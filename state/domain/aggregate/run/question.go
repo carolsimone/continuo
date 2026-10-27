@@ -15,6 +15,7 @@ import (
 // dispatch carries.
 type Question struct {
 	RunID        uuid.UUID
+	TenantID     string
 	ScheduleName string
 	TaskID       uuid.UUID
 	Attempt      int32
@@ -33,6 +34,7 @@ type Question struct {
 func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 	return TaskDispatched{
 		ID:           q.RunID,
+		TenantID:     q.TenantID,
 		ScheduleName: q.ScheduleName,
 		TaskID:       q.TaskID,
 		Attempt:      q.Attempt,
@@ -49,6 +51,7 @@ func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 // who cancelled it and why, and those attempts.
 type StopQuestion struct {
 	RunID        uuid.UUID
+	TenantID     string
 	ScheduleName string
 	CancelledBy  string
 	Reason       string
@@ -63,6 +66,7 @@ type StopQuestion struct {
 func (q StopQuestion) Cancel() RunCancelled {
 	return RunCancelled{
 		ID:                 q.RunID,
+		TenantID:           q.TenantID,
 		Name:               q.ScheduleName,
 		By:                 q.CancelledBy,
 		CancellationReason: q.Reason,

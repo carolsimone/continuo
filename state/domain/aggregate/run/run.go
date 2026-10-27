@@ -564,7 +564,7 @@ func (r *Run) Cancel(
 	}
 	r.changes.cancelDirty = true
 	r.changes.statusDirty = true
-	events := []DomainEvent{RunCancelled{ID: r.runID, Name: r.scheduleName, By: by, CancellationReason: reason}}
+	events := []DomainEvent{RunCancelled{ID: r.runID, TenantID: r.tenantID, Name: r.scheduleName, By: by, CancellationReason: reason}}
 
 	if counts.Stopping > 0 {
 		r.status = RunStatusCancelling
@@ -692,6 +692,7 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
 		ID:           r.runID,
+		TenantID:     r.tenantID,
 		ScheduleName: r.scheduleName,
 		TaskID:       taskID,
 		Attempt:      n,

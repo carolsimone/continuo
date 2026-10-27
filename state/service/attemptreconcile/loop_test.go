@@ -301,7 +301,7 @@ func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
 		{TaskID: b.TaskID, Attempt: b.Attempt, JobName: "job-b", ChecksSent: 2},
 	}
 	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []repository.RunRef{ref},
-		stops: map[repository.RunRef]run.StopQuestion{ref: {RunID: runID, ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data",
+		stops: map[repository.RunRef]run.StopQuestion{ref: {RunID: runID, TenantID: "acme", ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data",
 			CancelledAt: now.Add(-6 * time.Minute), Attempts: targets}}}
 	outbox := &recordingOutbox{}
 	f := newFake(attempts, outbox)
@@ -309,7 +309,7 @@ func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
 	require.NoError(t, newLoop(f, &countingMetrics{}).Pass(context.Background()))
 
 	require.Len(t, outbox.events, 1)
-	assert.Equal(t, run.RunCancelled{ID: runID, Name: "daily", By: "alice", CancellationReason: "bad data", Attempts: targets}, outbox.events[0])
+	assert.Equal(t, run.RunCancelled{ID: runID, TenantID: "acme", Name: "daily", By: "alice", CancellationReason: "bad data", Attempts: targets}, outbox.events[0])
 	assert.Equal(t, map[repository.AttemptKey]time.Duration{a: run.NextStopCheckAfter(1), b: run.NextStopCheckAfter(3)}, attempts.marked,
 		"each attempt's next check moves under the run's tenant")
 	assert.Equal(t, 10*time.Minute, attempts.marked[a])

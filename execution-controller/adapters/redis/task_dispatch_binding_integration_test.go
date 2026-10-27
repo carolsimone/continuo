@@ -21,6 +21,7 @@ import (
 	executortest "github.com/carolsimone/continuo/execution-controller/test"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -131,7 +132,9 @@ func (f *dispatchFlow) reports() []pkgevents.TaskStatusReport {
 	require.NoError(f.t, f.db.Select(&payloads, `SELECT payload FROM execution_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, f.taskID, streams.TaskStatusUpdatedV2))
 	out := make([]pkgevents.TaskStatusReport, 0, len(payloads))
-	for _, p := range payloads {
+	for _, stored := range payloads {
+		_, p, err := outbox.UnwrapTenant(stored)
+		require.NoError(f.t, err)
 		var r pkgevents.TaskStatusReport
 		require.NoError(f.t, json.Unmarshal(p, &r))
 		out = append(out, r)
@@ -232,7 +235,7 @@ func TestTaskDispatch_ARefusedDispatchOfARunningJobsNameLeavesTheJobToItsOwner(t
 	f := newDispatchFlow(t, db)
 	name := jobNameOf(f.runID, 0)
 	repo := postgres.NewDeploymentsRepository(db, testDispatchLogger())
-	owner := model.NewDeployment(command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString(),
+	owner := model.NewDeployment(command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: uuid.NewString(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: name,
 		NodeType: "dbt-model", Operation: "run", ImageTag: "sha-abc", TimeoutSeconds: 3600}, nil, time.Now().Add(-time.Minute))
 	require.NoError(t, repo.Add(ctx, owner))

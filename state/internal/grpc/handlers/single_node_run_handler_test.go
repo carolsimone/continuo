@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -43,10 +44,12 @@ type singleNodeRunFixture struct {
 	Tenant string
 }
 
-// outboxRow holds the fields read back from state_outbox in tests.
+// outboxRow holds the fields read back from state_outbox in tests: the stream,
+// the tenant the row stores and the payload it publishes.
 type outboxRow struct {
 	StreamName string `db:"stream_name"`
 	Payload    []byte `db:"payload"`
+	TenantID   string `db:"-"`
 }
 
 // getOutboxByAggregate reads the state_outbox row for the given aggregate_id.
@@ -62,6 +65,10 @@ func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *out
 	if err != nil {
 		return nil
 	}
+	tenantID, wire, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	require.NoError(t, err)
+	entry.TenantID = tenantID
+	entry.Payload = wire
 	return &entry
 }
 

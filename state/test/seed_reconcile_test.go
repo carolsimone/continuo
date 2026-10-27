@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -174,8 +175,11 @@ func TestSeedReconcile(t *testing.T) {
 		}
 		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
 		assert.Equal(t, streams.TaskDispatchV1, outbox.StreamName, "the run dispatches the seed as it is created")
+		tenantID, wire, err := pkgoutbox.UnwrapTenant(outbox.Payload)
+		require.NoError(t, err)
+		assert.Equal(t, h.tenant, tenantID, "the dispatch is stored under the run's tenant")
 		var payload map[string]any
-		require.NoError(t, json.Unmarshal(outbox.Payload, &payload))
+		require.NoError(t, json.Unmarshal(wire, &payload))
 		assert.Equal(t, runID.String(), payload["run_id"])
 		assert.Equal(t, run.TaskIDFor(h.tenant, runID, "raw.orders").String(), payload["task_id"])
 		assert.Equal(t, "orders", payload["table_name"])
@@ -186,7 +190,7 @@ func TestSeedReconcile(t *testing.T) {
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a second pass while the run is running creates nothing")
 		assert.Equal(t, 1, h.seedDispatches(t, releaseID))
 
-		_, err := db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
+		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
 		require.NoError(t, err)
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a failed load of the live content is not retried")
@@ -345,8 +349,8 @@ func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []st
 	t.Helper()
 	var tables []string
 	require.NoError(t, h.db.Select(&tables, `
-		SELECT payload->>'table_name' FROM state_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`, runID, streams.TaskDispatchV1))
+		SELECT payload->'payload'->>'table_name' FROM state_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->'payload'->>'table_name'`, runID, streams.TaskDispatchV1))
 	return tables
 }
 

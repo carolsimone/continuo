@@ -46,7 +46,7 @@ func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 	require.NoError(t, h.db.Get(&out.Tasks, `SELECT count(*) FROM tasks WHERE run_id = $1`, id))
 	require.NoError(t, h.db.Select(&out.Dispatch, `
 		SELECT t.node_key FROM state_outbox o
-		JOIN tasks t ON t.task_id = (o.payload->>'task_id')::uuid
+		JOIN tasks t ON t.task_id = (o.payload->'payload'->>'task_id')::uuid
 		WHERE o.aggregate_id = $1 AND o.stream_name = $2
 		ORDER BY t.node_key COLLATE "C"`, id, streams.TaskDispatchV1))
 	return out

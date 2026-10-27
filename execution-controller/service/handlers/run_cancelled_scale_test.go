@@ -152,7 +152,7 @@ type lossyCreate struct {
 func (l *lossyCreate) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	close(l.entered)
 	<-l.release
-	cmd := command.DeployTask{TaskID: spec.TaskID, RunID: spec.RunID, JobName: spec.JobName, Attempt: spec.Attempt}
+	cmd := command.DeployTask{TenantID: "default", TaskID: spec.TaskID, RunID: spec.RunID, JobName: spec.JobName, Attempt: spec.Attempt}
 	if _, err := l.cs.BatchV1().Jobs(fenceNamespace).Create(ctx, apiJob(cmd), metav1.CreateOptions{}); err != nil {
 		return err
 	}

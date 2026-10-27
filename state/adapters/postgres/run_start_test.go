@@ -117,8 +117,8 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 
 	var taskIDs []string
 	require.NoError(t, db.Select(&taskIDs, `
-		SELECT payload->>'task_id' FROM state_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`,
+		SELECT payload->'payload'->>'task_id' FROM state_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->'payload'->>'table_name'`,
 		r.RunID(), streams.TaskDispatchV1))
 	assert.Equal(t, []string{
 		run.TaskIDFor(pkgevents.DefaultTenantID, r.RunID(), "e2e_schema.ftable_a").String(),
@@ -177,6 +177,7 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	defer tx.Rollback()
 	require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{run.TaskDispatched{
 		ID:           runID,
+		TenantID:     "default",
 		ScheduleName: in.ScheduleName,
 		TaskID:       uuid.MustParse(in.TaskID),
 		Attempt:      in.Attempt,
@@ -202,8 +203,11 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	assert.Equal(t, streams.TaskDispatchV1, stored.StreamName)
 	assert.Equal(t, "scheduler", stored.AggregateType)
 	assert.Equal(t, streams.TaskDispatchV1, stored.EventType)
+	tenantID, wire, err := pkgoutbox.UnwrapTenant(stored.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "default", tenantID, "the row stores the run's tenant")
 	var payload pkgevents.TaskDispatch
-	require.NoError(t, json.Unmarshal(stored.Payload, &payload))
+	require.NoError(t, json.Unmarshal(wire, &payload))
 	assert.Equal(t, in, payload, "the row's payload is the dispatch")
 
 	rendered, err := publisher.NewOutboxPublisher(nil, discardLogger()).Render(&pkgoutbox.Entry{

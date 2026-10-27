@@ -148,6 +148,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	}
 	return run.Question{
 		RunID:        row.RunID,
+		TenantID:     key.TenantID,
 		ScheduleName: row.ScheduleName,
 		TaskID:       row.TaskID,
 		Attempt:      row.Attempt,
@@ -237,7 +238,7 @@ func (r *AttemptRepository) LockStops(ctx context.Context, ref repository.RunRef
 		return run.StopQuestion{}, false, nil
 	}
 	head := rows[0]
-	q := run.StopQuestion{RunID: head.RunID, ScheduleName: head.ScheduleName}
+	q := run.StopQuestion{RunID: head.RunID, TenantID: ref.TenantID, ScheduleName: head.ScheduleName}
 	if head.CancelledBy != nil {
 		q.CancelledBy = *head.CancelledBy
 	}

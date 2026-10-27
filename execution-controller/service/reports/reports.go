@@ -18,7 +18,8 @@ import (
 
 // Write reports d's attempt with status, from everything observed of it and,
 // for a failure, errorMessage: it keeps the report as d's last report, which
-// the caller saves with d, and writes it to the outbox.
+// the caller saves with d, and writes it to the outbox. The row stores the
+// report beside d's tenant, which the publisher renders on the envelope.
 func Write(ctx context.Context, repo outbox.Repository, d *model.Deployment, status pkgmodel.AttemptStatus, errorMessage string) error {
 	r := d.ReportOf(status, errorMessage)
 	d.RecordReport(r)
@@ -54,8 +55,12 @@ func write(ctx context.Context, repo outbox.Repository, d *model.Deployment, r m
 	if err != nil {
 		return fmt.Errorf("marshal the %s report of task %s: %w", r.Status, cmd.TaskID, err)
 	}
+	stored, err := outbox.WrapTenant(d.TenantID(), payload)
+	if err != nil {
+		return fmt.Errorf("store the %s report of task %s under its tenant: %w", r.Status, cmd.TaskID, err)
+	}
 	if err := repo.Create(ctx, &outbox.Entry{MessageProcessingID: d.MessageProcessingID(), AggregateType: "task",
-		AggregateID: taskID, EventType: event.EventTypeTaskStatusReport, Payload: payload,
+		AggregateID: taskID, EventType: event.EventTypeTaskStatusReport, Payload: stored,
 		StreamName: streams.TaskStatusUpdatedV2}); err != nil {
 		return fmt.Errorf("write the %s report of attempt %d of task %s: %w", r.Status, cmd.Attempt, cmd.TaskID, err)
 	}

@@ -123,8 +123,8 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at, tenant_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute', 'default')`,
 		id, uuid.New(), uuid.New(), payload, maxRetries, retryCount)
 	require.NoError(t, err)
 	return id
@@ -137,8 +137,10 @@ func failedReport(t *testing.T, db *sqlx.DB) pkgevents.TaskStatusReport {
 	var payload []byte
 	require.NoError(t, db.QueryRow(
 		`SELECT payload FROM execution_outbox WHERE event_type = $1 LIMIT 1`, event.EventTypeTaskStatusReport).Scan(&payload))
+	_, report, err := outbox.UnwrapTenant(payload)
+	require.NoError(t, err)
 	var got pkgevents.TaskStatusReport
-	require.NoError(t, json.Unmarshal(payload, &got))
+	require.NoError(t, json.Unmarshal(report, &got))
 	return got
 }
 
@@ -307,8 +309,8 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	runID := uuid.New()
 	// Valid JSONB, but a JSON string — cannot unmarshal into DeployTask.
 	_, err := db.Exec(
-		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
-		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute')`,
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at, tenant_id)
+		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute', 'default')`,
 		uuid.New(), taskID, runID)
 	require.NoError(t, err)
 
@@ -355,8 +357,8 @@ func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUI
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
-		 VALUES ($1, $2, $3, $4, 3, 0, $5)`,
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at, tenant_id)
+		 VALUES ($1, $2, $3, $4, 3, 0, $5, 'default')`,
 		id, uuid.New(), uuid.New(), payload, nextAttempt)
 	require.NoError(t, err)
 	return id
@@ -664,7 +666,7 @@ func (a *lossyAPI) set(f func(*lossyAPI)) {
 func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.DeployTask) {
 	t.Helper()
 	id := uuid.New()
-	cmd := command.DeployTask{
+	cmd := command.DeployTask{TenantID: "default",
 		TaskID: uuid.NewString(), RunID: uuid.NewString(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders-" + uuid.NewString()[:8] + "-r1", NodeType: "dbt-model",
@@ -673,8 +675,8 @@ func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(cmd))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
-		 VALUES ($1, $2, $3, $4, 3, $5, NOW() - interval '1 minute')`,
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at, tenant_id)
+		 VALUES ($1, $2, $3, $4, 3, $5, NOW() - interval '1 minute', 'default')`,
 		id, cmd.TaskID, cmd.RunID, payload, retryCount)
 	require.NoError(t, err)
 	return id, cmd
@@ -861,7 +863,7 @@ func TestLaunch_AFencedReservedRowEndsStoppedWithoutAJob(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	runID := uuid.New()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
+	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	dep := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
@@ -941,7 +943,7 @@ func newFencedLaunch(t *testing.T) *fencedLaunch {
 	db, cleanup := setupPostgres(t)
 	t.Cleanup(cleanup)
 	runID := uuid.New()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
+	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	added, err := repoFactory(db).AddAttempt(context.Background(), model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute)))

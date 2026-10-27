@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
@@ -166,8 +167,10 @@ func requireDispatched(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID, sched
 	require.NoError(t, db.SelectContext(context.Background(), &payloads,
 		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`, runID, streams.TaskDispatchV1))
 	require.Len(t, payloads, 1)
+	_, wire, err := pkgoutbox.UnwrapTenant(payloads[0])
+	require.NoError(t, err)
 	var payload pkgevents.TaskDispatch
-	require.NoError(t, json.Unmarshal(payloads[0], &payload))
+	require.NoError(t, json.Unmarshal(wire, &payload))
 	require.Equal(t, runID.String(), payload.RunID)
 	require.Equal(t, scheduleName, payload.ScheduleName)
 	require.Equal(t, taskID.String(), payload.TaskID)

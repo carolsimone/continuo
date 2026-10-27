@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -139,7 +140,7 @@ func TestAttemptRepository_LockQuestionCarriesTheAttemptsDispatch(t *testing.T) 
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, run.Question{
-			RunID: f.r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
+			RunID: f.r.RunID(), TenantID: tenant, ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
 			Attempt: 0, Status: run.AttemptQueued, JobName: jobName, Operation: model.OperationRun,
 			Node: topology.Node{Key: "e2e_schema.ftable_a", UniqueID: "e2e_schema.ftable_a", ServiceName: "service-1",
 				SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model", ContentHash: "h-ftable_a",
@@ -643,8 +644,11 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 		f.r.RunID(), streams.RunCancelledV1))
 	require.Len(t, rows, 1, "one re-sent cancel")
 	assert.Equal(t, streams.RunCancelledV1, rows[0].EventType)
+	tenantID, wire, err := pkgoutbox.UnwrapTenant(rows[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, f.tenant, tenantID, "the row stores the run's tenant")
 	var cancel pkgevents.RunCancelled
-	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancel))
+	require.NoError(t, json.Unmarshal(wire, &cancel))
 	assert.Equal(t, f.r.RunID().String(), cancel.RunID)
 	assert.Equal(t, "user", cancel.CancelledBy)
 	assert.Equal(t, stops, cancel.Attempts)

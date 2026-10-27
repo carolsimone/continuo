@@ -119,7 +119,7 @@ func newFenceFlow(t *testing.T) *fenceFlow {
 // command is attempt attempt of a new task of the run.
 func (f *fenceFlow) command(attempt int) command.DeployTask {
 	taskID := uuid.NewString()
-	return command.DeployTask{TaskID: taskID, RunID: f.runID.String(), ScheduleName: "daily",
+	return command.DeployTask{TenantID: "default", TaskID: taskID, RunID: f.runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "t" + taskID[:8],
 		JobName: "dbt-public-t" + taskID[:8] + "-" + f.runID.String()[:8], NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "run", Attempt: attempt, TimeoutSeconds: 3600}
@@ -157,7 +157,7 @@ func (f *fenceFlow) handler(runJobs ports.RunJobLookup) *handlers.RunCancelledHa
 }
 
 func (f *fenceFlow) event(attempts ...events.AttemptRef) events.RunCancelled {
-	return events.RunCancelled{RunID: f.runID, CancelledBy: "alice", Reason: "wrong window", Attempts: attempts}
+	return events.RunCancelled{TenantID: "default", RunID: f.runID, CancelledBy: "alice", Reason: "wrong window", Attempts: attempts}
 }
 
 // cancel applies evt in one transaction and commits it.
@@ -190,7 +190,9 @@ func (f *fenceFlow) reports(taskID string) []pkgevents.TaskStatusReport {
 	require.NoError(f.t, f.db.Select(&payloads, `SELECT payload FROM execution_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY created_at, id`, taskID, streams.TaskStatusUpdatedV2))
 	out := make([]pkgevents.TaskStatusReport, 0, len(payloads))
-	for _, p := range payloads {
+	for _, stored := range payloads {
+		_, p, err := outbox.UnwrapTenant(stored)
+		require.NoError(f.t, err)
 		var r pkgevents.TaskStatusReport
 		require.NoError(f.t, json.Unmarshal(p, &r))
 		out = append(out, r)
@@ -440,6 +442,32 @@ func TestRunCancelled_StoresANamedAttemptItNeverReceivedAsStopped(t *testing.T) 
 	assert.Equal(t, 1, f.metrics.stopped)
 }
 
+// The stopped report of an attempt the cancel names but execution-controller
+// never received is stored and published under the tenant of the cancel.
+func TestRunCancelled_AStoppedReportForANamedAttemptCarriesTheCancelsTenant(t *testing.T) {
+	f := newFenceFlow(t)
+	cmd := f.command(1)
+	evt := f.event(ref(cmd))
+	evt.TenantID = "acme"
+
+	f.cancel(f.handler(&runReads{}), evt)
+
+	got := f.reload(cmd.TaskID, 1)
+	assert.Equal(t, "acme", got.TenantID(), "the record keeps the cancel's tenant")
+	var column string
+	require.NoError(t, f.db.Get(&column, `SELECT tenant_id FROM deployments WHERE task_id = $1`, cmd.TaskID))
+	assert.Equal(t, "acme", column)
+	var stored []byte
+	require.NoError(t, f.db.Get(&stored, `SELECT payload FROM execution_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+		cmd.TaskID, streams.TaskStatusUpdatedV2))
+	tenantID, payload, err := outbox.UnwrapTenant(stored)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID)
+	var report pkgevents.TaskStatusReport
+	require.NoError(t, json.Unmarshal(payload, &report))
+	assert.Equal(t, pkgmodel.AttemptStatusStopped, report.Status)
+}
+
 // An attempt the cancel names that has no row but whose Job exists (here only
 // a live read shows it) is adopted as terminating with the stop recorded, and
 // its Job is returned for deletion; the observer reports it once its pods are
@@ -511,7 +539,7 @@ func TestRunCancelled_IsIdempotent(t *testing.T) {
 // dispatchOf is state's dispatch of attempt 0 of a new task of the run.
 func (f *fenceFlow) dispatchOf() events.TaskDispatch {
 	cmd := f.command(0)
-	return events.TaskDispatch{RunID: f.runID, TaskID: uuid.MustParse(cmd.TaskID), Attempt: 0,
+	return events.TaskDispatch{TenantID: "default", RunID: f.runID, TaskID: uuid.MustParse(cmd.TaskID), Attempt: 0,
 		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: cmd.ScheduleName, ServiceName: cmd.ServiceName,
 		SchemaName: cmd.SchemaName, TableName: cmd.TableName, NodeType: cmd.NodeType, Operation: cmd.Operation,
 		ImageTag: cmd.ImageTag, JobName: cmd.JobName, TimeoutSeconds: cmd.TimeoutSeconds}

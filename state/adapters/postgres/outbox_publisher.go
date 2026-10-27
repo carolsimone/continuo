@@ -98,7 +98,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		// Like a dispatch, the row's event_type is the stream name and its
 		// aggregate is the run, so the relay publishes it after every dispatch
 		// of the run written before it.
-		return buildEntry(e.ID, "scheduler", streams.RunCancelledV1, streams.RunCancelledV1, payload, msgProcPtr), false, nil
+		return buildTenantEntry(e.ID, e.TenantID, streams.RunCancelledV1, payload, msgProcPtr)
 
 	case run.TaskDispatched:
 		payload, err := json.Marshal(pkgevents.TaskDispatch{
@@ -125,7 +125,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		// envelope from the row. Every dispatch of a run shares the run as its
 		// aggregate, so the relay publishes them in the order they were
 		// written.
-		return buildEntry(e.ID, "scheduler", streams.TaskDispatchV1, streams.TaskDispatchV1, payload, msgProcPtr), false, nil
+		return buildTenantEntry(e.ID, e.TenantID, streams.TaskDispatchV1, payload, msgProcPtr)
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
 		// The activation handler logs its reason.
@@ -134,6 +134,16 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 	default:
 		return nil, false, fmt.Errorf("OutboxPublisher: unknown event type %T", evt)
 	}
+}
+
+// buildTenantEntry constructs the row of a run's event on stream: stored under
+// the run's tenant, which the relay renders as the envelope's tenant.
+func buildTenantEntry(runID uuid.UUID, tenantID, stream string, payload []byte, msgProcID *uuid.UUID) (*pkgoutbox.Entry, bool, error) {
+	stored, err := pkgoutbox.WrapTenant(tenantID, payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("store the %s of run %s: %w", stream, runID, err)
+	}
+	return buildEntry(runID, "scheduler", stream, stream, stored, msgProcID), false, nil
 }
 
 // buildEntry constructs a pending pkg/outbox.Entry with a generated ID.

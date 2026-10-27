@@ -9,6 +9,7 @@ type Event interface {
 // row; the publisher routes on it.
 const (
 	// EventTypeTaskStatusReport names a task.status.updated:v2 report: its
-	// row's payload is the report, the envelope is rendered on publish.
+	// row stores the report with its tenant (outbox.WrapTenant), and the
+	// envelope is rendered on publish.
 	EventTypeTaskStatusReport = "task_status_report"
 )
