@@ -1,0 +1,293 @@
+package runservice_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/projection"
+	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
+	"github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/runreads"
+)
+
+const (
+	tenantA = "default"
+	tenantB = "acme"
+)
+
+// ctxOf is the context of a request that acts for tenant.
+func ctxOf(tenant string) context.Context {
+	return identity.WithTenant(context.Background(), tenant)
+}
+
+var errBoom = errors.New("boom")
+
+// fakeStore holds the rows every fake read port serves, keyed by tenant, and
+// records the arguments of the last read of each port.
+type fakeStore struct {
+	runs      map[string]map[uuid.UUID]projection.RunDetail
+	tasks     map[string]map[uuid.UUID][]projection.TaskDetail
+	attempts  map[string]map[uuid.UUID][]projection.TaskAttempt
+	graphs    map[string]map[uuid.UUID]projection.RunGraph
+	drifts    map[string][]projection.ActiveRunDrift
+	latest    map[string]int64
+	completed map[string][]projection.RunSummary
+
+	nodeTasks    []*projection.NodeRun
+	nodes        []*projection.NodeSummary
+	nodeNames    []string
+	nodeServices []string
+	schedules    []string
+	lastRuns     map[string]repository.LastRunSummary
+
+	failWith error
+
+	// Arguments of the last read.
+	taskFilter            *run.TaskStatus
+	taskLimit, taskOffset int
+	attemptTaskID         *uuid.UUID
+	attemptLimit          int
+	attemptOffset         int
+	runsLimit, runsOffset int
+	nodeTasksLimit        int
+	nodeTasksOperation    string
+	nodesSearch           string
+	nodesService          string
+	nodesLimit            int
+	nodesOffset           int
+	nodeNamesService      string
+	tenantsRead           []string
+}
+
+func newStore() *fakeStore {
+	return &fakeStore{
+		runs:      map[string]map[uuid.UUID]projection.RunDetail{},
+		tasks:     map[string]map[uuid.UUID][]projection.TaskDetail{},
+		attempts:  map[string]map[uuid.UUID][]projection.TaskAttempt{},
+		graphs:    map[string]map[uuid.UUID]projection.RunGraph{},
+		drifts:    map[string][]projection.ActiveRunDrift{},
+		latest:    map[string]int64{},
+		completed: map[string][]projection.RunSummary{},
+		lastRuns:  map[string]repository.LastRunSummary{},
+	}
+}
+
+func (s *fakeStore) putRun(tenant string, r projection.RunDetail) {
+	if s.runs[tenant] == nil {
+		s.runs[tenant] = map[uuid.UUID]projection.RunDetail{}
+	}
+	s.runs[tenant][r.RunID] = r
+}
+
+func (s *fakeStore) putTasks(tenant string, runID uuid.UUID, tasks ...projection.TaskDetail) {
+	if s.tasks[tenant] == nil {
+		s.tasks[tenant] = map[uuid.UUID][]projection.TaskDetail{}
+	}
+	s.tasks[tenant][runID] = tasks
+}
+
+func (s *fakeStore) putAttempts(tenant string, runID uuid.UUID, attempts ...projection.TaskAttempt) {
+	if s.attempts[tenant] == nil {
+		s.attempts[tenant] = map[uuid.UUID][]projection.TaskAttempt{}
+	}
+	s.attempts[tenant][runID] = attempts
+}
+
+func (s *fakeStore) putGraph(tenant string, runID uuid.UUID, g projection.RunGraph) {
+	if s.graphs[tenant] == nil {
+		s.graphs[tenant] = map[uuid.UUID]projection.RunGraph{}
+	}
+	s.graphs[tenant][runID] = g
+}
+
+// The fakes below are the read ports of the run reads over fakeStore.
+
+type fakeRunDetails struct{ *fakeStore }
+
+var _ repository.RunDetailReader = fakeRunDetails{}
+
+func (f fakeRunDetails) GetRunDetail(_ context.Context, tenantID string, runID uuid.UUID) (projection.RunDetail, error) {
+	f.tenantsRead = append(f.tenantsRead, tenantID)
+	if f.failWith != nil {
+		return projection.RunDetail{}, f.failWith
+	}
+	r, ok := f.runs[tenantID][runID]
+	if !ok {
+		return projection.RunDetail{}, repository.ErrRunNotFound
+	}
+	return r, nil
+}
+
+type fakeTaskDetails struct{ *fakeStore }
+
+var _ repository.TaskDetailReader = fakeTaskDetails{}
+
+func (f fakeTaskDetails) ListRunTasks(_ context.Context, tenantID string, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]projection.TaskDetail, int, error) {
+	f.taskFilter, f.taskLimit, f.taskOffset = status, limit, offset
+	if f.failWith != nil {
+		return nil, 0, f.failWith
+	}
+	var matching []projection.TaskDetail
+	for _, t := range f.tasks[tenantID][runID] {
+		if status == nil || t.Status == *status {
+			matching = append(matching, t)
+		}
+	}
+	total := len(matching)
+	if offset >= len(matching) {
+		return nil, total, nil
+	}
+	end := min(offset+limit, len(matching))
+	return matching[offset:end], total, nil
+}
+
+type fakeAttempts struct{ *fakeStore }
+
+var _ repository.TaskAttemptReader = fakeAttempts{}
+
+func (f fakeAttempts) ListRunAttempts(_ context.Context, tenantID string, runID uuid.UUID, taskID *uuid.UUID, pageSize, pageOffset int) ([]projection.TaskAttempt, int, error) {
+	f.attemptTaskID, f.attemptLimit, f.attemptOffset = taskID, pageSize, pageOffset
+	if f.failWith != nil {
+		return nil, 0, f.failWith
+	}
+	var matching []projection.TaskAttempt
+	for _, a := range f.attempts[tenantID][runID] {
+		if taskID == nil || a.TaskID == *taskID {
+			matching = append(matching, a)
+		}
+	}
+	return matching, len(matching), nil
+}
+
+type fakeRunReads struct{ *fakeStore }
+
+var _ repository.RunReadRepository = fakeRunReads{}
+
+func (f fakeRunReads) GetRunGraph(_ context.Context, tenantID string, runID uuid.UUID) (projection.RunGraph, error) {
+	if f.failWith != nil {
+		return projection.RunGraph{}, f.failWith
+	}
+	g, ok := f.graphs[tenantID][runID]
+	if !ok {
+		return projection.RunGraph{LatestPromotionSeq: f.latest[tenantID]}, nil
+	}
+	return g, nil
+}
+
+func (f fakeRunReads) ListCompletedRuns(_ context.Context, tenantID, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error) {
+	f.runsLimit, f.runsOffset = limit, offset
+	if f.failWith != nil {
+		return nil, 0, f.failWith
+	}
+	var matching []projection.RunSummary
+	for _, r := range f.completed[tenantID] {
+		if r.ScheduleName == scheduleName {
+			matching = append(matching, r)
+		}
+	}
+	return matching, len(matching), nil
+}
+
+func (f fakeRunReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
+	if f.failWith != nil {
+		return 0, nil, f.failWith
+	}
+	return f.latest[tenantID], f.drifts[tenantID], nil
+}
+
+func (f fakeRunReads) LastSuccessDurations(context.Context, string, []run.NodeID) (map[run.NodeID]time.Duration, error) {
+	return nil, nil
+}
+
+type fakeNodes struct{ *fakeStore }
+
+var _ repository.NodeReader = fakeNodes{}
+
+func (f fakeNodes) ListNodeTasks(_ context.Context, _, _, _, _, operation string, limit int) ([]*projection.NodeRun, error) {
+	f.nodeTasksOperation, f.nodeTasksLimit = operation, limit
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.nodeTasks, nil
+}
+
+func (f fakeNodes) ListNodes(_ context.Context, _, search, serviceName, _ string, limit, offset int) ([]*projection.NodeSummary, int, error) {
+	f.nodesSearch, f.nodesService, f.nodesLimit, f.nodesOffset = search, serviceName, limit, offset
+	if f.failWith != nil {
+		return nil, 0, f.failWith
+	}
+	return f.nodes, len(f.nodes), nil
+}
+
+func (f fakeNodes) ListNodeNames(_ context.Context, _, serviceName string) ([]string, error) {
+	f.nodeNamesService = serviceName
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.nodeNames, nil
+}
+
+func (f fakeNodes) ListNodeServices(context.Context, string) ([]string, error) {
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.nodeServices, nil
+}
+
+type fakeActiveSchedules struct{ *fakeStore }
+
+var _ repository.ActiveScheduleReader = fakeActiveSchedules{}
+
+func (f fakeActiveSchedules) ListActive(context.Context, string) ([]string, error) {
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	names := append([]string(nil), f.schedules...)
+	sort.Strings(names)
+	return names, nil
+}
+
+type fakeLastRuns struct{ *fakeStore }
+
+var _ repository.LastRunReader = fakeLastRuns{}
+
+func (f fakeLastRuns) GetLastRunPerSchedule(context.Context, string) (map[string]repository.LastRunSummary, error) {
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.lastRuns, nil
+}
+
+type fakeCrons struct {
+	timezone string
+	byName   map[string]ports.ScheduleCron
+}
+
+var _ ports.ScheduleCrons = fakeCrons{}
+
+func (f fakeCrons) Timezone() string { return f.timezone }
+
+func (f fakeCrons) CronOf(name string) (ports.ScheduleCron, bool) {
+	c, ok := f.byName[name]
+	return c, ok
+}
+
+// newServer builds the RunService read server over the fakes of store.
+func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
+	return runservice.NewServer(runservice.Reads{
+		Runs:      runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
+		Attempts:  runreads.NewAttempts(fakeAttempts{store}),
+		Nodes:     runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
+		Schedules: runreads.NewSchedules(fakeActiveSchedules{store}, fakeLastRuns{store}, crons),
+		Graphs:    runreads.New(fakeRunReads{store}),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}

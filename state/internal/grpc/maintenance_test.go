@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/stretchr/testify/require"
 	grpclib "google.golang.org/grpc"
@@ -24,7 +25,7 @@ func dialState(t *testing.T, maintenanceOn bool) statev1.StateServiceClient {
 	// validation answers before their use case is touched, which is all
 	// reaching a handler needs.
 	srv, err := NewServer(0, nil, nil, nil, handlers.NewRerunHandler(nil, nil, logger), nil, nil,
-		handlers.NewPreviewRebaseHandler(nil, logger), nil, nil, logger, maintenanceOn)
+		handlers.NewPreviewRebaseHandler(nil, logger), nil, nil, runv1.UnimplementedRunServiceServer{}, logger, maintenanceOn)
 	require.NoError(t, err)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })

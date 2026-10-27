@@ -28,9 +28,11 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
+	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -474,9 +476,16 @@ func main() {
 	}
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
+	runService := runservice.NewServer(runservice.Reads{
+		Runs:      runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
+		Attempts:  runreads.NewAttempts(taskAttemptReadRepo),
+		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
+		Schedules: runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
+		Graphs:    runreads.New(runReadRepo),
+	}, logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskAttemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskAttemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, runService, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

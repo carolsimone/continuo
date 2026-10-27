@@ -54,6 +54,15 @@ var handlerDirs = []string{
 	"dead-letter-controller/service/uow",
 }
 
+// grpcEdgeDirs lists the gRPC edge packages (relative to repo root): handlers
+// that parse a wire request and map the result to a wire response, so they
+// import the service's generated proto and grpc status packages. They must
+// still import no adapters/* package; they reach every collaborator through
+// the read and application services behind ports.
+var grpcEdgeDirs = []string{
+	"state/internal/grpc/runservice",
+}
+
 // forbiddenAppImports are import-path fragments the application layer must not
 // reference directly: concrete adapters, and the gRPC/proto wire types that are
 // an adapter concern. Application code reaches these only through ports.
@@ -72,7 +81,20 @@ var forbiddenAppImports = []struct {
 func TestServiceHandlersDoNotImportAdapters(t *testing.T) {
 	root := repoRootFromTest(t)
 	fset := token.NewFileSet()
+	adaptersOnly := forbiddenAppImports[:1]
+	type guarded struct {
+		rel       string
+		forbidden []struct{ fragment, why string }
+	}
+	var dirs []guarded
 	for _, rel := range handlerDirs {
+		dirs = append(dirs, guarded{rel, forbiddenAppImports})
+	}
+	for _, rel := range grpcEdgeDirs {
+		dirs = append(dirs, guarded{rel, adaptersOnly})
+	}
+	for _, g := range dirs {
+		rel := g.rel
 		dir := filepath.Join(root, rel)
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -95,7 +117,7 @@ func TestServiceHandlersDoNotImportAdapters(t *testing.T) {
 			}
 			for _, imp := range f.Imports {
 				p := strings.Trim(imp.Path.Value, `"`)
-				for _, bad := range forbiddenAppImports {
+				for _, bad := range g.forbidden {
 					if strings.Contains(p, bad.fragment) {
 						t.Errorf("%s: application code imports %q — %s", path, p, bad.why)
 					}

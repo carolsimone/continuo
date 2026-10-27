@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
@@ -31,6 +34,7 @@ import (
 
 var (
 	stateClient statev1.StateServiceClient
+	runClient   runv1.RunServiceClient
 	stateConn   *grpc.ClientConn
 	stateServer *grpcserver.Server
 	stateDB     *sqlx.DB
@@ -138,9 +142,16 @@ func TestMain(m *testing.M) {
 	}
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, 24*time.Hour, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
+	runService := runservice.NewServer(runservice.Reads{
+		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
+		Attempts:  runreads.NewAttempts(attemptRepo),
+		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
+		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, schedulesconfig.New(nil)),
+		Graphs:    runreads.New(runReadRepo),
+	}, logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, attemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, false)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, attemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, runService, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
@@ -160,6 +171,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stateClient = statev1.NewStateServiceClient(stateConn)
+	runClient = runv1.NewRunServiceClient(stateConn)
 
 	// ---- Run tests ----
 	code := m.Run()

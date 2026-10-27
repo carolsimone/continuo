@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/maintenance/grpcgate"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -54,6 +55,7 @@ func NewServer(
 	previewRebaseHandler *handlers.PreviewRebaseHandler,
 	nodeRunHandler *handlers.NodeRunHandler,
 	runReadHandler *handlers.RunReadHandler,
+	runService runv1.RunServiceServer,
 	logger *slog.Logger,
 	maintenance bool,
 ) (*Server, error) {
@@ -90,6 +92,7 @@ func NewServer(
 	}
 
 	statev1.RegisterStateServiceServer(grpcServer, server)
+	runv1.RegisterRunServiceServer(grpcServer, runService)
 
 	// Enable reflection for grpcurl/testing
 	reflection.Register(grpcServer)
