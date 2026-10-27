@@ -115,6 +115,8 @@ Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Char
 - **If a value becomes newly required**, add an `{{ if .Release.IsUpgrade }}` warning to `templates/NOTES.txt` telling operators what to set — the changelog is easy to miss, but NOTES.txt is what actually prints at `helm upgrade` time.
 - Validate with `bash scripts/install-test/lint.sh` (helm lint + template + kube-linter across all four values topologies) before pushing.
 
+After a release: once `release.yml` has succeeded for `vX.Y.Z` and the docs-pin PR (the one pinning this repository's install guides to `X.Y.Z` and adding its release notes) has merged, run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in `carolsimone/continuo-site` that moves the public site's quickstart `chartVersion` to `X.Y.Z`; nothing else bumps that pin. It runs with your own `gh` login, and `release.yml` does not call it, because it needs push access to that second repository.
+
 # How to run it
 Everything needs to run against docker images within my host machine. I use MacOS M4 and colima to be precise.
 All should be added to the `docker-compose.yml` file at the root of the project.

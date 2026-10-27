@@ -301,6 +301,13 @@ Pushing a `vX.Y.Z` git tag runs `release.yml`:
 3. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and
    pushed to `oci://ghcr.io/carolsimone/charts/continuo`.
 
+After the release workflow succeeds and the docs-pin PR (pinning this
+repository's install guides to `X.Y.Z` and adding its release notes) merges,
+run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in
+`carolsimone/continuo-site` that moves the public site's quickstart
+`chartVersion` to `X.Y.Z`. It runs with your own `gh` login, which needs push
+access to that repository; the release workflow does not call it.
+
 ghcr packages created by CI start private, and GitHub has no API for
 container-package visibility — the first publish needs a one-time manual flip
 to public in the package's UI settings (Package settings → Change visibility).
