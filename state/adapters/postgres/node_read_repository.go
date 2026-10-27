@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
 )
@@ -22,12 +23,12 @@ func NewNodeReadRepository(nodeRunsOf func(tenantID string) NodeRunRepository) *
 }
 
 // ListNodeTasks returns the most recent tasks of a node, newest run first.
-func (r *NodeReadRepository) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error) {
+func (r *NodeReadRepository) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
 	return r.nodeRunsOf(tenantID).List(ctx, serviceName, schemaName, tableName, operation, limit)
 }
 
 // ListNodes returns one page of the node catalog and how many nodes match.
-func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error) {
+func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error) {
 	return r.nodeRunsOf(tenantID).ListNodes(ctx, search, serviceName, operation, limit, offset)
 }
 

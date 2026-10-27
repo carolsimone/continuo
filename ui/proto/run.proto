@@ -27,8 +27,11 @@ import "google/protobuf/timestamp.proto";
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
 // reused with different parameters"). A call that is refused stores nothing,
-// so its id may be sent again. An id is remembered for 30 days. A request_id
-// is a UUID and is required: an empty or malformed one is INVALID_ARGUMENT.
+// so its id may be sent again. Concurrent calls of one id serialise on it; a
+// call that keeps losing the id to concurrent calls that then roll back is
+// ABORTED, and the same call may be sent again with the same request_id. An
+// id is remembered for at least 30 days. A request_id is a UUID and is
+// required: an empty or malformed one is INVALID_ARGUMENT.
 //
 // While maintenance mode is on, every command that starts a run is refused
 // with UNAVAILABLE. Cancels and reads are not.
@@ -53,6 +56,9 @@ service RunService {
   //                         schedule, or a node to run has a node type the
   //                         node_type vocabulary does not declare.
   //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   ABORTED             - concurrent calls of the same request_id kept
+  //                         rolling back; send it again with the same
+  //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
   rpc StartRun(StartRunRequest) returns (StartRunResponse);
 
@@ -68,6 +74,9 @@ service RunService {
   //                         re-execute, or its schedule already has an active
   //                         run.
   //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   ABORTED             - concurrent calls of the same request_id kept
+  //                         rolling back; send it again with the same
+  //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
   rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
 
@@ -95,6 +104,9 @@ service RunService {
   //                         with no data tests; or a node type the node_type
   //                         vocabulary does not declare.
   //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   ABORTED             - concurrent calls of the same request_id kept
+  //                         rolling back; send it again with the same
+  //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
   rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
       returns (TriggerSingleNodeRunResponse);
@@ -123,6 +135,9 @@ service RunService {
   //                         (message "the live release changed; preview
   //                         again").
   //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   ABORTED             - concurrent calls of the same request_id kept
+  //                         rolling back; send it again with the same
+  //                         request_id.
   //   UNAVAILABLE         - maintenance mode is on.
   rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
 
@@ -134,7 +149,8 @@ service RunService {
   // add, whether or not include_changed_upstream is set. Maintenance mode does
   // not refuse it.
   // Errors: as TriggerRebase, except that an active run on the schedule does
-  // not refuse a preview, no release is compared, and it takes no request_id.
+  // not refuse a preview, no release is compared, and it takes no request_id,
+  // so it is never ALREADY_EXISTS or ABORTED.
   rpc PreviewRebase(PreviewRebaseRequest) returns (PreviewRebaseResponse);
 
   // CancelRun cancels a run by id. The response carries the run as the cancel
@@ -155,6 +171,9 @@ service RunService {
   //   INVALID_ARGUMENT    - empty schedule_name.
   //   FAILED_PRECONDITION - the schedule has no active run.
   //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   ABORTED             - concurrent calls of the same request_id kept
+  //                         rolling back; send it again with the same
+  //                         request_id.
   rpc CancelActiveRun(CancelActiveRunRequest) returns (CancelActiveRunResponse);
 
   // ==========================================================================
@@ -175,8 +194,8 @@ service RunService {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
 
   // ListActiveRunDrifts returns the live promotion seq and every schedule's
-  // newest pending or running run with the promotion seq its release was live
-  // under (0 when it names no release).
+  // newest pending, running or cancelling run with the promotion seq its
+  // release was live under (0 when it names no release).
   // Errors: none beyond the service-wide ones. With no active run it returns
   // an empty list.
   rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
@@ -215,10 +234,13 @@ service RunService {
   // Node reads
   // ==========================================================================
 
-  // ListNodeTasks returns the most recent tasks of a node, newest run first.
-  // The identity fields are required; limit is capped server-side at 50 (0
-  // uses the default of 50). A node with no task returns no tasks.
-  // Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
+  // ListNodeTasks returns the most recent tasks of a node applying operation,
+  // newest run first; the tasks of run (the empty default) include the node's
+  // full refreshes. The identity fields are required; limit is capped
+  // server-side at 50 (0 uses the default of 50). A node with no task returns
+  // no tasks.
+  // Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+  // empty, or operation is not an operation value).
   rpc ListNodeTasks(ListNodeTasksRequest) returns (ListNodeTasksResponse);
 
   // ListNodes returns the node catalog: one summary row per node that has run,
@@ -227,8 +249,9 @@ service RunService {
   // only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
   // filter, and limit/offset paging. total_count reports the full
   // match count (before paging). A limit of 0 or less means 50 and a limit
-  // above 200 is 200; a negative offset is 0.
-  // Errors: none beyond the service-wide ones.
+  // above 200 is 200; a negative offset is 0. The catalog of run (the empty
+  // default) includes full refreshes.
+  // Errors: INVALID_ARGUMENT (operation is not an operation value).
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
   // ListNodeNames returns the distinct table names of nodes that have run,
@@ -248,8 +271,8 @@ service RunService {
   // Schedule reads
   // ==========================================================================
 
-  // ListSchedules returns every schedule of the tenant, merging the names the
-  // live release holds, the cron of each, and its last run, ordered by
+  // ListSchedules returns every active schedule of the tenant's schedule
+  // catalog, with the cron of each and its last run, ordered by
   // schedule_name.
   // Errors: none beyond the service-wide ones. With no schedule it returns an
   // empty list.
@@ -629,8 +652,8 @@ message ListNodeServicesResponse {
 
 message ListSchedulesRequest {}
 
-// ScheduleSummary merges the schedule names of the live release, each
-// schedule cron configuration and its last run. last_run_status is a
+// ScheduleSummary is one active schedule of the tenant's schedule catalog,
+// with its cron configuration and its last run. last_run_status is a
 // run_status value.
 message ScheduleSummary {
   string schedule_name = 1;

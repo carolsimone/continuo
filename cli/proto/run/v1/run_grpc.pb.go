@@ -66,8 +66,11 @@ const (
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
 // reused with different parameters"). A call that is refused stores nothing,
-// so its id may be sent again. An id is remembered for 30 days. A request_id
-// is a UUID and is required: an empty or malformed one is INVALID_ARGUMENT.
+// so its id may be sent again. Concurrent calls of one id serialise on it; a
+// call that keeps losing the id to concurrent calls that then roll back is
+// ABORTED, and the same call may be sent again with the same request_id. An
+// id is remembered for at least 30 days. A request_id is a UUID and is
+// required: an empty or malformed one is INVALID_ARGUMENT.
 //
 // While maintenance mode is on, every command that starts a run is refused
 // with UNAVAILABLE. Cancels and reads are not.
@@ -89,6 +92,9 @@ type RunServiceClient interface {
 	//	                      schedule, or a node to run has a node type the
 	//	                      node_type vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(ctx context.Context, in *StartRunRequest, opts ...grpc.CallOption) (*StartRunResponse, error)
 	// TriggerRerun creates a run that re-executes a failed or cancelled run's
@@ -104,6 +110,9 @@ type RunServiceClient interface {
 	//	                      re-execute, or its schedule already has an active
 	//	                      run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that executes
@@ -132,6 +141,9 @@ type RunServiceClient interface {
 	//	                      with no data tests; or a node type the node_type
 	//	                      vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
 	// TriggerRebase creates a new run on the source's schedule and the live
@@ -159,6 +171,9 @@ type RunServiceClient interface {
 	//	                      (message "the live release changed; preview
 	//	                      again").
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error)
 	// PreviewRebase reports what TriggerRebase would run for the same
@@ -169,7 +184,8 @@ type RunServiceClient interface {
 	// add, whether or not include_changed_upstream is set. Maintenance mode does
 	// not refuse it.
 	// Errors: as TriggerRebase, except that an active run on the schedule does
-	// not refuse a preview, no release is compared, and it takes no request_id.
+	// not refuse a preview, no release is compared, and it takes no request_id,
+	// so it is never ALREADY_EXISTS or ABORTED.
 	PreviewRebase(ctx context.Context, in *PreviewRebaseRequest, opts ...grpc.CallOption) (*PreviewRebaseResponse, error)
 	// CancelRun cancels a run by id. The response carries the run as the cancel
 	// left it: cancelling while an attempt is still being stopped, cancelled once
@@ -190,6 +206,9 @@ type RunServiceClient interface {
 	//	INVALID_ARGUMENT    - empty schedule_name.
 	//	FAILED_PRECONDITION - the schedule has no active run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	CancelActiveRun(ctx context.Context, in *CancelActiveRunRequest, opts ...grpc.CallOption) (*CancelActiveRunResponse, error)
 	// GetRun returns one run.
 	// Errors:
@@ -204,8 +223,8 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
 	// ListActiveRunDrifts returns the live promotion seq and every schedule's
-	// newest pending or running run with the promotion seq its release was live
-	// under (0 when it names no release).
+	// newest pending, running or cancelling run with the promotion seq its
+	// release was live under (0 when it names no release).
 	// Errors: none beyond the service-wide ones. With no active run it returns
 	// an empty list.
 	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
@@ -237,10 +256,13 @@ type RunServiceClient interface {
 	// unknown". A run of another tenant is an unknown run.
 	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID).
 	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
-	// ListNodeTasks returns the most recent tasks of a node, newest run first.
-	// The identity fields are required; limit is capped server-side at 50 (0
-	// uses the default of 50). A node with no task returns no tasks.
-	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
+	// ListNodeTasks returns the most recent tasks of a node applying operation,
+	// newest run first; the tasks of run (the empty default) include the node's
+	// full refreshes. The identity fields are required; limit is capped
+	// server-side at 50 (0 uses the default of 50). A node with no task returns
+	// no tasks.
+	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+	// empty, or operation is not an operation value).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
@@ -248,8 +270,9 @@ type RunServiceClient interface {
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
-	// above 200 is 200; a negative offset is 0.
-	// Errors: none beyond the service-wide ones.
+	// above 200 is 200; a negative offset is 0. The catalog of run (the empty
+	// default) includes full refreshes.
+	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
@@ -262,8 +285,8 @@ type RunServiceClient interface {
 	// list, independent of the paginated catalog).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
-	// ListSchedules returns every schedule of the tenant, merging the names the
-	// live release holds, the cron of each, and its last run, ordered by
+	// ListSchedules returns every active schedule of the tenant's schedule
+	// catalog, with the cron of each and its last run, ordered by
 	// schedule_name.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.
@@ -515,8 +538,11 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 // parameters writes nothing and answers with the run the first call created or
 // cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
 // reused with different parameters"). A call that is refused stores nothing,
-// so its id may be sent again. An id is remembered for 30 days. A request_id
-// is a UUID and is required: an empty or malformed one is INVALID_ARGUMENT.
+// so its id may be sent again. Concurrent calls of one id serialise on it; a
+// call that keeps losing the id to concurrent calls that then roll back is
+// ABORTED, and the same call may be sent again with the same request_id. An
+// id is remembered for at least 30 days. A request_id is a UUID and is
+// required: an empty or malformed one is INVALID_ARGUMENT.
 //
 // While maintenance mode is on, every command that starts a run is refused
 // with UNAVAILABLE. Cancels and reads are not.
@@ -538,6 +564,9 @@ type RunServiceServer interface {
 	//	                      schedule, or a node to run has a node type the
 	//	                      node_type vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(context.Context, *StartRunRequest) (*StartRunResponse, error)
 	// TriggerRerun creates a run that re-executes a failed or cancelled run's
@@ -553,6 +582,9 @@ type RunServiceServer interface {
 	//	                      re-execute, or its schedule already has an active
 	//	                      run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that executes
@@ -581,6 +613,9 @@ type RunServiceServer interface {
 	//	                      with no data tests; or a node type the node_type
 	//	                      vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
 	// TriggerRebase creates a new run on the source's schedule and the live
@@ -608,6 +643,9 @@ type RunServiceServer interface {
 	//	                      (message "the live release changed; preview
 	//	                      again").
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error)
 	// PreviewRebase reports what TriggerRebase would run for the same
@@ -618,7 +656,8 @@ type RunServiceServer interface {
 	// add, whether or not include_changed_upstream is set. Maintenance mode does
 	// not refuse it.
 	// Errors: as TriggerRebase, except that an active run on the schedule does
-	// not refuse a preview, no release is compared, and it takes no request_id.
+	// not refuse a preview, no release is compared, and it takes no request_id,
+	// so it is never ALREADY_EXISTS or ABORTED.
 	PreviewRebase(context.Context, *PreviewRebaseRequest) (*PreviewRebaseResponse, error)
 	// CancelRun cancels a run by id. The response carries the run as the cancel
 	// left it: cancelling while an attempt is still being stopped, cancelled once
@@ -639,6 +678,9 @@ type RunServiceServer interface {
 	//	INVALID_ARGUMENT    - empty schedule_name.
 	//	FAILED_PRECONDITION - the schedule has no active run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
+	//	ABORTED             - concurrent calls of the same request_id kept
+	//	                      rolling back; send it again with the same
+	//	                      request_id.
 	CancelActiveRun(context.Context, *CancelActiveRunRequest) (*CancelActiveRunResponse, error)
 	// GetRun returns one run.
 	// Errors:
@@ -653,8 +695,8 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
 	// ListActiveRunDrifts returns the live promotion seq and every schedule's
-	// newest pending or running run with the promotion seq its release was live
-	// under (0 when it names no release).
+	// newest pending, running or cancelling run with the promotion seq its
+	// release was live under (0 when it names no release).
 	// Errors: none beyond the service-wide ones. With no active run it returns
 	// an empty list.
 	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
@@ -686,10 +728,13 @@ type RunServiceServer interface {
 	// unknown". A run of another tenant is an unknown run.
 	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID).
 	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
-	// ListNodeTasks returns the most recent tasks of a node, newest run first.
-	// The identity fields are required; limit is capped server-side at 50 (0
-	// uses the default of 50). A node with no task returns no tasks.
-	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
+	// ListNodeTasks returns the most recent tasks of a node applying operation,
+	// newest run first; the tasks of run (the empty default) include the node's
+	// full refreshes. The identity fields are required; limit is capped
+	// server-side at 50 (0 uses the default of 50). A node with no task returns
+	// no tasks.
+	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+	// empty, or operation is not an operation value).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
@@ -697,8 +742,9 @@ type RunServiceServer interface {
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
-	// above 200 is 200; a negative offset is 0.
-	// Errors: none beyond the service-wide ones.
+	// above 200 is 200; a negative offset is 0. The catalog of run (the empty
+	// default) includes full refreshes.
+	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
@@ -711,8 +757,8 @@ type RunServiceServer interface {
 	// list, independent of the paginated catalog).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
-	// ListSchedules returns every schedule of the tenant, merging the names the
-	// live release holds, the cron of each, and its last run, ordered by
+	// ListSchedules returns every active schedule of the tenant's schedule
+	// catalog, with the cron of each and its last run, ordered by
 	// schedule_name.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.

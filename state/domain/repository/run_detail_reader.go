@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 )
@@ -30,14 +31,16 @@ type TaskDetailReader interface {
 
 // NodeReader reads the history and catalog of a tenant's nodes.
 type NodeReader interface {
-	// ListNodeTasks returns the most recent tasks of a node, newest run first.
-	// operation defaults to run when empty; limit is capped at 50, 0 meaning 50.
-	ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error)
+	// ListNodeTasks returns the most recent tasks of a node applying
+	// operation, newest run first; the tasks of model.OperationRun include
+	// the node's full refreshes. limit is capped at 50, 0 meaning 50.
+	ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
 
-	// ListNodes returns one page of the node catalog and how many nodes match
-	// search (a case-insensitive substring of "service.schema.table") and
-	// serviceName (exact; empty means all).
-	ListNodes(ctx context.Context, tenantID, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error)
+	// ListNodes returns one page of the node catalog of operation (the
+	// catalog of model.OperationRun includes full refreshes) and how many
+	// nodes match search (a case-insensitive exact match on the table name;
+	// empty means all) and serviceName (exact; empty means all).
+	ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error)
 
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// sorted, only serviceName's when it is not empty.

@@ -7,11 +7,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 )
 
-// ListNodeTasks returns the most recent tasks of a node, newest run first.
+// ListNodeTasks returns the most recent tasks of a node, newest run first. An
+// operation the operation vocabulary does not declare is InvalidArgument.
 func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequest) (*runv1.ListNodeTasksResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -20,7 +22,11 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 	if req.GetServiceName() == "" || req.GetSchemaName() == "" || req.GetTableName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
 	}
-	rows, err := s.reads.Nodes.ListNodeTasks(ctx, tenantID, req.GetServiceName(), req.GetSchemaName(), req.GetTableName(), req.GetOperation(), int(req.GetLimit()))
+	operation, err := model.ParseOperation(req.GetOperation())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
+	}
+	rows, err := s.reads.Nodes.ListNodeTasks(ctx, tenantID, req.GetServiceName(), req.GetSchemaName(), req.GetTableName(), operation, int(req.GetLimit()))
 	if err != nil {
 		return nil, s.internalError("ListNodeTasks", err,
 			"service", req.GetServiceName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
@@ -54,13 +60,18 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 	return &runv1.ListNodeTasksResponse{Tasks: out}, nil
 }
 
-// ListNodes returns one page of the node catalog.
+// ListNodes returns one page of the node catalog. An operation the operation
+// vocabulary does not declare is InvalidArgument.
 func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*runv1.ListNodesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetServiceName(), req.GetOperation(), int(req.GetLimit()), int(req.GetOffset()))
+	operation, err := model.ParseOperation(req.GetOperation())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
+	}
+	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetServiceName(), operation, int(req.GetLimit()), int(req.GetOffset()))
 	if err != nil {
 		return nil, s.internalError("ListNodes", err, "search", req.GetSearch(), "service", req.GetServiceName())
 	}

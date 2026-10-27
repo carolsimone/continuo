@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -33,17 +34,16 @@ func NewNodes(nodes repository.NodeReader, defaultTimeout time.Duration) *Nodes 
 	return &Nodes{nodes: nodes, defaultTimeout: defaultTimeout}
 }
 
-// ListNodeTasks returns the most recent tasks of a node of tenantID, newest
-// run first. The repository caps limit at 50 and reads an empty operation as
-// run.
-func (n *Nodes) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error) {
+// ListNodeTasks returns the most recent tasks of a node of tenantID applying
+// operation, newest run first. The repository caps limit at 50.
+func (n *Nodes) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
 	return n.nodes.ListNodeTasks(ctx, tenantID, serviceName, schemaName, tableName, operation, limit)
 }
 
 // ListNodes returns one page of tenantID's node catalog and how many nodes
 // match. A limit below 1 becomes DefaultPageSize, one above MaxPageSize
 // becomes MaxPageSize, and a negative offset becomes 0.
-func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName, operation string, limit, offset int) ([]NodeCatalogEntry, int, error) {
+func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]NodeCatalogEntry, int, error) {
 	if limit < 1 {
 		limit = DefaultPageSize
 	}

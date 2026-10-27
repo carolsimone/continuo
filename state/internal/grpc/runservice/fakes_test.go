@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
@@ -67,7 +68,8 @@ type fakeStore struct {
 	attemptOffset         int
 	runsLimit, runsOffset int
 	nodeTasksLimit        int
-	nodeTasksOperation    string
+	nodeTasksOperation    model.Operation
+	nodesOperation        model.Operation
 	nodesSearch           string
 	nodesService          string
 	nodesLimit            int
@@ -228,7 +230,7 @@ type fakeNodes struct{ *fakeStore }
 
 var _ repository.NodeReader = fakeNodes{}
 
-func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _, operation string, limit int) ([]*projection.NodeRun, error) {
+func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _ string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
 	f.nodeTasksOperation, f.nodeTasksLimit = operation, limit
 	if f.failWith != nil {
 		return nil, f.failWith
@@ -239,8 +241,8 @@ func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _, operation
 	return f.nodeTasks, nil
 }
 
-func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName, _ string, limit, offset int) ([]*projection.NodeSummary, int, error) {
-	f.nodesSearch, f.nodesService, f.nodesLimit, f.nodesOffset = search, serviceName, limit, offset
+func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error) {
+	f.nodesSearch, f.nodesService, f.nodesOperation, f.nodesLimit, f.nodesOffset = search, serviceName, operation, limit, offset
 	if f.failWith != nil {
 		return nil, 0, f.failWith
 	}

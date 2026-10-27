@@ -2,9 +2,11 @@ package postgres_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/google/uuid"
@@ -167,5 +169,57 @@ func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 	}
 	if len(testRuns) != 0 {
 		t.Fatalf("test history = %+v, want empty", testRuns)
+	}
+}
+
+// TestNodeReads_ReadTheDefaultOperationAsTheStoredRun asserts the node reads
+// match model.OperationRun, the empty default, against the stored 'run': the
+// history and the catalog of the default operation hold the node's run task
+// and, as for 'run', its full refresh.
+func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
+	db := newTestDB(t)
+	nodes := postgres.NewNodeReadRepository(func(tenantID string) postgres.NodeRunRepository {
+		return postgres.NewNodeRunRepository(db, tenantID, discardLogger())
+	})
+	ctx := context.Background()
+
+	seed := func(op, taskStatus string) {
+		sid, tid := uuid.New(), uuid.New()
+		if _, err := db.Exec(`INSERT INTO runs
+			(tenant_id, run_id, schedule_name, status, created_at, operation)
+			VALUES ('default', $1,'default-op','succeeded',now(),$2)`, sid, op); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO tasks
+			(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','defaultop',$3,$4,3,$5)`,
+			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
+	}
+	seed("run", "succeeded")
+	time.Sleep(10 * time.Millisecond)
+	seed("full_refresh", "failed")
+	seed("test", "succeeded")
+
+	history, err := nodes.ListNodeTasks(ctx, pkgevents.DefaultTenantID, "svc", "analytics", "defaultop", model.OperationRun, 50)
+	if err != nil {
+		t.Fatalf("ListNodeTasks: %v", err)
+	}
+	var ops []string
+	for _, h := range history {
+		ops = append(ops, h.Operation)
+	}
+	if len(ops) != 2 || !slices.Contains(ops, "run") || !slices.Contains(ops, "full_refresh") {
+		t.Fatalf("history operations = %v, want the run and the full refresh", ops)
+	}
+
+	catalog, total, err := nodes.ListNodes(ctx, pkgevents.DefaultTenantID, "defaultop", "", model.OperationRun, 50, 0)
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if total != 1 || len(catalog) != 1 || catalog[0].Operation != "run" || catalog[0].RunCount != 2 {
+		t.Fatalf("catalog = %+v (total %d), want one run row over two tasks", catalog, total)
 	}
 }

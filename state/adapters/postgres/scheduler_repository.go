@@ -596,8 +596,9 @@ func kindWithDefault(kind string) string {
 }
 
 // operationWithDefault returns 'run' for the empty model.OperationRun value,
-// else the operation as-is — the runs.operation column is a
-// non-empty 4-value domain.
+// else the operation as-is: the value runs.operation and tasks.operation
+// store, a non-empty 4-value domain. Every write of an operation and every
+// read that filters on one maps it here.
 func operationWithDefault(op string) string {
 	if op == "" {
 		return "run"

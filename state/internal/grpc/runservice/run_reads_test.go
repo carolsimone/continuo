@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -219,6 +220,41 @@ func TestListNodeTasks_MapsRunStatus(t *testing.T) {
 	assert.Equal(t, "node_lease", n.GetWaitReason())
 	assert.Equal(t, holder.String(), n.GetWaitingOnRunId())
 	assert.Equal(t, "2026-10-27T08:00:01Z", n.GetWaitingSince())
+}
+
+// A node read refuses an operation the operation vocabulary does not declare.
+func TestNodeReads_RefuseAnUnknownOperation(t *testing.T) {
+	srv := newServer(newStore(), nil)
+	ctx := ctxOf(tenantA)
+	for _, op := range []string{"tset", "RUN", "full-refresh"} {
+		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders", Operation: op})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "ListNodeTasks with operation %q", op)
+		_, err = srv.ListNodes(ctx, &runv1.ListNodesRequest{Operation: op})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "ListNodes with operation %q", op)
+	}
+}
+
+// A node read hands the reader the operation its request names: every value
+// of the operation vocabulary, with the empty default and "run" both read as
+// model.OperationRun.
+func TestNodeReads_ParseTheOperation(t *testing.T) {
+	store := newStore()
+	srv := newServer(store, nil)
+	ctx := ctxOf(tenantA)
+	for wire, want := range map[string]model.Operation{
+		"":             model.OperationRun,
+		"run":          model.OperationRun,
+		"test":         model.OperationTest,
+		"build":        model.OperationBuild,
+		"full_refresh": model.OperationFullRefresh,
+	} {
+		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders", Operation: wire})
+		require.NoError(t, err, "ListNodeTasks with operation %q", wire)
+		assert.Equal(t, want, store.nodeTasksOperation, "ListNodeTasks with operation %q", wire)
+		_, err = srv.ListNodes(ctx, &runv1.ListNodesRequest{Operation: wire})
+		require.NoError(t, err, "ListNodes with operation %q", wire)
+		assert.Equal(t, want, store.nodesOperation, "ListNodes with operation %q", wire)
+	}
 }
 
 func TestListNodes_MapsTaskCount(t *testing.T) {

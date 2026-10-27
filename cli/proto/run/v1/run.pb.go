@@ -3152,8 +3152,8 @@ func (*ListSchedulesRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{43}
 }
 
-// ScheduleSummary merges the schedule names of the live release, each
-// schedule cron configuration and its last run. last_run_status is a
+// ScheduleSummary is one active schedule of the tenant's schedule catalog,
+// with its cron configuration and its last run. last_run_status is a
 // run_status value.
 type ScheduleSummary struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
