@@ -101,7 +101,9 @@ func looksLikeServicePrefixedGroup(s string) bool {
 var streamLiteralScanDirs = []string{
 	"state/adapters/postgres",
 	"state/adapters/redis",
+	"state/service/commands",
 	"state/service/handlers",
+	"state/service/runreads",
 	"state/internal/grpc/runservice",
 	"orchestrator/adapters/redis",
 	"orchestrator/service/handlers",

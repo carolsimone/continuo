@@ -24,6 +24,7 @@ var handlerDirs = []string{
 	"state/service/commands",
 	"state/service/handlers",
 	"state/service/leasewaker",
+	"state/service/ports",
 	"state/service/runreads",
 	"state/service/runsettle",
 	"state/service/runstart",
