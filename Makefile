@@ -257,6 +257,12 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # - check-release-tag-trigger: release.yml's tag glob must not claim another
 #   workflow's tag family, which would run the product release pipeline on a
 #   tag that has no release images behind it.
+# - check-closed-pr-ci-cancel: cancel-closed-pr-ci.yml must fire when a pull
+#   request closes, hold `actions: write`, run on a GitHub-hosted runner, and
+#   select only the closed pull request's own unfinished ci runs, never a push
+#   run on main, so a closed pull request's ci stops holding the self-hosted
+#   runners a release deploy waits for. Its _test.sh runs it against edited
+#   copies of the workflow.
 # - check-validation-image-pin: the hand-maintained continuo-python-runtime
 #   image tag must not drift between the Makefile, setup/e2e scripts,
 #   docker-compose, the execution-controller Go test fixtures, and the chart's
@@ -304,6 +310,8 @@ guards: bench-test
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
 	bash scripts/check-release-tag-trigger.sh
+	bash scripts/check-closed-pr-ci-cancel.sh
+	bash scripts/check-closed-pr-ci-cancel_test.sh
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-python-kind-parity.sh
 	bash scripts/check-agent-remediation-runtime-pin.sh

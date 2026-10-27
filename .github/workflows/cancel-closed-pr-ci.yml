@@ -1,0 +1,65 @@
+name: cancel-closed-pr-ci
+
+# Cancels a pull request's queued or running `ci` run once the pull request is
+# closed, merged or not. ci.yml's concurrency group is keyed by the pull
+# request's ref, so closing the pull request does not stop its run: a build
+# whose result no longer gates anything keeps holding one of the self-hosted
+# runners that `ci` and the release workflows share, and a release deploy or
+# tag waits behind it for as long as the e2e suite takes.
+#
+# It cancels only ci.yml runs that a pull_request event started at the closed
+# pull request's head commit: a push run on main and every other pull
+# request's runs are never selected. It runs on a GitHub-hosted runner, so it
+# never queues behind the runs it cancels. scripts/check-closed-pr-ci-cancel.sh
+# guards the trigger, the permission and the runner, and runs the selection
+# below against fixture runs.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cancel-closed-pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    # A pull request from a fork gets a read-only token, which cannot cancel a
+    # run; its ci runs on a GitHub-hosted runner (see ci.yml's runs-on) and
+    # holds no self-hosted one.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel the pull request's ci runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ids="$(gh run list --workflow ci.yml --branch "$HEAD_REF" --event pull_request --limit 100 \
+            --json databaseId,event,headSha,status \
+            --jq '.[] | select(.event == "pull_request" and .headSha == env.HEAD_SHA and .status != "completed") | .databaseId')"
+          if [ -z "$ids" ]; then
+            echo "No queued or running ci run of ${HEAD_SHA}."
+            exit 0
+          fi
+          rc=0
+          for id in $ids; do
+            if gh run cancel "$id"; then
+              echo "Cancelled ci run ${id}."
+            elif [ "$(gh run view "$id" --json status --jq .status)" = "completed" ]; then
+              echo "ci run ${id} completed before it could be cancelled."
+            else
+              echo "::error::Could not cancel ci run ${id}."
+              rc=1
+            fi
+          done
+          exit "$rc"
