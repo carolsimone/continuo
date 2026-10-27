@@ -231,13 +231,13 @@ func verifyRunFenced(t *testing.T, ctx context.Context, clients *testClients, ru
 }
 
 // verifyNoLiveJobOfRun asserts that a cancelled run holds no Job that can still
-// run work: every Job labelled schedule-id=<run> is terminal (Complete or
+// run work: every Job labelled run-id=<run> is terminal (Complete or
 // Failed) or being deleted, and no pod of the run has a phase other than
 // Succeeded or Failed. A Job that finished before the cancel stays on the
 // cluster until its TTL, so a terminal Job does not count as live.
 func verifyNoLiveJobOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
-	selector := "schedule-id=" + runID.String()
+	selector := "run-id=" + runID.String()
 
 	jobs, err := getK8sJobs(ctx, selector)
 	require.NoError(t, err)

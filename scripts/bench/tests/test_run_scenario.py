@@ -55,7 +55,7 @@ def test_each_rep_exports_the_runs_rows_for_the_breakdown(tmp_path):
     assert json.loads((out / "deployments-rep1.json").read_text())[0]["table"] == "n00_0000"
     assert json.loads((out / "tasks-rep1.json").read_text())[0]["table"] == "n00_0000"
     psql = [json.loads(line)["argv"] for line in (fake / "docker-calls.jsonl").read_text().splitlines()]
-    assert any(f"schedule_id = '{run_id}'" in " ".join(argv) and "FROM deployments" in " ".join(argv) for argv in psql)
+    assert any(f"run_id = '{run_id}'" in " ".join(argv) and "FROM deployments" in " ".join(argv) for argv in psql)
     assert json.loads((out / "rep1.json").read_text())["final_status"] == "succeeded"
 
 

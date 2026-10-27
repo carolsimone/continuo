@@ -231,9 +231,9 @@ func TestBuildOperationRerun(t *testing.T) {
 	// node (ftable_e) as a build Job, proving DispatchDerivedRun threaded
 	// operation through the rerun's frontier, not just the initial trigger.
 	// The source run also dispatched a Job for ftable_e (it's the node that
-	// failed there too), so the selector must scope to THIS run's schedule-id
+	// failed there too), so the selector must scope to THIS run's run-id
 	// label, not just table_name, or it could pick up the source run's Job.
-	jobs, err := getK8sJobs(ctx, fmt.Sprintf("table_name=ftable_e,schedule-id=%s", newRunID.String()))
+	jobs, err := getK8sJobs(ctx, fmt.Sprintf("table_name=ftable_e,run-id=%s", newRunID.String()))
 	require.NoError(t, err, "failed to query K8s jobs for ftable_e")
 	require.NotEmpty(t, jobs.Items, "ftable_e must have been re-dispatched on the rerun")
 	cmd := strings.Join(jobs.Items[0].Spec.Template.Spec.Containers[0].Command, " ")

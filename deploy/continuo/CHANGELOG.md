@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+### Breaking
+
+- Run state and attempt records are named for runs. State's tables `scheduler_tracker` and `task_tracker` are now `runs` and `tasks` (migration V52): the column holding a run's id is `run_id` in both, and `last_heartbeat_at` is `last_progress_at`. execution-controller's `deployments.schedule_id` is `deployments.run_id` (migration V14), and the Job and pod label `schedule-id` is `run-id`. The migrations run on upgrade and rename in place. Deploy with no run in flight: an execution-controller that starts after the upgrade selects a run's Jobs by the `run-id` label, so a Job created before it carries the old label and is not found by a cancel, and a `task.dispatch:v1` payload already stored in `deployments.job_params` keeps its old `schedule_id` key. Cancel or wait out every running run before `helm upgrade`. Anything outside the chart that reads those tables, or selects Jobs by `schedule-id`, must follow the new names. No values change. MINOR.
+
 ## [0.16.0] - 2026-10-26
 
 Two runs never write one node at once: a writing task takes its node's lease when state dispatches it and holds it until the task ends, so a run that needs a node another run is writing waits for it (shown as "waiting for node"), and execution-controller's Kubernetes client rate limit is a chart value. An unmodified values file keeps working; the state migration V51 runs on upgrade. **MINOR.**

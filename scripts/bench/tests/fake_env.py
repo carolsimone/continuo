@@ -173,7 +173,7 @@ else:
 def job(run_id: str, table: str = "n00_0000") -> dict:
     return {
         "metadata": {"name": f"bench-bench-{table.replace('_', '-')}-{run_id}", "creationTimestamp": "2026-10-03T09:00:01Z",
-                     "labels": {"schedule-id": run_id}},
+                     "labels": {"run-id": run_id}},
         "spec": {"template": {"spec": {"containers": [
             {"name": "dbt-job", "env": [{"name": "TABLE_NAME", "value": table}]}]}}},
         "status": {"succeeded": 1, "completionTime": "2026-10-03T09:00:02Z"},

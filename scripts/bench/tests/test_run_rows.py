@@ -6,7 +6,7 @@ RUN = "7f3e1a2b-0000-4000-8000-000000000001"
 
 
 def test_each_query_reads_only_the_run():
-    assert f"schedule_id = '{RUN}'" in run_rows.query("deployments", RUN)
+    assert f"run_id = '{RUN}'" in run_rows.query("deployments", RUN)
     assert "FROM deployments" in run_rows.query("deployments", RUN)
     assert "mode = 'production'" in run_rows.query("deployments", RUN)
     assert f"run_id = '{RUN}'" in run_rows.query("tasks", RUN)
