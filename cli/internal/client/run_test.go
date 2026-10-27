@@ -113,6 +113,48 @@ func TestRunClient_RetriesACommandOnUnavailableWithTheSameRequestID(t *testing.T
 		"every try carries the id of the first")
 }
 
+func TestRunClient_RetriesACommandOnAbortedWithTheSameRequestID(t *testing.T) {
+	aborted := status.Error(codes.Aborted, "the request id is claimed by calls that keep rolling back")
+	srv := &scriptedRunServer{errs: []error{aborted, aborted}}
+	c := dialScripted(t, srv)
+
+	resp, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	require.NoError(t, err, "the third try succeeds")
+	assert.Equal(t, "r1", resp.GetRunId())
+	assert.Equal(t, 3, srv.startCalls, "a command refused ABORTED is tried up to three times")
+	assert.Equal(t, []string{"5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"}, srv.startIDs,
+		"every try carries the id of the first")
+}
+
+func TestRunClient_GivesUpAfterThreeTriesOnAborted(t *testing.T) {
+	aborted := status.Error(codes.Aborted, "contended")
+	srv := &scriptedRunServer{errs: []error{aborted, aborted, aborted, aborted}}
+	c := dialScripted(t, srv)
+
+	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	require.Error(t, err)
+	assert.Equal(t, codes.Aborted, status.Code(err))
+	assert.Equal(t, 3, srv.startCalls)
+}
+
+func TestRunClient_DoesNotRetryAReadOnAborted(t *testing.T) {
+	srv := &scriptedRunServer{errs: []error{status.Error(codes.Aborted, "aborted")}}
+	c := dialScripted(t, srv)
+
+	_, err := c.ListAllSchedules(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 1, srv.listCalls, "a read is sent once")
+}
+
+func TestRunClient_DoesNotRetryAReusedRequestID(t *testing.T) {
+	srv := &scriptedRunServer{errs: []error{status.Error(codes.AlreadyExists, "request_id reused with different parameters")}}
+	c := dialScripted(t, srv)
+
+	_, err := c.TriggerSchedule(context.Background(), "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "daily", "")
+	require.Error(t, err)
+	assert.Equal(t, 1, srv.startCalls, "the same id with other parameters cannot succeed on a retry")
+}
+
 func TestRunClient_GivesUpAfterThreeTriesOnUnavailable(t *testing.T) {
 	unavailable := status.Error(codes.Unavailable, "down")
 	srv := &scriptedRunServer{errs: []error{unavailable, unavailable, unavailable, unavailable}}

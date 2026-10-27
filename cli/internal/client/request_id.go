@@ -45,7 +45,12 @@ func newUUIDv4() string {
 // RequestIDHelp is the paragraph a command that sends a request id adds to its
 // help, so a reader knows what repeating the command does.
 const RequestIDHelp = `Each invocation sends one request id (the CONTINUO_REQUEST_ID environment
-variable when set, otherwise a fresh UUID). The state service answers a repeat
+variable when set, otherwise a fresh UUID). CONTINUO_REQUEST_ID must be a UUID:
+any other value is refused (usage, exit 2). The state service answers a repeat
 of the same id and the same arguments with the run the first call started or
-cancelled and writes nothing, so a lost response is safe to retry; the same id with other
-arguments is refused (conflict).`
+cancelled and writes nothing, so a lost response is safe to retry. The same id
+with other arguments is refused (conflict, exit 4, not retryable): no retry of
+it can succeed, so send other arguments under a new id. A call refused because
+the state service is unavailable, or because concurrent calls of the same id
+kept rolling back, is sent again with the same id up to twice before it is
+reported (unavailable or conflict, retryable).`

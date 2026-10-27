@@ -39,13 +39,13 @@ type RunClient interface {
 }
 
 // retryDelays are the waits before the second and the third try of a command
-// the server refused as UNAVAILABLE.
+// the server refused as UNAVAILABLE or ABORTED.
 var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
 // commandMethods are the RPCs that start or cancel a run by request id. The
-// dialled client retries these on UNAVAILABLE, and only these: the server
-// answers a repeated id with the run its first call made, so a retry cannot
-// duplicate work, while a read needs no retry.
+// dialled client retries these on UNAVAILABLE and ABORTED, and only these: the
+// server answers a repeated id with the run its first call made, so a retry
+// cannot duplicate work, while a read needs no retry.
 var commandMethods = map[string]bool{
 	runv1.RunService_StartRun_FullMethodName:             true,
 	runv1.RunService_TriggerRerun_FullMethodName:         true,
@@ -54,10 +54,11 @@ var commandMethods = map[string]bool{
 	runv1.RunService_CancelActiveRun_FullMethodName:      true,
 }
 
-// retryCommandInterceptor repeats a command call that failed UNAVAILABLE, up
-// to len(retryDelays)+1 tries, sending the same request, and so the same
-// request id, each time. A refusal for maintenance is UNAVAILABLE too but lasts
-// until an operator ends it, so it is returned at once.
+// retryCommandInterceptor repeats a command call that failed UNAVAILABLE or
+// ABORTED (concurrent calls of its request id kept rolling back), up to
+// len(retryDelays)+1 tries, sending the same request, and so the same request
+// id, each time. A refusal for maintenance is UNAVAILABLE too but lasts until
+// an operator ends it, so it is returned at once.
 func retryCommandInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	err := invoker(ctx, method, req, reply, cc, opts...)
 	if !commandMethods[method] {
@@ -79,9 +80,18 @@ func retryCommandInterceptor(ctx context.Context, method string, req, reply any,
 	return err
 }
 
-// retryable reports whether err is a plain UNAVAILABLE, not a maintenance refusal.
+// retryable reports whether err is an ABORTED or a plain UNAVAILABLE, not a
+// maintenance refusal.
 func retryable(err error) bool {
-	return err != nil && !errors.Is(err, output.ErrMaintenance) && status.Code(err) == codes.Unavailable
+	if err == nil || errors.Is(err, output.ErrMaintenance) {
+		return false
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Aborted:
+		return true
+	default:
+		return false
+	}
 }
 
 // runDialOptions are the dial options of the production client: plaintext
