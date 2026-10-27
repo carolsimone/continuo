@@ -1,9 +1,9 @@
-// Package runsettle cancels, when state starts, every active run whose tasks
-// state did not plan. Such a run's tasks record neither when they were
-// dispatched nor which of them wait on which, so no status update can move it
-// on; cancelling it ends it, or stops the work it has in flight (Run.Cancel),
-// and run.cancelled:v1 tells execution-controller to fence the run and stop
-// its Jobs.
+// Package runsettle cancels, when state starts, every active run of every
+// tenant whose tasks state did not plan. Such a run's tasks record neither
+// when they were dispatched nor which of them wait on which, so no status
+// update can move it on; cancelling it ends it, or stops the work it has in
+// flight (Run.Cancel), and run.cancelled:v1 tells execution-controller to
+// fence the run and stop its Jobs.
 package runsettle
 
 import (
@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -22,45 +22,47 @@ import (
 // Reason is the cancellation reason recorded on each run Settle cancels.
 const Reason = "the run's tasks were not planned by state, so it cannot continue"
 
-// Settle cancels every pending or running run whose tasks state did not plan,
-// each in a transaction of its own, and returns how many it cancelled. A run
-// that finished, or that state planned, between the list and its own
-// transaction is left as it is.
+// Settle cancels every pending or running run of every tenant whose tasks
+// state did not plan, each in a transaction of its own under the run's
+// tenant, and returns how many it cancelled. A run that finished, or that
+// state planned, between the list and its own transaction is left as it is.
 func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logger) (int, error) {
-	ids, err := listUnplanned(ctx, newUoW())
+	refs, err := listUnplanned(ctx, newUoW())
 	if err != nil {
 		return 0, err
 	}
 	cancelled := 0
-	for _, id := range ids {
-		done, err := cancel(ctx, newUoW(), id)
+	for _, ref := range refs {
+		done, err := cancel(ctx, newUoW(), ref)
 		if err != nil {
 			return cancelled, err
 		}
 		if done {
 			cancelled++
-			logger.Warn("Cancelled a run whose tasks state did not plan", "run_id", id, "reason", Reason)
+			logger.Warn("Cancelled a run whose tasks state did not plan", "tenant_id", ref.TenantID, "run_id", ref.RunID,
+				"reason", Reason)
 		}
 	}
 	return cancelled, nil
 }
 
-func listUnplanned(ctx context.Context, u uow.UnitOfWork) ([]uuid.UUID, error) {
+func listUnplanned(ctx context.Context, u uow.UnitOfWork) ([]repository.RunRef, error) {
 	if err := u.Begin(ctx); err != nil {
 		return nil, fmt.Errorf("begin the list of unplanned runs: %w", err)
 	}
 	defer func() { _ = u.Rollback() }()
-	ids, err := u.Run().ListUnplannedActive(ctx, pkgevents.DefaultTenantID)
+	refs, err := u.Run().ListUnplannedActive(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
 	}
-	return ids, nil
+	return refs, nil
 }
 
-// cancel cancels run id in u's transaction when it is still active and
-// unplanned, and reports whether it did. A run that is already cancelling has
-// had its cancel written: it is left as it is.
-func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
+// cancel cancels the run ref names, under its tenant, in u's transaction when
+// it is still active and unplanned, and reports whether it did. A run that is
+// already cancelling has had its cancel written: it is left as it is.
+func cancel(ctx context.Context, u uow.UnitOfWork, ref repository.RunRef) (bool, error) {
+	id := ref.RunID
 	if err := u.Begin(ctx); err != nil {
 		return false, fmt.Errorf("begin the cancel of run %s: %w", id, err)
 	}
@@ -70,9 +72,9 @@ func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
 			_ = u.Rollback()
 		}
 	}()
-	r, err := u.Run().LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, id)
+	r, err := u.Run().LoadRunForUpdate(ctx, ref.TenantID, id)
 	if err != nil {
-		return false, fmt.Errorf("load run %s: %w", id, err)
+		return false, fmt.Errorf("load run %s of tenant %s: %w", id, ref.TenantID, err)
 	}
 	if !r.IsActive() || r.PlannedAt() != nil {
 		return false, nil

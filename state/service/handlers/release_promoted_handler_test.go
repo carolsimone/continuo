@@ -52,6 +52,10 @@ func (f *fakeTopologyRepo) LivePointer(context.Context, string) (topology.Pointe
 	return f.live, nil
 }
 
+func (f *fakeTopologyRepo) LivePointers(context.Context) ([]topology.Pointer, error) {
+	return nil, errors.New("LivePointers is not used by the handlers")
+}
+
 func (f *fakeTopologyRepo) SetLivePointer(_ context.Context, _ string, p topology.Pointer, _ time.Time) error {
 	f.calls = append(f.calls, "move")
 	f.moved = append(f.moved, p)

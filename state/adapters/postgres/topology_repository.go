@@ -199,7 +199,25 @@ func (r *TopologyRepository) LivePointer(ctx context.Context, tenantID string) (
 	if err != nil {
 		return topology.Pointer{}, fmt.Errorf("read the live release of tenant %s: %w", tenantID, err)
 	}
-	return topology.Pointer{ReleaseID: row.ReleaseID, PromotionSeq: row.PromotionSeq}, nil
+	return topology.Pointer{TenantID: tenantID, ReleaseID: row.ReleaseID, PromotionSeq: row.PromotionSeq}, nil
+}
+
+// LivePointers reads every live_release row, in tenant order.
+func (r *TopologyRepository) LivePointers(ctx context.Context) ([]topology.Pointer, error) {
+	var rows []struct {
+		TenantID     string `db:"tenant_id"`
+		ReleaseID    string `db:"release_id"`
+		PromotionSeq int64  `db:"promotion_seq"`
+	}
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows,
+		`SELECT tenant_id, release_id, promotion_seq FROM live_release ORDER BY tenant_id`); err != nil {
+		return nil, fmt.Errorf("read the live releases: %w", err)
+	}
+	out := make([]topology.Pointer, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, topology.Pointer{TenantID: row.TenantID, ReleaseID: row.ReleaseID, PromotionSeq: row.PromotionSeq})
+	}
+	return out, nil
 }
 
 // SetLivePointer upserts the tenant's live_release row.

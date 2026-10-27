@@ -94,12 +94,13 @@ func takeLeaseForWaiter(ctx context.Context, tx *sqlx.Tx, tenantID string, c run
 }
 
 // runGrantableWaitsQuery keeps, among the nodes the waiting tasks of the
-// tenant's ($1) run $2 wait for, the next waiter of each free one
-// (nextWaiters) when it is a task of the run, in node-key order: the order
-// takeLeasesQuery inserts in, so a transaction that grants several of them
-// takes their leases in that order too.
+// tenant's ($1) run $2 wait for, the next waiter of each of the tenant's free
+// ones (nextWaiters) when it is a task of the run, in node-key order: the
+// order takeLeasesQuery inserts in, so a transaction that grants several of
+// them takes their leases in that order too.
 const runGrantableWaitsQuery = `
-SELECT task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + `
+SELECT tenant_id, task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + `
+	  AND w.tenant_id = $1
 	  AND w.node_key IN (
 		SELECT m.node_key FROM tasks m
 		WHERE m.tenant_id = $1 AND m.run_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `

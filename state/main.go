@@ -279,8 +279,9 @@ func main() {
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update
-	// can dispatch or skip its tasks. It is cancelled before any consumer
-	// starts, so its Jobs are suppressed and its schedule is free to run again.
+	// can dispatch or skip its tasks. Every such run, of any tenant, is
+	// cancelled under its own tenant before any consumer starts, so its Jobs
+	// are suppressed and its schedule is free to run again.
 	settled, err := runsettle.Settle(ctx, uowFactory, logger)
 	if err != nil {
 		logger.Error("Failed to cancel the active runs state did not plan", "error", err)
@@ -329,13 +330,14 @@ func main() {
 	}
 	// The seed reconcile loads the dbt seeds whose live content the warehouse
 	// does not hold. It runs inside every release.promoted:v2 transaction that
-	// moves the live release, and every seedReconcileInterval from the loop
-	// started below; maintenance mode stops it creating runs.
+	// moves a tenant's live release, for that tenant, and every
+	// seedReconcileInterval from the loop started below, once per tenant with
+	// a live release; maintenance mode stops it creating runs.
 	// Every task state plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
 	runMetrics := statemetrics.NewRunMetrics(metricsReg)
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, taskDefaults, logger)
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every state consumer is the same shape: a domain handler wrapped by a
@@ -383,19 +385,19 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
-	// The lease waker grants each node whose write lease is free to the task
-	// that has waited longest for it, and deletes the leases of tasks that
-	// ended without releasing them.
-	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+	// The lease waker grants each node of each tenant whose write lease is
+	// free to the tenant's task that has waited longest for it, and deletes
+	// the leases of tasks that ended without releasing them.
+	leaseWaker := leasewaker.New(uowFactory, taskDefaults, runMetrics, logger)
 
-	// The attempt reconcile asks execution-controller about every attempt
-	// nothing was heard of within its window and fails every run left with
-	// nothing in flight as stalled. Under the lock of a run it would fail, it
+	// The attempt reconcile asks execution-controller about every attempt, of
+	// any tenant, nothing was heard of within its window and fails every run
+	// left with nothing in flight as stalled, each under its own tenant. Under the lock of a run it would fail, it
 	// first grants each free node the run's waiting task is next in line for,
 	// so a lease wait a grant can serve is never failed; the lease waker pass
 	// it runs before each stall scan grants most freed nodes before the scan.
 	// Its goroutine is tracked, so shutdown waits for a pass in progress.
-	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, leaseWaker.Pass, logger)
+	attemptReconciler := attemptreconcile.New(uowFactory, taskDefaults, runMetrics, leaseWaker.Pass, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
 
 	// The lease waker passes at startup, on every notification node_leases'

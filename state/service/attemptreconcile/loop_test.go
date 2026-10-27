@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -28,15 +29,16 @@ var (
 )
 
 // fakeAttempts serves the due attempts and stalled runs of a pass and the
-// questions it locks; it records each question's next window.
+// questions it locks; it records each question's next window. A question and a
+// stop are found only under the key or run, tenant included, they are held by.
 type fakeAttempts struct {
 	due       []repository.AttemptKey
-	stalled   []uuid.UUID
+	stalled   []repository.RunRef
 	questions map[repository.AttemptKey]run.Question
 	marked    map[repository.AttemptKey]time.Duration
 
-	dueStops      []uuid.UUID
-	stops         map[uuid.UUID]run.StopQuestion
+	dueStops      []repository.RunRef
+	stops         map[repository.RunRef]run.StopQuestion
 	cancelling    [2]int
 	overdueAfter  time.Duration
 	lockQuestions int
@@ -48,7 +50,7 @@ type fakeAttempts struct {
 func (f *fakeAttempts) DueAttempts(context.Context, int) ([]repository.AttemptKey, error) {
 	return f.due, nil
 }
-func (f *fakeAttempts) StalledRuns(_ context.Context, idle time.Duration, _ int) ([]uuid.UUID, error) {
+func (f *fakeAttempts) StalledRuns(_ context.Context, idle time.Duration, _ int) ([]repository.RunRef, error) {
 	if idle != run.StallAfter {
 		panic("a run is stalled after run.StallAfter")
 	}
@@ -67,9 +69,11 @@ func (f *fakeAttempts) MarkQuestioned(_ context.Context, key repository.AttemptK
 	return nil
 }
 
-func (f *fakeAttempts) DueStops(context.Context, int) ([]uuid.UUID, error) { return f.dueStops, nil }
-func (f *fakeAttempts) LockStops(_ context.Context, id uuid.UUID) (run.StopQuestion, bool, error) {
-	q, ok := f.stops[id]
+func (f *fakeAttempts) DueStops(context.Context, int) ([]repository.RunRef, error) {
+	return f.dueStops, nil
+}
+func (f *fakeAttempts) LockStops(_ context.Context, ref repository.RunRef) (run.StopQuestion, bool, error) {
+	q, ok := f.stops[ref]
 	return q, ok, nil
 }
 func (f *fakeAttempts) CountCancelling(_ context.Context, overdueAfter time.Duration) (int, int, error) {
@@ -105,15 +109,37 @@ func (*countingMetrics) LeaseWaiters(int)           {}
 func (*countingMetrics) LeaseGranted(time.Duration) {}
 func (*countingMetrics) LeaseRepaired()             {}
 
-// runs serves one run for update and records saves.
+// runs serves the runs it holds for update, each only under its own tenant,
+// and records every load and save.
 type runs struct {
 	repository.RunRepository
-	r     *run.Run
+	held  map[repository.RunRef]*run.Run
+	loads []repository.RunRef
 	saved int
 }
 
-func (s *runs) LoadRunForUpdate(context.Context, string, uuid.UUID) (*run.Run, error) {
-	return s.r, nil
+// runsOf holds rs.
+func runsOf(rs ...*run.Run) *runs {
+	held := make(map[repository.RunRef]*run.Run, len(rs))
+	for _, r := range rs {
+		held[refOf(r)] = r
+	}
+	return &runs{held: held}
+}
+
+// refOf names r with its tenant.
+func refOf(r *run.Run) repository.RunRef {
+	return repository.RunRef{TenantID: r.TenantID(), RunID: r.RunID()}
+}
+
+func (s *runs) LoadRunForUpdate(_ context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
+	ref := repository.RunRef{TenantID: tenantID, RunID: id}
+	s.loads = append(s.loads, ref)
+	r, ok := s.held[ref]
+	if !ok {
+		return nil, fmt.Errorf("run %s of tenant %s not found", id, tenantID)
+	}
+	return r, nil
 }
 func (s *runs) SaveRun(context.Context, *run.Run) error { s.saved++; return nil }
 
@@ -141,7 +167,7 @@ func (t *idleTasks) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait,
 }
 
 func newLoop(f *uow.FakeUnitOfWork, metrics *countingMetrics) *attemptreconcile.Loop {
-	return attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+	return attemptreconcile.New(func() uow.UnitOfWork { return f }, defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
@@ -155,9 +181,8 @@ func newFake(attempts *fakeAttempts, outbox *recordingOutbox) *uow.FakeUnitOfWor
 // Each due attempt is dispatched again with the status state knows it in, in
 // its own transaction, and its next check moves to its next window.
 func TestPass_AsksAboutEachDueAttemptWithItsKnownStatus(t *testing.T) {
-	quiet := repository.AttemptKey{TaskID: uuid.New(), Attempt: 0}
-	silent := repository.AttemptKey{TaskID: uuid.New(), Attempt: 1}
-	node := topology.Node{Key: "e2e_schema.ftable_a", ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model"}
+	quiet := repository.AttemptKey{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), Attempt: 0}
+	silent := repository.AttemptKey{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), Attempt: 1}
 	attempts := &fakeAttempts{due: []repository.AttemptKey{quiet, silent}, marked: map[repository.AttemptKey]time.Duration{},
 		questions: map[repository.AttemptKey]run.Question{
 			quiet:  {RunID: uuid.New(), TaskID: quiet.TaskID, Attempt: 0, Status: run.AttemptDispatched, ChecksSent: 0, Node: node, Operation: model.OperationRun},
@@ -177,10 +202,38 @@ func TestPass_AsksAboutEachDueAttemptWithItsKnownStatus(t *testing.T) {
 	assert.Equal(t, 2, f.CommitCalled, "one transaction per question")
 }
 
+// node is the node the questions of these tests are about.
+var node = topology.Node{Key: "e2e_schema.ftable_a", ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model"}
+
+// One pass asks about the due attempts of every tenant the scan lists: each
+// attempt is locked and its next check moved under its own tenant, so an
+// attempt of another tenant is asked about as one of the default tenant is.
+func TestPass_AsksAboutAttemptsOfEveryTenant(t *testing.T) {
+	ours := repository.AttemptKey{TenantID: "default", TaskID: uuid.New(), Attempt: 0}
+	theirs := repository.AttemptKey{TenantID: "acme", TaskID: uuid.New(), Attempt: 1}
+	oursRun, theirsRun := uuid.New(), uuid.New()
+	attempts := &fakeAttempts{due: []repository.AttemptKey{ours, theirs}, marked: map[repository.AttemptKey]time.Duration{},
+		questions: map[repository.AttemptKey]run.Question{
+			ours:   {RunID: oursRun, TaskID: ours.TaskID, Attempt: 0, Status: run.AttemptDispatched, Node: node, Operation: model.OperationRun},
+			theirs: {RunID: theirsRun, TaskID: theirs.TaskID, Attempt: 1, Status: run.AttemptQueued, Node: node, Operation: model.OperationRun},
+		}}
+	outbox := &recordingOutbox{}
+	f := newFake(attempts, outbox)
+
+	require.NoError(t, newLoop(f, &countingMetrics{}).Pass(context.Background()))
+
+	require.Len(t, outbox.events, 2, "the attempts of both tenants are asked about")
+	assert.Equal(t, oursRun, outbox.events[0].(run.TaskDispatched).ID)
+	assert.Equal(t, theirsRun, outbox.events[1].(run.TaskDispatched).ID)
+	assert.Equal(t, map[repository.AttemptKey]time.Duration{ours: 10 * time.Minute, theirs: 30 * time.Minute}, attempts.marked,
+		"each attempt's next check moves under its own tenant")
+	assert.Equal(t, 2, f.CommitCalled, "one transaction per question")
+}
+
 // An attempt another pass holds, or that ended since it was listed, is left
 // alone.
 func TestPass_LeavesAnAttemptItCannotLock(t *testing.T) {
-	attempts := &fakeAttempts{due: []repository.AttemptKey{{TaskID: uuid.New()}}, marked: map[repository.AttemptKey]time.Duration{},
+	attempts := &fakeAttempts{due: []repository.AttemptKey{{TenantID: "acme", TaskID: uuid.New()}}, marked: map[repository.AttemptKey]time.Duration{},
 		questions: map[repository.AttemptKey]run.Question{}}
 	outbox := &recordingOutbox{}
 
@@ -192,13 +245,10 @@ func TestPass_LeavesAnAttemptItCannotLock(t *testing.T) {
 
 // A stalled run is failed, saved and counted, and its finalization written.
 func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
-	stale := now.Add(-run.StallAfter - time.Minute)
-	total := int32(2)
-	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
-		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
-	runRepo := &runs{r: r}
+	r := staleRun()
+	runRepo := runsOf(r)
 	outbox := &recordingOutbox{}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, outbox)
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
@@ -214,19 +264,44 @@ func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
 }
 
+// One pass fails the stalled runs of every tenant the scan lists, each under
+// its own tenant: the run is loaded, its tasks read and its waits checked with
+// the tenant the scan named it with.
+func TestPass_FailsAStalledRunOfAnyTenantUnderItsTenant(t *testing.T) {
+	ours, theirs := staleRunOf("default"), staleRunOf("acme")
+	runRepo := runsOf(ours, theirs)
+	outbox := &recordingOutbox{}
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(ours), refOf(theirs)}}, outbox)
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(&idleTasks{})
+	metrics := &countingMetrics{}
+
+	require.NoError(t, newLoop(f, metrics).Pass(context.Background()))
+
+	assert.Equal(t, run.RunStatusFailed, ours.Status())
+	assert.Equal(t, run.RunStatusFailed, theirs.Status())
+	assert.Equal(t, []repository.RunRef{refOf(ours), refOf(theirs)}, runRepo.loads, "each run is loaded under its own tenant")
+	assert.Equal(t, []string{"default", "acme"}, f.TaskCollectionTenants, "each run's tasks are read under its own tenant")
+	assert.Equal(t, "acme", f.GraphTenant, "the last run's waits are checked under its tenant")
+	assert.Equal(t, 2, runRepo.saved)
+	assert.Equal(t, 2, metrics.stalled)
+	require.Len(t, outbox.events, 2)
+}
+
 // The cancel of a cancelling run is sent again naming the attempts that have
 // not answered, in a transaction of its own, and each attempt's next check
 // moves to the stop's next window.
 func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
 	runID := uuid.New()
-	a := repository.AttemptKey{TaskID: uuid.New(), Attempt: 0}
-	b := repository.AttemptKey{TaskID: uuid.New(), Attempt: 2}
+	ref := repository.RunRef{TenantID: "acme", RunID: runID}
+	a := repository.AttemptKey{TenantID: "acme", TaskID: uuid.New(), Attempt: 0}
+	b := repository.AttemptKey{TenantID: "acme", TaskID: uuid.New(), Attempt: 2}
 	targets := []run.StopTarget{
 		{TaskID: a.TaskID, Attempt: a.Attempt, JobName: "job-a", ChecksSent: 0},
 		{TaskID: b.TaskID, Attempt: b.Attempt, JobName: "job-b", ChecksSent: 2},
 	}
-	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID},
-		stops: map[uuid.UUID]run.StopQuestion{runID: {RunID: runID, ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data",
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []repository.RunRef{ref},
+		stops: map[repository.RunRef]run.StopQuestion{ref: {RunID: runID, ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data",
 			CancelledAt: now.Add(-6 * time.Minute), Attempts: targets}}}
 	outbox := &recordingOutbox{}
 	f := newFake(attempts, outbox)
@@ -235,7 +310,8 @@ func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
 
 	require.Len(t, outbox.events, 1)
 	assert.Equal(t, run.RunCancelled{ID: runID, Name: "daily", By: "alice", CancellationReason: "bad data", Attempts: targets}, outbox.events[0])
-	assert.Equal(t, map[repository.AttemptKey]time.Duration{a: run.NextStopCheckAfter(1), b: run.NextStopCheckAfter(3)}, attempts.marked)
+	assert.Equal(t, map[repository.AttemptKey]time.Duration{a: run.NextStopCheckAfter(1), b: run.NextStopCheckAfter(3)}, attempts.marked,
+		"each attempt's next check moves under the run's tenant")
 	assert.Equal(t, 10*time.Minute, attempts.marked[a])
 	assert.Equal(t, 1, f.CommitCalled, "one transaction per cancelling run")
 }
@@ -243,8 +319,8 @@ func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
 // A cancelling run another pass holds, or whose stops answered since it was
 // listed, is left alone.
 func TestPass_LeavesACancelItCannotLock(t *testing.T) {
-	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{uuid.New()},
-		stops: map[uuid.UUID]run.StopQuestion{}}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{},
+		dueStops: []repository.RunRef{{TenantID: "acme", RunID: uuid.New()}}, stops: map[repository.RunRef]run.StopQuestion{}}
 	outbox := &recordingOutbox{}
 
 	require.NoError(t, newLoop(newFake(attempts, outbox), &countingMetrics{}).Pass(context.Background()))
@@ -258,10 +334,11 @@ func TestPass_LeavesACancelItCannotLock(t *testing.T) {
 // not appended for it.
 func TestPass_AsksNoDispatchQuestionAboutAStopRequestedAttempt(t *testing.T) {
 	runID := uuid.New()
-	stopped := repository.AttemptKey{TaskID: uuid.New(), Attempt: 0}
-	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID},
+	ref := repository.RunRef{TenantID: pkgevents.DefaultTenantID, RunID: runID}
+	stopped := repository.AttemptKey{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), Attempt: 0}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []repository.RunRef{ref},
 		questions: map[repository.AttemptKey]run.Question{},
-		stops: map[uuid.UUID]run.StopQuestion{runID: {RunID: runID, ScheduleName: "daily",
+		stops: map[repository.RunRef]run.StopQuestion{ref: {RunID: runID, ScheduleName: "daily",
 			Attempts: []run.StopTarget{{TaskID: stopped.TaskID, Attempt: 0, JobName: "job"}}}}}
 	outbox := &recordingOutbox{}
 
@@ -295,10 +372,12 @@ func TestPass_LogsAnOverdueCancelNamingItsAttempts(t *testing.T) {
 		Attempts: []run.StopTarget{{TaskID: taskID, Attempt: 1, JobName: "job-x"}}}
 	young := run.StopQuestion{RunID: uuid.New(), ScheduleName: "weekly", CancelledAt: now.Add(-time.Minute),
 		Attempts: []run.StopTarget{{TaskID: uuid.New(), Attempt: 0, JobName: "job-y"}}}
-	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID, young.RunID},
-		stops: map[uuid.UUID]run.StopQuestion{runID: overdue, young.RunID: young}}
+	overdueRef := repository.RunRef{TenantID: pkgevents.DefaultTenantID, RunID: runID}
+	youngRef := repository.RunRef{TenantID: pkgevents.DefaultTenantID, RunID: young.RunID}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []repository.RunRef{overdueRef, youngRef},
+		stops: map[repository.RunRef]run.StopQuestion{overdueRef: overdue, youngRef: young}}
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults, &countingMetrics{}, nil,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, defaults, &countingMetrics{}, nil,
 		slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -323,15 +402,12 @@ func (failingCommit) Commit() error { return errors.New("commit failed") }
 // A stalled run whose transaction fails to commit is not counted: it is
 // still active, and the next pass fails and counts it.
 func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
-	stale := now.Add(-run.StallAfter - time.Minute)
-	total := int32(2)
-	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
-		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
-	f.SetRunRepo(&runs{r: r})
+	r := staleRun()
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, &recordingOutbox{})
+	f.SetRunRepo(runsOf(r))
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return failingCommit{f} }, "default", defaults, metrics, nil,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return failingCommit{f} }, defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	require.Error(t, loop.Pass(context.Background()))
@@ -342,12 +418,9 @@ func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 // A run listed as stalled that has an attempt in flight by the time its lock
 // is taken is left running.
 func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
-	stale := now.Add(-run.StallAfter - time.Minute)
-	total := int32(2)
-	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
-		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
-	runRepo := &runs{r: r}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
+	r := staleRun()
+	runRepo := runsOf(r)
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{inFlight: true})
 	metrics := &countingMetrics{}
@@ -359,14 +432,23 @@ func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
 	assert.Zero(t, metrics.stalled)
 }
 
-// staleRun is a running run whose progress clock is older than run.StallAfter.
-func staleRun() *run.Run { return idleRun(run.StallAfter + time.Minute) }
+// staleRun is a running run of the default tenant whose progress clock is
+// older than run.StallAfter.
+func staleRun() *run.Run { return staleRunOf(pkgevents.DefaultTenantID) }
 
-// idleRun is a running run that has made no progress for idle.
-func idleRun(idle time.Duration) *run.Run {
+// staleRunOf is a running run of tenantID whose progress clock is older than
+// run.StallAfter.
+func staleRunOf(tenantID string) *run.Run { return idleRunOf(tenantID, run.StallAfter+time.Minute) }
+
+// idleRun is a running run of the default tenant that has made no progress for
+// idle.
+func idleRun(idle time.Duration) *run.Run { return idleRunOf(pkgevents.DefaultTenantID, idle) }
+
+// idleRunOf is a running run of tenantID that has made no progress for idle.
+func idleRunOf(tenantID string, idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
-	return run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 }
 
@@ -387,12 +469,12 @@ func errorLines(logs *bytes.Buffer) []string {
 func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
 	r := staleRun()
 	tasks := &idleTasks{grantFailures: 1}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
-	f.SetRunRepo(&runs{r: r})
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, &recordingOutbox{})
+	f.SetRunRepo(runsOf(r))
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -411,15 +493,15 @@ func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
 // level with the grant's error. The pass itself succeeds.
 func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.T) {
 	r := idleRun(run.StallAfterFailedGrant + time.Minute)
-	runRepo := &runs{r: r}
+	runRepo := runsOf(r)
 	tasks := &idleTasks{grantFailures: 100}
 	outbox := &recordingOutbox{}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, outbox)
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -444,9 +526,9 @@ func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.
 // grant's error.
 func TestPass_LeavesARunWhoseGrantFailsWhileItIsIdleForLessThanTheBound(t *testing.T) {
 	r := idleRun(run.StallAfterFailedGrant - time.Minute)
-	runRepo := &runs{r: r}
+	runRepo := runsOf(r)
 	tasks := &idleTasks{grantFailures: 100}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
@@ -468,7 +550,7 @@ func TestPass_RunsItsHookBeforeItListsTheStalledRuns(t *testing.T) {
 		calls = append(calls, "hook")
 		return nil
 	}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, defaults,
 		&countingMetrics{}, hook, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -481,8 +563,8 @@ func TestPass_RunsItsHookBeforeItListsTheStalledRuns(t *testing.T) {
 // stalled runs, so it is left running.
 func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 	r := staleRun()
-	runRepo := &runs{r: r}
-	attempts := &fakeAttempts{stalled: []uuid.UUID{r.RunID()}}
+	runRepo := runsOf(r)
+	attempts := &fakeAttempts{stalled: []repository.RunRef{refOf(r)}}
 	f := newFake(attempts, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{})
@@ -491,7 +573,7 @@ func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 		return nil
 	}
 	metrics := &countingMetrics{}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, hook,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, defaults, metrics, hook,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -505,12 +587,12 @@ func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 // stalled runs are still listed and failed.
 func TestPass_AFailedHookIsLoggedAndTheStallScanStillRuns(t *testing.T) {
 	r := staleRun()
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
-	f.SetRunRepo(&runs{r: r})
+	f := newFake(&fakeAttempts{stalled: []repository.RunRef{refOf(r)}}, &recordingOutbox{})
+	f.SetRunRepo(runsOf(r))
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, defaults, metrics,
 		func(context.Context) error { return errors.New("grant failed") }, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))

@@ -175,20 +175,21 @@ func (r *RunRepository) RunExists(ctx context.Context, tenantID string, id uuid.
 	return exists, nil
 }
 
-// ListUnplannedActive reads the tenant's pending, running and cancelling run
-// rows whose planned_at is NULL, oldest first, inside the bound transaction.
-func (r *RunRepository) ListUnplannedActive(ctx context.Context, tenantID string) ([]uuid.UUID, error) {
+// ListUnplannedActive reads the pending, running and cancelling run rows of
+// every tenant whose planned_at is NULL, oldest first, inside the bound
+// transaction.
+func (r *RunRepository) ListUnplannedActive(ctx context.Context) ([]repository.RunRef, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("ListUnplannedActive requires an active transaction")
 	}
-	var ids []uuid.UUID
-	if err := r.tx.SelectContext(ctx, &ids, `
-		SELECT run_id FROM runs
-		WHERE tenant_id = $2 AND status = ANY($1::text[]) AND planned_at IS NULL
-		ORDER BY created_at, run_id`, pq.Array(activeRunStatuses()), tenantID); err != nil {
+	var rows []runRefRow
+	if err := r.tx.SelectContext(ctx, &rows, `
+		SELECT tenant_id, run_id FROM runs
+		WHERE status = ANY($1::text[]) AND planned_at IS NULL
+		ORDER BY created_at, tenant_id, run_id`, pq.Array(activeRunStatuses())); err != nil {
 		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
 	}
-	return ids, nil
+	return runRefs(rows), nil
 }
 
 // CountReleaseRuns counts the tenant's run rows of kind that name releaseID,

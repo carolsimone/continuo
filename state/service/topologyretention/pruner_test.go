@@ -51,6 +51,10 @@ func (f *pruneTopology) LivePointer(context.Context, string) (topology.Pointer, 
 	return topology.Pointer{}, errors.New("LivePointer is not used by the pruner")
 }
 
+func (f *pruneTopology) LivePointers(context.Context) ([]topology.Pointer, error) {
+	return nil, errors.New("LivePointers is not used by the pruner")
+}
+
 func (f *pruneTopology) SetLivePointer(context.Context, string, topology.Pointer, time.Time) error {
 	return errors.New("SetLivePointer is not used by the pruner")
 }

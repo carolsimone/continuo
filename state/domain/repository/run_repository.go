@@ -54,10 +54,11 @@ type RunRepository interface {
 	// reads inside the bound transaction and needs one.
 	RunExists(ctx context.Context, tenantID string, id uuid.UUID) (bool, error)
 
-	// ListUnplannedActive returns the ids of the tenant's PENDING, RUNNING or
-	// CANCELLING runs whose tasks state did not plan (planned_at is NULL),
-	// oldest first. It reads inside the bound transaction and needs one.
-	ListUnplannedActive(ctx context.Context, tenantID string) ([]uuid.UUID, error)
+	// ListUnplannedActive returns the PENDING, RUNNING or CANCELLING runs of
+	// every tenant whose tasks state did not plan (planned_at is NULL), each
+	// with its tenant, oldest first. It reads inside the bound transaction and
+	// needs one.
+	ListUnplannedActive(ctx context.Context) ([]RunRef, error)
 
 	// CountReleaseRuns counts the tenant's runs of kind whose release_id is
 	// releaseID. It reads inside the bound transaction, so it sees the runs

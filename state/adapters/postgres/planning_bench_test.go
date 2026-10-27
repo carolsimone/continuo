@@ -11,7 +11,6 @@ import (
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	"github.com/carolsimone/continuo/state/service/handlers"
-	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
@@ -148,8 +147,7 @@ func BenchmarkReconcileDue(b *testing.B) {
 	_, err = db.Exec(`UPDATE tasks SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
 		WHERE run_id = $1`, r.RunID())
 	require.NoError(b, err)
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults,
-		noRunMetrics{}, nil, discardLogger())
+	loop := attemptreconcile.New(scopedUoW(db, tenant), testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 
 	b.ResetTimer()
 	for range b.N {

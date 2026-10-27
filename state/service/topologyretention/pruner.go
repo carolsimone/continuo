@@ -22,9 +22,9 @@ func NewPruner(uowFactory func() uow.UnitOfWork, logger *slog.Logger) *Pruner {
 	return &Pruner{uowFactory: uowFactory, logger: logger}
 }
 
-// Prune deletes, with their nodes and edges, the releases loaded more than
-// retention ago that are neither live nor named by any run, and
-// returns how many it deleted. It has the shape of a pkg/outbox retention
+// Prune deletes, with their nodes and edges, the releases of every tenant
+// loaded more than retention ago that are neither the tenant's live release
+// nor named by any run of the tenant, and returns how many it deleted. It has the shape of a pkg/outbox retention
 // target's prune function; limit is not used, because one statement deletes a
 // release with its rows and releases are few. It holds the topology lock in a
 // transaction of its own, so it never interleaves with a promotion moving the

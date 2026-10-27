@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,11 +29,11 @@ type fixedClock struct{}
 
 func (fixedClock) Now() time.Time { return testNow }
 
-// fakeTopology serves one tenant's live pointer and its releases' nodes, and
+// fakeTopology serves each tenant's live pointer and the releases' nodes, and
 // records the calls it receives.
 type fakeTopology struct {
-	live  topology.Pointer
-	nodes map[string][]topology.Node // by release id
+	live  map[string]topology.Pointer // by tenant
+	nodes map[string][]topology.Node  // by release id
 	calls []string
 }
 
@@ -47,9 +48,26 @@ func (f *fakeTopology) SaveRelease(context.Context, topology.Release) (bool, err
 	return false, errors.New("SaveRelease is not used by the seed reconcile")
 }
 
-func (f *fakeTopology) LivePointer(context.Context, string) (topology.Pointer, error) {
+func (f *fakeTopology) LivePointer(_ context.Context, tenantID string) (topology.Pointer, error) {
 	f.calls = append(f.calls, "live")
-	return f.live, nil
+	return f.live[tenantID], nil
+}
+
+// LivePointers lists every tenant's live pointer in tenant order.
+func (f *fakeTopology) LivePointers(context.Context) ([]topology.Pointer, error) {
+	f.calls = append(f.calls, "pointers")
+	tenants := make([]string, 0, len(f.live))
+	for tenant, p := range f.live {
+		if !p.IsZero() {
+			tenants = append(tenants, tenant)
+		}
+	}
+	slices.Sort(tenants)
+	out := make([]topology.Pointer, 0, len(tenants))
+	for _, tenant := range tenants {
+		out = append(out, f.live[tenant])
+	}
+	return out, nil
 }
 
 func (f *fakeTopology) SetLivePointer(context.Context, string, topology.Pointer, time.Time) error {
@@ -95,42 +113,55 @@ func (f *fakeTopology) PruneReleases(context.Context, time.Time) (int64, error) 
 
 // attempt is one RecordAttempt call.
 type attempt struct {
-	key   topology.NodeKey
-	hash  string
-	runID uuid.UUID
+	tenant string
+	key    topology.NodeKey
+	hash   string
+	runID  uuid.UUID
 }
 
-// fakeMaterializations keeps node_materializations in memory. A build request
-// leaves its seed's attempt in flight, as a freshly created run is.
+// fakeMaterializations keeps each tenant's node_materializations in memory. A
+// build request leaves its seed's attempt in flight, as a freshly created run
+// is.
 type fakeMaterializations struct {
-	rows     map[topology.NodeKey]seeds.Materialization
+	rows     map[string]map[topology.NodeKey]seeds.Materialization // by tenant
 	built    []seeds.Built
 	attempts []attempt
 }
 
 var _ repository.MaterializationRepository = (*fakeMaterializations)(nil)
 
-func (f *fakeMaterializations) List(context.Context, string) (map[topology.NodeKey]seeds.Materialization, error) {
-	out := make(map[topology.NodeKey]seeds.Materialization, len(f.rows))
-	for k, v := range f.rows {
+// of returns the rows of tenantID, which it creates on first use.
+func (f *fakeMaterializations) of(tenantID string) map[topology.NodeKey]seeds.Materialization {
+	if f.rows[tenantID] == nil {
+		f.rows[tenantID] = map[topology.NodeKey]seeds.Materialization{}
+	}
+	return f.rows[tenantID]
+}
+
+func (f *fakeMaterializations) List(_ context.Context, tenantID string) (map[topology.NodeKey]seeds.Materialization, error) {
+	rows := f.of(tenantID)
+	out := make(map[topology.NodeKey]seeds.Materialization, len(rows))
+	for k, v := range rows {
 		out[k] = v
 	}
 	return out, nil
 }
 
-func (f *fakeMaterializations) RecordAttempt(_ context.Context, _ string, key topology.NodeKey, hash string, runID uuid.UUID, _ time.Time) error {
-	f.attempts = append(f.attempts, attempt{key: key, hash: hash, runID: runID})
-	m := f.rows[key]
+func (f *fakeMaterializations) RecordAttempt(_ context.Context, tenantID string, key topology.NodeKey, hash string, runID uuid.UUID, _ time.Time) error {
+	f.attempts = append(f.attempts, attempt{tenant: tenantID, key: key, hash: hash, runID: runID})
+	rows := f.of(tenantID)
+	m := rows[key]
 	m.Key, m.AttemptContentHash, m.AttemptRunID, m.AttemptState = key, hash, runID, seeds.AttemptInFlight
-	f.rows[key] = m
+	rows[key] = m
 	return nil
 }
 
-func (f *fakeMaterializations) RecordBuilt(_ context.Context, _ string, b seeds.Built) error {
+func (f *fakeMaterializations) RecordBuilt(_ context.Context, tenantID string, b seeds.Built) error {
 	f.built = append(f.built, b)
-	m := f.rows[b.Key]
+	rows := f.of(tenantID)
+	m := rows[b.Key]
 	m.Key, m.ContentHash = b.Key, b.ContentHash
-	f.rows[b.Key] = m
+	rows[b.Key] = m
 	return nil
 }
 
@@ -139,15 +170,21 @@ func (f *fakeMaterializations) DeleteAbsentFrom(context.Context, string, string)
 }
 
 // fakeRuns persists runs in memory. taken holds the ids already persisted
-// (including runs that name no release); count is what CountReleaseRuns
-// answers and grows with every run saved.
+// (including runs that name no release); counts holds, by tenant and release
+// (countKey), what CountReleaseRuns answers, and grows with every run saved.
+// saveErr, when set, fails every save of a run of the tenant failTenant names,
+// or of every tenant when failTenant is empty.
 type fakeRuns struct {
-	taken     map[uuid.UUID]bool
-	count     int
-	saved     []*run.Run
-	saveErr   error
-	existsAsk []uuid.UUID
+	taken      map[uuid.UUID]bool
+	counts     map[string]int
+	saved      []*run.Run
+	saveErr    error
+	failTenant string
+	existsAsk  []uuid.UUID
 }
+
+// countKey names the runs of tenantID that name releaseID.
+func countKey(tenantID, releaseID string) string { return tenantID + "/" + releaseID }
 
 var _ repository.RunRepository = (*fakeRuns)(nil)
 
@@ -182,7 +219,7 @@ func (f *fakeTasks) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Ti
 }
 
 func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
-	if f.saveErr != nil {
+	if f.saveErr != nil && (f.failTenant == "" || f.failTenant == r.TenantID()) {
 		return f.saveErr
 	}
 	if !r.Changes().IsCreated() {
@@ -194,7 +231,7 @@ func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
 	}
 	f.taken[r.RunID()] = true
 	f.saved = append(f.saved, r)
-	f.count++
+	f.counts[countKey(r.TenantID(), r.ReleaseID())]++
 	r.ResetChanges()
 	return nil
 }
@@ -204,12 +241,12 @@ func (f *fakeRuns) RunExists(_ context.Context, _ string, id uuid.UUID) (bool, e
 	return f.taken[id], nil
 }
 
-func (f *fakeRuns) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
+func (f *fakeRuns) ListUnplannedActive(context.Context) ([]repository.RunRef, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *fakeRuns) CountReleaseRuns(context.Context, string, string, run.Kind) (int, error) {
-	return f.count, nil
+func (f *fakeRuns) CountReleaseRuns(_ context.Context, tenantID, releaseID string, _ run.Kind) (int, error) {
+	return f.counts[countKey(tenantID, releaseID)], nil
 }
 
 func (f *fakeRuns) GetRun(context.Context, string, uuid.UUID) (*run.Run, error) {
@@ -245,7 +282,7 @@ func (f *fakeOutbox) Append(_ context.Context, evts []run.DomainEvent, msgProcID
 	return nil
 }
 
-// world is one tenant's state behind fake repositories; every unit of work it
+// world is the tenants' state behind fake repositories; every unit of work it
 // hands out shares them.
 type world struct {
 	topo   *fakeTopology
@@ -256,14 +293,27 @@ type world struct {
 	uows   []*uow.FakeUnitOfWork
 }
 
+// newWorld makes live, holding nodes, the default tenant's live release; the
+// zero live leaves no release live.
 func newWorld(live topology.Pointer, nodes ...topology.Node) *world {
-	return &world{
-		topo:   &fakeTopology{live: live, nodes: map[string][]topology.Node{live.ReleaseID: nodes}},
-		mats:   &fakeMaterializations{rows: map[topology.NodeKey]seeds.Materialization{}},
-		runs:   &fakeRuns{taken: map[uuid.UUID]bool{}},
+	w := &world{
+		topo:   &fakeTopology{live: map[string]topology.Pointer{}, nodes: map[string][]topology.Node{}},
+		mats:   &fakeMaterializations{rows: map[string]map[topology.NodeKey]seeds.Materialization{}},
+		runs:   &fakeRuns{taken: map[uuid.UUID]bool{}, counts: map[string]int{}},
 		tasks:  &fakeTasks{},
 		outbox: &fakeOutbox{},
 	}
+	w.addTenant(pkgevents.DefaultTenantID, live, nodes...)
+	return w
+}
+
+// addTenant makes live, holding nodes, tenantID's live release.
+func (w *world) addTenant(tenantID string, live topology.Pointer, nodes ...topology.Node) {
+	if !live.IsZero() {
+		live.TenantID = tenantID
+	}
+	w.topo.live[tenantID] = live
+	w.topo.nodes[live.ReleaseID] = nodes
 }
 
 func (w *world) newUoW() *uow.FakeUnitOfWork {
@@ -277,14 +327,14 @@ func (w *world) newUoW() *uow.FakeUnitOfWork {
 }
 
 func (w *world) reconciler(maintenance bool) *seedreconcile.Reconciler {
-	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, "default", run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour},
+	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// loaded records table as last loaded at hash.
+// loaded records table as last loaded at hash for the default tenant.
 func (w *world) loaded(table, hash string) {
 	key := topology.KeyOf("raw", table)
-	w.mats.rows[key] = seeds.Materialization{Key: key, ContentHash: hash}
+	w.mats.of(pkgevents.DefaultTenantID)[key] = seeds.Materialization{Key: key, ContentHash: hash}
 }
 
 func seedNode(table, hash string) topology.Node {
@@ -353,7 +403,7 @@ func TestAfterPromotion_MovedBuildsTheSeedsWhoseContentDiffers(t *testing.T) {
 	assert.Equal(t, seedNode("orders", "h-orders-2"), d.Node)
 	assert.Equal(t, scheduleNameOf(wantID), d.ScheduleName)
 	assert.Equal(t, []uuid.UUID{trigger.MessageProcessingID}, w.outbox.msgProcIDs)
-	assert.Equal(t, []attempt{{key: "raw.orders", hash: "h-orders-2", runID: wantID}}, w.mats.attempts)
+	assert.Equal(t, []attempt{{tenant: "default", key: "raw.orders", hash: "h-orders-2", runID: wantID}}, w.mats.attempts)
 	assert.Empty(t, w.mats.built)
 	assert.Zero(t, u.BeginCalled, "the pass runs in the handler's transaction")
 }
@@ -469,7 +519,7 @@ func TestReconciler_MaintenanceCreatesNoRun(t *testing.T) {
 // already name it.
 func TestPass_NumbersTheRunAfterTheReleasesRuns(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"))
-	w.runs.count = 2
+	w.runs.counts[countKey("default", "rel-2")] = 2
 
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
 
@@ -494,9 +544,10 @@ func TestPass_SkipsARunIDAlreadyTaken(t *testing.T) {
 // live content failed is not retried.
 func TestPass_WaitsForAnInFlightBuildAndDoesNotRetryAFailedOne(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-2"))
-	w.mats.rows["raw.orders"] = seeds.Materialization{Key: "raw.orders", ContentHash: "h-orders-1",
+	rows := w.mats.of("default")
+	rows["raw.orders"] = seeds.Materialization{Key: "raw.orders", ContentHash: "h-orders-1",
 		AttemptContentHash: "h-orders-2", AttemptRunID: uuid.New(), AttemptState: seeds.AttemptInFlight}
-	w.mats.rows["raw.users"] = seeds.Materialization{Key: "raw.users", ContentHash: "h-users-1",
+	rows["raw.users"] = seeds.Materialization{Key: "raw.users", ContentHash: "h-users-1",
 		AttemptContentHash: "h-users-2", AttemptRunID: uuid.New(), AttemptState: seeds.AttemptFailed}
 
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
@@ -505,20 +556,78 @@ func TestPass_WaitsForAnInFlightBuildAndDoesNotRetryAFailedOne(t *testing.T) {
 	assert.Empty(t, w.outbox.appended)
 }
 
-// RunOnce takes the topology lock in a transaction of its own, runs the pass
-// and commits; its trigger names no message.
+// RunOnce lists the live releases, then takes the topology lock in a
+// transaction of its own, runs the pass and commits; its trigger names no
+// message.
 func TestRunOnce_LocksPassesAndCommits(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"))
 
 	require.NoError(t, w.reconciler(false).RunOnce(context.Background()))
 
-	require.Len(t, w.uows, 1)
-	assert.Equal(t, 1, w.uows[0].BeginCalled)
-	assert.Equal(t, 1, w.uows[0].CommitCalled)
-	assert.Zero(t, w.uows[0].RollbackCalled)
-	assert.Equal(t, "lock", w.topo.calls[0], "the lock comes before any read")
+	require.Len(t, w.uows, 2, "one unit of work lists the live releases, one runs the pass")
+	assert.Zero(t, w.uows[0].BeginCalled, "the live releases are listed outside any transaction")
+	assert.Equal(t, 1, w.uows[1].BeginCalled)
+	assert.Equal(t, 1, w.uows[1].CommitCalled)
+	assert.Zero(t, w.uows[1].RollbackCalled)
+	assert.Equal(t, []string{"pointers", "lock", "live"}, w.topo.calls[:3], "the pass's lock comes before any of its reads")
 	require.Len(t, w.runs.saved, 1)
 	assert.Equal(t, []uuid.UUID{uuid.Nil}, w.outbox.msgProcIDs)
+}
+
+// RunOnce makes one pass per live release, each for the tenant whose release
+// it is and in a transaction of its own under the topology lock: two tenants
+// whose live releases each hold a seed whose content differs from what the
+// tenant loaded get one promote-seed run each, of their own tenant, on their
+// own release.
+func TestSeedReconcile_PassesOncePerLiveRelease(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"))
+	w.addTenant("acme", topology.Pointer{ReleaseID: "rel-acme", PromotionSeq: 3}, seedNode("orders", "h-orders-acme"))
+	w.loaded("orders", "h-orders-1")
+
+	require.NoError(t, w.reconciler(false).RunOnce(context.Background()))
+
+	require.Len(t, w.runs.saved, 2, "one run per tenant")
+	acme, def := w.runs.saved[0], w.runs.saved[1]
+	assert.Equal(t, "acme", acme.TenantID(), "the passes run in tenant order")
+	assert.Equal(t, seeds.RunID("acme", "rel-acme", 1), acme.RunID())
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-acme", PromotionSeq: 3}, acme.Release())
+	assert.Equal(t, "default", def.TenantID())
+	assert.Equal(t, seeds.RunID("default", "rel-2", 1), def.RunID())
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-2", PromotionSeq: 7}, def.Release())
+	assert.Equal(t, []attempt{
+		{tenant: "acme", key: "raw.orders", hash: "h-orders-acme", runID: acme.RunID()},
+		{tenant: "default", key: "raw.orders", hash: "h-orders-2", runID: def.RunID()},
+	}, w.mats.attempts, "each seed's build request is its own tenant's")
+	assert.Equal(t, []topology.NodeKey{"raw.orders", "raw.orders"}, dispatchedKeys(w.outbox.appended))
+	require.Len(t, w.uows, 3, "one unit of work lists the live releases, one runs each pass")
+	for i, tenant := range []string{"acme", "default"} {
+		u := w.uows[i+1]
+		assert.Equal(t, 1, u.BeginCalled, tenant)
+		assert.Equal(t, 1, u.CommitCalled, tenant)
+		assert.Equal(t, []string{tenant}, u.TaskCollectionTenants, "the pass of %s starts its run under its tenant", tenant)
+	}
+	assert.Equal(t, []string{"pointers", "lock", "live", "nodes:rel-acme", "graph:rel-acme", "lock", "live", "nodes:rel-2", "graph:rel-2"},
+		w.topo.calls, "each pass takes the lock and reads its tenant's live release under it")
+}
+
+// A pass that fails rolls back its own transaction only: the other tenants'
+// passes still run and commit, and RunOnce returns the failure.
+func TestRunOnce_AFailedPassDoesNotStopTheOtherTenants(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"))
+	w.addTenant("acme", topology.Pointer{ReleaseID: "rel-acme", PromotionSeq: 3}, seedNode("orders", "h-orders-acme"))
+	boom := errors.New("connection reset by peer")
+	w.runs.saveErr, w.runs.failTenant = boom, "acme"
+
+	err := w.reconciler(false).RunOnce(context.Background())
+
+	require.ErrorIs(t, err, boom)
+	assert.Contains(t, err.Error(), "acme")
+	require.Len(t, w.uows, 3)
+	assert.Equal(t, 1, w.uows[1].RollbackCalled, "the acme pass rolls back")
+	assert.Zero(t, w.uows[1].CommitCalled)
+	assert.Equal(t, 1, w.uows[2].CommitCalled, "the default tenant's pass still commits")
+	require.Len(t, w.runs.saved, 1)
+	assert.Equal(t, "default", w.runs.saved[0].TenantID())
 }
 
 // A second pass while the first run is still in flight creates nothing.
@@ -542,15 +651,19 @@ func TestRunOnce_RollsBackAFailedPass(t *testing.T) {
 	err := w.reconciler(false).RunOnce(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
-	assert.Zero(t, w.uows[0].CommitCalled)
-	assert.Equal(t, 1, w.uows[0].RollbackCalled)
+	require.Len(t, w.uows, 2)
+	assert.Zero(t, w.uows[1].CommitCalled)
+	assert.Equal(t, 1, w.uows[1].RollbackCalled)
 }
 
-// With no release live, a pass reads nothing beyond the pointer.
+// With no release live, RunOnce reads nothing beyond the list of live
+// releases and opens no transaction.
 func TestRunOnce_NothingLiveReadsNothingElse(t *testing.T) {
 	w := newWorld(topology.Pointer{})
 
 	require.NoError(t, w.reconciler(false).RunOnce(context.Background()))
 
-	assert.Equal(t, []string{"lock", "live"}, w.topo.calls)
+	assert.Equal(t, []string{"pointers"}, w.topo.calls)
+	require.Len(t, w.uows, 1)
+	assert.Zero(t, w.uows[0].BeginCalled)
 }

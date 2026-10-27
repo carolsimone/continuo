@@ -167,7 +167,7 @@ func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context, _ string)
 func (f *activateFakeRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in activate tests")
 }
-func (f *activateFakeRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
+func (f *activateFakeRunRepo) ListUnplannedActive(context.Context) ([]repository.RunRef, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
@@ -635,7 +635,7 @@ func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context, _ string) (
 func (f *cancelFakeRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in cancel tests")
 }
-func (f *cancelFakeRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
+func (f *cancelFakeRunRepo) ListUnplannedActive(context.Context) ([]repository.RunRef, error) {
 	panic("ListUnplannedActive is not used here")
 }
 

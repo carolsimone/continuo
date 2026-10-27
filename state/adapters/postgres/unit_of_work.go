@@ -149,16 +149,16 @@ func (u *PostgresUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 	return NewTaskGraph(u.tx, tenantID)
 }
 
-// Attempts returns the attempt reconcile's repository for tenantID, bound to
-// the current transaction.
-func (u *PostgresUnitOfWork) Attempts(tenantID string) repository.AttemptRepository {
-	return NewAttemptRepository(u.db, u.tx, tenantID)
+// Attempts returns the attempt reconcile's repository, bound to the current
+// transaction.
+func (u *PostgresUnitOfWork) Attempts() repository.AttemptRepository {
+	return NewAttemptRepository(u.db, u.tx)
 }
 
-// Leases returns the lease waker's repository for tenantID, bound to the
-// current transaction.
-func (u *PostgresUnitOfWork) Leases(tenantID string) repository.LeaseRepository {
-	return NewLeaseRepository(u.db, u.tx, tenantID)
+// Leases returns the lease waker's repository, bound to the current
+// transaction.
+func (u *PostgresUnitOfWork) Leases() repository.LeaseRepository {
+	return NewLeaseRepository(u.db, u.tx)
 }
 
 // Compile-time interface assertion.

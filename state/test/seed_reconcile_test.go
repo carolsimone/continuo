@@ -37,7 +37,8 @@ func (h *reconcileHarness) firstPromoteSeedRunID(releaseID string) uuid.UUID {
 }
 
 // reconcileHarness runs the seed reconcile, alone and inside state's
-// release.promoted:v2 binding, against one tenant of its own.
+// release.promoted:v2 binding, with releases of one tenant of its own. A pass
+// of the reconciler covers every tenant with a live release.
 type reconcileHarness struct {
 	db         *sqlx.DB
 	tenant     string
@@ -53,7 +54,7 @@ func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
 	}
 	tenant := "t-" + uuid.NewString()
-	reconciler := seedreconcile.New(factory, false, tenant, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
+	reconciler := seedreconcile.New(factory, false, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{
@@ -276,6 +277,32 @@ func TestSeedReconcile(t *testing.T) {
 		require.Len(t, h.promoteSeedRuns(t, rel3), 1, "orders is loaded at its live content once the earlier build is over")
 		assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, h.promoteSeedRuns(t, rel3)[0]))
 		assert.Equal(t, "sha256:orders-3", h.materialization(t, "raw.orders").AttemptContentHash)
+	})
+
+	t.Run("one pass builds each tenant's live seeds under that tenant", func(t *testing.T) {
+		ours, theirs := newReconcileHarness(db), newReconcileHarness(db)
+		ourRelease, theirRelease := "rel-"+uuid.NewString()[:8], "rel-"+uuid.NewString()[:8]
+		ours.liveRelease(t, ourRelease, 5, promotedNode("raw", "orders", "dbt-seed"))
+		theirs.liveRelease(t, theirRelease, 2, promotedNode("raw", "orders", "dbt-seed"))
+		ours.loaded(t, "raw", "orders", "sha256:previous")
+		theirs.loaded(t, "raw", "orders", "sha256:previous")
+
+		require.NoError(t, ours.reconciler.RunOnce(ctx))
+
+		for _, h := range []struct {
+			h       *reconcileHarness
+			release string
+		}{{ours, ourRelease}, {theirs, theirRelease}} {
+			runID := h.h.firstPromoteSeedRunID(h.release)
+			require.Equal(t, []uuid.UUID{runID}, h.h.promoteSeedRuns(t, h.release), "each tenant's live release gets its own run")
+			assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM runs WHERE tenant_id = $1 AND run_id = $2`, h.h.tenant, runID),
+				"the run is its release's tenant's")
+			orders := h.h.materialization(t, "raw.orders")
+			assert.Equal(t, "sha256:orders", orders.AttemptContentHash, "the build request is the tenant's own")
+			assert.Equal(t, uuid.NullUUID{UUID: runID, Valid: true}, orders.AttemptRunID)
+			assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM tasks WHERE tenant_id = $1 AND run_id = $2`, h.h.tenant, runID),
+				"the run's task is its tenant's")
+		}
 	})
 
 	t.Run("a bootstrap release adopts nothing and builds every seed with a content hash", func(t *testing.T) {

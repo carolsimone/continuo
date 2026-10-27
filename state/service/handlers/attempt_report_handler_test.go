@@ -66,7 +66,7 @@ func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context, _ strin
 func (f *fakeTaskStatusRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
+func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context) ([]repository.RunRef, error) {
 	panic("ListUnplannedActive is not used here")
 }
 

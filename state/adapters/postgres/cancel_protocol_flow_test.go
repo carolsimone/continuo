@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -246,8 +247,8 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	assert.Contains(t, driftRuns, id)
 
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		unplanned, err := u.Run().ListUnplannedActive(ctx, tenant)
+		unplanned, err := u.Run().ListUnplannedActive(ctx)
 		require.NoError(t, err)
-		assert.Contains(t, unplanned, id)
+		assert.Contains(t, unplanned, repository.RunRef{TenantID: tenant, RunID: id})
 	})
 }

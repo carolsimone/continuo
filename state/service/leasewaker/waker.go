@@ -1,8 +1,10 @@
 // Package leasewaker is state's lease waker: it grants the write lease on each
 // node no task holds to the task that has waited longest for it, dispatching
 // that task, and deletes the leases whose holder task has ended without
-// releasing them. A pass runs on every notification that leases were released,
-// every interval, and before each stall scan of the attempt reconcile.
+// releasing them. A pass covers every tenant: each tenant's node is its own,
+// and each grant runs under the tenant of the waiter it serves. A pass runs on
+// every notification that leases were released, every interval, and before
+// each stall scan of the attempt reconcile.
 package leasewaker
 
 import (
@@ -23,19 +25,18 @@ import (
 // waiting first; the rest wait for the next pass.
 const GrantLimit = 200
 
-// Waker grants the node leases of one tenant.
+// Waker grants the node leases of every tenant.
 type Waker struct {
-	newUoW   func() uow.UnitOfWork
-	tenantID string
-	tasks    run.TaskDefaults
-	metrics  ports.RunMetrics
-	logger   *slog.Logger
+	newUoW  func() uow.UnitOfWork
+	tasks   run.TaskDefaults
+	metrics ports.RunMetrics
+	logger  *slog.Logger
 }
 
 // New builds the waker; tasks names the timeout of a dispatch whose node
 // declares none.
-func New(newUoW func() uow.UnitOfWork, tenantID string, tasks run.TaskDefaults, metrics ports.RunMetrics, logger *slog.Logger) *Waker {
-	return &Waker{newUoW: newUoW, tenantID: tenantID, tasks: tasks, metrics: metrics, logger: logger}
+func New(newUoW func() uow.UnitOfWork, tasks run.TaskDefaults, metrics ports.RunMetrics, logger *slog.Logger) *Waker {
+	return &Waker{newUoW: newUoW, tasks: tasks, metrics: metrics, logger: logger}
 }
 
 // Run passes now, then on every signal from wake and every interval, until
@@ -56,14 +57,15 @@ func (w *Waker) Run(ctx context.Context, wake <-chan struct{}, interval time.Dur
 	}
 }
 
-// Pass deletes, counts and logs every lease whose holder task has ended, then
-// grants each free node to its oldest waiter whose run is running, up to
-// GrantLimit of them, each grant in a transaction of its own, and sets the
-// waiter gauge. A failed repair or grant does not stop the pass; Pass returns
-// every failure. Two passes at once grant a node once: the second finds its
-// waiter dispatched, or its node held, under the run's lock.
+// Pass deletes, counts and logs every lease of any tenant whose holder task
+// has ended, then grants each free node of each tenant to its oldest waiter
+// whose run is running, up to GrantLimit of them, each grant in a transaction
+// of its own under the waiter's tenant, and sets the waiter gauge to the count
+// of every tenant's waiters. A failed repair or grant does not stop the pass;
+// Pass returns every failure. Two passes at once grant a node once: the
+// second finds its waiter dispatched, or its node held, under the run's lock.
 func (w *Waker) Pass(ctx context.Context) error {
-	leases := w.newUoW().Leases(w.tenantID)
+	leases := w.newUoW().Leases()
 	var errs []error
 	repaired, err := leases.RepairEnded(ctx)
 	if err != nil {
@@ -72,7 +74,8 @@ func (w *Waker) Pass(ctx context.Context) error {
 	for _, l := range repaired {
 		w.metrics.LeaseRepaired()
 		w.logger.Error("Deleted the node lease of a task that ended without releasing it, which a defect in state causes",
-			"node_key", l.NodeKey, "task_id", l.TaskID, "run_id", l.RunID, "task_status", l.TaskStatus, "acquired_at", l.AcquiredAt)
+			"tenant_id", l.TenantID, "node_key", l.NodeKey, "task_id", l.TaskID, "run_id", l.RunID, "task_status", l.TaskStatus,
+			"acquired_at", l.AcquiredAt)
 	}
 	waiters, err := leases.Grantable(ctx, GrantLimit)
 	if err != nil {
@@ -93,19 +96,20 @@ func (w *Waker) Pass(ctx context.Context) error {
 
 // grant locks the waiter's run and grants its task the node's lease, which
 // dispatches the task, then saves the run and writes the dispatch to the
-// outbox. A run that is no longer running, a task that no longer waits and a
-// node another task took first are left as they are. The wait is observed,
-// and the grant logged, once the transaction has committed.
+// outbox, all under the waiter's tenant. A run that is no longer running, a
+// task that no longer waits and a node another task took first are left as
+// they are. The wait is observed, and the grant logged, once the transaction
+// has committed.
 func (w *Waker) grant(ctx context.Context, waiter repository.LeaseWaiter) error {
 	var waited time.Duration
 	granted := false
 	if err := w.inTx(ctx, func(u uow.UnitOfWork) error {
-		r, err := u.Run().LoadRunForUpdate(ctx, w.tenantID, waiter.RunID)
+		r, err := u.Run().LoadRunForUpdate(ctx, waiter.TenantID, waiter.RunID)
 		if err != nil {
-			return fmt.Errorf("load run %s: %w", waiter.RunID, err)
+			return fmt.Errorf("load run %s of tenant %s: %w", waiter.RunID, waiter.TenantID, err)
 		}
 		now := u.Clock().Now()
-		events, ok, err := r.GrantLease(ctx, u.TaskCollection(w.tenantID), u.TaskGraph(w.tenantID), waiter.TaskID, w.tasks, now)
+		events, ok, err := r.GrantLease(ctx, u.TaskCollection(waiter.TenantID), u.TaskGraph(waiter.TenantID), waiter.TaskID, w.tasks, now)
 		if err != nil {
 			return fmt.Errorf("grant the lease of %s to task %s of run %s: %w", waiter.NodeKey, waiter.TaskID, waiter.RunID, err)
 		}
@@ -127,7 +131,7 @@ func (w *Waker) grant(ctx context.Context, waiter repository.LeaseWaiter) error 
 		return err
 	}
 	w.metrics.LeaseGranted(waited)
-	w.logger.Info("Granted a node lease to the task that waited longest for it",
+	w.logger.Info("Granted a node lease to the task that waited longest for it", "tenant_id", waiter.TenantID,
 		"node_key", waiter.NodeKey, "task_id", waiter.TaskID, "run_id", waiter.RunID, "waited", waited.String())
 	return nil
 }
