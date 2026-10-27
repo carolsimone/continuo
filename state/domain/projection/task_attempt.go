@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// TaskAttempt is one attempt of a task as ListTaskAttempts shows it: one
+// TaskAttempt is one attempt of a task as ListRunAttempts shows it: one
 // dispatch of the task's Kubernetes Job and what became of it. A fact not
 // reported yet is nil.
 type TaskAttempt struct {

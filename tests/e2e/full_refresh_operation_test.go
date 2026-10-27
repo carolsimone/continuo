@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +34,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 
 	for _, table := range []string{"table_a", "seed_table_1"} {
 		t.Run(table, func(t *testing.T) {
-			resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+			resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 				ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table,
 				MetadataSource: "latest", Operation: "full_refresh",
 			})
@@ -67,7 +67,7 @@ func TestFullRefreshRejectedOnSchedule(t *testing.T) {
 	clients := setupClients(t, ctx)
 	defer clients.close(ctx)
 
-	_, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	_, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: "e2e-schedule", Operation: "full_refresh",
 	})
 	require.Error(t, err)

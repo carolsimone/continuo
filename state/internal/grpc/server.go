@@ -8,61 +8,31 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/maintenance/grpcgate"
-	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
-// Server wraps gRPC server with graceful shutdown
+// Server serves run.v1.RunService on one listener, with graceful shutdown.
 type Server struct {
-	statev1.UnimplementedStateServiceServer
-	grpcServer           *grpc.Server
-	listener             net.Listener
-	logger               *slog.Logger
-	schedulerHandler     *handlers.SchedulerHandler
-	taskHandler          *handlers.TaskHandler
-	taskAttemptHandler   *handlers.TaskAttemptHandler
-	rerunHandler         *handlers.RerunHandler
-	singleNodeRunHandler *handlers.SingleNodeRunHandler
-	rebaseHandler        *handlers.RebaseHandler
-	previewRebaseHandler *handlers.PreviewRebaseHandler
-	nodeRunHandler       *handlers.NodeRunHandler
-	runReadHandler       *handlers.RunReadHandler
+	grpcServer *grpc.Server
+	listener   net.Listener
+	logger     *slog.Logger
 }
 
 // MaintenanceGatedMethods are the RPCs that start a run. While maintenance mode
 // is on they are refused before their handler runs; cancels and reads,
 // PreviewRebase among them, are not.
 var MaintenanceGatedMethods = []string{
-	statev1.StateService_TriggerSchedule_FullMethodName,
-	statev1.StateService_ActivateSchedule_FullMethodName,
-	statev1.StateService_TriggerRerun_FullMethodName,
-	statev1.StateService_TriggerRebase_FullMethodName,
-	statev1.StateService_TriggerSingleNodeRun_FullMethodName,
 	runv1.RunService_StartRun_FullMethodName,
 	runv1.RunService_TriggerRerun_FullMethodName,
 	runv1.RunService_TriggerRebase_FullMethodName,
 	runv1.RunService_TriggerSingleNodeRun_FullMethodName,
 }
 
-// NewServer creates a new gRPC server
-func NewServer(
-	port int,
-	schedulerHandler *handlers.SchedulerHandler,
-	taskHandler *handlers.TaskHandler,
-	taskAttemptHandler *handlers.TaskAttemptHandler,
-	rerunHandler *handlers.RerunHandler,
-	singleNodeRunHandler *handlers.SingleNodeRunHandler,
-	rebaseHandler *handlers.RebaseHandler,
-	previewRebaseHandler *handlers.PreviewRebaseHandler,
-	nodeRunHandler *handlers.NodeRunHandler,
-	runReadHandler *handlers.RunReadHandler,
-	runService runv1.RunServiceServer,
-	logger *slog.Logger,
-	maintenance bool,
-) (*Server, error) {
+// NewServer creates a gRPC server on port that serves runService. With
+// maintenance on it refuses every RPC MaintenanceGatedMethods names.
+func NewServer(port int, runService runv1.RunServiceServer, logger *slog.Logger, maintenance bool) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
@@ -80,22 +50,8 @@ func NewServer(
 		),
 	)
 
-	server := &Server{
-		grpcServer:           grpcServer,
-		listener:             listener,
-		logger:               logger,
-		schedulerHandler:     schedulerHandler,
-		taskHandler:          taskHandler,
-		taskAttemptHandler:   taskAttemptHandler,
-		rerunHandler:         rerunHandler,
-		singleNodeRunHandler: singleNodeRunHandler,
-		rebaseHandler:        rebaseHandler,
-		previewRebaseHandler: previewRebaseHandler,
-		nodeRunHandler:       nodeRunHandler,
-		runReadHandler:       runReadHandler,
-	}
+	server := &Server{grpcServer: grpcServer, listener: listener, logger: logger}
 
-	statev1.RegisterStateServiceServer(grpcServer, server)
 	runv1.RegisterRunServiceServer(grpcServer, runService)
 
 	// Enable reflection for grpcurl/testing
@@ -126,105 +82,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // ============================================================================
-// IMPLEMENT STATE SERVICE SERVER INTERFACE
-// ============================================================================
-
-// GetScheduler delegates to scheduler handler
-func (s *Server) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	return s.schedulerHandler.GetScheduler(ctx, req)
-}
-
-// CancelScheduler delegates to scheduler handler
-func (s *Server) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
-	return s.schedulerHandler.CancelScheduler(ctx, req)
-}
-
-// ActivateSchedule delegates to scheduler handler
-func (s *Server) ActivateSchedule(ctx context.Context, req *statev1.ActivateScheduleRequest) (*statev1.ActivateScheduleResponse, error) {
-	return s.schedulerHandler.ActivateSchedule(ctx, req)
-}
-
-// ListAllSchedules delegates to scheduler handler
-func (s *Server) ListAllSchedules(ctx context.Context, req *statev1.ListAllSchedulesRequest) (*statev1.ListAllSchedulesResponse, error) {
-	return s.schedulerHandler.ListAllSchedules(ctx, req)
-}
-
-// TriggerSchedule delegates to scheduler handler
-func (s *Server) TriggerSchedule(ctx context.Context, req *statev1.TriggerScheduleRequest) (*statev1.TriggerScheduleResponse, error) {
-	return s.schedulerHandler.TriggerSchedule(ctx, req)
-}
-
-// CancelSchedule delegates to scheduler handler
-func (s *Server) CancelSchedule(ctx context.Context, req *statev1.CancelScheduleRequest) (*statev1.CancelScheduleResponse, error) {
-	return s.schedulerHandler.CancelSchedule(ctx, req)
-}
-
-// GetTask delegates to task handler
-func (s *Server) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
-	return s.taskHandler.GetTask(ctx, req)
-}
-
-// GetTaskByScheduleAndNode delegates to task handler
-func (s *Server) GetTaskByScheduleAndNode(ctx context.Context, req *statev1.GetTaskByScheduleAndNodeRequest) (*statev1.TaskResponse, error) {
-	return s.taskHandler.GetTaskByScheduleAndNode(ctx, req)
-}
-
-// ListTasks delegates to task handler
-func (s *Server) ListTasks(ctx context.Context, req *statev1.ListTasksRequest) (*statev1.ListTasksResponse, error) {
-	return s.taskHandler.ListTasks(ctx, req)
-}
-
-// GetSchedulerInitStatus delegates to scheduler handler
-func (s *Server) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
-	return s.schedulerHandler.GetSchedulerInitStatus(ctx, req)
-}
-
-// ListTaskAttempts delegates to the task attempt handler
-func (s *Server) ListTaskAttempts(ctx context.Context, req *statev1.ListTaskAttemptsRequest) (*statev1.ListTaskAttemptsResponse, error) {
-	return s.taskAttemptHandler.ListTaskAttempts(ctx, req)
-}
-
-// TriggerRerun delegates to rerun handler
-func (s *Server) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
-	return s.rerunHandler.TriggerRerun(ctx, req)
-}
-
-// TriggerSingleNodeRun delegates to single node run handler
-func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *statev1.TriggerSingleNodeRunRequest) (*statev1.TriggerSingleNodeRunResponse, error) {
-	return s.singleNodeRunHandler.TriggerSingleNodeRun(ctx, req)
-}
-
-// TriggerRebase delegates to rebase handler
-func (s *Server) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
-	return s.rebaseHandler.TriggerRebase(ctx, req)
-}
-
-// PreviewRebase delegates to the rebase preview handler.
-func (s *Server) PreviewRebase(ctx context.Context, req *statev1.PreviewRebaseRequest) (*statev1.PreviewRebaseResponse, error) {
-	return s.previewRebaseHandler.PreviewRebase(ctx, req)
-}
-
-// ListNodeRuns delegates to node run handler
-func (s *Server) ListNodeRuns(ctx context.Context, req *statev1.ListNodeRunsRequest) (*statev1.ListNodeRunsResponse, error) {
-	return s.nodeRunHandler.ListNodeRuns(ctx, req)
-}
-
-// ListNodes delegates to node run handler
-func (s *Server) ListNodes(ctx context.Context, req *statev1.ListNodesRequest) (*statev1.ListNodesResponse, error) {
-	return s.nodeRunHandler.ListNodes(ctx, req)
-}
-
-// ListNodeNames delegates to node run handler
-func (s *Server) ListNodeNames(ctx context.Context, req *statev1.ListNodeNamesRequest) (*statev1.ListNodeNamesResponse, error) {
-	return s.nodeRunHandler.ListNodeNames(ctx, req)
-}
-
-// ListNodeServices delegates to node run handler
-func (s *Server) ListNodeServices(ctx context.Context, req *statev1.ListNodeServicesRequest) (*statev1.ListNodeServicesResponse, error) {
-	return s.nodeRunHandler.ListNodeServices(ctx, req)
-}
-
-// ============================================================================
 // INTERCEPTORS
 // ============================================================================
 
@@ -238,19 +95,4 @@ func loggingInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 		}
 		return resp, err
 	}
-}
-
-// GetRunGraph delegates to the run read handler.
-func (s *Server) GetRunGraph(ctx context.Context, req *statev1.GetRunGraphRequest) (*statev1.GetRunGraphResponse, error) {
-	return s.runReadHandler.GetRunGraph(ctx, req)
-}
-
-// ListRuns delegates to the run read handler.
-func (s *Server) ListRuns(ctx context.Context, req *statev1.ListRunsRequest) (*statev1.ListRunsResponse, error) {
-	return s.runReadHandler.ListRuns(ctx, req)
-}
-
-// ListActiveRunDrifts delegates to the run read handler.
-func (s *Server) ListActiveRunDrifts(ctx context.Context, req *statev1.ListActiveRunDriftsRequest) (*statev1.ListActiveRunDriftsResponse, error) {
-	return s.runReadHandler.ListActiveRunDrifts(ctx, req)
 }

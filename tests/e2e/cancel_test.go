@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +30,7 @@ import (
 //
 // Phase 3: Retrigger once the run is 'cancelled' — no cleanup.
 //
-//	The fence rejects late dispatches for the old run_id; TriggerSchedule
+//	The fence rejects late dispatches for the old run_id; the trigger
 //	creates a fresh run_id.
 //
 // Phase 4: Assert the fresh run completes fully to 'succeeded'.
@@ -78,7 +78,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	// Level 1 jobs (table_a/b/c) are now being dispatched. Cancel before they
 	// can complete so we exercise the cancellation guards.
 	t.Log("Phase 2: cancelling schedule mid-way...")
-	callCancelEndpoint(t, ctx, testScheduleName, "e2e-test", "cancel-mid-run e2e test")
+	callCancelEndpoint(t, ctx, cancelledIDStr, "cancel-mid-run e2e test")
 
 	// The run ends 'cancelled' only after execution-controller reported every
 	// attempt stopped, i.e. once its Jobs were deleted and their pods gone.
@@ -92,7 +92,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	// ── Phase 3: Retrigger — no cleanup ──────────────────────────────────────
 	// The run is 'cancelled' and fenced; the system rejects any late dispatch
-	// for cancelledID. TriggerSchedule creates a brand-new run_id.
+	// for cancelledID. The trigger creates a brand-new run_id.
 	t.Log("Phase 3: retriggering via UI endpoint (no cleanup)...")
 	freshIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
 	freshID, err := uuid.Parse(freshIDStr)
@@ -122,14 +122,13 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 // ─── cancel helpers ──────────────────────────────────────────────────────────
 
-// callCancelEndpoint calls POST /api/schedules/:name/cancel and asserts 200 OK.
-func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancelledBy, reason string) {
+// callCancelEndpoint calls POST /api/runs/:id/cancel and asserts 200 OK.
+func callCancelEndpoint(t *testing.T, ctx context.Context, runID, reason string) {
 	t.Helper()
 	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
-	url := fmt.Sprintf("%s/api/schedules/%s/cancel", uiBase, scheduleName)
+	url := fmt.Sprintf("%s/api/runs/%s/cancel", uiBase, runID)
 
 	body, err := json.Marshal(map[string]string{
-		"cancelled_by":        cancelledBy,
 		"cancellation_reason": reason,
 	})
 	require.NoError(t, err)
@@ -140,12 +139,12 @@ func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancell
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "POST /api/schedules/%s/cancel failed", scheduleName)
+	require.NoError(t, err, "POST /api/runs/%s/cancel failed", runID)
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode,
 		"expected 200 OK from cancel endpoint, got %d", resp.StatusCode)
-	t.Logf("POST /api/schedules/%s/cancel → 200 OK", scheduleName)
+	t.Logf("POST /api/runs/%s/cancel → 200 OK", runID)
 }
 
 // verifySchedulerCancelled polls runs until status = 'cancelled'.
@@ -176,7 +175,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 }
 
 // verifyTasksCancelled asserts that at least some non-seed tasks were cancelled.
-// CancelSchedule atomically sets every task that has not ended (pending,
+// A cancel atomically sets every task that has not ended (pending,
 // dispatched, queued or running) to 'cancelled', so any task still in flight
 // before the cancel call must be cancelled.
 func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
@@ -189,18 +188,18 @@ func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClient
 	`, schedulerID).Scan(&count)
 	require.NoError(t, err)
 	assert.Greater(t, count, 0,
-		"Expected at least one task to be 'cancelled' after CancelSchedule")
+		"Expected at least one task to be 'cancelled' after the cancel")
 	t.Logf("✅ %d tasks have status='cancelled'", count)
 }
 
-// verifyRunNotActive polls StateService.ListActiveRunDrifts until the given run
+// verifyRunNotActive polls RunService.ListActiveRunDrifts until the given run
 // is no longer reported as in-flight. A cancelled run's row is terminal, so it
 // must drop out of the active set rather than linger forever.
 func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	want := runID.String()
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		resp, err := clients.stateClient.ListActiveRunDrifts(ctx, &statev1.ListActiveRunDriftsRequest{})
+		resp, err := clients.runClient.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{})
 		if err != nil {
 			return false, err
 		}

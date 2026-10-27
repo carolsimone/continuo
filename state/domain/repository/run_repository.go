@@ -46,7 +46,7 @@ type RunRepository interface {
 	GetActiveRun(ctx context.Context, tenantID, name string) (*run.Run, error)
 
 	// GetLastRunPerSchedule returns the tenant's most recent Run per schedule
-	// name. Read-only projection for ListAllSchedules.
+	// name. Read-only projection for ListSchedules.
 	GetLastRunPerSchedule(ctx context.Context, tenantID string) (map[string]LastRunSummary, error)
 
 	// RunExists reports whether the tenant has a persisted run with id. It

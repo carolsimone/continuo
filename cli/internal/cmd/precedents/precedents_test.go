@@ -33,10 +33,6 @@ type fakePrecedentsOrchestrator struct {
 	gotIncludeCode bool
 }
 
-func (f *fakePrecedentsOrchestrator) GetScheduleGraph(context.Context, string) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	panic("GetScheduleGraph should not be called in precedents tests")
-}
-
 func (f *fakePrecedentsOrchestrator) GetNodeVersions(context.Context, string, int32, bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
 	panic("GetNodeVersions should not be called in precedents tests")
 }

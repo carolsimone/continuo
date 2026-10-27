@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,7 +46,7 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetService, targetSchema, targetTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
@@ -153,7 +153,7 @@ func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testCl
 	t.Helper()
 	before := countRunsOfKind(t, clients, "single_node_run")
 	t.Logf("TriggerSingleNodeRun operation=test on a node without known tests: %s.%s.%s", service, schema, table)
-	_, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    service,
 		SchemaName:     schema,
 		TableName:      table,
@@ -167,7 +167,7 @@ func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testCl
 
 // TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
 // "seed" schedule holds seed_table_1 (test_count=2), seed_table_2 (0), and
-// seed_table_3 (1). A TriggerSchedule with operation="test" dispatches ONLY the
+// seed_table_3 (1). A StartRun with operation="test" dispatches ONLY the
 // nodes that have tests, each independently: seed_table_1 and seed_table_3 run
 // their tests and the run finalizes 'succeeded', while seed_table_2 (no tests)
 // is omitted from the projection entirely.
@@ -191,16 +191,16 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, seedSchedule)
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSchedule operation=test on %q", seedSchedule)
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	t.Logf("StartRun operation=test on %q", seedSchedule)
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: seedSchedule,
 		Operation:    "test",
 	})
-	require.NoError(t, err, "TriggerSchedule(operation=test) failed")
-	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+	require.NoError(t, err, "StartRun(operation=test) failed")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
-	scheduleID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "schedule_id must be a valid UUID")
+	scheduleID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
 
 	t.Log("Waiting for the whole-DAG test run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, scheduleID)
@@ -233,7 +233,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 // TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
 // whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
 // e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
-// TriggerSchedule with operation="test" selects no node, and state records the
+// StartRun with operation="test" selects no node, and state records the
 // run 'skipped' — a benign non-failure — rather than 'failed'. No Job is
 // dispatched, so no tasks row exists.
 func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
@@ -256,16 +256,16 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, noTestsSchedule)
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSchedule operation=test on %q (all nodes have no tests)", noTestsSchedule)
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	t.Logf("StartRun operation=test on %q (all nodes have no tests)", noTestsSchedule)
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: noTestsSchedule,
 		Operation:    "test",
 	})
-	require.NoError(t, err, "TriggerSchedule(operation=test) failed")
-	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+	require.NoError(t, err, "StartRun(operation=test) failed")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
-	scheduleID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "schedule_id must be a valid UUID")
+	scheduleID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
 
 	t.Log("Waiting for the all-gated whole-DAG test run to finalize 'skipped'...")
 	verifySchedulerSkipped(t, ctx, clients, scheduleID)
@@ -317,7 +317,7 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	t.Logf("TriggerSingleNodeRun operation=run: %s.%s.%s", targetService, targetSchema, targetTable)
-	runResp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	runResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
@@ -335,7 +335,7 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, modelRunID)
 
 	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetService, targetSchema, targetTable)
-	testResp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	testResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,

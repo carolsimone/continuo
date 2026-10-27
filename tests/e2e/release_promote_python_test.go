@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -448,7 +448,7 @@ func deleteAPISecret(t *testing.T, ctx context.Context) {
 // node and returns its run id and schedule name.
 func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClients, table string) (uuid.UUID, string) {
 	t.Helper()
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    pyE2EService,
 		SchemaName:     "e2e_schema",
 		TableName:      table,

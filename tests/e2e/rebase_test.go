@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,10 +40,10 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// ── Drive the source run to FAILED (mirrors failure_test.go) ────────────
-	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	srcIDStr := startFailureScheduleRun(t, ctx, clients)
 	srcID, err := uuid.Parse(srcIDStr)
 	require.NoError(t, err)
-	t.Logf("Source schedule created: schedule_id=%s", srcIDStr)
+	t.Logf("Source run created: run_id=%s", srcIDStr)
 
 	t.Log("Waiting for ftable_e to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
@@ -53,7 +53,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 
 	// ── Trigger rebase against the failed source ────────────────────────────
 	t.Log("Triggering rebase against failed source run...")
-	rebaseResp, err := clients.stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+	rebaseResp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcIDStr,
 	})
 	require.NoError(t, err, "TriggerRebase must succeed against a FAILED source")
@@ -66,7 +66,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 
 	// ── Source row stays unchanged ──────────────────────────────────────────
 	srcKind := queryRunKind(t, clients.stateDB, srcID)
-	assert.Equal(t, "cron", srcKind, "source row must NOT mutate — kind stays 'cron'")
+	assert.Equal(t, "trigger", srcKind, "source row must NOT mutate — kind stays 'trigger'")
 
 	// ── New run row: kind='rebase', source_run_id=src ───────────────────────
 	newKind := queryRunKind(t, clients.stateDB, newRunID)
@@ -182,10 +182,10 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// ── Drive the source run to FAILED ──────────────────────────────────────
-	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	srcIDStr := startFailureScheduleRun(t, ctx, clients)
 	srcID, err := uuid.Parse(srcIDStr)
 	require.NoError(t, err)
-	t.Logf("Source schedule created: schedule_id=%s", srcIDStr)
+	t.Logf("Source run created: run_id=%s", srcIDStr)
 
 	t.Log("Waiting for ftable_e to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
@@ -196,7 +196,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 	// ── Trigger rebase against the failed source ────────────────────────────
 	t.Log("Triggering rebase against failed source run...")
-	rebaseResp, err := clients.stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+	rebaseResp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcIDStr,
 	})
 	require.NoError(t, err, "TriggerRebase must succeed against a FAILED source")

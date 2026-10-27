@@ -14,7 +14,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -244,7 +244,7 @@ const (
 // task's timeout stops it and that a timeout is not retried:
 //
 //	ftable_deadline declares a one-minute task timeout and sleeps for ten
-//	→ TriggerSchedule(e2e-deadline) → state dispatches attempt 0 with the
+//	→ StartRun(e2e-deadline) → state dispatches attempt 0 with the
 //	  node's timeout
 //	→ execution-controller gives its Job an activeDeadlineSeconds of the start
 //	  timeout plus that minute
@@ -277,10 +277,10 @@ func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 
 	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: deadlineScheduleName})
-	require.NoError(t, err, "TriggerSchedule(%s)", deadlineScheduleName)
-	runID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "TriggerSchedule must return the run's id")
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: deadlineScheduleName})
+	require.NoError(t, err, "StartRun(%s)", deadlineScheduleName)
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "StartRun must return the run's id")
 	t.Logf("run %s of %s triggered", runID, deadlineScheduleName)
 	taskID := taskOfRun(t, ctx, clients, runID, deadlineTable)
 

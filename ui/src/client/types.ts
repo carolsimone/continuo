@@ -103,7 +103,7 @@ export interface RunGraphNode {
 export interface RunGraph {
   nodes: RunGraphNode[];
   edges: GraphEdge[];
-  // Drift fields from /api/runs/:run_id/graph (populated by StateService's
+  // Drift fields from /api/runs/:run_id/graph (populated by RunService's
   // GetRunGraph). 0 means "drift unknown" — see drift-helpers.
   run_promotion_seq: number;
   latest_promotion_seq: number;

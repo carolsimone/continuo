@@ -13,12 +13,9 @@ protoc \
   --go_opt=paths=source_relative \
   --go-grpc_out=. \
   --go-grpc_opt=paths=source_relative \
-  proto/state/v1/state.proto \
   proto/run/v1/run.proto
 
 echo "Proto code generated successfully!"
 echo "Generated files:"
-echo "  - proto/state/v1/state.pb.go"
-echo "  - proto/state/v1/state_grpc.pb.go"
 echo "  - proto/run/v1/run.pb.go"
 echo "  - proto/run/v1/run_grpc.pb.go"

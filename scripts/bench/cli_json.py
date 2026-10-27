@@ -13,7 +13,7 @@ def has_schedule(doc: dict, name: str) -> bool:
 
 
 def run_state(doc: dict) -> tuple:
-    return doc.get("run_id", ""), bool(doc.get("is_running")), doc.get("last_run_status", "")
+    return doc.get("run_id", ""), bool(doc.get("has_active_run")), doc.get("last_run_status", "")
 
 
 def schedule_names(doc: dict) -> list:

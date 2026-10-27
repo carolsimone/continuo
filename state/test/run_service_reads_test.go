@@ -11,20 +11,16 @@ import (
 	"google.golang.org/grpc/status"
 
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 )
 
-// RunService serves the reads of a run a trigger created, from the same rows
-// StateService reads, and treats another tenant's run as one that does not
-// exist.
+// RunService serves the reads of a run StartRun created, and treats another
+// tenant's run as one that does not exist.
 func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
 	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
-	trig, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: schedule})
-	require.NoError(t, err)
-	runID := trig.ScheduleId
+	runID := startRun(t, schedule)
 
 	got, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
 	require.NoError(t, err)
@@ -94,7 +90,7 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	assert.True(t, summary.GetHasActiveRun())
 	assert.Equal(t, runID, summary.GetLastRunId())
 
-	_, err = stateClient.CancelScheduler(ctx, &statev1.CancelSchedulerRequest{ScheduleId: runID, CancelledBy: "test"})
+	_, err = runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: runID, CancelledBy: "test"})
 	require.NoError(t, err)
 	listed, err := runClient.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: schedule})
 	require.NoError(t, err)

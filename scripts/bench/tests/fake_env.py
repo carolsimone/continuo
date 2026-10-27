@@ -51,7 +51,7 @@ if cmd == ["schedule", "trigger"]:
     for extra in sorted((d / "on-trigger").glob("*.log")):
         with open(d / "logs" / extra.name, "a") as log:
             log.write(extra.read_text())
-    print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
+    print(json.dumps({"run_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
     with open(d / "status-calls", "a") as calls:
         calls.write("status\n")
@@ -59,7 +59,7 @@ elif cmd == ["schedule", "status"]:
     if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
         unavailable()
     state = read("state")
-    print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "is_running": state == "running",
+    print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "has_active_run": state == "running",
                       "last_run_status": state}))
 elif cmd == ["schedule", "cancel"]:
     if os.environ.get("FAKE_CANCEL_FAIL"):
@@ -70,7 +70,7 @@ elif cmd == ["schedule", "cancel"]:
         (d / "state").write_text("cancelled")
     with open(d / "calls", "a") as calls:
         calls.write(f"cancel {sys.argv[4]}\n")
-    print(json.dumps({"schedule_id": read("current"), "cancelled_at": "2026-10-03T09:00:05Z"}))
+    print(json.dumps({"run_id": read("current"), "cancelled_at": "2026-10-03T09:00:05Z"}))
 else:
     sys.exit(f"unexpected continuo call: {sys.argv[1:]}")
 '''

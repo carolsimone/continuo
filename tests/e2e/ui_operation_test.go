@@ -19,7 +19,7 @@ import (
 // TestUIWholeDAGTestOperation drives a whole-DAG `test` run through the
 // ui HTTP API — POST /api/schedules/:name/trigger with a JSON
 // {"operation":"test"} body — the exact wire path the UI's operation selector
-// uses. It proves the operation survives the HTTP → gRPC TriggerSchedule hop
+// uses. It proves the operation survives the HTTP → gRPC StartRun hop
 // by asserting the resulting run's stored operation, covering the
 // ui HTTP layer on top of the gRPC-level whole-DAG test coverage.
 func TestUIWholeDAGTestOperation(t *testing.T) {
@@ -46,7 +46,7 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 	scheduleID := triggerScheduleOperationHTTP(t, clients.uiBase, seedSchedule, "test")
 
 	id, err := uuid.Parse(scheduleID)
-	require.NoError(t, err, "schedule_id must be a valid UUID")
+	require.NoError(t, err, "run_id must be a valid UUID")
 
 	t.Log("Waiting for the UI-triggered whole-DAG test run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, id)
@@ -116,15 +116,14 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 }
 
 // triggerScheduleOperationHTTP triggers a schedule with an explicit run
-// operation via the ui HTTP endpoint (POST
-// /api/schedules/:name/trigger {"operation": op}) and returns the
-// schedule_id. Mirrors triggerScheduleHTTP in trigger_test.go but sends a
-// JSON body instead of a nil one, exercising the UI operation-selector's
-// wire path end to end.
+// operation via the ui HTTP endpoint (POST /api/schedules/:name/trigger
+// {"request_id": id, "operation": op}) and returns the run_id. Mirrors
+// triggerScheduleHTTP in trigger_test.go but also sends the operation,
+// exercising the UI operation-selector's wire path end to end.
 func triggerScheduleOperationHTTP(t *testing.T, base, scheduleName, operation string) string {
 	t.Helper()
 
-	body, err := json.Marshal(map[string]string{"operation": operation})
+	body, err := json.Marshal(map[string]string{"request_id": uuid.NewString(), "operation": operation})
 	require.NoError(t, err)
 
 	resp, err := http.Post(
@@ -143,20 +142,20 @@ func triggerScheduleOperationHTTP(t *testing.T, base, scheduleName, operation st
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &result))
 
-	scheduleID, ok := result["schedule_id"].(string)
-	require.True(t, ok && scheduleID != "", "schedule_id missing from trigger response")
+	runID, ok := result["run_id"].(string)
+	require.True(t, ok && runID != "", "run_id missing from trigger response")
 
-	return scheduleID
+	return runID
 }
 
 // triggerNodeRunOperationHTTP triggers a single-node run with an explicit run
 // operation via the ui HTTP endpoint (POST
-// /api/nodes/:service/:schema/:table/run {"operation": op}) and returns
-// (run_id, schedule_name).
+// /api/nodes/:service/:schema/:table/run {"request_id": id, "operation": op})
+// and returns (run_id, schedule_name).
 func triggerNodeRunOperationHTTP(t *testing.T, base, service, schema, table, operation string) (string, string) {
 	t.Helper()
 
-	body, err := json.Marshal(map[string]string{"operation": operation})
+	body, err := json.Marshal(map[string]string{"request_id": uuid.NewString(), "operation": operation})
 	require.NoError(t, err)
 
 	resp, err := http.Post(

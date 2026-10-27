@@ -32,8 +32,8 @@ func TestAuthOIDC(t *testing.T) {
 	})
 
 	t.Run("unauthenticated API access is rejected", func(t *testing.T) {
-		if st := statusOf(t, http.DefaultClient, "GET", base+"/api/schedulers"); st != http.StatusUnauthorized {
-			t.Fatalf("GET /api/schedulers without session = %d, want 401", st)
+		if st := statusOf(t, http.DefaultClient, "GET", base+"/api/schedules"); st != http.StatusUnauthorized {
+			t.Fatalf("GET /api/schedules without session = %d, want 401", st)
 		}
 		if st := statusOf(t, http.DefaultClient, "GET", base+"/auth/me"); st != http.StatusUnauthorized {
 			t.Fatalf("GET /auth/me without session = %d, want 401", st)
@@ -42,8 +42,8 @@ func TestAuthOIDC(t *testing.T) {
 
 	t.Run("viewer can read but not mutate", func(t *testing.T) {
 		client, _ := loginThroughDex(t, base, "viewer@example.com", "password")
-		if st := statusOf(t, client, "GET", base+"/api/schedulers"); st != http.StatusOK {
-			t.Fatalf("viewer GET /api/schedulers = %d, want 200", st)
+		if st := statusOf(t, client, "GET", base+"/api/schedules"); st != http.StatusOK {
+			t.Fatalf("viewer GET /api/schedules = %d, want 200", st)
 		}
 		if st := statusOf(t, client, "POST", base+"/api/schedules/any/trigger"); st != http.StatusForbidden {
 			t.Fatalf("viewer POST trigger = %d, want 403", st)
@@ -166,7 +166,7 @@ func TestAuthOIDC(t *testing.T) {
 		if st := statusOf(t, client, "GET", base+"/auth/me"); st != http.StatusUnauthorized {
 			t.Fatalf("operator /auth/me after revocation = %d, want 401", st)
 		}
-		if st := statusOf(t, client, "GET", base+"/api/schedulers"); st != http.StatusUnauthorized {
+		if st := statusOf(t, client, "GET", base+"/api/schedules"); st != http.StatusUnauthorized {
 			t.Fatalf("operator API read after revocation = %d, want 401", st)
 		}
 	})

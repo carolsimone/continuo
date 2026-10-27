@@ -11,10 +11,8 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
-	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
@@ -33,8 +31,7 @@ import (
 )
 
 var (
-	stateClient statev1.StateServiceClient
-	runClient   runv1.RunServiceClient
+	runClient runv1.RunServiceClient
 	// runCommands serves the RunService commands of the server under test;
 	// a test calls it directly to act for a tenant the gRPC edge does not
 	// resolve.
@@ -124,28 +121,15 @@ func TestMain(m *testing.M) {
 	taskRepo := postgres.NewTaskCollection(db, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
-	// ---- Build handlers ----
+	// ---- Build the RunService ----
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
-	activateHandler := svchandlers.NewStartRunHandler(defaultPlanner, logger)
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
-	taskHandler := handlers.NewTaskHandler(func(tenantID string) handlers.TaskReads { return taskRepo.ForTenant(tenantID) }, logger)
-	attemptHandler := handlers.NewTaskAttemptHandler(attemptRepo, logger)
-	rerunUC := svchandlers.NewTriggerRerunHandler(defaultPlanner, logger)
-	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)
-	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, logger)
-	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, integrationUoWFactory, logger)
-	rebaseUC := svchandlers.NewTriggerRebaseHandler(defaultPlanner, logger)
-	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, integrationUoWFactory, logger)
 	runReadRepo := postgres.NewRunReadRepository(db)
-	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo), logger)
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, 24*time.Hour, logger)
-	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 	runCommands = svchandlers.NewRunCommands(integrationUoWFactory, noRunMetrics{}, defaultPlanner, logger)
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
@@ -157,7 +141,7 @@ func TestMain(m *testing.M) {
 	}, runCommands, logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, attemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, runService, logger, false)
+	stateServer, err = grpcserver.NewServer(0, runService, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)
@@ -176,7 +160,6 @@ func TestMain(m *testing.M) {
 		logger.Error("Failed to create gRPC client", "error", err)
 		os.Exit(1)
 	}
-	stateClient = statev1.NewStateServiceClient(stateConn)
 	runClient = runv1.NewRunServiceClient(stateConn)
 
 	// ---- Run tests ----
@@ -191,59 +174,51 @@ func TestMain(m *testing.M) {
 // Integration tests
 // ============================================================================
 
-func TestStateService(t *testing.T) {
-	t.Run("CancelSchedule/success", func(t *testing.T) {
+func TestRunService_StartAndCancelByName(t *testing.T) {
+	t.Run("CancelActiveRun/success", func(t *testing.T) {
 		ctx := context.Background()
 
-		// Activate a run through the aggregate path: seed the catalog, then
-		// manually trigger the schedule. TriggerSchedule mints a PENDING Run via
-		// the Run aggregate (kind='trigger'), which CancelSchedule then cancels.
+		// Seed the catalog and the live release, then start the schedule:
+		// StartRun creates a run of kind trigger, which CancelActiveRun then
+		// cancels.
 		seedActiveSchedule(t, "daily-cancel-success")
 		promoteSchedules(t, stateDB, "daily-cancel-success")
-		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
-			ScheduleName: "daily-cancel-success",
-		})
-		require.NoError(t, err)
-		schedID := trigResp.ScheduleId
+		runID := startRun(t, "daily-cancel-success")
 
-		// A manual trigger must persist kind='trigger', not 'cron'.
-		assert.Equal(t, "trigger", schedulerKind(t, schedID))
+		// A manual start persists kind='trigger', not 'cron'.
+		assert.Equal(t, "trigger", schedulerKind(t, runID))
 
-		// Cancel it by name
-		resp, err := stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
+		resp, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
+			RequestId:          uuid.NewString(),
 			ScheduleName:       "daily-cancel-success",
 			CancelledBy:        "user",
 			CancellationReason: "manual stop",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, schedID, resp.ScheduleId)
+		assert.Equal(t, runID, resp.GetRunId())
 
-		// The trigger dispatched the schedule's task, so the run is cancelling
+		// The start dispatched the schedule's task, so the run is cancelling
 		// until that attempt reports stopped.
 		var stored string
 		require.NoError(t, stateDB.GetContext(ctx, &stored,
-			`SELECT status FROM runs WHERE run_id = $1`, schedID))
+			`SELECT status FROM runs WHERE run_id = $1`, runID))
 		assert.Equal(t, "cancelling", stored)
 
-		// Verify via GetScheduler
-		getResp, err := stateClient.GetScheduler(ctx, &statev1.GetSchedulerRequest{
-			ScheduleId: resp.ScheduleId,
-		})
+		got, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: resp.GetRunId()})
 		require.NoError(t, err)
-		assert.Equal(t, "user", getResp.Scheduler.CancelledBy)
-		assert.Equal(t, "manual stop", getResp.Scheduler.CancellationReason)
-		assert.NotNil(t, getResp.Scheduler.CancelledAt)
+		assert.Equal(t, "user", got.GetRun().GetCancelledBy())
+		assert.Equal(t, "manual stop", got.GetRun().GetCancellationReason())
+		assert.NotNil(t, got.GetRun().GetCancelledAt())
 	})
 
-	t.Run("CancelSchedule/a_second_cancel_returns_the_cancelling_run", func(t *testing.T) {
+	t.Run("CancelActiveRun/a_second_cancel_returns_the_cancelling_run", func(t *testing.T) {
 		ctx := context.Background()
 
 		seedActiveSchedule(t, "daily-cancel-twice")
 		promoteSchedules(t, stateDB, "daily-cancel-twice")
-		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: "daily-cancel-twice"})
-		require.NoError(t, err)
-		_, err = stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
-			ScheduleName: "daily-cancel-twice", CancelledBy: "alice", CancellationReason: "first",
+		runID := startRun(t, "daily-cancel-twice")
+		_, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
+			RequestId: uuid.NewString(), ScheduleName: "daily-cancel-twice", CancelledBy: "alice", CancellationReason: "first",
 		})
 		require.NoError(t, err)
 		type cancelRow struct {
@@ -254,60 +229,45 @@ func TestStateService(t *testing.T) {
 		}
 		var before cancelRow
 		require.NoError(t, stateDB.GetContext(ctx, &before,
-			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, trigResp.ScheduleId))
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, runID))
 		require.Equal(t, "cancelling", before.Status)
 		var outboxBefore int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxBefore,
-			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, trigResp.ScheduleId))
+			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID))
 
-		second, err := stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
-			ScheduleName: "daily-cancel-twice", CancelledBy: "bob", CancellationReason: "second",
+		second, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
+			RequestId: uuid.NewString(), ScheduleName: "daily-cancel-twice", CancelledBy: "bob", CancellationReason: "second",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, trigResp.ScheduleId, second.ScheduleId)
-		byID, err := stateClient.CancelScheduler(ctx, &statev1.CancelSchedulerRequest{ScheduleId: trigResp.ScheduleId, CancelledBy: "bob"})
+		assert.Equal(t, runID, second.GetRunId())
+		byID, err := runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: runID, CancelledBy: "bob"})
 		require.NoError(t, err)
-		assert.Equal(t, "alice", byID.Scheduler.CancelledBy, "the answer is the run as the first cancel left it")
+		assert.Equal(t, "alice", byID.GetRun().GetCancelledBy(), "the answer is the run as the first cancel left it")
 
 		var after cancelRow
 		require.NoError(t, stateDB.GetContext(ctx, &after,
-			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, trigResp.ScheduleId))
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, runID))
 		assert.Equal(t, before, after, "a second cancel changes nothing")
 		var outboxAfter int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxAfter,
-			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, trigResp.ScheduleId))
+			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID))
 		assert.Equal(t, outboxBefore, outboxAfter, "a second cancel writes no outbox row")
 	})
 
-	t.Run("CancelSchedule/no_active_run", func(t *testing.T) {
+	t.Run("CancelActiveRun/no_active_run", func(t *testing.T) {
 		ctx := context.Background()
 
-		_, err := stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
-			ScheduleName: "never-ran-" + uuid.NewString(),
+		_, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
+			RequestId: uuid.NewString(), ScheduleName: "never-ran-" + uuid.NewString(),
 		})
 		require.Error(t, err)
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.FailedPrecondition, st.Code())
 	})
-
-	t.Run("TriggerSchedule/persists_kind_trigger", func(t *testing.T) {
-		ctx := context.Background()
-
-		seedActiveSchedule(t, "daily-trigger-kind")
-		promoteSchedules(t, stateDB, "daily-trigger-kind")
-		resp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
-			ScheduleName: "daily-trigger-kind",
-		})
-		require.NoError(t, err)
-		require.NotEmpty(t, resp.ScheduleId)
-
-		// A manual trigger is a distinct run kind from a cron activation.
-		assert.Equal(t, "trigger", schedulerKind(t, resp.ScheduleId))
-	})
 }
 
-// seedActiveSchedule inserts an active schedule_catalog row so that
-// ActivateSchedule / TriggerSchedule pass their catalog-existence pre-condition.
+// seedActiveSchedule inserts an active schedule_catalog row so that a start of
+// the schedule passes its catalog-existence pre-condition.
 func seedActiveSchedule(t *testing.T, scheduleName string) {
 	t.Helper()
 	_, err := stateDB.ExecContext(context.Background(), `

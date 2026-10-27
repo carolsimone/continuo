@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -44,7 +45,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	// Seed topology directly into Neo4j + schedule_catalog.
 	seedTopology(t, ctx, clients)
 
-	// Verify "seed" schedule is in the catalog (required by TriggerSchedule)
+	// Verify "seed" schedule is in the catalog (required by StartRun)
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
 		var count int
 		err := clients.stateDB.QueryRowContext(ctx,
@@ -60,7 +61,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	// === Run 1 ===
 	t.Log("=== Run 1: Triggering seed schedule via ui HTTP ===")
 	scheduleID1 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
-	t.Logf("Run 1 created: schedule_id=%s", scheduleID1)
+	t.Logf("Run 1 created: run_id=%s", scheduleID1)
 
 	id1, err := uuid.Parse(scheduleID1)
 	require.NoError(t, err)
@@ -72,9 +73,9 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	// === Run 2: Re-trigger ===
 	t.Log("=== Run 2: Re-triggering seed schedule ===")
 	scheduleID2 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
-	t.Logf("Run 2 created: schedule_id=%s", scheduleID2)
+	t.Logf("Run 2 created: run_id=%s", scheduleID2)
 
-	require.NotEqual(t, scheduleID1, scheduleID2, "Run 2 must have a different schedule_id")
+	require.NotEqual(t, scheduleID1, scheduleID2, "Run 2 must have a different run_id")
 
 	id2, err := uuid.Parse(scheduleID2)
 	require.NoError(t, err)
@@ -83,17 +84,21 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, id2)
 	t.Log("✅ Run 2 completed successfully")
 
-	t.Log("🎉 TriggerSchedule run-and-rerun test passed")
+	t.Log("🎉 StartRun run-and-rerun test passed")
 }
 
 // triggerScheduleHTTP triggers a schedule via the ui HTTP endpoint
-// (POST /api/schedules/:name/trigger) and returns the schedule_id.
+// (POST /api/schedules/:name/trigger {"request_id": id}) and returns the
+// run_id.
 func triggerScheduleHTTP(t *testing.T, base, scheduleName string) string {
 	t.Helper()
 
+	body, err := json.Marshal(map[string]string{"request_id": uuid.NewString()})
+	require.NoError(t, err)
+
 	resp, err := http.Post(
 		fmt.Sprintf("%s/api/schedules/%s/trigger", base, scheduleName),
-		"application/json", nil,
+		"application/json", bytes.NewReader(body),
 	)
 	require.NoError(t, err, "POST /api/schedules/%s/trigger: request failed", scheduleName)
 	defer resp.Body.Close()
@@ -107,15 +112,15 @@ func triggerScheduleHTTP(t *testing.T, base, scheduleName string) string {
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &result))
 
-	scheduleID, ok := result["schedule_id"].(string)
-	require.True(t, ok && scheduleID != "", "schedule_id missing from trigger response")
+	runID, ok := result["run_id"].(string)
+	require.True(t, ok && runID != "", "run_id missing from trigger response")
 
-	return scheduleID
+	return runID
 }
 
 // waitForAllTasksSucceeded polls tasks until all given tables reach
-// "succeeded" status for the specified schedule_id. Unlike verifyJobsCompleted
-// (which filters by schedule_name), this filters by schedule_id to support
+// "succeeded" status for the specified run_id. Unlike verifyJobsCompleted
+// (which filters by schedule_name), this filters by run_id to support
 // multiple runs of the same schedule in a single test.
 func waitForAllTasksSucceeded(
 	t *testing.T,

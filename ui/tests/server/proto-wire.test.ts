@@ -65,7 +65,6 @@ describe('proto wire: run.proto', () => {
     ]) {
       expect(svc[rpc], `missing rpc method: ${rpc}`).toBeTruthy();
     }
-    expect((packageDefinition as Record<string, any>)['state.v1.StateService']).toBeUndefined();
   });
 
   it('TriggerRerun request round-trips request_id and source_run_id', () => {
@@ -107,6 +106,11 @@ describe('proto wire: run.proto', () => {
     const resp = decodeResponse('GetRunGraph', [0x18, 5, 0x20, 7]);
     expect(resp.run_promotion_seq).toBe('5');
     expect(resp.latest_promotion_seq).toBe('7');
+  });
+
+  it('GetScheduleGraph decodes field 3 as promotion_seq', () => {
+    const resp = decodeResponse('GetScheduleGraph', [0x18, 42]);
+    expect(resp.promotion_seq).toBe('42');
   });
 
   it('ListActiveRunDrifts decodes field 1 and ActiveRunDrift field 3 as promotion seqs', () => {

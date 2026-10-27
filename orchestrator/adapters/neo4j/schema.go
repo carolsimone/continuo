@@ -22,8 +22,7 @@ import (
 //     cannot mint two current_release singletons.
 //   - table_fqn: backs the composite (service_name, schema_name, table_name)
 //     lookup of GetNode.
-//   - table_schedule: backs the `MATCH (:Table {schedule_name: …})` scan of
-//     the schedule-graph query.
+//   - table_schedule: an index on :Table.schedule_name; no read path uses it.
 //   - run_schedule: an index on :Run.schedule_name; no read path uses it.
 //   - node_version_unique: makes (unique_id, content_hash) a code version's
 //     identity, so a redelivered release MERGEs onto the version it already

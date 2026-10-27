@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -159,7 +159,7 @@ func TestMaintenanceMode(t *testing.T) {
 	t.Cleanup(func() { setMaintenance(t, context.Background(), false) })
 
 	// 1. A run in flight before maintenance begins.
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestMaintenanceMode(t *testing.T) {
 
 	// 3. A new run through ui is refused by state, and ui maps the refusal.
 	status, body := afterRestart(t, ctx, func() (int, map[string]any) {
-		return postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+		return postJSON(t, nodeRunURL, map[string]string{"request_id": uuid.NewString(), "operation": "run"})
 	})
 	require.Equal(t, http.StatusServiceUnavailable, status, "%v", body)
 	require.Equal(t, "maintenance", body["code"])
@@ -193,7 +193,7 @@ func TestMaintenanceMode(t *testing.T) {
 	// 6. Maintenance off: new work is accepted again.
 	setMaintenance(t, ctx, false)
 	status, body = afterRestart(t, ctx, func() (int, map[string]any) {
-		return postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+		return postJSON(t, nodeRunURL, map[string]string{"request_id": uuid.NewString(), "operation": "run"})
 	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	runIDStr, ok := body["run_id"].(string)

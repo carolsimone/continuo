@@ -28,9 +28,8 @@ const (
 	OutcomeSkippedActive ActivationOutcome = iota
 )
 
-// StartRunHandler is the use case behind the cron fire, gRPC
-// ActivateSchedule (both kind cron), and gRPC TriggerSchedule and StartRun
-// (kind trigger).
+// StartRunHandler is the use case behind the cron fire (kind cron) and gRPC
+// StartRun (kind trigger).
 // It creates the run, chooses its tasks from the schedule's graph on the live
 // release and dispatches the ready ones, in one transaction.
 //

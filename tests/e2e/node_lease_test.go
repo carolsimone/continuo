@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +33,7 @@ const (
 // TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter proves that two
 // runs never write one node at once:
 //
-//	TriggerSchedule(e2e-schedule) → the cron run's table_a takes the node's
+//	StartRun(e2e-schedule) → the cron run's table_a takes the node's
 //	write lease when it is dispatched, and runs
 //	→ TriggerSingleNodeRun(table_a) while it holds the lease → the single-node
 //	  run's task is pending: GetTaskByScheduleAndNode and GetRunGraph show
@@ -76,10 +76,10 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	repairedBefore := leasesRepaired(t)
 
 	// ── The cron run's table_a takes the lease and runs ──────────────────────
-	cronResp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: testScheduleName})
-	require.NoError(t, err, "TriggerSchedule(%s)", testScheduleName)
-	cronID, err := uuid.Parse(cronResp.ScheduleId)
-	require.NoError(t, err, "TriggerSchedule must return the run's id")
+	cronResp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: testScheduleName})
+	require.NoError(t, err, "StartRun(%s)", testScheduleName)
+	cronID, err := uuid.Parse(cronResp.RunId)
+	require.NoError(t, err, "StartRun must return the run's id")
 	t.Logf("cron run %s of %s triggered", cronID, testScheduleName)
 	cronTaskID := taskOfRun(t, ctx, clients, cronID, leaseTable)
 
@@ -87,7 +87,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	t.Logf("the cron run's %s holds the node's lease (task status %s)", leaseTable, cronStatus)
 
 	// ── A single-node run of the same node waits for it ──────────────────────
-	snResp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	snResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    leaseService,
 		SchemaName:     testSchemaName,
 		TableName:      leaseTable,
@@ -105,14 +105,14 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	// so both reads are made at once, while the cron run's table_a still runs.
 	waitingTask, err := readLeaseTask(ctx, clients, snID)
 	require.NoError(t, err)
-	graph, err := clients.stateClient.GetRunGraph(ctx, &statev1.GetRunGraphRequest{RunId: snID.String()})
+	graph, err := clients.runClient.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: snID.String()})
 	require.NoError(t, err, "GetRunGraph(%s)", snID)
 	cronAfter, err := taskStatus(ctx, clients, cronTaskID)
 	require.NoError(t, err, "read the cron run's %s", leaseTable)
 	window := fmt.Sprintf("the cron run's %s was %s right after these reads: while it still runs, a task that does not wait is a lease defect; "+
 		"once it has ended, the test missed the window in which the single-node run had to wait", leaseTable, cronAfter)
 
-	require.Equal(t, statev1.TaskStatus_TASK_STATUS_PENDING, waitingTask.GetStatus(),
+	require.Equal(t, "pending", waitingTask.GetStatus(),
 		"the single-node run's task is not dispatched while the cron run writes the node (%s)", window)
 	require.Equal(t, nodeLeaseWait, waitingTask.GetWaitReason(),
 		"the single-node run's task waits for the node's lease (%s)", window)
@@ -135,14 +135,14 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 
 	// The report that ended the cron task released the lease, and the waker,
 	// woken by that release or by its pass every 60 s, grants the node.
-	var dispatched *statev1.Task
+	var dispatched *runv1.Task
 	pollUntilDescribed(t, ctx, 2*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		task, err := readLeaseTask(ctx, clients, snID)
 		if err != nil {
 			return false, err
 		}
 		dispatched = task
-		return task.GetStatus() != statev1.TaskStatus_TASK_STATUS_PENDING, nil
+		return task.GetStatus() != "pending", nil
 	}, func() string {
 		return fmt.Sprintf("the single-node run's %s was not dispatched once the cron run's had succeeded; last read: status %s, wait_reason %q, waiting on run %q",
 			leaseTable, dispatched.GetStatus(), dispatched.GetWaitReason(), dispatched.GetWaitingOnRunId())
@@ -280,26 +280,22 @@ func waitForLeaseHeldBy(t *testing.T, ctx context.Context, clients *testClients,
 	return status
 }
 
-// readLeaseTask reads runID's task at leaseTable through state's
-// GetTaskByScheduleAndNode.
-func readLeaseTask(ctx context.Context, clients *testClients, runID uuid.UUID) (*statev1.Task, error) {
-	resp, err := clients.stateClient.GetTaskByScheduleAndNode(ctx, &statev1.GetTaskByScheduleAndNodeRequest{
-		ScheduleId:  runID.String(),
-		ServiceName: leaseService,
-		SchemaName:  testSchemaName,
-		TableName:   leaseTable,
-	})
+// readLeaseTask reads runID's task at leaseTable through state's ListTasks.
+func readLeaseTask(ctx context.Context, clients *testClients, runID uuid.UUID) (*runv1.Task, error) {
+	resp, err := clients.runClient.ListTasks(ctx, &runv1.ListTasksRequest{RunId: runID.String()})
 	if err != nil {
-		return nil, fmt.Errorf("GetTaskByScheduleAndNode(%s, %s): %w", runID, leaseTable, err)
+		return nil, fmt.Errorf("ListTasks(%s): %w", runID, err)
 	}
-	if resp.GetTask() == nil {
-		return nil, fmt.Errorf("run %s holds no task at %s", runID, leaseTable)
+	for _, task := range resp.GetTasks() {
+		if task.GetServiceName() == leaseService && task.GetSchemaName() == testSchemaName && task.GetTableName() == leaseTable {
+			return task, nil
+		}
 	}
-	return resp.GetTask(), nil
+	return nil, fmt.Errorf("run %s holds no task at %s", runID, leaseTable)
 }
 
 // runGraphNodeOf returns the node of graph whose table is table.
-func runGraphNodeOf(t *testing.T, graph *statev1.GetRunGraphResponse, table string) *statev1.RunGraphNode {
+func runGraphNodeOf(t *testing.T, graph *runv1.GetRunGraphResponse, table string) *runv1.RunGraphNode {
 	t.Helper()
 	for _, node := range graph.GetNodes() {
 		if node.GetTableName() == table {

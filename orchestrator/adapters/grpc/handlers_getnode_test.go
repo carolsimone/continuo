@@ -15,10 +15,10 @@ import (
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 type stubNodeReader struct {
-	ScheduleListReader // embed so unused methods are nil; only GetNode is called
-	meta               *domain.NodeMeta
-	err                error
-	gotScope           *domain.NodeScope
+	NodeReader // embed so unused methods are nil; only GetNode is called
+	meta       *domain.NodeMeta
+	err        error
+	gotScope   *domain.NodeScope
 }
 
 func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string, scope domain.NodeScope) (*domain.NodeMeta, error) {

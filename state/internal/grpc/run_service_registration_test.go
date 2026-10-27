@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,16 +14,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 )
 
-// The server serves run.v1.RunService on the same listener as StateService: a
-// call to the RunService the server was given reaches it, and StateService is
-// still served.
-func TestServer_ServesRunServiceBesideStateService(t *testing.T) {
+// The server serves run.v1.RunService, and no other service beside gRPC
+// reflection: a call to the RunService the server was given reaches it.
+func TestServer_ServesRunServiceOnly(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := NewServer(0, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		runv1.UnimplementedRunServiceServer{}, logger, true)
+	srv, err := NewServer(0, runv1.UnimplementedRunServiceServer{}, logger, true)
 	require.NoError(t, err)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
@@ -35,8 +33,12 @@ func TestServer_ServesRunServiceBesideStateService(t *testing.T) {
 	_, err = runv1.NewRunServiceClient(conn).GetRun(context.Background(), &runv1.GetRunRequest{})
 	require.Equal(t, codes.Unimplemented, status.Code(err))
 	require.Contains(t, status.Convert(err).Message(), "GetRun")
-	// Maintenance mode refuses a run-starting StateService call before its
-	// handler, which proves StateService is served too.
-	_, err = statev1.NewStateServiceClient(conn).TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "daily"})
-	require.Equal(t, codes.Unavailable, status.Code(err))
+
+	var served []string
+	for name := range srv.grpcServer.GetServiceInfo() {
+		if !strings.HasPrefix(name, "grpc.reflection.") {
+			served = append(served, name)
+		}
+	}
+	require.Equal(t, []string{runv1.RunService_ServiceDesc.ServiceName}, served)
 }

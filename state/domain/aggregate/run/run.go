@@ -130,13 +130,14 @@ func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
-// NewPendingRun creates a fresh PENDING Run id of a schedule, fired by cron or
+// NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
 // triggered. The caller chooses id, so a command can record the run it
-// creates before the run exists; a nil id is ErrRunIDRequired. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
-// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start → SaveRun.
+// creates before the run exists; a nil id is ErrRunIDRequired. Caller flow:
+// SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.EnsureNoActiveRun →
+// NewPendingRun → SaveRun → Start → SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
-// executes. Callers other than a manual TriggerSchedule (cron, etc.) pass
+// executes. Callers other than a manual StartRun (cron, etc.) pass
 // model.OperationRun.
 //
 // stamp is the release the run runs on: the live release when the run is created.
@@ -185,8 +186,7 @@ func NewPendingRun(
 }
 
 // NewDerivedRun creates the PENDING Run id for rerun/rebase; a nil id is
-// ErrRunIDRequired. The derived run
-// inherits the source run's operation: rerun/rebase re-issue the source
+// ErrRunIDRequired. The derived run inherits the source run's operation: rerun/rebase re-issue the source
 // run's dbt verb (run/build) against the derived task set; the planner refuses
 // a test source. Stamps last_progress_at so dashboards show the new run
 // immediately.
@@ -235,8 +235,8 @@ func NewDerivedRun(
 }
 
 // NewSingleNodeRun creates the RUNNING single-task Run id; a nil id is
-// ErrRunIDRequired. operation is the dbt
-// verb (run/test/build/full_refresh) the run applies to its node.
+// ErrRunIDRequired. operation is the dbt verb (run/test/build/full_refresh)
+// the run applies to its node.
 //
 // stamp is the release the run runs on; the zero stamp names none.
 func NewSingleNodeRun(

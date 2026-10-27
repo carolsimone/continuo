@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,11 +47,11 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
-	// Create and activate scheduler
-	t.Log("Creating and activating scheduler...")
-	schedulerIDStr := createAndActivateScheduler(t, ctx, clients)
+	// Start a run of the schedule
+	t.Log("Starting a run of the schedule...")
+	schedulerIDStr := startScheduleRun(t, ctx, clients)
 	schedulerID, err := uuid.Parse(schedulerIDStr)
-	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
+	require.NoError(t, err, "Invalid run_id returned from StartRun")
 
 	// Verify state dispatched the root nodes to task.dispatch:v1
 	t.Log("Verifying state dispatched the root nodes...")
@@ -82,7 +82,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Verifying audit fields (kind, image_tag)...")
 
 	trackerKind := queryRunKind(t, clients.stateDB, schedulerID)
-	assert.Equal(t, "cron", trackerKind, "runs.kind must be cron after fresh activation")
+	assert.Equal(t, "trigger", trackerKind, "runs.kind must be trigger after StartRun")
 
 	imageTag := queryFirstTaskImageTag(t, clients.stateDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be populated")
@@ -92,18 +92,19 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("🎉 E2E test completed successfully!")
 }
 
-// createAndActivateScheduler triggers a schedule run via the state service gRPC.
+// startScheduleRun starts a run of the schedule through RunService.StartRun.
 // State creates the run, chooses its tasks and dispatches the ready ones itself.
-func createAndActivateScheduler(
+func startScheduleRun(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
 ) string {
-	resp, err := clients.stateClient.ActivateSchedule(ctx, &statev1.ActivateScheduleRequest{
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{
+		RequestId:    uuid.NewString(),
 		ScheduleName: testScheduleName,
 	})
-	require.NoError(t, err, "Failed to activate schedule via state service")
+	require.NoError(t, err, "Failed to start a run of the schedule via state service")
 
-	t.Logf("Activated schedule %q: schedule_id=%s", testScheduleName, resp.ScheduleId)
-	return resp.ScheduleId
+	t.Logf("Started a run of schedule %q: run_id=%s", testScheduleName, resp.GetRunId())
+	return resp.GetRunId()
 }

@@ -52,7 +52,7 @@ for c in "${consumers[@]}"; do
   offsets+=("$(docker exec "${c}" sh -c "wc -l < /tmp/${c}.log" | tr -d ' ')")
 done
 trig="$(bench_cli_run schedule trigger "${schedule}")"
-run_id="$(printf '%s' "${trig}" | python3 "${here}/cli_json.py" field schedule_id)"
+run_id="$(printf '%s' "${trig}" | python3 "${here}/cli_json.py" field run_id)"
 trigger_ts="$(printf '%s' "${trig}" | python3 "${here}/cli_json.py" field triggered_at)"
 sleep "${start_after}"
 disconnected=1

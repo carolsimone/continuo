@@ -325,8 +325,8 @@ func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err), "%v", err)
 }
 
-// PreviewRebase on RunService answers as StateService's does and stores no
-// command record.
+// PreviewRebase on RunService reports the rebase of a failed run and refuses
+// an unknown source as NotFound.
 func TestPreviewRebase_IsServedOnRunService(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-preview"

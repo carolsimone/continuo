@@ -12,7 +12,7 @@ import (
 // NodeRun is one row in a node's execution history — the audit-loud projection
 // of a (runs × tasks × task_attempts) join filtered by
 // node identity (service_name, schema_name, table_name). Returned by the
-// ListNodeRuns gRPC method.
+// ListNodeTasks gRPC method.
 //
 // One NodeRun corresponds to one task row, not one scheduler run. The
 // timings, error, log, results and failure fields come from the task's latest
