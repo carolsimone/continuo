@@ -384,7 +384,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 
 	require.NoError(t, h.reconciler.RunOnce(ctx))
 
-	followUp := seeds.RunID(relC, 2)
+	followUp := seeds.RunID(pkgevents.DefaultTenantID, relC, 2)
 	assert.Equal(t, []uuid.UUID{runC, followUp}, h.promoteSeedRuns(t, relC), "the live release's second run loads the content orders is missing")
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, followUp))
 	orders = h.materialization(t, "raw.orders")

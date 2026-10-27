@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
@@ -104,7 +105,7 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 func runIn(status run.RunStatus) *run.Run {
 	started := now.Add(-time.Hour)
 	total := int32(1)
-	return run.HydrateRun(uuid.New(), "single-node-run-91c2ab07", status, run.InitStatusCompleted, run.KindSingleNodeRun, nil, "system",
+	return run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "single-node-run-91c2ab07", status, run.InitStatusCompleted, run.KindSingleNodeRun, nil, "system",
 		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0, nil)
 }
 

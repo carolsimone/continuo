@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -204,7 +205,7 @@ func TestPlanner_ScheduleRefusals(t *testing.T) {
 
 func sourceRun(t *testing.T, stamp run.ReleaseStamp) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
 	require.NoError(t, err)
 	return r
 }

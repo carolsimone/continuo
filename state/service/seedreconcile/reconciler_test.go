@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/seeds"
@@ -336,7 +337,7 @@ func TestAfterPromotion_MovedBuildsTheSeedsWhoseContentDiffers(t *testing.T) {
 
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), u, trigger))
 
-	wantID := seeds.RunID("rel-2", 1)
+	wantID := seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 1)
 	require.Len(t, w.runs.saved, 1)
 	created := w.runs.saved[0]
 	assert.Equal(t, wantID, created.RunID())
@@ -422,7 +423,7 @@ func TestAfterPromotion_FirstPromotionAdoptsTheUnchangedSeeds(t *testing.T) {
 
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), trigger))
 
-	assert.Equal(t, []uuid.UUID{seeds.RunID("rel-2", 1)}, w.runs.existsAsk)
+	assert.Equal(t, []uuid.UUID{seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 1)}, w.runs.existsAsk)
 	assert.Equal(t, []seeds.Built{{
 		Key: "raw.users", ContentHash: "h-users-1", ImageTag: "svc:2", ReleaseID: "rel-2", At: testNow, Source: seeds.SourceAdopted,
 	}}, w.mats.built)
@@ -433,7 +434,7 @@ func TestAfterPromotion_FirstPromotionAdoptsTheUnchangedSeeds(t *testing.T) {
 // adopted and nothing is built.
 func TestAfterPromotion_FirstPromotionAdoptsEverySeedWhenItsFirstRunExists(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
-	w.runs.taken[seeds.RunID("rel-2", 1)] = true
+	w.runs.taken[seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 1)] = true
 	trigger := moved("rel-2", 7)
 	trigger.FirstPromotion = true
 	trigger.ChangedNodeIDs = []string{"seed.svc.orders"}
@@ -473,20 +474,20 @@ func TestPass_NumbersTheRunAfterTheReleasesRuns(t *testing.T) {
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
 
 	require.Len(t, w.runs.saved, 1)
-	assert.Equal(t, seeds.RunID("rel-2", 3), w.runs.saved[0].RunID())
+	assert.Equal(t, seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 3), w.runs.saved[0].RunID())
 }
 
 // A run that holds the next id without naming the release moves the pass on to
 // the following number.
 func TestPass_SkipsARunIDAlreadyTaken(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"))
-	w.runs.taken[seeds.RunID("rel-2", 1)] = true
+	w.runs.taken[seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 1)] = true
 
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
 
 	require.Len(t, w.runs.saved, 1)
-	assert.Equal(t, seeds.RunID("rel-2", 2), w.runs.saved[0].RunID())
-	assert.Equal(t, seeds.RunID("rel-2", 2), w.mats.attempts[0].runID)
+	assert.Equal(t, seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 2), w.runs.saved[0].RunID())
+	assert.Equal(t, seeds.RunID(pkgevents.DefaultTenantID, "rel-2", 2), w.mats.attempts[0].runID)
 }
 
 // A seed whose build is still in flight waits, and a seed whose build of the

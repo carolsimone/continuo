@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -156,7 +157,8 @@ func hydrateCatalog(rows []ScheduleCatalogRow, promotionSeq int64) *catalog.Sche
 			ServiceMetadata: meta,
 		}
 	}
-	return catalog.Hydrate(entries, promotionSeq)
+	// The catalog table has no tenant column: it is the default tenant's.
+	return catalog.Hydrate(pkgevents.DefaultTenantID, entries, promotionSeq)
 }
 
 // catalogPromotionSeq reads the promotion seq the schedule catalog last

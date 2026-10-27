@@ -52,7 +52,7 @@ func (h *builtHarness) stampOf(t *testing.T, id uuid.UUID) run.ReleaseStamp {
 // or rebase source.
 func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStamp) uuid.UUID {
 	t.Helper()
-	rn, err := run.NewPendingRun(name, run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, time.Now())
+	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, name, run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, time.Now())
 	require.NoError(t, err)
 	id := h.saveRun(t, rn)
 	_, err = h.db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, id)

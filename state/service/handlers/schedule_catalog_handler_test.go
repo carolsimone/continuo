@@ -34,7 +34,7 @@ func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
-	return catalog.Hydrate(f.initial, f.promotionSeq), nil
+	return catalog.Hydrate(pkgevents.DefaultTenantID, f.initial, f.promotionSeq), nil
 }
 
 func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.ScheduleCatalog) error {
@@ -46,7 +46,7 @@ func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.Schedule
 }
 
 func (f *fakeCatalogPortRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
-	return catalog.Hydrate(f.initial, f.promotionSeq), nil
+	return catalog.Hydrate(pkgevents.DefaultTenantID, f.initial, f.promotionSeq), nil
 }
 
 func (f *fakeCatalogPortRepo) ExistsActive(_ context.Context, _ string) (bool, error) {

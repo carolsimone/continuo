@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 )
@@ -66,7 +67,7 @@ func TestRunStatus_CancellingIsActiveAndNotTerminal(t *testing.T) {
 		}
 	}
 	for _, s := range run.RunStatuses() {
-		r := run.HydrateRun(uuid.New(), "daily", s, run.InitStatusCompleted, run.KindCron, nil, "", "",
+		r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", s, run.InitStatusCompleted, run.KindCron, nil, "", "",
 			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
 		wantActive := s == run.RunStatusPending || s == run.RunStatusRunning ||
 			s == run.RunStatusCancelling
@@ -98,7 +99,7 @@ func TestTaskStatus_StoppingIsNotTerminal(t *testing.T) {
 func TestActiveRunStatuses_AreTheStatusesOfTheActiveRuns(t *testing.T) {
 	var want []run.RunStatus
 	for _, s := range run.RunStatuses() {
-		r := run.HydrateRun(uuid.New(), "daily", s, run.InitStatusCompleted, run.KindCron, nil, "", "",
+		r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", s, run.InitStatusCompleted, run.KindCron, nil, "", "",
 			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
 		if r.IsActive() {
 			want = append(want, s)

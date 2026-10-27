@@ -5,11 +5,12 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
 
 func TestNewPendingRun_StoresOperation(t *testing.T) {
-	r, err := NewPendingRun("sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
+	r, err := NewPendingRun(pkgevents.DefaultTenantID, "sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
@@ -19,7 +20,7 @@ func TestNewPendingRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
-	r, err := NewSingleNodeRun("sched", model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
+	r, err := NewSingleNodeRun(pkgevents.DefaultTenantID, "sched", model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewSingleNodeRun: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewDerivedRun_InheritsOperation(t *testing.T) {
-	r, err := NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
+	r, err := NewDerivedRun(pkgevents.DefaultTenantID, "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 		t.Fatalf("Operation() = %q, want build", r.Operation())
 	}
 
-	r, err = NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
+	r, err = NewDerivedRun(pkgevents.DefaultTenantID, "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 }
 
 func TestHydrateRun_RoundTripsOperation(t *testing.T) {
-	r := HydrateRun(uuid.New(), "sched", RunStatusRunning, InitStatusCompleted,
+	r := HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "sched", RunStatusRunning, InitStatusCompleted,
 		KindTrigger, nil, "user-1", model.OperationTest, time.Now(),
 		nil, nil, nil, nil, nil, nil, nil, 0, nil)
 	if r.Operation() != model.OperationTest {

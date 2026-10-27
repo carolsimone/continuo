@@ -281,7 +281,7 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 
 // newRunningTaskStatusRunOfKind is newRunningTaskStatusRun for a run of kind.
 func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, total, terminal int32) *run.Run {
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		run.RunStatusRunning,
 		run.InitStatusCompleted,
@@ -306,7 +306,7 @@ func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.RunStatus) *
 // newTerminalTaskStatusRunOfKind is newTerminalTaskStatusRun for a run of kind.
 func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, status run.RunStatus) *run.Run {
 	now := time.Now()
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		status,
 		run.InitStatusCompleted,
@@ -370,7 +370,7 @@ func (c fixedClock) Now() time.Time { return c.t }
 func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.FakeUnitOfWork, events.AttemptReported) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	total, by := int32(1), "alice"
-	cancelling := run.HydrateRun(scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
+	cancelling := run.HydrateRun(pkgevents.DefaultTenantID, scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
@@ -633,7 +633,7 @@ func (c taskStatusClock) Now() time.Time { return c.at }
 // plannedRun builds a RUNNING run of total tasks, none terminal, that state
 // planned on releaseID with operation op.
 func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32) *run.Run {
-	r := run.HydrateRun(
+	r := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusRunning,
 		run.InitStatusCompleted,

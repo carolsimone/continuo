@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -22,7 +23,7 @@ func (existingRunSchedRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *RunRow) e
 }
 
 func TestRunRepositoryAdapter_SaveRun_ExistingRunIsErrRunAlreadyExists(t *testing.T) {
-	rn, err := run.NewPromotedSeedsRun(uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
+	rn, err := run.NewPromotedSeedsRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

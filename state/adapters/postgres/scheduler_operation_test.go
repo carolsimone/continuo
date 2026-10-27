@@ -10,6 +10,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -45,7 +46,7 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	// sibling helper in scheduler_repository_test.go.
 	repo := NewRunTableRepository(db, discardLogger())
 
-	r, err := run.NewPendingRun("op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}

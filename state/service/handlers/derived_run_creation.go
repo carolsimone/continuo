@@ -66,7 +66,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	newRun, err := run.NewDerivedRun(src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, err := run.NewDerivedRun(src.TenantID(), src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

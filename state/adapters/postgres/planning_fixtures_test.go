@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -128,7 +129,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	tb.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	r, err := run.NewPendingRun(schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {

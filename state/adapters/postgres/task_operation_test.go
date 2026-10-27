@@ -24,7 +24,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
-	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
+	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	// One statement deletes the run and, through the tasks table's ON DELETE
 	// CASCADE, its tasks, so no concurrent reader sees this single-node run

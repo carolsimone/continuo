@@ -861,7 +861,7 @@ func newCancelUoWFactory(runRepo *cancelFakeRunRepo, outbox *cancelFakeOutbox, t
 
 // newPendingRun builds a minimal PENDING Run aggregate for cancel handler tests.
 func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		scheduleID, name,
 		run.RunStatusPending,
 		run.InitStatusCompleted,
@@ -918,7 +918,7 @@ func TestCancelScheduler_NotFound(t *testing.T) {
 func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 	id := uuid.New()
 	// Build a CANCELLED (terminal) Run.
-	cancelledRun := run.HydrateRun(
+	cancelledRun := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusCancelled,
 		run.InitStatusCompleted,
@@ -1091,7 +1091,7 @@ func TestCancelSchedule_Success(t *testing.T) {
 
 func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 	id := uuid.New()
-	cancelledRun := run.HydrateRun(
+	cancelledRun := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusCancelled,
 		run.InitStatusCompleted,
@@ -1121,7 +1121,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 // newCancellingRun builds a run a cancel by by at cancelledAt already moved to
 // cancelling.
 func newCancellingRun(scheduleID uuid.UUID, name, by string, cancelledAt time.Time) *run.Run {
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		scheduleID, name,
 		run.RunStatusCancelling,
 		run.InitStatusCompleted,

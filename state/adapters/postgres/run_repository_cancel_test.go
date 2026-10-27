@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -47,7 +48,7 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 
 	// Hydrate a RUNNING run, then cancel it at `now` so cancelDirty is set and
 	// cancelled_at == completed_at == now.
-	r := run.HydrateRun(
+	r := run.HydrateRun(pkgevents.DefaultTenantID,
 		uuid.New(), "daily",
 		run.RunStatusRunning,
 		run.InitStatusCompleted,

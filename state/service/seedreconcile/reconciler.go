@@ -145,7 +145,7 @@ func (r *Reconciler) adopt(ctx context.Context, u uow.UnitOfWork, t ports.Promot
 	if err != nil {
 		return fmt.Errorf("read the seeds of release %s: %w", t.ReleaseID, err)
 	}
-	firstRunExists, err := u.Run().RunExists(ctx, seeds.RunID(t.ReleaseID, 1))
+	firstRunExists, err := u.Run().RunExists(ctx, seeds.RunID(t.TenantID, t.ReleaseID, 1))
 	if err != nil {
 		return fmt.Errorf("look up the first promote-seed run of release %s: %w", t.ReleaseID, err)
 	}
@@ -202,7 +202,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
 	}
 	now := u.Clock().Now()
-	seedRun, err := createRun(ctx, u, live, now)
+	seedRun, err := createRun(ctx, u, tenantID, live, now)
 	if err != nil {
 		return err
 	}
@@ -224,14 +224,14 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 // createRun saves a promote-seed run on the live release and returns it. The
 // id is the release's run id numbered one past the runs that already name the
 // release; an id another run holds moves it to the next number.
-func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, now time.Time) (*run.Run, error) {
+func createRun(ctx context.Context, u uow.UnitOfWork, tenantID string, live topology.Pointer, now time.Time) (*run.Run, error) {
 	existing, err := u.Run().CountReleaseRuns(ctx, live.ReleaseID, run.KindPromoteSeed)
 	if err != nil {
 		return nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
 	}
 	for n := existing + 1; n <= existing+maxRunIDProbes; n++ {
-		id := seeds.RunID(live.ReleaseID, n)
-		newRun, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, now)
+		id := seeds.RunID(tenantID, live.ReleaseID, n)
+		newRun, err := run.NewPromotedSeedsRun(tenantID, id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, now)
 		if err != nil {
 			return nil, fmt.Errorf("new promote-seed run: %w", err)
 		}

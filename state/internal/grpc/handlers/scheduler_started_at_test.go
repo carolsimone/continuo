@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -38,7 +39,7 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 	started := time.Now()
 	created := started.Add(-time.Minute)
 	total := int32(1)
-	rn := run.HydrateRun(
+	rn := run.HydrateRun(pkgevents.DefaultTenantID,
 		uuid.New(),
 		"s",
 		run.RunStatusRunning,
@@ -68,7 +69,7 @@ func TestSchedulerMappers_CarryTheRunFailureReason(t *testing.T) {
 	assert.Equal(t, "stalled", domainToProtoScheduler(tracker).GetFailureReason())
 
 	total := int32(1)
-	rn := run.HydrateRun(uuid.New(), "s", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	rn := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "s", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, time.Now(), nil, nil, nil, nil, nil, nil, &total, 1,
 		map[string]run.ServiceMetadata{})
 	assert.Empty(t, runToProto(rn).GetFailureReason(), "a run whose task failed names no run failure reason")

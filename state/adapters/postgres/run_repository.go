@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
@@ -254,7 +255,9 @@ func hydrateRun(tr *RunRow) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Every run row belongs to the default tenant: the table has no tenant column.
 	rn := run.HydrateRun(
+		pkgevents.DefaultTenantID,
 		tr.ScheduleID,
 		tr.ScheduleName,
 		tr.Status,

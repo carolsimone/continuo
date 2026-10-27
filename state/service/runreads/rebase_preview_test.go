@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -104,7 +105,7 @@ type previewFixture struct {
 func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &previewFixture{

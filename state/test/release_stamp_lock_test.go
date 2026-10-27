@@ -121,7 +121,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "rel-old", p.ReleaseID)
 		stamp := run.ReleaseStamp{ReleaseID: p.ReleaseID, PromotionSeq: p.PromotionSeq}
-		rn, err := run.NewPendingRun("stamp-lock", run.KindTrigger, nil, alice.UserID, nil, model.OperationRun, stamp, time.Now())
+		rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, "stamp-lock", run.KindTrigger, nil, alice.UserID, nil, model.OperationRun, stamp, time.Now())
 		require.NoError(t, err)
 		require.NoError(t, creation.Run().SaveRun(ctx, rn))
 

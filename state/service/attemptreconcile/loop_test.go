@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -191,7 +192,7 @@ func TestPass_LeavesAnAttemptItCannotLock(t *testing.T) {
 func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
 	outbox := &recordingOutbox{}
@@ -322,7 +323,7 @@ func (failingCommit) Commit() error { return errors.New("commit failed") }
 func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(&runs{r: r})
@@ -341,7 +342,7 @@ func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
 	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
@@ -363,7 +364,7 @@ func staleRun() *run.Run { return idleRun(run.StallAfter + time.Minute) }
 func idleRun(idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
-	return run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	return run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 }
 

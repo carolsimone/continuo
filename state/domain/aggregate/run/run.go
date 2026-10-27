@@ -18,6 +18,8 @@ import (
 // HydrateRun constructor to rebuild a Run from persisted rows; application
 // code never calls Hydrate.
 type Run struct {
+	// tenantID is the tenant the run belongs to; never empty.
+	tenantID     string
 	runID        uuid.UUID
 	scheduleName string
 
@@ -81,6 +83,7 @@ type changeSet struct {
 // the postgres adapter inside LoadRunForUpdate / GetRun. Application code MUST
 // NOT call this — use one of the New* constructors instead.
 func HydrateRun(
+	tenantID string,
 	runID uuid.UUID,
 	scheduleName string,
 	status RunStatus,
@@ -97,6 +100,7 @@ func HydrateRun(
 	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
 	return &Run{
+		tenantID:           tenantID,
 		runID:              runID,
 		scheduleName:       scheduleName,
 		status:             status,
@@ -140,6 +144,7 @@ func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason =
 //
 // stamp is the release the run runs on: the live release when the run is created.
 func NewPendingRun(
+	tenantID string,
 	scheduleName string,
 	kind Kind,
 	sourceRunID *uuid.UUID,
@@ -149,6 +154,9 @@ func NewPendingRun(
 	stamp ReleaseStamp,
 	now time.Time,
 ) (*Run, error) {
+	if tenantID == "" {
+		return nil, ErrNoTenant
+	}
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
@@ -159,6 +167,7 @@ func NewPendingRun(
 		metadata = map[string]ServiceMetadata{}
 	}
 	r := &Run{
+		tenantID:        tenantID,
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
@@ -184,6 +193,7 @@ func NewPendingRun(
 // stamp is the release the run runs on: the source run's for a rerun, the
 // live release for a rebase.
 func NewDerivedRun(
+	tenantID string,
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
@@ -192,6 +202,9 @@ func NewDerivedRun(
 	operation model.Operation,
 	now time.Time,
 ) (*Run, error) {
+	if tenantID == "" {
+		return nil, ErrNoTenant
+	}
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
@@ -199,6 +212,7 @@ func NewDerivedRun(
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
+		tenantID:        tenantID,
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
@@ -221,6 +235,7 @@ func NewDerivedRun(
 //
 // stamp is the release the run runs on; the zero stamp names none.
 func NewSingleNodeRun(
+	tenantID string,
 	scheduleName string,
 	operation model.Operation,
 	sourceRunID *uuid.UUID,
@@ -228,10 +243,14 @@ func NewSingleNodeRun(
 	stamp ReleaseStamp,
 	now time.Time,
 ) (*Run, error) {
+	if tenantID == "" {
+		return nil, ErrNoTenant
+	}
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
 	r := &Run{
+		tenantID:        tenantID,
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
@@ -262,11 +281,15 @@ func NewSingleNodeRun(
 // The run carries no operation: a seed is materialised by its own dbt verb,
 // chosen downstream from the node type, not by a verb selected here.
 func NewPromotedSeedsRun(
+	tenantID string,
 	id uuid.UUID,
 	scheduleName string,
 	stamp ReleaseStamp,
 	now time.Time,
 ) (*Run, error) {
+	if tenantID == "" {
+		return nil, ErrNoTenant
+	}
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
@@ -277,6 +300,7 @@ func NewPromotedSeedsRun(
 		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
+		tenantID:        tenantID,
 		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
@@ -296,6 +320,7 @@ func NewPromotedSeedsRun(
 // Getters (read-only — adapters and gRPC mappers use these)
 // ============================================================================
 
+func (r *Run) TenantID() string                 { return r.tenantID }
 func (r *Run) RunID() uuid.UUID                 { return r.runID }
 func (r *Run) ScheduleName() string             { return r.scheduleName }
 func (r *Run) Status() RunStatus                { return r.status }

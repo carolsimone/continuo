@@ -153,12 +153,19 @@ func TestAdopted(t *testing.T) {
 }
 
 // The namespace is fixed, so a release's first run id is the UUIDv5 of the
-// release under it and every later run id is derived the same way.
-func TestRunID(t *testing.T) {
+// tenant and the release under it and every later run id is derived the same
+// way.
+func TestSeedsRunID_IsStablePerTenantReleaseAndCount(t *testing.T) {
 	ns := uuid.MustParse("3e7b1a2f-8c4d-4e9a-b5f0-1d2c3a4e5f60")
-	assert.Equal(t, uuid.NewSHA1(ns, []byte("schedule:rel-1")), seeds.RunID("rel-1", 1))
-	assert.Equal(t, uuid.NewSHA1(ns, []byte("schedule:rel-1#2")), seeds.RunID("rel-1", 2))
-	assert.Equal(t, uuid.NewSHA1(ns, []byte("schedule:rel-1#7")), seeds.RunID("rel-1", 7))
-	assert.Equal(t, seeds.RunID("rel-1", 1), seeds.RunID("rel-1", 0), "a count below 1 names the first run")
-	assert.NotEqual(t, seeds.RunID("rel-1", 2), seeds.RunID("rel-2", 2))
+	assert.Equal(t, uuid.NewSHA1(ns, []byte("acme\x00schedule:rel-1")), seeds.RunID("acme", "rel-1", 1))
+	assert.Equal(t, uuid.NewSHA1(ns, []byte("acme\x00schedule:rel-1#2")), seeds.RunID("acme", "rel-1", 2))
+	assert.Equal(t, uuid.NewSHA1(ns, []byte("acme\x00schedule:rel-1#7")), seeds.RunID("acme", "rel-1", 7))
+	assert.Equal(t, seeds.RunID("acme", "rel-1", 1), seeds.RunID("acme", "rel-1", 0), "a count below 1 names the first run")
+	assert.NotEqual(t, seeds.RunID("acme", "rel-1", 2), seeds.RunID("acme", "rel-2", 2))
+}
+
+// The same release id promoted under two tenants plans two runs.
+func TestSeedsRunID_DiffersPerTenant(t *testing.T) {
+	assert.NotEqual(t, seeds.RunID("acme", "rel-1", 1), seeds.RunID("globex", "rel-1", 1))
+	assert.NotEqual(t, seeds.RunID("acme", "rel-1", 3), seeds.RunID("globex", "rel-1", 3))
 }
