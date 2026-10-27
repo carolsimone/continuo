@@ -193,18 +193,16 @@ func stopTargets(targets []run.StopTarget) []string {
 	return out
 }
 
-// failStalled locks one run the scan listed, under the run's tenant, and
-// checks it under the lock (run.Run.FailStalled): a task of it next in line
-// for a free node is granted that node's lease and dispatched, and a run
-// granted none that is still stalled is failed. A check whose grant fails (run.ErrGrantFailed) is rolled
-// back and tried once more at once, in a transaction of its own, since a
-// transient error rarely repeats; when the grant fails again the run is
-// checked without its grant (run.Run.FailStalledWithoutGrants), which fails a
-// run idle for run.StallAfterFailedGrant, so a grant that keeps failing ends
-// its run and leaves the node's queue to the next waiter. A run idle for less
-// is left for the next pass, and the grant's error is returned. Once a check
-// has committed, it observes and logs each grant as the lease waker does, and
-// counts and logs a failed run.
+// failStalled locks one run the scan listed, under the run's tenant, and checks it under the lock
+// (run.Run.FailStalled): a task of it next in line for a free node is granted that node's lease
+// and dispatched, and a run granted none that is still stalled is failed. A check whose grant
+// fails (run.ErrGrantFailed) is rolled back and tried once more at once, in a transaction of its
+// own, since a transient error rarely repeats; when the grant fails again the run is checked
+// without its grant (run.Run.FailStalledWithoutGrants), which fails a run idle for
+// run.StallAfterFailedGrant, so a grant that keeps failing ends its run and leaves the node's
+// queue to the next waiter. A run idle for less is left for the next pass, and the grant's error
+// is returned. Once a check has committed, it observes and logs each grant as the lease waker
+// does, and counts and logs a failed run.
 func (l *Loop) failStalled(ctx context.Context, ref repository.RunRef) error {
 	c, err := l.checkStall(ctx, ref, true)
 	if errors.Is(err, run.ErrGrantFailed) {

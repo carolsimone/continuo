@@ -76,7 +76,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	// A pending task keeps the run RUNNING (not finalized), so Start stamps
 	// started_at and sets startedDirty.
 	plan, g := independentNodes(t, "tbl")
-	_, err = rn.Start(ctx, tasks, "default", plan, g, testTaskDefaults, time.Now())
+	_, err = rn.Start(ctx, tasks, plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, run.RunStatusRunning, rn.Status(), "run must be RUNNING after a start with a pending task")
 
@@ -128,7 +128,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	// Two tasks, neither terminal: Start sets total_task_count=2,
 	// terminal_task_count=0, init_status=completed, status=running, started_at.
 	plan, g := independentNodes(t, "a", "b")
-	_, err = rn.Start(ctx, tasks, "default", plan, g, testTaskDefaults, time.Now())
+	_, err = rn.Start(ctx, tasks, plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
 
 	require.NoError(t, runRepo.SaveRun(ctx, rn))

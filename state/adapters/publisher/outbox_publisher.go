@@ -80,9 +80,9 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 // a task.dispatch:v1 row's payload is the dispatch and a run.cancelled:v1
 // row's the cancel, each stored under its tenant (outbox.WrapTenant) and
 // rendered under an envelope that names the row as the event, the tenant it
-// stores and the time it was written; every other row's JSON payload is flattened to
-// scalar fields, with nested values JSON-encoded.
-// Every call returns a fresh map.
+// stores and the time it was written; every other row's JSON payload is
+// flattened to scalar fields, with nested values JSON-encoded. Every call
+// returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
 	case outbox.DeadLetterEventType:

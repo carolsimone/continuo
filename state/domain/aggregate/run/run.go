@@ -380,7 +380,7 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 // tasks. g is the slice of r's release the plan was chosen from; every task
 // reads its node there.
 //
-// Each planned task gets the id TaskIDFor derives for tenantID, r and its node,
+// Each planned task gets the id TaskIDFor derives for r's tenant, r and its node,
 // its node's Job name, r's operation and the node's image. A pending task gets
 // status pending and the retry budget of d; an inherited task gets status
 // succeeded, no retry budget and the task it inherits from, and is never
@@ -404,7 +404,6 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 func (r *Run) Start(
 	ctx context.Context,
 	tasks TaskCollection,
-	tenantID string,
 	plan runplan.Plan,
 	g topology.Graph,
 	d TaskDefaults,
@@ -446,7 +445,7 @@ func (r *Run) Start(
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
 		t := Task{
-			TaskID:      TaskIDFor(tenantID, r.runID, p.Key),
+			TaskID:      TaskIDFor(r.tenantID, r.runID, p.Key),
 			ScheduleID:  r.runID,
 			CreatedAt:   now,
 			ServiceName: n.ServiceName,

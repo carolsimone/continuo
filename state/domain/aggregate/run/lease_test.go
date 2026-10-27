@@ -40,7 +40,7 @@ func waitingFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGra
 	tc := newFakeTaskCollection()
 	tc.derived = true
 	tc.leases[fkey("ftable_a")] = otherRunsTask
-	_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
+	_, err = r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 	require.Equal(t, run.WaitReasonNodeLease, tc.waits[taskOf(r, "ftable_a")])
 	return r, tc, &memTaskGraph{g: g, tc: tc}

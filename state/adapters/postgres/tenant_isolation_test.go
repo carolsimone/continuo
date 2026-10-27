@@ -292,8 +292,8 @@ func TestTenantIsolation_WaitersAndGrantsArePerTenant(t *testing.T) {
 	assert.Equal(t, heldLease{TaskID: holder, RunID: holderRun}, held, "default's lease stays default's holder's")
 }
 
-// One lease waker pass serves every tenant, each under its own tenant: default
-// and acme each have a node of the same key whose holder ended without
+// One lease waker pass serves every tenant, each under its own tenant: two
+// tenants each have a node of the same key whose holder ended without
 // releasing its lease, and a task waiting for that node. The pass repairs
 // both leases and grants each tenant's freed node to that tenant's waiter,
 // dispatching it from the tenant's own release.
@@ -301,11 +301,11 @@ func TestLeaseWaker_GrantsEachTenantsFreedNodeToThatTenantsWaiter(t *testing.T) 
 	ctx := context.Background()
 	db := newTestDB(t)
 	table := leaseTables("freed")[0]
-	acmeCleanup(t, db, table)
+	tenants := []string{leaseTenant(t, db), leaseTenant(t, db)}
 	since := time.Now().UTC().Add(-time.Hour)
 	type waiter struct{ runID, taskID, holderID uuid.UUID }
 	waiters := map[string]waiter{}
-	for _, tenant := range []string{pkgevents.DefaultTenantID, acmeTenant} {
+	for _, tenant := range tenants {
 		rel := tenantRelease(t, db, tenant, table)
 		holderRun := tenantRunOn(t, db, tenant, rel, "running")
 		holder := tenantTask(t, db, tenant, holderRun, table, run.TaskStatusSucceeded)
@@ -314,7 +314,7 @@ func TestLeaseWaker_GrantsEachTenantsFreedNodeToThatTenantsWaiter(t *testing.T) 
 		waiters[tenant] = waiter{runID: waitingRun, taskID: waitingTask(t, db, tenant, waitingRun, table, since), holderID: holder}
 	}
 	metrics := &leaseMetrics{}
-	waker := leasewaker.New(scopedUoW(db, pkgevents.DefaultTenantID, acmeTenant), testTaskDefaults, metrics, discardLogger())
+	waker := leasewaker.New(scopedUoW(db, tenants...), testTaskDefaults, metrics, discardLogger())
 
 	require.NoError(t, waker.Pass(ctx))
 
@@ -339,8 +339,8 @@ func TestLeaseWaker_GrantsEachTenantsFreedNodeToThatTenantsWaiter(t *testing.T) 
 }
 
 // One attempt reconcile pass fails the stalled runs of every tenant, each
-// under its own tenant: default's and acme's runs, idle for ten minutes with
-// a pending task and nothing in flight, both end failed as stalled with their
+// under its own tenant: two tenants' runs, idle for ten minutes with a
+// pending task and nothing in flight, both end failed as stalled with their
 // pending task skipped.
 func TestAttemptReconcile_FailsAStalledRunOfEachTenantUnderItsTenant(t *testing.T) {
 	ctx := context.Background()
@@ -348,7 +348,8 @@ func TestAttemptReconcile_FailsAStalledRunOfEachTenantUnderItsTenant(t *testing.
 	table := leaseTables("stalled")[0]
 	type stalled struct{ runID, taskID uuid.UUID }
 	runs := map[string]stalled{}
-	for _, tenant := range []string{pkgevents.DefaultTenantID, acmeTenant} {
+	tenants := []string{leaseTenant(t, db), leaseTenant(t, db)}
+	for _, tenant := range tenants {
 		runID := tenantRun(t, db, tenant, "running")
 		taskID := tenantTask(t, db, tenant, runID, table, run.TaskStatusPending)
 		_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE tenant_id = $1 AND run_id = $2`,
@@ -356,7 +357,7 @@ func TestAttemptReconcile_FailsAStalledRunOfEachTenantUnderItsTenant(t *testing.
 		require.NoError(t, err)
 		runs[tenant] = stalled{runID: runID, taskID: taskID}
 	}
-	loop := attemptreconcile.New(scopedUoW(db, pkgevents.DefaultTenantID, acmeTenant), testTaskDefaults, noRunMetrics{}, nil, discardLogger())
+	loop := attemptreconcile.New(scopedUoW(db, tenants...), testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
 

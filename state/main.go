@@ -269,8 +269,8 @@ func main() {
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
-	// returns a fresh PostgresUnitOfWork over the same low-level repos and
-	// *sqlx.DB so concurrent message handlers do not share transaction state.
+	// returns a fresh PostgresUnitOfWork over the same *sqlx.DB, so concurrent
+	// message handlers do not share transaction state.
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
 	// TaskCollection) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
@@ -391,10 +391,11 @@ func main() {
 
 	// The attempt reconcile asks execution-controller about every attempt, of
 	// any tenant, nothing was heard of within its window and fails every run
-	// left with nothing in flight as stalled, each under its own tenant. Under the lock of a run it would fail, it
-	// first grants each free node the run's waiting task is next in line for,
-	// so a lease wait a grant can serve is never failed; the lease waker pass
-	// it runs before each stall scan grants most freed nodes before the scan.
+	// left with nothing in flight as stalled, each under its own tenant.
+	// Under the lock of a run it would fail, it first grants each free node
+	// the run's waiting task is next in line for, so a lease wait a grant can
+	// serve is never failed; the lease waker pass it runs before each stall
+	// scan grants most freed nodes before the scan.
 	// Its goroutine is tracked, so shutdown waits for a pass in progress.
 	attemptReconciler := attemptreconcile.New(uowFactory, taskDefaults, runMetrics, leaseWaker.Pass, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })

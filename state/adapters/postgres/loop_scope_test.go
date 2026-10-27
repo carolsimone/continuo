@@ -80,6 +80,8 @@ func (l scopedLeases) RepairEnded(ctx context.Context) ([]repository.RepairedLea
 	return keep(all, func(r repository.RepairedLease) string { return r.TenantID }, l.tenants), err
 }
 
+// CountWaiters counts only the scoped tenants' waiting tasks and does not join
+// runs.
 func (l scopedLeases) CountWaiters(ctx context.Context) (int, error) {
 	var n int
 	err := l.db.GetContext(ctx, &n, `

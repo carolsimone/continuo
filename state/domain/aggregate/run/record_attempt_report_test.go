@@ -200,7 +200,7 @@ func TestRecordAttemptReport_ABudgetOfZeroFailsOnTheFirstFailure(t *testing.T) {
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
 	tc.derived = true
-	_, err = r.Start(context.Background(), tc, "default", plan, g, run.TaskDefaults{MaxRetries: 0, Timeout: time.Hour}, startNow)
+	_, err = r.Start(context.Background(), tc, plan, g, run.TaskDefaults{MaxRetries: 0, Timeout: time.Hour}, startNow)
 	require.NoError(t, err)
 	mg := &memTaskGraph{g: g, tc: tc}
 

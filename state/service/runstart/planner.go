@@ -130,7 +130,7 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, tenantID string, l
 // has already saved, saves r again and appends r's events to the outbox under
 // msgProcID.
 func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Selection, msgProcID uuid.UUID) error {
-	events, err := r.Start(ctx, u.TaskCollection(r.TenantID()), r.TenantID(), sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
+	events, err := r.Start(ctx, u.TaskCollection(r.TenantID()), sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("start run %s: %w", r.RunID(), err)
 	}

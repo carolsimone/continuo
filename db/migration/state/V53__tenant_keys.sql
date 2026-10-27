@@ -51,10 +51,14 @@ DROP INDEX uq_runs_active_per_schedule;
 CREATE UNIQUE INDEX uq_runs_active_per_schedule
     ON runs (tenant_id, schedule_name)
     WHERE status IN ('pending', 'running', 'cancelling');
+COMMENT ON INDEX uq_runs_active_per_schedule IS
+    'Enforces at most one active (pending|running|cancelling) run per schedule within a tenant; the DB-level backstop for the activation TOCTOU race.';
 -- Every read of a schedule's runs names its tenant: the latest run of each
 -- schedule and a schedule's completed runs, newest first, walk this index.
 DROP INDEX idx_runs_schedule_name_created;
 CREATE INDEX idx_runs_schedule_name_created ON runs (tenant_id, schedule_name, created_at DESC);
+COMMENT ON INDEX idx_runs_schedule_name_created IS
+    'Serves the schedule_name-keyed active-run lookups and the DISTINCT ON last-run-per-schedule scan within a tenant.';
 
 ALTER TABLE tasks DROP CONSTRAINT tasks_pkey;
 ALTER TABLE tasks ADD CONSTRAINT tasks_pkey PRIMARY KEY (tenant_id, task_id);
@@ -93,3 +97,12 @@ ALTER TABLE schedule_catalog_state DROP COLUMN id;
 ALTER TABLE schedule_catalog_state ADD CONSTRAINT schedule_catalog_state_pkey PRIMARY KEY (tenant_id);
 COMMENT ON TABLE schedule_catalog_state IS
     'The promotion seq of the last schedules.loaded:v1 payload each tenant''s schedule catalog applied; one row per tenant';
+
+-- A dispatch or cancel row written before this migration stores its payload
+-- alone and belongs to the default tenant: it is wrapped here, so a row still
+-- pending publishes as it would have. A row already so wrapped is left as it
+-- is.
+UPDATE state_outbox
+   SET payload = jsonb_build_object('tenant_id', 'default', 'payload', payload)
+ WHERE event_type IN ('task.dispatch:v1', 'run.cancelled:v1')
+   AND NOT (payload ? 'tenant_id' AND payload ? 'payload');
