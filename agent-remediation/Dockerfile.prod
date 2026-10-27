@@ -22,9 +22,11 @@ COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-c
 COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
-# Download dependencies with cache
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# Download dependencies into an image layer keyed on the go.mod files.
+# A source change reuses the layer, and `go build` finds every module in the
+# image instead of fetching it again; only a changed go.mod or go.sum
+# downloads again.
+RUN go mod download
 
 # Copy source code — pkg and orchestrator (gRPC stubs) are dependencies
 # of agent-remediation and must be present for the build.

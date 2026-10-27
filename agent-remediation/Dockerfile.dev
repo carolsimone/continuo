@@ -41,10 +41,11 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./egress-proxy \
     && go work edit -dropuse=./tests/e2e
 
-# Layer 3: Download dependencies with cache mount. Cache persists across
-# builds; rebuild only re-runs when go.mod files change.
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# Layer 3: Download dependencies into an image layer keyed on the go.mod files.
+# A source change reuses the layer, and `go build` finds every module in the
+# image instead of fetching it again; only a changed go.mod or go.sum
+# downloads again.
+RUN go mod download
 
 # Layer 4: Source for the modules this service builds against. pkg/ and
 # orchestrator/ first (lower churn) so a change in agent-remediation/
