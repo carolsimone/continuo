@@ -1,0 +1,647 @@
+syntax = "proto3";
+
+package run.v1;
+
+option go_package = "github.com/carolsimone/continuo/state/proto/run/v1;runv1";
+
+import "google/protobuf/timestamp.proto";
+
+// RunService is the public API for runs, their tasks and attempts, the
+// schedules that start them and the topology of the live release.
+//
+// Statuses travel as the lowercase strings of the run_status and task_status
+// vocabularies and an operation as a string of the operation vocabulary, all
+// declared in pkg/streams/contract.yaml.
+//
+// The tenant of a call is the one the caller's identity carries; no request
+// names it. Every error below is a gRPC status code. A call whose request
+// fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
+// itself is INTERNAL; the lists below name the other codes of each RPC.
+//
+// The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
+// TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
+// first call with an id does its work. A retry with the same id and the same
+// parameters writes nothing and answers with the run the first call created or
+// cancelled. The same id with other parameters is ALREADY_EXISTS ("request_id
+// reused with different parameters"). A call that is refused stores nothing,
+// so its id may be sent again. An id is remembered for 30 days. A request_id
+// is a UUID and is required: an empty or malformed one is INVALID_ARGUMENT.
+//
+// While maintenance mode is on, every command that starts a run is refused
+// with UNAVAILABLE. Cancels and reads are not.
+service RunService {
+  // ==========================================================================
+  // Commands
+  // ==========================================================================
+
+  // StartRun creates a run of a schedule's nodes in the live release and
+  // dispatches its ready tasks in the transaction that creates it. The run's
+  // kind is trigger.
+  // Errors:
+  //   INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
+  //                         full_refresh, which targets a single node only.
+  //   NOT_FOUND           - the live release holds no node of the schedule.
+  //   FAILED_PRECONDITION - the schedule already has an active run, or its
+  //                         selection cannot make a valid run (no node to
+  //                         run, no data test for a test, a node type the
+  //                         operation does not support).
+  //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   UNAVAILABLE         - maintenance mode is on.
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+
+  // TriggerRerun creates a run that re-executes a failed or cancelled run's
+  // tasks that did not succeed, and their descendants, on the source run's
+  // release, and dispatches the ready ones in the transaction that creates it.
+  // The new run keeps the source's schedule_name.
+  // Errors:
+  //   NOT_FOUND           - source_run_id names no run.
+  //   FAILED_PRECONDITION - the source is not failed or cancelled, names no
+  //                         release, is a test run, leaves nothing to
+  //                         re-execute, or its schedule already has an active
+  //                         run.
+  //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   UNAVAILABLE         - maintenance mode is on.
+  rpc TriggerRerun(TriggerRerunRequest) returns (TriggerRerunResponse);
+
+  // TriggerSingleNodeRun creates a synthesised single-node run that executes
+  // exactly one task with no downstream pickup. Two modes, selected by the
+  // metadata_source field of the request:
+  //   - "latest" (default): the node as the live release holds it.
+  //   - "snapshot_of_run": the node as the release of the source run holds it;
+  //     requires source_run_id.
+  // Errors:
+  //   INVALID_ARGUMENT    - empty or malformed identity, unknown
+  //                         metadata_source, "snapshot_of_run" without
+  //                         source_run_id, "latest" with a non-empty
+  //                         source_run_id, an unknown operation, or a
+  //                         full_refresh of a node type that cannot be rebuilt
+  //                         from scratch.
+  //   NOT_FOUND           - the source run, or its task for the identity,
+  //                         does not exist; or the release holds no such node
+  //                         of that service.
+  //   FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
+  //                         terminal or names no release; or a test of a node
+  //                         with no data tests; or the node is a schedule
+  //                         node whose schedule already has an active run.
+  //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   UNAVAILABLE         - maintenance mode is on.
+  rpc TriggerSingleNodeRun(TriggerSingleNodeRunRequest)
+      returns (TriggerSingleNodeRunResponse);
+
+  // TriggerRebase creates a new run on the source's schedule and the live
+  // release that restarts the source from its failure. It re-executes the
+  // source's tasks that did not succeed (failed, cancelled or skipped) whose
+  // node the live schedule still holds, the live schedule's nodes the source
+  // never ran, every descendant of those and, with include_changed_upstream,
+  // every changed node upstream of anything it re-executes, until no changed
+  // ancestor is left out. A node is changed when its content_hash, node_type,
+  // secret_ref or upstream nodes differ between the live release and the
+  // release the source's result for the node was built on: the source's
+  // release, or for a success the source inherited, the release of the run
+  // that built it. image_tag alone is not a change. Every other source
+  // success is inherited. The new run keeps the source's schedule_name. A
+  // non-empty expected_release_id must name the live release.
+  // Errors:
+  //   NOT_FOUND           - source_run_id names no run.
+  //   FAILED_PRECONDITION - the source is not failed or cancelled; or it has
+  //                         no task that did not succeed; or its schedule
+  //                         already has an active run; or it names no release,
+  //                         is a test run, or leaves nothing to re-execute; or
+  //                         the live release is not expected_release_id
+  //                         (message "the live release changed; preview
+  //                         again").
+  //   ALREADY_EXISTS      - request_id reused with different parameters.
+  //   UNAVAILABLE         - maintenance mode is on.
+  rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
+
+  // PreviewRebase reports what TriggerRebase would run for the same
+  // source_run_id and include_changed_upstream on the live release, without
+  // creating a run: the live release, how many nodes run and why, and the
+  // changed upstream nodes with what each feeds and its last successful
+  // duration. changed_nodes lists every changed upstream node the option would
+  // add, whether or not include_changed_upstream is set. Maintenance mode does
+  // not refuse it.
+  // Errors: as TriggerRebase, except that an active run on the schedule does
+  // not refuse a preview, no release is compared, and it takes no request_id.
+  rpc PreviewRebase(PreviewRebaseRequest) returns (PreviewRebaseResponse);
+
+  // CancelRun cancels a run by id. The response carries the run as the cancel
+  // left it: cancelling while an attempt is still being stopped, cancelled once
+  // nothing was in flight. A run that is already cancelling or cancelled is
+  // returned as it is, and nothing is written. It takes no request_id.
+  // Errors:
+  //   NOT_FOUND           - run_id names no run.
+  //   FAILED_PRECONDITION - the run ended succeeded, failed or skipped.
+  rpc CancelRun(CancelRunRequest) returns (RunResponse);
+
+  // CancelActiveRun cancels the active run of a named schedule, as CancelRun
+  // does, and answers with its id. A retry with the same request_id answers
+  // with the run the first call cancelled, even once the schedule has another
+  // active run.
+  // Errors:
+  //   FAILED_PRECONDITION - the schedule has no active run.
+  //   ALREADY_EXISTS      - request_id reused with different parameters.
+  rpc CancelActiveRun(CancelActiveRunRequest) returns (CancelActiveRunResponse);
+
+  // ==========================================================================
+  // Run and task reads
+  // ==========================================================================
+
+  // GetRun returns one run.
+  // Errors: NOT_FOUND (run_id names no run).
+  rpc GetRun(GetRunRequest) returns (RunResponse);
+
+  // ListRuns returns a schedule's completed runs, newest first. page_size is
+  // clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+  // total_count counts every completed run of the schedule.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  // ListActiveRunDrifts returns the live promotion seq and every schedule's
+  // newest pending or running run with the promotion seq its release was live
+  // under (0 when it names no release).
+  rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
+
+  // ListTasks returns one page of a run's tasks, ordered by creation time then
+  // task_id, optionally only those in one status. page_size is clamped to
+  // [1, 200], 0 meaning 50; a negative page_offset is 0. total_count counts
+  // every task the filter matches. A status that is not in the task_status
+  // vocabulary is INVALID_ARGUMENT.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // ListRunAttempts returns one page of a run's task attempts, or of one of its
+  // tasks when task_id is set, ordered by task_id then attempt. page_size is
+  // clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+  // total_count counts every attempt the filter matches.
+  rpc ListRunAttempts(ListRunAttemptsRequest) returns (ListRunAttemptsResponse);
+
+  // GetRunGraph returns a run's tasks as nodes and the dependencies among them
+  // in the run's own release, with the promotion seq that release was live
+  // under and the live one. Edges point from the dependent node to its
+  // dependency; node ids are "service.schema.table". An unknown run returns no
+  // nodes and run_promotion_seq 0; a run that names no release returns its
+  // nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+  // unknown".
+  rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
+
+  // ==========================================================================
+  // Node reads
+  // ==========================================================================
+
+  // ListNodeTasks returns the most recent tasks of a node, newest run first.
+  // The identity fields are required; limit is capped server-side at 50 (0
+  // uses the default of 50).
+  rpc ListNodeTasks(ListNodeTasksRequest) returns (ListNodeTasksResponse);
+
+  // ListNodes returns the node catalog: one summary row per node that has run,
+  // with stats aggregated over the most recent 50 tasks of each node. Supports a
+  // case-insensitive substring search on "service.schema.table", an exact
+  // service_name filter, and limit/offset paging. total_count reports the full
+  // match count (before paging).
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // ListNodeNames returns the distinct table names of nodes that have run,
+  // optionally filtered by service. It powers the node search autocomplete
+  // (the complete name list, independent of the paginated catalog).
+  rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
+
+  // ListNodeServices returns the distinct service names of nodes that have run.
+  // It powers the catalog and remediation service filters (the complete service
+  // list, independent of the paginated catalog).
+  rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
+
+  // ==========================================================================
+  // Schedule reads
+  // ==========================================================================
+
+  // ListSchedules returns every schedule of the tenant, merging the names the
+  // live release holds, the cron of each, and its last run, ordered by
+  // schedule_name.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+
+  // GetScheduleGraph returns the live release view of one schedule: its
+  // nodes, their one-hop upstream nodes in other schedules, the edges among
+  // them (internal and cross-schedule) and the live promotion seq. A schedule
+  // the live release does not hold returns no nodes and no edges. When no
+  // release is live the graph is empty and promotion_seq is 0.
+  rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
+
+  // ListScheduleTopologies returns, for each schedule of the live release, its
+  // node count and the time that release went live. It is empty when no release
+  // is live.
+  rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
+      returns (ListScheduleTopologiesResponse);
+}
+
+// ============================================================================
+// DOMAIN MESSAGES
+// ============================================================================
+
+// Run is one execution of a set of nodes.
+message Run {
+  string run_id = 1;
+  // schedule_name is the schedule the run belongs to. A single-node or
+  // promote-seed run carries a name made for it, "single-node-run-<8hex>" or
+  // "promote-seed-<8hex>", and a rerun or rebase of a run copies its name.
+  string schedule_name = 2;
+  string kind = 3;       // cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string operation = 4;  // run | test | build | full_refresh
+  string status = 5;     // pending | running | cancelling | succeeded | failed | cancelled | skipped
+  // failure_reason says why a failed run failed when no task of it did:
+  // stalled | empty_selection | invalid_node_type. It is empty otherwise.
+  string failure_reason = 6;
+  string release_id = 7;       // the release the run executes on; empty when it names none
+  int64 promotion_seq = 8;     // the promotion_seq of that release; 0 when it names no release
+  string initiated_by = 9;     // the identity that started the run; empty for a cron fire
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp started_at = 11;        // unset until the first task starts
+  google.protobuf.Timestamp completed_at = 12;      // unset until the run ended
+  google.protobuf.Timestamp last_progress_at = 13;  // the latest dispatch or task move of the run
+  google.protobuf.Timestamp cancelled_at = 14;      // set once a cancel was requested
+  string cancelled_by = 15;                         // set once a cancel was requested
+  string cancellation_reason = 16;                  // set once a cancel was requested
+}
+
+// Task is one node of a run.
+message Task {
+  string task_id = 1;
+  string run_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  string service_name = 4;
+  string schema_name = 5;
+  string table_name = 6;
+  string job_name = 7;  // Kubernetes Job identifier (computed from service-schema-table)
+  string status = 8;    // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
+  int32 attempt = 9;    // 0-based number of the current attempt of the task
+  int32 max_retries = 10;
+  google.protobuf.Timestamp cancelled_at = 11;  // set only while status is cancelled
+  string cancelled_by = 12;                     // set only while status is cancelled
+  string wait_reason = 13;                      // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 14;                // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
+  google.protobuf.Timestamp waiting_since = 15; // when the task began waiting for wait_reason; unset when it has none
+}
+
+// TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
+message TaskAttempt {
+  string task_id = 1;
+  int32 attempt = 2;                              // 0-based attempt number
+  string job_name = 3;                            // Kubernetes Job of this attempt
+  string status = 4;                              // dispatched | queued | running | succeeded | failed | stopped
+  string failure_class = 5;                       // why the attempt failed; empty unless failed
+  string failure_reason = 6;                      // the specific failure within failure_class; empty unless failed
+  // exit_code is the exit code of the container, 0 when unknown: a 0 is a clean exit
+  // only for a succeeded attempt, so read it together with status and
+  // failure_reason.
+  int32 exit_code = 7;
+  google.protobuf.Timestamp dispatched_at = 8;    // when state dispatched the attempt
+  google.protobuf.Timestamp queued_at = 9;        // unset until reported
+  google.protobuf.Timestamp started_at = 10;      // unset until reported
+  google.protobuf.Timestamp finished_at = 11;     // unset until the attempt finished
+  double execution_seconds = 12;                  // 0 until recorded
+  string error_message = 13;                      // empty when none
+  string log_s3_key = 14;                         // S3 object key of the pod log; empty when none
+  string run_results_uri = 15;                    // S3 object key of the structured result block; empty when none
+}
+
+// ============================================================================
+// COMMAND REQUESTS/RESPONSES
+// ============================================================================
+
+message StartRunRequest {
+  string request_id = 1;     // Required: UUID, see the idempotency rules of the service
+  string schedule_name = 2;  // Required
+  // operation is "" | "run" | "test" | "build"; empty means run. "full_refresh"
+  // is single-node only and is rejected here (INVALID_ARGUMENT).
+  string operation = 3;
+}
+
+// run_id is always non-empty on success.
+message StartRunResponse {
+  string run_id = 1;
+}
+
+message TriggerRerunRequest {
+  string request_id = 1;      // Required: UUID
+  string source_run_id = 2;   // Required: the failed or cancelled run to rerun
+}
+
+message TriggerRerunResponse {
+  string run_id = 1;         // the new rerun run
+  string schedule_name = 2;  // copied verbatim from the source schedule_name
+}
+
+message TriggerSingleNodeRunRequest {
+  string request_id = 1;       // Required: UUID
+  string service_name = 2;     // Required
+  string schema_name = 3;      // Required
+  string table_name = 4;       // Required
+  string metadata_source = 5;  // Required: "latest" | "snapshot_of_run"
+  string source_run_id = 6;    // Required iff metadata_source is "snapshot_of_run"
+  // operation is "" | "run" | "test" | "build" | "full_refresh"; empty means
+  // run. full_refresh rebuilds a dbt model or seed from scratch.
+  string operation = 7;
+}
+
+message TriggerSingleNodeRunResponse {
+  string run_id = 1;         // the synthesised run
+  string schedule_name = 2;  // "single-node-run-<8hex>"
+}
+
+message TriggerRebaseRequest {
+  string request_id = 1;                 // Required: UUID
+  string source_run_id = 2;              // Required: the failed or cancelled run to rebase from
+  bool include_changed_upstream = 3;     // also re-execute the changed nodes upstream of what re-executes
+  string expected_release_id = 4;        // the live release the caller previewed; empty skips the check
+}
+
+message TriggerRebaseResponse {
+  string run_id = 1;         // the new rebase run
+  string schedule_name = 2;  // copied verbatim from the source schedule_name
+}
+
+message PreviewRebaseRequest {
+  string source_run_id = 1;           // Required: the failed or cancelled run to rebase from
+  bool include_changed_upstream = 2;  // as TriggerRebaseRequest.include_changed_upstream
+}
+
+// ChangedUpstreamNode is a changed node upstream of what a rebase re-executes.
+message ChangedUpstreamNode {
+  string service_name = 1;
+  string schema_name = 2;
+  string table_name = 3;
+  int32 downstream = 4;             // nodes below it in the live schedule
+  double last_success_seconds = 5;  // execution time of its latest successful task; 0 when it has none
+}
+
+message PreviewRebaseResponse {
+  string release_id = 1;         // the live release previewed; send it as TriggerRebaseRequest.expected_release_id
+  int64 promotion_seq = 2;       // the promotion_seq of that release
+  int32 total_nodes = 3;         // tasks of the rebase: re-executed plus inherited
+  int32 will_run = 4;            // tasks it re-executes: the sum of the four counts below
+  int32 failed_or_skipped = 5;   // source tasks that did not succeed
+  int32 new_nodes = 6;           // live schedule nodes the source never ran
+  int32 changed_upstream = 7;    // changed upstream nodes it re-executes; 0 without include_changed_upstream
+  int32 downstream = 8;          // every other re-executed node, each below one counted above
+  int32 inherited = 9;           // source successes carried over
+  repeated ChangedUpstreamNode changed_nodes = 10;  // ordered by service, schema, table
+}
+
+message CancelRunRequest {
+  string run_id = 1;               // Required
+  string cancelled_by = 2;         // Optional
+  string cancellation_reason = 3;  // Optional
+}
+
+message CancelActiveRunRequest {
+  string request_id = 1;           // Required: UUID
+  string schedule_name = 2;        // Required
+  string cancelled_by = 3;         // Optional
+  string cancellation_reason = 4;  // Optional
+}
+
+message CancelActiveRunResponse {
+  string run_id = 1;  // the run that was cancelled
+}
+
+// ============================================================================
+// RUN AND TASK REQUESTS/RESPONSES
+// ============================================================================
+
+message GetRunRequest {
+  string run_id = 1;  // Required
+}
+
+message RunResponse {
+  Run run = 1;
+}
+
+message ListRunsRequest {
+  string schedule_name = 1;  // Required
+  int32 page_size = 2;
+  int32 page_offset = 3;
+}
+
+message RunSummary {
+  string run_id = 1;
+  string schedule_name = 2;
+  string status = 3;          // succeeded | failed | cancelled | skipped
+  string created_at = 4;      // RFC3339, UTC, seconds
+  string completed_at = 5;    // RFC3339, UTC, seconds
+  string failure_reason = 6;  // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
+}
+
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+  int32 total_count = 2;
+}
+
+message ListActiveRunDriftsRequest {}
+
+message ActiveRunDrift {
+  string schedule_name = 1;
+  string run_id = 2;
+  int64 run_promotion_seq = 3;  // 0 when the run names no release
+}
+
+message ListActiveRunDriftsResponse {
+  int64 latest_promotion_seq = 1;
+  repeated ActiveRunDrift active_runs = 2;
+}
+
+message ListTasksRequest {
+  string run_id = 1;       // Required
+  string status = 2;       // Optional filter: a task_status value
+  int32 page_size = 3;     // Clamped to [1, 200]; 0 means 50
+  int32 page_offset = 4;   // Negative values are treated as 0
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  int32 total_count = 2;   // tasks matching the filter, ignoring paging
+}
+
+message ListRunAttemptsRequest {
+  string run_id = 1;       // Required
+  string task_id = 2;      // Optional: empty lists every task of the run
+  int32 page_size = 3;     // Clamped to [1, 200]; 0 means 50
+  int32 page_offset = 4;   // Negative values are treated as 0
+}
+
+message ListRunAttemptsResponse {
+  repeated TaskAttempt attempts = 1;
+  int32 total_count = 2;   // attempts matching the filter, ignoring paging
+}
+
+message RunGraphNode {
+  string service_name = 1;
+  string schema_name = 2;
+  string table_name = 3;
+  string schedule_name = 4;      // the schedule of the node in the release of the run; empty when unknown
+  string node_type = 5;          // empty when the run names no release
+  string status = 6;             // the task status: a task_status value
+  string task_id = 7;
+  string wait_reason = 8;        // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 9;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
+  string waiting_since = 10;     // RFC3339, when the task began waiting for wait_reason; empty when it has none
+}
+
+message RunGraphEdge {
+  string from_node_id = 1;  // the dependent node, "service.schema.table"
+  string to_node_id = 2;    // its dependency, "service.schema.table"
+}
+
+message GetRunGraphRequest {
+  string run_id = 1;  // Required
+}
+
+message GetRunGraphResponse {
+  repeated RunGraphNode nodes = 1;
+  repeated RunGraphEdge edges = 2;
+  int64 run_promotion_seq = 3;     // 0 when the run is unknown or names no release
+  int64 latest_promotion_seq = 4;  // the live promotion seq; 0 when no release is live
+}
+
+// ============================================================================
+// NODE REQUESTS/RESPONSES
+// ============================================================================
+
+message ListNodeTasksRequest {
+  string service_name = 1;  // Required
+  string schema_name = 2;   // Required
+  string table_name = 3;    // Required
+  int32 limit = 4;          // 0 means the server default 50; at most 50
+  string operation = 5;     // run | test | build; empty means run
+}
+
+message ListNodeTasksResponse {
+  repeated NodeTask tasks = 1;
+}
+
+// NodeTask is one task of a node, with the run it belongs to.
+message NodeTask {
+  string run_id = 1;
+  string schedule_name = 2;
+  string kind = 3;                // the run kind: cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string run_status = 4;          // the run status: a run_status value
+  string task_id = 5;
+  string task_status = 6;         // a task_status value
+  int32 attempt = 7;              // 0-based number of the current attempt of the task
+  string image_tag = 8;
+  string created_at = 9;          // RFC3339
+  string started_at = 10;         // RFC3339, empty if no execution yet
+  string completed_at = 11;       // RFC3339, empty if not finished
+  string error_message = 12;      // empty when none
+  string log_s3_key = 13;         // empty when none
+  string operation = 14;          // run | test | build | full_refresh
+  string run_results_uri = 15;    // empty when none
+  string content_hash = 16;       // the content hash of the node in the release of the run; empty when the run names no release
+  string failure_class = 17;      // why the latest attempt failed; empty unless it failed
+  string failure_reason = 18;     // the specific failure within failure_class; empty unless it failed
+  string wait_reason = 19;        // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 20;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
+  string waiting_since = 21;      // RFC3339, when the task began waiting for wait_reason; empty when it has none
+}
+
+message ListNodesRequest {
+  string search = 1;        // case-insensitive substring on "service.schema.table"; empty means no filter
+  string service_name = 2;  // exact service filter; empty means all services
+  int32 limit = 3;          // page size; 0 means 50, clamped to at most 200
+  int32 offset = 4;         // page offset; default 0
+  string operation = 5;     // run | test | build; empty means run
+}
+
+message ListNodesResponse {
+  repeated NodeSummary nodes = 1;
+  int32 total_count = 2;  // nodes matching the filter, ignoring limit and offset
+}
+
+message NodeSummary {
+  string service_name = 1;
+  string schema_name = 2;
+  string table_name = 3;
+  int32 task_count = 4;         // tasks in the stats window (at most 50)
+  int32 success_rate_pct = 5;   // -1 when no terminal task in the window
+  int32 avg_duration_sec = 6;   // -1 when no measurable task
+  int32 p95_duration_sec = 7;   // -1 when no measurable task
+  int32 flaky_rate_pct = 8;     // percent of window tasks with attempt > 0; 0 when none
+  string last_status = 9;       // the latest task status: a task_status value
+  string last_run_at = 10;      // RFC3339 of the most recent task created_at
+  string operation = 11;        // run | test | build
+  int32 timeout_seconds = 12;   // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
+  bool timeout_declared = 13;   // true when the live release declares the timeout of the node; false when its tasks get the install default
+}
+
+message ListNodeNamesRequest {
+  string service_name = 1;  // exact service filter; empty means all services
+}
+
+message ListNodeNamesResponse {
+  repeated string table_names = 1;  // distinct, sorted ascending
+}
+
+message ListNodeServicesRequest {}
+
+message ListNodeServicesResponse {
+  repeated string service_names = 1;  // distinct, sorted ascending
+}
+
+// ============================================================================
+// SCHEDULE REQUESTS/RESPONSES
+// ============================================================================
+
+message ListSchedulesRequest {}
+
+// ScheduleSummary merges the schedule names of the live release, each
+// schedule cron configuration and its last run. last_run_status is a
+// run_status value.
+message ScheduleSummary {
+  string schedule_name = 1;
+  string cron_expression = 2;  // empty when the schedule has no cron
+  string description = 3;      // empty when the schedule has none
+  string timezone = 4;         // IANA timezone the cron is read in
+  bool has_active_run = 5;     // a pending, running or cancelling run holds the schedule
+  google.protobuf.Timestamp last_run_at = 6;  // unset if never run
+  string last_run_status = 7;  // a run_status value; empty if never run
+  string last_run_id = 8;      // run_id of the most recent run; empty if never run
+}
+
+message ListSchedulesResponse {
+  repeated ScheduleSummary schedules = 1;
+}
+
+message GetScheduleGraphRequest {
+  string schedule_name = 1;  // Required
+}
+
+// ScheduleGraphNode is a node of the live release.
+message ScheduleGraphNode {
+  string service_name = 1;
+  string schema_name = 2;
+  string table_name = 3;
+  string node_type = 4;
+  string schedule_name = 5;  // the schedule the node belongs to, which differs from the requested one for an upstream node
+}
+
+message ScheduleGraphEdge {
+  string from_node_id = 1;  // the dependent node, "service.schema.table"
+  string to_node_id = 2;    // its dependency, "service.schema.table"
+}
+
+message GetScheduleGraphResponse {
+  repeated ScheduleGraphNode nodes = 1;
+  repeated ScheduleGraphEdge edges = 2;
+  // promotion_seq is the live promotion seq at query time. It is 0 when no
+  // release is live; consumers treat 0 as unknown, not as a seq.
+  int64 promotion_seq = 3;
+}
+
+message ListScheduleTopologiesRequest {}
+
+message ScheduleTopologySummary {
+  string schedule_name = 1;
+  int32 node_count = 2;                       // nodes of the schedule in the live release
+  google.protobuf.Timestamp last_updated_at = 3;  // when the live release went live
+}
+
+message ListScheduleTopologiesResponse {
+  repeated ScheduleTopologySummary schedules = 1;
+}
