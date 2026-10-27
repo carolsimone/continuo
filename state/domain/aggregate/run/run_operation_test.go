@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewPendingRun_StoresOperation(t *testing.T) {
-	r, err := NewPendingRun(pkgevents.DefaultTenantID, "sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
+	r, err := NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestNewPendingRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
-	r, err := NewSingleNodeRun(pkgevents.DefaultTenantID, "sched", model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
+	r, err := NewSingleNodeRun(pkgevents.DefaultTenantID, uuid.New(), "sched", model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewSingleNodeRun: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewDerivedRun_InheritsOperation(t *testing.T) {
-	r, err := NewDerivedRun(pkgevents.DefaultTenantID, "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
+	r, err := NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 		t.Fatalf("Operation() = %q, want build", r.Operation())
 	}
 
-	r, err = NewDerivedRun(pkgevents.DefaultTenantID, "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
+	r, err = NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}

@@ -19,14 +19,13 @@ import (
 // live in state/adapters/postgres.
 type RunRepository interface {
 	// GetRun loads the tenant's Run snapshot for read-only use. No row lock.
-	// Returns the adapter's ErrNotFound when the tenant has no such run; the
-	// adapter wraps repo-level not-found into a domain-friendly form at the
-	// application boundary.
+	// A run the tenant does not have is an error matching ErrRunNotFound.
 	GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error)
 
 	// LoadRunForUpdate loads the tenant's Run inside the repository's bound
 	// transaction with SELECT ... FOR UPDATE. The aggregate is intended to be
-	// mutated; call SaveRun before tx commit.
+	// mutated; call SaveRun before tx commit. A run the tenant does not have
+	// is an error matching ErrRunNotFound.
 	LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error)
 
 	// SaveRun persists every dirty field of r under r's tenant. The adapter

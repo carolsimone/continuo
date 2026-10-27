@@ -41,6 +41,10 @@ var MaintenanceGatedMethods = []string{
 	statev1.StateService_TriggerRerun_FullMethodName,
 	statev1.StateService_TriggerRebase_FullMethodName,
 	statev1.StateService_TriggerSingleNodeRun_FullMethodName,
+	runv1.RunService_StartRun_FullMethodName,
+	runv1.RunService_TriggerRerun_FullMethodName,
+	runv1.RunService_TriggerRebase_FullMethodName,
+	runv1.RunService_TriggerSingleNodeRun_FullMethodName,
 }
 
 // NewServer creates a new gRPC server

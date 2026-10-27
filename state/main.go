@@ -492,7 +492,8 @@ func main() {
 		Graphs:    runreads.New(runReadRepo),
 
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
-	}, logger)
+		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),
+	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), logger)
 
 	// Create gRPC server
 	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskAttemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, runService, logger, cfg.Maintenance)

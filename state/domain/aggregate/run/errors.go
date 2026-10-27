@@ -54,9 +54,9 @@ var (
 	// is empty.
 	ErrScheduleNameRequired = errors.New("schedule_name is required")
 
-	// ErrRunIDRequired is returned by NewPromotedSeedsRun when the caller-supplied
-	// run id is the nil UUID. That constructor takes its id rather than generating
-	// one, so an unset id would otherwise collide across every promotion.
+	// ErrRunIDRequired is returned by a run constructor whose caller-supplied
+	// run id is the nil UUID: every run takes its id from its caller, so an
+	// unset id would otherwise collide across every run created without one.
 	ErrRunIDRequired = errors.New("run id is required")
 
 	// ErrRunAlreadyExists is returned by RunRepository.SaveRun when a newly

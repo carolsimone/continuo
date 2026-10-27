@@ -51,9 +51,21 @@ func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Tri
 // check. That refusal and every selection the planner refuses are returned as
 // is, and nothing is written.
 func (h *TriggerRebaseHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerRebaseInput) (uuid.UUID, string, error) {
+	return h.creation.create(ctx, u, in.TenantID, in.SourceRunID, in.Initiator, h.selectRebase(in))
+}
+
+// HandleInTransaction creates the rebase runID in asks for, as Handle does,
+// inside u's open transaction, which the caller commits or rolls back. It
+// returns the rebase's schedule name.
+func (h *TriggerRebaseHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerRebaseInput) (string, error) {
+	return h.creation.createInTransaction(ctx, u, runID, in.TenantID, in.SourceRunID, in.Initiator, h.selectRebase(in))
+}
+
+// selectRebase chooses the tasks of the rebase in asks for.
+func (h *TriggerRebaseHandler) selectRebase(in TriggerRebaseInput) selectDerived {
 	opts := runstart.RebaseOptions{IncludeChangedUpstream: in.IncludeChangedUpstream, ExpectedReleaseID: in.ExpectedReleaseID}
-	return h.creation.create(ctx, u, in.TenantID, in.SourceRunID, in.Initiator, func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+	return func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
 		sel, _, err := h.creation.planner.Rebase(ctx, u, src, opts)
 		return sel, err
-	})
+	}
 }

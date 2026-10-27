@@ -333,9 +333,23 @@ func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) ([]top
 	return f.summaries[tenantID], nil
 }
 
-// newServer builds the RunService read server over the fakes of store.
+// newServer builds the RunService server over the fakes of store, with no
+// commands.
 func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
-	return runservice.NewServer(runservice.Reads{
+	return runservice.NewServer(readsOf(store, crons), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// newCommandServer builds the RunService server over the fakes of store, whose
+// commands and rebase previews cmds answers.
+func newCommandServer(store *fakeStore, cmds *fakeCommands) *runservice.Server {
+	reads := readsOf(store, nil)
+	reads.Rebases = cmds
+	return runservice.NewServer(reads, cmds, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// readsOf is the read services over the fakes of store.
+func readsOf(store *fakeStore, crons ports.ScheduleCrons) runservice.Reads {
+	return runservice.Reads{
 		Runs:      runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
 		Attempts:  runreads.NewAttempts(fakeAttempts{store}),
 		Nodes:     runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
@@ -343,5 +357,5 @@ func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
 		Graphs:    runreads.New(fakeRunReads{store}),
 
 		ScheduleGraphs: runreads.NewScheduleGraphs(fakeScheduleGraphs{store}),
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
 }

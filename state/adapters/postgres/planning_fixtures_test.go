@@ -128,7 +128,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	tb.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	r, err := run.NewPendingRun(tenant, schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(tenant, uuid.New(), schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {

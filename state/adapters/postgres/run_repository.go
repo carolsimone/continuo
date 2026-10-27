@@ -13,26 +13,39 @@ import (
 	"github.com/lib/pq"
 )
 
-// GetRun loads the tenant's Run snapshot for read-only use (no row lock).
+// GetRun loads the tenant's Run snapshot for read-only use (no row lock). A
+// run the tenant does not have is an error that is both ErrNotFound and
+// repository.ErrRunNotFound.
 func (r *RunRepository) GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	tr, err := r.GetByID(ctx, tenantID, id)
 	if err != nil {
-		return nil, err
+		return nil, runNotFound(id, err)
 	}
 	return hydrateRun(tr)
 }
 
 // LoadRunForUpdate loads the tenant's Run inside the bound transaction with
-// SELECT … FOR UPDATE.
+// SELECT … FOR UPDATE. A run the tenant does not have is an error that is both
+// ErrNotFound and repository.ErrRunNotFound.
 func (r *RunRepository) LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("LoadRunForUpdate requires an active transaction")
 	}
 	tr, err := r.LoadByIDForUpdateTx(ctx, r.tx, tenantID, id)
 	if err != nil {
-		return nil, err
+		return nil, runNotFound(id, err)
 	}
 	return hydrateRun(tr)
+}
+
+// runNotFound returns err, a failed read of run id, as an error that also
+// matches repository.ErrRunNotFound when err is ErrNotFound, so the
+// application layer recognises a missing run without naming this adapter.
+func runNotFound(id uuid.UUID, err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("run %s: %w (%w)", id, err, repository.ErrRunNotFound)
+	}
+	return err
 }
 
 // SaveRun persists every dirty field of rn under rn's tenant. It consults

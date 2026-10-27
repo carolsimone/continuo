@@ -47,33 +47,17 @@ type TriggerSingleNodeRunInput struct {
 	Initiator      identity.Identity
 }
 
-// Handle synthesises a single-task Run. In stale mode (MetadataSource =
-// snapshot_of_run) it requires the source run to be terminal and to carry a
-// task at the requested node. A selection the planner refuses (the node is not
-// in the release or another service owns it, a test of a node without data
-// tests, a full refresh of a type that cannot be rebuilt, a source that names
-// no release) is returned as is, and nothing is written.
+// Handle synthesises a single-task Run in a transaction of its own. In stale
+// mode (MetadataSource = snapshot_of_run) it requires the source run to be
+// terminal and to carry a task at the requested node. A selection the planner
+// refuses (the node is not in the release or another service owns it, a test
+// of a node without data tests, a full refresh of a type that cannot be
+// rebuilt, a source that names no release) is returned as is, and nothing is
+// written.
 func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (uuid.UUID, string, error) {
-	var src *run.Run
-	if in.MetadataSource == run.MetadataSourceSnapshotOfRun {
-		if in.SourceRunID == nil {
-			return uuid.Nil, "", fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
-		}
-		var err error
-		src, err = u.Run().GetRun(ctx, in.TenantID, *in.SourceRunID)
-		if err != nil {
-			return uuid.Nil, "", fmt.Errorf("get source: %w", err)
-		}
-		if !src.IsTerminal() {
-			return uuid.Nil, "", ErrSourceRunNotTerminal
-		}
-		ok, err := src.HasTaskAt(ctx, u.TaskCollection(src.TenantID()), in.Target)
-		if err != nil {
-			return uuid.Nil, "", err
-		}
-		if !ok {
-			return uuid.Nil, "", run.ErrTaskNotFound
-		}
+	src, err := h.source(ctx, u, in)
+	if err != nil {
+		return uuid.Nil, "", err
 	}
 
 	if err := u.Begin(ctx); err != nil {
@@ -86,28 +70,78 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		}
 	}()
 
-	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src)
+	runID := uuid.New()
+	name, err := h.write(ctx, u, runID, in, src)
 	if err != nil {
-		return uuid.Nil, "", err
-	}
-	id := uuid.New()
-	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	newRun, err := run.NewSingleNodeRun(in.TenantID, scheduleName, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-	if err := u.Run().SaveRun(ctx, newRun); err != nil {
-		return uuid.Nil, "", fmt.Errorf("save: %w", err)
-	}
-	if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Commit(); err != nil {
 		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
 	}
 	committed = true
+	return runID, name, nil
+}
 
-	h.logger.Info("Single-node run triggered", "tenant_id", in.TenantID, "new_run_id", newRun.RunID(), "schedule_name", scheduleName, "target", in.Target,
-		"release_id", sel.Stamp.ReleaseID)
-	return newRun.RunID(), newRun.ScheduleName(), nil
+// HandleInTransaction synthesises the single-task Run runID, as Handle does,
+// inside u's open transaction, which the caller commits or rolls back. It
+// returns the run's schedule name.
+func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput) (string, error) {
+	src, err := h.source(ctx, u, in)
+	if err != nil {
+		return "", err
+	}
+	return h.write(ctx, u, runID, in, src)
+}
+
+// source returns the source run of a stale-mode request, after checking it
+// is terminal and carries a task at the requested node; a request on the live
+// release has none.
+func (h *TriggerSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (*run.Run, error) {
+	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
+		return nil, nil
+	}
+	if in.SourceRunID == nil {
+		return nil, fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
+	}
+	src, err := u.Run().GetRun(ctx, in.TenantID, *in.SourceRunID)
+	if err != nil {
+		return nil, fmt.Errorf("get source: %w", err)
+	}
+	if !src.IsTerminal() {
+		return nil, ErrSourceRunNotTerminal
+	}
+	ok, err := src.HasTaskAt(ctx, u.TaskCollection(src.TenantID()), in.Target)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, run.ErrTaskNotFound
+	}
+	return src, nil
+}
+
+// write creates the single-task Run runID, named single-node-run- and the
+// first eight hex digits of its id, stores its task and dispatches it, inside
+// u's open transaction. It returns the run's schedule name.
+func (h *TriggerSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput, src *run.Run) (string, error) {
+	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src)
+	if err != nil {
+		return "", err
+	}
+	scheduleName := "single-node-run-" + strings.ReplaceAll(runID.String(), "-", "")[:8]
+	newRun, err := run.NewSingleNodeRun(in.TenantID, runID, scheduleName, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
+	if err != nil {
+		return "", err
+	}
+	if err := u.Run().SaveRun(ctx, newRun); err != nil {
+		return "", fmt.Errorf("save: %w", err)
+	}
+	if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+		return "", err
+	}
+	u.AfterCommit(func() {
+		h.logger.Info("Single-node run triggered", "tenant_id", in.TenantID, "new_run_id", runID, "schedule_name", scheduleName, "target", in.Target,
+			"release_id", sel.Stamp.ReleaseID)
+	})
+	return scheduleName, nil
 }

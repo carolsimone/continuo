@@ -38,18 +38,13 @@ type derivedRunCreation struct {
 type selectDerived func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
 
 // create creates the run derived from tenantID's run sourceID with the tasks
-// selectRun chooses, under the source's tenant, and returns its id and
-// schedule name. Another tenant's sourceID is not found. A selection the
-// planner refuses is returned as is, and nothing is written.
+// selectRun chooses, under the source's tenant, in a transaction of its own,
+// and returns its id and schedule name. Another tenant's sourceID is not
+// found. A selection the planner refuses is returned as is, and nothing is
+// written.
 func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, tenantID string, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
-	src, err := u.Run().GetRun(ctx, tenantID, sourceID)
+	src, err := c.source(ctx, u, tenantID, sourceID)
 	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
-	}
-	if err := c.eligible(ctx, src, u.TaskCollection(src.TenantID())); err != nil {
-		return uuid.Nil, "", err
-	}
-	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.TenantID(), src.ScheduleName()); err != nil {
 		return uuid.Nil, "", err
 	}
 
@@ -63,26 +58,68 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, tenant
 		}
 	}()
 
-	sel, err := selectRun(ctx, u, src)
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-	newRun, err := run.NewDerivedRun(src.TenantID(), src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-	if err := u.Run().SaveRun(ctx, newRun); err != nil {
-		return uuid.Nil, "", fmt.Errorf("save: %w", err)
-	}
-	if err := c.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+	runID := uuid.New()
+	if err := c.write(ctx, u, runID, src, initiator, selectRun); err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Commit(); err != nil {
 		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
 	}
 	committed = true
+	return runID, src.ScheduleName(), nil
+}
 
-	c.logger.Info(c.logLabel, "tenant_id", newRun.TenantID(), "new_run_id", newRun.RunID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
-		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
-	return newRun.RunID(), newRun.ScheduleName(), nil
+// createInTransaction creates the run runID derived from tenantID's run
+// sourceID, as create does, inside u's open transaction, which the caller
+// commits or rolls back. It returns the new run's schedule name.
+func (c derivedRunCreation) createInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, tenantID string, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (string, error) {
+	src, err := c.source(ctx, u, tenantID, sourceID)
+	if err != nil {
+		return "", err
+	}
+	if err := c.write(ctx, u, runID, src, initiator, selectRun); err != nil {
+		return "", err
+	}
+	return src.ScheduleName(), nil
+}
+
+// source loads tenantID's run sourceID and refuses it unless it may be the
+// source of the kind and its schedule has no active run.
+func (c derivedRunCreation) source(ctx context.Context, u uow.UnitOfWork, tenantID string, sourceID uuid.UUID) (*run.Run, error) {
+	src, err := u.Run().GetRun(ctx, tenantID, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("get source: %w", err)
+	}
+	if err := c.eligible(ctx, src, u.TaskCollection(src.TenantID())); err != nil {
+		return nil, err
+	}
+	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.TenantID(), src.ScheduleName()); err != nil {
+		return nil, err
+	}
+	return src, nil
+}
+
+// write creates the run runID derived from src with the tasks selectRun
+// chooses, stores its tasks and dispatches the ready ones, inside u's open
+// transaction.
+func (c derivedRunCreation) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, src *run.Run, initiator identity.Identity, selectRun selectDerived) error {
+	sel, err := selectRun(ctx, u, src)
+	if err != nil {
+		return err
+	}
+	newRun, err := run.NewDerivedRun(src.TenantID(), runID, src.ScheduleName(), c.kind, src.RunID(), sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	if err != nil {
+		return err
+	}
+	if err := u.Run().SaveRun(ctx, newRun); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	if err := c.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+		return err
+	}
+	u.AfterCommit(func() {
+		c.logger.Info(c.logLabel, "tenant_id", newRun.TenantID(), "new_run_id", newRun.RunID(), "schedule_name", newRun.ScheduleName(), "source_run_id", src.RunID(),
+			"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
+	})
+	return nil
 }

@@ -52,7 +52,7 @@ func (f *onceFixture) newUoW() uow.UnitOfWork {
 // pending builds the pending run a start command would create for schedule.
 func (f *onceFixture) pending(t *testing.T, schedule string) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(f.tenant, schedule, run.KindTrigger, nil, "tester", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(f.tenant, uuid.New(), schedule, run.KindTrigger, nil, "tester", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	return r
 }

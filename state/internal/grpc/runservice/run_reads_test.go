@@ -597,13 +597,6 @@ func TestRunReads_AFailingReadIsInternal(t *testing.T) {
 	}
 }
 
-// The server leaves the command RPCs unimplemented.
-func TestServer_LeavesTheCommandRPCsUnimplemented(t *testing.T) {
-	srv := newServer(newStore(), nil)
-	_, err := srv.CancelRun(ctxOf(tenantA), &runv1.CancelRunRequest{RunId: uuid.NewString()})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
 func TestListRunAttempts_ClampsPaging(t *testing.T) {
 	cases := []struct {
 		name                  string

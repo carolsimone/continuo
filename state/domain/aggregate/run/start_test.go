@@ -48,7 +48,7 @@ func fkey(table string) topology.NodeKey { return topology.KeyOf("e2e_schema", t
 
 func newCronRun(t *testing.T, op model.Operation) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, nil, op,
 		run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, startNow)
 	require.NoError(t, err)
 	return r
@@ -201,7 +201,7 @@ func TestStart_InheritedTasksAreSucceededAndNeverDispatched(t *testing.T) {
 	}}
 	plan, err := runplan.Rerun{Source: src}.Select(g)
 	require.NoError(t, err)
-	r, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "e2e-schedule-failure", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12},
+	r, err := run.NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12},
 		identity.SystemUserID, model.OperationRun, startNow)
 	require.NoError(t, err)
 	tc := newFakeTaskCollection()

@@ -69,7 +69,7 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, "no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.RunID()) })
 	u := newReleaseRunUoW(db)
@@ -137,9 +137,9 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	u := newReleaseRunUoW(db)
 
 	stamp := run.ReleaseStamp{ReleaseID: uuid.NewString(), PromotionSeq: 12}
-	withStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+	withStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
-	withoutStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
+	withoutStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
 	stamped, unstamped = withStamp.RunID(), withoutStamp.RunID()
 	saveRuns(t, u, withStamp, withoutStamp)

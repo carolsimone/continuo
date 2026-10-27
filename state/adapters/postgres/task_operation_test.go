@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	schedRepo := postgres.NewRunRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
-	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
+	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, uuid.New(), "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	// One statement deletes the run and, through the tasks table's ON DELETE
 	// CASCADE, its tasks, so no concurrent reader sees this single-node run

@@ -35,6 +35,10 @@ import (
 var (
 	stateClient statev1.StateServiceClient
 	runClient   runv1.RunServiceClient
+	// runCommands serves the RunService commands of the server under test;
+	// a test calls it directly to act for a tenant the gRPC edge does not
+	// resolve.
+	runCommands *svchandlers.RunCommands
 	stateConn   *grpc.ClientConn
 	stateServer *grpcserver.Server
 	stateDB     *sqlx.DB
@@ -142,13 +146,15 @@ func TestMain(m *testing.M) {
 	}
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, 24*time.Hour, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
+	runCommands = svchandlers.NewRunCommands(integrationUoWFactory, noRunMetrics{}, defaultPlanner, logger)
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
 		Attempts:  runreads.NewAttempts(attemptRepo),
 		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
 		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, schedulesconfig.New(nil)),
 		Graphs:    runreads.New(runReadRepo),
-	}, logger)
+		Rebases:   runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
+	}, runCommands, logger)
 
 	// ---- Create gRPC server on a random port ----
 	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, attemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, runService, logger, false)
