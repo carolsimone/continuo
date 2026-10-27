@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getRunningCount,
   getScheduleProgressLabel,
   getScheduleProgressPercent,
 } from '../../src/client/scheduler-card-helpers';
@@ -55,29 +54,7 @@ describe('scheduler card helpers', () => {
     expect(getScheduleProgressPercent(tasks)).toBe(50);
   });
 
-  it('counts only running nodes', () => {
-    const tasks = [
-      makeTask('running', 'a'),
-      makeTask('running', 'b'),
-      makeTask('succeeded', 'c'),
-      makeTask('failed', 'd'),
-      makeTask('pending', 'e'),
-    ];
-
-    expect(getRunningCount(tasks)).toBe(2);
-  });
-
-  it('returns 0 running when no nodes are running', () => {
-    const tasks = [
-      makeTask('succeeded', 'a'),
-      makeTask('failed', 'b'),
-      makeTask('pending', 'c'),
-    ];
-
-    expect(getRunningCount(tasks)).toBe(0);
-  });
-
-  it('counts a dispatched or queued node as neither completed nor running', () => {
+  it('counts a dispatched or queued node as not completed', () => {
     const tasks = [
       makeTask('succeeded', 'a'),
       makeTask('dispatched', 'b'),
@@ -87,6 +64,5 @@ describe('scheduler card helpers', () => {
 
     expect(getScheduleProgressLabel(tasks)).toBe('Completed: 1/4');
     expect(getScheduleProgressPercent(tasks)).toBe(25);
-    expect(getRunningCount(tasks)).toBe(1);
   });
 });

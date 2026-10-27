@@ -186,15 +186,6 @@ export function verificationRunPhase(status: string): 'queued' | 'running' | 'pa
   }
 }
 
-// verificationRunIds lists the verification runs that judged one attempt —
-// one per edited service, or the legacy singular verification_run_id.
-export function verificationRunIds(p: ProposalDTO): string[] {
-  if (p.verifications && p.verifications.length > 0) {
-    return p.verifications.map(v => v.run_id).filter(Boolean);
-  }
-  return p.verification_run_id ? [p.verification_run_id] : [];
-}
-
 // verificationPhase decides whether an attempt in 'verifying' is being run
 // now or is still waiting its turn, from the phases agent-remediation
 // recorded on its verifications. Running wins. Queued needs positive

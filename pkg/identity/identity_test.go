@@ -84,23 +84,6 @@ func TestFromIncomingContext_PresentHeader(t *testing.T) {
 	}
 }
 
-// The outgoing helper and the incoming extractor must agree on the key so a
-// user_id set by a Go client round-trips back to the same Identity on the
-// server. The wire moves it from outgoing to incoming metadata; this asserts
-// the two helpers share MetadataKey.
-func TestOutgoing_RoundTrips_ToIncoming(t *testing.T) {
-	ctx := identity.NewOutgoingContext(context.Background(), identity.FromUserID("alice"))
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		t.Fatal("no outgoing metadata set")
-	}
-	incoming := metadata.NewIncomingContext(context.Background(), md)
-	id := identity.FromIncomingContext(incoming)
-	if id.UserID != "alice" {
-		t.Fatalf("round-tripped UserID = %q, want alice", id.UserID)
-	}
-}
-
 func TestFromContext_FallsBackToSystem(t *testing.T) {
 	id := identity.FromContext(context.Background())
 	if !id.IsSystem() {

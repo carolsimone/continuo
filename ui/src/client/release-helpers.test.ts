@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
-  releasePillClass, verificationPhase, verificationRunPhase, verificationRunIds,
+  releasePillClass, verificationPhase, verificationRunPhase,
   effectiveRound, groupProposals, proposalPillClass,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
@@ -151,29 +151,6 @@ describe('verificationRunPhase', () => {
     for (const s of ['compiling', 'parsing', 'seed_building', 'validating']) expect(verificationRunPhase(s)).toBe('running');
     expect(verificationRunPhase('passed')).toBe('passed');
     expect(verificationRunPhase('failed')).toBe('failed');
-  });
-});
-
-describe('verificationRunIds', () => {
-  it('lists one run id per verification, dropping empty ids', () => {
-    const p = {
-      ...base,
-      verification_run_id: 'verify-legacy',
-      verifications: [
-        { service: 'svc_a', kind: 'dbt', run_id: 'verify-a', phase: '', activated_at: '', error: '' },
-        { service: 'svc_b', kind: 'dbt', run_id: '', phase: '', activated_at: '', error: '' },
-        { service: 'svc_c', kind: 'python', run_id: 'verify-c', phase: '', activated_at: '', error: '' },
-      ],
-    } as ProposalDTO;
-    expect(verificationRunIds(p)).toEqual(['verify-a', 'verify-c']);
-  });
-
-  it('falls back to the singular verification_run_id when there are no verifications', () => {
-    expect(verificationRunIds({ ...base, verification_run_id: 'verify-legacy' })).toEqual(['verify-legacy']);
-  });
-
-  it('is empty when an attempt was judged without any verification run', () => {
-    expect(verificationRunIds(base)).toEqual([]);
   });
 });
 

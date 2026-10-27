@@ -588,3 +588,30 @@ func TestSession_DisconnectLeavesPendingActionResumable(t *testing.T) {
 	assert.Equal(t, 1, calls, "the tool call is persisted")
 	assert.Equal(t, 0, results, "no tool result is persisted on disconnect")
 }
+
+// The confirm prompt the operator approves must show an optional positional
+// (here the source run a snapshot-mode run is pinned to), not only the node.
+func TestCommandString_ShowsOptionalPositionalInConfirmPrompt(t *testing.T) {
+	def := ports.ToolDef{
+		Name: "node_trigger", Mutating: true, CLIPath: []string{"node", "trigger"},
+		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+	}
+	got := commandString("continuo", def, map[string]string{
+		"service": "finance", "schema": "analytics", "table": "orders",
+		"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
+	})
+	assert.Equal(t, "continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", got)
+}
+
+// Absent and whitespace-only optional values are left out of the displayed
+// command, matching the argv the executor builds.
+func TestCommandString_SkipsBlankOptionalPositional(t *testing.T) {
+	def := ports.ToolDef{
+		Name: "node_trigger", CLIPath: []string{"node", "trigger"},
+		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+	}
+	got := commandString("continuo", def, map[string]string{
+		"service": "finance", "schema": "analytics", "table": "orders", "source-run-id": "  ",
+	})
+	assert.Equal(t, "continuo node trigger finance analytics orders", got)
+}

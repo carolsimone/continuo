@@ -259,15 +259,3 @@ func TestExecutor_AppendsPresentOptionalPositional(t *testing.T) {
 	assert.False(t, res.IsError)
 	assert.Contains(t, res.Output, `"argv":"node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"`)
 }
-
-// The confirm prompt the operator approves must show the source run the
-// snapshot-mode run will be pinned to, not only the node.
-func TestCommandString_ShowsOptionalPositionalInConfirmPrompt(t *testing.T) {
-	def, ok := testCatalog(t).Lookup("node_trigger")
-	require.True(t, ok)
-	got := CommandString("continuo", def, map[string]string{
-		"service": "finance", "schema": "analytics", "table": "orders",
-		"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
-	})
-	assert.Equal(t, "continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", got)
-}
