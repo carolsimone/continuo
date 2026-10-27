@@ -52,11 +52,10 @@ func TestTaskStatusConversion_NoDomainStatusIsUnspecified(t *testing.T) {
 
 // fakeTaskRepo serves fixed tasks to TaskHandler's reads.
 type fakeTaskRepo struct {
-	postgres.TaskRepository
 	tasks []*postgres.TaskRow
 }
 
-func (f *fakeTaskRepo) GetByID(_ context.Context, _ string, id uuid.UUID) (*postgres.TaskRow, error) {
+func (f *fakeTaskRepo) GetRow(_ context.Context, id uuid.UUID) (*postgres.TaskRow, error) {
 	for _, t := range f.tasks {
 		if t.TaskID == id {
 			return t, nil
@@ -65,7 +64,11 @@ func (f *fakeTaskRepo) GetByID(_ context.Context, _ string, id uuid.UUID) (*post
 	return nil, postgres.ErrNotFound
 }
 
-func (f *fakeTaskRepo) ListByRunID(_ context.Context, _ string, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskRow, int, error) {
+func (f *fakeTaskRepo) GetRowByNode(_ context.Context, _ uuid.UUID, _, _, _ string) (*postgres.TaskRow, error) {
+	return nil, postgres.ErrNotFound
+}
+
+func (f *fakeTaskRepo) ListByRunID(_ context.Context, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskRow, int, error) {
 	return f.tasks, len(f.tasks), nil
 }
 

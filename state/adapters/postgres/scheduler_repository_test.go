@@ -32,7 +32,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func createScheduler(t *testing.T, repo postgres.RunTableRepository, scheduleName string) *postgres.RunRow {
+func createScheduler(t *testing.T, repo *postgres.RunRepository, scheduleName string) *postgres.RunRow {
 	t.Helper()
 	runRow := &postgres.RunRow{
 		TenantID:             pkgevents.DefaultTenantID,
@@ -49,7 +49,7 @@ func createScheduler(t *testing.T, repo postgres.RunTableRepository, scheduleNam
 
 func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	runRow := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", runRow.ScheduleID)
@@ -69,7 +69,7 @@ func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testi
 
 func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	runRow := &postgres.RunRow{
@@ -105,7 +105,7 @@ func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 // ErrRunExists, and leaves the transaction usable.
 func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
@@ -141,7 +141,7 @@ func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 // index: a different id with the same active schedule_name still fails.
 func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	name := "active-" + uuid.New().String()[:8]
@@ -167,7 +167,7 @@ func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T
 
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	id := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), &postgres.RunRow{
 		TenantID:             pkgevents.DefaultTenantID,
@@ -194,7 +194,7 @@ func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 
 func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	id := uuid.New()
 	runRow := &postgres.RunRow{
@@ -219,7 +219,7 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 
 func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	ctx := context.Background()
 	sourceRunID := uuid.New()
@@ -262,9 +262,9 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	assert.Nil(t, gotDefault.SourceRunID)
 }
 
-func TestRunTableRepository_CancelTx(t *testing.T) {
+func TestRunRepository_CancelTx(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
@@ -309,9 +309,9 @@ func TestRunTableRepository_CancelTx(t *testing.T) {
 
 // A cancel that waits for its stops writes the run cancelling with who
 // cancelled it, why and when, and no completed_at: the run has not ended.
-func TestRunTableRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
+func TestRunRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 	id := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
@@ -340,13 +340,13 @@ func TestRunTableRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.
 	assert.Nil(t, got.CompletedAt, "a cancelling run has not ended")
 }
 
-// TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus drives
+// TestRunRepository_CancelTx_RefusesEveryTerminalStatus drives
 // CancelTx against a run in every status. Only an active run is cancelled; a
 // run in any terminal status, skipped included, returns ErrRunNotCancellable and
 // its row is left exactly as it was.
-func TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
+func TestRunRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	for _, status := range []run.RunStatus{
@@ -392,7 +392,7 @@ func TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
 	}
 }
 
-// TestRunTableRepository_TerminalCountSurvivesRetryFlow walks the full
+// TestRunRepository_TerminalCountSurvivesRetryFlow walks the full
 // FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
 // retry-exhausting task produces in production. The aggregate increments the
 // counter in memory on each FAILED and decrements it on each FAILED→RUNNING
@@ -402,9 +402,9 @@ func TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
 //
 // This is the unit-level guard against the inflation bug that broke
 // TestE2E_FailurePath_RerunRebasesBothFailureSubtrees in PR #61 CI.
-func TestRunTableRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
+func TestRunRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
@@ -447,13 +447,13 @@ func TestRunTableRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
 	}
 }
 
-// TestRunTableRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
+// TestRunRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
 // that SetTerminalTaskCountTx writes the value absolutely — including
 // decreasing writes. This replaces the deleted _GREATEST test, which guarded
 // the old monotonic-MAX semantics that the aggregate refactor obsoleted.
-func TestRunTableRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
+func TestRunRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()

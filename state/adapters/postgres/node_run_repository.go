@@ -4,7 +4,7 @@
 // surface. It joins runs × tasks × task_attempts filtered
 // by node identity and emits a flat NodeRun row per task instance.
 //
-// Why a separate repo (not a method on TaskRepository):
+// Why a separate repo (not a method on TaskCollection):
 //   - The query joins three tables; living on the per-table CRUD repo would
 //     pull cross-table concerns into single-table code.
 //   - The shape is read-only (no Create/Update/Delete) and audit-shaped (one

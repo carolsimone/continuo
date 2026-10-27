@@ -407,10 +407,7 @@ func TestPostgresUnitOfWork_TopologyWritesRollBackWithTheTransaction(t *testing.
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
-	u := postgres.NewPostgresUnitOfWork(db,
-		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, logger),
-		postgres.NewScheduleCatalogRepository(db, logger),
-		ports.SystemClock{}, logger)
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
 
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.Topology().LockTopology(ctx))

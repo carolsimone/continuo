@@ -25,7 +25,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -81,16 +80,12 @@ func noopUoWFactory() func() uow.UnitOfWork {
 
 // ---- stubs for schedule catalog ----
 
-// stubCatalogRepo satisfies both postgres.ScheduleCatalogRepository and
-// repository.ScheduleCatalogRepository for handler unit tests.
+// stubCatalogRepo satisfies repository.ScheduleCatalogRepository, and the
+// handler's activeSchedules, for handler unit tests.
 type stubCatalogRepo struct {
 	existsActive map[string]bool
 }
 
-func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]run.ServiceMetadata) error {
-	return nil
-}
-func (s *stubCatalogRepo) SoftDeleteAbsent(_ context.Context, _ []string) error { return nil }
 func (s *stubCatalogRepo) ListActive(_ context.Context, _ string) ([]string, error) {
 	names := make([]string, 0)
 	for k, v := range s.existsActive {
@@ -106,18 +101,6 @@ func (s *stubCatalogRepo) ExistsActive(_ context.Context, _, name string) (bool,
 func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _, _ string) (map[string]run.ServiceMetadata, error) {
 	return map[string]run.ServiceMetadata{}, nil
 }
-func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ string, _ []string, _ map[string]map[string]run.ServiceMetadata) error {
-	return nil
-}
-func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ string, _ []string) error {
-	return nil
-}
-func (s *stubCatalogRepo) ListAll(_ context.Context, _ string) ([]postgres.ScheduleCatalogRow, error) {
-	return nil, nil
-}
-func (s *stubCatalogRepo) ListAllForUpdateTx(_ context.Context, _ *sqlx.Tx, _ string) ([]postgres.ScheduleCatalogRow, error) {
-	return nil, nil
-}
 func (s *stubCatalogRepo) GetCatalog(_ context.Context, _ string) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
@@ -128,58 +111,21 @@ func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCata
 	return nil
 }
 
+// stubSchedulerRepo serves fixed run reads to SchedulerHandler.
 type stubSchedulerRepo struct {
-	hasActive       bool
-	lastRunData     map[string]postgres.LastRunData
-	getActiveResult *postgres.RunRow
-	getActiveErr    error
-	cancelErr       error
-	getByIDResult   *postgres.RunRow
-	getByIDErr      error
+	lastRunData   map[string]repository.LastRunSummary
+	getByIDResult *postgres.RunRow
+	getByIDErr    error
 }
 
-func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.RunRow) error { return nil }
 func (s *stubSchedulerRepo) GetByID(_ context.Context, _ string, _ uuid.UUID) (*postgres.RunRow, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) GetActiveRun(_ context.Context, _, _ string) (*postgres.RunRow, error) {
-	return s.getActiveResult, s.getActiveErr
-}
-func (s *stubSchedulerRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
-	return s.hasActive, nil
-}
-func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]postgres.LastRunData, error) {
+func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
 	if s.lastRunData != nil {
 		return s.lastRunData, nil
 	}
-	return map[string]postgres.LastRunData{}, nil
-}
-func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.RunRow) error {
-	return nil
-}
-func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ int32) error {
-	return nil
-}
-func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ int32) error {
-	return nil
-}
-func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (s *stubSchedulerRepo) LoadByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID) (*postgres.RunRow, error) {
-	return s.getByIDResult, s.getByIDErr
-}
-func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
-	return nil
-}
-func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ postgres.RunRowUpdate) error {
-	return nil
-}
-func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ run.RunStatus, _, _ string, _ time.Time) error {
-	return s.cancelErr
+	return map[string]repository.LastRunSummary{}, nil
 }
 
 // defaultPlanner plans the runs of the default tenant, as state's main does.
@@ -591,7 +537,7 @@ func TestListAllSchedules_Empty(t *testing.T) {
 func TestListAllSchedules_MergesData(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{
-		lastRunData: map[string]postgres.LastRunData{
+		lastRunData: map[string]repository.LastRunSummary{
 			"daily": {ScheduleName: "daily", RunID: uuid.New(), Status: run.RunStatusSucceeded, IsActive: false},
 		},
 	}
@@ -617,7 +563,7 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 	id := uuid.New()
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{
-		lastRunData: map[string]postgres.LastRunData{
+		lastRunData: map[string]repository.LastRunSummary{
 			"daily": {
 				ScheduleName: "daily",
 				RunID:        id,
@@ -1257,7 +1203,7 @@ func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
 // cancelling run as running.
 func TestListAllSchedules_ACancellingLastRunIsRunning(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-	repo := &stubSchedulerRepo{lastRunData: map[string]postgres.LastRunData{
+	repo := &stubSchedulerRepo{lastRunData: map[string]repository.LastRunSummary{
 		"daily": {ScheduleName: "daily", RunID: uuid.New(), Status: run.RunStatusCancelling, CreatedAt: time.Now(), IsActive: true},
 	}}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())

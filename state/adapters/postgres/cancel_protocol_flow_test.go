@@ -220,7 +220,7 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	id := insertSeedRun(t, db, tenant, run.RunStatusCancelling)
 	var schedule string
 	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM runs WHERE run_id = $1`, id))
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	blocked, err := repo.HasActiveRun(ctx, tenant, schedule)
 	require.NoError(t, err)
@@ -229,8 +229,8 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	active, err := repo.GetActiveRun(ctx, tenant, schedule)
 	require.NoError(t, err)
 	require.NotNil(t, active)
-	assert.Equal(t, id, active.ScheduleID)
-	assert.Equal(t, run.RunStatusCancelling, active.Status)
+	assert.Equal(t, id, active.RunID())
+	assert.Equal(t, run.RunStatusCancelling, active.Status())
 
 	last, err := repo.GetLastRunPerSchedule(ctx, tenant)
 	require.NoError(t, err)

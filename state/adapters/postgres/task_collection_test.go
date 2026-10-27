@@ -15,12 +15,12 @@ import (
 
 // GetByID reads one task's identity and image, and reports a missing task as
 // run.ErrTaskNotFound.
-func TestTaskCollectionAdapter_GetByID(t *testing.T) {
+func TestTaskCollection_GetByID(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	logger := discardLogger()
-	schedRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
+	schedRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	sched := createScheduler(t, schedRepo, "get-by-id-"+uuid.NewString()[:8])
 	taskID := uuid.New()
 	t.Cleanup(func() {
@@ -33,9 +33,9 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 		SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		ImageTag: "service-1:v3",
 	}))
-	adapter := postgres.NewTaskCollectionAdapter(taskRepo, nil, "default")
+	collection := taskRepo.ForTenant("default")
 
-	got, err := adapter.GetByID(ctx, taskID)
+	got, err := collection.GetByID(ctx, taskID)
 	require.NoError(t, err)
 	assert.Equal(t, taskID, got.TaskID)
 	assert.Equal(t, sched.ScheduleID, got.ScheduleID)
@@ -43,7 +43,7 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 	assert.Equal(t, "service-1:v3", got.ImageTag)
 	assert.Equal(t, run.TaskStatusSucceeded, got.Status)
 
-	_, err = adapter.GetByID(ctx, uuid.New())
+	_, err = collection.GetByID(ctx, uuid.New())
 	assert.ErrorIs(t, err, run.ErrTaskNotFound)
 }
 
@@ -51,11 +51,11 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 // each task's run is stamped with. A task whose run names no release, and an
 // id no task has, are absent. With a pool of one connection, held by the
 // transaction, a read on another connection would wait until the deadline.
-func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
+func TestTaskCollection_RunReleasesOf(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
-	schedRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
+	schedRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	suffix := uuid.NewString()[:8]
 	release := "rel-" + suffix
 	stamped := createScheduler(t, schedRepo, "run-releases-stamped-"+suffix)
@@ -81,9 +81,9 @@ func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	adapter := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
+	collection := taskRepo.ForTenant("default").WithTx(tx)
 
-	got, err := adapter.RunReleasesOf(ctx, []uuid.UUID{stampedTask, legacyTask, uuid.New()})
+	got, err := collection.RunReleasesOf(ctx, []uuid.UUID{stampedTask, legacyTask, uuid.New()})
 
 	require.NoError(t, err)
 	assert.Equal(t, map[uuid.UUID]string{stampedTask: release}, got)

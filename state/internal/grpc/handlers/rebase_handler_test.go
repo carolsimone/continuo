@@ -31,8 +31,8 @@ import (
 
 type rebaseFixture struct {
 	Handler       *RebaseHandler
-	SchedulerRepo postgres.RunTableRepository
-	TaskRepo      postgres.TaskRepository
+	SchedulerRepo *postgres.RunRepository
+	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
 	// Tenant is the tenant the fixture's planner plans for; its releases and
 	// live pointer are deleted when the test ends.
@@ -59,12 +59,11 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	useCase := svchandlers.NewTriggerRebaseHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)

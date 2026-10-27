@@ -58,9 +58,6 @@ func explainWithoutSeqScan(t *testing.T, db *sqlx.DB, q string) string {
 func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.StartRunHandler) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	for _, n := range names {
 		_, err := db.Exec(`
@@ -73,7 +70,7 @@ func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.
 
 	clk := svcports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	return factory, svchandlers.NewStartRunHandler(defaultPlanner, logger)
 }

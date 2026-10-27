@@ -11,89 +11,54 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
 
-// TaskRepository defines all operations for tasks table. Every method names
-// the tenant whose tasks it reads or writes and touches only that tenant's
-// rows, and every lease a read joins is the tenant's; a row to insert carries
-// its own tenant.
-type TaskRepository interface {
-	Create(ctx context.Context, task *TaskRow) error
-	GetByID(ctx context.Context, tenantID string, taskID uuid.UUID) (*TaskRow, error)
-	GetByRunAndNode(ctx context.Context, tenantID string, runID uuid.UUID, serviceName, schemaName, tableName string) (*TaskRow, error)
-	ListByRunID(ctx context.Context, tenantID string, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskRow, int, error)
-	// ListByRunTx returns every task of a run in node-key order, reading
-	// through tx so a caller that holds the connection does not wait for a
-	// second one.
-	ListByRunTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) ([]*TaskRow, error)
-	// RunReleasesTx maps each task of taskIDs whose run names a release to
-	// that release, reading through tx.
-	RunReleasesTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) (map[uuid.UUID]string, error)
-	// BulkCreateTx inserts every task of a run within a transaction, with one
-	// COPY. A task whose id, or whose node in its run, is already stored fails
-	// the whole copy.
-	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskRow) error
-	// SetStatusAndAttemptTx writes status and attempt for the given task,
-	// leaving a cancelled row untouched. Returns rows affected.
-	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.UUID, status string, attempt int32) (int32, error)
-	// LoadAttemptStateTx returns the task's status, stored attempt,
-	// max_retries, node_key, job_name, service_name, schema_name, table_name
-	// and dispatched_at, locking the row FOR UPDATE so concurrent writers of
-	// the task (attempt reports, the cancel) serialize. found is false when
-	// the row does not exist. attempt is what the Run aggregate compares a
-	// report's attempt with.
-	LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.UUID) (row TaskAttemptRow, found bool, err error)
-	// MarkDispatchedTx makes the pending, undispatched tasks among taskIDs
-	// dispatched, stamping dispatched_at and ending their wait for a node
-	// lease, and returns the ids it changed.
-	MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error)
-	// MarkSkippedTx sets status 'skipped' on the pending, undispatched tasks
-	// among taskIDs, ending their wait for a node lease, and returns how many
-	// it changed.
-	MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) (int64, error)
-	// SkipPendingTx sets status 'skipped' on the run's pending, undispatched
-	// tasks, ending their wait for a node lease, and returns how many it
-	// changed.
-	SkipPendingTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (int64, error)
-	// HasInFlightTaskTx reports whether any task of the run is dispatched,
-	// queued, running or stopping, or is pending and waits for a node lease
-	// whose holder is one of those.
-	HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (bool, error)
-	// HasFailedTaskTx reports whether any task of the given run has status
-	// 'failed' or 'cancelled'.
-	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (bool, error)
-	// HasNonSucceededTask returns true iff at least one task for the given run_id
-	// has a status other than 'succeeded'. Used by rebase eligibility: a source run is
-	// visible as a rebase candidate iff it is terminal AND has ≥1 non-succeeded task.
-	HasNonSucceededTask(ctx context.Context, tenantID string, runID uuid.UUID) (bool, error)
-	// BeginStopTx cancels the schedule's pending tasks and makes its
-	// dispatched, queued and running tasks stopping, stamping each with
-	// cancelled_by and cancelled_at (the run's cancellation instant); it ends
-	// the wait of each pending task and releases the node lease of each task
-	// it cancels, and returns how many it moved to each status.
-	BeginStopTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error)
+// TaskCollection implements run.TaskCollection over the tasks table and the
+// tables that hang off a task (task_attempts, node_leases). It is the
+// collection of one tenant's tasks: every read and write of a method below
+// names only that tenant's rows, and every lease a read joins is the tenant's;
+// a row to insert through Create or BulkCreateTx carries its own tenant. The
+// transactional methods (the attempt, lease, stop and run-planning writes) run
+// in the transaction bound by WithTx, so a task, its attempts and its node
+// lease change in one commit; the reads of a task's identity use the
+// autocommit db. NewTaskCollection builds one bound to neither a tenant nor a
+// transaction, and ForTenant and WithTx bind them.
+type TaskCollection struct {
+	db       *sqlx.DB
+	tx       *sqlx.Tx
+	tenantID string
+	logger   *slog.Logger
 }
 
-type taskRepository struct {
-	db     *sqlx.DB
-	logger *slog.Logger
-}
-
-// NewTaskRepository creates a TaskRepository over db.
-func NewTaskRepository(db *sqlx.DB, logger *slog.Logger) TaskRepository {
-	return &taskRepository{
+// NewTaskCollection creates a TaskCollection over db, bound to no tenant and
+// no transaction.
+func NewTaskCollection(db *sqlx.DB, logger *slog.Logger) *TaskCollection {
+	return &TaskCollection{
 		db:     db,
 		logger: logger,
 	}
 }
 
+// ForTenant returns a TaskCollection over the same db and transaction that
+// reads and writes the tasks of tenantID.
+func (r *TaskCollection) ForTenant(tenantID string) *TaskCollection {
+	return &TaskCollection{db: r.db, tx: r.tx, tenantID: tenantID, logger: r.logger}
+}
+
+// WithTx returns a TaskCollection over the same db and tenant that runs its
+// transactional methods in tx.
+func (r *TaskCollection) WithTx(tx *sqlx.Tx) *TaskCollection {
+	return &TaskCollection{db: r.db, tx: tx, tenantID: r.tenantID, logger: r.logger}
+}
+
 // Create inserts a new task record into the database, under the row's tenant.
 // Operation is normalized here (empty → 'run') so callers that build a TaskRow
 // without setting it still satisfy the tasks_operation_check constraint.
-func (r *taskRepository) Create(ctx context.Context, task *TaskRow) error {
+func (r *TaskCollection) Create(ctx context.Context, task *TaskRow) error {
 	if task.TenantID == "" {
 		return fmt.Errorf("create task %s: %w", task.TaskID, ErrNoTenant)
 	}
@@ -155,11 +120,11 @@ const taskReadQuery = `
 	 AND l.node_key = t.node_key AND l.task_id <> t.task_id
 	WHERE t.tenant_id = $1`
 
-// GetByID retrieves the tenant's task by task_id, with the run holding the
+// GetRow retrieves the tenant's task row by task_id, with the run holding the
 // node lease it waits for.
-func (r *taskRepository) GetByID(ctx context.Context, tenantID string, taskID uuid.UUID) (*TaskRow, error) {
+func (r *TaskCollection) GetRow(ctx context.Context, taskID uuid.UUID) (*TaskRow, error) {
 	var task TaskRow
-	err := r.db.GetContext(ctx, &task, taskReadQuery+` AND t.task_id = $2`, tenantID, taskID)
+	err := r.db.GetContext(ctx, &task, taskReadQuery+` AND t.task_id = $2`, r.tenantID, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task not found",
@@ -182,27 +147,35 @@ func (r *taskRepository) GetByID(ctx context.Context, tenantID string, taskID uu
 	return &task, nil
 }
 
-// ListByRunTx returns every task of the tenant's run runID, ordered by node
-// key (byte order), then by task id for rows that have none.
-func (r *taskRepository) ListByRunTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) ([]*TaskRow, error) {
-	var tasks []*TaskRow
-	err := tx.SelectContext(ctx, &tasks, `
+// ListRunTasks returns every task of the tenant's run runID, ordered by node
+// key (byte order), then by task id for rows that have none. It reads through
+// the bound transaction: a derived run plans while its creating transaction
+// holds a connection, and a read on a second one would wait for it under a
+// small pool.
+func (r *TaskCollection) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
+	var rows []*TaskRow
+	err := r.tx.SelectContext(ctx, &rows, `
 		SELECT tenant_id, task_id, run_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
 		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
 		FROM tasks
 		WHERE tenant_id = $1 AND run_id = $2
-		ORDER BY node_key COLLATE "C", task_id`, tenantID, runID)
+		ORDER BY node_key COLLATE "C", task_id`, r.tenantID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list the tasks of run %s: %w", runID, err)
 	}
-	return tasks, nil
+	out := make([]run.Task, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, taskFromRow(t))
+	}
+	return out, nil
 }
 
-// RunReleasesTx maps each of the tenant's tasks of taskIDs whose run names a
-// release to that release. A task id the tenant has no row of, or whose run's
+// RunReleasesOf maps each of the tenant's tasks of taskIDs whose run names a
+// release to that release, reading through the bound transaction, which a
+// rebase plans in. A task id the tenant has no row of, or whose run's
 // release_id is NULL or empty, is absent.
-func (r *taskRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+func (r *TaskCollection) RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID) (map[uuid.UUID]string, error) {
 	out := make(map[uuid.UUID]string, len(taskIDs))
 	if len(taskIDs) == 0 {
 		return out, nil
@@ -211,12 +184,12 @@ func (r *taskRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, tenantI
 		TaskID    uuid.UUID `db:"task_id"`
 		ReleaseID string    `db:"release_id"`
 	}
-	err := tx.SelectContext(ctx, &rows, `
+	err := r.tx.SelectContext(ctx, &rows, `
 		SELECT t.task_id, s.release_id
 		FROM tasks t
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE t.tenant_id = $1 AND t.task_id = ANY($2) AND s.release_id <> ''`,
-		tenantID, pq.Array(taskIDs))
+		r.tenantID, pq.Array(taskIDs))
 	if err != nil {
 		return nil, fmt.Errorf("read the run releases of %d tasks: %w", len(taskIDs), err)
 	}
@@ -226,16 +199,16 @@ func (r *taskRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, tenantI
 	return out, nil
 }
 
-// GetByRunAndNode retrieves the tenant's task by run_id and node information,
-// with the run holding the node lease it waits for.
-func (r *taskRepository) GetByRunAndNode(ctx context.Context, tenantID string, runID uuid.UUID, serviceName, schemaName, tableName string) (*TaskRow, error) {
+// GetRowByNode retrieves the tenant's task row by run_id and node
+// information, with the run holding the node lease it waits for.
+func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, serviceName, schemaName, tableName string) (*TaskRow, error) {
 	var task TaskRow
 	err := r.db.GetContext(ctx, &task, taskReadQuery+`
 		  AND t.run_id = $2
 		  AND t.service_name = $3
 		  AND t.schema_name = $4
 		  AND t.table_name = $5`,
-		tenantID, runID, serviceName, schemaName, tableName)
+		r.tenantID, runID, serviceName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task not found by run and node",
@@ -266,7 +239,7 @@ func (r *taskRepository) GetByRunAndNode(ctx context.Context, tenantID string, r
 // ListByRunID retrieves one page of the tasks of the tenant's run, newest
 // first, with an optional status filter, and the number of tasks the filter
 // matches. Each task carries the run holding the node lease it waits for.
-func (r *taskRepository) ListByRunID(ctx context.Context, tenantID string, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskRow, int, error) {
+func (r *TaskCollection) ListByRunID(ctx context.Context, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskRow, int, error) {
 	var statusFilter sql.NullString
 	if status != nil {
 		statusFilter = sql.NullString{String: string(*status), Valid: true}
@@ -276,7 +249,7 @@ func (r *taskRepository) ListByRunID(ctx context.Context, tenantID string, runID
 	if err := r.db.GetContext(ctx, &total, `
 		SELECT COUNT(*) FROM tasks
 		WHERE tenant_id = $3 AND run_id = $1 AND ($2::text IS NULL OR status = $2)`,
-		runID, statusFilter, tenantID); err != nil {
+		runID, statusFilter, r.tenantID); err != nil {
 		return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
 	}
 
@@ -285,7 +258,7 @@ func (r *taskRepository) ListByRunID(ctx context.Context, tenantID string, runID
 		  AND t.run_id = $2 AND ($3::text IS NULL OR t.status = $3)
 		ORDER BY t.created_at DESC
 		LIMIT $4 OFFSET $5`,
-		tenantID, runID, statusFilter, limit, offset); err != nil {
+		r.tenantID, runID, statusFilter, limit, offset); err != nil {
 		r.logger.Error("Failed to list tasks by schedule",
 			"run_id", runID,
 			"error", err,
@@ -310,7 +283,7 @@ const copyTasks = `COPY tasks (tenant_id, task_id, run_id, created_at, service_n
 // no statement parameters, and commits or rolls back with tx. An empty
 // operation is stored as 'run', which the tasks_operation_check constraint
 // requires; a row with no tenant fails the whole write.
-func (r *taskRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskRow) error {
+func (r *TaskCollection) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskRow) error {
 	rows := make([][]any, 0, len(tasks))
 	for _, t := range tasks {
 		if t.TenantID == "" {
@@ -328,18 +301,18 @@ func (r *taskRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []
 	return nil
 }
 
-// SetStatusAndAttemptTx writes status and attempt for the given task,
-// leaving a cancelled row untouched. Returns rows affected (0 if the task is
-// cancelled or the row is missing). It applies no attempt logic — the Run
-// aggregate decides when a write is warranted under the row lock taken by
-// LoadAttemptStateTx.
-func (r *taskRepository) SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.UUID, status string, attempt int32) (int32, error) {
-	res, err := tx.ExecContext(ctx, `
+// SetStatusAndAttempt writes status and attempt for the given task through the
+// bound transaction, leaving a cancelled row untouched. Returns rows affected
+// (0 if the task is cancelled or the row is missing). It applies no attempt
+// logic — the Run aggregate decides when a write is warranted under the row
+// lock taken by LoadAttemptState.
+func (r *TaskCollection) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, attempt int32) (int, error) {
+	res, err := r.tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = $2, attempt = $3
 		WHERE tenant_id = $4 AND task_id = $1
 		  AND status != 'cancelled'
-	`, taskID, status, attempt, tenantID)
+	`, taskID, string(status), attempt, r.tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("set task status and attempt: %w", err)
 	}
@@ -347,13 +320,13 @@ func (r *taskRepository) SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx,
 	if err != nil {
 		return 0, err
 	}
-	return num.ClampInt32(n), nil
+	return int(num.ClampInt32(n)), nil
 }
 
-// TaskAttemptRow is the part of a task row an attempt report or a
+// taskStateRow is the part of a task row an attempt report or a
 // lease grant reads. RunID is the row's run_id; NodeKey and WaitReason are
 // empty when the row has none.
-type TaskAttemptRow struct {
+type taskStateRow struct {
 	RunID        uuid.UUID  `db:"run_id"`
 	Status       string     `db:"status"`
 	Attempt      int32      `db:"attempt"`
@@ -367,62 +340,80 @@ type TaskAttemptRow struct {
 	WaitReason   string     `db:"wait_reason"`
 }
 
-// LoadAttemptStateTx reads the run_id, status, attempt, max_retries,
+// LoadAttemptState reads the run_id, status, attempt, max_retries,
 // node_key (empty when NULL), job_name, service_name, schema_name, table_name,
 // dispatched_at and wait_reason (empty when NULL) of the tenant's task row of
-// taskID with FOR UPDATE, so concurrent writers of the same task serialize
-// within their transactions. A row the tenant does not have yields found ==
-// false and no error.
-func (r *taskRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
-	var row TaskAttemptRow
-	err := tx.GetContext(ctx, &row,
+// taskID with FOR UPDATE through the bound transaction, so concurrent writers
+// of the same task (attempt reports, the cancel) serialize. attempt is what the
+// Run aggregate compares a report's attempt with. A row the tenant does not
+// have yields found == false and no error.
+func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID) (run.TaskAttemptState, bool, error) {
+	var row taskStateRow
+	err := r.tx.GetContext(ctx, &row,
 		`SELECT run_id, status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
 		        job_name, service_name, schema_name, table_name, dispatched_at,
 		        COALESCE(wait_reason, '') AS wait_reason
 		 FROM tasks WHERE tenant_id = $1 AND task_id = $2 FOR UPDATE`,
-		tenantID, taskID,
+		r.tenantID, taskID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return TaskAttemptRow{}, false, nil
+		return run.TaskAttemptState{}, false, nil
 	}
 	if err != nil {
-		return TaskAttemptRow{}, false, fmt.Errorf("load the attempt of task_id %s: %w", taskID, err)
+		return run.TaskAttemptState{}, false, fmt.Errorf("load the attempt of task_id %s: %w", taskID, err)
 	}
-	return row, true, nil
+	status, err := run.ParseTaskStatus(row.Status)
+	if err != nil {
+		return run.TaskAttemptState{}, true, err
+	}
+	return run.TaskAttemptState{
+		RunID:        row.RunID,
+		Status:       status,
+		Attempt:      row.Attempt,
+		MaxRetries:   row.MaxRetries,
+		NodeKey:      topology.NodeKey(row.NodeKey),
+		JobName:      row.JobName,
+		ServiceName:  row.ServiceName,
+		SchemaName:   row.SchemaName,
+		TableName:    row.TableName,
+		DispatchedAt: row.DispatchedAt,
+		WaitReason:   run.WaitReason(row.WaitReason),
+	}, true, nil
 }
 
-// MarkDispatchedTx makes the tasks of taskIDs that are still pending and
-// undispatched dispatched, with dispatched_at = at, clears what each waited
-// for (wait_reason, lease_wait_since), and returns the ids it changed.
-func (r *taskRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
+// MarkDispatched makes the tasks of taskIDs that are still pending and
+// undispatched dispatched through the bound transaction, with dispatched_at =
+// at, clears what each waited for (wait_reason, lease_wait_since), and returns
+// the ids it changed.
+func (r *TaskCollection) MarkDispatched(ctx context.Context, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
 	}
 	var stamped []uuid.UUID
-	err := tx.SelectContext(ctx, &stamped, `
+	err := r.tx.SelectContext(ctx, &stamped, `
 		UPDATE tasks
 		SET dispatched_at = $2, status = 'dispatched', wait_reason = NULL, lease_wait_since = NULL
 		WHERE tenant_id = $3 AND task_id = ANY($1) AND status = 'pending' AND dispatched_at IS NULL
 		RETURNING task_id`,
-		pq.Array(taskIDs), at, tenantID)
+		pq.Array(taskIDs), at, r.tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("mark %d tasks dispatched: %w", len(taskIDs), err)
 	}
 	return stamped, nil
 }
 
-// MarkSkippedTx sets status = 'skipped' on the tasks of taskIDs that are still
-// pending and undispatched, clears what each waited for (wait_reason,
-// lease_wait_since), and returns how many it changed.
-func (r *taskRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) (int64, error) {
+// MarkSkipped sets status = 'skipped' on the tasks of taskIDs that are still
+// pending and undispatched through the bound transaction, clears what each
+// waited for (wait_reason, lease_wait_since), and returns how many it changed.
+func (r *TaskCollection) MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error) {
 	if len(taskIDs) == 0 {
 		return 0, nil
 	}
-	res, err := tx.ExecContext(ctx, `
+	res, err := r.tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'skipped', wait_reason = NULL, lease_wait_since = NULL
 		WHERE tenant_id = $2 AND task_id = ANY($1) AND status = 'pending' AND dispatched_at IS NULL`,
-		pq.Array(taskIDs), tenantID)
+		pq.Array(taskIDs), r.tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("mark %d tasks skipped: %w", len(taskIDs), err)
 	}
@@ -430,17 +421,17 @@ func (r *taskRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, tenantI
 	if err != nil {
 		return 0, fmt.Errorf("mark %d tasks skipped: %w", len(taskIDs), err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
-// SkipPendingTx sets status = 'skipped' on the run's tasks that are still
-// pending and undispatched, clears what each waited for (wait_reason,
-// lease_wait_since), and returns how many it changed.
-func (r *taskRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (int64, error) {
-	res, err := tx.ExecContext(ctx, `
+// SkipPending sets status = 'skipped' on the run's tasks that are still
+// pending and undispatched through the bound transaction, clears what each
+// waited for (wait_reason, lease_wait_since), and returns how many it changed.
+func (r *TaskCollection) SkipPending(ctx context.Context, runID uuid.UUID) (int, error) {
+	res, err := r.tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'skipped', wait_reason = NULL, lease_wait_since = NULL
-		WHERE tenant_id = $2 AND run_id = $1 AND status = 'pending' AND dispatched_at IS NULL`, runID, tenantID)
+		WHERE tenant_id = $2 AND run_id = $1 AND status = 'pending' AND dispatched_at IS NULL`, runID, r.tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("skip the pending tasks of run_id %s: %w", runID, err)
 	}
@@ -448,7 +439,7 @@ func (r *taskRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, tenantI
 	if err != nil {
 		return 0, fmt.Errorf("skip the pending tasks of run_id %s: %w", runID, err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // runWorkInFlight holds for the run row s when the run has work
@@ -464,7 +455,7 @@ func (r *taskRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, tenantI
 // so another tenant's task on the same node key never counts. The task checks
 // probe idx_tasks_run_id and the older waiters idx_tasks_lease_waiters;
 // node_leases holds one row per tenant and node being written. StalledRuns
-// lists a run only when this is false, and HasInFlightTaskTx re-checks it
+// lists a run only when this is false, and HasInFlight re-checks it
 // under the run's lock.
 const runWorkInFlight = `(
 	EXISTS (
@@ -485,15 +476,15 @@ const runWorkInFlight = `(
 		JOIN runs q ON q.tenant_id = o.tenant_id AND q.run_id = o.run_id AND q.status = 'running'
 		WHERE w.tenant_id = s.tenant_id AND w.run_id = s.run_id AND w.status = 'pending' AND w.wait_reason = 'node_lease'))`
 
-// HasInFlightTaskTx reports whether the tenant's run has work in flight: a
-// task of it is dispatched, queued, running or stopping, or a pending task of
-// it waits for a node lease whose holder is, or behind an older waiter of a
-// running run (runWorkInFlight).
-func (r *taskRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (bool, error) {
+// HasInFlight reports, through the bound transaction, whether the tenant's run
+// has work in flight: a task of it is dispatched, queued, running or stopping,
+// or a pending task of it waits for a node lease whose holder is, or behind an
+// older waiter of a running run (runWorkInFlight).
+func (r *TaskCollection) HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error) {
 	var exists bool
-	err := tx.QueryRowContext(ctx,
+	err := r.tx.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM runs s WHERE s.tenant_id = $3 AND s.run_id = $2 AND `+runWorkInFlight+`)`,
-		pq.Array(inFlightTaskStatuses()), runID, tenantID,
+		pq.Array(inFlightTaskStatuses()), runID, r.tenantID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has in-flight task check for run_id %s: %w", runID, err)
@@ -501,14 +492,15 @@ func (r *taskRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, ten
 	return exists, nil
 }
 
-// HasFailedTaskTx reports whether any task row of the given run
-// has status 'failed' or 'cancelled': a task that ended unsuccessfully (pending
-// and running tasks do not match), so its run finalizes failed.
-func (r *taskRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) (bool, error) {
+// HasFailed reports, through the bound transaction, whether any task row of
+// the given run has status 'failed' or 'cancelled': a task that ended
+// unsuccessfully (pending and running tasks do not match), so its run
+// finalizes failed.
+func (r *TaskCollection) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
 	var exists bool
-	err := tx.QueryRowContext(ctx,
+	err := r.tx.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM tasks WHERE tenant_id = $2 AND run_id = $1 AND status IN ('failed', 'cancelled'))`,
-		runID, tenantID,
+		runID, r.tenantID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has failed task check for run_id %s: %w", runID, err)
@@ -516,24 +508,24 @@ func (r *taskRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, tenan
 	return exists, nil
 }
 
-// HasNonSucceededTask returns true iff at least one task row for the given
+// HasNonSucceeded returns true iff at least one task row for the given
 // run_id has a status other than 'succeeded'. Used by rebase eligibility: a
 // source run is visible as a rebase candidate iff it is terminal AND has ≥1
-// non-succeeded task.
-func (r *taskRepository) HasNonSucceededTask(ctx context.Context, tenantID string, runID uuid.UUID) (bool, error) {
+// non-succeeded task. It reads through the autocommit db.
+func (r *TaskCollection) HasNonSucceeded(ctx context.Context, runID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.db.GetContext(ctx, &exists, `
 		SELECT EXISTS(SELECT 1 FROM tasks
 		              WHERE tenant_id = $2 AND run_id = $1 AND status != 'succeeded')`,
-		runID, tenantID,
+		runID, r.tenantID,
 	)
 	if err != nil {
-		return false, fmt.Errorf("HasNonSucceededTask: %w", err)
+		return false, fmt.Errorf("HasNonSucceeded: %w", err)
 	}
 	return exists, nil
 }
 
-// BeginStopTx stops the schedule's tasks that have not ended, within the given
+// BeginStop stops the run's tasks that have not ended, within the bound
 // transaction: a dispatched, queued or running task whose current attempt is
 // open (dispatched, queued or running) becomes stopping, and every other one
 // of them, a pending task or a task with no open current attempt, becomes
@@ -541,18 +533,18 @@ func (r *taskRepository) HasNonSucceededTask(ctx context.Context, tenantID strin
 // cancelled_at and cancelled_by, and stops waiting for a node lease
 // (wait_reason and lease_wait_since are cleared). A task that has ended
 // (succeeded, failed, skipped or cancelled) or is already stopping keeps its
-// status. The update locks each row it changes until tx ends; a report of an
+// status. The update locks each row it changes until the transaction ends; a report of an
 // attempt of the run locks the run first, so it reads these rows only after
 // the cancel commits. The node lease of each task it cancels is released in
 // the same transaction, since the cancel ends that task; a stopping task keeps
 // its lease until the report that ends it. It returns how many tasks it
 // cancelled and how many it made stopping.
-func (r *taskRepository) BeginStopTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
+func (r *TaskCollection) BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
 	var stopped []struct {
 		TaskID uuid.UUID      `db:"task_id"`
 		Status run.TaskStatus `db:"status"`
 	}
-	err := tx.SelectContext(ctx, &stopped, `
+	err := r.tx.SelectContext(ctx, &stopped, `
 		UPDATE tasks t
 		SET status           = CASE
 		                         WHEN t.status = 'pending' OR NOT EXISTS (
@@ -571,7 +563,7 @@ func (r *taskRepository) BeginStopTx(ctx context.Context, tx *sqlx.Tx, tenantID 
 		WHERE t.tenant_id = $4 AND t.run_id = $1
 		  AND t.status IN ('pending', 'dispatched', 'queued', 'running')
 		RETURNING t.task_id, t.status
-	`, runID, cancelledAt, cancelledBy, tenantID)
+	`, runID, cancelledAt, cancelledBy, r.tenantID)
 	if err != nil {
 		return run.StopCounts{}, fmt.Errorf("stop the tasks of run_id %s: %w", runID, err)
 	}
@@ -586,8 +578,132 @@ func (r *taskRepository) BeginStopTx(ctx context.Context, tx *sqlx.Tx, tenantID 
 			counts.Stopping++
 		}
 	}
-	if err := releaseLeases(ctx, tx, tenantID, cancelled); err != nil {
+	if err := releaseLeases(ctx, r.tx, r.tenantID, cancelled); err != nil {
 		return run.StopCounts{}, fmt.Errorf("stop the tasks of run_id %s: %w", runID, err)
 	}
 	return counts, nil
 }
+
+// LoadAttempt, SaveAttempt and RequestStops run through the bound transaction:
+// the attempt row is locked after the task row and written in the same commit.
+func (r *TaskCollection) LoadAttempt(ctx context.Context, taskID uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	return loadAttempt(ctx, r.tx, r.tenantID, taskID, attempt)
+}
+
+func (r *TaskCollection) SaveAttempt(ctx context.Context, at run.Attempt) error {
+	return saveAttempt(ctx, r.tx, r.tenantID, at)
+}
+
+func (r *TaskCollection) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
+	return addAttempts(ctx, r.tx, r.tenantID, attempts)
+}
+
+func (r *TaskCollection) RequestStops(ctx context.Context, runID uuid.UUID) ([]run.StopTarget, error) {
+	return requestStops(ctx, r.tx, r.tenantID, runID)
+}
+
+// GetByNode reads the task of run runID that runs node, through the autocommit
+// db.
+func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
+	t, err := r.GetRowByNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return run.Task{}, run.ErrTaskNotFound
+		}
+		return run.Task{}, err
+	}
+	return taskFromRow(t), nil
+}
+
+// GetByID reads one task by id. A task's node and image never change once its
+// row is written, so the read uses the autocommit db.
+func (r *TaskCollection) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
+	t, err := r.GetRow(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return run.Task{}, run.ErrTaskNotFound
+		}
+		return run.Task{}, err
+	}
+	return taskFromRow(t), nil
+}
+
+// taskFromRow maps a task row onto the domain task.
+func taskFromRow(t *TaskRow) run.Task {
+	return run.Task{
+		TaskID:              t.TaskID,
+		ScheduleID:          t.ScheduleID,
+		CreatedAt:           t.CreatedAt,
+		ServiceName:         t.ServiceName,
+		SchemaName:          t.SchemaName,
+		TableName:           t.TableName,
+		JobName:             t.JobName,
+		Status:              t.Status,
+		Attempt:             t.Attempt,
+		MaxRetries:          t.MaxRetries,
+		CancelledAt:         t.CancelledAt,
+		CancelledBy:         t.CancelledBy,
+		ImageTag:            t.ImageTag,
+		InheritedFromTaskID: t.InheritedFromTaskID,
+		Operation:           operationFromColumn(t.Operation),
+		NodeKey:             topology.NodeKey(stringOrEmpty(t.NodeKey)),
+		DispatchedAt:        t.DispatchedAt,
+	}
+}
+
+// BulkCreate stores tasks under the collection's tenant through the bound
+// transaction with one COPY (BulkCreateTx).
+func (r *TaskCollection) BulkCreate(ctx context.Context, tasks []run.Task) error {
+	rows := make([]*TaskRow, 0, len(tasks))
+	for _, t := range tasks {
+		rows = append(rows, &TaskRow{
+			TenantID:            r.tenantID,
+			TaskID:              t.TaskID,
+			ScheduleID:          t.ScheduleID,
+			CreatedAt:           t.CreatedAt,
+			ServiceName:         t.ServiceName,
+			SchemaName:          t.SchemaName,
+			TableName:           t.TableName,
+			JobName:             t.JobName,
+			Status:              t.Status,
+			Attempt:             t.Attempt,
+			MaxRetries:          t.MaxRetries,
+			CancelledAt:         t.CancelledAt,
+			CancelledBy:         t.CancelledBy,
+			ImageTag:            t.ImageTag,
+			InheritedFromTaskID: t.InheritedFromTaskID,
+			Operation:           operationWithDefault(string(t.Operation)),
+			NodeKey:             optionalString(string(t.NodeKey)),
+			DispatchedAt:        t.DispatchedAt,
+		})
+	}
+	return r.BulkCreateTx(ctx, r.tx, rows)
+}
+
+// TakeLeases, WaitForLeases, ReleaseLease, TakeLeaseForWaiter and
+// GrantableWaits run through the bound transaction, so a lease is taken or
+// released, and a wait begins, in the commit that dispatches, makes wait or
+// ends the task, and the waits a grant serves are read under the lock of the
+// run it grants.
+func (r *TaskCollection) TakeLeases(ctx context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	return takeLeases(ctx, r.tx, r.tenantID, claims)
+}
+
+func (r *TaskCollection) WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error {
+	return waitForLeases(ctx, r.tx, r.tenantID, taskIDs)
+}
+
+func (r *TaskCollection) ReleaseLease(ctx context.Context, taskID uuid.UUID) error {
+	return releaseLeases(ctx, r.tx, r.tenantID, []uuid.UUID{taskID})
+}
+
+func (r *TaskCollection) TakeLeaseForWaiter(ctx context.Context, claim run.LeaseClaim) (bool, error) {
+	return takeLeaseForWaiter(ctx, r.tx, r.tenantID, claim)
+}
+
+func (r *TaskCollection) GrantableWaits(ctx context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	return grantableWaitsOf(ctx, r.tx, r.tenantID, runID)
+}
+
+// Compile-time interface assertion.
+var _ run.TaskCollection = (*TaskCollection)(nil)

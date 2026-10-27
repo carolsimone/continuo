@@ -19,10 +19,7 @@ import (
 
 func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
-	return postgres.NewPostgresUnitOfWork(db,
-		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, logger),
-		postgres.NewScheduleCatalogRepository(db, logger),
-		ports.SystemClock{}, logger)
+	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
 }
 
 // promoteSeedRun builds an unsaved promote-seed run of releaseID with one seed.

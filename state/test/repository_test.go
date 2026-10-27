@@ -86,13 +86,13 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	return db, cleanup
 }
 
-// TestRunTableRepository_Create tests creating a run record
-func TestRunTableRepository_Create(t *testing.T) {
+// TestRunRepository_Create tests creating a run record
+func TestRunRepository_Create(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
@@ -118,13 +118,13 @@ func TestRunTableRepository_Create(t *testing.T) {
 	assert.Equal(t, 1, count, "Expected 1 record in database")
 }
 
-// TestRunTableRepository_Create_DuplicateKey tests duplicate key handling
-func TestRunTableRepository_Create_DuplicateKey(t *testing.T) {
+// TestRunRepository_Create_DuplicateKey tests duplicate key handling
+func TestRunRepository_Create_DuplicateKey(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
@@ -148,13 +148,13 @@ func TestRunTableRepository_Create_DuplicateKey(t *testing.T) {
 	assert.ErrorIs(t, err, postgres.ErrDuplicateKey, "Expected ErrDuplicateKey")
 }
 
-// TestRunTableRepository_GetByID tests retrieving a run by ID
-func TestRunTableRepository_GetByID(t *testing.T) {
+// TestRunRepository_GetByID tests retrieving a run by ID
+func TestRunRepository_GetByID(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
@@ -185,13 +185,13 @@ func TestRunTableRepository_GetByID(t *testing.T) {
 	assert.NotNil(t, retrieved.StartedAt)
 }
 
-// TestRunTableRepository_GetByID_NotFound tests error handling for non-existent record
-func TestRunTableRepository_GetByID_NotFound(t *testing.T) {
+// TestRunRepository_GetByID_NotFound tests error handling for non-existent record
+func TestRunRepository_GetByID_NotFound(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 
 	// Try to get non-existent record
 	nonExistentID := uuid.New()
@@ -202,13 +202,13 @@ func TestRunTableRepository_GetByID_NotFound(t *testing.T) {
 	assert.Nil(t, retrieved, "Expected nil run")
 }
 
-// TestRunTableRepository_Create_WithNullableFields tests creating with nullable fields
-func TestRunTableRepository_Create_WithNullableFields(t *testing.T) {
+// TestRunRepository_Create_WithNullableFields tests creating with nullable fields
+func TestRunRepository_Create_WithNullableFields(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 
 	// Create test data with nullable fields set
 	scheduleID := uuid.New()
@@ -245,11 +245,11 @@ func TestRunTableRepository_Create_WithNullableFields(t *testing.T) {
 // schedule_catalog is created by db/migration/state/V*.sql, which setupPostgres
 // applies via ApplyMigrations — these tests just consume it.
 
-func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
+func TestCatalogRepository_ExistsActive(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
+	repo := postgres.NewCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
 	seedCatalog(t, db, repo, []string{"daily"})
@@ -266,7 +266,7 @@ func TestScheduleCatalogRepository_ExistsActive(t *testing.T) {
 // seedCatalog upserts the given schedule names as active rows via the tx-bound
 // UpsertAllTx, committing in its own transaction. Used to set up catalog state
 // for tests that exercise read-side methods.
-func seedCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogRepository, names []string) {
+func seedCatalog(t *testing.T, db *sqlx.DB, repo *postgres.CatalogRepository, names []string) {
 	t.Helper()
 	ctx := context.Background()
 	meta := make(map[string]map[string]run.ServiceMetadata, len(names))
@@ -282,7 +282,7 @@ func seedCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogReposit
 // softDeleteAllCatalog soft-deletes every active catalog row via the tx-bound
 // SoftDeleteAbsentTx with an empty present-set, committing in its own
 // transaction.
-func softDeleteAllCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogRepository) {
+func softDeleteAllCatalog(t *testing.T, db *sqlx.DB, repo *postgres.CatalogRepository) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := db.BeginTxx(ctx, nil)
@@ -291,11 +291,11 @@ func softDeleteAllCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatal
 	require.NoError(t, tx.Commit())
 }
 
-func TestScheduleCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testing.T) {
+func TestCatalogRepository_ExistsActive_SoftDeletedReturnsFalse(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	repo := postgres.NewScheduleCatalogRepository(db, slog.Default())
+	repo := postgres.NewCatalogRepository(db, slog.Default())
 	ctx := context.Background()
 
 	seedCatalog(t, db, repo, []string{"daily"})
@@ -312,7 +312,7 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	repo := postgres.NewRunTableRepository(db, slog.Default())
+	repo := postgres.NewRunRepository(db, slog.Default())
 	ctx := context.Background()
 
 	// Insert two runs for "daily", one for "hourly"
@@ -356,12 +356,12 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	assert.False(t, lastRuns["hourly"].IsActive)
 }
 
-func TestRunTableRepository_GetActiveRun(t *testing.T) {
+func TestRunRepository_GetActiveRun(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	repo := postgres.NewRunTableRepository(db, logger)
+	repo := postgres.NewRunRepository(db, logger)
 	ctx := context.Background()
 
 	t.Run("returns nil when no active run exists", func(t *testing.T) {
@@ -385,8 +385,8 @@ func TestRunTableRepository_GetActiveRun(t *testing.T) {
 		result, err := repo.GetActiveRun(ctx, pkgevents.DefaultTenantID, "active-pending")
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, schedID, result.ScheduleID)
-		assert.Equal(t, run.RunStatusPending, result.Status)
+		assert.Equal(t, schedID, result.RunID())
+		assert.Equal(t, run.RunStatusPending, result.Status())
 	})
 
 	t.Run("returns the run when a running run exists", func(t *testing.T) {
@@ -404,7 +404,7 @@ func TestRunTableRepository_GetActiveRun(t *testing.T) {
 		result, err := repo.GetActiveRun(ctx, pkgevents.DefaultTenantID, "active-running")
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, schedID, result.ScheduleID)
+		assert.Equal(t, schedID, result.RunID())
 	})
 
 	t.Run("returns nil after run is cancelled", func(t *testing.T) {

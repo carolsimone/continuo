@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/repository"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -20,11 +21,23 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// runReads is the part of the runs table the scheduler reads serve: one run
+// row by id and the last run of every schedule.
+type runReads interface {
+	GetByID(ctx context.Context, tenantID string, runID uuid.UUID) (*postgres.RunRow, error)
+	GetLastRunPerSchedule(ctx context.Context, tenantID string) (map[string]repository.LastRunSummary, error)
+}
+
+// activeSchedules lists the names of a tenant's active schedules.
+type activeSchedules interface {
+	ListActive(ctx context.Context, tenantID string) ([]string, error)
+}
+
 // SchedulerHandler handles all scheduler-related gRPC requests.
 type SchedulerHandler struct {
-	repo            postgres.RunTableRepository
+	repo            runReads
 	activate        *svchandlers.StartRunHandler
-	catalogRepo     postgres.ScheduleCatalogRepository
+	catalogRepo     activeSchedules
 	schedulesConfig *schedulerpkg.SchedulesConfig // may be nil
 	uowFactory      func() uow.UnitOfWork
 	logger          *slog.Logger
@@ -32,9 +45,9 @@ type SchedulerHandler struct {
 
 // NewSchedulerHandler creates a new SchedulerHandler.
 func NewSchedulerHandler(
-	repo postgres.RunTableRepository,
+	repo runReads,
 	activate *svchandlers.StartRunHandler,
-	catalogRepo postgres.ScheduleCatalogRepository,
+	catalogRepo activeSchedules,
 	schedulesConfig *schedulerpkg.SchedulesConfig,
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,

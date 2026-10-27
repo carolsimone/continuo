@@ -25,8 +25,8 @@ func TestNodeRunRepository_List(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-nr-" + uuid.New().String()[:8]
@@ -165,8 +165,8 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-noe-" + uuid.New().String()[:8]
@@ -266,13 +266,13 @@ func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.Tas
 	ctx := context.Background()
 	at := time.Now().Add(-time.Duration(ageMin) * time.Minute)
 	sid, tid := uuid.New(), uuid.New()
-	require.NoError(t, postgres.NewRunTableRepository(db, discardLogger()).Create(ctx, &postgres.RunRow{
+	require.NoError(t, postgres.NewRunRepository(db, discardLogger()).Create(ctx, &postgres.RunRow{
 		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: sch, Status: run.RunStatusSucceeded, Kind: "cron",
 		CreatedAt: at, InitializationStatus: "completed",
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
-	require.NoError(t, postgres.NewTaskRepository(db, discardLogger()).Create(ctx, &postgres.TaskRow{
+	require.NoError(t, postgres.NewTaskCollection(db, discardLogger()).Create(ctx, &postgres.TaskRow{
 		TenantID: pkgevents.DefaultTenantID,
 		TaskID:   tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
 		JobName: "j", Status: status, Attempt: attempt, MaxRetries: 3, ImageTag: "v1", CreatedAt: at,
@@ -401,8 +401,8 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-ln-" + uuid.New().String()[:8]
@@ -474,8 +474,8 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-iso-" + uuid.New().String()[:8]
@@ -505,8 +505,8 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-pg-" + uuid.New().String()[:8]
@@ -549,8 +549,8 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-tie-" + uuid.New().String()[:8]
@@ -590,8 +590,8 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-skip-" + uuid.New().String()[:8]
 	mk := func(taskStatus run.TaskStatus, ageMin int) {
@@ -624,8 +624,8 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-exact-" + uuid.New().String()[:8]
 	mk := func(table string) {
@@ -666,8 +666,8 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-names-a-" + uuid.New().String()[:8]
@@ -712,8 +712,8 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-list-a-" + uuid.New().String()[:8]
@@ -762,8 +762,8 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	suffix := uuid.New().String()[:8]
@@ -803,8 +803,8 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-emp-" + uuid.New().String()[:8]
 	for i := 0; i < 3; i++ {

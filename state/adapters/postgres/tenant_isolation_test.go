@@ -65,7 +65,7 @@ func inTenantTx(t *testing.T, db *sqlx.DB, tenant string, fn func(tasks run.Task
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, discardLogger()), tx, tenant))
+	fn(postgres.NewTaskCollection(db, discardLogger()).ForTenant(tenant).WithTx(tx))
 	require.NoError(t, tx.Commit())
 }
 

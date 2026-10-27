@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -15,14 +14,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// TaskHandler handles all task-related gRPC requests
+// taskReads is the part of a tenant's task collection the task reads serve.
+type taskReads interface {
+	GetRow(ctx context.Context, taskID uuid.UUID) (*postgres.TaskRow, error)
+	GetRowByNode(ctx context.Context, runID uuid.UUID, serviceName, schemaName, tableName string) (*postgres.TaskRow, error)
+	ListByRunID(ctx context.Context, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*postgres.TaskRow, int, error)
+}
+
+// TaskHandler handles all task-related gRPC requests. It reads the tasks of
+// the tenant its repo is bound to.
 type TaskHandler struct {
-	repo   postgres.TaskRepository
+	repo   taskReads
 	logger *slog.Logger
 }
 
 // NewTaskHandler creates a new TaskHandler.
-func NewTaskHandler(repo postgres.TaskRepository, logger *slog.Logger) *TaskHandler {
+func NewTaskHandler(repo taskReads, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{
 		repo:   repo,
 		logger: logger,
@@ -42,7 +49,7 @@ func (h *TaskHandler) GetTask(ctx context.Context, req *statev1.GetTaskRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
 	}
 
-	task, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, taskID)
+	task, err := h.repo.GetRow(ctx, taskID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -79,7 +86,7 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	task, err := h.repo.GetByRunAndNode(ctx, pkgevents.DefaultTenantID, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
+	task, err := h.repo.GetRowByNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -124,7 +131,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 		statusFilter = &s
 	}
 
-	tasks, total, err := h.repo.ListByRunID(ctx, pkgevents.DefaultTenantID, scheduleID, statusFilter, limit, offset)
+	tasks, total, err := h.repo.ListByRunID(ctx, scheduleID, statusFilter, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list tasks", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to list tasks")

@@ -24,8 +24,8 @@ import (
 
 type rerunFixture struct {
 	Handler       *RerunHandler
-	SchedulerRepo postgres.RunTableRepository
-	TaskRepo      postgres.TaskRepository
+	SchedulerRepo *postgres.RunRepository
+	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
 	Tenant        string
 	Cleanup       func()
@@ -38,12 +38,11 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)

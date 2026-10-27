@@ -49,11 +49,8 @@ type reconcileHarness struct {
 
 func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
 	}
 	tenant := "t-" + uuid.NewString()
 	reconciler := seedreconcile.New(factory, false, tenant, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)

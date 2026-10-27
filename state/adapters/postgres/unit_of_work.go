@@ -15,43 +15,32 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB. It holds the
-// low-level repositories the aggregate accessors compose; each accessor builds
-// a fresh adapter bound to the current transaction so write methods run inside
-// the active tx while reads use the autocommit db.
+// PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB. Each
+// accessor builds the repository of its port bound to the current transaction,
+// so write methods run inside the active tx while reads use the autocommit db.
 type PostgresUnitOfWork struct {
-	db            *sqlx.DB
-	tx            *sqlx.Tx
-	schedulerRepo RunTableRepository
-	taskRepo      TaskRepository
-	catalogRepo   ScheduleCatalogRepository
-	clock         ports.Clock
-	logger        *slog.Logger
+	db     *sqlx.DB
+	tx     *sqlx.Tx
+	clock  ports.Clock
+	logger *slog.Logger
 	// afterCommit holds the functions AfterCommit registered in the current
 	// transaction.
 	afterCommit []func()
 }
 
-// NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
-// and the low-level repositories its aggregate accessors compose. Run(),
-// Catalog(), Outbox() and TaskCollection(tenantID) each return an adapter
-// bound to the current transaction; TaskCollection's reads and writes the
-// tasks, attempts and node leases of tenantID.
+// NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db.
+// Run(), Catalog(), Outbox() and TaskCollection(tenantID) each return a
+// repository bound to the current transaction; TaskCollection's reads and
+// writes the tasks, attempts and node leases of tenantID.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
-	schedulerRepo RunTableRepository,
-	taskRepo TaskRepository,
-	catalogRepo ScheduleCatalogRepository,
 	clock ports.Clock,
 	logger *slog.Logger,
 ) *PostgresUnitOfWork {
 	return &PostgresUnitOfWork{
-		db:            db,
-		schedulerRepo: schedulerRepo,
-		taskRepo:      taskRepo,
-		catalogRepo:   catalogRepo,
-		clock:         clock,
-		logger:        logger,
+		db:     db,
+		clock:  clock,
+		logger: logger,
 	}
 }
 
@@ -122,12 +111,12 @@ func (u *PostgresUnitOfWork) Rollback() error {
 // Run returns a RunRepository bound to the current transaction. Read methods
 // use the autocommit db; LoadRunForUpdate/SaveRun run inside u.tx.
 func (u *PostgresUnitOfWork) Run() repository.RunRepository {
-	return NewRunRepository(u.tx, u.schedulerRepo)
+	return NewRunRepository(u.db, u.logger).WithTx(u.tx)
 }
 
 // Catalog returns a ScheduleCatalogRepository bound to the current transaction.
 func (u *PostgresUnitOfWork) Catalog() repository.ScheduleCatalogRepository {
-	return NewCatalogRepositoryAdapter(u.db, u.tx, u.catalogRepo, u.logger)
+	return NewCatalogRepository(u.db, u.logger).WithTx(u.tx)
 }
 
 // Outbox returns an OutboxPublisher bound to the current transaction.
@@ -137,11 +126,11 @@ func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
 
 func (u *PostgresUnitOfWork) Clock() ports.Clock { return u.clock }
 
-// TaskCollection returns a TaskCollectionAdapter of tenantID bound to the
-// current transaction (or nil tx if no transaction is in progress). Each call
-// returns a fresh adapter so callers always see the active tx.
+// TaskCollection returns the TaskCollection of tenantID bound to the current
+// transaction (or nil tx if no transaction is in progress). Each call returns
+// a fresh collection so callers always see the active tx.
 func (u *PostgresUnitOfWork) TaskCollection(tenantID string) run.TaskCollection {
-	return NewTaskCollectionAdapter(u.taskRepo, u.tx, tenantID)
+	return NewTaskCollection(u.db, u.logger).ForTenant(tenantID).WithTx(u.tx)
 }
 
 // Topology returns a TopologyRepository bound to the current transaction.

@@ -22,8 +22,8 @@ import (
 func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
@@ -44,10 +44,10 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		tx, err := db.BeginTxx(ctx, nil)
 		require.NoError(t, err)
 		defer tx.Rollback()
-		runRepo := postgres.NewRunRepository(tx, schedRepo)
+		runRepo := schedRepo.WithTx(tx)
 		rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 		require.NoError(t, err)
-		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx, "default"))
+		mutate(rn, taskRepo.ForTenant("default").WithTx(tx))
 		require.NoError(t, runRepo.SaveRun(ctx, rn))
 		require.NoError(t, tx.Commit())
 	}

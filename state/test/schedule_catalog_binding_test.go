@@ -32,11 +32,8 @@ func TestScheduleCatalogBinding_OlderPromotionLeavesTheCatalogUnchanged(t *testi
 	defer cleanup()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 
-	schedulerRepo := postgres.NewRunTableRepository(rawDB, logger)
-	taskRepo := postgres.NewTaskRepository(rawDB, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(rawDB, logger)
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(rawDB, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(rawDB, svcports.SystemClock{}, logger)
 	}
 	binding := stateredis.NewScheduleCatalogBinding(factory, svchandlers.NewScheduleCatalogHandler(logger), logger)
 

@@ -41,8 +41,8 @@ func independentNodes(t *testing.T, tables ...string) (runplan.Plan, topology.Gr
 func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
@@ -67,8 +67,8 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
+	runRepo := schedRepo.WithTx(tx)
+	tasks := taskRepo.ForTenant("default").WithTx(tx)
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
@@ -99,8 +99,8 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
@@ -119,8 +119,8 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
+	runRepo := schedRepo.WithTx(tx)
+	tasks := taskRepo.ForTenant("default").WithTx(tx)
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
@@ -191,7 +191,7 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 func TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := postgres.NewRunTableRepository(db, discardLogger())
+	repo := postgres.NewRunRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{

@@ -68,7 +68,7 @@ func inLeaseTx(t *testing.T, db *sqlx.DB, tenant string, fn func(tasks run.TaskC
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, discardLogger()), tx, tenant))
+	fn(postgres.NewTaskCollection(db, discardLogger()).ForTenant(tenant).WithTx(tx))
 	require.NoError(t, tx.Commit())
 }
 
@@ -235,7 +235,7 @@ func TestNodeLeases_OverlappingTakesInOppositeOrdersDoNotDeadlock(t *testing.T) 
 	a, b := tables[0], tables[1]
 	firstRun, first := pendingTasks(t, db, tenant, a, b)
 	secondRun, second := pendingTasks(t, db, tenant, a, b)
-	repo := postgres.NewTaskRepository(db, discardLogger())
+	repo := postgres.NewTaskCollection(db, discardLogger())
 	orders := [2][]run.LeaseClaim{
 		{claim(firstRun, first[a], a), claim(firstRun, first[b], b)},
 		{claim(secondRun, second[b], b), claim(secondRun, second[a], a)},
@@ -284,14 +284,14 @@ func TestNodeLeases_OverlappingTakesInOppositeOrdersDoNotDeadlock(t *testing.T) 
 
 // takeInOwnTx begins a transaction, waits for start, takes the leases of
 // claims for tenant and commits.
-func takeInOwnTx(ctx context.Context, db *sqlx.DB, repo postgres.TaskRepository, tenant string, claims []run.LeaseClaim, start <-chan struct{}) ([]uuid.UUID, error) {
+func takeInOwnTx(ctx context.Context, db *sqlx.DB, repo *postgres.TaskCollection, tenant string, claims []run.LeaseClaim, start <-chan struct{}) ([]uuid.UUID, error) {
 	tx, err := db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	<-start
-	taken, err := postgres.NewTaskCollectionAdapter(repo, tx, tenant).TakeLeases(ctx, claims)
+	taken, err := repo.ForTenant(tenant).WithTx(tx).TakeLeases(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("take: %w", err)
 	}
@@ -449,7 +449,7 @@ func takeAfter(ctx context.Context, db *sqlx.DB, tenant string, claims []run.Lea
 	case <-start:
 	case <-stop:
 	}
-	taken, err := postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, discardLogger()), tx, tenant).TakeLeases(ctx, claims)
+	taken, err := postgres.NewTaskCollection(db, discardLogger()).ForTenant(tenant).WithTx(tx).TakeLeases(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("take: %w", err)
 	}

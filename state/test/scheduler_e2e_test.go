@@ -109,9 +109,6 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	defer cleanupRedis()
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.
 	// removed_at IS NULL means active. The e2e test uses "daily" and "hourly".
@@ -127,7 +124,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 
 	// Initialize activation handler

@@ -183,10 +183,10 @@ func main() {
 	}
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	runRepo := postgres.NewRunRepository(db, logger)
+	catalogRepo := postgres.NewCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger).ForTenant(pkgevents.DefaultTenantID)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -275,7 +275,7 @@ func main() {
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
 	// TaskCollection) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update
@@ -453,7 +453,7 @@ func main() {
 	logger.Info("Cron scheduler started")
 
 	// Initialize gRPC handlers
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
+	schedulerHandler := handlers.NewSchedulerHandler(runRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskAttemptHandler := handlers.NewTaskAttemptHandler(taskAttemptReadRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)

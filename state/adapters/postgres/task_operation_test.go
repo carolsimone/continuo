@@ -21,8 +21,8 @@ import (
 func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
 	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
@@ -37,8 +37,8 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
+	runRepo := schedRepo.WithTx(tx)
+	tasks := taskRepo.ForTenant("default").WithTx(tx)
 
 	require.NoError(t, runRepo.SaveRun(ctx, r))
 

@@ -113,19 +113,18 @@ func TestMain(m *testing.M) {
 	stateDB = db
 
 	// ---- Build repositories ----
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build handlers ----
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	activateHandler := svchandlers.NewStartRunHandler(defaultPlanner, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	taskHandler := handlers.NewTaskHandler(taskRepo.ForTenant(pkgevents.DefaultTenantID), logger)
 	attemptHandler := handlers.NewTaskAttemptHandler(attemptRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(defaultPlanner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)

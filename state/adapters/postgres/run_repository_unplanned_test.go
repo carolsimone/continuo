@@ -35,7 +35,7 @@ func TestRunRepository_ListUnplannedActive(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	runs := postgres.NewRunRepository(tx, postgres.NewRunTableRepository(db, discardLogger()))
+	runs := postgres.NewRunRepository(db, discardLogger()).WithTx(tx)
 	got, err := runs.ListUnplannedActive(ctx, tenant)
 	require.NoError(t, err)
 

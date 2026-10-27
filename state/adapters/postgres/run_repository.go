@@ -10,34 +10,12 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
 
-// RunRepositoryAdapter implements repository.RunRepository by composing the
-// existing tuned RunTableRepository methods. SaveRun consults
-// run.Run.Changes() to dispatch column-by-column.
-type RunRepositoryAdapter struct {
-	tx        *sqlx.Tx
-	schedRepo RunTableRepository
-}
-
-// NewRunRepository constructs the adapter bound to tx.
-// LoadRunForUpdate/SaveRun run inside tx (which may be nil outside a
-// transaction, in which case those write methods return an error).
-func NewRunRepository(
-	tx *sqlx.Tx,
-	schedRepo RunTableRepository,
-) *RunRepositoryAdapter {
-	return &RunRepositoryAdapter{
-		tx:        tx,
-		schedRepo: schedRepo,
-	}
-}
-
 // GetRun loads the tenant's Run snapshot for read-only use (no row lock).
-func (r *RunRepositoryAdapter) GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
-	tr, err := r.schedRepo.GetByID(ctx, tenantID, id)
+func (r *RunRepository) GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
+	tr, err := r.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -46,11 +24,11 @@ func (r *RunRepositoryAdapter) GetRun(ctx context.Context, tenantID string, id u
 
 // LoadRunForUpdate loads the tenant's Run inside the bound transaction with
 // SELECT … FOR UPDATE.
-func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
+func (r *RunRepository) LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("LoadRunForUpdate requires an active transaction")
 	}
-	tr, err := r.schedRepo.LoadByIDForUpdateTx(ctx, r.tx, tenantID, id)
+	tr, err := r.LoadByIDForUpdateTx(ctx, r.tx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +38,7 @@ func (r *RunRepositoryAdapter) LoadRunForUpdate(ctx context.Context, tenantID st
 // SaveRun persists every dirty field of rn under rn's tenant. It consults
 // rn.Changes() to dispatch to the correct tuned SQL method, then calls
 // rn.ResetChanges().
-func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
+func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 	if r.tx == nil {
 		return fmt.Errorf("SaveRun requires an active transaction")
 	}
@@ -71,7 +49,7 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		if err != nil {
 			return fmt.Errorf("dehydrate run: %w", err)
 		}
-		if err := r.schedRepo.CreateTx(ctx, r.tx, tr); err != nil {
+		if err := r.CreateTx(ctx, r.tx, tr); err != nil {
 			// The partial unique index uq_runs_active_per_schedule is
 			// the DB-level backstop for the activation TOCTOU: a concurrent
 			// activation that passed the HasActiveRun pre-check loses the
@@ -109,7 +87,7 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		if at == nil {
 			return fmt.Errorf("cancel save: aggregate marked cancel-dirty without a cancelled_at")
 		}
-		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.TenantID(), rn.RunID(), rn.Status(), by, reason, *at); err != nil {
+		if err := r.CancelTx(ctx, r.tx, rn.TenantID(), rn.RunID(), rn.Status(), by, reason, *at); err != nil {
 			if errors.Is(err, ErrRunNotCancellable) {
 				return run.ErrAlreadyTerminal
 			}
@@ -162,7 +140,7 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		}
 	}
 
-	if err := r.schedRepo.UpdateRunRowTx(ctx, r.tx, rn.TenantID(), rn.RunID(), fields); err != nil {
+	if err := r.UpdateRunRowTx(ctx, r.tx, rn.TenantID(), rn.RunID(), fields); err != nil {
 		return fmt.Errorf("update run row: %w", err)
 	}
 
@@ -170,16 +148,10 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 	return nil
 }
 
-// HasActiveRun returns true when the tenant has a PENDING, RUNNING or
-// CANCELLING Run for name.
-func (r *RunRepositoryAdapter) HasActiveRun(ctx context.Context, tenantID, name string) (bool, error) {
-	return r.schedRepo.HasActiveRun(ctx, tenantID, name)
-}
-
 // GetActiveRun returns the tenant's active Run for name, or nil when none
 // exists.
-func (r *RunRepositoryAdapter) GetActiveRun(ctx context.Context, tenantID, name string) (*run.Run, error) {
-	tr, err := r.schedRepo.GetActiveRun(ctx, tenantID, name)
+func (r *RunRepository) GetActiveRun(ctx context.Context, tenantID, name string) (*run.Run, error) {
+	tr, err := r.getActiveRunRow(ctx, tenantID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +163,7 @@ func (r *RunRepositoryAdapter) GetActiveRun(ctx context.Context, tenantID, name 
 
 // RunExists reports whether the tenant has a run row with id, reading inside
 // the bound transaction.
-func (r *RunRepositoryAdapter) RunExists(ctx context.Context, tenantID string, id uuid.UUID) (bool, error) {
+func (r *RunRepository) RunExists(ctx context.Context, tenantID string, id uuid.UUID) (bool, error) {
 	if r.tx == nil {
 		return false, fmt.Errorf("RunExists requires an active transaction")
 	}
@@ -205,7 +177,7 @@ func (r *RunRepositoryAdapter) RunExists(ctx context.Context, tenantID string, i
 
 // ListUnplannedActive reads the tenant's pending, running and cancelling run
 // rows whose planned_at is NULL, oldest first, inside the bound transaction.
-func (r *RunRepositoryAdapter) ListUnplannedActive(ctx context.Context, tenantID string) ([]uuid.UUID, error) {
+func (r *RunRepository) ListUnplannedActive(ctx context.Context, tenantID string) ([]uuid.UUID, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("ListUnplannedActive requires an active transaction")
 	}
@@ -221,7 +193,7 @@ func (r *RunRepositoryAdapter) ListUnplannedActive(ctx context.Context, tenantID
 
 // CountReleaseRuns counts the tenant's run rows of kind that name releaseID,
 // reading inside the bound transaction.
-func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, tenantID, releaseID string, kind run.Kind) (int, error) {
+func (r *RunRepository) CountReleaseRuns(ctx context.Context, tenantID, releaseID string, kind run.Kind) (int, error) {
 	if r.tx == nil {
 		return 0, fmt.Errorf("CountReleaseRuns requires an active transaction")
 	}
@@ -232,26 +204,6 @@ func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, tenantID, r
 		return 0, fmt.Errorf("count the %s runs of release %s: %w", kind, releaseID, err)
 	}
 	return n, nil
-}
-
-// GetLastRunPerSchedule returns the tenant's most recent Run summary per
-// schedule name.
-func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context, tenantID string) (map[string]repository.LastRunSummary, error) {
-	raw, err := r.schedRepo.GetLastRunPerSchedule(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]repository.LastRunSummary, len(raw))
-	for name, d := range raw {
-		out[name] = repository.LastRunSummary{
-			ScheduleName: d.ScheduleName,
-			RunID:        d.RunID,
-			Status:       d.Status,
-			CreatedAt:    d.CreatedAt,
-			IsActive:     d.IsActive,
-		}
-	}
-	return out, nil
 }
 
 // hydrateRun translates a persisted RunRow into a Run aggregate.
@@ -381,4 +333,4 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 }
 
 // Compile-time interface assertion.
-var _ repository.RunRepository = (*RunRepositoryAdapter)(nil)
+var _ repository.RunRepository = (*RunRepository)(nil)

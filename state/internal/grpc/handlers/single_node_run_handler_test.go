@@ -34,8 +34,8 @@ import (
 
 type singleNodeRunFixture struct {
 	Handler       *SingleNodeRunHandler
-	SchedulerRepo postgres.RunTableRepository
-	TaskRepo      postgres.TaskRepository
+	SchedulerRepo *postgres.RunRepository
+	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
 	// Tenant is the tenant the fixture plans for; it holds release rel-svca
 	// as its live release, with svcA's public.users (one data test) and
@@ -75,12 +75,11 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	promoteUsers(t, db, tenant)

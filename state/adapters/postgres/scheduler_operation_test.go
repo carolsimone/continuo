@@ -40,11 +40,11 @@ func discardLogger() *slog.Logger {
 // operation and asserts the reloaded aggregate reports OperationTest.
 func TestRunRow_OperationRoundTrip(t *testing.T) {
 	db := newTestDB(t)
-	// The brief's sample passes a nil logger; runTableRepository.Create
+	// The brief's sample passes a nil logger; RunRepository.Create
 	// logs unconditionally on its success path (r.logger.Info(...)), which
 	// panics on a nil *slog.Logger. Use a discard logger instead, matching the
 	// sibling helper in scheduler_repository_test.go.
-	repo := NewRunTableRepository(db, discardLogger())
+	repo := NewRunRepository(db, discardLogger())
 
 	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
