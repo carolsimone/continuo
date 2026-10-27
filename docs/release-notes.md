@@ -17,6 +17,15 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.16.0 · 2026-10-26 · `MINOR`
+
+- **Two runs never write one node at once.** A writing task takes the write lease on its node when state dispatches it, keeps it across retries and while it is `stopping`, and releases it when the task ends. A ready task whose node another run is writing stays `pending` and waits; the run page and the run graph show it as "waiting for node", linked to the run it waits for. A freed node goes to its oldest waiter, and a wait behind a run that is still writing is not treated as a stall.
+- **The read surfaces carry the wait.** gRPC tasks, run graphs and node runs have `wait_reason`, `waiting_on_run_id` and `waiting_since`, and `continuo schedule status` and `continuo node history` print them.
+- **Kubernetes client rate limit.** `execution.kubeClientQPS` (default 50) and `execution.kubeClientBurst` (default 100) set the request rate of execution-controller's client, which every Job it creates, watches and reads goes through; the library's own limit of 5 requests per second held back the reads that record how an attempt ended on wide levels.
+- No values change is required. The state migration V51 runs on upgrade; runs in flight keep running, and a task already dispatched writes without a lease until it ends.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0160---2026-10-26) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.16.0)
+
 ## 0.15.0 · 2026-10-26 · `MINOR`
 
 - **The two LLM agents reach the outside only through an egress proxy.** agent-chat and agent-remediation send their outbound traffic through `egress-proxy`, which admits a connection only to a host and port on its allowlist. The chart builds the allowlist from your settings (`llm.provider` and `llm.baseUrl`, agent-remediation's `GITHUB_BASE_URL`, `s3.endpointUrl` with an external bucket, `egress.allowedDomains`, `egress.privateDomains`), and with `networkPolicy.enabled` a NetworkPolicy drops every other outbound connection from the agents. It is on by default.
