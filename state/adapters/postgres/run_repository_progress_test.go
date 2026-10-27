@@ -18,24 +18,24 @@ import (
 
 // TestRunRepository_SaveRun_PersistsProgressClock walks a run through its start
 // and its first applied task status change, saving after each, and asserts
-// scheduler_tracker.last_heartbeat_at holds the instant of the latest one.
+// runs.last_progress_at holds the instant of the latest one.
 func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	scheduleID := uuid.New()
-	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "progress-" + scheduleID.String()[:8],
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now().Add(-time.Hour),
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	// saveIn loads the run FOR UPDATE, applies mutate, saves it and commits.
 	saveIn := func(mutate func(rn *run.Run, tasks run.TaskCollection)) {
@@ -54,8 +54,8 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		t.Helper()
 		got, err := schedRepo.GetByID(ctx, scheduleID)
 		require.NoError(t, err)
-		require.NotNil(t, got.LastHeartbeatAt, "last_heartbeat_at must be persisted")
-		return *got.LastHeartbeatAt
+		require.NotNil(t, got.LastProgressAt, "last_progress_at must be persisted")
+		return *got.LastProgressAt
 	}
 
 	dispatchedAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)
@@ -70,7 +70,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	})
 	taskID := run.TaskIDFor("default", scheduleID, "public.tbl")
 	got := heartbeat()
-	assert.True(t, got.Equal(dispatchedAt), "after the start: last_heartbeat_at = %v, want %v", got, dispatchedAt)
+	assert.True(t, got.Equal(dispatchedAt), "after the start: last_progress_at = %v, want %v", got, dispatchedAt)
 
 	runningAt := time.Now().UTC().Truncate(time.Microsecond)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
@@ -79,5 +79,5 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		require.NoError(t, err)
 	})
 	got = heartbeat()
-	assert.True(t, got.Equal(runningAt), "after the task started: last_heartbeat_at = %v, want %v", got, runningAt)
+	assert.True(t, got.Equal(runningAt), "after the task started: last_progress_at = %v, want %v", got, runningAt)
 }

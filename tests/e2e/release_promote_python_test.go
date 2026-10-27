@@ -340,8 +340,8 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 			err := clients.stateDB.QueryRowContext(ctx, `
 				SELECT COALESCE(a.run_results_uri, '')
 				FROM task_attempts a
-				JOIN task_tracker t ON t.task_id = a.task_id
-				WHERE t.schedule_id = $1
+				JOIN tasks t ON t.task_id = a.task_id
+				WHERE t.run_id = $1
 				ORDER BY a.last_report_at DESC NULLS LAST
 				LIMIT 1
 			`, runID).Scan(&runResultsURI)

@@ -132,8 +132,8 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID())
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 
 	u := newPlanningUoW(db)
@@ -155,8 +155,8 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 // setTaskStatus writes status on the task of r at nodeKey.
 func setTaskStatus(tb testing.TB, db *sqlx.DB, r *run.Run, nodeKey string, status run.TaskStatus) {
 	tb.Helper()
-	res, err := db.Exec(`UPDATE task_tracker SET status = $3 WHERE schedule_id = $1 AND node_key = $2`,
-		r.ScheduleID(), nodeKey, string(status))
+	res, err := db.Exec(`UPDATE tasks SET status = $3 WHERE run_id = $1 AND node_key = $2`,
+		r.RunID(), nodeKey, string(status))
 	require.NoError(tb, err)
 	n, err := res.RowsAffected()
 	require.NoError(tb, err)
@@ -168,12 +168,12 @@ func setTaskStatus(tb testing.TB, db *sqlx.DB, r *run.Run, nodeKey string, statu
 // dispatched task's attempt 0 becomes that attempt.
 func succeedWithAttempts(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded' WHERE schedule_id = $1`, runID)
+	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`
 		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
 		SELECT task_id, 0, job_name, 'succeeded', now(), now(), 1 + row_number() OVER (ORDER BY node_key)
-		FROM task_tracker WHERE schedule_id = $1
+		FROM tasks WHERE run_id = $1
 		ON CONFLICT (task_id, attempt) DO UPDATE SET status = EXCLUDED.status, started_at = EXCLUDED.started_at,
 			finished_at = EXCLUDED.finished_at, execution_seconds = EXCLUDED.execution_seconds, next_check_at = NULL`, runID)
 	require.NoError(tb, err)

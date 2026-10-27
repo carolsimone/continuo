@@ -323,7 +323,7 @@ func (d *Deployment) IsDeployable() bool {
 	}
 	return d.command.JobName != "" &&
 		d.command.TaskID != "" &&
-		d.command.ScheduleID != "" &&
+		d.command.RunID != "" &&
 		d.command.NodeType != ""
 }
 

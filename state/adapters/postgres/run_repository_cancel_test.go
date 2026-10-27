@@ -12,20 +12,20 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// cancelCapturingSchedRepo is a SchedulerTrackerRepository test double that
+// cancelCapturingSchedRepo is a RunTableRepository test double that
 // records what the adapter passes to CancelTx and UpdateRunRowTx, so a unit
 // test can assert the adapter persists the aggregate's cancellation instant
 // and status. Only those two are exercised; the other methods are unreachable
 // in this test and fail loudly if called.
 type cancelCapturingSchedRepo struct {
-	SchedulerTrackerRepository
+	RunTableRepository
 	gotCancelledAt time.Time
-	gotStatus      run.SchedulerStatus
+	gotStatus      run.RunStatus
 	called         bool
 	gotFields      RunRowUpdate
 }
 
-func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status run.SchedulerStatus, _, _ string, cancelledAt time.Time) error {
+func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status run.RunStatus, _, _ string, cancelledAt time.Time) error {
 	r.called = true
 	r.gotStatus = status
 	r.gotCancelledAt = cancelledAt
@@ -49,7 +49,7 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 	// cancelled_at == completed_at == now.
 	r := run.HydrateRun(
 		uuid.New(), "daily",
-		run.SchedulerStatusRunning,
+		run.RunStatusRunning,
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
@@ -84,7 +84,7 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 		t.Fatalf("persisted cancel instant %v must equal aggregate completed_at %v",
 			sched.gotCancelledAt, r.CompletedAt())
 	}
-	if sched.gotStatus != run.SchedulerStatusCancelled {
+	if sched.gotStatus != run.RunStatusCancelled {
 		t.Fatalf("CancelTx got status %q, want cancelled: nothing was in flight", sched.gotStatus)
 	}
 	if sched.gotFields.Status != nil || sched.gotFields.CompletedAtNow {

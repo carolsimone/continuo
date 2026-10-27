@@ -67,20 +67,20 @@ func TestSettle(t *testing.T) {
 		CancelledBy *string `db:"cancelled_by"`
 		Reason      *string `db:"cancellation_reason"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, cancelled_by, cancellation_reason FROM scheduler_tracker WHERE schedule_id = $1`, unplanned))
+	require.NoError(t, db.Get(&row, `SELECT status, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, unplanned))
 	assert.Equal(t, "cancelled", row.Status)
 	require.NotNil(t, row.CancelledBy)
 	assert.Equal(t, "system", *row.CancelledBy)
 	require.NotNil(t, row.Reason)
 	assert.Equal(t, runsettle.Reason, *row.Reason)
 	var taskStatus string
-	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM task_tracker WHERE task_id = $1`, unplannedTask))
+	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM tasks WHERE task_id = $1`, unplannedTask))
 	assert.Equal(t, "cancelled", taskStatus)
 	assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
 		unplanned, streams.RunCancelledV1), "execution-controller is told to fence the run and stop its Jobs")
 
 	var plannedStatus string
-	require.NoError(t, db.Get(&plannedStatus, `SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, planned))
+	require.NoError(t, db.Get(&plannedStatus, `SELECT status FROM runs WHERE run_id = $1`, planned))
 	assert.Equal(t, "running", plannedStatus)
 
 	n, err = runsettle.Settle(ctx, newUoW, h.logger)
@@ -103,7 +103,7 @@ func TestSettle_AnUnplannedRunWithATaskInFlightEndsCancelledAtOnce(t *testing.T)
 	releaseID := "rel-" + uuid.NewString()[:8]
 	h.storeRelease(t, releaseID, promotedNode("raw", "settle_inflight", "dbt-model"))
 	unplanned, task := h.legacyRun(t, releaseID, "settle_inflight")
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'running', dispatched_at = now() WHERE task_id = $1`, task)
+	_, err := db.Exec(`UPDATE tasks SET status = 'running', dispatched_at = now() WHERE task_id = $1`, task)
 	require.NoError(t, err)
 	newUoW := func() uow.UnitOfWork { return ownRuns{UnitOfWork: h.factory(), ids: []uuid.UUID{unplanned}} }
 
@@ -115,11 +115,11 @@ func TestSettle_AnUnplannedRunWithATaskInFlightEndsCancelledAtOnce(t *testing.T)
 		Status      string     `db:"status"`
 		CompletedAt *time.Time `db:"completed_at"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`, unplanned))
+	require.NoError(t, db.Get(&row, `SELECT status, completed_at FROM runs WHERE run_id = $1`, unplanned))
 	assert.Equal(t, "cancelled", row.Status)
 	assert.NotNil(t, row.CompletedAt)
 	var taskStatus string
-	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM task_tracker WHERE task_id = $1`, task))
+	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM tasks WHERE task_id = $1`, task))
 	assert.Equal(t, "cancelled", taskStatus)
 	assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
 		unplanned, streams.RunCancelledV1), "execution-controller is told to fence the run and stop its Jobs")
@@ -140,7 +140,7 @@ func TestSettle_ACancellingRunIsLeftAlone(t *testing.T) {
 	releaseID := "rel-" + uuid.NewString()[:8]
 	h.storeRelease(t, releaseID, promotedNode("raw", "settle_cancelling", "dbt-model"))
 	cancelling, _ := h.legacyRun(t, releaseID, "settle_cancelling")
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now(), cancelled_by = 'alice' WHERE schedule_id = $1`, cancelling)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now(), cancelled_by = 'alice' WHERE run_id = $1`, cancelling)
 	require.NoError(t, err)
 	newUoW := func() uow.UnitOfWork { return ownRuns{UnitOfWork: h.factory(), ids: []uuid.UUID{cancelling}} }
 
@@ -152,7 +152,7 @@ func TestSettle_ACancellingRunIsLeftAlone(t *testing.T) {
 		Status      string  `db:"status"`
 		CancelledBy *string `db:"cancelled_by"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, cancelled_by FROM scheduler_tracker WHERE schedule_id = $1`, cancelling))
+	require.NoError(t, db.Get(&row, `SELECT status, cancelled_by FROM runs WHERE run_id = $1`, cancelling))
 	assert.Equal(t, "cancelling", row.Status)
 	require.NotNil(t, row.CancelledBy)
 	assert.Equal(t, "alice", *row.CancelledBy)

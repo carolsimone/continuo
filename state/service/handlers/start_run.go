@@ -24,11 +24,11 @@ import (
 type ActivationOutcome int
 
 const (
-	OutcomeActivated     ActivationOutcome = iota
+	OutcomeRunStarted    ActivationOutcome = iota
 	OutcomeSkippedActive ActivationOutcome = iota
 )
 
-// ActivateScheduleHandler is the use case behind the cron fire, gRPC
+// StartRunHandler is the use case behind the cron fire, gRPC
 // ActivateSchedule (both kind cron) and gRPC TriggerSchedule (kind trigger).
 // It creates the run, chooses its tasks from the schedule's graph on the live
 // release and dispatches the ready ones, in one transaction.
@@ -38,21 +38,21 @@ const (
 // cron run is still recorded, finished failed with the refusal as its reason,
 // while a trigger creates no run and returns the refusal; a test run whose
 // schedule has no node with data tests is recorded skipped for both.
-type ActivateScheduleHandler struct {
+type StartRunHandler struct {
 	policy  policy.SchedulePolicy
 	planner runstart.Planner
 	logger  *slog.Logger
 }
 
-// NewActivateScheduleHandler constructs the handler; planner plans its runs.
-func NewActivateScheduleHandler(planner runstart.Planner, logger *slog.Logger) *ActivateScheduleHandler {
-	return &ActivateScheduleHandler{planner: planner, logger: logger}
+// NewStartRunHandler constructs the handler; planner plans its runs.
+func NewStartRunHandler(planner runstart.Planner, logger *slog.Logger) *StartRunHandler {
+	return &StartRunHandler{planner: planner, logger: logger}
 }
 
-// Handle runs the activation use case. The catalog existence and active-run
+// Handle starts a run for the named schedule. The catalog existence and active-run
 // pre-conditions are enforced via SchedulePolicy.
 //
-// Returns (id, OutcomeActivated) when a run was created, (uuid.Nil,
+// Returns (id, OutcomeRunStarted) when a run was created, (uuid.Nil,
 // OutcomeSkippedActive) when the schedule already has an active run, or an
 // error otherwise: a refused trigger's runplan refusal, or an infrastructure
 // failure, after which nothing is written.
@@ -60,7 +60,7 @@ func NewActivateScheduleHandler(planner runstart.Planner, logger *slog.Logger) *
 // operation selects the dbt verb (run/test/build) the run applies to its
 // nodes. Only the manual TriggerSchedule caller passes a non-default value;
 // every other caller (cron, etc.) passes model.OperationRun.
-func (h *ActivateScheduleHandler) Handle(
+func (h *StartRunHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	name string,
@@ -72,7 +72,7 @@ func (h *ActivateScheduleHandler) Handle(
 	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), name); err != nil {
 		return uuid.Nil, 0, err
 	}
-	if err := h.policy.IsScheduleAvailable(ctx, u.Run(), name); err != nil {
+	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), name); err != nil {
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			return uuid.Nil, OutcomeSkippedActive, nil
 		}
@@ -109,7 +109,7 @@ func (h *ActivateScheduleHandler) Handle(
 		return uuid.Nil, 0, err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
-		// A concurrent activation that passed the IsScheduleAvailable pre-check
+		// A concurrent activation that passed the EnsureNoActiveRun pre-check
 		// loses the partial-unique-index race on insert. Treat it identically to
 		// the check-first active-run outcome so the gRPC caller maps it to the
 		// same response (cron skip / manual FailedPrecondition).
@@ -130,15 +130,15 @@ func (h *ActivateScheduleHandler) Handle(
 	}
 	committed = true
 
-	h.logger.Info("Schedule activated", "schedule_id", newRun.ScheduleID(), "schedule_name", name, "kind", string(kind),
+	h.logger.Info("Schedule activated", "run_id", newRun.RunID(), "schedule_name", name, "kind", string(kind),
 		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
-	return newRun.ScheduleID(), OutcomeActivated, nil
+	return newRun.RunID(), OutcomeRunStarted, nil
 }
 
 // finishRefused finishes r, whose selection was refused, without tasks:
 // skipped when the refusal is benign, failed otherwise with the run failure
 // reason the refusal names, and with the refusal as the reason it logs.
-func (h *ActivateScheduleHandler) finishRefused(ctx context.Context, u uow.UnitOfWork, r *run.Run, benign bool, refusal error, now time.Time) error {
+func (h *StartRunHandler) finishRefused(ctx context.Context, u uow.UnitOfWork, r *run.Run, benign bool, refusal error, now time.Time) error {
 	events, err := r.MarkDispatchTerminal(benign, refusalFailureReason(refusal), refusal.Error(), now)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (h *ActivateScheduleHandler) finishRefused(ctx context.Context, u uow.UnitO
 	if err := u.Outbox().Append(ctx, events, uuid.Nil); err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
-	logDispatchTerminal(h.logger, "activate", r.ScheduleID(), events)
+	logDispatchTerminal(h.logger, "activate", r.RunID(), events)
 	return nil
 }
 

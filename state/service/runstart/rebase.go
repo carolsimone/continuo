@@ -46,11 +46,11 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 		return Selection{Stamp: stamp}, runplan.Preview{}, err
 	}
 	if err := builtOnRootReleases(ctx, u.TaskCollection(p.TenantID), src); err != nil {
-		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the releases that built the results run %s inherited: %w", source.ScheduleID(), err)
+		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the releases that built the results run %s inherited: %w", source.RunID(), err)
 	}
 	sourceGraphs, err := p.sourceGraphs(ctx, u, src, keys)
 	if err != nil {
-		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the nodes of run %s: %w", source.ScheduleID(), err)
+		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the nodes of run %s: %w", source.RunID(), err)
 	}
 	sel, err := p.scheduleGraph(ctx, u, stamp, source.ScheduleName())
 	if err != nil {

@@ -27,7 +27,7 @@ type sourceRuns struct {
 }
 
 func (r *sourceRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) { return r.source, nil }
-func (r *sourceRuns) HasActiveSchedule(context.Context, string) (bool, error) {
+func (r *sourceRuns) HasActiveRun(context.Context, string) (bool, error) {
 	return true, nil
 }
 
@@ -101,7 +101,7 @@ type previewFixture struct {
 
 // newPreviewFixture is a failed run of daily on rel-3 whose mart.b failed and
 // skipped mart.c; the live rel-7 changed raw.a and raw.d.
-func newPreviewFixture(t *testing.T, status run.SchedulerStatus) *previewFixture {
+func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
 	source := run.HydrateRun(uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
@@ -133,10 +133,10 @@ func newPreviewFixture(t *testing.T, status run.SchedulerStatus) *previewFixture
 // order, its last successful duration (0 for a node without one). A
 // schedule's active run does not refuse it.
 func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
-	f := newPreviewFixture(t, run.SchedulerStatusFailed)
+	f := newPreviewFixture(t, run.RunStatusFailed)
 	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	got, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
+	got, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, got.Release)
@@ -156,7 +156,7 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	assert.Equal(t, 1, f.u.RollbackCalled)
 	assert.Equal(t, 0, f.u.CommitCalled)
 
-	off, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), false)
+	off, err := p.Preview(context.Background(), f.runs.source.RunID(), false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, off.Preview.ChangedUpstream)
 	assert.Equal(t, got.Changed, off.Changed)
@@ -165,10 +165,10 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 // A source that is not failed or cancelled is refused before the
 // transaction begins.
 func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
-	f := newPreviewFixture(t, run.SchedulerStatusSucceeded)
+	f := newPreviewFixture(t, run.RunStatusSucceeded)
 	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	_, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
+	_, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
 
 	require.ErrorIs(t, err, run.ErrSourceMustBeTerminallyFailedOrCancelled)
 	assert.Equal(t, 0, f.u.BeginCalled)
@@ -177,11 +177,11 @@ func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
 // A selection the planner refuses is returned as is, and the transaction is
 // rolled back.
 func TestRebasePreviewer_ReturnsTheSelectionsRefusal(t *testing.T) {
-	f := newPreviewFixture(t, run.SchedulerStatusFailed)
+	f := newPreviewFixture(t, run.RunStatusFailed)
 	f.u.TopologyRepo = &releaseGraphs{}
 	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	_, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
+	_, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
 
 	require.ErrorIs(t, err, runplan.ErrEmptySelection, "no release is live")
 	assert.Equal(t, 1, f.u.RollbackCalled)

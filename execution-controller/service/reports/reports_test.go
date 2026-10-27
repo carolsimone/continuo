@@ -38,7 +38,7 @@ func payloadOf(t *testing.T, e *outbox.Entry) pkgevents.TaskStatusReport {
 // A report is kept as the attempt's last report and written to
 // task.status.updated:v2 as its payload.
 func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
-	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString(), Attempt: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1"}
+	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString(), Attempt: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1"}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	out := &recordingOutbox{}
 
@@ -52,14 +52,14 @@ func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 	p := payloadOf(t, e)
 	assert.Equal(t, pkgmodel.AttemptStatusQueued, p.Status)
 	assert.Equal(t, int32(1), p.Attempt)
-	assert.Equal(t, cmd.ScheduleID, p.RunID)
+	assert.Equal(t, cmd.RunID, p.RunID)
 	require.NotNil(t, d.LastReport())
 	assert.Equal(t, pkgmodel.AttemptStatusQueued, d.LastReport().Status)
 }
 
 // A repeated dispatch is answered with the attempt's last report, unchanged.
 func TestResend_WritesTheLastReportAgain(t *testing.T) {
-	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString()}
+	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString()}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	d.RecordReport(model.Report{Status: pkgmodel.AttemptStatusRunning})
 	out := &recordingOutbox{}

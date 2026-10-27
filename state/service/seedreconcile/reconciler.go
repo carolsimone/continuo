@@ -206,7 +206,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	if err != nil {
 		return err
 	}
-	runID := seedRun.ScheduleID()
+	runID := seedRun.RunID()
 	for _, d := range toBuild {
 		if err := u.Materializations().RecordAttempt(ctx, tenantID, d.Key, d.ContentHash, runID, now); err != nil {
 			return fmt.Errorf("record the build request of %s: %w", d.Key, err)

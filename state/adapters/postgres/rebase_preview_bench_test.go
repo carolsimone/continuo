@@ -52,7 +52,7 @@ func BenchmarkPreviewRebase(b *testing.B) {
 			nodes = append(nodes, run.NodeID{ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName})
 		}
 		var succeeded int
-		require.NoError(b, db.Get(&succeeded, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1 AND status = 'succeeded'`, runID))
+		require.NoError(b, db.Get(&succeeded, `SELECT count(*) FROM tasks WHERE run_id = $1 AND status = 'succeeded'`, runID))
 		repo := postgres.NewRunReadRepository(db)
 		b.ResetTimer()
 		for range b.N {
@@ -73,7 +73,7 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	ctx := context.Background()
 	tenant := storeShape(tb, db, shape)
 	r := startScheduleRun(tb, db, tenant, shape.schedule(), model.OperationRun)
-	succeedWithAttempts(tb, db, r.ScheduleID())
+	succeedWithAttempts(tb, db, r.RunID())
 
 	rel := shape.release(tb, tenant, "rel-2")
 	g := topology.NewGraph(rel.Nodes, rel.Edges)
@@ -88,15 +88,15 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	}
 	rel.PromotionSeq = 2
 
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed' WHERE schedule_id = $1 AND node_key = $2`, r.ScheduleID(), string(failed))
+	_, err := db.Exec(`UPDATE tasks SET status = 'failed' WHERE run_id = $1 AND node_key = $2`, r.RunID(), string(failed))
 	require.NoError(tb, err)
 	skipped := make([]string, 0, len(descendants))
 	for _, k := range descendants {
 		skipped = append(skipped, string(k))
 	}
-	_, err = db.Exec(`UPDATE task_tracker SET status = 'skipped' WHERE schedule_id = $1 AND node_key = ANY($2)`, r.ScheduleID(), pq.Array(skipped))
+	_, err = db.Exec(`UPDATE tasks SET status = 'skipped' WHERE run_id = $1 AND node_key = ANY($2)`, r.RunID(), pq.Array(skipped))
 	require.NoError(tb, err)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, r.ScheduleID())
+	_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, r.RunID())
 	require.NoError(tb, err)
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -107,7 +107,7 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	require.NoError(tb, err)
 	require.NoError(tb, topo.SetLivePointer(ctx, tenant, topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 2}, time.Now()))
 	require.NoError(tb, tx.Commit())
-	_, err = db.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges, task_tracker, task_attempts`)
+	_, err = db.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges, tasks, task_attempts`)
 	require.NoError(tb, err)
-	return tenant, r.ScheduleID(), len(changed)
+	return tenant, r.RunID(), len(changed)
 }

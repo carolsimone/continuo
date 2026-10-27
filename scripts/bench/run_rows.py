@@ -21,11 +21,11 @@ QUERIES = {
         "SELECT coalesce(json_agg(json_build_object("
         "'table', job_params->>'table_name', 'queued', created_at, 'created', deployed_at, 'recorded', outcome_at)"
         " ORDER BY created_at), '[]') FROM deployments"
-        " WHERE schedule_id = '{run_id}' AND mode = 'production'"),
+        " WHERE run_id = '{run_id}' AND mode = 'production'"),
     # One row per task: its table and when state first dispatched it.
     "tasks": (
         "SELECT coalesce(json_agg(json_build_object('table', table_name, 'dispatched', dispatched_at)), '[]')"
-        " FROM task_tracker WHERE schedule_id = '{run_id}'"),
+        " FROM tasks WHERE run_id = '{run_id}'"),
 }
 
 

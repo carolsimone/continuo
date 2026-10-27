@@ -30,7 +30,7 @@ type rebaseRuns struct {
 }
 
 func (r *rebaseRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) { return r.source, nil }
-func (r *rebaseRuns) HasActiveSchedule(context.Context, string) (bool, error) {
+func (r *rebaseRuns) HasActiveRun(context.Context, string) (bool, error) {
 	return r.active, nil
 }
 func (r *rebaseRuns) SaveRun(_ context.Context, rn *run.Run) error {
@@ -120,7 +120,7 @@ type rebaseFixture struct {
 func newRebaseFixture(t *testing.T) *rebaseFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &rebaseFixture{
@@ -152,7 +152,7 @@ func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 	f := newRebaseFixture(t)
 
 	id, name, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.ScheduleID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
+		SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
 		Initiator: identity.FromUserID("okta|alice"),
 	})
 
@@ -161,7 +161,7 @@ func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 	assert.Equal(t, 1, f.u.CommitCalled)
 	require.NotEmpty(t, f.runs.saved)
 	r := f.runs.saved[0]
-	assert.Equal(t, id, r.ScheduleID())
+	assert.Equal(t, id, r.RunID())
 	assert.Equal(t, run.KindRebase, r.Kind())
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, r.Release())
 	assert.Len(t, f.tasks.created, 3)
@@ -176,7 +176,7 @@ func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) 
 	f := newRebaseFixture(t)
 
 	id, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.ScheduleID(), Initiator: identity.FromUserID("okta|alice"),
+		SourceRunID: f.runs.source.RunID(), Initiator: identity.FromUserID("okta|alice"),
 	})
 
 	require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 	f := newRebaseFixture(t)
 
 	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.ScheduleID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
+		SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
 	})
 
 	require.ErrorIs(t, err, runstart.ErrLiveReleaseMoved)
@@ -207,7 +207,7 @@ func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 	f.runs.active = true
 
 	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.ScheduleID(),
+		SourceRunID: f.runs.source.RunID(),
 	})
 
 	require.ErrorIs(t, err, run.ErrScheduleHasActiveRun)

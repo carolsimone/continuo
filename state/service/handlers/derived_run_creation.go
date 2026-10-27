@@ -48,7 +48,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	if err := c.eligible(ctx, src, u.TaskCollection(c.planner.TenantID)); err != nil {
 		return uuid.Nil, "", err
 	}
-	if err := c.policy.IsScheduleAvailable(ctx, u.Run(), src.ScheduleName()); err != nil {
+	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.ScheduleName()); err != nil {
 		return uuid.Nil, "", err
 	}
 
@@ -81,7 +81,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	}
 	committed = true
 
-	c.logger.Info(c.logLabel, "new_run_id", newRun.ScheduleID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
+	c.logger.Info(c.logLabel, "new_run_id", newRun.RunID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
 		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
-	return newRun.ScheduleID(), newRun.ScheduleName(), nil
+	return newRun.RunID(), newRun.ScheduleName(), nil
 }

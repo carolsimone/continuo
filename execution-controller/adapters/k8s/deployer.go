@@ -65,7 +65,7 @@ func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespa
 	return JobParams{
 		JobName:      spec.JobName,
 		TaskID:       spec.TaskID,
-		ScheduleID:   spec.ScheduleID,
+		RunID:        spec.RunID,
 		ScheduleName: spec.ScheduleName,
 		ServiceName:  spec.ServiceName,
 		SchemaName:   spec.SchemaName,

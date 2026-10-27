@@ -33,7 +33,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Get scheduler ID first (needed for outbox cleanup)
 	var schedulerID string
 	_ = clients.stateDB.Get(&schedulerID, `
-		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
+		SELECT run_id FROM runs WHERE schedule_name = $1
 	`, scheduleName)
 
 	// Clean the execution database. Order matters: execution_outbox carries a
@@ -54,8 +54,8 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	}
 
 	// Clean state tables (do last to preserve scheduler_id)
-	_, _ = clients.stateDB.Exec("DELETE FROM task_tracker WHERE schedule_id = $1", schedulerID)
-	_, _ = clients.stateDB.Exec("DELETE FROM scheduler_tracker WHERE schedule_name = $1", scheduleName)
+	_, _ = clients.stateDB.Exec("DELETE FROM tasks WHERE run_id = $1", schedulerID)
+	_, _ = clients.stateDB.Exec("DELETE FROM runs WHERE schedule_name = $1", scheduleName)
 }
 
 // cleanupRedis removes test streams from Redis
@@ -74,7 +74,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 
 // cleanupK8s removes test jobs from Kubernetes
 func cleanupK8s(t *testing.T, ctx context.Context) {
-	// Use the schedule-id label to match what execution-controller actually creates
+	// Delete every Job execution-controller creates for a task, by its app=dbt-job label
 	cmd := exec.CommandContext(ctx, "kubectl", "delete", "jobs",
 		"-n", "default",
 		"-l", "app=dbt-job",

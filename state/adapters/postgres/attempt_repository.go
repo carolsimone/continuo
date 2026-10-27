@@ -47,8 +47,8 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT a.task_id, a.attempt
 		FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		JOIN tasks t ON t.task_id = a.task_id
+		JOIN runs s ON s.run_id = t.run_id
 		JOIN topology_nodes n ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
 		  AND a.stop_requested_at IS NULL
@@ -68,31 +68,31 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 // old progress clock and no work in flight (runWorkInFlight: no task
 // dispatched, queued, running or stopping, no task waiting for a node lease
 // whose holder is, and none waiting behind an older waiter of a running run),
-// of every tenant: scheduler_tracker has no tenant column. A lease or an older
+// of every tenant: runs has no tenant column. A lease or an older
 // waiter in another tenant on the waiting task's node key also counts, which
 // can delay noticing a stalled run but never fails a waiting one. A run it
 // lists may hold the oldest waiter of a free node; the attempt reconcile
 // grants that node under the run's lock (run.Run.FailStalled) rather than
-// failing the run. The run scan filters scheduler_tracker by status, which
+// failing the run. The run scan filters runs by status, which
 // holds few active rows.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
-		SELECT s.schedule_id
-		FROM scheduler_tracker s
+		SELECT s.run_id
+		FROM runs s
 		WHERE s.status = ANY($4::text[])
-		  AND s.last_heartbeat_at < now() - make_interval(secs => $2::float8)
+		  AND s.last_progress_at < now() - make_interval(secs => $2::float8)
 		  AND NOT `+runWorkInFlight+`
-		ORDER BY s.last_heartbeat_at, s.schedule_id
+		ORDER BY s.last_progress_at, s.run_id
 		LIMIT $3`, pq.Array(inFlightTaskStatuses()), idle.Seconds(), limit,
-		pq.Array(activeSchedulerStatuses())); err != nil {
+		pq.Array(activeRunStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil
 }
 
 type questionRow struct {
-	RunID        uuid.UUID `db:"schedule_id"`
+	RunID        uuid.UUID `db:"run_id"`
 	ScheduleName string    `db:"run_schedule_name"`
 	TaskID       uuid.UUID `db:"task_id"`
 	Attempt      int32     `db:"attempt"`
@@ -113,13 +113,13 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	}
 	var row questionRow
 	err := r.tx.GetContext(ctx, &row, `
-		SELECT s.schedule_id, s.schedule_name AS run_schedule_name, a.task_id, a.attempt, a.status, a.checks_sent, a.job_name,
+		SELECT s.run_id, s.schedule_name AS run_schedule_name, a.task_id, a.attempt, a.status, a.checks_sent, a.job_name,
 		       t.operation,
 		       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 		       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
 		FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		JOIN tasks t ON t.task_id = a.task_id
+		JOIN runs s ON s.run_id = t.run_id
 		JOIN topology_nodes n ON n.tenant_id = $3 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.task_id = $1 AND a.attempt = $2
 		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
@@ -165,15 +165,15 @@ func (r *AttemptRepository) MarkQuestioned(ctx context.Context, key repository.A
 func (r *AttemptRepository) DueStops(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
-		SELECT s.schedule_id
+		SELECT s.run_id
 		FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		JOIN tasks t ON t.task_id = a.task_id
+		JOIN runs s ON s.run_id = t.run_id
 		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
 		  AND a.stop_requested_at IS NOT NULL
 		  AND s.status = 'cancelling'
-		GROUP BY s.schedule_id
-		ORDER BY min(a.next_check_at), s.schedule_id
+		GROUP BY s.run_id
+		ORDER BY min(a.next_check_at), s.run_id
 		LIMIT $1`, limit); err != nil {
 		return nil, fmt.Errorf("read the cancelling runs with a quiet stop: %w", err)
 	}
@@ -181,7 +181,7 @@ func (r *AttemptRepository) DueStops(ctx context.Context, limit int) ([]uuid.UUI
 }
 
 type stopRow struct {
-	RunID        uuid.UUID  `db:"schedule_id"`
+	RunID        uuid.UUID  `db:"run_id"`
 	ScheduleName string     `db:"schedule_name"`
 	CancelledBy  *string    `db:"cancelled_by"`
 	Reason       *string    `db:"cancellation_reason"`
@@ -202,12 +202,12 @@ func (r *AttemptRepository) LockStops(ctx context.Context, runID uuid.UUID) (run
 	}
 	var rows []stopRow
 	if err := r.tx.SelectContext(ctx, &rows, `
-		SELECT s.schedule_id, s.schedule_name, s.cancelled_by, s.cancellation_reason, s.cancelled_at,
+		SELECT s.run_id, s.schedule_name, s.cancelled_by, s.cancellation_reason, s.cancelled_at,
 		       a.task_id, a.attempt, a.job_name, a.checks_sent, a.next_check_at <= now() AS due
 		FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
-		WHERE s.schedule_id = $1 AND s.status = 'cancelling'
+		JOIN tasks t ON t.task_id = a.task_id
+		JOIN runs s ON s.run_id = t.run_id
+		WHERE s.run_id = $1 AND s.status = 'cancelling'
 		  AND a.status IN ('dispatched', 'queued', 'running')
 		  AND a.stop_requested_at IS NOT NULL
 		FOR UPDATE OF a SKIP LOCKED`, runID); err != nil {
@@ -249,7 +249,7 @@ func (r *AttemptRepository) CountCancelling(ctx context.Context, overdueAfter ti
 	if err := r.db.GetContext(ctx, &counts, `
 		SELECT count(*) AS total,
 		       count(*) FILTER (WHERE cancelled_at < now() - make_interval(secs => $1::float8)) AS overdue
-		FROM scheduler_tracker
+		FROM runs
 		WHERE status = 'cancelling'`, overdueAfter.Seconds()); err != nil {
 		return 0, 0, fmt.Errorf("count the cancelling runs: %w", err)
 	}

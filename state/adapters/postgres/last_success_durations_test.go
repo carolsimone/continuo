@@ -20,7 +20,7 @@ func durationTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, service, table, op
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key, operation, inherited_from_task_id)
+		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key, operation, inherited_from_task_id)
 		VALUES ($1, $2, $3, 'raw', $4::text, $5, $6, 2, 'raw.' || $4::text, $7, $8)`,
 		id, runID, service, table, "job-"+id.String()[:8], status, operation, inheritedFrom)
 	require.NoError(t, err)

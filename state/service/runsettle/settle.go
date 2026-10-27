@@ -39,7 +39,7 @@ func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logg
 		}
 		if done {
 			cancelled++
-			logger.Warn("Cancelled a run whose tasks state did not plan", "schedule_id", id, "reason", Reason)
+			logger.Warn("Cancelled a run whose tasks state did not plan", "run_id", id, "reason", Reason)
 		}
 	}
 	return cancelled, nil

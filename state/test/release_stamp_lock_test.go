@@ -87,7 +87,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		created := make(chan uuid.UUID, 1)
 		failed := make(chan error, 1)
 		go func() {
-			id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
+			id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
 			if err != nil {
 				failed <- err
 				return
@@ -110,7 +110,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		// Put the live release back to rel-old, which is past retention and named
 		// by no run yet.
 		h.inTx(t, promote("rel-old", 4))
-		_, err := db.Exec(`DELETE FROM scheduler_tracker WHERE release_id = 'rel-new'`)
+		_, err := db.Exec(`DELETE FROM runs WHERE release_id = 'rel-new'`)
 		require.NoError(t, err)
 
 		creation := h.factory()
@@ -151,7 +151,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		require.NoError(t, waitFor(t, promoted, "the promotion"))
 		require.NoError(t, waitFor(t, pruned, "the prune"))
 
-		assert.Equal(t, stamp, h.stampOf(t, rn.ScheduleID()))
+		assert.Equal(t, stamp, h.stampOf(t, rn.RunID()))
 		assert.Positive(t, countOf(t, db, `SELECT count(*) FROM topology_releases WHERE release_id = 'rel-old'`),
 			"the release the run names survives the prune")
 		assert.Positive(t, countOf(t, db, `SELECT count(*) FROM topology_nodes WHERE release_id = 'rel-old'`),

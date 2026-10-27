@@ -102,7 +102,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	t.Logf("Phase 3 complete: fresh run triggered (run_id=%s)", freshID)
 
 	// ── Phase 4: Verify fresh run completes ───────────────────────────────────
-	// Verify by schedule_id — two runs share the same schedule_name in the DB,
+	// Verify by run_id — two runs share the same schedule_name in the DB,
 	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
 	verifyRootNodesDispatched(t, ctx, dispatchTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
@@ -148,7 +148,7 @@ func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancell
 	t.Logf("POST /api/schedules/%s/cancel → 200 OK", scheduleName)
 }
 
-// verifySchedulerCancelled polls scheduler_tracker until status = 'cancelled'.
+// verifySchedulerCancelled polls runs until status = 'cancelled'.
 // A cancel first moves the run to 'cancelling'; it ends 'cancelled' once
 // execution-controller has deleted the run's Jobs and reported every attempt
 // stopped, which takes up to 3 minutes.
@@ -161,7 +161,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 	pollUntilDescribed(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
-			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
 			return false, err
@@ -172,7 +172,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 		return fmt.Sprintf("run %s did not reach 'cancelled' within 3m; last status %q", schedulerID, lastStatus)
 	})
 
-	t.Log("✅ scheduler_tracker.status = 'cancelled'")
+	t.Log("✅ runs.status = 'cancelled'")
 }
 
 // verifyTasksCancelled asserts that at least some non-seed tasks were cancelled.
@@ -184,8 +184,8 @@ func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClient
 	var count int
 	err := clients.stateDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM task_tracker
-		WHERE schedule_id = $1 AND status = 'cancelled'
+		FROM tasks
+		WHERE run_id = $1 AND status = 'cancelled'
 	`, schedulerID).Scan(&count)
 	require.NoError(t, err)
 	assert.Greater(t, count, 0,
@@ -231,13 +231,13 @@ func verifyRunFenced(t *testing.T, ctx context.Context, clients *testClients, ru
 }
 
 // verifyNoLiveJobOfRun asserts that a cancelled run holds no Job that can still
-// run work: every Job labelled schedule-id=<run> is terminal (Complete or
+// run work: every Job labelled run-id=<run> is terminal (Complete or
 // Failed) or being deleted, and no pod of the run has a phase other than
 // Succeeded or Failed. A Job that finished before the cancel stays on the
 // cluster until its TTL, so a terminal Job does not count as live.
 func verifyNoLiveJobOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
-	selector := "schedule-id=" + runID.String()
+	selector := "run-id=" + runID.String()
 
 	jobs, err := getK8sJobs(ctx, selector)
 	require.NoError(t, err)

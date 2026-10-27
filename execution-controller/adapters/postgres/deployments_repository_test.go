@@ -34,7 +34,7 @@ func testLogger() *slog.Logger {
 
 func validCmd() command.DeployTask {
 	return command.DeployTask{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
 		Attempt: 0,
@@ -55,7 +55,7 @@ func seedDue(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at)
 		 VALUES ($1, $2, $3, '{}'::jsonb, $4)`,
 		id, uuid.New(), uuid.New(), nextAttempt)
 	require.NoError(t, err)
@@ -207,7 +207,7 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 		jobParams        []byte
 	)
 	require.NoError(t, db.QueryRow(
-		`SELECT mode, release_id, node_id, task_id, schedule_id, job_params
+		`SELECT mode, release_id, node_id, task_id, run_id, job_params
 		 FROM deployments WHERE id=$1`, dep.ID(),
 	).Scan(&mode, &releaseID, &nodeID, &taskID, &schedule, &jobParams))
 	assert.Equal(t, "validation", mode)
@@ -225,10 +225,10 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 	require.NoError(t, repo.Add(context.Background(), dep2))
 	var taskID2, schedule2 uuid.UUID
 	require.NoError(t, db.QueryRow(
-		`SELECT task_id, schedule_id FROM deployments WHERE id=$1`, dep2.ID(),
+		`SELECT task_id, run_id FROM deployments WHERE id=$1`, dep2.ID(),
 	).Scan(&taskID2, &schedule2))
 	assert.Equal(t, taskID, taskID2, "synthetic task_id deterministic for same (release,node)")
-	assert.Equal(t, schedule, schedule2, "synthetic schedule_id deterministic for same (release,node)")
+	assert.Equal(t, schedule, schedule2, "synthetic run_id deterministic for same (release,node)")
 
 	// Reconstitution via GetByReleaseNode rebuilds the validation aggregate.
 	got, err := repo.GetByReleaseNode(context.Background(), "rel-1", "node-A", model.ModeValidation)

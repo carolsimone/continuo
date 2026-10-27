@@ -133,8 +133,8 @@ func TestTaskCollection_SkipPendingSkipsOnlyTheRunsPendingTasks(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 		var skipped, untouched int
-		require.NoError(t, tx.Get(&skipped, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1 AND status = 'skipped'`, runID))
-		require.NoError(t, tx.Get(&untouched, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1 AND status = 'pending'`, otherRun))
+		require.NoError(t, tx.Get(&skipped, `SELECT count(*) FROM tasks WHERE run_id = $1 AND status = 'skipped'`, runID))
+		require.NoError(t, tx.Get(&untouched, `SELECT count(*) FROM tasks WHERE run_id = $1 AND status = 'pending'`, otherRun))
 		assert.Equal(t, 2, skipped)
 		assert.Equal(t, 1, untouched)
 	})
@@ -190,11 +190,11 @@ func TestTaskCollection_BeginStopCancelsPendingTasksAndStopsTasksInFlight(t *tes
 			"ftable_f": run.TaskStatusCancelled, "ftable_g": run.TaskStatusCancelled,
 		} {
 			var got run.TaskStatus
-			require.NoError(t, tx.Get(&got, `SELECT status FROM task_tracker WHERE task_id = $1`, ids[table]))
+			require.NoError(t, tx.Get(&got, `SELECT status FROM tasks WHERE task_id = $1`, ids[table]))
 			assert.Equal(t, want, got, table)
 		}
 		var other run.TaskStatus
-		require.NoError(t, tx.Get(&other, `SELECT status FROM task_tracker WHERE task_id = $1`, others["ftable_a"]))
+		require.NoError(t, tx.Get(&other, `SELECT status FROM tasks WHERE task_id = $1`, others["ftable_a"]))
 		assert.Equal(t, run.TaskStatusRunning, other, "another run's task")
 
 		counts, err = tasks.BeginStop(ctx, runID, "user", time.Now())
@@ -239,7 +239,7 @@ func TestTaskGraph_ReadyCandidatesCarryTheNodesTimeout(t *testing.T) {
 	setTaskStatus(t, db, r, "e2e_schema.ftable_a", run.TaskStatusSucceeded)
 
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
-		got, err := g.ReadyCandidates(ctx, r.ScheduleID(), "rel-1", "e2e_schema.ftable_a")
+		got, err := g.ReadyCandidates(ctx, r.RunID(), "rel-1", "e2e_schema.ftable_a")
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_g"), got[1].Node.Key)

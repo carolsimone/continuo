@@ -47,7 +47,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 }
 
 func TestHydrateRun_RoundTripsOperation(t *testing.T) {
-	r := HydrateRun(uuid.New(), "sched", SchedulerStatusRunning, InitStatusCompleted,
+	r := HydrateRun(uuid.New(), "sched", RunStatusRunning, InitStatusCompleted,
 		KindTrigger, nil, "user-1", model.OperationTest, time.Now(),
 		nil, nil, nil, nil, nil, nil, nil, 0, nil)
 	if r.Operation() != model.OperationTest {

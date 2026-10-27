@@ -19,7 +19,7 @@ import (
 func schemaTaskRun(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var runID uuid.UUID
-	require.NoError(t, db.Get(&runID, `SELECT schedule_id FROM task_tracker WHERE task_id = $1`, taskID))
+	require.NoError(t, db.Get(&runID, `SELECT run_id FROM tasks WHERE task_id = $1`, taskID))
 	return runID
 }
 
@@ -74,7 +74,7 @@ func TestNodeLeasesSchema_DeletingATaskReleasesItsLease(t *testing.T) {
 	taskID := newSchemaTask(t, db)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", taskID, schemaTaskRun(t, db, taskID)))
 
-	_, err := db.Exec(`DELETE FROM task_tracker WHERE task_id = $1`, taskID)
+	_, err := db.Exec(`DELETE FROM tasks WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
 	var n int
@@ -192,16 +192,16 @@ func assertNoNotificationFrom(t *testing.T, listener *pq.Listener, pid int, when
 }
 
 // A task waits for exactly one thing, a node lease, or for nothing.
-func TestTaskTrackerSchema_WaitReasonIsNodeLeaseOrNull(t *testing.T) {
+func TestTasksSchema_WaitReasonIsNodeLeaseOrNull(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 
 	var reason *string
-	require.NoError(t, db.Get(&reason, `SELECT wait_reason FROM task_tracker WHERE task_id = $1`, taskID))
+	require.NoError(t, db.Get(&reason, `SELECT wait_reason FROM tasks WHERE task_id = $1`, taskID))
 	assert.Nil(t, reason, "a task waits for nothing until it is made to wait")
 
 	setReason := func(r any) error {
-		_, err := db.Exec(`UPDATE task_tracker SET wait_reason = $2, lease_wait_since = now() WHERE task_id = $1`, taskID, r)
+		_, err := db.Exec(`UPDATE tasks SET wait_reason = $2, lease_wait_since = now() WHERE task_id = $1`, taskID, r)
 		return err
 	}
 	for _, r := range run.WaitReasons() {

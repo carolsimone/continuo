@@ -37,7 +37,7 @@ func apiJob(cmd command.DeployTask) *batchv1.Job {
 
 func attemptLabels(cmd command.DeployTask) map[string]string {
 	return map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": strconv.Itoa(cmd.Attempt),
-		"schedule-id": cmd.ScheduleID}
+		"run-id": cmd.RunID}
 }
 
 // apiPod is a running pod of cmd's attempt's Job.
@@ -152,7 +152,7 @@ type lossyCreate struct {
 func (l *lossyCreate) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	close(l.entered)
 	<-l.release
-	cmd := command.DeployTask{TaskID: spec.TaskID, ScheduleID: spec.ScheduleID, JobName: spec.JobName, Attempt: spec.Attempt}
+	cmd := command.DeployTask{TaskID: spec.TaskID, RunID: spec.RunID, JobName: spec.JobName, Attempt: spec.Attempt}
 	if _, err := l.cs.BatchV1().Jobs(fenceNamespace).Create(ctx, apiJob(cmd), metav1.CreateOptions{}); err != nil {
 		return err
 	}

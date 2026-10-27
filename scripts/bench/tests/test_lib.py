@@ -226,12 +226,12 @@ def test_sql_on_compose_runs_in_the_postgres_container_as_the_services_user(tmp_
     import fake_env
     env = fake_env.make(tmp_path, [])
     (Path(env["FAKE_DIR"]) / "tasks.json").write_text('[{"table": "a"}]\n')
-    out = run_lib(env, 'bench_sql state "SELECT 1 FROM task_tracker"')
+    out = run_lib(env, 'bench_sql state "SELECT 1 FROM tasks"')
     assert out.returncode == 0, out.stderr
     assert out.stdout == '[{"table": "a"}]\n'
     psql = [json.loads(line) for line in (Path(env["FAKE_DIR"]) / "docker-calls.jsonl").read_text().splitlines()]
     assert psql[-1]["argv"][-7:] == ["-U", "fake_postgres_user", "-d", "fake_postgres_db", "-At", "-c",
-                                     "SELECT 1 FROM task_tracker"]
+                                     "SELECT 1 FROM tasks"]
 
 
 def test_sql_on_k8s_runs_in_the_postgres_pod_with_the_services_credentials(tmp_path):

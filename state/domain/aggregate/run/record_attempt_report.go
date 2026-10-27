@@ -76,7 +76,7 @@ func (r *Run) RecordAttemptReport(
 	if !exists {
 		return nil, false, ErrTaskNotHeld
 	}
-	if task.RunID != r.scheduleID {
+	if task.RunID != r.runID {
 		return nil, false, fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, rep.TaskID, task.RunID)
 	}
 	a, held, err := tasks.LoadAttempt(ctx, rep.TaskID, rep.Attempt)
@@ -116,7 +116,7 @@ func (r *Run) RecordAttemptReport(
 		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusSucceeded, d, now)
 		return events, err == nil, err
 	case AttemptFailed:
-		if r.status == SchedulerStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
+		if r.status == RunStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
 			events, err := r.dispatchNextAttempt(ctx, tasks, graph, rep.TaskID, task, d, now)
 			return events, false, err
 		}
@@ -155,7 +155,7 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 	}
 	r.fillSlot()
 	var events []DomainEvent
-	if r.plannedAt != nil && r.status == SchedulerStatusRunning {
+	if r.plannedAt != nil && r.status == RunStatusRunning {
 		switch status {
 		case TaskStatusSucceeded:
 			dispatched, err := r.dispatchReady(ctx, tasks, graph, task.NodeKey, d, now)
@@ -193,7 +193,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 		return nil, fmt.Errorf("retry task %s: release %s holds no node %s", taskID, r.release.ReleaseID, task.NodeKey)
 	}
 	next := task.Attempt + 1
-	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.scheduleID.String(), int(next))
+	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.runID.String(), int(next))
 	if err != nil {
 		return nil, fmt.Errorf("name attempt %d of task %s: %w", next, taskID, err)
 	}
@@ -214,19 +214,19 @@ func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollecti
 	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount || r.initStatus != InitStatusCompleted {
 		return nil, nil
 	}
-	if r.status == SchedulerStatusCancelling {
-		return r.finalize(SchedulerStatusCancelled, now), nil
+	if r.status == RunStatusCancelling {
+		return r.finalize(RunStatusCancelled, now), nil
 	}
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, nil
 	}
-	anyFailed, err := tasks.HasFailed(ctx, r.scheduleID)
+	anyFailed, err := tasks.HasFailed(ctx, r.runID)
 	if err != nil {
 		return nil, fmt.Errorf("has failed: %w", err)
 	}
-	outcome := SchedulerStatusSucceeded
+	outcome := RunStatusSucceeded
 	if anyFailed {
-		outcome = SchedulerStatusFailed
+		outcome = RunStatusFailed
 	}
 	return r.finalize(outcome, now), nil
 }
@@ -299,26 +299,26 @@ func (r *Run) FailStalledWithoutGrants(ctx context.Context, tasks TaskCollection
 // idleFor reports whether r is active and has made no progress for idle at
 // now.
 func (r *Run) idleFor(idle time.Duration, now time.Time) bool {
-	return r.IsActive() && r.lastHeartbeatAt != nil && now.Sub(*r.lastHeartbeatAt) >= idle
+	return r.IsActive() && r.lastProgressAt != nil && now.Sub(*r.lastProgressAt) >= idle
 }
 
 // endWhenNothingInFlight ends r when it has no work in flight (HasInFlight): a
 // cancelling run cancelled, any other run failed as stalled with its pending
 // tasks skipped and counted terminal.
 func (r *Run) endWhenNothingInFlight(ctx context.Context, tasks TaskCollection, now time.Time) (StallCheck, error) {
-	inFlight, err := tasks.HasInFlight(ctx, r.scheduleID)
+	inFlight, err := tasks.HasInFlight(ctx, r.runID)
 	if err != nil {
 		return StallCheck{}, fmt.Errorf("has in flight: %w", err)
 	}
 	if inFlight {
 		return StallCheck{}, nil
 	}
-	if r.status == SchedulerStatusCancelling {
-		return StallCheck{Events: r.finalize(SchedulerStatusCancelled, now), Stalled: true}, nil
+	if r.status == RunStatusCancelling {
+		return StallCheck{Events: r.finalize(RunStatusCancelled, now), Stalled: true}, nil
 	}
-	skipped, err := tasks.SkipPending(ctx, r.scheduleID)
+	skipped, err := tasks.SkipPending(ctx, r.runID)
 	if err != nil {
-		return StallCheck{}, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.scheduleID, err)
+		return StallCheck{}, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.runID, err)
 	}
 	if skipped > 0 {
 		r.terminalTaskCount += num.ClampInt32(skipped)
@@ -326,5 +326,5 @@ func (r *Run) endWhenNothingInFlight(ctx context.Context, tasks TaskCollection, 
 	}
 	reason := RunFailureStalled
 	r.failureReason = &reason
-	return StallCheck{Events: r.finalize(SchedulerStatusFailed, now), Stalled: true}, nil
+	return StallCheck{Events: r.finalize(RunStatusFailed, now), Stalled: true}, nil
 }

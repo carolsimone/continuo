@@ -14,15 +14,15 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status)
 		VALUES ($1, 'op-default', 'pending', now(), 'in_progress')`, id)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id) })
+	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 
 	var op string
-	if err := db.Get(&op, `SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, id); err != nil {
+	if err := db.Get(&op, `SELECT operation FROM runs WHERE run_id = $1`, id); err != nil {
 		t.Fatalf("select: %v", err)
 	}
 	if op != "run" {
@@ -31,40 +31,40 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	bad := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, operation)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, operation)
 		VALUES ($1, 'op-bad', 'pending', now(), 'in_progress', 'nonsense')`, bad)
 	if err == nil {
-		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, bad)
+		db.Exec(`DELETE FROM runs WHERE run_id = $1`, bad)
 		t.Fatal("expected CHECK violation for operation='nonsense', got nil")
 	}
 
-	// task_tracker carries its own operation column (denormalized from its run),
+	// tasks carries its own operation column (denormalized from its run),
 	// so verify its default and CHECK independently — a copy-paste slip on the
-	// second ALTER would otherwise go undetected. task_tracker has NOT NULL
-	// columns and a FK to scheduler_tracker(schedule_id), so reuse the parent
+	// second ALTER would otherwise go undetected. tasks has NOT NULL
+	// columns and a FK to runs(run_id), so reuse the parent
 	// row inserted above.
 	taskDefault := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
+		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
 		VALUES ($1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-default', 'pending', 3)`, taskDefault, id)
 	if err != nil {
-		t.Fatalf("insert task_tracker: %v", err)
+		t.Fatalf("insert tasks: %v", err)
 	}
 
 	var taskOp string
-	if err := db.Get(&taskOp, `SELECT operation FROM task_tracker WHERE task_id = $1`, taskDefault); err != nil {
-		t.Fatalf("select task_tracker: %v", err)
+	if err := db.Get(&taskOp, `SELECT operation FROM tasks WHERE task_id = $1`, taskDefault); err != nil {
+		t.Fatalf("select tasks: %v", err)
 	}
 	if taskOp != "run" {
-		t.Fatalf("task_tracker default operation = %q, want run", taskOp)
+		t.Fatalf("tasks default operation = %q, want run", taskOp)
 	}
 
 	badTask := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ($1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-bad', 'pending', 3, 'nonsense')`, badTask, id)
 	if err == nil {
-		db.Exec(`DELETE FROM task_tracker WHERE task_id = $1`, badTask)
-		t.Fatal("expected CHECK violation for task_tracker operation='nonsense', got nil")
+		db.Exec(`DELETE FROM tasks WHERE task_id = $1`, badTask)
+		t.Fatal("expected CHECK violation for tasks operation='nonsense', got nil")
 	}
 }

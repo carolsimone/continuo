@@ -73,7 +73,7 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 	runID := uuid.New()
 	at := time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC)
 	f := &fakeRunReader{runs: []projection.RunSummary{{RunID: runID, ScheduleName: "daily",
-		TerminalStatus: run.SchedulerStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
+		TerminalStatus: run.RunStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
 	h := NewRunReadHandler(f, newTestLogger())
 
 	resp, err := h.ListRuns(context.Background(), &statev1.ListRunsRequest{ScheduleName: "daily", PageSize: 20, PageOffset: 40})

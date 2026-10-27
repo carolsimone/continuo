@@ -30,7 +30,7 @@ type TaskDispatch struct {
 // Command is the deploy command of the dispatched attempt.
 func (d TaskDispatch) Command() command.DeployTask {
 	return command.DeployTask{
-		TaskID: d.TaskID.String(), ScheduleID: d.RunID.String(), ScheduleName: d.ScheduleName,
+		TaskID: d.TaskID.String(), RunID: d.RunID.String(), ScheduleName: d.ScheduleName,
 		ServiceName: d.ServiceName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
 		NodeType: d.NodeType, ImageTag: d.ImageTag, SecretRef: d.SecretRef, Attempt: d.Attempt,
 		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds,

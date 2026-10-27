@@ -409,6 +409,6 @@ func TestPlanner_StartStoresTheTasksAndWritesTheDispatches(t *testing.T) {
 	require.Len(t, outbox.events, 1)
 	d, ok := outbox.events[0].(run.TaskDispatched)
 	require.True(t, ok, "%T", outbox.events[0])
-	assert.Equal(t, run.TaskIDFor("default", r.ScheduleID(), "raw.a"), d.TaskID)
+	assert.Equal(t, run.TaskIDFor("default", r.RunID(), "raw.a"), d.TaskID)
 	assert.NotNil(t, r.PlannedAt())
 }

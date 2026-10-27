@@ -131,21 +131,21 @@ func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCata
 type stubSchedulerRepo struct {
 	hasActive       bool
 	lastRunData     map[string]postgres.LastRunData
-	getActiveResult *postgres.SchedulerTracker
+	getActiveResult *postgres.RunRow
 	getActiveErr    error
 	cancelErr       error
-	getByIDResult   *postgres.SchedulerTracker
+	getByIDResult   *postgres.RunRow
 	getByIDErr      error
 }
 
-func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
-func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.RunRow) error { return nil }
+func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.RunRow, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) GetActiveScheduler(_ context.Context, _ string) (*postgres.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) GetActiveRun(_ context.Context, _ string) (*postgres.RunRow, error) {
 	return s.getActiveResult, s.getActiveErr
 }
-func (s *stubSchedulerRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
+func (s *stubSchedulerRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
 	return s.hasActive, nil
 }
 func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
@@ -157,7 +157,7 @@ func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string
 func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.SchedulerTracker) error {
+func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.RunRow) error {
 	return nil
 }
 func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
@@ -169,7 +169,7 @@ func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx
 func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) GetByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.SchedulerTracker, error) {
+func (s *stubSchedulerRepo) LoadByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.RunRow, error) {
 	return s.getByIDResult, s.getByIDErr
 }
 func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
@@ -178,7 +178,7 @@ func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.
 func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ run.SchedulerStatus, _, _ string, _ time.Time) error {
+func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ run.RunStatus, _, _ string, _ time.Time) error {
 	return s.cancelErr
 }
 
@@ -188,7 +188,7 @@ var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks
 // ---- fake run repo for activation tests ----
 
 // activateFakeRunRepo satisfies repository.RunRepository for ActivateSchedule /
-// TriggerSchedule handler tests. HasActiveSchedule drives the policy check;
+// TriggerSchedule handler tests. HasActiveRun drives the policy check;
 // SaveRun records the run so tests can inspect it.
 type activateFakeRunRepo struct {
 	hasActive bool
@@ -209,11 +209,11 @@ func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.savedRun = r
 	return nil
 }
-func (f *activateFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
+func (f *activateFakeRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
 	return f.hasActive, nil
 }
-func (f *activateFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
-	panic("GetActiveScheduler not used in activate tests")
+func (f *activateFakeRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+	panic("GetActiveRun not used in activate tests")
 }
 func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in activate tests")
@@ -331,7 +331,7 @@ func dispatchedOperations(events []run.DomainEvent) []model.Operation {
 // ---- ActivateSchedule tests ----
 
 func TestSchedulerHandler_ActivateSchedule_EmptyName(t *testing.T) {
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, noopUoWFactory(), newTestLogger())
 
 	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{})
@@ -346,7 +346,7 @@ func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -356,7 +356,7 @@ func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ScheduleId)
 	require.NotNil(t, runRepo.savedRun, "a new Run must be persisted")
-	assert.Equal(t, run.SchedulerStatusRunning, runRepo.savedRun.Status())
+	assert.Equal(t, run.RunStatusRunning, runRepo.savedRun.Status())
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, runRepo.savedRun.Release())
 	assert.Len(t, outbox.appended, 2, "one dispatch per node of the schedule")
 }
@@ -368,14 +368,14 @@ func TestActivateSchedule_ARefusedSelectionRecordsAFailedRun(t *testing.T) {
 	runRepo := &activateFakeRunRepo{}
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-	h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
+	h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{ScheduleName: "empty"})
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ScheduleId)
 	require.NotNil(t, runRepo.savedRun)
-	assert.Equal(t, run.SchedulerStatusFailed, runRepo.savedRun.Status())
+	assert.Equal(t, run.RunStatusFailed, runRepo.savedRun.Status())
 	assert.Empty(t, dispatchedOperations(outbox.appended))
 }
 
@@ -385,7 +385,7 @@ func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -404,7 +404,7 @@ func TestActivateSchedule_AlreadyActive_ReturnsEmptyID(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -423,7 +423,7 @@ func TestTriggerSchedule_Success(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -454,7 +454,7 @@ func TestTriggerSchedule_Operation_ThreadsOntoTheDispatches(t *testing.T) {
 			fu, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 			fu.TopologyRepo.(*scheduleTopology).tested = true
 
-			h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
+			h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 			resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
 				ScheduleName: "daily",
 				Operation:    tc.operation,
@@ -475,7 +475,7 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
+		h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 		_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "empty"})
 
@@ -490,14 +490,14 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
+		h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "daily", Operation: "test"})
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp.ScheduleId)
 		require.NotNil(t, runRepo.savedRun)
-		assert.Equal(t, run.SchedulerStatusSkipped, runRepo.savedRun.Status())
+		assert.Equal(t, run.RunStatusSkipped, runRepo.savedRun.Status())
 		assert.Empty(t, dispatchedOperations(outbox.appended))
 	})
 }
@@ -511,7 +511,7 @@ func TestTriggerSchedule_InvalidOperation(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -531,7 +531,7 @@ func TestTriggerSchedule_FullRefreshRejected(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -550,7 +550,7 @@ func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -567,7 +567,7 @@ func TestTriggerSchedule_NotFound(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -592,7 +592,7 @@ func TestListAllSchedules_MergesData(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{
 		lastRunData: map[string]postgres.LastRunData{
-			"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: run.SchedulerStatusSucceeded, IsRunning: false},
+			"daily": {ScheduleName: "daily", RunID: uuid.New(), Status: run.RunStatusSucceeded, IsActive: false},
 		},
 	}
 	schedulesConfig := &schedulerpkg.SchedulesConfig{
@@ -620,10 +620,10 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 		lastRunData: map[string]postgres.LastRunData{
 			"daily": {
 				ScheduleName: "daily",
-				ScheduleID:   id,
-				Status:       run.SchedulerStatusSucceeded,
+				RunID:        id,
+				Status:       run.RunStatusSucceeded,
 				CreatedAt:    time.Now(),
-				IsRunning:    false,
+				IsActive:     false,
 			},
 		},
 	}
@@ -640,11 +640,11 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 // cancelFakeRunRepo is an in-memory RunRepository for CancelScheduler /
 // CancelSchedule handler unit tests.
 type cancelFakeRunRepo struct {
-	// stored is the run returned by LoadRunForUpdate and GetActiveScheduler.
+	// stored is the run returned by LoadRunForUpdate and GetActiveRun.
 	stored *run.Run
 	// loadErr is returned by LoadRunForUpdate when non-nil.
 	loadErr error
-	// getActiveErr is returned by GetActiveScheduler when non-nil.
+	// getActiveErr is returned by GetActiveRun when non-nil.
 	getActiveErr error
 	// saveErr is returned by SaveRun when non-nil.
 	saveErr error
@@ -672,11 +672,11 @@ func (f *cancelFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *cancelFakeRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
-	panic("HasActiveSchedule not used in cancel tests")
+func (f *cancelFakeRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+	panic("HasActiveRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
+func (f *cancelFakeRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
 	if f.getActiveErr != nil {
 		return nil, f.getActiveErr
 	}
@@ -725,7 +725,7 @@ func assertCancelEvents(t *testing.T, evts []run.DomainEvent, by string) {
 			assert.Equal(t, by, ev.By)
 		case run.RunFinalized:
 			sawFinalized = true
-			assert.Equal(t, run.SchedulerStatusCancelled, ev.Outcome)
+			assert.Equal(t, run.RunStatusCancelled, ev.Outcome)
 		}
 	}
 	assert.True(t, sawCancelled, "RunCancelled must be appended")
@@ -863,7 +863,7 @@ func newCancelUoWFactory(runRepo *cancelFakeRunRepo, outbox *cancelFakeOutbox, t
 func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
 	return run.HydrateRun(
 		scheduleID, name,
-		run.SchedulerStatusPending,
+		run.RunStatusPending,
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
@@ -920,7 +920,7 @@ func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 	// Build a CANCELLED (terminal) Run.
 	cancelledRun := run.HydrateRun(
 		id, "daily",
-		run.SchedulerStatusCancelled,
+		run.RunStatusCancelled,
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
@@ -1043,7 +1043,7 @@ func TestCancelSchedule_EmptyScheduleName(t *testing.T) {
 }
 
 func TestCancelSchedule_NoActiveRun(t *testing.T) {
-	// GetActiveScheduler returns nil — no active run exists.
+	// GetActiveRun returns nil — no active run exists.
 	runRepo := &cancelFakeRunRepo{stored: nil}
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
@@ -1056,7 +1056,7 @@ func TestCancelSchedule_NoActiveRun(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
-func TestCancelSchedule_GetActiveSchedulerError(t *testing.T) {
+func TestCancelSchedule_GetActiveRunError(t *testing.T) {
 	runRepo := &cancelFakeRunRepo{getActiveErr: errors.New("db error")}
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
@@ -1093,7 +1093,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 	id := uuid.New()
 	cancelledRun := run.HydrateRun(
 		id, "daily",
-		run.SchedulerStatusCancelled,
+		run.RunStatusCancelled,
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
@@ -1123,7 +1123,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 func newCancellingRun(scheduleID uuid.UUID, name, by string, cancelledAt time.Time) *run.Run {
 	return run.HydrateRun(
 		scheduleID, name,
-		run.SchedulerStatusCancelling,
+		run.RunStatusCancelling,
 		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
@@ -1163,7 +1163,7 @@ func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 	assert.False(t, runRepo.saveCalled, "a second cancel saves nothing")
 	assert.False(t, tasks.beginStopCalled, "a second cancel stops nothing")
 	assert.Empty(t, outbox.appended, "a second cancel sends nothing")
-	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	assert.Equal(t, run.RunStatusCancelling, runRepo.stored.Status())
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, domainToProtoSchedulerStatus(runRepo.stored.Status()))
 	require.NotNil(t, runRepo.stored.CancelledAt())
 	assert.True(t, runRepo.stored.CancelledAt().Equal(first))
@@ -1213,7 +1213,7 @@ func TestCancelScheduler_AFirstCancelWithAttemptsInFlightAnswersCancelling(t *te
 	require.NoError(t, err)
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, resp.Scheduler.Status)
 	assert.Nil(t, resp.Scheduler.CompletedAt, "a cancelling run has not ended")
-	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	assert.Equal(t, run.RunStatusCancelling, runRepo.stored.Status())
 }
 
 // CancelSchedule answers with the run's id only; the run it cancelled is
@@ -1229,7 +1229,7 @@ func TestCancelSchedule_AFirstCancelWithAttemptsInFlightLeavesTheRunCancelling(t
 
 	require.NoError(t, err)
 	assert.Equal(t, id.String(), resp.ScheduleId)
-	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	assert.Equal(t, run.RunStatusCancelling, runRepo.stored.Status())
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, domainToProtoSchedulerStatus(runRepo.stored.Status()))
 }
 
@@ -1239,8 +1239,8 @@ func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
 	id := uuid.New()
 	at := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
 	by := "alice"
-	repo := &stubSchedulerRepo{getByIDResult: &postgres.SchedulerTracker{
-		ScheduleID: id, ScheduleName: "daily", Status: run.SchedulerStatusCancelling,
+	repo := &stubSchedulerRepo{getByIDResult: &postgres.RunRow{
+		ScheduleID: id, ScheduleName: "daily", Status: run.RunStatusCancelling,
 		CreatedAt: at.Add(-time.Hour), CancelledAt: &at, CancelledBy: &by, InitializationStatus: "completed",
 	}}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
@@ -1258,7 +1258,7 @@ func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
 func TestListAllSchedules_ACancellingLastRunIsRunning(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{lastRunData: map[string]postgres.LastRunData{
-		"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: run.SchedulerStatusCancelling, CreatedAt: time.Now(), IsRunning: true},
+		"daily": {ScheduleName: "daily", RunID: uuid.New(), Status: run.RunStatusCancelling, CreatedAt: time.Now(), IsActive: true},
 	}}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
 
@@ -1272,12 +1272,12 @@ func TestListAllSchedules_ACancellingLastRunIsRunning(t *testing.T) {
 
 func TestDomainToProtoSchedulerStatus_Cancelling(t *testing.T) {
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING,
-		domainToProtoSchedulerStatus(run.SchedulerStatusCancelling))
+		domainToProtoSchedulerStatus(run.RunStatusCancelling))
 }
 
 // Every domain run status maps to its own proto status; none falls to UNSPECIFIED.
 func TestDomainToProtoSchedulerStatus_EveryStatusIsMapped(t *testing.T) {
-	for _, s := range run.SchedulerStatuses() {
+	for _, s := range run.RunStatuses() {
 		assert.NotEqual(t, statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED, domainToProtoSchedulerStatus(s),
 			"run status %q must map to a proto status", s)
 	}
@@ -1303,7 +1303,7 @@ func TestCancelSchedule_OutboxError(t *testing.T) {
 // ---- GetSchedulerInitStatus tests ----
 
 func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
-	tracker := &postgres.SchedulerTracker{
+	tracker := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
 		InitializationStatus: "completed",

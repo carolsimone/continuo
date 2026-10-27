@@ -183,10 +183,10 @@ func main() {
 	}
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -421,7 +421,7 @@ func main() {
 	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: taskDefaults}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
-	activateHandler := svchandlers.NewActivateScheduleHandler(planner, logger)
+	activateHandler := svchandlers.NewStartRunHandler(planner, logger)
 	logger.Info("Activation handler initialized")
 
 	// Load schedules config — fail fast if missing or malformed

@@ -34,9 +34,9 @@ const (
 // pod: the task's id, the attempt's number and the run's id. The watch reads
 // them back to tell which attempt, of which run, a Job runs.
 const (
-	LabelTaskID     = "task-id"
-	LabelAttempt    = "attempt"
-	LabelScheduleID = "schedule-id"
+	LabelTaskID  = "task-id"
+	LabelAttempt = "attempt"
+	LabelRunID   = "run-id"
 )
 
 // CreateQueryJob builds and creates the K8s Job of one attempt of a task. A
@@ -71,14 +71,14 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 
 	backoffLimit := int32(0)
 	jobLabels := map[string]string{
-		"app":           "dbt-job",
-		LabelTaskID:     params.TaskID,
-		LabelAttempt:    strconv.Itoa(params.Attempt),
-		LabelScheduleID: params.ScheduleID,
-		"schedule":      params.ScheduleName,
-		"table_name":    sanitizeK8sLabel(params.TableName),
-		"schema_name":   params.SchemaName,
-		"service_name":  params.ServiceName,
+		"app":          "dbt-job",
+		LabelTaskID:    params.TaskID,
+		LabelAttempt:   strconv.Itoa(params.Attempt),
+		LabelRunID:     params.RunID,
+		"schedule":     params.ScheduleName,
+		"table_name":   sanitizeK8sLabel(params.TableName),
+		"schema_name":  params.SchemaName,
+		"service_name": params.ServiceName,
 	}
 	// The runtime label distinguishes python pods for operators without
 	// changing the app selector every executor Job carries.
@@ -817,7 +817,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	envVars := []corev1.EnvVar{
 		{Name: "TASK_ID", Value: params.TaskID},
 		{Name: "TASK_ATTEMPT", Value: strconv.Itoa(params.Attempt)},
-		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
+		{Name: "SCHEDULE_ID", Value: params.RunID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
 		{Name: "SERVICE_NAME", Value: params.ServiceName},
 		{Name: "SCHEMA", Value: params.SchemaName},

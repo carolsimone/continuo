@@ -235,12 +235,12 @@ func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
 	l.metrics.RunStalled()
 	if grantErr != nil {
 		l.logger.Error("Failed a stalled run whose waiting task could not be granted its node's lease, which a defect in state causes",
-			"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastHeartbeatAt(),
+			"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastProgressAt(),
 			"idle_for_at_least", run.StallAfterFailedGrant.String(), "grant_error", grantErr)
 		return nil
 	}
 	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
-		"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastHeartbeatAt())
+		"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastProgressAt())
 	return nil
 }
 

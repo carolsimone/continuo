@@ -50,8 +50,8 @@ type reconcileHarness struct {
 
 func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -114,7 +114,7 @@ func (h *reconcileHarness) promoteSeedRuns(t *testing.T, releaseID string) []uui
 	t.Helper()
 	var ids []uuid.UUID
 	require.NoError(t, h.db.Select(&ids,
-		`SELECT schedule_id FROM scheduler_tracker WHERE kind = 'promote_seed' AND release_id = $1 ORDER BY created_at`, releaseID))
+		`SELECT run_id FROM runs WHERE kind = 'promote_seed' AND release_id = $1 ORDER BY created_at`, releaseID))
 	return ids
 }
 
@@ -162,7 +162,7 @@ func TestSeedReconcile(t *testing.T) {
 			Name   string `db:"schedule_name"`
 			Status string `db:"status"`
 		}
-		require.NoError(t, db.Get(&runRow, `SELECT schedule_name, status FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+		require.NoError(t, db.Get(&runRow, `SELECT schedule_name, status FROM runs WHERE run_id = $1`, runID))
 		assert.Equal(t, "promote-seed-"+strings.ReplaceAll(runID.String(), "-", "")[:8], runRow.Name)
 		assert.Equal(t, "running", runRow.Status)
 
@@ -189,7 +189,7 @@ func TestSeedReconcile(t *testing.T) {
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a second pass while the run is running creates nothing")
 		assert.Equal(t, 1, h.seedDispatches(t, releaseID))
 
-		_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, runID)
+		_, err := db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
 		require.NoError(t, err)
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a failed load of the live content is not retried")
@@ -240,7 +240,7 @@ func TestSeedReconcile(t *testing.T) {
 		releaseID := "rel-" + uuid.NewString()[:8]
 		existing := firstPromoteSeedRunID(releaseID)
 		_, err := db.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, kind)
+			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
 			VALUES ($1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
 			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8])
 		require.NoError(t, err)
@@ -273,7 +273,7 @@ func TestSeedReconcile(t *testing.T) {
 		assert.Equal(t, uuid.NullUUID{UUID: run1, Valid: true}, orders.AttemptRunID)
 
 		// Once that build ends, the next pass loads the live content.
-		_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, run1)
+		_, err := db.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE run_id = $1`, run1)
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, run1)
 		require.NoError(t, h.reconciler.RunOnce(ctx))
@@ -312,7 +312,7 @@ func seedAt(table, hash string) topology.NodeSpec {
 func (h *reconcileHarness) seedDispatches(t *testing.T, releaseID string) int {
 	t.Helper()
 	return countOf(t, h.db, `
-		SELECT count(*) FROM state_outbox o JOIN scheduler_tracker s ON s.schedule_id = o.aggregate_id
+		SELECT count(*) FROM state_outbox o JOIN runs s ON s.run_id = o.aggregate_id
 		WHERE o.stream_name = $1 AND s.release_id = $2`, streams.TaskDispatchV1, releaseID)
 }
 
@@ -369,12 +369,12 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	assert.Equal(t, uuid.NullUUID{UUID: runC, Valid: true}, users.AttemptRunID)
 
 	require.NoError(t, h.reconciler.RunOnce(ctx))
-	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM scheduler_tracker WHERE kind = 'promote_seed' AND release_id IN ($1, $2, $3)`,
+	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM runs WHERE kind = 'promote_seed' AND release_id IN ($1, $2, $3)`,
 		relA, relB, relC), "a pass while both builds run creates nothing")
 
 	// The build of orders at the first release ends and its task records the
 	// version it loaded, as a task's success does.
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, runA)
+	_, err := db.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE run_id = $1`, runA)
 	require.NoError(t, err)
 	releaseLeasesOf(t, db, runA)
 	require.NoError(t, postgres.NewMaterializationRepository(db, nil).RecordBuilt(ctx, h.tenant, seeds.Built{
@@ -391,6 +391,6 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	assert.Equal(t, "sha256:orders-c", orders.AttemptContentHash, "orders is now requested at the live content")
 	assert.Equal(t, uuid.NullUUID{UUID: followUp, Valid: true}, orders.AttemptRunID)
 	assert.Equal(t, "sha256:users-c", h.materialization(t, "raw.users").AttemptContentHash, "users is still waiting on its own build")
-	assert.Equal(t, 3, countOf(t, db, `SELECT count(*) FROM scheduler_tracker WHERE kind = 'promote_seed' AND release_id IN ($1, $2, $3)`,
+	assert.Equal(t, 3, countOf(t, db, `SELECT count(*) FROM runs WHERE kind = 'promote_seed' AND release_id IN ($1, $2, $3)`,
 		relA, relB, relC), "three builds in all: orders twice because it changed while loading, users once")
 }

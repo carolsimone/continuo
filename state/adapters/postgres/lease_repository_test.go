@@ -37,7 +37,7 @@ func leaseKey(table string) topology.NodeKey { return topology.NodeKey("e2e_sche
 // since.
 func waitSince(t *testing.T, db *sqlx.DB, taskID uuid.UUID, since time.Time) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1 AND status = 'pending'`,
+	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1 AND status = 'pending'`,
 		taskID, since)
 	require.NoError(t, err)
 }
@@ -79,7 +79,7 @@ func TestLeaseRepository_GrantableIsTheOldestWaiterOfEachFreeNode(t *testing.T) 
 
 	zStuckRun, zStuck := pendingTasks(t, db, z)
 	waitSince(t, db, zStuck[z], base.Add(time.Minute))
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling' WHERE schedule_id = $1`, zStuckRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, zStuckRun)
 	require.NoError(t, err)
 	zRun, zNext := pendingTasks(t, db, z)
 	waitSince(t, db, zNext[z], base.Add(3*time.Minute))
@@ -150,7 +150,7 @@ func TestTaskCollection_GrantableWaitsAreTheRunsWaitsNextInLine(t *testing.T) {
 	waitSince(t, db, zOlder[z], base.Add(-time.Minute))
 	vOlderRun, vOlder := pendingTasks(t, db, v)
 	waitSince(t, db, vOlder[v], base.Add(-time.Minute))
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling' WHERE schedule_id = $1`, vOlderRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, vOlderRun)
 	require.NoError(t, err)
 
 	var got []run.LeaseWait
@@ -280,7 +280,7 @@ func (lf leaseFlow) cronHoldingTableA(t *testing.T) statusFlow {
 	cron.report(t, string(leaseKey(lf.seed)), 0, run.AttemptSucceeded, "")
 	held, ok := leaseOn(t, lf.db, lf.tenant, lf.tableA)
 	require.True(t, ok, "the report that made table_a ready dispatched it holding its lease")
-	require.Equal(t, heldLease{TaskID: cron.taskID(lf.tableA), RunID: cron.r.ScheduleID()}, held)
+	require.Equal(t, heldLease{TaskID: cron.taskID(lf.tableA), RunID: cron.r.RunID()}, held)
 	return cron
 }
 
@@ -300,7 +300,7 @@ func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, id)
-		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 	})
 	r, err := newPlanningUoW(lf.db).Run().GetRun(ctx, id)
 	require.NoError(t, err)
@@ -324,7 +324,7 @@ func (lf leaseFlow) builtBy(t *testing.T, table string) uuid.UUID {
 
 // taskID is the id of the run's task at table.
 func (f statusFlow) taskID(table string) uuid.UUID {
-	return run.TaskIDFor(f.tenant, f.r.ScheduleID(), leaseKey(table))
+	return run.TaskIDFor(f.tenant, f.r.RunID(), leaseKey(table))
 }
 
 // dispatches returns the task.dispatch:v1 rows the run wrote to the outbox.
@@ -332,7 +332,7 @@ func (f statusFlow) dispatches(t *testing.T) []pkgevents.TaskDispatch {
 	t.Helper()
 	var payloads [][]byte
 	require.NoError(t, f.db.Select(&payloads, `SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
-		f.r.ScheduleID(), streams.TaskDispatchV1))
+		f.r.RunID(), streams.TaskDispatchV1))
 	out := make([]pkgevents.TaskDispatch, 0, len(payloads))
 	for _, p := range payloads {
 		var d pkgevents.TaskDispatch
@@ -385,14 +385,14 @@ func TestLeaseWaker_GrantsAFreedNodeToItsOldestWaiter(t *testing.T) {
 	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
 	_, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.False(t, held, "the cron task's success released table_a")
-	assert.Equal(t, cron.r.ScheduleID(), lf.builtBy(t, lf.tableA))
+	assert.Equal(t, cron.r.RunID(), lf.builtBy(t, lf.tableA))
 
 	require.NoError(t, waker.Pass(ctx))
 
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, singleTask), "the grant dispatched the task and ended its wait")
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.ScheduleID()}, lease)
+	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.RunID()}, lease)
 	job, _, _ := single.task(t, keyA)
 	assert.Equal(t, []attemptRow{{Attempt: 0, JobName: job, Status: "dispatched"}}, single.attempts(t, keyA))
 	dispatches := single.dispatches(t)
@@ -406,13 +406,13 @@ func TestLeaseWaker_GrantsAFreedNodeToItsOldestWaiter(t *testing.T) {
 	assert.Equal(t, []int{2, 1}, metrics.waiters)
 
 	single.report(t, keyA, 0, run.AttemptSucceeded, "")
-	assert.Equal(t, single.r.ScheduleID(), lf.builtBy(t, lf.tableA), "the later write is the one recorded")
+	assert.Equal(t, single.r.RunID(), lf.builtBy(t, lf.tableA), "the later write is the one recorded")
 
 	require.NoError(t, waker.Pass(ctx))
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, laterTask))
 	lease, held = leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	assert.Equal(t, heldLease{TaskID: laterTask, RunID: later.r.ScheduleID()}, lease)
+	assert.Equal(t, heldLease{TaskID: laterTask, RunID: later.r.RunID()}, lease)
 	assert.Equal(t, []int{2, 1, 0}, metrics.waiters)
 }
 
@@ -427,10 +427,10 @@ func TestLeaseWaker_SkipsARunThatIsNotRunning(t *testing.T) {
 	cron := lf.cronHoldingTableA(t)
 	stuck := lf.triggerSingleNode(t, lf.tableA)
 	cancelled := lf.triggerSingleNode(t, lf.tableA)
-	cancelByID(t, db, cancelled.r.ScheduleID(), "alice", "not needed")
+	cancelByID(t, db, cancelled.r.RunID(), "alice", "not needed")
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now() WHERE schedule_id = $1`, stuck.r.ScheduleID())
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() WHERE run_id = $1`, stuck.r.RunID())
 	require.NoError(t, err)
 	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
 	metrics := &leaseMetrics{}
@@ -489,31 +489,31 @@ func TestFailStalled_AWaitBehindAnOlderWaiterGrantedTheNodeIsNotFailed(t *testin
 	cron := lf.cronHoldingTableA(t)
 	older := lf.triggerSingleNode(t, lf.tableA)
 	younger := lf.triggerSingleNode(t, lf.tableA)
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`,
-		younger.r.ScheduleID())
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`,
+		younger.r.RunID())
 	require.NoError(t, err)
 	attempts := postgres.NewAttemptRepository(db, nil, lf.tenant)
 	listed, err := attempts.StalledRuns(ctx, run.StallAfter, 500)
 	require.NoError(t, err)
-	require.NotContains(t, listed, younger.r.ScheduleID(), "the cron task holding table_a is in flight")
+	require.NotContains(t, listed, younger.r.RunID(), "the cron task holding table_a is in flight")
 
 	cron.report(t, string(leaseKey(lf.tableA)), 0, run.AttemptSucceeded, "")
 	listed, err = attempts.StalledRuns(ctx, run.StallAfter, 500)
 	require.NoError(t, err)
-	require.NotContains(t, listed, younger.r.ScheduleID(), "with table_a free, the younger run waits behind the older one")
+	require.NotContains(t, listed, younger.r.RunID(), "with table_a free, the younger run waits behind the older one")
 	require.NoError(t, lf.waker(&leaseMetrics{}, discardLogger()).Pass(ctx))
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	require.Equal(t, heldLease{TaskID: older.taskID(lf.tableA), RunID: older.r.ScheduleID()}, lease,
+	require.Equal(t, heldLease{TaskID: older.taskID(lf.tableA), RunID: older.r.RunID()}, lease,
 		"the waker granted table_a to the older waiter")
 	listed, err = attempts.StalledRuns(ctx, run.StallAfter, 500)
 	require.NoError(t, err)
-	require.NotContains(t, listed, younger.r.ScheduleID(), "the older run's task holding table_a is in flight")
+	require.NotContains(t, listed, younger.r.RunID(), "the older run's task holding table_a is in flight")
 
-	assert.False(t, failStalledUnderLock(t, db, lf.tenant, younger.r.ScheduleID()),
+	assert.False(t, failStalledUnderLock(t, db, lf.tenant, younger.r.RunID()),
 		"under the lock the younger run waits behind the older run's task in flight")
 	status, _ := younger.run(t)
-	assert.Equal(t, run.SchedulerStatusRunning, status)
+	assert.Equal(t, run.RunStatusRunning, status)
 	requireWaiting(t, db, younger.taskID(lf.tableA), "the waiting task is not skipped")
 	assert.Empty(t, younger.dispatches(t))
 }
@@ -533,13 +533,13 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 	single := lf.triggerSingleNode(t, lf.tableA)
 	singleTask := single.taskID(lf.tableA)
 	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
-	waitedTenMinutes(t, db, single.r.ScheduleID(), singleTask)
+	waitedTenMinutes(t, db, single.r.RunID(), singleTask)
 	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
 	_, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.False(t, held, "the cron task's success released table_a")
 	listed, err := postgres.NewAttemptRepository(db, nil, lf.tenant).StalledRuns(ctx, run.StallAfter, 500)
 	require.NoError(t, err)
-	require.Contains(t, listed, single.r.ScheduleID(), "with table_a free and not yet granted, the run waits on nothing in flight")
+	require.Contains(t, listed, single.r.RunID(), "with table_a free and not yet granted, the run waits on nothing in flight")
 	metrics := &leaseMetrics{}
 	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, lf.tenant, testTaskDefaults, metrics,
 		lf.waker(metrics, discardLogger()).Pass, discardLogger())
@@ -547,11 +547,11 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 	require.NoError(t, loop.Pass(ctx))
 
 	status, _ := single.run(t)
-	assert.Equal(t, run.SchedulerStatusRunning, status, "the waiting run is not failed as stalled")
+	assert.Equal(t, run.RunStatusRunning, status, "the waiting run is not failed as stalled")
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, singleTask), "the waker's pass dispatched the task")
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.ScheduleID()}, lease)
+	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.RunID()}, lease)
 	dispatches := single.dispatches(t)
 	require.Len(t, dispatches, 1)
 	assert.Equal(t, singleTask.String(), dispatches[0].TaskID)
@@ -564,9 +564,9 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 // run.StallAfter.
 func waitedTenMinutes(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE task_tracker SET lease_wait_since = now() - interval '10 minutes' WHERE task_id = $1`, taskID)
+	_, err = db.Exec(`UPDATE tasks SET lease_wait_since = now() - interval '10 minutes' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 }
 
@@ -586,7 +586,7 @@ func TestAttemptReconcile_GrantsANodeFreedAfterTheWakersPassUnderTheRunsLock(t *
 	single := lf.triggerSingleNode(t, lf.tableA)
 	singleTask := single.taskID(lf.tableA)
 	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
-	waitedTenMinutes(t, db, single.r.ScheduleID(), singleTask)
+	waitedTenMinutes(t, db, single.r.RunID(), singleTask)
 	metrics := &leaseMetrics{}
 	waker := lf.waker(metrics, discardLogger())
 	var listed []uuid.UUID
@@ -605,13 +605,13 @@ func TestAttemptReconcile_GrantsANodeFreedAfterTheWakersPassUnderTheRunsLock(t *
 
 	require.NoError(t, loop.Pass(ctx))
 
-	require.Contains(t, listed, single.r.ScheduleID(), "with table_a free and not yet granted, the listing names the waiting run")
+	require.Contains(t, listed, single.r.RunID(), "with table_a free and not yet granted, the listing names the waiting run")
 	status, _ := single.run(t)
-	assert.Equal(t, run.SchedulerStatusRunning, status, "the waiting run is not failed as stalled")
+	assert.Equal(t, run.RunStatusRunning, status, "the waiting run is not failed as stalled")
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, singleTask), "the reconcile dispatched the task")
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.ScheduleID()}, lease)
+	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.RunID()}, lease)
 	job, _, _ := single.task(t, keyA)
 	assert.Equal(t, []attemptRow{{Attempt: 0, JobName: job, Status: "dispatched"}}, single.attempts(t, keyA))
 	dispatches := single.dispatches(t)
@@ -651,7 +651,7 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = ANY($1)`, pq.Array(runIDs))
 	})
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = ANY($1)`,
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = ANY($1)`,
 		pq.Array(runIDs))
 	require.NoError(t, err)
 	metrics := &leaseMetrics{}
@@ -662,11 +662,11 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 	require.NoError(t, loop.Pass(ctx))
 
 	var runStatuses []string
-	require.NoError(t, db.Select(&runStatuses, `SELECT DISTINCT status FROM scheduler_tracker WHERE schedule_id = ANY($1)`,
+	require.NoError(t, db.Select(&runStatuses, `SELECT DISTINCT status FROM runs WHERE run_id = ANY($1)`,
 		pq.Array(runIDs)))
-	assert.Equal(t, []string{string(run.SchedulerStatusRunning)}, runStatuses, "no waiting run is failed as stalled")
+	assert.Equal(t, []string{string(run.RunStatusRunning)}, runStatuses, "no waiting run is failed as stalled")
 	var dispatched, leases, rows int
-	require.NoError(t, db.Get(&dispatched, `SELECT count(*) FROM task_tracker WHERE task_id = ANY($1) AND status = 'dispatched'
+	require.NoError(t, db.Get(&dispatched, `SELECT count(*) FROM tasks WHERE task_id = ANY($1) AND status = 'dispatched'
 		AND wait_reason IS NULL`, pq.Array(taskIDs)))
 	require.NoError(t, db.Get(&leases, `SELECT count(*) FROM node_leases WHERE tenant_id = $1 AND task_id = ANY($2)`,
 		tenant, pq.Array(taskIDs)))
@@ -687,7 +687,7 @@ func staleWaitOn(t *testing.T, db *sqlx.DB, table string, since time.Time) (uuid
 	t.Helper()
 	runID, ids := pendingTasks(t, db, table)
 	waitSince(t, db, ids[table], since)
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
@@ -732,7 +732,7 @@ func TestStalledRuns_AWaitQueuedBehindAnOlderWaiterOfARunningRunIsNotStalled(t *
 			assert.False(t, failStalledUnderLock(t, db, tenant, youngerRun), "the re-check under the lock leaves the queued wait")
 			f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, youngerRun)}
 			status, _ := f.run(t)
-			assert.Equal(t, run.SchedulerStatusRunning, status)
+			assert.Equal(t, run.RunStatusRunning, status)
 			requireWaiting(t, db, youngerTask, "the queued task keeps waiting")
 			assert.False(t, leaseOf(t, db, youngerTask), "the node is left to the older waiter")
 		})
@@ -755,8 +755,8 @@ func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testin
 	cancellingRun, cancellingTask := staleWaitOn(t, db, table, since)
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now(), last_heartbeat_at = now()
-		WHERE schedule_id = $1`, cancellingRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now(), last_progress_at = now()
+		WHERE run_id = $1`, cancellingRun)
 	require.NoError(t, err)
 	waitingRun, waitingTask := staleWaitOn(t, db, table, since.Add(time.Minute))
 
@@ -768,7 +768,7 @@ func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testin
 
 	f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, waitingRun)}
 	status, _ := f.run(t)
-	assert.Equal(t, run.SchedulerStatusRunning, status)
+	assert.Equal(t, run.RunStatusRunning, status)
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, waitingTask))
 	lease, held := leaseOn(t, db, tenant, table)
 	require.True(t, held)
@@ -809,7 +809,7 @@ func newGrantFailingQueue(t *testing.T, db *sqlx.DB, idle time.Duration) grantFa
 	q.headRun, q.headTask = staleWaitOn(t, db, q.table, since)
 	_, err := db.Exec(`INSERT INTO task_attempts (task_id, attempt, job_name, status) VALUES ($1, 0, $2, 'failed')`, q.headTask, q.table)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - make_interval(secs => $2::float8) WHERE schedule_id = $1`,
+	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - make_interval(secs => $2::float8) WHERE run_id = $1`,
 		q.headRun, idle.Seconds())
 	require.NoError(t, err)
 	q.nextRun, q.nextTask = staleWaitOn(t, db, q.table, since.Add(time.Minute))
@@ -823,7 +823,7 @@ func runStatusOf(t *testing.T, db *sqlx.DB, runID uuid.UUID) (string, *string) {
 		Status string  `db:"status"`
 		Reason *string `db:"failure_reason"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, failure_reason FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+	require.NoError(t, db.Get(&row, `SELECT status, failure_reason FROM runs WHERE run_id = $1`, runID))
 	return row.Status, row.Reason
 }
 
@@ -847,7 +847,7 @@ func TestAttemptReconcile_FailsAWaiterWhoseGrantKeepsFailingSoItsQueueMoves(t *t
 	require.NoError(t, loop.Pass(ctx))
 
 	status, reason := runStatusOf(t, db, q.headRun)
-	assert.Equal(t, string(run.SchedulerStatusFailed), status)
+	assert.Equal(t, string(run.RunStatusFailed), status)
 	require.NotNil(t, reason)
 	assert.Equal(t, string(run.RunFailureStalled), *reason)
 	assert.Equal(t, leaseWait{Status: run.TaskStatusSkipped}, waitOf(t, db, q.headTask), "the head leaves the node's queue")
@@ -869,7 +869,7 @@ func TestAttemptReconcile_FailsAWaiterWhoseGrantKeepsFailingSoItsQueueMoves(t *t
 	require.True(t, held)
 	assert.Equal(t, heldLease{TaskID: q.nextTask, RunID: q.nextRun}, lease)
 	status, _ = runStatusOf(t, db, q.nextRun)
-	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+	assert.Equal(t, string(run.RunStatusRunning), status)
 }
 
 // A run idle for more than run.StallAfter but less than twice that whose
@@ -892,7 +892,7 @@ func TestAttemptReconcile_AFailedGrantLeavesARunIdleForLessThanTheBound(t *testi
 
 	require.ErrorIs(t, err, run.ErrGrantFailed)
 	status, reason := runStatusOf(t, db, q.headRun)
-	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+	assert.Equal(t, string(run.RunStatusRunning), status)
 	assert.Nil(t, reason)
 	requireWaiting(t, db, q.headTask, "the head keeps waiting")
 	requireWaiting(t, db, q.nextTask, "and so does the waiter behind it")
@@ -913,7 +913,7 @@ func TestLeaseWaker_RepairsAndCounts(t *testing.T) {
 	first := lf.triggerSingleNode(t, lf.tableA)
 	second := lf.triggerSingleNode(t, lf.tableA)
 	// A defect ends the cron task without the report that releases its lease.
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded' WHERE task_id = $1`, cronTask)
+	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE task_id = $1`, cronTask)
 	require.NoError(t, err)
 	require.True(t, leaseOf(t, db, cronTask))
 	var logs bytes.Buffer
@@ -935,7 +935,7 @@ func TestLeaseWaker_RepairsAndCounts(t *testing.T) {
 	assert.Contains(t, errorLines[0], string(leaseKey(lf.tableA)))
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
-	assert.Equal(t, heldLease{TaskID: first.taskID(lf.tableA), RunID: first.r.ScheduleID()}, lease,
+	assert.Equal(t, heldLease{TaskID: first.taskID(lf.tableA), RunID: first.r.RunID()}, lease,
 		"the repaired node went to its oldest waiter in the same pass")
 	requireWaiting(t, db, second.taskID(lf.tableA), "the second waiter waits behind the first")
 	assert.Equal(t, []int{1}, metrics.waiters)

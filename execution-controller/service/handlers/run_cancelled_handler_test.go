@@ -119,7 +119,7 @@ func newFenceFlow(t *testing.T) *fenceFlow {
 // command is attempt attempt of a new task of the run.
 func (f *fenceFlow) command(attempt int) command.DeployTask {
 	taskID := uuid.NewString()
-	return command.DeployTask{TaskID: taskID, ScheduleID: f.runID.String(), ScheduleName: "daily",
+	return command.DeployTask{TaskID: taskID, RunID: f.runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "t" + taskID[:8],
 		JobName: "dbt-public-t" + taskID[:8] + "-" + f.runID.String()[:8], NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "run", Attempt: attempt, TimeoutSeconds: 3600}
@@ -685,7 +685,7 @@ func TestRunCancelled_CountsAStopOnlyOnceItCommits(t *testing.T) {
 func (f *fenceFlow) liveJobOf(cmd command.DeployTask) model.JobObservation {
 	started := f.now.Add(-time.Minute)
 	return model.JobObservation{JobPresent: true, JobTaskID: cmd.TaskID, JobAttempt: strconv.Itoa(cmd.Attempt),
-		JobRunID: cmd.ScheduleID, Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		JobRunID: cmd.RunID, Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
 			Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}
 }
 

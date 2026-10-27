@@ -40,11 +40,11 @@ func (r *Run) writes() bool { return r.operation != model.OperationTest }
 func (r *Run) takeLeases(ctx context.Context, tasks TaskCollection, ready []readyTask) ([]readyTask, error) {
 	claims := make([]LeaseClaim, 0, len(ready))
 	for _, t := range ready {
-		claims = append(claims, LeaseClaim{TaskID: t.taskID, RunID: r.scheduleID, NodeKey: t.node.Key})
+		claims = append(claims, LeaseClaim{TaskID: t.taskID, RunID: r.runID, NodeKey: t.node.Key})
 	}
 	taken, err := tasks.TakeLeases(ctx, claims)
 	if err != nil {
-		return nil, fmt.Errorf("take the leases of %d ready tasks of run %s: %w", len(claims), r.scheduleID, err)
+		return nil, fmt.Errorf("take the leases of %d ready tasks of run %s: %w", len(claims), r.runID, err)
 	}
 	holds := make(map[uuid.UUID]bool, len(taken))
 	for _, id := range taken {
@@ -61,7 +61,7 @@ func (r *Run) takeLeases(ctx context.Context, tasks TaskCollection, ready []read
 	}
 	if len(waiting) > 0 {
 		if err := tasks.WaitForLeases(ctx, waiting); err != nil {
-			return nil, fmt.Errorf("make %d ready tasks of run %s wait for their leases: %w", len(waiting), r.scheduleID, err)
+			return nil, fmt.Errorf("make %d ready tasks of run %s wait for their leases: %w", len(waiting), r.runID, err)
 		}
 	}
 	return leased, nil
@@ -91,7 +91,7 @@ func (r *Run) GrantLease(
 	d TaskDefaults,
 	now time.Time,
 ) ([]DomainEvent, bool, error) {
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, false, nil
 	}
 	task, exists, err := tasks.LoadAttemptState(ctx, taskID)
@@ -101,13 +101,13 @@ func (r *Run) GrantLease(
 	if !exists {
 		return nil, false, fmt.Errorf("%w: task %s", ErrTaskNotHeld, taskID)
 	}
-	if task.RunID != r.scheduleID {
+	if task.RunID != r.runID {
 		return nil, false, fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, taskID, task.RunID)
 	}
 	if task.Status != TaskStatusPending || task.DispatchedAt != nil || task.WaitReason != WaitReasonNodeLease {
 		return nil, false, nil
 	}
-	taken, err := tasks.TakeLeaseForWaiter(ctx, LeaseClaim{TaskID: taskID, RunID: r.scheduleID, NodeKey: task.NodeKey})
+	taken, err := tasks.TakeLeaseForWaiter(ctx, LeaseClaim{TaskID: taskID, RunID: r.runID, NodeKey: task.NodeKey})
 	if err != nil {
 		return nil, false, fmt.Errorf("take the lease of %s for task %s: %w", task.NodeKey, taskID, err)
 	}
@@ -139,19 +139,19 @@ func (r *Run) GrantLease(
 // whose node another task took after GrantableWaits read it keeps waiting.
 func (r *Run) grantWaitingTasks(ctx context.Context, tasks TaskCollection, graph TaskGraph, d TaskDefaults,
 	now time.Time) ([]DomainEvent, []LeaseWait, error) {
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, nil, nil
 	}
-	waits, err := tasks.GrantableWaits(ctx, r.scheduleID)
+	waits, err := tasks.GrantableWaits(ctx, r.runID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read the lease waits of run %s next in line: %w", r.scheduleID, err)
+		return nil, nil, fmt.Errorf("read the lease waits of run %s next in line: %w", r.runID, err)
 	}
 	var events []DomainEvent
 	var granted []LeaseWait
 	for _, w := range waits {
 		dispatched, ok, err := r.GrantLease(ctx, tasks, graph, w.TaskID, d, now)
 		if err != nil {
-			return nil, nil, fmt.Errorf("grant the lease of %s to task %s of run %s: %w", w.NodeKey, w.TaskID, r.scheduleID, err)
+			return nil, nil, fmt.Errorf("grant the lease of %s to task %s of run %s: %w", w.NodeKey, w.TaskID, r.runID, err)
 		}
 		if ok {
 			events = append(events, dispatched...)
