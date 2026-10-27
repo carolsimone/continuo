@@ -6,6 +6,12 @@ interface Props {
   liveStatus: string | null;
   selectedRunId: string | null;
   onSelectRun: (runId: string | null) => void;
+  // Paging is optional: the pager renders only when the parent supplies all
+  // four and the runs do not fit on one page.
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  onPageChange?: (page: number) => void;
 }
 
 function formatDate(iso: string | null): string {
@@ -51,10 +57,15 @@ function dotClass(status: string): string {
   return 'run-dot--current';
 }
 
-export default function PastRunsPanel({ runs, liveRunId, liveStatus, selectedRunId, onSelectRun }: Props) {
+export default function PastRunsPanel({
+  runs, liveRunId, liveStatus, selectedRunId, onSelectRun, page, pageSize, total, onPageChange,
+}: Props) {
   const isLiveSelected = selectedRunId === null;
+  const paged = page !== undefined && pageSize !== undefined && total !== undefined && onPageChange !== undefined;
+  const showPager = paged && total > pageSize;
 
   return (
+    <>
     <div className="runs-list">
       {liveRunId && (
         <button
@@ -102,5 +113,21 @@ export default function PastRunsPanel({ runs, liveRunId, liveStatus, selectedRun
         </p>
       )}
     </div>
+    {showPager && (
+      <div className="runs-pager">
+        <button type="button" className="btn btn--secondary" disabled={page === 0}
+                onClick={() => onPageChange(page - 1)}>
+          Newer
+        </button>
+        <span className="runs-pager__range">
+          {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} of {total}
+        </span>
+        <button type="button" className="btn btn--secondary" disabled={(page + 1) * pageSize >= total}
+                onClick={() => onPageChange(page + 1)}>
+          Older
+        </button>
+      </div>
+    )}
+    </>
   );
 }

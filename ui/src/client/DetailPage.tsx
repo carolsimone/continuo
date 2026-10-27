@@ -33,6 +33,9 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
   return next;
 }
 
+// Past runs shown per page; also bounds the height of the run list.
+const RUNS_PAGE_SIZE = 10;
+
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
   return ((locationState as { last_run_id?: string | null } | null)?.last_run_id ?? null);
@@ -105,7 +108,14 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [promotionSeq, setPromotionSeq] = useState<number>(0);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  // Past runs load one page at a time; `runsTotal` is the schedule's full run
+  // count (null until the first page arrives).
+  const [runsPage, setRunsPage] = useState(0);
+  const [runsTotal, setRunsTotal] = useState<number | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // The selected run's summary, kept so the header still describes it after
+  // paging away from the page it was chosen on.
+  const [pinnedRun, setPinnedRun] = useState<RunSummary | null>(null);
   const [liveRunGraph, setLiveRunGraph] = useState<RunGraph | null>(null);
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -132,7 +142,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setGraph(null);
     setAttempts([]);
     setRuns([]);
+    setRunsPage(0);
+    setRunsTotal(null);
     setSelectedRunId(null);
+    setPinnedRun(null);
     setLiveRunGraph(null);
     setRunGraph(null);
     setSelectedNodeId(null);
@@ -186,10 +199,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     if (!name) return;
     let cancelled = false;
 
-    fetch(`/api/schedules/${name}/runs`)
+    fetch(`/api/schedules/${name}/runs?limit=${RUNS_PAGE_SIZE}&offset=${runsPage * RUNS_PAGE_SIZE}`)
       .then((response) => response.json())
-      .then((data: { runs: RunSummary[] }) => {
-        if (!cancelled) setRuns(data.runs || []);
+      .then((data: { runs: RunSummary[]; total_count?: number }) => {
+        if (cancelled) return;
+        setRuns(data.runs || []);
+        setRunsTotal(typeof data.total_count === 'number' ? data.total_count : null);
       })
       .catch(() => {
         if (!cancelled) setRuns([]);
@@ -198,7 +213,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [name]);
+  }, [name, runsPage]);
 
   useEffect(() => {
     if (!lastRunId) return;
@@ -378,7 +393,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
-  const selectedRun = runs.find((run) => run.run_id === selectedRunId) ?? null;
+  const selectedRun = runs.find((run) => run.run_id === selectedRunId)
+    ?? (pinnedRun && pinnedRun.run_id === selectedRunId ? pinnedRun : null);
+  const runsCount = runsTotal ?? runs.length;
   const activeGraph: ScheduleGraph | null = resolveActiveGraph({
     mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
@@ -389,7 +406,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // never run shows "No runs yet."; a selected historical run whose snapshot
   // is still loading, or a live run whose tasks are still arriving, shows
   // "Loading run…". Only a non-empty task set renders the header and views.
-  const runTabNoRuns = lastRunId === null && runs.length === 0 && tasks.length === 0;
+  const runTabNoRuns = lastRunId === null && runsCount === 0 && tasks.length === 0;
   const runTabLoading = !runTabNoRuns
     && ((selectedRunId ? runGraph === null : lastRunId === undefined) || tasks.length === 0);
 
@@ -494,6 +511,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       setAttempts([]);
     }
     setSelectedRunId(runId);
+    setPinnedRun(runs.find((run) => run.run_id === runId) ?? null);
     setSelectedNodeId(null);
     setExpandedServices(new Set());
   };
@@ -537,7 +555,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // does not use these.
   const pageTabSpecs = [
     { slug: 'run', label: 'Run' },
-    { slug: 'runs', label: 'Past runs', count: runs.length },
+    { slug: 'runs', label: 'Past runs', count: runsCount },
   ];
   const activePage = useActiveTab('panel', 'run', pageTabSpecs.map(t => t.slug));
 
@@ -720,7 +738,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
               <div className="section-header">
                 <div className="section-header__main">
                   <span className="section-header__title">Past Runs</span>
-                  <span className="section-header__count">{runs.length}</span>
+                  <span className="section-header__count">{runsCount}</span>
                 </div>
               </div>
               <PastRunsPanel
@@ -729,6 +747,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                 liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
                 selectedRunId={selectedRunId}
                 onSelectRun={handleSelectRun}
+                page={runsPage}
+                pageSize={RUNS_PAGE_SIZE}
+                total={runsCount}
+                onPageChange={setRunsPage}
               />
             </section>
           </div>
@@ -785,6 +807,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
               liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
               selectedRunId={selectedRunId}
               onSelectRun={handleSelectRun}
+              page={runsPage}
+              pageSize={RUNS_PAGE_SIZE}
+              total={runsCount}
+              onPageChange={setRunsPage}
             />
           )}
         </div>
