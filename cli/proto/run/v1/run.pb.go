@@ -1839,7 +1839,7 @@ type ListTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                 // Required
 	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                            // Optional filter: a task_status value
-	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`       // Clamped to [1, 200]; 0 means 50
+	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`       // 0 or less means 50; there is no upper bound
 	PageOffset    int32                  `protobuf:"varint,4,opt,name=page_offset,json=pageOffset,proto3" json:"page_offset,omitempty"` // Negative values are treated as 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

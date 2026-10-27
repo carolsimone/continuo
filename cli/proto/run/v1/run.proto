@@ -481,7 +481,7 @@ message ListActiveRunDriftsResponse {
 message ListTasksRequest {
   string run_id = 1;       // Required
   string status = 2;       // Optional filter: a task_status value
-  int32 page_size = 3;     // Clamped to [1, 200]; 0 means 50
+  int32 page_size = 3;     // 0 or less means 50; there is no upper bound
   int32 page_offset = 4;   // Negative values are treated as 0
 }
 
