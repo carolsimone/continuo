@@ -75,7 +75,7 @@ describe('GET /api/schedules/:name/runs', () => {
 
   it('lists completed runs from the state service', async () => {
     mockListRuns.mockImplementation((req: any, cb: any) => {
-      expect(req).toEqual({ schedule_name: 'daily' });
+      expect(req).toEqual({ schedule_name: 'daily', page_size: 10, page_offset: 0 });
       cb(null, { runs: [
         { run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
           created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: '' },
@@ -93,6 +93,39 @@ describe('GET /api/schedules/:name/runs', () => {
       { run_id: 'r2', schedule_name: 'daily', terminal_status: 'failed',
         created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
     ]);
+    expect(res.body.total_count).toBe(2);
+  });
+
+  it('forwards limit and offset as page_size and page_offset and returns the total', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, { runs: [], total_count: 50 }));
+
+    const res = await request(app).get('/api/schedules/daily/runs?limit=25&offset=50');
+
+    expect(mockListRuns).toHaveBeenCalledWith(
+      { schedule_name: 'daily', page_size: 25, page_offset: 50 },
+      expect.any(Function),
+    );
+    expect(res.body.total_count).toBe(50);
+  });
+
+  it('clamps limit to 200 and falls back to the defaults on malformed values', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, { runs: [] }));
+
+    await request(app).get('/api/schedules/daily/runs?limit=9999&offset=-3');
+    await request(app).get('/api/schedules/daily/runs?limit=abc&offset=xyz');
+
+    expect(mockListRuns).toHaveBeenNthCalledWith(
+      1, { schedule_name: 'daily', page_size: 200, page_offset: 0 }, expect.any(Function));
+    expect(mockListRuns).toHaveBeenNthCalledWith(
+      2, { schedule_name: 'daily', page_size: 10, page_offset: 0 }, expect.any(Function));
+  });
+
+  it('reports a zero total when state sends none', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, { runs: [] }));
+
+    const res = await request(app).get('/api/schedules/daily/runs');
+
+    expect(res.body).toEqual({ runs: [], total_count: 0 });
   });
 });
 

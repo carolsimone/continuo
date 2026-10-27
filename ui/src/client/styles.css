@@ -287,7 +287,7 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   gap: 16px;
   flex: 1;
   min-height: calc(100vh - 160px);
-  align-items: stretch;
+  align-items: flex-start;
 }
 
 .detail-right-col > .detail-card {
@@ -295,10 +295,16 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   min-height: 0;
 }
 
+/* The graph card is sized to the viewport, not to the Past Runs card beside it,
+   so the fitted graph is framed the same however many runs are listed. It
+   stays in view while the page scrolls. */
 .detail-graph-card {
   flex: 3;
-  min-height: 0;
-  position: relative;
+  min-width: 0;
+  height: calc(100vh - 160px);
+  min-height: 480px;
+  position: sticky;
+  top: 16px;
 }
 
 .dag-card-body {
@@ -655,6 +661,22 @@ a.release-author:hover { text-decoration: underline; }
 /* ---- Past runs list ---- */
 .runs-list {
   overflow-y: auto;
+  max-height: calc(100vh - 260px);
+}
+
+.runs-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid #f1f5f9;
+  flex-shrink: 0;
+}
+.runs-pager__range {
+  font-size: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
 }
 
 .run-row {

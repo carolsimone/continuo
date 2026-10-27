@@ -758,6 +758,99 @@ describe('DetailPage in latest mode', () => {
   });
 });
 
+describe('DetailPage in latest mode — Past Runs paging', () => {
+  const TOTAL_RUNS = 25;
+
+  // Serves the requested page of a TOTAL_RUNS-long history, newest first. Run
+  // 0 failed; every other run succeeded.
+  function pagedRunsRoutes() {
+    return {
+      ...latestRoutes(),
+      [`/api/schedules/${LATEST_SCHED}/runs`]: async (url: string) => {
+        const params = new URL(url, 'http://x').searchParams;
+        const limit = Number(params.get('limit'));
+        const offset = Number(params.get('offset'));
+        const ids = Array.from({ length: TOTAL_RUNS }, (_, i) => i).slice(offset, offset + limit);
+        return {
+          runs: ids.map(i => ({
+            run_id: `hist-run-${i}`,
+            schedule_name: LATEST_SCHED,
+            terminal_status: i === 0 ? 'failed' : 'succeeded',
+            created_at: '2026-05-26T11:39:00Z',
+            completed_at: '2026-05-26T11:40:00Z',
+            failure_reason: i === 0 ? 'stalled' : null,
+          })),
+          total_count: TOTAL_RUNS,
+        };
+      },
+      '/api/runs/hist-run-0/graph': async () => ({
+        nodes: [{ node_id: 'svc.sch.a', node_type: 'dbt-model', schedule_name: LATEST_SCHED, status: 'failed' }],
+        edges: [],
+        run_promotion_seq: 4,
+        latest_promotion_seq: 5,
+      }),
+    };
+  }
+
+  it('loads the first page, shows the true total and pages with Older and Newer', async () => {
+    const fetchMock = mockFetchSequence(pagedRunsRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withLatestRouter());
+
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(10));
+      expect(container.querySelector('.section-header__count')).toHaveTextContent(String(TOTAL_RUNS));
+      expect(screen.getByText('1–10 of 25')).toBeInTheDocument();
+      const runUrls = () => fetchMock.mock.calls.map(c => String(c[0])).filter(u => /\/runs\?/.test(u));
+      expect(runUrls()[0]).toContain('limit=10&offset=0');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Older' }));
+      await screen.findByText('11–20 of 25');
+      expect(runUrls().some(u => u.includes('offset=10'))).toBe(true);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Newer' }));
+      await screen.findByText('1–10 of 25');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps describing a selected run after paging away from its page', async () => {
+    const fetchMock = mockFetchSequence(pagedRunsRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withLatestRouter());
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(10));
+
+      // The first row is the failed run 0.
+      fireEvent.click(container.querySelectorAll('.run-row')[0]);
+      await waitFor(() => expect(container.querySelector('.pill')).toHaveTextContent(/failed/i));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Older' }));
+      await screen.findByText('11–20 of 25');
+
+      expect(container.querySelector('.pill')).toHaveTextContent(/failed/i);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('hides the pager when the history fits on one page', async () => {
+    const fetchMock = mockFetchSequence({
+      ...latestRoutes(),
+      [`/api/schedules/${LATEST_SCHED}/runs`]: async () => ({ runs: [], total_count: 3 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withLatestRouter());
+      await waitFor(() => expect(container.querySelector('.section-header__count')).toHaveTextContent('3'));
+      expect(screen.queryByRole('button', { name: 'Older' })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('DetailPage — Run tab polling', () => {
   // Only setInterval is faked: the page polls through it, while waitFor and
   // the mocked fetches keep running on real timers and microtasks.
