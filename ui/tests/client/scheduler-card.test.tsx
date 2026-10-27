@@ -22,7 +22,7 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
 function renderCard(schedule: ScheduleSummary) {
   return render(
     <MemoryRouter>
-      <SchedulerCard schedule={schedule} />
+      <SchedulerCard schedule={schedule} onRunChanged={() => {}} />
     </MemoryRouter>,
   );
 }
@@ -33,7 +33,7 @@ function renderCardWithRouteProbe(schedule: ScheduleSummary) {
   return render(
     <MemoryRouter initialEntries={['/']}>
       <Routes>
-        <Route path="/" element={<SchedulerCard schedule={schedule} />} />
+        <Route path="/" element={<SchedulerCard schedule={schedule} onRunChanged={() => {}} />} />
         <Route path="/schedule/:name" element={<div>SCHEDULE DETAIL</div>} />
       </Routes>
     </MemoryRouter>,
@@ -270,9 +270,10 @@ describe('SchedulerCard — task counts', () => {
     job_name: 'job', status, attempt: 0, max_retries: 0, created_at: null,
   });
 
-  it('counts dispatched, queued and stopping tasks before running and pending, and the counts add up to the total', async () => {
+  it('counts every task status once, dispatched, queued and stopping before running and pending, and the counts add up to the total', async () => {
     const statuses = [
-      'succeeded', 'succeeded', 'failed', 'dispatched', 'queued', 'queued', 'stopping', 'running', 'pending', 'pending', 'pending',
+      'succeeded', 'succeeded', 'failed', 'skipped', 'cancelled', 'cancelled',
+      'dispatched', 'queued', 'queued', 'stopping', 'running', 'pending', 'pending', 'pending',
     ];
     const tasks = statuses.map((s, i) => mkTask(i, s));
     installFetch({ tasks: { tasks, total_count: tasks.length } });
@@ -286,7 +287,8 @@ describe('SchedulerCard — task counts', () => {
       return [m?.[2], Number(m?.[1])] as const;
     });
     expect(counts).toEqual([
-      ['succeeded', 2], ['failed', 1], ['dispatched', 1], ['queued', 2], ['stopping', 1], ['running', 1], ['pending', 3],
+      ['succeeded', 2], ['failed', 1], ['skipped', 1], ['cancelled', 2],
+      ['dispatched', 1], ['queued', 2], ['stopping', 1], ['running', 1], ['pending', 3],
     ]);
     expect(counts.reduce((sum, [, n]) => sum + n, 0)).toBe(tasks.length);
   });
