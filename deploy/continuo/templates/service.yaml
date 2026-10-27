@@ -1,5 +1,5 @@
 {{- range $svc := .Values.services }}
-{{- if and ($svc.enabled | default true) $svc.httpPort }}
+{{- if and $svc.enabled (or $svc.httpPort $svc.grpcPort) }}
 ---
 apiVersion: v1
 kind: Service
@@ -14,9 +14,11 @@ spec:
   selector:
     {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 4 }}
   ports:
+    {{- if $svc.httpPort }}
     - name: http
       port: {{ $svc.httpPort }}
       targetPort: {{ $svc.httpPort }}
+    {{- end }}
     {{- if $svc.grpcPort }}
     - name: grpc
       port: {{ $svc.grpcPort }}
