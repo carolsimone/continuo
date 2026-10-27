@@ -99,6 +99,13 @@ If you change the Helm chart under `deploy/continuo/`, you must also update
 under `## [Unreleased]`, and pass `bash scripts/install-test/lint.sh`. CI enforces all
 three.
 
+Give the pull request a Conventional Commit title, `<type>[(<scope>)][!]: <summary>`,
+for example `fix(state): stop double-dispatching a retried task`. The type is one of
+`feat`, `fix`, `refactor`, `docs`, `perf`, `ci`, `test`, `chore`, `build` or `security`,
+and `!` marks a breaking change. A CI check fails any other title, and a workflow labels
+the pull request from it and from the directories it changes, so there are no labels to
+set by hand. [AGENTS.md](AGENTS.md) has the full mapping.
+
 ## Code of conduct
 
 Participation in this project is governed by our
