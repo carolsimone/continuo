@@ -300,6 +300,11 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # chart-pin pull request against a local bare repository and a stub gh: the
 # one-line edit, the branch, the commit's sign-off and trailers, the pull
 # request, and the failures that push nothing.
+# pr-title-type_test.sh and sync-pr-type-labels_test.sh run the title-to-label
+# mapping that the pr-title check and the pr-labels workflow share: which
+# titles are accepted and which labels each yields, and (against a stub gh)
+# the add and remove calls that keep a pull request's type labels equal to its
+# title.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
@@ -337,6 +342,8 @@ guards: bench-test
 	bash scripts/deploy/last-deployed-commit_test.sh
 	bash scripts/install-test/changelog-check_test.sh
 	bash scripts/release/open-site-bump-pr_test.sh
+	bash scripts/pr-title-type_test.sh
+	bash scripts/sync-pr-type-labels_test.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...

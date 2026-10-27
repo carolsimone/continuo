@@ -1,0 +1,66 @@
+name: pr-labels
+
+# Labels every pull request with its type and its areas.
+#
+#   type  one label from the title's Conventional Commit prefix, plus
+#         breaking-change for `!` (scripts/sync-pr-type-labels.sh)
+#   area  one area/<name> label per directory the pull request changes, from
+#         .github/labeler.yml (actions/labeler, with sync-labels so an area
+#         the pull request stops touching is removed)
+#
+# A pull request from dependabot already carries its own labels and is skipped.
+#
+# It is triggered by pull_request_target, not pull_request: a pull request from
+# a fork gets a read-only token under pull_request, and labelling needs write
+# access. That is safe here because the job runs no code from the pull request.
+# actions/checkout checks out the base branch under pull_request_target, so the
+# scripts and labeler.yml below are the ones on main, and the one value the
+# author chooses (the title) reaches the shell through env: and is quoted,
+# never written into the script. actions/labeler reads the changed file names
+# through the API.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    # An edit that changed neither the title nor the base branch moves no label.
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (github.event.action != 'edited' ||
+       github.event.changes.title != null ||
+       github.event.changes.base != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # Cone mode treats every entry as a directory, so files need it off.
+          sparse-checkout: |
+            scripts/pr-title-type.sh
+            scripts/sync-pr-type-labels.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Label the type from the title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash scripts/sync-pr-type-labels.sh "$PR_NUMBER"
+
+      - name: Label the areas from the changed files
+        uses: actions/labeler@v7
+        with:
+          sync-labels: true
