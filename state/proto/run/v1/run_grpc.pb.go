@@ -74,16 +74,20 @@ const (
 type RunServiceClient interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
-	// kind is trigger.
+	// kind is trigger. A test of a schedule none of whose nodes has data tests
+	// is not refused: the run is created, ends skipped with no task, and its id
+	// is returned.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
 	//	                      full_refresh, which targets a single node only.
-	//	NOT_FOUND           - the live release holds no node of the schedule.
+	//	NOT_FOUND           - the tenant's schedule catalog holds no schedule of
+	//	                      that name.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its
-	//	                      selection cannot make a valid run (no node to
-	//	                      run, no data test for a test, a node type the
-	//	                      operation does not support).
+	//	                      selection cannot make a valid run: no release is
+	//	                      live, the live release holds no node of the
+	//	                      schedule, or a node to run has a node type the
+	//	                      node_type vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(ctx context.Context, in *StartRunRequest, opts ...grpc.CallOption) (*StartRunResponse, error)
@@ -103,27 +107,30 @@ type RunServiceClient interface {
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that executes
-	// exactly one task with no downstream pickup. Two modes, selected by the
-	// metadata_source field of the request:
-	//   - "latest" (default): the node as the live release holds it.
+	// exactly one task with no downstream pickup. The required metadata_source
+	// field of the request selects one of two modes:
+	//   - "latest": the node as the live release holds it.
 	//   - "snapshot_of_run": the node as the release of the source run holds it;
 	//     requires source_run_id.
 	//
+	// The run holds no schedule, so an active run of the node's schedule does
+	// not refuse it.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - empty or malformed identity, unknown
-	//	                      metadata_source, "snapshot_of_run" without
-	//	                      source_run_id, "latest" with a non-empty
-	//	                      source_run_id, an unknown operation, or a
-	//	                      full_refresh of a node type that cannot be rebuilt
-	//	                      from scratch.
+	//	INVALID_ARGUMENT    - an empty service_name, schema_name or table_name,
+	//	                      an empty or unknown metadata_source,
+	//	                      "snapshot_of_run" without a UUID source_run_id,
+	//	                      "latest" with a non-empty source_run_id, an
+	//	                      unknown operation, or a full_refresh of a node
+	//	                      type that cannot be rebuilt from scratch.
 	//	NOT_FOUND           - the source run, or its task for the identity,
-	//	                      does not exist; or the release holds no such node
-	//	                      of that service.
+	//	                      does not exist; or no release is live for
+	//	                      "latest"; or the release holds no such node of
+	//	                      that service.
 	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
-	//	                      with no data tests; or the node is a schedule
-	//	                      node whose schedule already has an active run.
+	//	                      with no data tests; or a node type the node_type
+	//	                      vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
@@ -269,8 +276,8 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
-	// node count and the time that release went live. It is empty when no release
-	// is live.
+	// node count and the time state loaded that release. It is empty when no
+	// release is live.
 	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 }
@@ -516,16 +523,20 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 type RunServiceServer interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
-	// kind is trigger.
+	// kind is trigger. A test of a schedule none of whose nodes has data tests
+	// is not refused: the run is created, ends skipped with no task, and its id
+	// is returned.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
 	//	                      full_refresh, which targets a single node only.
-	//	NOT_FOUND           - the live release holds no node of the schedule.
+	//	NOT_FOUND           - the tenant's schedule catalog holds no schedule of
+	//	                      that name.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its
-	//	                      selection cannot make a valid run (no node to
-	//	                      run, no data test for a test, a node type the
-	//	                      operation does not support).
+	//	                      selection cannot make a valid run: no release is
+	//	                      live, the live release holds no node of the
+	//	                      schedule, or a node to run has a node type the
+	//	                      node_type vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	//	UNAVAILABLE         - maintenance mode is on.
 	StartRun(context.Context, *StartRunRequest) (*StartRunResponse, error)
@@ -545,27 +556,30 @@ type RunServiceServer interface {
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that executes
-	// exactly one task with no downstream pickup. Two modes, selected by the
-	// metadata_source field of the request:
-	//   - "latest" (default): the node as the live release holds it.
+	// exactly one task with no downstream pickup. The required metadata_source
+	// field of the request selects one of two modes:
+	//   - "latest": the node as the live release holds it.
 	//   - "snapshot_of_run": the node as the release of the source run holds it;
 	//     requires source_run_id.
 	//
+	// The run holds no schedule, so an active run of the node's schedule does
+	// not refuse it.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - empty or malformed identity, unknown
-	//	                      metadata_source, "snapshot_of_run" without
-	//	                      source_run_id, "latest" with a non-empty
-	//	                      source_run_id, an unknown operation, or a
-	//	                      full_refresh of a node type that cannot be rebuilt
-	//	                      from scratch.
+	//	INVALID_ARGUMENT    - an empty service_name, schema_name or table_name,
+	//	                      an empty or unknown metadata_source,
+	//	                      "snapshot_of_run" without a UUID source_run_id,
+	//	                      "latest" with a non-empty source_run_id, an
+	//	                      unknown operation, or a full_refresh of a node
+	//	                      type that cannot be rebuilt from scratch.
 	//	NOT_FOUND           - the source run, or its task for the identity,
-	//	                      does not exist; or the release holds no such node
-	//	                      of that service.
+	//	                      does not exist; or no release is live for
+	//	                      "latest"; or the release holds no such node of
+	//	                      that service.
 	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
-	//	                      with no data tests; or the node is a schedule
-	//	                      node whose schedule already has an active run.
+	//	                      with no data tests; or a node type the node_type
+	//	                      vocabulary does not declare.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	//	UNAVAILABLE         - maintenance mode is on.
 	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
@@ -711,8 +725,8 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
-	// node count and the time that release went live. It is empty when no release
-	// is live.
+	// node count and the time state loaded that release. It is empty when no
+	// release is live.
 	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	mustEmbedUnimplementedRunServiceServer()

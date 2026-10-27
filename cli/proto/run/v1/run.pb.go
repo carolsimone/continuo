@@ -3574,7 +3574,7 @@ type ScheduleTopologySummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
 	NodeCount     int32                  `protobuf:"varint,2,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`              // nodes of the schedule in the live release
-	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when the live release went live
+	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when state loaded the live release
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
