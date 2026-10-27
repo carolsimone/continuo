@@ -16,7 +16,10 @@ import "google/protobuf/timestamp.proto";
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
 // fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
-// itself is INTERNAL; the lists below name the other codes of each RPC.
+// itself, or a request that reaches it without a tenant, is INTERNAL; the lists
+// below name the other codes of each RPC. A run of another tenant
+// is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
+// empty result where it returns one.
 //
 // The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
 // TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
@@ -54,6 +57,7 @@ service RunService {
   // release, and dispatches the ready ones in the transaction that creates it.
   // The new run keeps the source's schedule_name.
   // Errors:
+  //   INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
   //   NOT_FOUND           - source_run_id names no run.
   //   FAILED_PRECONDITION - the source is not failed or cancelled, names no
   //                         release, is a test run, leaves nothing to
@@ -102,6 +106,7 @@ service RunService {
   // success is inherited. The new run keeps the source's schedule_name. A
   // non-empty expected_release_id must name the live release.
   // Errors:
+  //   INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
   //   NOT_FOUND           - source_run_id names no run.
   //   FAILED_PRECONDITION - the source is not failed or cancelled; or it has
   //                         no task that did not succeed; or its schedule
@@ -130,7 +135,8 @@ service RunService {
   // nothing was in flight. A run that is already cancelling or cancelled is
   // returned as it is, and nothing is written. It takes no request_id.
   // Errors:
-  //   NOT_FOUND           - run_id names no run.
+  //   INVALID_ARGUMENT    - run_id is empty or not a UUID.
+  //   NOT_FOUND           - run_id names no run of the tenant.
   //   FAILED_PRECONDITION - the run ended succeeded, failed or skipped.
   rpc CancelRun(CancelRunRequest) returns (RunResponse);
 
@@ -139,6 +145,7 @@ service RunService {
   // with the run the first call cancelled, even once the schedule has another
   // active run.
   // Errors:
+  //   INVALID_ARGUMENT    - empty schedule_name.
   //   FAILED_PRECONDITION - the schedule has no active run.
   //   ALREADY_EXISTS      - request_id reused with different parameters.
   rpc CancelActiveRun(CancelActiveRunRequest) returns (CancelActiveRunResponse);
@@ -148,30 +155,43 @@ service RunService {
   // ==========================================================================
 
   // GetRun returns one run.
-  // Errors: NOT_FOUND (run_id names no run).
+  // Errors:
+  //   INVALID_ARGUMENT - run_id is empty or not a UUID.
+  //   NOT_FOUND        - run_id names no run of the tenant.
   rpc GetRun(GetRunRequest) returns (RunResponse);
 
   // ListRuns returns a schedule's completed runs, newest first. page_size is
   // clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-  // total_count counts every completed run of the schedule.
+  // total_count counts every completed run of the schedule. A schedule with no
+  // completed run returns no runs and total_count 0.
+  // Errors: INVALID_ARGUMENT (empty schedule_name).
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
 
   // ListActiveRunDrifts returns the live promotion seq and every schedule's
   // newest pending or running run with the promotion seq its release was live
   // under (0 when it names no release).
+  // Errors: none beyond the service-wide ones. With no active run it returns
+  // an empty list.
   rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
 
-  // ListTasks returns one page of a run's tasks, ordered by creation time then
-  // task_id, optionally only those in one status. page_size is clamped to
-  // [1, 200], 0 meaning 50; a negative page_offset is 0. total_count counts
-  // every task the filter matches. A status that is not in the task_status
-  // vocabulary is INVALID_ARGUMENT.
+  // ListTasks returns one page of a run's tasks, newest first, optionally only
+  // those in one status. A page_size of 0 or less means 50, with no upper
+  // bound; a page_offset of 0 or less is 0. total_count counts every task the
+  // filter matches. A run of the tenant that does not exist, or a run of
+  // another tenant, returns no tasks and total_count 0.
+  // Errors:
+  //   INVALID_ARGUMENT - run_id is empty or not a UUID, or status is set and
+  //                      is not a task_status value.
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
 
   // ListRunAttempts returns one page of a run's task attempts, or of one of its
   // tasks when task_id is set, ordered by task_id then attempt. page_size is
   // clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-  // total_count counts every attempt the filter matches.
+  // total_count counts every attempt the filter matches. A run of the tenant
+  // that does not exist, or a run of another tenant, returns no attempts and
+  // total_count 0.
+  // Errors: INVALID_ARGUMENT (run_id is empty or not a UUID, or task_id is set
+  // and is not a UUID).
   rpc ListRunAttempts(ListRunAttemptsRequest) returns (ListRunAttemptsResponse);
 
   // GetRunGraph returns a run's tasks as nodes and the dependencies among them
@@ -180,7 +200,8 @@ service RunService {
   // dependency; node ids are "service.schema.table". An unknown run returns no
   // nodes and run_promotion_seq 0; a run that names no release returns its
   // nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
-  // unknown".
+  // unknown". A run of another tenant is an unknown run.
+  // Errors: INVALID_ARGUMENT (run_id is empty or not a UUID).
   rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
 
   // ==========================================================================
@@ -189,24 +210,30 @@ service RunService {
 
   // ListNodeTasks returns the most recent tasks of a node, newest run first.
   // The identity fields are required; limit is capped server-side at 50 (0
-  // uses the default of 50).
+  // uses the default of 50). A node with no task returns no tasks.
+  // Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
   rpc ListNodeTasks(ListNodeTasksRequest) returns (ListNodeTasksResponse);
 
   // ListNodes returns the node catalog: one summary row per node that has run,
   // with stats aggregated over the most recent 50 tasks of each node. Supports a
   // case-insensitive substring search on "service.schema.table", an exact
   // service_name filter, and limit/offset paging. total_count reports the full
-  // match count (before paging).
+  // match count (before paging). A limit of 0 or less means 50 and a limit
+  // above 200 is 200; a negative offset is 0.
+  // Errors: none beyond the service-wide ones.
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
   // ListNodeNames returns the distinct table names of nodes that have run,
   // optionally filtered by service. It powers the node search autocomplete
   // (the complete name list, independent of the paginated catalog).
+  // Errors: none beyond the service-wide ones. A service with no node returns
+  // an empty list.
   rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
 
   // ListNodeServices returns the distinct service names of nodes that have run.
   // It powers the catalog and remediation service filters (the complete service
   // list, independent of the paginated catalog).
+  // Errors: none beyond the service-wide ones.
   rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
 
   // ==========================================================================
@@ -216,6 +243,8 @@ service RunService {
   // ListSchedules returns every schedule of the tenant, merging the names the
   // live release holds, the cron of each, and its last run, ordered by
   // schedule_name.
+  // Errors: none beyond the service-wide ones. With no schedule it returns an
+  // empty list.
   rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
 
   // GetScheduleGraph returns the live release view of one schedule: its
@@ -223,11 +252,13 @@ service RunService {
   // them (internal and cross-schedule) and the live promotion seq. A schedule
   // the live release does not hold returns no nodes and no edges. When no
   // release is live the graph is empty and promotion_seq is 0.
+  // Errors: INVALID_ARGUMENT (empty schedule_name).
   rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
 
   // ListScheduleTopologies returns, for each schedule of the live release, its
   // node count and the time that release went live. It is empty when no release
   // is live.
+  // Errors: none beyond the service-wide ones.
   rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
       returns (ListScheduleTopologiesResponse);
 }

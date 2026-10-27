@@ -55,7 +55,10 @@ const (
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
 // fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
-// itself is INTERNAL; the lists below name the other codes of each RPC.
+// itself, or a request that reaches it without a tenant, is INTERNAL; the lists
+// below name the other codes of each RPC. A run of another tenant
+// is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
+// empty result where it returns one.
 //
 // The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
 // TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
@@ -90,6 +93,7 @@ type RunServiceClient interface {
 	// The new run keeps the source's schedule_name.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
 	//	NOT_FOUND           - source_run_id names no run.
 	//	FAILED_PRECONDITION - the source is not failed or cancelled, names no
 	//	                      release, is a test run, leaves nothing to
@@ -138,6 +142,7 @@ type RunServiceClient interface {
 	// non-empty expected_release_id must name the live release.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
 	//	NOT_FOUND           - source_run_id names no run.
 	//	FAILED_PRECONDITION - the source is not failed or cancelled; or it has
 	//	                      no task that did not succeed; or its schedule
@@ -165,7 +170,8 @@ type RunServiceClient interface {
 	// returned as it is, and nothing is written. It takes no request_id.
 	// Errors:
 	//
-	//	NOT_FOUND           - run_id names no run.
+	//	INVALID_ARGUMENT    - run_id is empty or not a UUID.
+	//	NOT_FOUND           - run_id names no run of the tenant.
 	//	FAILED_PRECONDITION - the run ended succeeded, failed or skipped.
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*RunResponse, error)
 	// CancelActiveRun cancels the active run of a named schedule, as CancelRun
@@ -174,30 +180,46 @@ type RunServiceClient interface {
 	// active run.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - empty schedule_name.
 	//	FAILED_PRECONDITION - the schedule has no active run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	CancelActiveRun(ctx context.Context, in *CancelActiveRunRequest, opts ...grpc.CallOption) (*CancelActiveRunResponse, error)
 	// GetRun returns one run.
-	// Errors: NOT_FOUND (run_id names no run).
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - run_id is empty or not a UUID.
+	//	NOT_FOUND        - run_id names no run of the tenant.
 	GetRun(ctx context.Context, in *GetRunRequest, opts ...grpc.CallOption) (*RunResponse, error)
 	// ListRuns returns a schedule's completed runs, newest first. page_size is
 	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-	// total_count counts every completed run of the schedule.
+	// total_count counts every completed run of the schedule. A schedule with no
+	// completed run returns no runs and total_count 0.
+	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
 	// ListActiveRunDrifts returns the live promotion seq and every schedule's
 	// newest pending or running run with the promotion seq its release was live
 	// under (0 when it names no release).
+	// Errors: none beyond the service-wide ones. With no active run it returns
+	// an empty list.
 	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
-	// ListTasks returns one page of a run's tasks, ordered by creation time then
-	// task_id, optionally only those in one status. page_size is clamped to
-	// [1, 200], 0 meaning 50; a negative page_offset is 0. total_count counts
-	// every task the filter matches. A status that is not in the task_status
-	// vocabulary is INVALID_ARGUMENT.
+	// ListTasks returns one page of a run's tasks, newest first, optionally only
+	// those in one status. A page_size of 0 or less means 50, with no upper
+	// bound; a page_offset of 0 or less is 0. total_count counts every task the
+	// filter matches. A run of the tenant that does not exist, or a run of
+	// another tenant, returns no tasks and total_count 0.
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - run_id is empty or not a UUID, or status is set and
+	//	                   is not a task_status value.
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
 	// ListRunAttempts returns one page of a run's task attempts, or of one of its
 	// tasks when task_id is set, ordered by task_id then attempt. page_size is
 	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-	// total_count counts every attempt the filter matches.
+	// total_count counts every attempt the filter matches. A run of the tenant
+	// that does not exist, or a run of another tenant, returns no attempts and
+	// total_count 0.
+	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID, or task_id is set
+	// and is not a UUID).
 	ListRunAttempts(ctx context.Context, in *ListRunAttemptsRequest, opts ...grpc.CallOption) (*ListRunAttemptsResponse, error)
 	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
 	// in the run's own release, with the promotion seq that release was live
@@ -205,39 +227,50 @@ type RunServiceClient interface {
 	// dependency; node ids are "service.schema.table". An unknown run returns no
 	// nodes and run_promotion_seq 0; a run that names no release returns its
 	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
-	// unknown".
+	// unknown". A run of another tenant is an unknown run.
+	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID).
 	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
 	// ListNodeTasks returns the most recent tasks of a node, newest run first.
 	// The identity fields are required; limit is capped server-side at 50 (0
-	// uses the default of 50).
+	// uses the default of 50). A node with no task returns no tasks.
+	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
 	// case-insensitive substring search on "service.schema.table", an exact
 	// service_name filter, and limit/offset paging. total_count reports the full
-	// match count (before paging).
+	// match count (before paging). A limit of 0 or less means 50 and a limit
+	// above 200 is 200; a negative offset is 0.
+	// Errors: none beyond the service-wide ones.
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
 	// (the complete name list, independent of the paginated catalog).
+	// Errors: none beyond the service-wide ones. A service with no node returns
+	// an empty list.
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
 	// ListNodeServices returns the distinct service names of nodes that have run.
 	// It powers the catalog and remediation service filters (the complete service
 	// list, independent of the paginated catalog).
+	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
 	// ListSchedules returns every schedule of the tenant, merging the names the
 	// live release holds, the cron of each, and its last run, ordered by
 	// schedule_name.
+	// Errors: none beyond the service-wide ones. With no schedule it returns an
+	// empty list.
 	ListSchedules(ctx context.Context, in *ListSchedulesRequest, opts ...grpc.CallOption) (*ListSchedulesResponse, error)
 	// GetScheduleGraph returns the live release view of one schedule: its
 	// nodes, their one-hop upstream nodes in other schedules, the edges among
 	// them (internal and cross-schedule) and the live promotion seq. A schedule
 	// the live release does not hold returns no nodes and no edges. When no
 	// release is live the graph is empty and promotion_seq is 0.
+	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
 	// node count and the time that release went live. It is empty when no release
 	// is live.
+	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 }
 
@@ -463,7 +496,10 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
 // fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
-// itself is INTERNAL; the lists below name the other codes of each RPC.
+// itself, or a request that reaches it without a tenant, is INTERNAL; the lists
+// below name the other codes of each RPC. A run of another tenant
+// is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
+// empty result where it returns one.
 //
 // The commands that start a run (StartRun, TriggerRerun, TriggerRebase and
 // TriggerSingleNodeRun) and CancelActiveRun are idempotent per request_id. The
@@ -498,6 +534,7 @@ type RunServiceServer interface {
 	// The new run keeps the source's schedule_name.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
 	//	NOT_FOUND           - source_run_id names no run.
 	//	FAILED_PRECONDITION - the source is not failed or cancelled, names no
 	//	                      release, is a test run, leaves nothing to
@@ -546,6 +583,7 @@ type RunServiceServer interface {
 	// non-empty expected_release_id must name the live release.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - source_run_id is empty or not a UUID.
 	//	NOT_FOUND           - source_run_id names no run.
 	//	FAILED_PRECONDITION - the source is not failed or cancelled; or it has
 	//	                      no task that did not succeed; or its schedule
@@ -573,7 +611,8 @@ type RunServiceServer interface {
 	// returned as it is, and nothing is written. It takes no request_id.
 	// Errors:
 	//
-	//	NOT_FOUND           - run_id names no run.
+	//	INVALID_ARGUMENT    - run_id is empty or not a UUID.
+	//	NOT_FOUND           - run_id names no run of the tenant.
 	//	FAILED_PRECONDITION - the run ended succeeded, failed or skipped.
 	CancelRun(context.Context, *CancelRunRequest) (*RunResponse, error)
 	// CancelActiveRun cancels the active run of a named schedule, as CancelRun
@@ -582,30 +621,46 @@ type RunServiceServer interface {
 	// active run.
 	// Errors:
 	//
+	//	INVALID_ARGUMENT    - empty schedule_name.
 	//	FAILED_PRECONDITION - the schedule has no active run.
 	//	ALREADY_EXISTS      - request_id reused with different parameters.
 	CancelActiveRun(context.Context, *CancelActiveRunRequest) (*CancelActiveRunResponse, error)
 	// GetRun returns one run.
-	// Errors: NOT_FOUND (run_id names no run).
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - run_id is empty or not a UUID.
+	//	NOT_FOUND        - run_id names no run of the tenant.
 	GetRun(context.Context, *GetRunRequest) (*RunResponse, error)
 	// ListRuns returns a schedule's completed runs, newest first. page_size is
 	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-	// total_count counts every completed run of the schedule.
+	// total_count counts every completed run of the schedule. A schedule with no
+	// completed run returns no runs and total_count 0.
+	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
 	// ListActiveRunDrifts returns the live promotion seq and every schedule's
 	// newest pending or running run with the promotion seq its release was live
 	// under (0 when it names no release).
+	// Errors: none beyond the service-wide ones. With no active run it returns
+	// an empty list.
 	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
-	// ListTasks returns one page of a run's tasks, ordered by creation time then
-	// task_id, optionally only those in one status. page_size is clamped to
-	// [1, 200], 0 meaning 50; a negative page_offset is 0. total_count counts
-	// every task the filter matches. A status that is not in the task_status
-	// vocabulary is INVALID_ARGUMENT.
+	// ListTasks returns one page of a run's tasks, newest first, optionally only
+	// those in one status. A page_size of 0 or less means 50, with no upper
+	// bound; a page_offset of 0 or less is 0. total_count counts every task the
+	// filter matches. A run of the tenant that does not exist, or a run of
+	// another tenant, returns no tasks and total_count 0.
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - run_id is empty or not a UUID, or status is set and
+	//	                   is not a task_status value.
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
 	// ListRunAttempts returns one page of a run's task attempts, or of one of its
 	// tasks when task_id is set, ordered by task_id then attempt. page_size is
 	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
-	// total_count counts every attempt the filter matches.
+	// total_count counts every attempt the filter matches. A run of the tenant
+	// that does not exist, or a run of another tenant, returns no attempts and
+	// total_count 0.
+	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID, or task_id is set
+	// and is not a UUID).
 	ListRunAttempts(context.Context, *ListRunAttemptsRequest) (*ListRunAttemptsResponse, error)
 	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
 	// in the run's own release, with the promotion seq that release was live
@@ -613,39 +668,50 @@ type RunServiceServer interface {
 	// dependency; node ids are "service.schema.table". An unknown run returns no
 	// nodes and run_promotion_seq 0; a run that names no release returns its
 	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
-	// unknown".
+	// unknown". A run of another tenant is an unknown run.
+	// Errors: INVALID_ARGUMENT (run_id is empty or not a UUID).
 	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
 	// ListNodeTasks returns the most recent tasks of a node, newest run first.
 	// The identity fields are required; limit is capped server-side at 50 (0
-	// uses the default of 50).
+	// uses the default of 50). A node with no task returns no tasks.
+	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is empty).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
 	// case-insensitive substring search on "service.schema.table", an exact
 	// service_name filter, and limit/offset paging. total_count reports the full
-	// match count (before paging).
+	// match count (before paging). A limit of 0 or less means 50 and a limit
+	// above 200 is 200; a negative offset is 0.
+	// Errors: none beyond the service-wide ones.
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
 	// (the complete name list, independent of the paginated catalog).
+	// Errors: none beyond the service-wide ones. A service with no node returns
+	// an empty list.
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
 	// ListNodeServices returns the distinct service names of nodes that have run.
 	// It powers the catalog and remediation service filters (the complete service
 	// list, independent of the paginated catalog).
+	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
 	// ListSchedules returns every schedule of the tenant, merging the names the
 	// live release holds, the cron of each, and its last run, ordered by
 	// schedule_name.
+	// Errors: none beyond the service-wide ones. With no schedule it returns an
+	// empty list.
 	ListSchedules(context.Context, *ListSchedulesRequest) (*ListSchedulesResponse, error)
 	// GetScheduleGraph returns the live release view of one schedule: its
 	// nodes, their one-hop upstream nodes in other schedules, the edges among
 	// them (internal and cross-schedule) and the live promotion seq. A schedule
 	// the live release does not hold returns no nodes and no edges. When no
 	// release is live the graph is empty and promotion_seq is 0.
+	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
 	// node count and the time that release went live. It is empty when no release
 	// is live.
+	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	mustEmbedUnimplementedRunServiceServer()
 }
