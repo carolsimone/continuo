@@ -14,7 +14,7 @@ import (
 
 func deployableCmd() command.DeployTask {
 	return command.DeployTask{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 		JobName: "dbt-public-orders", NodeType: "dbt-model",
 		Attempt: 0,
 	}
@@ -35,7 +35,7 @@ func TestNewDeployment_Defaults(t *testing.T) {
 
 func TestIsDeployable_FalseWhenIdentityOnly(t *testing.T) {
 	// Mimics a corrupt row recovered with only task/schedule identity.
-	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: uuid.New().String()}
+	cmd := command.DeployTask{TaskID: uuid.New().String(), RunID: uuid.New().String()}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	assert.False(t, d.IsDeployable(), "missing JobName/NodeType => not deployable")
 }
@@ -356,7 +356,7 @@ func TestBackoff_CapAndOverflow(t *testing.T) {
 func productionDeployment(t *testing.T) *model.Deployment {
 	t.Helper()
 	return model.NewDeployment(command.DeployTask{
-		TaskID: "11111111-1111-1111-1111-111111111111", ScheduleID: "22222222-2222-2222-2222-222222222222",
+		TaskID: "11111111-1111-1111-1111-111111111111", RunID: "22222222-2222-2222-2222-222222222222",
 		JobName: "dbt-public-orders", NodeType: "dbt-model",
 	}, nil, time.Now())
 }

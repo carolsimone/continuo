@@ -22,7 +22,7 @@ import (
 func attemptSpec(nodeType pkg_model.NodeType, image string) deploy.JobSpec {
 	return deploy.JobSpec{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b-r1", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
-		ScheduleID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
+		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: string(nodeType), ImageTag: image, Attempt: 1, TimeoutSeconds: 3600,
 	}

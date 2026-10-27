@@ -89,7 +89,7 @@ func TestObservation_TheJobCreatedForAnAttemptRunsIt(t *testing.T) {
 	taskID := "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b-r2", TaskID: taskID,
-		ScheduleID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
+		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", Namespace: ns,
 		NodeType: pkgmodel.NodeTypeDbtModel, ImageTag: "v42", Attempt: 2, ActiveDeadlineSeconds: 4500,
 	}))
@@ -102,10 +102,10 @@ func TestObservation_TheJobCreatedForAnAttemptRunsIt(t *testing.T) {
 	assert.False(t, obs.RunsAttempt(taskID, 1))
 }
 
-// A task's Job names the run it belongs to in its schedule-id label, the one
+// A task's Job names the run it belongs to in its run-id label, the one
 // the Kubernetes adapter writes; the observer reads it to tell a Job of a
 // fenced run.
-func TestObservation_ReadsTheRunLabel(t *testing.T) {
+func TestObservation_ReadsTheRunIDLabel(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	cs := fake.NewSimpleClientset()
@@ -113,13 +113,14 @@ func TestObservation_ReadsTheRunLabel(t *testing.T) {
 	runID := "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
-		ScheduleID: runID, ScheduleName: "daily", ServiceName: "service-1", SchemaName: "e2e_schema",
+		RunID: runID, ScheduleName: "daily", ServiceName: "service-1", SchemaName: "e2e_schema",
 		TableName: "ftable_e", Namespace: ns, NodeType: pkgmodel.NodeTypeDbtModel, ImageTag: "v42",
 		ActiveDeadlineSeconds: 4500,
 	}))
 	created, err := cs.BatchV1().Jobs(ns).Get(context.Background(), "service-1-e2e-schema-ftable-e-7f3e1a2b", metav1.GetOptions{})
 	require.NoError(t, err)
 
+	assert.Equal(t, runID, created.Labels["run-id"], "the adapter writes the run under the run-id label")
 	assert.Equal(t, runID, observation(created, nil).JobRunID)
 	assert.Empty(t, observation(job("j"), nil).JobRunID, "a Job with no run label names no run")
 	assert.Empty(t, observation(nil, nil).JobRunID, "no Job names no run")

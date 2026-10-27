@@ -27,7 +27,7 @@ var (
 type JobSpec struct {
 	JobName      string
 	TaskID       string
-	ScheduleID   string
+	RunID        string
 	ScheduleName string
 	ServiceName  string
 	SchemaName   string

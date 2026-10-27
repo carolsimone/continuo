@@ -3,7 +3,7 @@ package model
 import "github.com/google/uuid"
 
 // validationSyntheticIDNamespace seeds the deterministic synthetic
-// task_id/schedule_id of validation rows. Validation deploys have no real
+// task_id/run_id of validation rows. Validation deploys have no real
 // task/schedule identity, but those columns are NOT NULL, so we derive stable
 // UUIDv5 values from the (release_id, node_id) business key. This namespace is
 // IMMUTABLE — changing it remaps every persisted validation row's synthetic
@@ -11,12 +11,12 @@ import "github.com/google/uuid"
 var validationSyntheticIDNamespace = uuid.MustParse("8f8d2b7a-2f1e-4c6a-9d3b-6a7c1e0f4d22")
 
 // ValidationSyntheticIDs derives the deterministic task/schedule UUIDs for a
-// validation deployment from (releaseID, nodeID). task_id/schedule_id are NOT
+// validation deployment from (releaseID, nodeID). task_id/run_id are NOT
 // NULL in deployments; validation rows have no real task/schedule, so these
 // synthetic IDs satisfy the columns. The NUL separator keeps the two business
 // keys unambiguous across boundaries.
-func ValidationSyntheticIDs(releaseID, nodeID string) (taskID, scheduleID uuid.UUID) {
+func ValidationSyntheticIDs(releaseID, nodeID string) (taskID, runID uuid.UUID) {
 	taskID = uuid.NewSHA1(validationSyntheticIDNamespace, []byte("task:"+releaseID+"\x00"+nodeID))
-	scheduleID = uuid.NewSHA1(validationSyntheticIDNamespace, []byte("schedule:"+releaseID+"\x00"+nodeID))
-	return taskID, scheduleID
+	runID = uuid.NewSHA1(validationSyntheticIDNamespace, []byte("schedule:"+releaseID+"\x00"+nodeID))
+	return taskID, runID
 }

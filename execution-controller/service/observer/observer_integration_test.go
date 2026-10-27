@@ -82,7 +82,7 @@ func newHarness(t testing.TB) *harness {
 func (h *harness) started(t testing.TB, attempt int, deployedAt time.Time) *model.Deployment {
 	t.Helper()
 	runID := uuid.New().String()
-	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: runID, ScheduleName: "daily",
+	cmd := command.DeployTask{TaskID: uuid.New().String(), RunID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: attempt}
 	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, attempt)
@@ -397,7 +397,7 @@ func TestSettle_ReportsAStoppedAttemptOfACancelledRun(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
-	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, dep.Command().ScheduleID)
+	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, dep.Command().RunID)
 	require.NoError(t, err)
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{runningPod(h.now.Add(-30 * time.Second))}})
 	require.NoError(t, h.o.Process(ctx, dep.JobName()))
@@ -787,7 +787,7 @@ func liveJobOf(runID string, now time.Time) model.JobObservation {
 func (h *harness) unstartedRow(t *testing.T, runID, jobName string, failed bool) *model.Deployment {
 	t.Helper()
 	ctx := context.Background()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: runID, ScheduleName: "daily",
+	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", JobName: jobName,
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run"}
 	dep := model.NewDeployment(cmd, nil, h.now.Add(-time.Minute))
@@ -903,7 +903,7 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 
 	const ns = "jobs"
 	cmd := dep.Command()
-	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID}
+	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "run-id": cmd.RunID}
 	deletingSince := metav1.NewTime(h.now.Add(-5 * time.Second))
 	cs := fake.NewClientset(
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: dep.JobName(), Namespace: ns, Labels: labels}},
@@ -956,12 +956,12 @@ func TestObserver_ReportsAFencedReservedRowsJobStoppedOnlyOnceItsPodIsGone(t *te
 	const name, ns = "dbt-service-1-ftable-e-launched", "jobs"
 	dep := h.unstartedRow(t, runID.String(), name, false)
 	cmd := dep.Command()
-	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID}
+	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "run-id": cmd.RunID}
 	cs := fake.NewClientset(
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels}},
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-q4m8z", Namespace: ns,
-				Labels: map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID,
+				Labels: map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "run-id": cmd.RunID,
 					batchv1.JobNameLabel: name, "job-name": name}},
 			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "dbt-job", Image: "service-1:v42"}}},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "dbt-job",
@@ -1020,7 +1020,7 @@ func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testi
 	started := h.started(t, 0, h.now.Add(-time.Minute))
 	jobOf := func(name, task, run string) *batchv1.Job {
 		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{
-			"app": "dbt-job", "task-id": task, "attempt": "0", "schedule-id": run}}}
+			"app": "dbt-job", "task-id": task, "attempt": "0", "run-id": run}}}
 	}
 	completed := jobOf("job-completed", uuid.NewString(), runID)
 	completed.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
@@ -1030,7 +1030,7 @@ func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testi
 	deletedAt := metav1.NewTime(h.now)
 	deleting.DeletionTimestamp, deleting.Finalizers = &deletedAt, []string{"batch.kubernetes.io/job-tracking"}
 	cs := fake.NewClientset(jobOf("job-created-anyway", taskID, runID),
-		jobOf(started.JobName(), started.Command().TaskID, started.Command().ScheduleID), completed, failed, deleting)
+		jobOf(started.JobName(), started.Command().TaskID, started.Command().RunID), completed, failed, deleting)
 	h.watchOver(t, cs, ns)
 	queued := func() []string {
 		h.q.mu.Lock()

@@ -295,9 +295,9 @@ func (d *Dispatcher) fenced(ctx context.Context, tx outbox.Executor, dep *model.
 	if dep.Mode() != model.ModeProduction {
 		return false, nil
 	}
-	runID, err := uuid.Parse(dep.Command().ScheduleID)
+	runID, err := uuid.Parse(dep.Command().RunID)
 	if err != nil {
-		return false, fmt.Errorf("deployment %s: run id %q: %w", dep.ID(), dep.Command().ScheduleID, err)
+		return false, fmt.Errorf("deployment %s: run id %q: %w", dep.ID(), dep.Command().RunID, err)
 	}
 	fenced, err := d.newCancelled(tx).Exists(ctx, runID)
 	if err != nil {
@@ -326,7 +326,7 @@ func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentR
 	if err != nil {
 		return model.StopNone, err
 	}
-	logArgs := []any{"deployment_id", dep.ID(), "run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt,
+	logArgs := []any{"deployment_id", dep.ID(), "run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt,
 		"job_name", dep.JobName()}
 	switch effect {
 	case model.StopEnded:

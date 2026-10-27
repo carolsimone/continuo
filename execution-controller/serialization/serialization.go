@@ -17,7 +17,7 @@ import (
 // deployments.job_params JSONB column for a production deployment.
 type DeployTaskDTO struct {
 	TaskID         string `json:"task_id"`
-	ScheduleID     string `json:"schedule_id"`
+	RunID          string `json:"run_id"`
 	ScheduleName   string `json:"schedule_name"`
 	ServiceName    string `json:"service_name"`
 	SchemaName     string `json:"schema_name"`
@@ -35,7 +35,7 @@ type DeployTaskDTO struct {
 func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 	return DeployTaskDTO{
 		TaskID:         c.TaskID,
-		ScheduleID:     c.ScheduleID,
+		RunID:          c.RunID,
 		ScheduleName:   c.ScheduleName,
 		ServiceName:    c.ServiceName,
 		SchemaName:     c.SchemaName,
@@ -54,7 +54,7 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 func (d DeployTaskDTO) ToDomain() command.DeployTask {
 	return command.DeployTask{
 		TaskID:         d.TaskID,
-		ScheduleID:     d.ScheduleID,
+		RunID:          d.RunID,
 		ScheduleName:   d.ScheduleName,
 		ServiceName:    d.ServiceName,
 		SchemaName:     d.SchemaName,
