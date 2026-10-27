@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,7 +62,7 @@ func TestTaskAttemptReadRepository_ListsARunsAttemptsByTaskThenNumber(t *testing
 		WHERE task_id = $1 AND attempt = 0`, tasks[0], at)
 	require.NoError(t, err)
 
-	rows, total, err := postgres.NewTaskAttemptReadRepository(db).ListRunAttempts(context.Background(), runID, nil, 50, 0)
+	rows, total, err := postgres.NewTaskAttemptReadRepository(db).ListRunAttempts(context.Background(), pkgevents.DefaultTenantID, runID, nil, 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	assert.Equal(t, want, attemptKeys(rows))
@@ -94,7 +95,7 @@ func TestTaskAttemptReadRepository_FiltersToOneTask(t *testing.T) {
 	db := newTestDB(t)
 	runID, tasks, _ := attemptRun(t, db)
 
-	rows, total, err := postgres.NewTaskAttemptReadRepository(db).ListRunAttempts(context.Background(), runID, &tasks[0], 50, 0)
+	rows, total, err := postgres.NewTaskAttemptReadRepository(db).ListRunAttempts(context.Background(), pkgevents.DefaultTenantID, runID, &tasks[0], 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Equal(t, []string{attemptKey(tasks[0], 0), attemptKey(tasks[0], 1)}, attemptKeys(rows))
@@ -105,10 +106,10 @@ func TestTaskAttemptReadRepository_PagesWithAStableOrder(t *testing.T) {
 	runID, _, want := attemptRun(t, db)
 	repo := postgres.NewTaskAttemptReadRepository(db)
 
-	first, total, err := repo.ListRunAttempts(context.Background(), runID, nil, 2, 0)
+	first, total, err := repo.ListRunAttempts(context.Background(), pkgevents.DefaultTenantID, runID, nil, 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
-	second, total, err := repo.ListRunAttempts(context.Background(), runID, nil, 2, 2)
+	second, total, err := repo.ListRunAttempts(context.Background(), pkgevents.DefaultTenantID, runID, nil, 2, 2)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 

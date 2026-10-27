@@ -78,10 +78,11 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id. A dead-letter row renders through outbox.DeadLetterValues;
 // a task.dispatch:v1 row's payload is the dispatch and a run.cancelled:v1
-// row's the cancel, each under an envelope that names the row as the event
-// and the time it was written; every other row's JSON payload is flattened to
-// scalar fields, with nested values JSON-encoded.
-// Every call returns a fresh map.
+// row's the cancel, each stored under its tenant (outbox.WrapTenant) and
+// rendered under an envelope that names the row as the event, the tenant it
+// stores and the time it was written; every other row's JSON payload is
+// flattened to scalar fields, with nested values JSON-encoded. Every call
+// returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
 	case outbox.DeadLetterEventType:
@@ -93,21 +94,29 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		delete(values, "outbox_entry_id")
 		return values, nil
 	case streams.TaskDispatchV1:
+		tenantID, payload, err := outbox.UnwrapTenant(entry.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
 		var d pkgevents.TaskDispatch
-		if err := json.Unmarshal(entry.Payload, &d); err != nil {
+		if err := json.Unmarshal(payload, &d); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
 		}
-		values, err := pkgevents.TaskDispatchFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, d)
+		values, err := pkgevents.TaskDispatchFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, d)
 		if err != nil {
 			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
 		}
 		return values, nil
 	case streams.RunCancelledV1:
+		tenantID, payload, err := outbox.UnwrapTenant(entry.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RunCancelledV1, err)
+		}
 		var c pkgevents.RunCancelled
-		if err := json.Unmarshal(entry.Payload, &c); err != nil {
+		if err := json.Unmarshal(payload, &c); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RunCancelledV1, err)
 		}
-		values, err := pkgevents.RunCancelledFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, c)
+		values, err := pkgevents.RunCancelledFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, c)
 		if err != nil {
 			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RunCancelledV1, err)
 		}

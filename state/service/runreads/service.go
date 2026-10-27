@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
 )
@@ -20,7 +19,8 @@ const (
 	MaxPageSize     = 200
 )
 
-// Service reads runs for the default tenant.
+// Service reads the runs of the tenant each read is given; another tenant's
+// rows are never read.
 type Service struct {
 	repo repository.RunReadRepository
 }
@@ -30,25 +30,25 @@ func New(repo repository.RunReadRepository) *Service {
 	return &Service{repo: repo}
 }
 
-// GetRunGraph returns runID's graph.
-func (s *Service) GetRunGraph(ctx context.Context, runID uuid.UUID) (projection.RunGraph, error) {
-	return s.repo.GetRunGraph(ctx, pkgevents.DefaultTenantID, runID)
+// GetRunGraph returns the graph of tenantID's run runID.
+func (s *Service) GetRunGraph(ctx context.Context, tenantID string, runID uuid.UUID) (projection.RunGraph, error) {
+	return s.repo.GetRunGraph(ctx, tenantID, runID)
 }
 
-// ListRuns returns one page of a schedule's completed runs. A page size below
-// 1 becomes DefaultPageSize, one above MaxPageSize becomes MaxPageSize, and a
-// negative offset becomes 0.
-func (s *Service) ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int) ([]projection.RunSummary, int, error) {
+// ListRuns returns one page of the completed runs of tenantID's schedule. A
+// page size below 1 becomes DefaultPageSize, one above MaxPageSize becomes
+// MaxPageSize, and a negative offset becomes 0.
+func (s *Service) ListRuns(ctx context.Context, tenantID, scheduleName string, pageSize, pageOffset int) ([]projection.RunSummary, int, error) {
 	if pageSize < 1 {
 		pageSize = DefaultPageSize
 	}
 	pageSize = min(pageSize, MaxPageSize)
 	pageOffset = max(pageOffset, 0)
-	return s.repo.ListCompletedRuns(ctx, scheduleName, pageSize, pageOffset)
+	return s.repo.ListCompletedRuns(ctx, tenantID, scheduleName, pageSize, pageOffset)
 }
 
-// ListActiveRunDrifts returns the live promotion seq and every schedule's
-// newest active run.
-func (s *Service) ListActiveRunDrifts(ctx context.Context) (int64, []projection.ActiveRunDrift, error) {
-	return s.repo.ListActiveRunDrifts(ctx, pkgevents.DefaultTenantID)
+// ListActiveRunDrifts returns tenantID's live promotion seq and the newest
+// active run of each of the tenant's schedules.
+func (s *Service) ListActiveRunDrifts(ctx context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
+	return s.repo.ListActiveRunDrifts(ctx, tenantID)
 }

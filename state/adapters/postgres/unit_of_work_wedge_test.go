@@ -13,14 +13,14 @@ import (
 )
 
 // newWedgeTestUoW builds a PostgresUnitOfWork over a sqlmock DB. Only the
-// transaction lifecycle (Begin/Commit/Rollback) is exercised here, so the
-// repository collaborators are left nil.
+// transaction lifecycle (Begin/Commit/Rollback) is exercised here, so no
+// clock is set.
 func newWedgeTestUoW(t *testing.T) (*PostgresUnitOfWork, sqlmock.Sqlmock, func()) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewPostgresUnitOfWork(sqlxDB, nil, nil, nil, nil, slog.Default())
+	u := NewPostgresUnitOfWork(sqlxDB, nil, slog.Default())
 	return u, mock, func() { _ = db.Close() }
 }
 

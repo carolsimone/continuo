@@ -12,9 +12,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// RebasePreviewReader previews a rebase: the read behind PreviewRebase.
+// RebasePreviewReader previews a rebase of a tenant's run: the read behind
+// PreviewRebase.
 type RebasePreviewReader interface {
-	Preview(ctx context.Context, sourceID uuid.UUID, includeChangedUpstream bool) (runreads.RebasePreview, error)
+	Preview(ctx context.Context, tenantID string, sourceID uuid.UUID, includeChangedUpstream bool) (runreads.RebasePreview, error)
 }
 
 // PreviewRebaseHandler implements the PreviewRebase gRPC method: what
@@ -34,13 +35,18 @@ func NewPreviewRebaseHandler(reader RebasePreviewReader, logger *slog.Logger) *P
 // preview to the response: the live release, the counts by reason, and the
 // changed upstream nodes in the order the selection lists them (service,
 // schema, table), each with its last successful duration in seconds, 0 when
-// it has none.
+// it has none. The source is a run of the request's tenant: another tenant's
+// run is NotFound.
 func (h *PreviewRebaseHandler) PreviewRebase(ctx context.Context, req *statev1.PreviewRebaseRequest) (*statev1.PreviewRebaseResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	srcID, err := parseSourceRunID(req.GetSourceRunId())
 	if err != nil {
 		return nil, err
 	}
-	got, err := h.reader.Preview(ctx, srcID, req.GetIncludeChangedUpstream())
+	got, err := h.reader.Preview(ctx, tenantID, srcID, req.GetIncludeChangedUpstream())
 	if err != nil {
 		if st, ok := rebaseRefusal(err); ok {
 			return nil, st.Err()

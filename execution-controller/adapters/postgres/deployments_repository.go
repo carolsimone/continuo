@@ -41,6 +41,7 @@ type deploymentRow struct {
 	MessageProcessingID *uuid.UUID `db:"message_processing_id"`
 	TaskID              uuid.UUID  `db:"task_id"`
 	RunID               uuid.UUID  `db:"run_id"`
+	TenantID            string     `db:"tenant_id"`
 	JobParams           []byte     `db:"job_params"`
 	Status              string     `db:"status"`
 	RetryCount          int        `db:"retry_count"`
@@ -93,12 +94,12 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		INSERT INTO deployments (
 			id, message_processing_id, task_id, run_id, job_params,
 			status, retry_count, max_retries, next_attempt_at, created_at,
-			mode, release_id, node_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+			mode, release_id, node_id, tenant_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	if _, err := r.exec.ExecContext(ctx, query,
 		d.ID(), d.MessageProcessingID(), taskID, runID, jobParams,
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
-		string(d.Mode()), releaseID, nodeID,
+		string(d.Mode()), releaseID, nodeID, d.TenantID(),
 	); err != nil {
 		return fmt.Errorf("insert deployments row: %w", err)
 	}
@@ -138,7 +139,7 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 // validationSelectColumns is the column list reconstituted into a Deployment by
 // the validation getters. Mirrors the order deploymentRow's db tags expect.
 const validationSelectColumns = `
-	id, message_processing_id, task_id, run_id, job_params,
+	id, message_processing_id, task_id, run_id, tenant_id, job_params,
 	status, retry_count, max_retries, next_attempt_at,
 	created_at, deployed_at, error_message,
 	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container, facts, last_report`
@@ -150,7 +151,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 		WHERE mode = $3 AND release_id = $1 AND node_id = $2`
 	var row deploymentRow
 	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID, string(mode)).Scan(
-		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.RunID, &row.JobParams,
+		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.RunID, &row.TenantID, &row.JobParams,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
 		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt, &row.RunResultsURI,
@@ -292,6 +293,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	} else {
 		cmd = cmdDTO.ToDomain()
 	}
+	cmd.TenantID = row.TenantID
 	d := model.ReconstituteProduction(
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
@@ -419,12 +421,12 @@ func (r *deploymentsRepository) AddAttempt(ctx context.Context, d *model.Deploym
 		INSERT INTO deployments (
 			id, message_processing_id, task_id, run_id, job_params,
 			status, retry_count, max_retries, next_attempt_at, created_at,
-			mode, deployed_at, error_message, outcome, outcome_at, facts, last_report
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			mode, deployed_at, error_message, outcome, outcome_at, facts, last_report, tenant_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (task_id, attempt) WHERE mode = 'production' AND attempt IS NOT NULL DO NOTHING`,
 		d.ID(), d.MessageProcessingID(), taskID, runID, jobParams,
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
-		string(d.Mode()), d.DeployedAt(), d.ErrorMessage(), nullableStr(d.Outcome()), d.OutcomeAt(), facts, report)
+		string(d.Mode()), d.DeployedAt(), d.ErrorMessage(), nullableStr(d.Outcome()), d.OutcomeAt(), facts, report, d.TenantID())
 	if err != nil {
 		return false, fmt.Errorf("insert attempt %d of task %s: %w", d.Command().Attempt, taskID, err)
 	}

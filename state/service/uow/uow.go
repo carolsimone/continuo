@@ -41,14 +41,14 @@ type UnitOfWork interface {
 	// TaskGraph reads how the tasks of a run of tenantID connect over the
 	// edges of the run's release, inside the transaction.
 	TaskGraph(tenantID string) run.TaskGraph
-	// Attempts serves the attempt reconcile of tenantID: the due attempts and
-	// stalled runs, and the lock and record of one question inside the
-	// transaction.
-	Attempts(tenantID string) repository.AttemptRepository
-	// Leases serves the lease waker of tenantID: the waiters a free node can
-	// be granted to, the repair of leases whose holder task has ended, and
-	// the count of tasks waiting for a lease.
-	Leases(tenantID string) repository.LeaseRepository
+	// Attempts serves the attempt reconcile: the due attempts, stalled runs
+	// and due stops of every tenant, and the lock and record of one question,
+	// under the tenant its key or run names, inside the transaction.
+	Attempts() repository.AttemptRepository
+	// Leases serves the lease waker across every tenant: the waiters a free
+	// node can be granted to, the repair of leases whose holder task has
+	// ended, and the count of tasks waiting for a lease.
+	Leases() repository.LeaseRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

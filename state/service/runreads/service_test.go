@@ -28,7 +28,8 @@ func (f *fakeReads) GetRunGraph(_ context.Context, tenantID string, _ uuid.UUID)
 	return projection.RunGraph{RunPromotionSeq: 4, LatestPromotionSeq: 7}, nil
 }
 
-func (f *fakeReads) ListCompletedRuns(_ context.Context, _ string, limit, offset int) ([]projection.RunSummary, int, error) {
+func (f *fakeReads) ListCompletedRuns(_ context.Context, tenantID, _ string, limit, offset int) ([]projection.RunSummary, int, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.limit, f.offset = limit, offset
 	return nil, 0, nil
 }
@@ -38,21 +39,24 @@ func (f *fakeReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int
 	return 7, nil, nil
 }
 
-func (f *fakeReads) LastSuccessDurations(context.Context, []run.NodeID) (map[run.NodeID]time.Duration, error) {
+func (f *fakeReads) LastSuccessDurations(context.Context, string, []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	return nil, nil
 }
 
-func TestService_ReadsTheDefaultTenant(t *testing.T) {
+// Every read reads the rows of the tenant it is given.
+func TestService_ReadsTheTenantItIsGiven(t *testing.T) {
 	f := &fakeReads{}
 	s := runreads.New(f)
 
-	g, err := s.GetRunGraph(context.Background(), uuid.New())
+	g, err := s.GetRunGraph(context.Background(), "acme", uuid.New())
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), g.RunPromotionSeq)
-	_, _, err = s.ListActiveRunDrifts(context.Background())
+	_, _, err = s.ListActiveRunDrifts(context.Background(), "acme")
+	require.NoError(t, err)
+	_, _, err = s.ListRuns(context.Background(), pkgevents.DefaultTenantID, "daily", 10, 0)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{pkgevents.DefaultTenantID, pkgevents.DefaultTenantID}, f.tenants)
+	assert.Equal(t, []string{"acme", "acme", pkgevents.DefaultTenantID}, f.tenants)
 }
 
 func TestService_ClampsThePage(t *testing.T) {
@@ -68,7 +72,7 @@ func TestService_ClampsThePage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeReads{}
-			_, _, err := runreads.New(f).ListRuns(context.Background(), "daily", tc.size, tc.offset)
+			_, _, err := runreads.New(f).ListRuns(context.Background(), pkgevents.DefaultTenantID, "daily", tc.size, tc.offset)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantLimit, f.limit)
 			assert.Equal(t, tc.wantOffset, f.offset)

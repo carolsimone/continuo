@@ -17,19 +17,19 @@ type SchedulePolicy struct{}
 // RunRepo is the narrow contract SchedulePolicy needs from the run repository.
 // The same interface is satisfied by repository.RunRepository in production code.
 type RunRepo interface {
-	HasActiveRun(ctx context.Context, name string) (bool, error)
+	HasActiveRun(ctx context.Context, tenantID, name string) (bool, error)
 }
 
 // CatalogRepo is the narrow contract SchedulePolicy needs from the catalog
 // repository. Satisfied by repository.ScheduleCatalogRepository in production.
 type CatalogRepo interface {
-	ExistsActive(ctx context.Context, name string) (bool, error)
+	ExistsActive(ctx context.Context, tenantID, name string) (bool, error)
 }
 
-// EnsureNoActiveRun returns run.ErrScheduleHasActiveRun when a PENDING or
-// RUNNING run already exists on `name`.
-func (SchedulePolicy) EnsureNoActiveRun(ctx context.Context, repo RunRepo, name string) error {
-	active, err := repo.HasActiveRun(ctx, name)
+// EnsureNoActiveRun returns run.ErrScheduleHasActiveRun when the tenant
+// already has a PENDING, RUNNING or CANCELLING run on `name`.
+func (SchedulePolicy) EnsureNoActiveRun(ctx context.Context, repo RunRepo, tenantID, name string) error {
+	active, err := repo.HasActiveRun(ctx, tenantID, name)
 	if err != nil {
 		return err
 	}
@@ -40,9 +40,9 @@ func (SchedulePolicy) EnsureNoActiveRun(ctx context.Context, repo RunRepo, name 
 }
 
 // ScheduleExistsInCatalog returns run.ErrScheduleNotInCatalog when the named
-// schedule has no active row in schedule_catalog.
-func (SchedulePolicy) ScheduleExistsInCatalog(ctx context.Context, cat CatalogRepo, name string) error {
-	exists, err := cat.ExistsActive(ctx, name)
+// schedule has no active row in the tenant's schedule catalog.
+func (SchedulePolicy) ScheduleExistsInCatalog(ctx context.Context, cat CatalogRepo, tenantID, name string) error {
+	exists, err := cat.ExistsActive(ctx, tenantID, name)
 	if err != nil {
 		return err
 	}

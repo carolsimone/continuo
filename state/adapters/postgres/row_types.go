@@ -14,6 +14,7 @@ import (
 // package by the repository implementations. Domain logic operates on
 // run.Run aggregates; hydrateRun / dehydrateRun translate between the two.
 type RunRow struct {
+	TenantID             string                         `json:"tenant_id" db:"tenant_id"`
 	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"run_id"`
 	ScheduleName         string                         `json:"schedule_name" db:"schedule_name"`
 	Status               run.RunStatus                  `json:"status" db:"status"`
@@ -63,6 +64,7 @@ func (s *RunRow) GetServiceMetadata() (map[string]run.ServiceMetadata, error) {
 // logic operates on run.Task values, and the adapters translate between the
 // two.
 type TaskRow struct {
+	TenantID            string         `json:"tenant_id" db:"tenant_id"`
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
 	ScheduleID          uuid.UUID      `json:"schedule_id" db:"run_id"`
 	CreatedAt           time.Time      `json:"created_at" db:"created_at"`

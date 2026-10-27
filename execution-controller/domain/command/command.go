@@ -15,6 +15,9 @@ type Command interface {
 // Job. It is the payload of a queued deployment and carries everything needed
 // both to create the Job and to report the attempt afterwards.
 type DeployTask struct {
+	// TenantID is the tenant of the dispatch the attempt came from; its
+	// reports are published under it.
+	TenantID     string
 	TaskID       string
 	RunID        string
 	ScheduleName string

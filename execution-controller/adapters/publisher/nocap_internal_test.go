@@ -19,7 +19,11 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV2, EventType: event.EventTypeTaskStatusReport, Payload: payload}
+	stored, err := outbox.WrapTenant("default", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV2, EventType: event.EventTypeTaskStatusReport, Payload: stored}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)

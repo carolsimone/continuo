@@ -32,6 +32,10 @@ type TopologyRepository interface {
 	// none is live.
 	LivePointer(ctx context.Context, tenantID string) (topology.Pointer, error)
 
+	// LivePointers returns the live release of every tenant that has one,
+	// each naming its tenant, in tenant order.
+	LivePointers(ctx context.Context) ([]topology.Pointer, error)
+
 	// SetLivePointer makes p the tenant's live release as of at.
 	SetLivePointer(ctx context.Context, tenantID string, p topology.Pointer, at time.Time) error
 

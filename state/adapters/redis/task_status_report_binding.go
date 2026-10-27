@@ -18,16 +18,18 @@ import (
 )
 
 // NewTaskStatusReportBinding returns a pkg/redis.MessageHandler that turns
-// each task.status.updated:v2 entry into a report, runs dedup, and invokes
-// AttemptReportHandler inside a single Unit-of-Work transaction. The dedup
-// row's payload is the entry's payload field, and its id is threaded to the
-// handler so the task.dispatch:v1 rows the report writes carry provenance back
-// to it.
+// each task.status.updated:v2 entry into a report carrying its envelope's
+// tenant, runs dedup, and invokes AttemptReportHandler inside a single
+// Unit-of-Work transaction. The dedup row's payload is the entry's payload
+// field, and its id is threaded to the handler so the task.dispatch:v1 rows
+// the report writes carry provenance back to it.
 //
-// A report for a run state never created, for a task its run does not hold,
-// for an attempt state never dispatched, or a stopped report of an attempt
-// state never asked to stop, is permanent (permanentWhenNeverValid); every other handler error keeps its class. See
-// bindStreamHandler for the shared pipeline and ACK-policy semantics.
+// A report for a run state never created, for a run of another tenant than
+// its envelope names, for a task its run does not hold, for an attempt state
+// never dispatched, or a stopped report of an attempt state never asked to
+// stop, is permanent (permanentWhenNeverValid); every other handler error
+// keeps its class. See bindStreamHandler for the shared pipeline and
+// ACK-policy semantics.
 func NewTaskStatusReportBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.AttemptReportHandler,
@@ -43,13 +45,14 @@ func NewTaskStatusReportBinding(
 }
 
 // permanentWhenNeverValid wraps handle so that a report for a run with no row
-// (postgres.ErrNotFound, which the run's lock returns), for a task its run
-// does not hold (run.ErrTaskNotHeld), for an attempt the task was never
-// dispatched (run.ErrAttemptNotIssued) or a stopped report of an open attempt
-// state never asked to stop (run.ErrStopNotRequested) is permanent: a run's
-// row and tasks are stored in the transaction that creates it, before any
-// task is dispatched, each attempt's row in the transaction that dispatches
-// it, and a stop is requested in the transaction that cancels the run, so a
+// under the tenant its envelope names (postgres.ErrNotFound, which the run's
+// lock returns), for a task its run does not hold (run.ErrTaskNotHeld), for
+// an attempt the task was never dispatched (run.ErrAttemptNotIssued) or a
+// stopped report of an open attempt state never asked to stop
+// (run.ErrStopNotRequested) is permanent: a run's row and tasks are stored,
+// under the run's tenant, in the transaction that creates it, before any task
+// is dispatched, each attempt's row in the transaction that dispatches it,
+// and a stop is requested in the transaction that cancels the run, so a
 // redelivery can never find any of them, and the consumer dead-letters the
 // message at once.
 func permanentWhenNeverValid[E any](

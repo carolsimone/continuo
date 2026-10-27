@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -25,8 +24,8 @@ import (
 
 type rerunFixture struct {
 	Handler       *RerunHandler
-	SchedulerRepo postgres.RunTableRepository
-	TaskRepo      postgres.TaskRepository
+	SchedulerRepo *postgres.RunRepository
+	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
 	Tenant        string
 	Cleanup       func()
@@ -39,15 +38,14 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
-	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
+	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewRerunHandler(useCase, factory, logger)
 	return &rerunFixture{Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo, DB: db, Tenant: tenant, Cleanup: func() { db.Close() }}
 }
@@ -65,7 +63,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	scheduleName := "rerun-happy-" + uuid.New().String()[:8]
 	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.RunStatusFailed)
 
-	resp, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{
+	resp, err := rfx.Handler.TriggerRerun(tenantCtx(rfx.Tenant), &statev1.TriggerRerunRequest{
 		SourceRunId: srcID.String(),
 	})
 	require.NoError(t, err)
@@ -78,7 +76,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 		rfx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
-	tracker, err := rfx.SchedulerRepo.GetByID(context.Background(), newID)
+	tracker, err := rfx.SchedulerRepo.GetByID(context.Background(), rfx.Tenant, newID)
 	require.NoError(t, err)
 	require.Equal(t, "rerun", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)
@@ -96,27 +94,27 @@ func TestRerunHandler_RejectsASourceWithoutARelease(t *testing.T) {
 	fx := &rebaseFixture{SchedulerRepo: rfx.SchedulerRepo, TaskRepo: rfx.TaskRepo, DB: rfx.DB, Tenant: rfx.Tenant, Cleanup: func() {}}
 
 	srcID := seedRunWithTaskStatus(t, fx, "rerun-rej-norelease-"+uuid.New().String()[:8], run.RunStatusFailed, run.TaskStatusFailed)
-	_, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{SourceRunId: srcID.String()})
+	_, err := rfx.Handler.TriggerRerun(tenantCtx(rfx.Tenant), &statev1.TriggerRerunRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 }
 
 func TestRerunHandler_RejectsEmptySourceRunID(t *testing.T) {
 	rfx := setupRerunFixture(t)
 	defer rfx.Cleanup()
-	_, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{SourceRunId: ""})
+	_, err := rfx.Handler.TriggerRerun(tenantCtx(rfx.Tenant), &statev1.TriggerRerunRequest{SourceRunId: ""})
 	requireGRPCCode(t, err, codes.InvalidArgument)
 }
 
 func TestRerunHandler_RejectsMalformedSourceRunID(t *testing.T) {
 	rfx := setupRerunFixture(t)
 	defer rfx.Cleanup()
-	_, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{SourceRunId: "not-a-uuid"})
+	_, err := rfx.Handler.TriggerRerun(tenantCtx(rfx.Tenant), &statev1.TriggerRerunRequest{SourceRunId: "not-a-uuid"})
 	requireGRPCCode(t, err, codes.InvalidArgument)
 }
 
 func TestRerunHandler_RejectsSourceNotFound(t *testing.T) {
 	rfx := setupRerunFixture(t)
 	defer rfx.Cleanup()
-	_, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{SourceRunId: uuid.New().String()})
+	_, err := rfx.Handler.TriggerRerun(tenantCtx(rfx.Tenant), &statev1.TriggerRerunRequest{SourceRunId: uuid.New().String()})
 	requireGRPCCode(t, err, codes.NotFound)
 }

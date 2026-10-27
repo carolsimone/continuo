@@ -86,12 +86,12 @@ func readLivePointer(ctx context.Context, clients *testClients) livePointer {
 	return p
 }
 
-// catalogPromotionSeq is the promotion seq state's schedule catalog last
-// applied, or -1 when it cannot be read.
+// catalogPromotionSeq is the promotion seq the default tenant's schedule
+// catalog in state last applied, or -1 when it cannot be read.
 func catalogPromotionSeq(ctx context.Context, clients *testClients) int64 {
 	var seq int64
 	if err := clients.stateDB.QueryRowContext(ctx,
-		`SELECT promotion_seq FROM schedule_catalog_state WHERE id = TRUE`).Scan(&seq); err != nil {
+		`SELECT promotion_seq FROM schedule_catalog_state WHERE tenant_id = 'default'`).Scan(&seq); err != nil {
 		return -1
 	}
 	return seq

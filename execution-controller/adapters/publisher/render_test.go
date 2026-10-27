@@ -46,7 +46,7 @@ func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 func TestRender_TypedEventsAreAcceptedByStringifyFields(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	for _, entry := range []*outbox.Entry{
-		{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`{"run_id":"s1","task_id":"t1","attempt":0,"status":"running"}`)},
+		{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: storedRow(t, `{"run_id":"s1","task_id":"t1","attempt":0,"status":"running"}`)},
 	} {
 		values, err := p.Render(entry)
 		require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestRender_TypedEventsAreAcceptedByStringifyFields(t *testing.T) {
 
 func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`{"run_id":"s1","task_id":"t1","status":"queued"}`)}
+	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: storedRow(t, `{"run_id":"s1","task_id":"t1","status":"queued"}`)}
 	first, err := p.Render(entry)
 	require.NoError(t, err)
 	first["event_id"] = "mutated"
@@ -78,7 +78,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	p := NewOutboxPublisher(rdb, nil)
 	entry := &outbox.Entry{
 		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
-		Payload: []byte(`{"run_id":"s1","task_id":"t1","attempt":2,"status":"running"}`),
+		Payload: storedRow(t, `{"run_id":"s1","task_id":"t1","attempt":2,"status":"running"}`),
 	}
 	rendered, err := p.Render(entry)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestRender_ATaskStatusReportIsTheGoldenEntry(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &fx))
 
 			got, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: uuid.MustParse(fx.Input.EventID),
-				EventType: event.EventTypeTaskStatusReport, Payload: fx.Input.Payload, CreatedAt: fx.Input.OccurredAt})
+				EventType: event.EventTypeTaskStatusReport, Payload: storedRow(t, string(fx.Input.Payload)), CreatedAt: fx.Input.OccurredAt})
 			require.NoError(t, err)
 
 			require.Len(t, got, len(fx.Fields))
@@ -133,4 +133,13 @@ func TestRender_ATaskStatusReportIsTheGoldenEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// storedRow is the payload of a report row of the default tenant: the report
+// stored beside its tenant.
+func storedRow(t *testing.T, report string) []byte {
+	t.Helper()
+	stored, err := outbox.WrapTenant("default", []byte(report))
+	require.NoError(t, err)
+	return stored
 }

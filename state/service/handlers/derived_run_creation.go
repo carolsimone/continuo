@@ -37,18 +37,19 @@ type derivedRunCreation struct {
 // inside the creating transaction.
 type selectDerived func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
 
-// create creates the run derived from sourceID with the tasks selectRun
-// chooses, and returns its id and schedule name. A selection the planner
-// refuses is returned as is, and nothing is written.
-func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
-	src, err := u.Run().GetRun(ctx, sourceID)
+// create creates the run derived from tenantID's run sourceID with the tasks
+// selectRun chooses, under the source's tenant, and returns its id and
+// schedule name. Another tenant's sourceID is not found. A selection the
+// planner refuses is returned as is, and nothing is written.
+func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, tenantID string, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
+	src, err := u.Run().GetRun(ctx, tenantID, sourceID)
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 	}
-	if err := c.eligible(ctx, src, u.TaskCollection(c.planner.TenantID)); err != nil {
+	if err := c.eligible(ctx, src, u.TaskCollection(src.TenantID())); err != nil {
 		return uuid.Nil, "", err
 	}
-	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.ScheduleName()); err != nil {
+	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.TenantID(), src.ScheduleName()); err != nil {
 		return uuid.Nil, "", err
 	}
 
@@ -66,7 +67,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	newRun, err := run.NewDerivedRun(src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, err := run.NewDerivedRun(src.TenantID(), src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -81,7 +82,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	}
 	committed = true
 
-	c.logger.Info(c.logLabel, "new_run_id", newRun.RunID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
+	c.logger.Info(c.logLabel, "tenant_id", newRun.TenantID(), "new_run_id", newRun.RunID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
 		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
 	return newRun.RunID(), newRun.ScheduleName(), nil
 }

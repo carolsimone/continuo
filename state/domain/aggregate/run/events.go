@@ -39,6 +39,7 @@ func (e RunFinalized) RunID() uuid.UUID { return e.ID }
 // not answered. Translated to run.cancelled:v1.
 type RunCancelled struct {
 	ID                 uuid.UUID
+	TenantID           string
 	Name               string
 	By                 string
 	CancellationReason string
@@ -58,10 +59,12 @@ func (e RunCancelled) RunID() uuid.UUID { return e.ID }
 // the attempt's number, state's view of the attempt (KnownStatus: dispatched
 // until execution-controller acknowledged it), the node it builds as the run's
 // release holds it, the attempt's Kubernetes Job name, the dbt verb and how
-// long the attempt's container may run. No retry budget travels: state decides
+// long the attempt's container may run. TenantID is the tenant of the run,
+// which the event's outbox row stores. No retry budget travels: state decides
 // every retry.
 type TaskDispatched struct {
 	ID           uuid.UUID
+	TenantID     string
 	ScheduleName string
 	TaskID       uuid.UUID
 	Attempt      int32

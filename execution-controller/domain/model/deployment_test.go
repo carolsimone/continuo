@@ -7,6 +7,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -703,4 +704,10 @@ func TestNewStoppedDeployment_IsDoneAndStopped(t *testing.T) {
 	assert.Equal(t, model.ModeProduction, d.Mode())
 	assert.False(t, d.Status().InFlight())
 	assert.Nil(t, d.DeployedAt(), "no Job was created")
+}
+
+// A release leg is stored under the tenant release-controller stamps on the
+// events that request it, the install's default tenant.
+func TestReleaseLegTenantID_IsTheDefaultTenant(t *testing.T) {
+	assert.Equal(t, pkgevents.DefaultTenantID, model.ReleaseLegTenantID)
 }

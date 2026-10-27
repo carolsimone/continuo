@@ -103,7 +103,7 @@ func startedFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGra
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
 	tc.derived = true
-	_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
+	_, err = r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 	return r, tc, &memTaskGraph{g: g, tc: tc}
 }

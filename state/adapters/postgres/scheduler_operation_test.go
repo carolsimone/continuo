@@ -10,6 +10,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -39,13 +40,13 @@ func discardLogger() *slog.Logger {
 // operation and asserts the reloaded aggregate reports OperationTest.
 func TestRunRow_OperationRoundTrip(t *testing.T) {
 	db := newTestDB(t)
-	// The brief's sample passes a nil logger; runTableRepository.Create
+	// The brief's sample passes a nil logger; RunRepository.Create
 	// logs unconditionally on its success path (r.logger.Info(...)), which
 	// panics on a nil *slog.Logger. Use a discard logger instead, matching the
 	// sibling helper in scheduler_repository_test.go.
-	repo := NewRunTableRepository(db, discardLogger())
+	repo := NewRunRepository(db, discardLogger())
 
-	r, err := run.NewPendingRun("op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.RunID()) })
 
-	got, err := repo.GetByID(context.Background(), r.RunID())
+	got, err := repo.GetByID(context.Background(), r.TenantID(), r.RunID())
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}

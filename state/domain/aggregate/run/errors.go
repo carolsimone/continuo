@@ -46,6 +46,10 @@ var (
 	// allowed wire-stable values.
 	ErrInvalidKind = errors.New("invalid run kind")
 
+	// ErrNoTenant is returned by the run constructors when the tenant id is
+	// empty: every run belongs to a tenant.
+	ErrNoTenant = errors.New("tenant_id is required")
+
 	// ErrScheduleNameRequired is returned by constructors when schedule_name
 	// is empty.
 	ErrScheduleNameRequired = errors.New("schedule_name is required")

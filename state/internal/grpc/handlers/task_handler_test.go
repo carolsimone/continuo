@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestTaskStatusConversion_SkippedRoundTrips guards the regression where a
@@ -50,18 +52,29 @@ func TestTaskStatusConversion_NoDomainStatusIsUnspecified(t *testing.T) {
 	}
 }
 
-// fakeTaskRepo serves fixed tasks to TaskHandler's reads.
+// fakeTaskRepo serves fixed tasks to TaskHandler's reads, whatever the tenant,
+// and records the tenant each request reads.
 type fakeTaskRepo struct {
-	postgres.TaskRepository
-	tasks []*postgres.TaskRow
+	tasks   []*postgres.TaskRow
+	tenants []string
 }
 
-func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskRow, error) {
+// of is the task reads of tenantID.
+func (f *fakeTaskRepo) of(tenantID string) TaskReads {
+	f.tenants = append(f.tenants, tenantID)
+	return f
+}
+
+func (f *fakeTaskRepo) GetRow(_ context.Context, id uuid.UUID) (*postgres.TaskRow, error) {
 	for _, t := range f.tasks {
 		if t.TaskID == id {
 			return t, nil
 		}
 	}
+	return nil, postgres.ErrNotFound
+}
+
+func (f *fakeTaskRepo) GetRowByNode(_ context.Context, _ uuid.UUID, _, _, _ string) (*postgres.TaskRow, error) {
 	return nil, postgres.ErrNotFound
 }
 
@@ -82,14 +95,14 @@ func stampedTask(s run.TaskStatus) *postgres.TaskRow {
 // ListTasks and GetTask report a stopping task as STOPPING.
 func TestTaskHandler_AStoppingTaskIsStopping(t *testing.T) {
 	stopping := stampedTask(run.TaskStatusStopping)
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{stopping}}, newTestLogger())
+	h := NewTaskHandler((&fakeTaskRepo{tasks: []*postgres.TaskRow{stopping}}).of, newTestLogger())
 
-	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: stopping.ScheduleID.String()})
+	list, err := h.ListTasks(requestCtx(), &statev1.ListTasksRequest{ScheduleId: stopping.ScheduleID.String()})
 	require.NoError(t, err)
 	require.Len(t, list.Tasks, 1)
 	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_STOPPING, list.Tasks[0].Status)
 
-	got, err := h.GetTask(context.Background(), &statev1.GetTaskRequest{TaskId: stopping.TaskID.String()})
+	got, err := h.GetTask(requestCtx(), &statev1.GetTaskRequest{TaskId: stopping.TaskID.String()})
 	require.NoError(t, err)
 	assert.Equal(t, statev1.TaskStatus_TASK_STATUS_STOPPING, got.Task.Status)
 }
@@ -114,14 +127,14 @@ func TestDomainToProtoTask_CancelStampsOnlyOnACancelledTask(t *testing.T) {
 // succeeded after its stop was requested.
 func TestTaskHandler_ASucceededTaskThatWasAskedToStopShowsNoCancel(t *testing.T) {
 	done := stampedTask(run.TaskStatusSucceeded)
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{done}}, newTestLogger())
+	h := NewTaskHandler((&fakeTaskRepo{tasks: []*postgres.TaskRow{done}}).of, newTestLogger())
 
-	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: done.ScheduleID.String()})
+	list, err := h.ListTasks(requestCtx(), &statev1.ListTasksRequest{ScheduleId: done.ScheduleID.String()})
 	require.NoError(t, err)
 	assert.Empty(t, list.Tasks[0].CancelledBy)
 	assert.Nil(t, list.Tasks[0].CancelledAt)
 
-	got, err := h.GetTask(context.Background(), &statev1.GetTaskRequest{TaskId: done.TaskID.String()})
+	got, err := h.GetTask(requestCtx(), &statev1.GetTaskRequest{TaskId: done.TaskID.String()})
 	require.NoError(t, err)
 	assert.Empty(t, got.Task.CancelledBy)
 	assert.Nil(t, got.Task.CancelledAt)
@@ -139,9 +152,9 @@ func TestTaskHandler_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 	freed := &postgres.TaskRow{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending,
 		WaitReason: &reason, LeaseWaitSince: &since}
 	idle := &postgres.TaskRow{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending}
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{waiting, freed, idle}}, newTestLogger())
+	h := NewTaskHandler((&fakeTaskRepo{tasks: []*postgres.TaskRow{waiting, freed, idle}}).of, newTestLogger())
 
-	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: waiting.ScheduleID.String()})
+	list, err := h.ListTasks(requestCtx(), &statev1.ListTasksRequest{ScheduleId: waiting.ScheduleID.String()})
 	require.NoError(t, err)
 	require.Len(t, list.Tasks, 3)
 	assert.Equal(t, "node_lease", list.Tasks[0].WaitReason)
@@ -155,8 +168,27 @@ func TestTaskHandler_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 	assert.Empty(t, list.Tasks[2].WaitingOnRunId)
 	assert.Nil(t, list.Tasks[2].WaitingSince)
 
-	got, err := h.GetTask(context.Background(), &statev1.GetTaskRequest{TaskId: waiting.TaskID.String()})
+	got, err := h.GetTask(requestCtx(), &statev1.GetTaskRequest{TaskId: waiting.TaskID.String()})
 	require.NoError(t, err)
 	assert.Equal(t, "node_lease", got.Task.WaitReason)
 	assert.Equal(t, holderRun.String(), got.Task.WaitingOnRunId)
+}
+
+// Every task read a request makes reads the request's tenant's tasks.
+func TestTaskHandler_ReadsTheRequestsTenant(t *testing.T) {
+	task := stampedTask(run.TaskStatusRunning)
+	repo := &fakeTaskRepo{tasks: []*postgres.TaskRow{task}}
+	h := NewTaskHandler(repo.of, newTestLogger())
+	ctx := tenantCtx("acme")
+
+	_, err := h.GetTask(ctx, &statev1.GetTaskRequest{TaskId: task.TaskID.String()})
+	require.NoError(t, err)
+	_, err = h.GetTaskByScheduleAndNode(ctx, &statev1.GetTaskByScheduleAndNodeRequest{
+		ScheduleId: task.ScheduleID.String(), ServiceName: "svc", SchemaName: "raw", TableName: "a",
+	})
+	assert.Equal(t, codes.NotFound, status.Code(err), "the fake holds no task at that node")
+	_, err = h.ListTasks(ctx, &statev1.ListTasksRequest{ScheduleId: task.ScheduleID.String()})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", "acme", "acme"}, repo.tenants)
 }

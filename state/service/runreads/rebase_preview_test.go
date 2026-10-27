@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -24,10 +25,15 @@ import (
 type sourceRuns struct {
 	repository.RunRepository
 	source *run.Run
+	// tenants records the tenant of each read.
+	tenants []string
 }
 
-func (r *sourceRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) { return r.source, nil }
-func (r *sourceRuns) HasActiveRun(context.Context, string) (bool, error) {
+func (r *sourceRuns) GetRun(_ context.Context, tenantID string, _ uuid.UUID) (*run.Run, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return r.source, nil
+}
+func (r *sourceRuns) HasActiveRun(context.Context, string, string) (bool, error) {
 	return true, nil
 }
 
@@ -63,7 +69,7 @@ type durations struct {
 	asked [][]run.NodeID
 }
 
-func (d *durations) LastSuccessDurations(_ context.Context, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
+func (d *durations) LastSuccessDurations(_ context.Context, _ string, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	d.asked = append(d.asked, nodes)
 	out := map[run.NodeID]time.Duration{}
 	for _, n := range nodes {
@@ -104,7 +110,7 @@ type previewFixture struct {
 func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &previewFixture{
@@ -134,11 +140,12 @@ func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 // schedule's active run does not refuse it.
 func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	f := newPreviewFixture(t, run.RunStatusFailed)
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	got, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
+	got, err := p.Preview(context.Background(), pkgevents.DefaultTenantID, f.runs.source.RunID(), true)
 
 	require.NoError(t, err)
+	assert.Equal(t, []string{pkgevents.DefaultTenantID}, f.runs.tenants, "the source is read under the tenant given")
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, got.Release)
 	assert.Equal(t, []runreads.ChangedUpstream{
 		{
@@ -156,7 +163,7 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	assert.Equal(t, 1, f.u.RollbackCalled)
 	assert.Equal(t, 0, f.u.CommitCalled)
 
-	off, err := p.Preview(context.Background(), f.runs.source.RunID(), false)
+	off, err := p.Preview(context.Background(), pkgevents.DefaultTenantID, f.runs.source.RunID(), false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, off.Preview.ChangedUpstream)
 	assert.Equal(t, got.Changed, off.Changed)
@@ -166,9 +173,9 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 // transaction begins.
 func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
 	f := newPreviewFixture(t, run.RunStatusSucceeded)
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	_, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
+	_, err := p.Preview(context.Background(), pkgevents.DefaultTenantID, f.runs.source.RunID(), true)
 
 	require.ErrorIs(t, err, run.ErrSourceMustBeTerminallyFailedOrCancelled)
 	assert.Equal(t, 0, f.u.BeginCalled)
@@ -179,9 +186,9 @@ func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
 func TestRebasePreviewer_ReturnsTheSelectionsRefusal(t *testing.T) {
 	f := newPreviewFixture(t, run.RunStatusFailed)
 	f.u.TopologyRepo = &releaseGraphs{}
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
-	_, err := p.Preview(context.Background(), f.runs.source.RunID(), true)
+	_, err := p.Preview(context.Background(), pkgevents.DefaultTenantID, f.runs.source.RunID(), true)
 
 	require.ErrorIs(t, err, runplan.ErrEmptySelection, "no release is live")
 	assert.Equal(t, 1, f.u.RollbackCalled)

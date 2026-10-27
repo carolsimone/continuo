@@ -13,8 +13,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// readyCandidatesQuery reads the pending, undispatched tasks of run $2 that
-// read node $4 directly over release $3's edges, with their Job names and the
+// readyCandidatesQuery reads the pending, undispatched tasks of tenant $1's run
+// $2 that read node $4 directly over release $3's edges, with their Job names and the
 // statuses of their upstream tasks in the run. Each lookup is an index probe:
 // topology_edges by its primary key prefix (tenant, release, upstream) or by
 // idx_topology_edges_downstream, tasks by uq_tasks_run_node.
@@ -26,22 +26,22 @@ const readyCandidatesQuery = `
 	           SELECT ut.status::text
 	           FROM topology_edges ue
 	           JOIN tasks ut
-	             ON ut.run_id = t.run_id AND ut.node_key = ue.upstream_key
+	             ON ut.tenant_id = t.tenant_id AND ut.run_id = t.run_id AND ut.node_key = ue.upstream_key
 	           WHERE ue.tenant_id = e.tenant_id AND ue.release_id = e.release_id
 	             AND ue.downstream_key = e.downstream_key
 	           ORDER BY ue.upstream_key COLLATE "C"
 	       ) AS upstream_statuses
 	FROM topology_edges e
 	JOIN tasks t
-	  ON t.run_id = $2 AND t.node_key = e.downstream_key
+	  ON t.tenant_id = e.tenant_id AND t.run_id = $2 AND t.node_key = e.downstream_key
 	JOIN topology_nodes n
 	  ON n.tenant_id = e.tenant_id AND n.release_id = e.release_id AND n.node_key = e.downstream_key
 	WHERE e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = $4
 	  AND t.status = 'pending' AND t.dispatched_at IS NULL
 	ORDER BY e.downstream_key COLLATE "C"`
 
-// pendingDescendantsQuery walks release $3's edges down from node $4 through
-// the pending, undispatched tasks of run $2. UNION keeps each node once, so
+// pendingDescendantsQuery walks tenant $1's release $3's edges down from node
+// $4 through the pending, undispatched tasks of run $2. UNION keeps each node once, so
 // the walk expands every node once however many paths reach it. Each reached
 // task carries its id out of the walk, so nothing is joined after it.
 const pendingDescendantsQuery = `
@@ -49,7 +49,7 @@ const pendingDescendantsQuery = `
 	    SELECT t.node_key, t.task_id
 	    FROM topology_edges e
 	    JOIN tasks t
-	      ON t.run_id = $2 AND t.node_key = e.downstream_key
+	      ON t.tenant_id = e.tenant_id AND t.run_id = $2 AND t.node_key = e.downstream_key
 	    WHERE e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = $4
 	      AND t.status = 'pending' AND t.dispatched_at IS NULL
 	  UNION
@@ -58,7 +58,7 @@ const pendingDescendantsQuery = `
 	    JOIN topology_edges e
 	      ON e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = b.node_key
 	    JOIN tasks t
-	      ON t.run_id = $2 AND t.node_key = e.downstream_key
+	      ON t.tenant_id = e.tenant_id AND t.run_id = $2 AND t.node_key = e.downstream_key
 	    WHERE t.status = 'pending' AND t.dispatched_at IS NULL
 	)
 	SELECT task_id FROM blocked ORDER BY node_key COLLATE "C"`

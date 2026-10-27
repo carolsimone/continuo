@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -30,15 +31,15 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 )
 
-// firstPromoteSeedRunID is the id a release's first promote-seed run has
-// always carried: UUIDv5 of the release under the fixed promote-seed
-// namespace.
-func firstPromoteSeedRunID(releaseID string) uuid.UUID {
-	return uuid.NewSHA1(uuid.MustParse("3e7b1a2f-8c4d-4e9a-b5f0-1d2c3a4e5f60"), []byte("schedule:"+releaseID))
+// firstPromoteSeedRunID is the id of the first promote-seed run of a release
+// of the harness's tenant.
+func (h *reconcileHarness) firstPromoteSeedRunID(releaseID string) uuid.UUID {
+	return seeds.RunID(h.tenant, releaseID, 1)
 }
 
 // reconcileHarness runs the seed reconcile, alone and inside state's
-// release.promoted:v2 binding, against one tenant of its own.
+// release.promoted:v2 binding, with releases of one tenant of its own. A pass
+// of the reconciler covers every tenant with a live release.
 type reconcileHarness struct {
 	db         *sqlx.DB
 	tenant     string
@@ -50,14 +51,11 @@ type reconcileHarness struct {
 
 func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
 	}
 	tenant := "t-" + uuid.NewString()
-	reconciler := seedreconcile.New(factory, false, tenant, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
+	reconciler := seedreconcile.New(factory, false, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{
@@ -156,7 +154,7 @@ func TestSeedReconcile(t *testing.T) {
 
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 
-		runID := firstPromoteSeedRunID(releaseID)
+		runID := h.firstPromoteSeedRunID(releaseID)
 		require.Equal(t, []uuid.UUID{runID}, h.promoteSeedRuns(t, releaseID), "the release's first run keeps its id")
 		var runRow struct {
 			Name   string `db:"schedule_name"`
@@ -177,8 +175,11 @@ func TestSeedReconcile(t *testing.T) {
 		}
 		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
 		assert.Equal(t, streams.TaskDispatchV1, outbox.StreamName, "the run dispatches the seed as it is created")
+		tenantID, wire, err := pkgoutbox.UnwrapTenant(outbox.Payload)
+		require.NoError(t, err)
+		assert.Equal(t, h.tenant, tenantID, "the dispatch is stored under the run's tenant")
 		var payload map[string]any
-		require.NoError(t, json.Unmarshal(outbox.Payload, &payload))
+		require.NoError(t, json.Unmarshal(wire, &payload))
 		assert.Equal(t, runID.String(), payload["run_id"])
 		assert.Equal(t, run.TaskIDFor(h.tenant, runID, "raw.orders").String(), payload["task_id"])
 		assert.Equal(t, "orders", payload["table_name"])
@@ -189,7 +190,7 @@ func TestSeedReconcile(t *testing.T) {
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a second pass while the run is running creates nothing")
 		assert.Equal(t, 1, h.seedDispatches(t, releaseID))
 
-		_, err := db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
+		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
 		require.NoError(t, err)
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a failed load of the live content is not retried")
@@ -213,7 +214,7 @@ func TestSeedReconcile(t *testing.T) {
 
 		require.NoError(t, errs[0])
 		require.NoError(t, errs[1])
-		assert.Equal(t, []uuid.UUID{firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
+		assert.Equal(t, []uuid.UUID{h.firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
 		assert.Equal(t, 2, h.seedDispatches(t, releaseID), "the one run dispatches each seed once")
 	})
 
@@ -232,17 +233,17 @@ func TestSeedReconcile(t *testing.T) {
 		orders := h.materialization(t, "raw.orders")
 		assert.Empty(t, orders.ContentHash)
 		assert.Equal(t, "sha256:orders", orders.AttemptContentHash)
-		assert.Equal(t, []uuid.UUID{firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
+		assert.Equal(t, []uuid.UUID{h.firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
 	})
 
 	t.Run("a first promotion whose release already has its first run adopts every seed", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		releaseID := "rel-" + uuid.NewString()[:8]
-		existing := firstPromoteSeedRunID(releaseID)
+		existing := h.firstPromoteSeedRunID(releaseID)
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
-			VALUES ($1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
-			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8])
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
+			VALUES ($3, $1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
+			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8], h.tenant)
 		require.NoError(t, err)
 
 		h.promote(t, releaseID, 2, false, []string{"raw.orders"},
@@ -256,7 +257,7 @@ func TestSeedReconcile(t *testing.T) {
 	t.Run("a seed that leaves the release and returns while its build runs is not built a second time", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		rel1, rel2, rel3 := "rel-1-"+uuid.NewString()[:8], "rel-2-"+uuid.NewString()[:8], "rel-3-"+uuid.NewString()[:8]
-		run1 := firstPromoteSeedRunID(rel1)
+		run1 := h.firstPromoteSeedRunID(rel1)
 
 		h.promote(t, rel1, 1, false, []string{"raw.orders"}, seedAt("orders", "sha256:orders-1"), seedAt("users", "sha256:users-1"))
 		require.Equal(t, []uuid.UUID{run1}, h.promoteSeedRuns(t, rel1), "the first release builds orders")
@@ -280,6 +281,32 @@ func TestSeedReconcile(t *testing.T) {
 		require.Len(t, h.promoteSeedRuns(t, rel3), 1, "orders is loaded at its live content once the earlier build is over")
 		assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, h.promoteSeedRuns(t, rel3)[0]))
 		assert.Equal(t, "sha256:orders-3", h.materialization(t, "raw.orders").AttemptContentHash)
+	})
+
+	t.Run("one pass builds each tenant's live seeds under that tenant", func(t *testing.T) {
+		ours, theirs := newReconcileHarness(db), newReconcileHarness(db)
+		ourRelease, theirRelease := "rel-"+uuid.NewString()[:8], "rel-"+uuid.NewString()[:8]
+		ours.liveRelease(t, ourRelease, 5, promotedNode("raw", "orders", "dbt-seed"))
+		theirs.liveRelease(t, theirRelease, 2, promotedNode("raw", "orders", "dbt-seed"))
+		ours.loaded(t, "raw", "orders", "sha256:previous")
+		theirs.loaded(t, "raw", "orders", "sha256:previous")
+
+		require.NoError(t, ours.reconciler.RunOnce(ctx))
+
+		for _, h := range []struct {
+			h       *reconcileHarness
+			release string
+		}{{ours, ourRelease}, {theirs, theirRelease}} {
+			runID := h.h.firstPromoteSeedRunID(h.release)
+			require.Equal(t, []uuid.UUID{runID}, h.h.promoteSeedRuns(t, h.release), "each tenant's live release gets its own run")
+			assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM runs WHERE tenant_id = $1 AND run_id = $2`, h.h.tenant, runID),
+				"the run is its release's tenant's")
+			orders := h.h.materialization(t, "raw.orders")
+			assert.Equal(t, "sha256:orders", orders.AttemptContentHash, "the build request is the tenant's own")
+			assert.Equal(t, uuid.NullUUID{UUID: runID, Valid: true}, orders.AttemptRunID)
+			assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM tasks WHERE tenant_id = $1 AND run_id = $2`, h.h.tenant, runID),
+				"the run's task is its tenant's")
+		}
 	})
 
 	t.Run("a bootstrap release adopts nothing and builds every seed with a content hash", func(t *testing.T) {
@@ -322,8 +349,8 @@ func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []st
 	t.Helper()
 	var tables []string
 	require.NoError(t, h.db.Select(&tables, `
-		SELECT payload->>'table_name' FROM state_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`, runID, streams.TaskDispatchV1))
+		SELECT payload->'payload'->>'table_name' FROM state_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->'payload'->>'table_name'`, runID, streams.TaskDispatchV1))
 	return tables
 }
 
@@ -349,7 +376,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	h.promote(t, relC, 3, false, []string{"raw.orders", "raw.users"}, seedAt("orders", "sha256:orders-c"), seedAt("users", "sha256:users-c"))
 
 	require.Equal(t, topology.Pointer{ReleaseID: relC, PromotionSeq: 3}, livePointerOf(t, db, h.tenant))
-	runA, runC := firstPromoteSeedRunID(relA), firstPromoteSeedRunID(relC)
+	runA, runC := h.firstPromoteSeedRunID(relA), h.firstPromoteSeedRunID(relC)
 	assert.Equal(t, []uuid.UUID{runA}, h.promoteSeedRuns(t, relA), "the first release builds orders")
 	assert.Empty(t, h.promoteSeedRuns(t, relB), "orders is already being built and users is as loaded")
 	assert.Equal(t, []uuid.UUID{runC}, h.promoteSeedRuns(t, relC), "the third release builds users")
@@ -384,7 +411,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 
 	require.NoError(t, h.reconciler.RunOnce(ctx))
 
-	followUp := seeds.RunID(relC, 2)
+	followUp := seeds.RunID(h.tenant, relC, 2)
 	assert.Equal(t, []uuid.UUID{runC, followUp}, h.promoteSeedRuns(t, relC), "the live release's second run loads the content orders is missing")
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, followUp))
 	orders = h.materialization(t, "raw.orders")

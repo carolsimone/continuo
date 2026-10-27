@@ -10,29 +10,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newSchemaTask inserts one run and one task of it, and deletes the run (and
-// through it the task and its attempts) when the test ends.
+// newSchemaTask inserts one run of the default tenant and one task of it, and
+// deletes the run (and through it the task and its attempts) when the test
+// ends.
 func newSchemaTask(t *testing.T, db *sqlx.DB) uuid.UUID {
+	t.Helper()
+	return newSchemaTaskOf(t, db, "default")
+}
+
+// newSchemaTaskOf inserts one run of tenant and one task of it, and deletes
+// the run (and through it the task and its attempts) when the test ends.
+func newSchemaTaskOf(t *testing.T, db *sqlx.DB, tenant string) uuid.UUID {
 	t.Helper()
 	scheduleID, taskID := uuid.New(), uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status)
-		VALUES ($1, $2, 'running')`, scheduleID, "schema-"+scheduleID.String())
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status)
+		VALUES ($3, $1, $2, 'running')`, scheduleID, "schema-"+scheduleID.String(), tenant)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 	_, err = db.Exec(`
-		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
-		VALUES ($1, $2, 'svc', 'sch', 'tbl', 'job-0', 'pending', 2)`, taskID, scheduleID)
+		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'sch', 'tbl', 'job-0', 'pending', 2)`, taskID, scheduleID)
 	require.NoError(t, err)
 	return taskID
 }
 
 func insertAttempt(db *sqlx.DB, taskID uuid.UUID, attempt int, status string) error {
 	_, err := db.Exec(`
-		INSERT INTO task_attempts (task_id, attempt, job_name, status)
-		VALUES ($1, $2, $3, $4)`, taskID, attempt, "job-name", status)
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status)
+		VALUES ((SELECT tenant_id FROM tasks WHERE task_id = $1), $1, $2, $3, $4)`, taskID, attempt, "job-name", status)
 	return err
 }
 
@@ -51,11 +59,13 @@ func TestTaskAttemptsSchema_DeletingATaskDeletesItsAttempts(t *testing.T) {
 	assert.Zero(t, n)
 }
 
-// An attempt belongs to a stored task.
+// An attempt belongs to a stored task of its tenant.
 func TestTaskAttemptsSchema_AnAttemptNeedsItsTask(t *testing.T) {
 	db := newTestDB(t)
 
-	err := insertAttempt(db, uuid.New(), 0, "running")
+	_, err := db.Exec(`
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status)
+		VALUES ('default', $1, 0, 'job-name', 'running')`, uuid.New())
 
 	require.Error(t, err)
 	assert.Equal(t, "23503", pqCode(t, err))

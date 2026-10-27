@@ -22,11 +22,12 @@ import (
 func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "progress-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -43,16 +44,16 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		tx, err := db.BeginTxx(ctx, nil)
 		require.NoError(t, err)
 		defer tx.Rollback()
-		runRepo := postgres.NewRunRepository(tx, schedRepo)
-		rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
+		runRepo := schedRepo.WithTx(tx)
+		rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 		require.NoError(t, err)
-		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx, "default"))
+		mutate(rn, taskRepo.ForTenant("default").WithTx(tx))
 		require.NoError(t, runRepo.SaveRun(ctx, rn))
 		require.NoError(t, tx.Commit())
 	}
 	heartbeat := func() time.Time {
 		t.Helper()
-		got, err := schedRepo.GetByID(ctx, scheduleID)
+		got, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 		require.NoError(t, err)
 		require.NotNil(t, got.LastProgressAt, "last_progress_at must be persisted")
 		return *got.LastProgressAt
@@ -65,7 +66,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	plan, err := runplan.SingleNode{Key: "public.tbl", ServiceName: "svc"}.Select(g)
 	require.NoError(t, err)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
-		_, err := rn.Start(ctx, tasks, "default", plan, g, testTaskDefaults, dispatchedAt)
+		_, err := rn.Start(ctx, tasks, plan, g, testTaskDefaults, dispatchedAt)
 		require.NoError(t, err)
 	})
 	taskID := run.TaskIDFor("default", scheduleID, "public.tbl")

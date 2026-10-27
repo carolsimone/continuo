@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"google.golang.org/grpc/metadata"
 )
@@ -137,5 +138,51 @@ func TestUnaryServerInterceptor_NoMetadata_SystemOnContext(t *testing.T) {
 	}
 	if !seen.IsSystem() {
 		t.Fatalf("handler saw UserID %q, want system", seen.UserID)
+	}
+}
+
+// Every request a gRPC server serves acts for the default tenant: the
+// interceptor stores it beside the identity, whatever the metadata carries,
+// a tenant a caller names included.
+func TestUnaryServerInterceptor_StoresTheDefaultTenant(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"no metadata": context.Background(),
+		"a user": metadata.NewIncomingContext(context.Background(),
+			metadata.New(map[string]string{identity.MetadataKey: "okta|alice"})),
+		"a tenant named in the metadata": metadata.NewIncomingContext(context.Background(),
+			metadata.New(map[string]string{"tenant_id": "acme", "x-continuo-tenant-id": "acme"})),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var seen string
+			_, err := identity.UnaryServerInterceptor()(ctx, nil, nil, func(innerCtx context.Context, _ interface{}) (interface{}, error) {
+				seen = identity.TenantFromContext(innerCtx)
+				return nil, nil
+			})
+			if err != nil {
+				t.Fatalf("interceptor returned error: %v", err)
+			}
+			if seen != pkgevents.DefaultTenantID {
+				t.Fatalf("handler saw tenant %q, want %q", seen, pkgevents.DefaultTenantID)
+			}
+		})
+	}
+}
+
+// A context no interceptor placed a tenant on carries none: there is no
+// fallback tenant, so a caller can refuse the request instead of guessing.
+func TestTenantFromContext_NoTenantIsEmpty(t *testing.T) {
+	if got := identity.TenantFromContext(context.Background()); got != "" {
+		t.Fatalf("TenantFromContext with no value = %q, want empty", got)
+	}
+}
+
+// WithTenant places the tenant a request acts for on its context.
+func TestWithTenant_RoundTrips(t *testing.T) {
+	ctx := identity.WithTenant(context.Background(), "acme")
+	if got := identity.TenantFromContext(ctx); got != "acme" {
+		t.Fatalf("TenantFromContext = %q, want acme", got)
+	}
+	if !identity.FromContext(ctx).IsSystem() {
+		t.Fatal("placing a tenant must not place an identity")
 	}
 }

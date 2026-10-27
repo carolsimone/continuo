@@ -40,6 +40,7 @@ func fixtureDispatch(t *testing.T) goredis.XMessage {
 func TestParseTaskDispatch_ReadsTheGoldenEntry(t *testing.T) {
 	evt, err := ParseTaskDispatch(fixtureDispatch(t))
 	require.NoError(t, err)
+	assert.Equal(t, "default", evt.TenantID)
 	assert.Equal(t, uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"), evt.RunID)
 	assert.Equal(t, uuid.MustParse("3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"), evt.TaskID)
 	assert.Equal(t, 1, evt.Attempt)
@@ -53,6 +54,17 @@ func TestParseTaskDispatch_ReadsTheGoldenEntry(t *testing.T) {
 func TestParseTaskDispatch_AnEntryWithoutItsAttemptIsPermanent(t *testing.T) {
 	msg := fixtureDispatch(t)
 	msg.Values["payload"] = `{"run_id":"7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b","task_id":"3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"}`
+
+	_, err := ParseTaskDispatch(msg)
+
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
+// An entry that names no tenant is dead-lettered: its attempt's reports could
+// not be published under one.
+func TestParseTaskDispatch_AnEntryWithoutATenantIsPermanent(t *testing.T) {
+	msg := fixtureDispatch(t)
+	msg.Values["tenant_id"] = ""
 
 	_, err := ParseTaskDispatch(msg)
 

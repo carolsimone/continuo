@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
-
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -95,5 +93,5 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, nil))
 }
 
-// defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
+// defaultPlanner plans runs with the task defaults state's main uses.
+var defaultPlanner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}

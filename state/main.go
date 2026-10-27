@@ -14,7 +14,6 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -183,10 +182,10 @@ func main() {
 	}
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	runRepo := postgres.NewRunRepository(db, logger)
+	catalogRepo := postgres.NewCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskCollection := postgres.NewTaskCollection(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -270,17 +269,18 @@ func main() {
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
-	// returns a fresh PostgresUnitOfWork over the same low-level repos and
-	// *sqlx.DB so concurrent message handlers do not share transaction state.
+	// returns a fresh PostgresUnitOfWork over the same *sqlx.DB, so concurrent
+	// message handlers do not share transaction state.
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
 	// TaskCollection) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update
-	// can dispatch or skip its tasks. It is cancelled before any consumer
-	// starts, so its Jobs are suppressed and its schedule is free to run again.
+	// can dispatch or skip its tasks. Every such run, of any tenant, is
+	// cancelled under its own tenant before any consumer starts, so its Jobs
+	// are suppressed and its schedule is free to run again.
 	settled, err := runsettle.Settle(ctx, uowFactory, logger)
 	if err != nil {
 		logger.Error("Failed to cancel the active runs state did not plan", "error", err)
@@ -329,13 +329,14 @@ func main() {
 	}
 	// The seed reconcile loads the dbt seeds whose live content the warehouse
 	// does not hold. It runs inside every release.promoted:v2 transaction that
-	// moves the live release, and every seedReconcileInterval from the loop
-	// started below; maintenance mode stops it creating runs.
+	// moves a tenant's live release, for that tenant, and every
+	// seedReconcileInterval from the loop started below, once per tenant with
+	// a live release; maintenance mode stops it creating runs.
 	// Every task state plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
 	runMetrics := statemetrics.NewRunMetrics(metricsReg)
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, taskDefaults, logger)
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every state consumer is the same shape: a domain handler wrapped by a
@@ -362,7 +363,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, logger), logger),
 		},
 		{
 			name:    "release_promoted",
@@ -383,19 +384,20 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
-	// The lease waker grants each node whose write lease is free to the task
-	// that has waited longest for it, and deletes the leases of tasks that
-	// ended without releasing them.
-	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+	// The lease waker grants each node of each tenant whose write lease is
+	// free to the tenant's task that has waited longest for it, and deletes
+	// the leases of tasks that ended without releasing them.
+	leaseWaker := leasewaker.New(uowFactory, taskDefaults, runMetrics, logger)
 
-	// The attempt reconcile asks execution-controller about every attempt
-	// nothing was heard of within its window and fails every run left with
-	// nothing in flight as stalled. Under the lock of a run it would fail, it
-	// first grants each free node the run's waiting task is next in line for,
-	// so a lease wait a grant can serve is never failed; the lease waker pass
-	// it runs before each stall scan grants most freed nodes before the scan.
+	// The attempt reconcile asks execution-controller about every attempt, of
+	// any tenant, nothing was heard of within its window and fails every run
+	// left with nothing in flight as stalled, each under its own tenant.
+	// Under the lock of a run it would fail, it first grants each free node
+	// the run's waiting task is next in line for, so a lease wait a grant can
+	// serve is never failed; the lease waker pass it runs before each stall
+	// scan grants most freed nodes before the scan.
 	// Its goroutine is tracked, so shutdown waits for a pass in progress.
-	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, leaseWaker.Pass, logger)
+	attemptReconciler := attemptreconcile.New(uowFactory, taskDefaults, runMetrics, leaseWaker.Pass, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
 
 	// The lease waker passes at startup, on every notification node_leases'
@@ -416,9 +418,10 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
 	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
-	// The cron loop and the gRPC entry points plan their runs for the default
-	// tenant; the seed reconcile builds its own planner for each pass.
-	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: taskDefaults}
+	// The cron loop and the gRPC entry points plan each run for the tenant its
+	// entry point chose; the seed reconcile builds its own planner for each
+	// pass.
+	planner := runstart.Planner{Tasks: taskDefaults}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewStartRunHandler(planner, logger)
@@ -452,9 +455,11 @@ func main() {
 	}
 	logger.Info("Cron scheduler started")
 
-	// Initialize gRPC handlers
-	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	// Initialize gRPC handlers. Each request acts for the tenant the identity
+	// interceptor placed on its context; the task and node-run reads are bound
+	// to that tenant per request.
+	schedulerHandler := handlers.NewSchedulerHandler(runRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
+	taskHandler := handlers.NewTaskHandler(func(tenantID string) handlers.TaskReads { return taskCollection.ForTenant(tenantID) }, logger)
 	taskAttemptHandler := handlers.NewTaskAttemptHandler(taskAttemptReadRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
@@ -464,8 +469,10 @@ func main() {
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
+	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
+		return postgres.NewNodeRunRepository(db, tenantID, logger)
+	}
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server

@@ -24,20 +24,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// errNoRunRow is what fakeTaskStatusRunRepo answers for a run it does not
+// hold, as a lock of a run with no row does.
+var errNoRunRow = errors.New("no run row")
+
 // fakeTaskStatusRunRepo is an in-memory RunRepository for
-// AttemptReportHandler tests. LoadRunForUpdate returns the stored run;
-// SaveRun records the call and stores the updated aggregate. Other methods
-// panic on accidental use.
+// AttemptReportHandler tests. LoadRunForUpdate returns the stored run under
+// its own tenant, and records the tenant of each lock; SaveRun records the
+// call and stores the updated aggregate. Other methods panic on accidental
+// use.
 type fakeTaskStatusRunRepo struct {
-	stored     *run.Run
-	loadErr    error
-	saveErr    error
-	saveCalled bool
+	stored      *run.Run
+	loadErr     error
+	saveErr     error
+	saveCalled  bool
+	loadTenants []string
 }
 
-func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, tenantID string, _ uuid.UUID) (*run.Run, error) {
+	f.loadTenants = append(f.loadTenants, tenantID)
 	if f.loadErr != nil {
 		return nil, f.loadErr
+	}
+	if f.stored != nil && f.stored.TenantID() != tenantID {
+		return nil, errNoRunRow
 	}
 	return f.stored, nil
 }
@@ -51,26 +61,26 @@ func (f *fakeTaskStatusRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+func (f *fakeTaskStatusRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
 	panic("HasActiveRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
 	panic("GetActiveRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
+func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+func (f *fakeTaskStatusRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context) ([]repository.RunRef, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *fakeTaskStatusRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+func (f *fakeTaskStatusRunRepo) CountReleaseRuns(_ context.Context, _, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not implemented in fake")
 }
 
@@ -281,7 +291,7 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 
 // newRunningTaskStatusRunOfKind is newRunningTaskStatusRun for a run of kind.
 func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, total, terminal int32) *run.Run {
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		run.RunStatusRunning,
 		run.InitStatusCompleted,
@@ -306,7 +316,7 @@ func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.RunStatus) *
 // newTerminalTaskStatusRunOfKind is newTerminalTaskStatusRun for a run of kind.
 func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, status run.RunStatus) *run.Run {
 	now := time.Now()
-	return run.HydrateRun(
+	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		status,
 		run.InitStatusCompleted,
@@ -333,9 +343,9 @@ func (f *fakeTaskStatusTaskCollection) held(taskID uuid.UUID, n int32, status ru
 	return f
 }
 
-// report is a report of attempt n of taskID in runID.
+// report is a report, of the default tenant, of attempt n of taskID in runID.
 func report(runID, taskID uuid.UUID, n int32, status run.AttemptStatus) events.AttemptReported {
-	r := events.AttemptReported{RunID: runID, Report: run.AttemptReport{TaskID: taskID, Attempt: n, Status: status}}
+	r := events.AttemptReported{TenantID: pkgevents.DefaultTenantID, RunID: runID, Report: run.AttemptReport{TaskID: taskID, Attempt: n, Status: status}}
 	if status == run.AttemptFailed {
 		r.Report.FailureReason = model.FailureReasonExitCode
 	}
@@ -347,7 +357,7 @@ func newAttemptReportHandler() *handlers.AttemptReportHandler {
 }
 
 func newAttemptReportHandlerWith(metrics *fakeRunMetrics) *handlers.AttemptReportHandler {
-	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
+	return handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
 }
 
 // fakeRunMetrics records the cancel durations the handler observes.
@@ -370,7 +380,7 @@ func (c fixedClock) Now() time.Time { return c.t }
 func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.FakeUnitOfWork, events.AttemptReported) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	total, by := int32(1), "alice"
-	cancelling := run.HydrateRun(scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
+	cancelling := run.HydrateRun(pkgevents.DefaultTenantID, scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
@@ -547,6 +557,38 @@ func TestAttemptReport_AReportThatCanNeverApplyFailsTheMessage(t *testing.T) {
 	}
 }
 
+// A report locks its run under the tenant it carries, its envelope's, and
+// applies under the run's tenant. A report naming a run of another tenant
+// finds no run: the lock's error is returned, which the binding marks
+// permanent, and nothing is read, saved or written.
+func TestAttemptReport_LoadsTheRunUnderTheReportsTenant(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 1, 0)}
+	outbox := &fakeTaskStatusOutboxPub{}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
+	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	rep := report(scheduleID, taskID, 0, run.AttemptSucceeded)
+	rep.TenantID = "acme"
+
+	err := newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New())
+
+	require.ErrorIs(t, err, errNoRunRow)
+	assert.Equal(t, []string{"acme"}, runRepo.loadTenants)
+	assert.False(t, runRepo.saveCalled)
+	assert.Empty(t, outbox.appended)
+	assert.Empty(t, taskColl.lockOrder, "no task or attempt of another tenant's run is read")
+
+	rep.TenantID = pkgevents.DefaultTenantID
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
+	assert.Equal(t, []string{"acme", pkgevents.DefaultTenantID}, runRepo.loadTenants)
+	assert.True(t, runRepo.saveCalled)
+	require.NotEmpty(t, u.TaskCollectionTenants)
+	for _, tenant := range u.TaskCollectionTenants {
+		assert.Equal(t, pkgevents.DefaultTenantID, tenant, "the report applies under the run's tenant")
+	}
+}
+
 // A LoadRunForUpdate failure short-circuits the handler before any mutation.
 func TestAttemptReport_LoadRunErrorPropagates(t *testing.T) {
 	runRepo := &fakeTaskStatusRunRepo{loadErr: errors.New("row lock failed")}
@@ -633,7 +675,7 @@ func (c taskStatusClock) Now() time.Time { return c.at }
 // plannedRun builds a RUNNING run of total tasks, none terminal, that state
 // planned on releaseID with operation op.
 func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32) *run.Run {
-	r := run.HydrateRun(
+	r := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusRunning,
 		run.InitStatusCompleted,

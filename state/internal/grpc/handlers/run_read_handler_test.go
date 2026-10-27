@@ -14,7 +14,9 @@ import (
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
+	"github.com/carolsimone/continuo/state/domain/repository"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/carolsimone/continuo/state/service/runreads"
 )
 
 type fakeRunReader struct {
@@ -28,17 +30,70 @@ type fakeRunReader struct {
 	gotOff  int
 }
 
-func (f *fakeRunReader) GetRunGraph(context.Context, uuid.UUID) (projection.RunGraph, error) {
+func (f *fakeRunReader) GetRunGraph(context.Context, string, uuid.UUID) (projection.RunGraph, error) {
 	return f.graph, f.err
 }
 
-func (f *fakeRunReader) ListRuns(_ context.Context, _ string, size, off int) ([]projection.RunSummary, int, error) {
+func (f *fakeRunReader) ListRuns(_ context.Context, _, _ string, size, off int) ([]projection.RunSummary, int, error) {
 	f.gotSize, f.gotOff = size, off
 	return f.runs, f.total, f.err
 }
 
-func (f *fakeRunReader) ListActiveRunDrifts(context.Context) (int64, []projection.ActiveRunDrift, error) {
+func (f *fakeRunReader) ListActiveRunDrifts(context.Context, string) (int64, []projection.ActiveRunDrift, error) {
 	return f.latest, f.drifts, f.err
+}
+
+// tenantReads is a run read repository that records the tenant of every read.
+type tenantReads struct{ tenants []string }
+
+var _ repository.RunReadRepository = (*tenantReads)(nil)
+
+func (r *tenantReads) GetRunGraph(_ context.Context, tenantID string, _ uuid.UUID) (projection.RunGraph, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return projection.RunGraph{}, nil
+}
+
+func (r *tenantReads) ListCompletedRuns(_ context.Context, tenantID, _ string, _, _ int) ([]projection.RunSummary, int, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return nil, 0, nil
+}
+
+func (r *tenantReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return 0, nil, nil
+}
+
+func (r *tenantReads) LastSuccessDurations(_ context.Context, tenantID string, _ []run.NodeID) (map[run.NodeID]time.Duration, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return nil, nil
+}
+
+// tenantAttempts is an attempt reader that records the tenant of every read.
+type tenantAttempts struct{ tenants []string }
+
+func (r *tenantAttempts) ListRunAttempts(_ context.Context, tenantID string, _ uuid.UUID, _ *uuid.UUID, _, _ int) ([]projection.TaskAttempt, int, error) {
+	r.tenants = append(r.tenants, tenantID)
+	return nil, 0, nil
+}
+
+// Every run read a request makes reads the request's tenant's rows: the run
+// graph, the completed runs, the active-run drift and the attempts.
+func TestRunReads_AreScopedToTheRequestsTenant(t *testing.T) {
+	reads, attempts := &tenantReads{}, &tenantAttempts{}
+	h := NewRunReadHandler(runreads.New(reads), newTestLogger())
+	ctx := tenantCtx("acme")
+
+	_, err := h.GetRunGraph(ctx, &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	require.NoError(t, err)
+	_, err = h.ListRuns(ctx, &statev1.ListRunsRequest{ScheduleName: "daily"})
+	require.NoError(t, err)
+	_, err = h.ListActiveRunDrifts(ctx, &statev1.ListActiveRunDriftsRequest{})
+	require.NoError(t, err)
+	_, err = NewTaskAttemptHandler(attempts, newTestLogger()).ListTaskAttempts(ctx, &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", "acme", "acme"}, reads.tenants)
+	assert.Equal(t, []string{"acme"}, attempts.tenants)
 }
 
 func TestRunReadHandler_GetRunGraph(t *testing.T) {
@@ -51,7 +106,7 @@ func TestRunReadHandler_GetRunGraph(t *testing.T) {
 		LatestPromotionSeq: 6,
 	}}, newTestLogger())
 
-	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	resp, err := h.GetRunGraph(requestCtx(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	require.Len(t, resp.Nodes, 1)
 	assert.Equal(t, "running", resp.Nodes[0].Status)
@@ -64,7 +119,7 @@ func TestRunReadHandler_GetRunGraph(t *testing.T) {
 func TestRunReadHandler_RefusesAMalformedRunID(t *testing.T) {
 	h := NewRunReadHandler(&fakeRunReader{}, newTestLogger())
 	for _, id := range []string{"", "not-a-uuid"} {
-		_, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: id})
+		_, err := h.GetRunGraph(requestCtx(), &statev1.GetRunGraphRequest{RunId: id})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "run_id %q", id)
 	}
 }
@@ -76,7 +131,7 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 		TerminalStatus: run.RunStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
 	h := NewRunReadHandler(f, newTestLogger())
 
-	resp, err := h.ListRuns(context.Background(), &statev1.ListRunsRequest{ScheduleName: "daily", PageSize: 20, PageOffset: 40})
+	resp, err := h.ListRuns(requestCtx(), &statev1.ListRunsRequest{ScheduleName: "daily", PageSize: 20, PageOffset: 40})
 	require.NoError(t, err)
 	assert.Equal(t, 20, f.gotSize)
 	assert.Equal(t, 40, f.gotOff)
@@ -84,7 +139,7 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 	assert.Equal(t, &statev1.RunSummary{RunId: runID.String(), ScheduleName: "daily", TerminalStatus: "failed",
 		CreatedAt: "2026-10-14T23:00:00Z", CompletedAt: "2026-10-14T23:03:00Z", FailureReason: "stalled"}, resp.Runs[0])
 
-	_, err = h.ListRuns(context.Background(), &statev1.ListRunsRequest{})
+	_, err = h.ListRuns(requestCtx(), &statev1.ListRunsRequest{})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
@@ -93,7 +148,7 @@ func TestRunReadHandler_ListActiveRunDrifts(t *testing.T) {
 	h := NewRunReadHandler(&fakeRunReader{latest: 9, drifts: []projection.ActiveRunDrift{
 		{ScheduleName: "daily", RunID: runID, RunPromotionSeq: 7}}}, newTestLogger())
 
-	resp, err := h.ListActiveRunDrifts(context.Background(), &statev1.ListActiveRunDriftsRequest{})
+	resp, err := h.ListActiveRunDrifts(requestCtx(), &statev1.ListActiveRunDriftsRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), resp.LatestPromotionSeq)
 	assert.Equal(t, []*statev1.ActiveRunDrift{{ScheduleName: "daily", RunId: runID.String(), RunPromotionSeq: 7}}, resp.ActiveRuns)
@@ -101,7 +156,7 @@ func TestRunReadHandler_ListActiveRunDrifts(t *testing.T) {
 
 func TestRunReadHandler_ReadFailureIsInternal(t *testing.T) {
 	h := NewRunReadHandler(&fakeRunReader{err: errors.New("db down")}, newTestLogger())
-	_, err := h.ListActiveRunDrifts(context.Background(), &statev1.ListActiveRunDriftsRequest{})
+	_, err := h.ListActiveRunDrifts(requestCtx(), &statev1.ListActiveRunDriftsRequest{})
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
@@ -111,7 +166,7 @@ func TestRunReadHandler_GetRunGraph_ReportsAStoppingTask(t *testing.T) {
 		Nodes: []projection.RunGraphNode{{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: run.TaskStatusStopping, TaskID: uuid.New()}},
 	}}, newTestLogger())
 
-	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	resp, err := h.GetRunGraph(requestCtx(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Equal(t, "stopping", resp.Nodes[0].Status)
 }
@@ -132,7 +187,7 @@ func TestRunReadHandler_GetRunGraph_ReportsALeaseWaitAndItsHolder(t *testing.T) 
 		},
 	}}, newTestLogger())
 
-	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	resp, err := h.GetRunGraph(requestCtx(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	require.Len(t, resp.Nodes, 3)
 	assert.Equal(t, "node_lease", resp.Nodes[0].WaitReason)

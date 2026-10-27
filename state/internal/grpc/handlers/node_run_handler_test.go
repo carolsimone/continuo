@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
@@ -39,6 +40,15 @@ type fakeNodeRunRepo struct {
 	// node-services (ListNodeServices) canned return
 	nodeServices    []string
 	nodeServicesErr error
+
+	// tenants records the tenant each request reads.
+	tenants []string
+}
+
+// of is the node-run reads of tenantID.
+func (f *fakeNodeRunRepo) of(tenantID string) postgres.NodeRunRepository {
+	f.tenants = append(f.tenants, tenantID)
+	return f
 }
 
 func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
@@ -80,9 +90,9 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 			},
 		},
 	}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
 
-	resp, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
+	resp, err := h.ListNodeRuns(requestCtx(), &statev1.ListNodeRunsRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "tbl", Limit: 50,
 	})
 	if err != nil {
@@ -109,9 +119,9 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 }
 
 func TestNodeRunHandler_ListNodeRuns_RejectsEmptyIdentity(t *testing.T) {
-	h := NewNodeRunHandler(&fakeNodeRunRepo{}, 24*time.Hour, nil)
+	h := NewNodeRunHandler((&fakeNodeRunRepo{}).of, 24*time.Hour, nil)
 
-	_, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
+	_, err := h.ListNodeRuns(requestCtx(), &statev1.ListNodeRunsRequest{
 		ServiceName: "", SchemaName: "sch", TableName: "tbl",
 	})
 	if err == nil {
@@ -123,9 +133,9 @@ func TestNodeRunHandler_ListNodeRuns_RejectsEmptyIdentity(t *testing.T) {
 }
 
 func TestNodeRunHandler_ListNodeRuns_RepoError(t *testing.T) {
-	h := NewNodeRunHandler(&fakeNodeRunRepo{err: errors.New("boom")}, 24*time.Hour, nil)
+	h := NewNodeRunHandler((&fakeNodeRunRepo{err: errors.New("boom")}).of, 24*time.Hour, nil)
 
-	_, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
+	_, err := h.ListNodeRuns(requestCtx(), &statev1.ListNodeRunsRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
 	})
 	if err == nil {
@@ -148,9 +158,9 @@ func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 			TimeoutSeconds: &twoHours,
 		}},
 	}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
 
-	resp, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{
+	resp, err := h.ListNodes(requestCtx(), &statev1.ListNodesRequest{
 		Search: "fct", ServiceName: "svc", Limit: 0, Offset: -5, // 0 -> default 50, -5 -> 0
 	})
 	if err != nil {
@@ -187,8 +197,8 @@ func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 
 func TestNodeRunHandler_ListNodes_ClampsLimitTo200(t *testing.T) {
 	repo := &fakeNodeRunRepo{}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
-	if _, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{Limit: 9999}); err != nil {
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	if _, err := h.ListNodes(requestCtx(), &statev1.ListNodesRequest{Limit: 9999}); err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
 	if repo.gotNodeLimit != 200 {
@@ -198,8 +208,8 @@ func TestNodeRunHandler_ListNodes_ClampsLimitTo200(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeNames(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeNames: []string{"customers", "orders"}}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
-	resp, err := h.ListNodeNames(context.Background(), &statev1.ListNodeNamesRequest{ServiceName: "svc"})
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	resp, err := h.ListNodeNames(requestCtx(), &statev1.ListNodeNamesRequest{ServiceName: "svc"})
 	if err != nil {
 		t.Fatalf("ListNodeNames: %v", err)
 	}
@@ -213,8 +223,8 @@ func TestNodeRunHandler_ListNodeNames(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeServices(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeServices: []string{"billing", "ledger"}}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
-	resp, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{})
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	resp, err := h.ListNodeServices(requestCtx(), &statev1.ListNodeServicesRequest{})
 	if err != nil {
 		t.Fatalf("ListNodeServices: %v", err)
 	}
@@ -225,8 +235,8 @@ func TestNodeRunHandler_ListNodeServices(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeServices_Error(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeServicesErr: errors.New("boom")}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
-	if _, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{}); err == nil {
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	if _, err := h.ListNodeServices(requestCtx(), &statev1.ListNodeServicesRequest{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -239,9 +249,9 @@ func TestNodeRunHandler_ListNodes_TimeoutIsDeclaredOrTheInstallDefault(t *testin
 		{ServiceName: "svc", SchemaName: "sch", TableName: "orders_full", TimeoutSeconds: &eightHours},
 		{ServiceName: "svc", SchemaName: "sch", TableName: "fx_rates"},
 	}}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
 
-	resp, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{})
+	resp, err := h.ListNodes(requestCtx(), &statev1.ListNodesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Nodes, 2)
 	assert.Equal(t, int32(28800), resp.Nodes[0].GetTimeoutSeconds())
@@ -261,9 +271,9 @@ func TestNodeRunHandler_ListNodeRuns_ReportsALeaseWaitAndItsHolder(t *testing.T)
 			WaitReason: run.WaitReasonNodeLease, WaitingOnRunID: &holderRun, WaitingSince: &since},
 		{ScheduleID: holderRun, TaskID: uuid.New(), TaskStatus: run.TaskStatusRunning, CreatedAt: since},
 	}}
-	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
 
-	resp, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
+	resp, err := h.ListNodeRuns(requestCtx(), &statev1.ListNodeRunsRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
 	})
 	require.NoError(t, err)
@@ -274,4 +284,22 @@ func TestNodeRunHandler_ListNodeRuns_ReportsALeaseWaitAndItsHolder(t *testing.T)
 	assert.Empty(t, resp.Runs[1].GetWaitReason())
 	assert.Empty(t, resp.Runs[1].GetWaitingOnRunId())
 	assert.Empty(t, resp.Runs[1].GetWaitingSince())
+}
+
+// Every node-run read a request makes reads the request's tenant's rows.
+func TestNodeRunHandler_ReadsTheRequestsTenant(t *testing.T) {
+	repo := &fakeNodeRunRepo{}
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	ctx := tenantCtx("acme")
+
+	_, err := h.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"})
+	require.NoError(t, err)
+	_, err = h.ListNodes(ctx, &statev1.ListNodesRequest{})
+	require.NoError(t, err)
+	_, err = h.ListNodeNames(ctx, &statev1.ListNodeNamesRequest{ServiceName: "svc"})
+	require.NoError(t, err)
+	_, err = h.ListNodeServices(ctx, &statev1.ListNodeServicesRequest{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", "acme", "acme", "acme"}, repo.tenants)
 }

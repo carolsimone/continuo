@@ -4,7 +4,7 @@
 // surface. It joins runs × tasks × task_attempts filtered
 // by node identity and emits a flat NodeRun row per task instance.
 //
-// Why a separate repo (not a method on TaskRepository):
+// Why a separate repo (not a method on TaskCollection):
 //   - The query joins three tables; living on the per-table CRUD repo would
 //     pull cross-table concerns into single-table code.
 //   - The shape is read-only (no Create/Update/Delete) and audit-shaped (one
@@ -37,7 +37,8 @@ type NodeRunRepository interface {
 
 type nodeRunRepository struct {
 	db *sqlx.DB
-	// tenantID is the tenant whose topology and node leases the reads join.
+	// tenantID is the tenant whose runs, tasks, attempts, topology and node
+	// leases the reads read.
 	tenantID string
 	logger   *slog.Logger
 }
@@ -45,7 +46,7 @@ type nodeRunRepository struct {
 var _ NodeRunRepository = (*nodeRunRepository)(nil)
 
 // NewNodeRunRepository constructs a NodeRunRepository backed by Postgres that
-// reads the topology and node leases of tenantID.
+// reads the runs, tasks, attempts, topology and node leases of tenantID.
 func NewNodeRunRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) NodeRunRepository {
 	return &nodeRunRepository{db: db, tenantID: tenantID, logger: logger}
 }
@@ -85,7 +86,8 @@ func (r *nodeRunRepository) List(
 			       t.attempt, t.image_tag, t.operation, t.node_key,
 			       t.wait_reason, t.lease_wait_since
 			FROM tasks t
-			WHERE t.service_name = $1
+			WHERE t.tenant_id    = $6
+			  AND t.service_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
 			  AND (t.operation = $4 OR ($4 = 'run' AND t.operation = 'full_refresh'))
@@ -97,7 +99,7 @@ func (r *nodeRunRepository) List(
 			       a.error_message, a.log_s3_key, a.run_results_uri,
 			       a.failure_class, a.failure_reason
 			FROM task_attempts a
-			JOIN target_tasks tt ON tt.task_id = a.task_id
+			JOIN target_tasks tt ON a.tenant_id = $6 AND tt.task_id = a.task_id
 			ORDER BY a.task_id, a.attempt DESC
 		)
 		SELECT s.run_id,
@@ -122,7 +124,7 @@ func (r *nodeRunRepository) List(
 		       tt.lease_wait_since  AS waiting_since,
 		       l.run_id             AS waiting_on_run_id
 		FROM target_tasks tt
-		JOIN runs s ON s.run_id = tt.run_id
+		JOIN runs s ON s.tenant_id = $6 AND s.run_id = tt.run_id
 		LEFT JOIN latest_attempt le ON le.task_id = tt.task_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $6 AND n.release_id = s.release_id AND n.node_key = tt.node_key
@@ -254,12 +256,12 @@ func (r *nodeRunRepository) ListNodes(
 	// rankedWindowedCTE filters and caps each node to its most recent 50 runs.
 	// $1 is a case-insensitive EXACT match on the table name (not a substring):
 	// searching "table_2" returns only "table_2", never "ftable_2" or
-	// "table_2_v2". Service is filtered via $2, and the run/test/build
-	// dimension via $3 (an exact match — always non-empty, since the caller
-	// defaults it to "run"). The run dimension includes full_refresh tasks and
-	// reports them as operation 'run', so a node keeps one catalog row per
-	// dimension. The window-function scan over tasks ⋈ runs
-	// runs ONCE: the page query layers the per-node aggregation and a
+	// "table_2_v2". Service is filtered via $2, the run/test/build dimension
+	// via $3 (an exact match — always non-empty, since the caller defaults it
+	// to "run"), and the tenant via $4. The run dimension includes
+	// full_refresh tasks and reports them as operation 'run', so a node keeps
+	// one catalog row per dimension. The window-function scan over tasks ⋈
+	// runs runs ONCE: the page query layers the per-node aggregation and a
 	// COUNT(*) OVER () total on top of this single scan, so the match count no
 	// longer requires a second pass.
 	const rankedWindowedCTE = `
@@ -272,8 +274,9 @@ func (r *nodeRunRepository) ListNodes(
 			         ORDER BY s.created_at DESC
 			       ) AS rn
 			FROM tasks t
-			JOIN runs s ON s.run_id = t.run_id
-			WHERE ($1 = '' OR lower(t.table_name) = lower($1))
+			JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
+			WHERE t.tenant_id = $4
+			  AND ($1 = '' OR lower(t.table_name) = lower($1))
 			  AND ($2 = '' OR t.service_name = $2)
 			  AND (t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))
 		),
@@ -290,7 +293,7 @@ func (r *nodeRunRepository) ListNodes(
 			       a.task_id, a.started_at, a.finished_at
 			FROM task_attempts a
 			JOIN windowed w ON w.task_id = a.task_id
-			WHERE a.status = 'succeeded'
+			WHERE a.tenant_id = $4 AND a.status = 'succeeded'
 			ORDER BY a.task_id, a.attempt DESC
 		),
 		agg AS (
@@ -321,7 +324,7 @@ func (r *nodeRunRepository) ListNodes(
 			FROM live_release l
 			JOIN topology_nodes n
 			  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
-			WHERE l.tenant_id = $6
+			WHERE l.tenant_id = $4
 			GROUP BY n.service_name, n.schema_name, n.table_name
 		)
 		SELECT agg.service_name, agg.schema_name, agg.table_name, agg.run_count,
@@ -335,10 +338,10 @@ func (r *nodeRunRepository) ListNodes(
 		 AND lt.schema_name = agg.schema_name
 		 AND lt.table_name = agg.table_name
 		ORDER BY agg.last_run_at DESC, agg.service_name, agg.schema_name, agg.table_name
-		LIMIT $4 OFFSET $5`
+		LIMIT $5 OFFSET $6`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, r.tenantID); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, r.tenantID, limit, offset); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -359,7 +362,7 @@ func (r *nodeRunRepository) ListNodes(
 			SELECT COUNT(*) FROM (
 				SELECT 1 FROM windowed GROUP BY service_name, schema_name, table_name
 			) g`
-		if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName, operation); err != nil {
+		if err := r.db.GetContext(ctx, &total, countQuery, search, serviceName, operation, r.tenantID); err != nil {
 			r.logger.Error("Failed to count nodes", "search", search, "service", serviceName, "error", err)
 			return nil, 0, fmt.Errorf("failed to count nodes: %w", err)
 		}
@@ -368,33 +371,35 @@ func (r *nodeRunRepository) ListNodes(
 	return out, total, nil
 }
 
-// ListNodeNames returns the distinct table names of nodes that have run,
-// filtered by exact service when serviceName is non-empty, sorted ascending.
-// A cheap DISTINCT (no window/aggregation) — it feeds the search autocomplete.
+// ListNodeNames returns the distinct table names of the tenant's nodes that
+// have run, filtered by exact service when serviceName is non-empty, sorted
+// ascending. A cheap DISTINCT (no window/aggregation) — it feeds the search
+// autocomplete.
 func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName string) ([]string, error) {
 	const query = `
 		SELECT DISTINCT table_name
 		FROM tasks
-		WHERE ($1 = '' OR service_name = $1)
+		WHERE tenant_id = $2 AND ($1 = '' OR service_name = $1)
 		ORDER BY table_name`
 	names := []string{}
-	if err := r.db.SelectContext(ctx, &names, query, serviceName); err != nil {
+	if err := r.db.SelectContext(ctx, &names, query, serviceName, r.tenantID); err != nil {
 		r.logger.Error("Failed to list node names", "service", serviceName, "error", err)
 		return nil, fmt.Errorf("failed to list node names: %w", err)
 	}
 	return names, nil
 }
 
-// ListNodeServices returns every service name in byte order. COLLATE "C" keeps
-// the order independent of the database's locale (en_US, for one, ignores '-'),
-// so every install lists services the same way.
+// ListNodeServices returns every service name of the tenant's tasks in byte
+// order. COLLATE "C" keeps the order independent of the database's locale
+// (en_US, for one, ignores '-'), so every install lists services the same way.
 func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
 	const query = `
 		SELECT DISTINCT service_name COLLATE "C" AS service_name
 		FROM tasks
+		WHERE tenant_id = $1
 		ORDER BY service_name`
 	services := []string{}
-	if err := r.db.SelectContext(ctx, &services, query); err != nil {
+	if err := r.db.SelectContext(ctx, &services, query, r.tenantID); err != nil {
 		r.logger.Error("Failed to list node services", "error", err)
 		return nil, fmt.Errorf("failed to list node services: %w", err)
 	}

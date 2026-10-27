@@ -49,8 +49,9 @@ func NewStartRunHandler(planner runstart.Planner, logger *slog.Logger) *StartRun
 	return &StartRunHandler{planner: planner, logger: logger}
 }
 
-// Handle starts a run for the named schedule. The catalog existence and active-run
-// pre-conditions are enforced via SchedulePolicy.
+// Handle starts a run of tenantID's named schedule, for that tenant. The
+// catalog existence and active-run pre-conditions are enforced via
+// SchedulePolicy.
 //
 // Returns (id, OutcomeRunStarted) when a run was created, (uuid.Nil,
 // OutcomeSkippedActive) when the schedule already has an active run, or an
@@ -63,22 +64,23 @@ func NewStartRunHandler(planner runstart.Planner, logger *slog.Logger) *StartRun
 func (h *StartRunHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
+	tenantID string,
 	name string,
 	kind run.Kind,
 	sourceRunID *uuid.UUID,
 	initiator identity.Identity,
 	operation model.Operation,
 ) (uuid.UUID, ActivationOutcome, error) {
-	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), name); err != nil {
+	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), tenantID, name); err != nil {
 		return uuid.Nil, 0, err
 	}
-	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), name); err != nil {
+	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), tenantID, name); err != nil {
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			return uuid.Nil, OutcomeSkippedActive, nil
 		}
 		return uuid.Nil, 0, err
 	}
-	metadata, err := u.Catalog().GetServiceMetadata(ctx, name)
+	metadata, err := u.Catalog().GetServiceMetadata(ctx, tenantID, name)
 	if err != nil {
 		return uuid.Nil, 0, fmt.Errorf("get metadata: %w", err)
 	}
@@ -93,7 +95,7 @@ func (h *StartRunHandler) Handle(
 		}
 	}()
 
-	sel, err := h.planner.Schedule(ctx, u, name, operation)
+	sel, err := h.planner.Schedule(ctx, u, tenantID, name, operation)
 	refusal := scheduleRefusal(err)
 	if err != nil && refusal == nil {
 		return uuid.Nil, 0, fmt.Errorf("select the run of %s: %w", name, err)
@@ -104,7 +106,7 @@ func (h *StartRunHandler) Handle(
 	}
 
 	now := u.Clock().Now()
-	newRun, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, sel.Stamp, now)
+	newRun, err := run.NewPendingRun(tenantID, name, kind, sourceRunID, initiator.UserID, metadata, operation, sel.Stamp, now)
 	if err != nil {
 		return uuid.Nil, 0, err
 	}
@@ -130,7 +132,7 @@ func (h *StartRunHandler) Handle(
 	}
 	committed = true
 
-	h.logger.Info("Schedule activated", "run_id", newRun.RunID(), "schedule_name", name, "kind", string(kind),
+	h.logger.Info("Schedule activated", "tenant_id", tenantID, "run_id", newRun.RunID(), "schedule_name", name, "kind", string(kind),
 		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
 	return newRun.RunID(), OutcomeRunStarted, nil
 }

@@ -40,7 +40,7 @@ func waitingFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGra
 	tc := newFakeTaskCollection()
 	tc.derived = true
 	tc.leases[fkey("ftable_a")] = otherRunsTask
-	_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
+	_, err = r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 	require.Equal(t, run.WaitReasonNodeLease, tc.waits[taskOf(r, "ftable_a")])
 	return r, tc, &memTaskGraph{g: g, tc: tc}
@@ -143,7 +143,7 @@ func TestGrantLease_DispatchesTheWaitingTask(t *testing.T) {
 	task := createdByKey(tc)[fkey("ftable_a")]
 	node, _ := failureSchedule().Node(fkey("ftable_a"))
 	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
-		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: a, Attempt: 0,
+		ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: a, Attempt: 0,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: task.JobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}}, events)
@@ -263,7 +263,7 @@ func TestFailStalled_GrantsAWaitingTaskItsFreedNodeInsteadOfFailingTheRun(t *tes
 	task := createdByKey(tc)[fkey("ftable_a")]
 	node, _ := failureSchedule().Node(fkey("ftable_a"))
 	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
-		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: a, Attempt: 0,
+		ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: a, Attempt: 0,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: task.JobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}}, check.Events)

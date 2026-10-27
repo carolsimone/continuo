@@ -7,24 +7,29 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 )
 
-// ScheduleCatalog is the aggregate root for the schedule_catalog table.
-// Loaded as a whole-set view via CatalogRepository.LoadCatalogForUpdate and
-// persisted via SaveCatalog after Reconcile. promotionSeq is the promotion seq
-// of the last schedules.loaded:v1 payload it applied.
+// ScheduleCatalog is the aggregate root for the schedule_catalog table: the
+// schedule catalog of one tenant. Loaded as a whole-set view via
+// CatalogRepository.LoadCatalogForUpdate and persisted via SaveCatalog after
+// Reconcile. promotionSeq is the promotion seq of the last schedules.loaded:v1
+// payload it applied.
 type ScheduleCatalog struct {
+	tenantID     string
 	entries      map[string]Entry
 	promotionSeq int64
 }
 
-// Hydrate constructs a ScheduleCatalog from persisted rows and the promotion
-// seq it last applied. Used by the postgres adapter inside
+// Hydrate constructs the ScheduleCatalog of a tenant from persisted rows and
+// the promotion seq it last applied. Used by the postgres adapter inside
 // LoadCatalogForUpdate / GetCatalog.
-func Hydrate(initial map[string]Entry, promotionSeq int64) *ScheduleCatalog {
+func Hydrate(tenantID string, initial map[string]Entry, promotionSeq int64) *ScheduleCatalog {
 	if initial == nil {
 		initial = map[string]Entry{}
 	}
-	return &ScheduleCatalog{entries: initial, promotionSeq: promotionSeq}
+	return &ScheduleCatalog{tenantID: tenantID, entries: initial, promotionSeq: promotionSeq}
 }
+
+// TenantID returns the tenant this catalog belongs to.
+func (c *ScheduleCatalog) TenantID() string { return c.tenantID }
 
 // PromotionSeq returns the promotion seq of the last payload Reconcile applied.
 func (c *ScheduleCatalog) PromotionSeq() int64 { return c.promotionSeq }

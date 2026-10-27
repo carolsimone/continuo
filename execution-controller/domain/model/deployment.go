@@ -26,6 +26,12 @@ const (
 	ModeCompile    Mode = "compile"
 )
 
+// ReleaseLegTenantID is the tenant a validation, seed-build or compile
+// deployment is stored under. The envelope tenant of the events that request a
+// release leg is not read; the deployment is stored under this tenant, which
+// equals the tenant release-controller stamps on those events.
+const ReleaseLegTenantID = "default"
+
 // BackoffPolicy computes the delay before the next deploy attempt:
 // base * 2^retryCount, capped at Cap.
 type BackoffPolicy struct {
@@ -535,6 +541,17 @@ func (d *Deployment) StopBeforeLaunch(now time.Time, found FencedAction) (StopEf
 
 func (d *Deployment) recordStopRequest(now time.Time) {
 	d.facts, _ = d.facts.Merge(AttemptFacts{StopRequestedAt: &now})
+}
+
+// TenantID is the tenant the deployment is stored under: the tenant of the
+// dispatch a production attempt came from, which its reports are published
+// under, or ReleaseLegTenantID for a release leg (whose event envelope tenant
+// is not read).
+func (d *Deployment) TenantID() string {
+	if d.mode == ModeProduction {
+		return d.command.TenantID
+	}
+	return ReleaseLegTenantID
 }
 
 // JobName is the name of the Kubernetes Job the deployment creates.

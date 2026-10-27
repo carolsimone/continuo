@@ -21,8 +21,8 @@ import (
 func seedProduction(t *testing.T, db *sqlx.DB, runID uuid.UUID, due time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at)
-		VALUES ($1, $2, $3, '{}'::jsonb, $4)`, id, uuid.New(), runID, due)
+	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at, tenant_id)
+		VALUES ($1, $2, $3, '{}'::jsonb, $4, 'default')`, id, uuid.New(), runID, due)
 	require.NoError(t, err)
 	return id
 }
@@ -31,8 +31,8 @@ func seedProduction(t *testing.T, db *sqlx.DB, runID uuid.UUID, due time.Time) u
 func seedCandidate(t *testing.T, db *sqlx.DB, releaseID string, due time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, mode, release_id, node_id, next_attempt_at)
-		VALUES ($1, $2, $3, '{}'::jsonb, 'validation', $4, $5, $6)`,
+	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, mode, release_id, node_id, next_attempt_at, tenant_id)
+		VALUES ($1, $2, $3, '{}'::jsonb, 'validation', $4, $5, $6, 'default')`,
 		id, uuid.New(), uuid.New(), releaseID, uuid.NewString(), due)
 	require.NoError(t, err)
 	return id

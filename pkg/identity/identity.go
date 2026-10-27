@@ -1,8 +1,9 @@
 // Package identity carries the initiating user's provenance from the system's
-// HTTP edge (ui) into the backend gRPC services. The authenticated
-// user_id travels as a single gRPC metadata header; a server interceptor reads
-// it at the adapter boundary and converts it into an Identity value placed on
-// the request context, which application/use-case code reads without ever
+// HTTP edge (ui) into the backend gRPC services, together with the tenant a
+// request acts for. The authenticated user_id travels as a single gRPC
+// metadata header; a server interceptor reads it at the adapter boundary and
+// converts it into an Identity value placed on the request context, beside
+// the request's tenant, which application/use-case code reads without ever
 // touching raw metadata.
 package identity
 

@@ -13,14 +13,18 @@ import (
 // yet migrated lacks: the per-attempt rows (task_attempts), the attempt counter
 // on tasks, the timeout a release stores for each node, why a run
 // failed when no task of it failed, when a stop was requested of an attempt,
-// and the node leases and the wait for one. A migration applies whole, so a
-// column also stands for what else its migration adds:
+// the node leases and the wait for one, and the tenant of each run, task,
+// attempt and schedule catalog row. A migration applies whole, so a column
+// also stands for what else its migration adds:
 // task_attempts.stop_requested_at for the cancelling, stopping and stopped
-// statuses, and the node lease columns for node_leases' release trigger and
-// the values tasks.wait_reason accepts.
+// statuses, the node lease columns for node_leases' release trigger and the
+// values tasks.wait_reason accepts, and the tenant columns for the keys that
+// lead with tenant_id.
 var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topology_nodes.timeout_seconds",
 	"runs.failure_reason", "task_attempts.stop_requested_at",
-	"node_leases.node_key", "tasks.wait_reason", "tasks.lease_wait_since"}
+	"node_leases.node_key", "tasks.wait_reason", "tasks.lease_wait_since",
+	"runs.tenant_id", "tasks.tenant_id", "task_attempts.tenant_id",
+	"schedule_catalog.tenant_id", "schedule_catalog_state.tenant_id"}
 
 // ErrSchemaNotReady reports a state database that lacks a column the running
 // code reads.

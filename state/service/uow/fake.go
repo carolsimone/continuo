@@ -47,6 +47,10 @@ type FakeUnitOfWork struct {
 	Graph       run.TaskGraph
 	GraphTenant string
 
+	// TaskCollectionTenants records the tenant of every TaskCollection call,
+	// in call order.
+	TaskCollectionTenants []string
+
 	// AttemptRepo backs Attempts().
 	AttemptRepo repository.AttemptRepository
 
@@ -99,9 +103,12 @@ func (f *FakeUnitOfWork) Rollback() error {
 
 // Aggregate-level accessors. Return whatever was set via the setter methods.
 
-func (f *FakeUnitOfWork) Run() repository.RunRepository            { return f.runRepo }
-func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher            { return f.outboxPub }
-func (f *FakeUnitOfWork) TaskCollection(string) run.TaskCollection { return f.taskColl }
+func (f *FakeUnitOfWork) Run() repository.RunRepository { return f.runRepo }
+func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher { return f.outboxPub }
+func (f *FakeUnitOfWork) TaskCollection(tenantID string) run.TaskCollection {
+	f.TaskCollectionTenants = append(f.TaskCollectionTenants, tenantID)
+	return f.taskColl
+}
 
 // Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
 func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }
@@ -124,10 +131,10 @@ func (f *FakeUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 
 // Attempts returns the repository.AttemptRepository set via the AttemptRepo
 // field.
-func (f *FakeUnitOfWork) Attempts(string) repository.AttemptRepository { return f.AttemptRepo }
+func (f *FakeUnitOfWork) Attempts() repository.AttemptRepository { return f.AttemptRepo }
 
 // Leases returns the repository.LeaseRepository set via the LeaseRepo field.
-func (f *FakeUnitOfWork) Leases(string) repository.LeaseRepository { return f.LeaseRepo }
+func (f *FakeUnitOfWork) Leases() repository.LeaseRepository { return f.LeaseRepo }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.
@@ -160,6 +167,9 @@ var _ repository.TopologyRepository = (*LiveReleaseOnly)(nil)
 
 func (f *LiveReleaseOnly) LivePointer(context.Context, string) (topology.Pointer, error) {
 	return f.Live, nil
+}
+func (f *LiveReleaseOnly) LivePointers(context.Context) ([]topology.Pointer, error) {
+	return nil, ErrNotFaked
 }
 func (f *LiveReleaseOnly) LockTopology(context.Context) error { return nil }
 func (f *LiveReleaseOnly) SaveRelease(context.Context, topology.Release) (bool, error) {

@@ -15,20 +15,22 @@ import (
 )
 
 // NodeRunHandler exposes per-node run history via ListNodeRuns and the node
-// catalog via ListNodes.
+// catalog via ListNodes, each of the request's tenant, through the repository
+// nodeRunsOf returns for that tenant.
 type NodeRunHandler struct {
-	repo           postgres.NodeRunRepository
+	nodeRunsOf     func(tenantID string) postgres.NodeRunRepository
 	defaultTimeout time.Duration
 	logger         *slog.Logger
 }
 
-// NewNodeRunHandler constructs a NodeRunHandler; defaultTimeout is the task
-// timeout of a node whose live release declares none.
-func NewNodeRunHandler(repo postgres.NodeRunRepository, defaultTimeout time.Duration, logger *slog.Logger) *NodeRunHandler {
+// NewNodeRunHandler constructs a NodeRunHandler; nodeRunsOf returns the
+// node-run reads of one tenant, and defaultTimeout is the task timeout of a
+// node whose live release declares none.
+func NewNodeRunHandler(nodeRunsOf func(tenantID string) postgres.NodeRunRepository, defaultTimeout time.Duration, logger *slog.Logger) *NodeRunHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &NodeRunHandler{repo: repo, defaultTimeout: defaultTimeout, logger: logger}
+	return &NodeRunHandler{nodeRunsOf: nodeRunsOf, defaultTimeout: defaultTimeout, logger: logger}
 }
 
 // ListNodeRuns returns the most recent task instances for a node, ordered by
@@ -38,12 +40,16 @@ func (h *NodeRunHandler) ListNodeRuns(
 	ctx context.Context,
 	req *statev1.ListNodeRunsRequest,
 ) (*statev1.ListNodeRunsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
 		return nil, status.Errorf(codes.InvalidArgument,
 			"ListNodeRuns: service_name, schema_name, and table_name are required")
 	}
 
-	rows, err := h.repo.List(ctx, req.ServiceName, req.SchemaName, req.TableName, req.GetOperation(), int(req.Limit))
+	rows, err := h.nodeRunsOf(tenantID).List(ctx, req.ServiceName, req.SchemaName, req.TableName, req.GetOperation(), int(req.Limit))
 	if err != nil {
 		h.logger.Error("ListNodeRuns repo error",
 			"service", req.ServiceName, "schema", req.SchemaName, "table", req.TableName,
@@ -86,6 +92,10 @@ func (h *NodeRunHandler) ListNodes(
 	ctx context.Context,
 	req *statev1.ListNodesRequest,
 ) (*statev1.ListNodesResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	limit := int(req.Limit)
 	if limit <= 0 {
 		limit = 50
@@ -98,7 +108,7 @@ func (h *NodeRunHandler) ListNodes(
 		offset = 0
 	}
 
-	rows, total, err := h.repo.ListNodes(ctx, req.Search, req.ServiceName, req.GetOperation(), limit, offset)
+	rows, total, err := h.nodeRunsOf(tenantID).ListNodes(ctx, req.Search, req.ServiceName, req.GetOperation(), limit, offset)
 	if err != nil {
 		h.logger.Error("ListNodes repo error", "search", req.Search, "service", req.ServiceName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListNodes: %v", err)
@@ -129,7 +139,11 @@ func (h *NodeRunHandler) ListNodes(
 
 // ListNodeNames returns distinct node table names for the search autocomplete.
 func (h *NodeRunHandler) ListNodeNames(ctx context.Context, req *statev1.ListNodeNamesRequest) (*statev1.ListNodeNamesResponse, error) {
-	names, err := h.repo.ListNodeNames(ctx, req.ServiceName)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names, err := h.nodeRunsOf(tenantID).ListNodeNames(ctx, req.ServiceName)
 	if err != nil {
 		h.logger.Error("ListNodeNames repo error", "service", req.ServiceName, "error", err)
 		return nil, status.Errorf(codes.Internal, "ListNodeNames: %v", err)
@@ -138,7 +152,11 @@ func (h *NodeRunHandler) ListNodeNames(ctx context.Context, req *statev1.ListNod
 }
 
 func (h *NodeRunHandler) ListNodeServices(ctx context.Context, req *statev1.ListNodeServicesRequest) (*statev1.ListNodeServicesResponse, error) {
-	services, err := h.repo.ListNodeServices(ctx)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	services, err := h.nodeRunsOf(tenantID).ListNodeServices(ctx)
 	if err != nil {
 		h.logger.Error("ListNodeServices repo error", "error", err)
 		return nil, status.Errorf(codes.Internal, "ListNodeServices: %v", err)

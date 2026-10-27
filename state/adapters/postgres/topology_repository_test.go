@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -291,13 +291,45 @@ func TestTopologyRepository_LivePointerUpserts(t *testing.T) {
 	require.NoError(t, repo.SetLivePointer(ctx, tenant, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 1}, at))
 	live, err = repo.LivePointer(ctx, tenant)
 	require.NoError(t, err)
-	assert.Equal(t, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 1}, live)
+	assert.Equal(t, topology.Pointer{TenantID: tenant, ReleaseID: "rel-1", PromotionSeq: 1}, live)
 
 	require.NoError(t, repo.SetLivePointer(ctx, tenant, topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 2}, at.Add(time.Minute)))
 	live, err = repo.LivePointer(ctx, tenant)
 	require.NoError(t, err)
-	assert.Equal(t, topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 2}, live)
+	assert.Equal(t, topology.Pointer{TenantID: tenant, ReleaseID: "rel-2", PromotionSeq: 2}, live)
 	assert.Equal(t, 1, countTopoRows(t, db, `SELECT count(*) FROM live_release WHERE tenant_id = $1`, tenant))
+}
+
+// LivePointers lists the live release of every tenant, each with its tenant,
+// in tenant order; a tenant with no live release is not listed.
+func TestTopologyRepository_LivePointersListsEveryTenantsLiveRelease(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	first, second, unlive := newTopoTenant(t, db), newTopoTenant(t, db), newTopoTenant(t, db)
+	if second < first {
+		first, second = second, first
+	}
+	for _, tenant := range []string{first, second, unlive} {
+		_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "aa", topoSpec("raw", "orders", "dbt-seed", "h1")))
+		require.NoError(t, err)
+	}
+	repo := postgres.NewTopologyRepository(db, nil)
+	require.NoError(t, repo.SetLivePointer(ctx, second, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 4}, time.Now()))
+	require.NoError(t, repo.SetLivePointer(ctx, first, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 9}, time.Now()))
+
+	all, err := repo.LivePointers(ctx)
+	require.NoError(t, err)
+
+	var ours []topology.Pointer
+	for _, p := range all {
+		if p.TenantID == first || p.TenantID == second || p.TenantID == unlive {
+			ours = append(ours, p)
+		}
+	}
+	assert.Equal(t, []topology.Pointer{
+		{TenantID: first, ReleaseID: "rel-1", PromotionSeq: 9},
+		{TenantID: second, ReleaseID: "rel-1", PromotionSeq: 4},
+	}, ours)
 }
 
 func TestTopologyRepository_NodeContentHash(t *testing.T) {
@@ -382,8 +414,8 @@ func TestTopologyRepository_PruneReleases(t *testing.T) {
 	for name, status := range map[string]string{"running-run": "running", "finished-run": "succeeded"} {
 		runID := uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, release_id)
-			VALUES ($1, $2, $3, now(), 'completed', $4)`, runID, "prune-"+runID.String()[:8], status, id(name))
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, release_id)
+			VALUES ($5, $1, $2, $3, now(), 'completed', $4)`, runID, "prune-"+runID.String()[:8], status, id(name), tenant)
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID) })
 	}
@@ -402,16 +434,43 @@ func TestTopologyRepository_PruneReleases(t *testing.T) {
 		SELECT count(*) FROM topology_edges WHERE tenant_id = $1 AND release_id = $2`, tenant, id("old")))
 }
 
+// One prune covers every tenant: each tenant keeps its own live release and
+// the releases its runs name, and loses its old unreferenced ones, whichever
+// tenant's live release shares a release id with them.
+func TestTopologyRepository_PruneReleasesKeepsEachTenantsLiveRelease(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	first, second := newTopoTenant(t, db), newTopoTenant(t, db)
+	for _, tenant := range []string{first, second} {
+		for _, id := range []string{"rel-a", "rel-b"} {
+			_, err := saveTopoRelease(t, db, topoRelease(t, tenant, id, 1, "aa", topoSpec("raw", "a", "dbt-seed", "h1")))
+			require.NoError(t, err)
+		}
+	}
+	_, err := db.Exec(`UPDATE topology_releases SET loaded_at = '2000-01-01T00:00:00Z' WHERE tenant_id = ANY($1)`,
+		pq.Array([]string{first, second}))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+	require.NoError(t, repo.SetLivePointer(ctx, first, topology.Pointer{ReleaseID: "rel-a", PromotionSeq: 1}, time.Now()))
+	require.NoError(t, repo.SetLivePointer(ctx, second, topology.Pointer{ReleaseID: "rel-b", PromotionSeq: 1}, time.Now()))
+
+	_, err = repo.PruneReleases(ctx, time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	for tenant, live := range map[string]string{first: "rel-a", second: "rel-b"} {
+		var kept []string
+		require.NoError(t, db.Select(&kept, `SELECT release_id FROM topology_releases WHERE tenant_id = $1`, tenant))
+		assert.Equal(t, []string{live}, kept, "%s keeps its own live release only", tenant)
+	}
+}
+
 // The unit of work's Topology() writes inside its transaction.
 func TestPostgresUnitOfWork_TopologyWritesRollBackWithTheTransaction(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
-	u := postgres.NewPostgresUnitOfWork(db,
-		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
-		postgres.NewScheduleCatalogRepository(db, logger),
-		ports.SystemClock{}, logger)
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
 
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.Topology().LockTopology(ctx))

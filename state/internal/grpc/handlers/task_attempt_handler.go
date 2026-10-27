@@ -36,8 +36,13 @@ func NewTaskAttemptHandler(attempts repository.TaskAttemptReader, logger *slog.L
 }
 
 // ListTaskAttempts implements the StateService ListTaskAttempts RPC: one page
-// of a run's attempts, or of one of its tasks when task_id is set.
+// of the attempts of a run of the request's tenant, or of one of its tasks
+// when task_id is set. Another tenant's run has no attempts.
 func (h *TaskAttemptHandler) ListTaskAttempts(ctx context.Context, req *statev1.ListTaskAttemptsRequest) (*statev1.ListTaskAttemptsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	runID, err := uuid.Parse(req.GetRunId())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "run_id must be a UUID: %q", req.GetRunId())
@@ -60,7 +65,7 @@ func (h *TaskAttemptHandler) ListTaskAttempts(ctx context.Context, req *statev1.
 	}
 	offset := max(int(req.GetPageOffset()), 0)
 
-	rows, total, err := h.attempts.ListRunAttempts(ctx, runID, taskID, pageSize, offset)
+	rows, total, err := h.attempts.ListRunAttempts(ctx, tenantID, runID, taskID, pageSize, offset)
 	if err != nil {
 		h.logger.Error("ListTaskAttempts failed", "run_id", runID, "task_id", req.GetTaskId(), "error", err)
 		return nil, status.Errorf(codes.Internal, "ListTaskAttempts: %v", err)

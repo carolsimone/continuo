@@ -6,30 +6,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/require"
 )
 
-// existingRunSchedRepo is a RunTableRepository whose CreateTx reports
-// that the row already exists. Only CreateTx is exercised.
-type existingRunSchedRepo struct {
-	RunTableRepository
-}
+// A run whose insert finds its row already stored (the INSERT does nothing)
+// is reported as run.ErrRunAlreadyExists.
+func TestRunRepository_SaveRun_ExistingRunIsErrRunAlreadyExists(t *testing.T) {
+	rn, err := run.NewPromotedSeedsRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
+	require.NoError(t, err)
 
-func (existingRunSchedRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *RunRow) error {
-	return ErrRunExists
-}
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO runs`).WillReturnResult(sqlmock.NewResult(0, 0))
+	tx, err := sqlxDB.BeginTxx(context.Background(), nil)
+	require.NoError(t, err)
 
-func TestRunRepositoryAdapter_SaveRun_ExistingRunIsErrRunAlreadyExists(t *testing.T) {
-	rn, err := run.NewPromotedSeedsRun(uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	// A non-nil tx is required by SaveRun's guard; the fake never dereferences it.
-	adapter := NewRunRepository(&sqlx.Tx{}, existingRunSchedRepo{})
-
-	if err := adapter.SaveRun(context.Background(), rn); !errors.Is(err, run.ErrRunAlreadyExists) {
+	err = NewRunRepository(sqlxDB, discardLogger()).WithTx(tx).SaveRun(context.Background(), rn)
+	if !errors.Is(err, run.ErrRunAlreadyExists) {
 		t.Fatalf("SaveRun err = %v, want run.ErrRunAlreadyExists", err)
 	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -25,8 +25,8 @@ func TestNodeRunRepository_List(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-nr-" + uuid.New().String()[:8]
@@ -37,6 +37,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// --- scheduler 1: cron, succeeded ---
 	sched1ID := uuid.New()
 	sched1 := &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           sched1ID,
 		ScheduleName:         sch,
 		Status:               run.RunStatusSucceeded,
@@ -50,6 +51,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// task1: on the target node
 	task1ID := uuid.New()
 	task1 := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      task1ID,
 		ScheduleID:  sched1ID,
 		ServiceName: svc,
@@ -76,6 +78,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// extra task on (svc, sch, other) — must NOT appear in results
 	taskExtraID := uuid.New()
 	taskExtra := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      taskExtraID,
 		ScheduleID:  sched1ID,
 		ServiceName: svc,
@@ -94,6 +97,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// --- scheduler 2: rerun (source = sched1), failed — created more recently ---
 	sched2ID := uuid.New()
 	sched2 := &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           sched2ID,
 		ScheduleName:         sch,
 		Status:               run.RunStatusFailed,
@@ -109,6 +113,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	task2ID := uuid.New()
 	errMsg := "boom"
 	task2 := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      task2ID,
 		ScheduleID:  sched2ID,
 		ServiceName: svc,
@@ -160,8 +165,8 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-noe-" + uuid.New().String()[:8]
@@ -170,6 +175,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	schedID := uuid.New()
 	sched := &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           schedID,
 		ScheduleName:         sch,
 		Status:               run.RunStatusRunning,
@@ -182,6 +188,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	taskID := uuid.New()
 	task := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      taskID,
 		ScheduleID:  schedID,
 		ServiceName: svc,
@@ -243,9 +250,9 @@ type storedAttempt struct {
 func insertAttemptRow(t testing.TB, db *sqlx.DB, row storedAttempt) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds,
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status, started_at, finished_at, execution_seconds,
 		                           error_message, log_s3_key, run_results_uri, failure_class, failure_reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		VALUES ((SELECT tenant_id FROM tasks WHERE task_id = $1), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		row.TaskID, row.Attempt, fmt.Sprintf("job-%s-%d", row.TaskID.String()[:8], row.Attempt), row.Status,
 		row.StartedAt, row.FinishedAt, row.ExecutionSeconds,
 		row.ErrorMessage, row.LogS3Key, row.RunResultsURI, row.FailureClass, row.FailureReason)
@@ -259,13 +266,15 @@ func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.Tas
 	ctx := context.Background()
 	at := time.Now().Add(-time.Duration(ageMin) * time.Minute)
 	sid, tid := uuid.New(), uuid.New()
-	require.NoError(t, postgres.NewRunTableRepository(db, discardLogger()).Create(ctx, &postgres.RunRow{
+	require.NoError(t, postgres.NewRunRepository(db, discardLogger()).Create(ctx, &postgres.RunRow{
+		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: sch, Status: run.RunStatusSucceeded, Kind: "cron",
 		CreatedAt: at, InitializationStatus: "completed",
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
-	require.NoError(t, postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()).Create(ctx, &postgres.TaskRow{
-		TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
+	require.NoError(t, postgres.NewTaskCollection(db, discardLogger()).Create(ctx, &postgres.TaskRow{
+		TenantID: pkgevents.DefaultTenantID,
+		TaskID:   tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
 		JobName: "j", Status: status, Attempt: attempt, MaxRetries: 3, ImageTag: "v1", CreatedAt: at,
 	}))
 	return tid
@@ -392,8 +401,8 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-ln-" + uuid.New().String()[:8]
@@ -404,6 +413,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	seed := func(table string, schedStatus run.RunStatus, taskStatus run.TaskStatus, retry int, ageMin int, durSec int) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: sch, Status: schedStatus, Kind: "cron",
 			CreatedAt:            time.Now().Add(-time.Duration(ageMin) * time.Minute),
 			InitializationStatus: "completed",
@@ -411,7 +421,8 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		tid := uuid.New()
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: table,
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: table,
 			JobName: "j", Status: taskStatus, Attempt: retry, MaxRetries: 3,
 			ImageTag:  "v1",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
@@ -463,19 +474,21 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-iso-" + uuid.New().String()[:8]
 	sid := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusFailed, Kind: "cron",
 		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "ok_node",
+		TenantID: pkgevents.DefaultTenantID,
+		TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "ok_node",
 		JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 		CreatedAt: time.Now().Add(-time.Minute),
 	}))
@@ -492,20 +505,22 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-pg-" + uuid.New().String()[:8]
 	for i := 0; i < 3; i++ {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:4], JobName: "j", Status: run.TaskStatusSucceeded,
 			MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
@@ -534,13 +549,14 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-tie-" + uuid.New().String()[:8]
 	sid := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 	}))
@@ -548,7 +564,8 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	// 5 distinct nodes all under the SAME scheduler => identical last_run_at
 	for i := 0; i < 5; i++ {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
 			MaxRetries: 3, ImageTag: "v", CreatedAt: time.Now().Add(-time.Minute),
 		}))
@@ -573,19 +590,21 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-skip-" + uuid.New().String()[:8]
 	mk := func(taskStatus run.TaskStatus, ageMin int) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "n",
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "n",
 			JobName: "j", Status: taskStatus, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
@@ -605,19 +624,21 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-exact-" + uuid.New().String()[:8]
 	mk := func(table string) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: table,
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
@@ -645,8 +666,8 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-names-a-" + uuid.New().String()[:8]
@@ -654,12 +675,14 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	mk := func(svc, schema, table string) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
@@ -689,8 +712,8 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-list-a-" + uuid.New().String()[:8]
@@ -698,12 +721,14 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	mk := func(svc, schema, table string) {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
@@ -737,8 +762,8 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	suffix := uuid.New().String()[:8]
@@ -747,12 +772,14 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 	for _, svc := range []string{plain, hyphenated} {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "t",
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "t",
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
@@ -776,19 +803,21 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-emp-" + uuid.New().String()[:8]
 	for i := 0; i < 3; i++ {
 		sid := uuid.New()
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
 			MaxRetries: 3, ImageTag: "v", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
@@ -846,8 +875,8 @@ func TestNodeRunRepository_ContentHashComesFromTheRunsRelease(t *testing.T) {
 		_, _ = db.Exec(`DELETE FROM live_release WHERE tenant_id = $1`, tenant)
 	})
 
-	stamped := readRun(t, db, "hash-"+uuid.NewString()[:8], &oldRelease, nil, "succeeded", true)
-	legacy := readRun(t, db, "hash-"+uuid.NewString()[:8], nil, nil, "succeeded", true)
+	stamped := readRun(t, db, tenant, "hash-"+uuid.NewString()[:8], &oldRelease, nil, "succeeded", true)
+	legacy := readRun(t, db, tenant, "hash-"+uuid.NewString()[:8], nil, nil, "succeeded", true)
 	readTask(t, db, stamped, table, "succeeded")
 	readTask(t, db, legacy, table, "succeeded")
 
@@ -1010,10 +1039,10 @@ func TestNodeRunRepository_List_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	db := newTestDB(t)
 	tenant, otherTenant := leaseTenant(t, db), leaseTenant(t, db)
 	tbl := "w" + uuid.NewString()[:8]
-	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
+	holderRun := readRun(t, db, tenant, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
 	holder := readTask(t, db, holderRun, tbl, "running")
 	require.NoError(t, insertLease(db, tenant, "raw."+tbl, holder, holderRun))
-	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
+	waitingRun := readRun(t, db, tenant, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
 	waiter := readTask(t, db, waitingRun, tbl, "pending")
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	waitForLease(t, db, waiter, since)
@@ -1023,9 +1052,7 @@ func TestNodeRunRepository_List_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	require.Len(t, rows, 2)
 	other, err := postgres.NewNodeRunRepository(db, otherTenant, discardLogger()).List(context.Background(), "svc", "raw", tbl, "run", 50)
 	require.NoError(t, err)
-	for _, r := range other {
-		assert.Nil(t, r.WaitingOnRunID, "another tenant's repository reads none of this tenant's leases")
-	}
+	assert.Empty(t, other, "another tenant's repository reads none of this tenant's tasks")
 	byTask := map[uuid.UUID]*projection.NodeRun{}
 	for _, r := range rows {
 		byTask[r.TaskID] = r

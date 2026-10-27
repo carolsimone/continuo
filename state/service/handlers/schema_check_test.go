@@ -44,3 +44,18 @@ func TestCheckSchema_ReadFailureIsNotAMissingSchema(t *testing.T) {
 		t.Fatalf("err = %v, want a read error", err)
 	}
 }
+
+// state refuses to start until every table whose keys lead with tenant_id has
+// the column.
+func TestCheckSchema_RequiresTheTenantColumns(t *testing.T) {
+	required := map[string]bool{}
+	for _, c := range RequiredColumns {
+		required[c] = true
+	}
+	for _, c := range []string{"runs.tenant_id", "tasks.tenant_id", "task_attempts.tenant_id",
+		"schedule_catalog.tenant_id", "schedule_catalog_state.tenant_id"} {
+		if !required[c] {
+			t.Errorf("RequiredColumns lacks %s", c)
+		}
+	}
+}

@@ -92,7 +92,7 @@ func (h *RunCancelledHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		if stopped[attemptOf{a.TaskID, a.Attempt}] {
 			continue
 		}
-		cmd := command.DeployTask{TaskID: a.TaskID, RunID: evt.RunID.String(), JobName: a.JobName, Attempt: a.Attempt}
+		cmd := command.DeployTask{TenantID: evt.TenantID, TaskID: a.TaskID, RunID: evt.RunID.String(), JobName: a.JobName, Attempt: a.Attempt}
 		job, err := h.stopNamed(ctx, u, snap, cmd, procID, now)
 		if err != nil {
 			return nil, err

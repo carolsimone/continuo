@@ -43,16 +43,22 @@ func NewRebaseHandler(
 	return &RebaseHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRebase validates the request and delegates to the rebase use case.
+// TriggerRebase validates the request and delegates to the rebase use case,
+// for the request's tenant: another tenant's source run is NotFound.
 func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	h.logger.Info("TriggerRebase called", "source_run_id", req.GetSourceRunId(),
 		"include_changed_upstream", req.GetIncludeChangedUpstream(), "expected_release_id", req.GetExpectedReleaseId())
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	srcID, err := parseSourceRunID(req.GetSourceRunId())
 	if err != nil {
 		return nil, err
 	}
 	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), svchandlers.TriggerRebaseInput{
+		TenantID:               tenantID,
 		SourceRunID:            srcID,
 		IncludeChangedUpstream: req.GetIncludeChangedUpstream(),
 		ExpectedReleaseID:      req.GetExpectedReleaseId(),

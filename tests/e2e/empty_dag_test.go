@@ -49,9 +49,9 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	// The live release holds no node of this schedule, so its selection is
 	// empty.
 	_, err := clients.stateDB.ExecContext(ctx, `
-		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, service_metadata)
-		VALUES ($1, $2, $2, '{}')
-		ON CONFLICT (schedule_name) DO NOTHING`,
+		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, service_metadata)
+		VALUES ('default', $1, $2, $2, '{}')
+		ON CONFLICT (tenant_id, schedule_name) DO NOTHING`,
 		scheduleName, now)
 	require.NoError(t, err, "INSERT schedule_catalog failed")
 

@@ -21,10 +21,10 @@ import (
 func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskCollection(db, discardLogger())
 
-	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
+	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	// One statement deletes the run and, through the tasks table's ON DELETE
 	// CASCADE, its tasks, so no concurrent reader sees this single-node run
@@ -37,8 +37,8 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
+	runRepo := schedRepo.WithTx(tx)
+	tasks := taskRepo.ForTenant("default").WithTx(tx)
 
 	require.NoError(t, runRepo.SaveRun(ctx, r))
 
@@ -48,7 +48,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	}}, nil)
 	plan, err := runplan.SingleNode{Key: "analytics.tbl_op", ServiceName: "svc", Operation: model.OperationTest}.Select(g)
 	require.NoError(t, err)
-	_, err = r.Start(ctx, tasks, "default", plan, g, testTaskDefaults, time.Now())
+	_, err = r.Start(ctx, tasks, plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
 	taskID := run.TaskIDFor("default", r.RunID(), "analytics.tbl_op")
 

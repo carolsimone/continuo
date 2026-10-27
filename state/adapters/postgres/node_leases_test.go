@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -46,15 +45,15 @@ func leaseTables(suffixes ...string) []string {
 	return out
 }
 
-// pendingTasks stores a run holding one pending, undispatched task per table
-// and returns the run id and each task's id.
-func pendingTasks(t *testing.T, db *sqlx.DB, tables ...string) (uuid.UUID, map[string]uuid.UUID) {
+// pendingTasks stores a run of tenant holding one pending, undispatched task
+// per table and returns the run id and each task's id.
+func pendingTasks(t *testing.T, db *sqlx.DB, tenant string, tables ...string) (uuid.UUID, map[string]uuid.UUID) {
 	t.Helper()
 	statuses := make(map[string]run.TaskStatus, len(tables))
 	for _, table := range tables {
 		statuses[table] = run.TaskStatusPending
 	}
-	return insertTasks(t, db, statuses)
+	return insertTasks(t, db, tenant, statuses)
 }
 
 // claim is the lease claim of the task of runID at table.
@@ -69,7 +68,7 @@ func inLeaseTx(t *testing.T, db *sqlx.DB, tenant string, fn func(tasks run.TaskC
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, tenant))
+	fn(postgres.NewTaskCollection(db, discardLogger()).ForTenant(tenant).WithTx(tx))
 	require.NoError(t, tx.Commit())
 }
 
@@ -135,8 +134,8 @@ func TestNodeLeases_TakesFreeNodesAndLeavesHeldOnes(t *testing.T) {
 	tenant := leaseTenant(t, db)
 	tables := leaseTables("x", "y", "z")
 	x, y, z := tables[0], tables[1], tables[2]
-	holderRun, holder := pendingTasks(t, db, x)
-	runID, ids := pendingTasks(t, db, x, y, z)
+	holderRun, holder := pendingTasks(t, db, tenant, x)
+	runID, ids := pendingTasks(t, db, tenant, x, y, z)
 	require.NoError(t, insertLease(db, tenant, "e2e_schema."+x, holder[x], holderRun))
 	require.NoError(t, insertLease(db, tenant, "e2e_schema."+z, ids[z], runID))
 
@@ -154,7 +153,8 @@ func TestNodeLeases_TakesFreeNodesAndLeavesHeldOnes(t *testing.T) {
 	assert.Equal(t, heldLease{TaskID: ids[z], RunID: runID}, lz)
 
 	other := leaseTenant(t, db)
-	assert.Equal(t, []uuid.UUID{ids[x]}, takeLeases(t, db, other, claim(runID, ids[x], x)),
+	otherRun, otherIDs := pendingTasks(t, db, other, x)
+	assert.Equal(t, []uuid.UUID{otherIDs[x]}, takeLeases(t, db, other, claim(otherRun, otherIDs[x], x)),
 		"a node is held per tenant: another tenant's node of the same key is free")
 }
 
@@ -166,9 +166,9 @@ func TestNodeLeases_ANewlyReadyTaskWaitsBehindAnOlderWaiter(t *testing.T) {
 	db := newTestDB(t)
 	tenant := leaseTenant(t, db)
 	x := leaseTables("x")[0]
-	holderRun, holder := pendingTasks(t, db, x)
-	waiterRun, waiter := pendingTasks(t, db, x)
-	newRun, newer := pendingTasks(t, db, x)
+	holderRun, holder := pendingTasks(t, db, tenant, x)
+	waiterRun, waiter := pendingTasks(t, db, tenant, x)
+	newRun, newer := pendingTasks(t, db, tenant, x)
 	require.Equal(t, []uuid.UUID{holder[x]}, takeLeases(t, db, tenant, claim(holderRun, holder[x], x)))
 
 	assert.Empty(t, takeLeases(t, db, tenant, claim(waiterRun, waiter[x], x)), "the node is held")
@@ -233,9 +233,9 @@ func TestNodeLeases_OverlappingTakesInOppositeOrdersDoNotDeadlock(t *testing.T) 
 	tenant := leaseTenant(t, db)
 	tables := leaseTables("a", "b")
 	a, b := tables[0], tables[1]
-	firstRun, first := pendingTasks(t, db, a, b)
-	secondRun, second := pendingTasks(t, db, a, b)
-	repo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	firstRun, first := pendingTasks(t, db, tenant, a, b)
+	secondRun, second := pendingTasks(t, db, tenant, a, b)
+	repo := postgres.NewTaskCollection(db, discardLogger())
 	orders := [2][]run.LeaseClaim{
 		{claim(firstRun, first[a], a), claim(firstRun, first[b], b)},
 		{claim(secondRun, second[b], b), claim(secondRun, second[a], a)},
@@ -284,14 +284,14 @@ func TestNodeLeases_OverlappingTakesInOppositeOrdersDoNotDeadlock(t *testing.T) 
 
 // takeInOwnTx begins a transaction, waits for start, takes the leases of
 // claims for tenant and commits.
-func takeInOwnTx(ctx context.Context, db *sqlx.DB, repo postgres.TaskRepository, tenant string, claims []run.LeaseClaim, start <-chan struct{}) ([]uuid.UUID, error) {
+func takeInOwnTx(ctx context.Context, db *sqlx.DB, repo *postgres.TaskCollection, tenant string, claims []run.LeaseClaim, start <-chan struct{}) ([]uuid.UUID, error) {
 	tx, err := db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	<-start
-	taken, err := postgres.NewTaskCollectionAdapter(repo, tx, tenant).TakeLeases(ctx, claims)
+	taken, err := repo.ForTenant(tenant).WithTx(tx).TakeLeases(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("take: %w", err)
 	}
@@ -310,8 +310,8 @@ func (f statusFlow) reportTo(t *testing.T, rep run.AttemptReport, beforeCommit f
 	u := newPlanningUoW(f.db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	require.NoError(t, handlers.NewAttemptReportHandler(f.tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: f.r.RunID(), Report: rep}, uuid.Nil))
+	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: f.tenant, RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	beforeCommit()
 	require.NoError(t, u.Commit())
 }
@@ -421,8 +421,8 @@ func reportThrough(ctx context.Context, db *sqlx.DB, gate *leaseWriteGate, tenan
 		return err
 	}
 	defer func() { _ = u.Rollback() }()
-	if err := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
-		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{RunID: runID, Report: rep}, uuid.Nil); err != nil {
+	if err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
+		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{TenantID: tenant, RunID: runID, Report: rep}, uuid.Nil); err != nil {
 		return err
 	}
 	return u.Commit()
@@ -449,7 +449,7 @@ func takeAfter(ctx context.Context, db *sqlx.DB, tenant string, claims []run.Lea
 	case <-start:
 	case <-stop:
 	}
-	taken, err := postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, tenant).TakeLeases(ctx, claims)
+	taken, err := postgres.NewTaskCollection(db, discardLogger()).ForTenant(tenant).WithTx(tx).TakeLeases(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("take: %w", err)
 	}
@@ -514,7 +514,7 @@ func TestNodeLeases_AReportAndAStartTakingTheSameNodesDoNotDeadlock(t *testing.T
 		held, ok := leaseOn(t, db, tenant, up)
 		require.True(t, ok)
 		require.Equal(t, heldLease{TaskID: upTask, RunID: f.r.RunID()}, held, "round %d: the run's start took Y", i)
-		otherRun, other := pendingTasks(t, db, down, up)
+		otherRun, other := pendingTasks(t, db, tenant, down, up)
 		claims := []run.LeaseClaim{claim(otherRun, other[down], down), claim(otherRun, other[up], up)}
 
 		var (
@@ -565,7 +565,7 @@ func TestNodeLeases_ACancelReleasesTheLeaseOfEachTaskItCancels(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, leaseOf(t, db, taskB))
 
-	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
+	cancelByID(t, db, f.tenant, f.r.RunID(), "alice", "bad data")
 
 	statuses := f.statuses(t)
 	assert.Equal(t, run.TaskStatusStopping, statuses["e2e_schema.ftable_a"])
@@ -585,9 +585,9 @@ func TestNodeLeases_LeavingPendingClearsTheWait(t *testing.T) {
 	tenant := leaseTenant(t, db)
 	tables := leaseTables("d", "s", "p", "c")
 	d, s, p, c := tables[0], tables[1], tables[2], tables[3]
-	_, first := pendingTasks(t, db, d, s)
-	skipRun, skip := pendingTasks(t, db, p)
-	cancelRun, cancel := pendingTasks(t, db, c)
+	_, first := pendingTasks(t, db, tenant, d, s)
+	skipRun, skip := pendingTasks(t, db, tenant, p)
+	cancelRun, cancel := pendingTasks(t, db, tenant, c)
 	all := []uuid.UUID{first[d], first[s], skip[p], cancel[c]}
 	inLeaseTx(t, db, tenant, func(tasks run.TaskCollection) {
 		require.NoError(t, tasks.WaitForLeases(ctx, all))

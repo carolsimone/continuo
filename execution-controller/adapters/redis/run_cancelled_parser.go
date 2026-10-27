@@ -13,14 +13,17 @@ import (
 // be read never becomes readable, so every error is permanent and the
 // consumer dead-letters the entry.
 func ParseRunCancelled(msg goredis.XMessage) (events.RunCancelled, error) {
-	_, p, err := pkgevents.DecodeRunCancelled(stringFields(msg.Values))
+	env, p, err := pkgevents.DecodeRunCancelled(stringFields(msg.Values))
 	if err != nil {
 		return events.RunCancelled{}, fmt.Errorf("%w: decode run cancel (message %s): %v", pkgevents.ErrPermanent, msg.ID, err)
+	}
+	if env.TenantID == "" {
+		return events.RunCancelled{}, fmt.Errorf("%w: run cancel (message %s) names no tenant", pkgevents.ErrPermanent, msg.ID)
 	}
 	attempts := make([]events.AttemptRef, len(p.Attempts))
 	for i, a := range p.Attempts {
 		attempts[i] = events.AttemptRef{TaskID: a.TaskID, Attempt: int(a.Attempt), JobName: a.JobName}
 	}
-	return events.RunCancelled{RunID: uuid.MustParse(p.RunID), CancelledBy: p.CancelledBy, Reason: p.Reason,
+	return events.RunCancelled{TenantID: env.TenantID, RunID: uuid.MustParse(p.RunID), CancelledBy: p.CancelledBy, Reason: p.Reason,
 		Attempts: attempts}, nil
 }

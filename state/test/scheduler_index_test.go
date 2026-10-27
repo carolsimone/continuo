@@ -59,22 +59,19 @@ func explainWithoutSeqScan(t *testing.T, db *sqlx.DB, q string) string {
 func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.StartRunHandler) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	for _, n := range names {
 		_, err := db.Exec(`
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-			VALUES ($1, NOW(), NOW(), NULL, '{}')
-			ON CONFLICT (schedule_name) DO NOTHING
+			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+			VALUES ('default', $1, NOW(), NOW(), NULL, '{}')
+			ON CONFLICT (tenant_id, schedule_name) DO NOTHING
 		`, n)
 		require.NoError(t, err)
 	}
 
 	clk := svcports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	return factory, svchandlers.NewStartRunHandler(defaultPlanner, logger)
 }
@@ -105,7 +102,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			_, outcome, err := handler.Handle(context.Background(), factory(), "race-schedule", run.KindCron, nil, identity.System(), model.OperationRun)
+			_, outcome, err := handler.Handle(context.Background(), factory(), pkgevents.DefaultTenantID, "race-schedule", run.KindCron, nil, identity.System(), model.OperationRun)
 			outcomes[idx] = outcome
 			errs[idx] = err
 		}(i)
@@ -135,9 +132,10 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	assert.Equal(t, 1, active, "the partial unique index allows only one active run")
 }
 
-// TestActivePerScheduleIndexUsedByHasActiveRun asserts the active-run
-// lookup uses an index scan over idx_runs_schedule_name_created
-// rather than a sequential scan.
+// TestActiveScheduleLookupUsesIndex asserts the active-run lookup of a
+// tenant's schedule, as HasActiveRun queries it, reads an index of runs
+// (idx_runs_schedule_name_created or the partial uq_runs_active_per_schedule)
+// rather than scanning the table.
 func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -147,8 +145,8 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 
 	for i := 0; i < 200; i++ {
 		_, err := rawDB.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at)
-			VALUES (gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at)
+			VALUES ('default', gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
 		`, fmt.Sprintf("sched-%d", i%20), i)
 		require.NoError(t, err)
 	}
@@ -156,12 +154,14 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	plan := explainWithoutSeqScan(t, rawDB, `
-		SELECT 1 FROM runs
-		WHERE schedule_name = 'sched-3' AND status IN ('pending','running')
-		ORDER BY created_at DESC LIMIT 1
+		SELECT EXISTS(
+			SELECT 1 FROM runs
+			WHERE tenant_id = 'default' AND schedule_name = 'sched-3'
+			  AND status = ANY('{pending,running,cancelling}'::text[]))
 	`)
-	assert.Contains(t, plan, "idx_runs_schedule_name_created",
-		"HasActiveRun must be able to use the schedule_name index; plan was:\n%s", plan)
+	assert.Regexp(t, "idx_runs_schedule_name_created|uq_runs_active_per_schedule", plan,
+		"HasActiveRun must be able to use an index of the schedule's runs; plan was:\n%s", plan)
+	assert.NotContains(t, plan, "Seq Scan", "plan was:\n%s", plan)
 }
 
 // TestGetLastRunPerSchedule_UsesIndex asserts the DISTINCT ON last-run scan,
@@ -175,8 +175,8 @@ func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 
 	for i := 0; i < 200; i++ {
 		_, err := rawDB.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at)
-			VALUES (gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at)
+			VALUES ('default', gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
 		`, fmt.Sprintf("sched-%d", i%20), i)
 		require.NoError(t, err)
 	}
@@ -186,6 +186,7 @@ func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 	plan := explainWithoutSeqScan(t, rawDB, `
 		SELECT DISTINCT ON (schedule_name) schedule_name, run_id, status, created_at
 		FROM runs
+		WHERE tenant_id = 'default'
 		ORDER BY schedule_name, created_at DESC
 	`)
 	assert.Contains(t, plan, "idx_runs_schedule_name_created",

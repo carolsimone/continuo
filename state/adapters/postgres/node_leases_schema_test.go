@@ -36,7 +36,7 @@ func insertLease(db *sqlx.DB, tenant, nodeKey string, taskID, runID uuid.UUID) e
 func TestNodeLeasesSchema_OneLeasePerNode(t *testing.T) {
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
-	first, second := newSchemaTask(t, db), newSchemaTask(t, db)
+	first, second := newSchemaTaskOf(t, db, tenant), newSchemaTaskOf(t, db, tenant)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", first, schemaTaskRun(t, db, first)))
 
 	err := insertLease(db, tenant, "raw.orders", second, schemaTaskRun(t, db, second))
@@ -58,7 +58,7 @@ func TestNodeLeasesSchema_OneLeasePerNode(t *testing.T) {
 func TestNodeLeasesSchema_ATaskHoldsOneLease(t *testing.T) {
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
-	taskID := newSchemaTask(t, db)
+	taskID := newSchemaTaskOf(t, db, tenant)
 	runID := schemaTaskRun(t, db, taskID)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", taskID, runID))
 
@@ -71,7 +71,7 @@ func TestNodeLeasesSchema_ATaskHoldsOneLease(t *testing.T) {
 func TestNodeLeasesSchema_DeletingATaskReleasesItsLease(t *testing.T) {
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
-	taskID := newSchemaTask(t, db)
+	taskID := newSchemaTaskOf(t, db, tenant)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", taskID, schemaTaskRun(t, db, taskID)))
 
 	_, err := db.Exec(`DELETE FROM tasks WHERE task_id = $1`, taskID)
@@ -88,7 +88,7 @@ func TestNodeLeasesSchema_ReleaseNotifies(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
-	first, second := newSchemaTask(t, db), newSchemaTask(t, db)
+	first, second := newSchemaTaskOf(t, db, tenant), newSchemaTaskOf(t, db, tenant)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", first, schemaTaskRun(t, db, first)))
 	require.NoError(t, insertLease(db, tenant, "raw.customers", second, schemaTaskRun(t, db, second)))
 	listener := listenForReleases(t)
@@ -115,7 +115,7 @@ func TestNodeLeasesSchema_ADeleteOfNoRowDoesNotNotify(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
-	taskID := newSchemaTask(t, db)
+	taskID := newSchemaTaskOf(t, db, tenant)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", taskID, schemaTaskRun(t, db, taskID)))
 	listener := listenForReleases(t)
 	conn, err := db.Connx(ctx)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
@@ -59,17 +60,17 @@ func (m *recordingMetrics) LeaseWaiters(n int)              { m.waiters = append
 func (m *recordingMetrics) LeaseGranted(wait time.Duration) { m.granted = append(m.granted, wait) }
 func (m *recordingMetrics) LeaseRepaired()                  { m.repaired++ }
 
-// runs serves the runs it holds for update, fails a run it does not hold, and
-// counts saves.
+// runs serves the runs it holds for update, each only under its own tenant,
+// fails a run it does not hold, and counts saves.
 type runs struct {
 	repository.RunRepository
 	held  map[uuid.UUID]*run.Run
 	saved int
 }
 
-func (s *runs) LoadRunForUpdate(_ context.Context, id uuid.UUID) (*run.Run, error) {
+func (s *runs) LoadRunForUpdate(_ context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	r, ok := s.held[id]
-	if !ok {
+	if !ok || r.TenantID() != tenantID {
 		return nil, errors.New("run not found")
 	}
 	return r, nil
@@ -100,20 +101,15 @@ func (fixedClock) Now() time.Time { return now }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// runIn returns a run of status that writes its nodes.
-func runIn(status run.RunStatus) *run.Run {
-	started := now.Add(-time.Hour)
-	total := int32(1)
-	return run.HydrateRun(uuid.New(), "single-node-run-91c2ab07", status, run.InitStatusCompleted, run.KindSingleNodeRun, nil, "system",
-		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0, nil)
-}
+// runIn returns a run of the default tenant in status that writes its nodes.
+func runIn(status run.RunStatus) *run.Run { return runOf(pkgevents.DefaultTenantID, status) }
 
 // A pass runs at once, then on each wake signal without waiting for the
 // interval, and Run returns once its context ends.
 func TestLeaseWaker_RunsOnANotification(t *testing.T) {
 	leases := &fakeLeases{passes: make(chan struct{}, 4)}
 	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
-	waker := leasewaker.New(func() uow.UnitOfWork { return f }, "default", defaults, &recordingMetrics{}, discard())
+	waker := leasewaker.New(func() uow.UnitOfWork { return f }, defaults, &recordingMetrics{}, discard())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wake := make(chan struct{}, 1)
@@ -154,7 +150,7 @@ func TestLeaseWaker_RunsOnANotification(t *testing.T) {
 func TestLeaseWaker_LeavesAWaiterWhoseRunIsNoLongerRunning(t *testing.T) {
 	r := runIn(run.RunStatusCancelling)
 	leases := &fakeLeases{waiters: 1, grantable: []repository.LeaseWaiter{
-		{TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-4 * time.Minute)},
+		{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-4 * time.Minute)},
 	}}
 	held := &runs{held: map[uuid.UUID]*run.Run{r.RunID(): r}}
 	tasks := &unreadTasks{}
@@ -166,7 +162,7 @@ func TestLeaseWaker_LeavesAWaiterWhoseRunIsNoLongerRunning(t *testing.T) {
 	f.SetClock(fixedClock{})
 	metrics := &recordingMetrics{}
 
-	require.NoError(t, leasewaker.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, discard()).Pass(context.Background()))
+	require.NoError(t, leasewaker.New(func() uow.UnitOfWork { return f }, defaults, metrics, discard()).Pass(context.Background()))
 
 	assert.Equal(t, 200, leasewaker.GrantLimit)
 	assert.Equal(t, leasewaker.GrantLimit, leases.limit)
@@ -183,8 +179,8 @@ func TestLeaseWaker_AFailedGrantDoesNotStopThePass(t *testing.T) {
 	gone := uuid.New()
 	r := runIn(run.RunStatusCancelling)
 	leases := &fakeLeases{waiters: 2, grantable: []repository.LeaseWaiter{
-		{TaskID: uuid.New(), RunID: gone, NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-time.Minute)},
-		{TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_b", WaitingSince: now.Add(-time.Minute)},
+		{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), RunID: gone, NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-time.Minute)},
+		{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_b", WaitingSince: now.Add(-time.Minute)},
 	}}
 	tasks := &unreadTasks{}
 	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
@@ -194,7 +190,7 @@ func TestLeaseWaker_AFailedGrantDoesNotStopThePass(t *testing.T) {
 	f.SetClock(fixedClock{})
 	metrics := &recordingMetrics{}
 
-	err := leasewaker.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, discard()).Pass(context.Background())
+	err := leasewaker.New(func() uow.UnitOfWork { return f }, defaults, metrics, discard()).Pass(context.Background())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), gone.String())
@@ -206,14 +202,45 @@ func TestLeaseWaker_AFailedGrantDoesNotStopThePass(t *testing.T) {
 // Each repaired lease is counted.
 func TestLeaseWaker_CountsEachRepairedLease(t *testing.T) {
 	leases := &fakeLeases{repaired: []repository.RepairedLease{
-		{TaskID: uuid.New(), RunID: uuid.New(), NodeKey: "e2e_schema.table_a", TaskStatus: run.TaskStatusSucceeded, AcquiredAt: now.Add(-time.Hour)},
-		{TaskID: uuid.New(), RunID: uuid.New(), NodeKey: "e2e_schema.table_b", TaskStatus: run.TaskStatusCancelled, AcquiredAt: now.Add(-time.Hour)},
+		{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), RunID: uuid.New(), NodeKey: "e2e_schema.table_a", TaskStatus: run.TaskStatusSucceeded, AcquiredAt: now.Add(-time.Hour)},
+		{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), RunID: uuid.New(), NodeKey: "e2e_schema.table_b", TaskStatus: run.TaskStatusCancelled, AcquiredAt: now.Add(-time.Hour)},
 	}}
 	metrics := &recordingMetrics{}
 	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
 
-	require.NoError(t, leasewaker.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, discard()).Pass(context.Background()))
+	require.NoError(t, leasewaker.New(func() uow.UnitOfWork { return f }, defaults, metrics, discard()).Pass(context.Background()))
 
 	assert.Equal(t, 2, metrics.repaired)
 	assert.Equal(t, []int{0}, metrics.waiters)
+}
+
+// A pass acts on the waiters of every tenant the scan lists, each under its
+// own tenant: the waiter's run is loaded, and its tasks and waits are read,
+// with the tenant the waiter names. Here both runs stopped running after the
+// scan, so neither is granted.
+func TestLeaseWaker_ActsOnEachWaiterUnderItsTenant(t *testing.T) {
+	ours, theirs := runOf("default", run.RunStatusCancelling), runOf("acme", run.RunStatusCancelling)
+	leases := &fakeLeases{grantable: []repository.LeaseWaiter{
+		{TenantID: "default", TaskID: uuid.New(), RunID: ours.RunID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-time.Minute)},
+		{TenantID: "acme", TaskID: uuid.New(), RunID: theirs.RunID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-time.Minute)},
+	}}
+	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
+	f.SetRunRepo(&runs{held: map[uuid.UUID]*run.Run{ours.RunID(): ours, theirs.RunID(): theirs}})
+	f.SetTaskCollection(&unreadTasks{})
+	f.SetOutboxPublisher(&recordingOutbox{})
+	f.SetClock(fixedClock{})
+
+	require.NoError(t, leasewaker.New(func() uow.UnitOfWork { return f }, defaults, &recordingMetrics{}, discard()).Pass(context.Background()),
+		"each waiter's run is found under its own tenant")
+
+	assert.Equal(t, []string{"default", "acme"}, f.TaskCollectionTenants)
+	assert.Equal(t, "acme", f.GraphTenant)
+}
+
+// runOf returns a run of tenantID in status that writes its nodes.
+func runOf(tenantID string, status run.RunStatus) *run.Run {
+	started := now.Add(-time.Hour)
+	total := int32(1)
+	return run.HydrateRun(tenantID, uuid.New(), "single-node-run-91c2ab07", status, run.InitStatusCompleted, run.KindSingleNodeRun, nil, "system",
+		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0, nil)
 }

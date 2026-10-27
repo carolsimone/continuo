@@ -168,8 +168,10 @@ func cloneCount(n *int) *int {
 }
 
 // Pointer names the release that is live for a tenant and the promotion seq it
-// was applied under. The zero Pointer means no release is live yet.
+// was applied under; TenantID names the tenant when the pointer was read from
+// the store. The zero Pointer means no release is live yet.
 type Pointer struct {
+	TenantID     string
 	ReleaseID    string
 	PromotionSeq int64
 }

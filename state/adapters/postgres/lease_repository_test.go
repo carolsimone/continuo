@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -22,7 +23,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	"github.com/carolsimone/continuo/state/service/runstart"
-	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -54,72 +54,80 @@ func inUTC(waiters []repository.LeaseWaiter) []repository.LeaseWaiter {
 // For each node no task holds, the oldest of its waiters whose run is running
 // is grantable, the longest waiting first; ties go to the lower task id. A
 // held node, a waiter of a run that is not running and a pending task that
-// waits only for its upstream tasks are not grantable, and every waiter of the
-// tenant counts. Another tenant's waker sees none of them.
+// waits only for its upstream tasks are not grantable, and every waiter
+// counts. The scan reads every tenant and names each waiter with its tenant: a
+// node of the same key is another tenant's own node, whose oldest waiter is
+// grantable beside this tenant's.
 func TestLeaseRepository_GrantableIsTheOldestWaiterOfEachFreeNode(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tables := leaseTables("x", "y", "z", "v", "u")
 	x, y, z, v, u := tables[0], tables[1], tables[2], tables[3], tables[4]
 	tenant := storeEdges(t, db, "grantable-"+x, nil, tables...)
+	other := storeEdges(t, db, "grantable-other-"+x, nil, x)
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = ANY($1)`, pq.Array([]string{tenant, other}))
 	})
-	base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+	repo := postgres.NewLeaseRepository(db, nil)
+	waitersBefore, err := repo.CountWaiters(ctx)
+	require.NoError(t, err)
+	// The oldest wait is a month old, older than any other test's, so the
+	// limit keeps it.
+	base := time.Now().UTC().Truncate(time.Microsecond).Add(-30 * 24 * time.Hour)
 
-	xOldRun, xOld := pendingTasks(t, db, x)
+	xOldRun, xOld := pendingTasks(t, db, tenant, x)
 	waitSince(t, db, xOld[x], base)
-	_, xNew := pendingTasks(t, db, x)
+	_, xNew := pendingTasks(t, db, tenant, x)
 	waitSince(t, db, xNew[x], base.Add(2*time.Minute))
 
-	holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{y: run.TaskStatusRunning})
+	holderRun, holder := insertTasks(t, db, tenant, map[string]run.TaskStatus{y: run.TaskStatusRunning})
 	require.NoError(t, insertLease(db, tenant, string(leaseKey(y)), holder[y], holderRun))
-	_, yWaiter := pendingTasks(t, db, y)
+	_, yWaiter := pendingTasks(t, db, tenant, y)
 	waitSince(t, db, yWaiter[y], base.Add(-time.Minute))
 
-	zStuckRun, zStuck := pendingTasks(t, db, z)
+	zStuckRun, zStuck := pendingTasks(t, db, tenant, z)
 	waitSince(t, db, zStuck[z], base.Add(time.Minute))
-	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, zStuckRun)
+	_, err = db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, zStuckRun)
 	require.NoError(t, err)
-	zRun, zNext := pendingTasks(t, db, z)
+	zRun, zNext := pendingTasks(t, db, tenant, z)
 	waitSince(t, db, zNext[z], base.Add(3*time.Minute))
 
-	vaRun, va := pendingTasks(t, db, v)
-	vbRun, vb := pendingTasks(t, db, v)
+	vaRun, va := pendingTasks(t, db, tenant, v)
+	vbRun, vb := pendingTasks(t, db, tenant, v)
 	waitSince(t, db, va[v], base.Add(4*time.Minute))
 	waitSince(t, db, vb[v], base.Add(4*time.Minute))
-	vFirst := repository.LeaseWaiter{TaskID: va[v], RunID: vaRun, NodeKey: leaseKey(v), WaitingSince: base.Add(4 * time.Minute)}
+	vFirst := repository.LeaseWaiter{TenantID: tenant, TaskID: va[v], RunID: vaRun, NodeKey: leaseKey(v), WaitingSince: base.Add(4 * time.Minute)}
 	if vb[v].String() < va[v].String() {
-		vFirst = repository.LeaseWaiter{TaskID: vb[v], RunID: vbRun, NodeKey: leaseKey(v), WaitingSince: base.Add(4 * time.Minute)}
+		vFirst = repository.LeaseWaiter{TenantID: tenant, TaskID: vb[v], RunID: vbRun, NodeKey: leaseKey(v), WaitingSince: base.Add(4 * time.Minute)}
 	}
 
-	pendingTasks(t, db, u)
+	pendingTasks(t, db, tenant, u)
 
-	repo := postgres.NewLeaseRepository(db, nil, tenant)
-	got, err := repo.Grantable(ctx, 100)
+	theirRun, theirs := pendingTasks(t, db, other, x)
+	waitSince(t, db, theirs[x], base.Add(time.Minute))
+
+	got, err := repo.Grantable(ctx, 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []repository.LeaseWaiter{
-		{TaskID: xOld[x], RunID: xOldRun, NodeKey: leaseKey(x), WaitingSince: base},
-		{TaskID: zNext[z], RunID: zRun, NodeKey: leaseKey(z), WaitingSince: base.Add(3 * time.Minute)},
+		{TenantID: tenant, TaskID: xOld[x], RunID: xOldRun, NodeKey: leaseKey(x), WaitingSince: base},
+		{TenantID: other, TaskID: theirs[x], RunID: theirRun, NodeKey: leaseKey(x), WaitingSince: base.Add(time.Minute)},
+		{TenantID: tenant, TaskID: zNext[z], RunID: zRun, NodeKey: leaseKey(z), WaitingSince: base.Add(3 * time.Minute)},
 		vFirst,
-	}, inUTC(got))
+	}, waitersOf(inUTC(got), tenant, other), "each tenant's node is its own, so each tenant's oldest waiter of x is grantable")
 
 	oldest, err := repo.Grantable(ctx, 1)
 	require.NoError(t, err)
-	assert.Equal(t, []repository.LeaseWaiter{{TaskID: xOld[x], RunID: xOldRun, NodeKey: leaseKey(x), WaitingSince: base}}, inUTC(oldest),
-		"the limit keeps the longest waiting")
+	assert.Equal(t, []repository.LeaseWaiter{{TenantID: tenant, TaskID: xOld[x], RunID: xOldRun, NodeKey: leaseKey(x), WaitingSince: base}},
+		inUTC(oldest), "the limit keeps the longest waiting")
 
 	n, err := repo.CountWaiters(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 7, n, "every waiting task of the tenant counts, whether its node is free or not")
+	assert.Equal(t, waitersBefore+8, n, "every waiting task of every tenant counts, whether its node is free or not")
+}
 
-	other := planningTenant(t, db)
-	theirs, err := postgres.NewLeaseRepository(db, nil, other).Grantable(ctx, 100)
-	require.NoError(t, err)
-	assert.Empty(t, theirs, "a waiter of a run on this tenant's release is not another tenant's")
-	n, err = postgres.NewLeaseRepository(db, nil, other).CountWaiters(ctx)
-	require.NoError(t, err)
-	assert.Zero(t, n)
+// waitersOf returns, in order, the waiters of waiters that are of tenants.
+func waitersOf(waiters []repository.LeaseWaiter, tenants ...string) []repository.LeaseWaiter {
+	return keep(waiters, func(w repository.LeaseWaiter) string { return w.TenantID }, tenants)
 }
 
 // The grantable waits of a run are its waiting tasks that are the next waiter
@@ -138,17 +146,17 @@ func TestTaskCollection_GrantableWaitsAreTheRunsWaitsNextInLine(t *testing.T) {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 	})
 	base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
-	runID, ids := pendingTasks(t, db, x, y, z, v, u)
+	runID, ids := pendingTasks(t, db, tenant, x, y, z, v, u)
 	waitSince(t, db, ids[x], base.Add(time.Minute))
 	waitSince(t, db, ids[y], base)
 	waitSince(t, db, ids[z], base)
 	waitSince(t, db, ids[v], base.Add(2*time.Minute))
 
-	holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{y: run.TaskStatusRunning})
+	holderRun, holder := insertTasks(t, db, tenant, map[string]run.TaskStatus{y: run.TaskStatusRunning})
 	require.NoError(t, insertLease(db, tenant, string(leaseKey(y)), holder[y], holderRun))
-	_, zOlder := pendingTasks(t, db, z)
+	_, zOlder := pendingTasks(t, db, tenant, z)
 	waitSince(t, db, zOlder[z], base.Add(-time.Minute))
-	vOlderRun, vOlder := pendingTasks(t, db, v)
+	vOlderRun, vOlder := pendingTasks(t, db, tenant, v)
 	waitSince(t, db, vOlder[v], base.Add(-time.Minute))
 	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, vOlderRun)
 	require.NoError(t, err)
@@ -174,9 +182,9 @@ func TestTaskCollection_GrantableWaitsAreTheRunsWaitsNextInLine(t *testing.T) {
 }
 
 // A lease whose holder task has ended is deleted and returned with the
-// holder's status; a lease whose holder is in flight is kept, and another
-// tenant's lease is left to that tenant's repair. A second repair finds
-// nothing.
+// holder's status and tenant; a lease whose holder is in flight is kept. One
+// repair covers every tenant, so another tenant's ended lease goes in the
+// same repair. A second repair finds nothing.
 func TestLeaseRepository_RepairEndedDeletesALeaseWhoseHolderEnded(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -194,23 +202,25 @@ func TestLeaseRepository_RepairEndedDeletesALeaseWhoseHolderEnded(t *testing.T) 
 	for i, table := range tables {
 		byTable[table] = statuses[i]
 	}
-	runID, ids := insertTasks(t, db, byTable)
+	runID, ids := insertTasks(t, db, tenant, byTable)
 	for _, table := range tables {
 		require.NoError(t, insertLease(db, tenant, string(leaseKey(table)), ids[table], runID))
 	}
 	otherTenant := leaseTenant(t, db)
 	otherTable := leaseTables("other")[0]
-	otherRun, other := insertTasks(t, db, map[string]run.TaskStatus{otherTable: run.TaskStatusSucceeded})
+	otherRun, other := insertTasks(t, db, otherTenant, map[string]run.TaskStatus{otherTable: run.TaskStatusSucceeded})
 	require.NoError(t, insertLease(db, otherTenant, string(leaseKey(otherTable)), other[otherTable], otherRun))
 
-	repaired, err := postgres.NewLeaseRepository(db, nil, tenant).RepairEnded(ctx)
+	repaired, err := postgres.NewLeaseRepository(db, nil).RepairEnded(ctx)
 	require.NoError(t, err)
 
 	var want, gotLeases []repository.RepairedLease
 	for _, table := range tables[:4] {
-		want = append(want, repository.RepairedLease{TaskID: ids[table], RunID: runID, NodeKey: leaseKey(table), TaskStatus: byTable[table]})
+		want = append(want, repository.RepairedLease{TenantID: tenant, TaskID: ids[table], RunID: runID, NodeKey: leaseKey(table), TaskStatus: byTable[table]})
 	}
-	for _, l := range repaired {
+	want = append(want, repository.RepairedLease{TenantID: otherTenant, TaskID: other[otherTable], RunID: otherRun, NodeKey: leaseKey(otherTable),
+		TaskStatus: run.TaskStatusSucceeded})
+	for _, l := range repairedOf(repaired, tenant, otherTenant) {
 		assert.False(t, l.AcquiredAt.IsZero(), "a repaired lease carries when it was taken")
 		l.AcquiredAt = time.Time{}
 		gotLeases = append(gotLeases, l)
@@ -222,11 +232,16 @@ func TestLeaseRepository_RepairEndedDeletesALeaseWhoseHolderEnded(t *testing.T) 
 	for _, table := range tables[4:] {
 		assert.True(t, leaseOf(t, db, ids[table]), "the lease of a %s holder is kept", byTable[table])
 	}
-	assert.True(t, leaseOf(t, db, other[otherTable]), "another tenant's lease is its own repair's")
+	assert.False(t, leaseOf(t, db, other[otherTable]), "another tenant's ended lease goes in the same repair")
 
-	again, err := postgres.NewLeaseRepository(db, nil, tenant).RepairEnded(ctx)
+	again, err := postgres.NewLeaseRepository(db, nil).RepairEnded(ctx)
 	require.NoError(t, err)
-	assert.Empty(t, again)
+	assert.Empty(t, repairedOf(again, tenant, otherTenant))
+}
+
+// repairedOf returns, in order, the repaired leases of tenants.
+func repairedOf(leases []repository.RepairedLease, tenants ...string) []repository.RepairedLease {
+	return keep(leases, func(l repository.RepairedLease) string { return l.TenantID }, tenants)
 }
 
 // leaseMetrics records what the lease waker observes.
@@ -290,8 +305,9 @@ func (lf leaseFlow) cronHoldingTableA(t *testing.T) statusFlow {
 func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	t.Helper()
 	ctx := context.Background()
-	h := handlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: lf.tenant, Tasks: testTaskDefaults}, discardLogger())
+	h := handlers.NewTriggerSingleNodeRunHandler(runstart.Planner{Tasks: testTaskDefaults}, discardLogger())
 	id, _, err := h.Handle(ctx, newPlanningUoW(lf.db), handlers.TriggerSingleNodeRunInput{
+		TenantID:       lf.tenant,
 		Target:         run.NodeID{ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table},
 		MetadataSource: run.MetadataSourceLatest,
 		Operation:      model.OperationRun,
@@ -302,14 +318,14 @@ func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, id)
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 	})
-	r, err := newPlanningUoW(lf.db).Run().GetRun(ctx, id)
+	r, err := newPlanningUoW(lf.db).Run().GetRun(ctx, lf.tenant, id)
 	require.NoError(t, err)
 	return statusFlow{db: lf.db, tenant: lf.tenant, r: r}
 }
 
-// waker returns the lease waker of the flow's tenant.
+// waker returns a lease waker that acts on the flow's tenant's rows.
 func (lf leaseFlow) waker(metrics *leaseMetrics, logger *slog.Logger) *leasewaker.Waker {
-	return leasewaker.New(func() uow.UnitOfWork { return newPlanningUoW(lf.db) }, lf.tenant, testTaskDefaults, metrics, logger)
+	return leasewaker.New(scopedUoW(lf.db, lf.tenant), testTaskDefaults, metrics, logger)
 }
 
 // builtBy returns the run node_materializations names as the last to load
@@ -335,8 +351,10 @@ func (f statusFlow) dispatches(t *testing.T) []pkgevents.TaskDispatch {
 		f.r.RunID(), streams.TaskDispatchV1))
 	out := make([]pkgevents.TaskDispatch, 0, len(payloads))
 	for _, p := range payloads {
+		_, wire, err := pkgoutbox.UnwrapTenant(p)
+		require.NoError(t, err)
 		var d pkgevents.TaskDispatch
-		require.NoError(t, json.Unmarshal(p, &d))
+		require.NoError(t, json.Unmarshal(wire, &d))
 		out = append(out, d)
 	}
 	return out
@@ -427,7 +445,7 @@ func TestLeaseWaker_SkipsARunThatIsNotRunning(t *testing.T) {
 	cron := lf.cronHoldingTableA(t)
 	stuck := lf.triggerSingleNode(t, lf.tableA)
 	cancelled := lf.triggerSingleNode(t, lf.tableA)
-	cancelByID(t, db, cancelled.r.RunID(), "alice", "not needed")
+	cancelByID(t, db, cancelled.tenant, cancelled.r.RunID(), "alice", "not needed")
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
 	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() WHERE run_id = $1`, stuck.r.RunID())
@@ -461,7 +479,7 @@ func failStalledUnderLock(t *testing.T, db *sqlx.DB, tenant string, runID uuid.U
 	})
 	var check run.StallCheck
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		r, err := u.Run().LoadRunForUpdate(ctx, runID)
+		r, err := u.Run().LoadRunForUpdate(ctx, tenant, runID)
 		require.NoError(t, err)
 		check, err = r.FailStalled(ctx, u.TaskCollection(tenant), u.TaskGraph(tenant), testTaskDefaults, u.Clock().Now())
 		require.NoError(t, err)
@@ -492,22 +510,18 @@ func TestFailStalled_AWaitBehindAnOlderWaiterGrantedTheNodeIsNotFailed(t *testin
 	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`,
 		younger.r.RunID())
 	require.NoError(t, err)
-	attempts := postgres.NewAttemptRepository(db, nil, lf.tenant)
-	listed, err := attempts.StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed := stalledRunsOf(t, db, lf.tenant, run.StallAfter)
 	require.NotContains(t, listed, younger.r.RunID(), "the cron task holding table_a is in flight")
 
 	cron.report(t, string(leaseKey(lf.tableA)), 0, run.AttemptSucceeded, "")
-	listed, err = attempts.StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed = stalledRunsOf(t, db, lf.tenant, run.StallAfter)
 	require.NotContains(t, listed, younger.r.RunID(), "with table_a free, the younger run waits behind the older one")
 	require.NoError(t, lf.waker(&leaseMetrics{}, discardLogger()).Pass(ctx))
 	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.True(t, held)
 	require.Equal(t, heldLease{TaskID: older.taskID(lf.tableA), RunID: older.r.RunID()}, lease,
 		"the waker granted table_a to the older waiter")
-	listed, err = attempts.StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed = stalledRunsOf(t, db, lf.tenant, run.StallAfter)
 	require.NotContains(t, listed, younger.r.RunID(), "the older run's task holding table_a is in flight")
 
 	assert.False(t, failStalledUnderLock(t, db, lf.tenant, younger.r.RunID()),
@@ -537,11 +551,10 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
 	_, held := leaseOn(t, db, lf.tenant, lf.tableA)
 	require.False(t, held, "the cron task's success released table_a")
-	listed, err := postgres.NewAttemptRepository(db, nil, lf.tenant).StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed := stalledRunsOf(t, db, lf.tenant, run.StallAfter)
 	require.Contains(t, listed, single.r.RunID(), "with table_a free and not yet granted, the run waits on nothing in flight")
 	metrics := &leaseMetrics{}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, lf.tenant, testTaskDefaults, metrics,
+	loop := attemptreconcile.New(scopedUoW(db, lf.tenant), testTaskDefaults, metrics,
 		lf.waker(metrics, discardLogger()).Pass, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
@@ -596,11 +609,10 @@ func TestAttemptReconcile_GrantsANodeFreedAfterTheWakersPassUnderTheRunsLock(t *
 		}
 		require.Empty(t, metrics.granted, "the waker's pass finds table_a held")
 		cron.report(t, keyA, 0, run.AttemptSucceeded, "")
-		var err error
-		listed, err = postgres.NewAttemptRepository(db, nil, lf.tenant).StalledRuns(ctx, run.StallAfter, 500)
-		return err
+		listed = stalledRunsOf(t, db, lf.tenant, run.StallAfter)
+		return nil
 	}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, lf.tenant, testTaskDefaults, metrics,
+	loop := attemptreconcile.New(scopedUoW(db, lf.tenant), testTaskDefaults, metrics,
 		beforeStall, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
@@ -642,7 +654,7 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 	runIDs := make([]uuid.UUID, 0, n)
 	taskIDs := make([]uuid.UUID, 0, n)
 	for i, table := range tables {
-		runID, ids := pendingTasks(t, db, table)
+		runID, ids := pendingTasks(t, db, tenant, table)
 		waitSince(t, db, ids[table], base.Add(time.Duration(i)*time.Millisecond))
 		runIDs = append(runIDs, runID)
 		taskIDs = append(taskIDs, ids[table])
@@ -655,8 +667,8 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 		pq.Array(runIDs))
 	require.NoError(t, err)
 	metrics := &leaseMetrics{}
-	waker := leasewaker.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, metrics, discardLogger())
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, metrics,
+	waker := leasewaker.New(scopedUoW(db, tenant), testTaskDefaults, metrics, discardLogger())
+	loop := attemptreconcile.New(scopedUoW(db, tenant), testTaskDefaults, metrics,
 		waker.Pass, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
@@ -680,12 +692,12 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 	assert.Len(t, metrics.granted, n)
 }
 
-// staleWaitOn stores a running run whose only task waits for the lease of
-// table's node since since, with a progress clock ten minutes old, and returns
-// the run and the task.
-func staleWaitOn(t *testing.T, db *sqlx.DB, table string, since time.Time) (uuid.UUID, uuid.UUID) {
+// staleWaitOn stores a running run of tenant whose only task waits for the
+// lease of table's node since since, with a progress clock ten minutes old, and
+// returns the run and the task.
+func staleWaitOn(t *testing.T, db *sqlx.DB, tenant, table string, since time.Time) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	runID, ids := pendingTasks(t, db, table)
+	runID, ids := pendingTasks(t, db, tenant, table)
 	waitSince(t, db, ids[table], since)
 	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
@@ -712,25 +724,25 @@ func TestStalledRuns_AWaitQueuedBehindAnOlderWaiterOfARunningRunIsNotStalled(t *
 			t.Cleanup(func() {
 				_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 			})
-			firstRun, firstTask := staleWaitOn(t, db, table, since)
-			secondRun, secondTask := staleWaitOn(t, db, table, since.Add(gap))
+			firstRun, firstTask := staleWaitOn(t, db, tenant, table, since)
+			secondRun, secondTask := staleWaitOn(t, db, tenant, table, since.Add(gap))
 			olderRun, olderTask, youngerRun, youngerTask := firstRun, firstTask, secondRun, secondTask
 			if gap == 0 && secondTask.String() < firstTask.String() {
 				olderRun, olderTask, youngerRun, youngerTask = secondRun, secondTask, firstRun, firstTask
 			}
-			head, err := postgres.NewLeaseRepository(db, nil, tenant).Grantable(ctx, 100)
+			all, err := postgres.NewLeaseRepository(db, nil).Grantable(ctx, 1000)
 			require.NoError(t, err)
+			head := waitersOf(all, tenant)
 			require.Len(t, head, 1)
 			require.Equal(t, olderTask, head[0].TaskID, "the lease waker grants the node to the waiter the in-flight check calls older")
 			require.Equal(t, olderRun, head[0].RunID)
 
-			listed, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, run.StallAfter, 500)
-			require.NoError(t, err)
+			listed := stalledRunsOf(t, db, tenant, run.StallAfter)
 			assert.NotContains(t, listed, youngerRun, "the younger waiter is queued behind the older one")
 			assert.Contains(t, listed, olderRun, "the oldest waiter of a free node is a candidate its lock grants")
 
 			assert.False(t, failStalledUnderLock(t, db, tenant, youngerRun), "the re-check under the lock leaves the queued wait")
-			f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, youngerRun)}
+			f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, tenant, youngerRun)}
 			status, _ := f.run(t)
 			assert.Equal(t, run.RunStatusRunning, status)
 			requireWaiting(t, db, youngerTask, "the queued task keeps waiting")
@@ -744,7 +756,6 @@ func TestStalledRuns_AWaitQueuedBehindAnOlderWaiterOfARunningRunIsNotStalled(t *
 // one. The younger waiter's run, idle past run.StallAfter, is listed, and under
 // its lock its task is granted the node and dispatched rather than failed.
 func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testing.T) {
-	ctx := context.Background()
 	db := newTestDB(t)
 	table := leaseTables("dead_head")[0]
 	tenant := storeEdges(t, db, "dead-head-"+table, nil, table)
@@ -752,21 +763,20 @@ func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testin
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 	})
 	since := time.Now().UTC().Add(-time.Hour)
-	cancellingRun, cancellingTask := staleWaitOn(t, db, table, since)
+	cancellingRun, cancellingTask := staleWaitOn(t, db, tenant, table, since)
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
 	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now(), last_progress_at = now()
 		WHERE run_id = $1`, cancellingRun)
 	require.NoError(t, err)
-	waitingRun, waitingTask := staleWaitOn(t, db, table, since.Add(time.Minute))
+	waitingRun, waitingTask := staleWaitOn(t, db, tenant, table, since.Add(time.Minute))
 
-	listed, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed := stalledRunsOf(t, db, tenant, run.StallAfter)
 	require.Contains(t, listed, waitingRun, "a waiter of a cancelling run queues no one")
 
 	assert.False(t, failStalledUnderLock(t, db, tenant, waitingRun), "the run is granted, not failed")
 
-	f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, waitingRun)}
+	f := statusFlow{db: db, tenant: tenant, r: hydrated(t, db, tenant, waitingRun)}
 	status, _ := f.run(t)
 	assert.Equal(t, run.RunStatusRunning, status)
 	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, waitingTask))
@@ -780,9 +790,9 @@ func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testin
 }
 
 // hydrated loads the run runID as the aggregate.
-func hydrated(t *testing.T, db *sqlx.DB, runID uuid.UUID) *run.Run {
+func hydrated(t *testing.T, db *sqlx.DB, tenant string, runID uuid.UUID) *run.Run {
 	t.Helper()
-	r, err := newPlanningUoW(db).Run().GetRun(context.Background(), runID)
+	r, err := newPlanningUoW(db).Run().GetRun(context.Background(), tenant, runID)
 	require.NoError(t, err)
 	return r
 }
@@ -806,13 +816,13 @@ func newGrantFailingQueue(t *testing.T, db *sqlx.DB, idle time.Duration) grantFa
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, q.tenant)
 	})
 	since := time.Now().UTC().Add(-time.Hour)
-	q.headRun, q.headTask = staleWaitOn(t, db, q.table, since)
-	_, err := db.Exec(`INSERT INTO task_attempts (task_id, attempt, job_name, status) VALUES ($1, 0, $2, 'failed')`, q.headTask, q.table)
+	q.headRun, q.headTask = staleWaitOn(t, db, q.tenant, q.table, since)
+	_, err := db.Exec(`INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status) VALUES ((SELECT tenant_id FROM tasks WHERE task_id = $1), $1, 0, $2, 'failed')`, q.headTask, q.table)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - make_interval(secs => $2::float8) WHERE run_id = $1`,
 		q.headRun, idle.Seconds())
 	require.NoError(t, err)
-	q.nextRun, q.nextTask = staleWaitOn(t, db, q.table, since.Add(time.Minute))
+	q.nextRun, q.nextTask = staleWaitOn(t, db, q.tenant, q.table, since.Add(time.Minute))
 	return q
 }
 
@@ -839,9 +849,9 @@ func TestAttemptReconcile_FailsAWaiterWhoseGrantKeepsFailingSoItsQueueMoves(t *t
 	db := newTestDB(t)
 	q := newGrantFailingQueue(t, db, 2*run.StallAfter+time.Minute)
 	metrics := &leaseMetrics{}
-	waker := leasewaker.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, metrics, discardLogger())
+	waker := leasewaker.New(scopedUoW(db, q.tenant), testTaskDefaults, metrics, discardLogger())
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, metrics,
+	loop := attemptreconcile.New(scopedUoW(db, q.tenant), testTaskDefaults, metrics,
 		waker.Pass, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(ctx))
@@ -882,13 +892,12 @@ func TestAttemptReconcile_AFailedGrantLeavesARunIdleForLessThanTheBound(t *testi
 	ctx := context.Background()
 	db := newTestDB(t)
 	q := newGrantFailingQueue(t, db, run.StallAfter+time.Minute)
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, &leaseMetrics{},
+	loop := attemptreconcile.New(scopedUoW(db, q.tenant), testTaskDefaults, &leaseMetrics{},
 		nil, discardLogger())
-	listed, err := postgres.NewAttemptRepository(db, nil, q.tenant).StalledRuns(ctx, run.StallAfter, 500)
-	require.NoError(t, err)
+	listed := stalledRunsOf(t, db, q.tenant, run.StallAfter)
 	require.Contains(t, listed, q.headRun)
 
-	err = loop.Pass(ctx)
+	err := loop.Pass(ctx)
 
 	require.ErrorIs(t, err, run.ErrGrantFailed)
 	status, reason := runStatusOf(t, db, q.headRun)

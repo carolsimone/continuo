@@ -128,7 +128,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	tb.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	r, err := run.NewPendingRun(schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(tenant, schedule, run.KindCron, nil, identity.SystemUserID, nil, op,
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
@@ -144,7 +144,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	plan, err := runplan.WholeDAG{Operation: op}.Select(g)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
-	events, err := r.Start(ctx, u.TaskCollection(tenant), tenant, plan, g, testTaskDefaults, now)
+	events, err := r.Start(ctx, u.TaskCollection(tenant), plan, g, testTaskDefaults, now)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
 	require.NoError(tb, u.Outbox().Append(ctx, events, uuid.Nil))
@@ -171,10 +171,10 @@ func succeedWithAttempts(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`
-		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
-		SELECT task_id, 0, job_name, 'succeeded', now(), now(), 1 + row_number() OVER (ORDER BY node_key)
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
+		SELECT tenant_id, task_id, 0, job_name, 'succeeded', now(), now(), 1 + row_number() OVER (ORDER BY node_key)
 		FROM tasks WHERE run_id = $1
-		ON CONFLICT (task_id, attempt) DO UPDATE SET status = EXCLUDED.status, started_at = EXCLUDED.started_at,
+		ON CONFLICT (tenant_id, task_id, attempt) DO UPDATE SET status = EXCLUDED.status, started_at = EXCLUDED.started_at,
 			finished_at = EXCLUDED.finished_at, execution_seconds = EXCLUDED.execution_seconds, next_check_at = NULL`, runID)
 	require.NoError(tb, err)
 }

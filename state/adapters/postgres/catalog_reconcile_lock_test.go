@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"testing"
 	"time"
 
@@ -9,15 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog proves the
+// TestCatalogRepository_LoadForUpdate_SerialisesOnEmptyCatalog proves the
 // reconcile advisory lock holds when schedule_catalog is empty — the case where
 // SELECT … FOR UPDATE locks nothing. A second reconciler's LoadCatalogForUpdate
 // must block until the first transaction releases, so two replicas can never
 // both read an empty catalog and upsert a divergent snapshot.
-func TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog(t *testing.T) {
+func TestCatalogRepository_LoadForUpdate_SerialisesOnEmptyCatalog(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	repo := postgres.NewScheduleCatalogRepository(db, discardLogger())
+	repo := postgres.NewCatalogRepository(db, discardLogger())
 
 	// Guarantee the empty-table case this test is about.
 	_, err := db.ExecContext(ctx, "DELETE FROM schedule_catalog")
@@ -28,7 +29,7 @@ func TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog(t *test
 	defer tx1.Rollback()
 
 	// First reconciler takes the advisory lock.
-	_, err = postgres.NewCatalogRepositoryAdapter(db, tx1, repo, discardLogger()).LoadCatalogForUpdate(ctx)
+	_, err = repo.WithTx(tx1).LoadCatalogForUpdate(ctx, pkgevents.DefaultTenantID)
 	require.NoError(t, err)
 
 	// Second reconciler should block on LoadCatalogForUpdate until tx1 ends.
@@ -40,7 +41,7 @@ func TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog(t *test
 			return
 		}
 		defer tx2.Rollback()
-		_, err = postgres.NewCatalogRepositoryAdapter(db, tx2, repo, discardLogger()).LoadCatalogForUpdate(ctx)
+		_, err = repo.WithTx(tx2).LoadCatalogForUpdate(ctx, pkgevents.DefaultTenantID)
 		done <- err
 	}()
 

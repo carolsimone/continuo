@@ -1,11 +1,12 @@
-// Package seedreconcile loads into the warehouse the dbt seeds of the live
-// release whose content it does not hold. A pass compares each live seed's
-// content hash with the version state last recorded as loaded and, for the
-// seeds that differ, creates one promote-seed run, which dispatches every one
-// of them as it is created, and records a build request per seed. A pass runs
-// inside every release.promoted:v2 transaction that moves the live release,
-// and on a fixed interval; both hold the topology lock, so two passes never
-// plan the same seed twice.
+// Package seedreconcile loads into the warehouse the dbt seeds of each
+// tenant's live release whose content it does not hold. A pass, for one
+// tenant, compares each live seed's content hash with the version state last
+// recorded as loaded for that tenant and, for the seeds that differ, creates
+// one promote-seed run of the tenant, which dispatches every one of them as it
+// is created, and records a build request per seed. A pass runs inside every
+// release.promoted:v2 transaction that moves a tenant's live release, for that
+// tenant, and on a fixed interval once per tenant with a live release; every
+// pass holds the topology lock, so two passes never plan the same seed twice.
 package seedreconcile
 
 import (
@@ -37,7 +38,6 @@ const maxRunIDProbes = 8
 type Reconciler struct {
 	uowFactory  func() uow.UnitOfWork
 	maintenance bool
-	tenantID    string
 	tasks       run.TaskDefaults
 	logger      *slog.Logger
 }
@@ -46,12 +46,12 @@ type Reconciler struct {
 // release.promoted:v2 handler.
 var _ handlers.SeedReconciler = (*Reconciler)(nil)
 
-// New builds the reconciler. RunOnce and Loop reconcile tenantID;
-// AfterPromotion reconciles the promotion's tenant. While maintenance is true
-// no pass runs, so no run is created; the first promotion's adoption is still
-// recorded, since it starts no work.
-func New(uowFactory func() uow.UnitOfWork, maintenance bool, tenantID string, tasks run.TaskDefaults, logger *slog.Logger) *Reconciler {
-	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, tenantID: tenantID, tasks: tasks, logger: logger}
+// New builds the reconciler. RunOnce and Loop reconcile every tenant with a
+// live release; AfterPromotion reconciles the promotion's tenant. While
+// maintenance is true no pass runs, so no run is created; the first
+// promotion's adoption is still recorded, since it starts no work.
+func New(uowFactory func() uow.UnitOfWork, maintenance bool, tasks run.TaskDefaults, logger *slog.Logger) *Reconciler {
+	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, tasks: tasks, logger: logger}
 }
 
 // AfterPromotion runs in the release.promoted:v2 transaction, after the
@@ -81,12 +81,32 @@ func (r *Reconciler) AfterPromotion(ctx context.Context, u uow.UnitOfWork, t por
 	return r.pass(ctx, u, t.TenantID, t.MessageProcessingID)
 }
 
-// RunOnce runs one pass for the reconciler's tenant in a transaction of its
-// own, under the topology lock. During maintenance it does nothing.
+// RunOnce lists the live release of every tenant and runs one pass per
+// tenant listed, each in a transaction of its own under the topology lock. A
+// pass reads its tenant's live release again under the lock, so a promotion
+// that moved it since the list is honoured. A pass that fails rolls back its
+// own transaction only; RunOnce runs the rest and returns every failure.
+// During maintenance it does nothing.
 func (r *Reconciler) RunOnce(ctx context.Context) error {
 	if r.maintenance {
 		return nil
 	}
+	live, err := r.uowFactory().Topology().LivePointers(ctx)
+	if err != nil {
+		return fmt.Errorf("list the live releases: %w", err)
+	}
+	var errs []error
+	for _, p := range live {
+		if err := r.runOnceFor(ctx, p.TenantID); err != nil {
+			errs = append(errs, fmt.Errorf("seed reconcile of tenant %s: %w", p.TenantID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// runOnceFor runs one pass for tenantID in a transaction of its own, under the
+// topology lock.
+func (r *Reconciler) runOnceFor(ctx context.Context, tenantID string) error {
 	u := r.uowFactory()
 	if err := u.Begin(ctx); err != nil {
 		return fmt.Errorf("begin the seed reconcile: %w", err)
@@ -100,7 +120,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	if err := u.Topology().LockTopology(ctx); err != nil {
 		return fmt.Errorf("lock the topology: %w", err)
 	}
-	if err := r.pass(ctx, u, r.tenantID, uuid.Nil); err != nil {
+	if err := r.pass(ctx, u, tenantID, uuid.Nil); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {
@@ -125,7 +145,7 @@ func (r *Reconciler) Loop(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := r.RunOnce(ctx); err != nil && ctx.Err() == nil {
-				r.logger.Error("Seed reconcile pass failed", "tenant_id", r.tenantID, "error", err)
+				r.logger.Error("Seed reconcile pass failed", "error", err)
 			}
 		}
 	}
@@ -145,7 +165,7 @@ func (r *Reconciler) adopt(ctx context.Context, u uow.UnitOfWork, t ports.Promot
 	if err != nil {
 		return fmt.Errorf("read the seeds of release %s: %w", t.ReleaseID, err)
 	}
-	firstRunExists, err := u.Run().RunExists(ctx, seeds.RunID(t.ReleaseID, 1))
+	firstRunExists, err := u.Run().RunExists(ctx, t.TenantID, seeds.RunID(t.TenantID, t.ReleaseID, 1))
 	if err != nil {
 		return fmt.Errorf("look up the first promote-seed run of release %s: %w", t.ReleaseID, err)
 	}
@@ -196,13 +216,13 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	for _, d := range toBuild {
 		keys = append(keys, d.Key)
 	}
-	planner := runstart.Planner{TenantID: tenantID, Tasks: r.tasks}
-	sel, err := planner.Seeds(ctx, u, live, keys)
+	planner := runstart.Planner{Tasks: r.tasks}
+	sel, err := planner.Seeds(ctx, u, tenantID, live, keys)
 	if err != nil {
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
 	}
 	now := u.Clock().Now()
-	seedRun, err := createRun(ctx, u, live, now)
+	seedRun, err := createRun(ctx, u, tenantID, live, now)
 	if err != nil {
 		return err
 	}
@@ -224,14 +244,14 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 // createRun saves a promote-seed run on the live release and returns it. The
 // id is the release's run id numbered one past the runs that already name the
 // release; an id another run holds moves it to the next number.
-func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, now time.Time) (*run.Run, error) {
-	existing, err := u.Run().CountReleaseRuns(ctx, live.ReleaseID, run.KindPromoteSeed)
+func createRun(ctx context.Context, u uow.UnitOfWork, tenantID string, live topology.Pointer, now time.Time) (*run.Run, error) {
+	existing, err := u.Run().CountReleaseRuns(ctx, tenantID, live.ReleaseID, run.KindPromoteSeed)
 	if err != nil {
 		return nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
 	}
 	for n := existing + 1; n <= existing+maxRunIDProbes; n++ {
-		id := seeds.RunID(live.ReleaseID, n)
-		newRun, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, now)
+		id := seeds.RunID(tenantID, live.ReleaseID, n)
+		newRun, err := run.NewPromotedSeedsRun(tenantID, id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, now)
 		if err != nil {
 			return nil, fmt.Errorf("new promote-seed run: %w", err)
 		}

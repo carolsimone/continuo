@@ -19,16 +19,13 @@ import (
 
 func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
-	return postgres.NewPostgresUnitOfWork(db,
-		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
-		postgres.NewScheduleCatalogRepository(db, logger),
-		ports.SystemClock{}, logger)
+	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
 }
 
 // promoteSeedRun builds an unsaved promote-seed run of releaseID with one seed.
 func promoteSeedRun(t *testing.T, id uuid.UUID, releaseID string) *run.Run {
 	t.Helper()
-	rn, err := run.NewPromotedSeedsRun(id, "promote-seed-"+id.String()[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 4}, time.Now())
+	rn, err := run.NewPromotedSeedsRun(pkgevents.DefaultTenantID, id, "promote-seed-"+id.String()[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 4}, time.Now())
 	require.NoError(t, err)
 	return rn
 }
@@ -57,13 +54,13 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, id))
 	assert.Equal(t, sql.NullString{String: releaseID, Valid: true}, stored)
 
-	read, err := u.Run().GetRun(ctx, id)
+	read, err := u.Run().GetRun(ctx, pkgevents.DefaultTenantID, id)
 	require.NoError(t, err)
 	assert.Equal(t, releaseID, read.ReleaseID())
 
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback() //nolint:errcheck
-	locked, err := u.Run().LoadRunForUpdate(ctx, id)
+	locked, err := u.Run().LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, id)
 	require.NoError(t, err)
 	assert.Equal(t, releaseID, locked.ReleaseID())
 }
@@ -72,7 +69,7 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	rn, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, "no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.RunID()) })
 	u := newReleaseRunUoW(db)
@@ -81,7 +78,7 @@ func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	var stored sql.NullString
 	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, rn.RunID()))
 	assert.False(t, stored.Valid)
-	read, err := u.Run().GetRun(ctx, rn.RunID())
+	read, err := u.Run().GetRun(ctx, pkgevents.DefaultTenantID, rn.RunID())
 	require.NoError(t, err)
 	assert.Empty(t, read.ReleaseID())
 }
@@ -102,29 +99,29 @@ func TestRunRepository_RunExistsAndCountReleaseRuns(t *testing.T) {
 
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback() //nolint:errcheck
-	exists, err := u.Run().RunExists(ctx, first)
+	exists, err := u.Run().RunExists(ctx, pkgevents.DefaultTenantID, first)
 	require.NoError(t, err)
 	assert.True(t, exists)
-	exists, err = u.Run().RunExists(ctx, uuid.New())
+	exists, err = u.Run().RunExists(ctx, pkgevents.DefaultTenantID, uuid.New())
 	require.NoError(t, err)
 	assert.False(t, exists)
 
-	n, err := u.Run().CountReleaseRuns(ctx, releaseID, run.KindPromoteSeed)
+	n, err := u.Run().CountReleaseRuns(ctx, pkgevents.DefaultTenantID, releaseID, run.KindPromoteSeed)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	n, err = u.Run().CountReleaseRuns(ctx, releaseID, run.KindRerun)
+	n, err = u.Run().CountReleaseRuns(ctx, pkgevents.DefaultTenantID, releaseID, run.KindRerun)
 	require.NoError(t, err)
 	assert.Zero(t, n, "only runs of the asked kind count")
 
 	require.NoError(t, u.Run().SaveRun(ctx, promoteSeedRun(t, third, releaseID)))
-	n, err = u.Run().CountReleaseRuns(ctx, releaseID, run.KindPromoteSeed)
+	n, err = u.Run().CountReleaseRuns(ctx, pkgevents.DefaultTenantID, releaseID, run.KindPromoteSeed)
 	require.NoError(t, err)
 	assert.Equal(t, 3, n, "a run written in the same transaction counts")
 
 	outside := newReleaseRunUoW(db)
-	_, err = outside.Run().RunExists(ctx, first)
+	_, err = outside.Run().RunExists(ctx, pkgevents.DefaultTenantID, first)
 	assert.Error(t, err, "RunExists needs a transaction")
-	_, err = outside.Run().CountReleaseRuns(ctx, releaseID, run.KindPromoteSeed)
+	_, err = outside.Run().CountReleaseRuns(ctx, pkgevents.DefaultTenantID, releaseID, run.KindPromoteSeed)
 	assert.Error(t, err, "CountReleaseRuns needs a transaction")
 }
 
@@ -140,9 +137,9 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	u := newReleaseRunUoW(db)
 
 	stamp := run.ReleaseStamp{ReleaseID: uuid.NewString(), PromotionSeq: 12}
-	withStamp, err := run.NewDerivedRun("stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+	withStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
-	withoutStamp, err := run.NewDerivedRun("stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
+	withoutStamp, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
 	stamped, unstamped = withStamp.RunID(), withoutStamp.RunID()
 	saveRuns(t, u, withStamp, withoutStamp)
@@ -153,10 +150,10 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM runs WHERE run_id = $1`, unstamped))
 	assert.False(t, seq.Valid)
 
-	read, err := u.Run().GetRun(ctx, stamped)
+	read, err := u.Run().GetRun(ctx, pkgevents.DefaultTenantID, stamped)
 	require.NoError(t, err)
 	assert.Equal(t, stamp, read.Release())
-	read, err = u.Run().GetRun(ctx, unstamped)
+	read, err = u.Run().GetRun(ctx, pkgevents.DefaultTenantID, unstamped)
 	require.NoError(t, err)
 	assert.True(t, read.Release().IsZero())
 }

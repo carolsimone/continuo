@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -34,19 +35,21 @@ import (
 
 type singleNodeRunFixture struct {
 	Handler       *SingleNodeRunHandler
-	SchedulerRepo postgres.RunTableRepository
-	TaskRepo      postgres.TaskRepository
+	SchedulerRepo *postgres.RunRepository
+	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
-	// Tenant is the tenant the fixture plans for; it holds release rel-svca
-	// as its live release, with svcA's public.users (one data test) and
-	// public.users_snap (a dbt snapshot).
+	// Tenant is the tenant the fixture's requests act for; it holds release
+	// rel-svca as its live release, with svcA's public.users (one data test)
+	// and public.users_snap (a dbt snapshot).
 	Tenant string
 }
 
-// outboxRow holds the fields read back from state_outbox in tests.
+// outboxRow holds the fields read back from state_outbox in tests: the stream,
+// the tenant the row stores and the payload it publishes.
 type outboxRow struct {
 	StreamName string `db:"stream_name"`
 	Payload    []byte `db:"payload"`
+	TenantID   string `db:"-"`
 }
 
 // getOutboxByAggregate reads the state_outbox row for the given aggregate_id.
@@ -62,6 +65,10 @@ func getOutboxByAggregate(t *testing.T, db *sqlx.DB, aggregateID uuid.UUID) *out
 	if err != nil {
 		return nil
 	}
+	tenantID, wire, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	require.NoError(t, err)
+	entry.TenantID = tenantID
+	entry.Payload = wire
 	return &entry
 }
 
@@ -75,16 +82,15 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
+	schedulerRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	promoteUsers(t, db, tenant)
-	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	// Register the DB close via t.Cleanup (not a bare defer in the calling
@@ -133,7 +139,7 @@ func promoteUsers(t *testing.T, db *sqlx.DB, tenant string) {
 func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -147,7 +153,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 
 	// Scheduler row exists with kind = "single_node_run", source_run_id NULL.
 	scheduleID := uuid.MustParse(resp.RunId)
-	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), scheduleID)
+	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), fx.Tenant, scheduleID)
 	require.NoError(t, err)
 	require.Equal(t, "single_node_run", tracker.Kind)
 	require.Nil(t, tracker.SourceRunID)
@@ -183,7 +189,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -209,7 +215,7 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -235,7 +241,7 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -269,6 +275,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
 	srcTracker := &postgres.RunRow{
+		TenantID:             fx.Tenant,
 		ScheduleID:           srcID,
 		ScheduleName:         "src-schedule",
 		Status:               run.RunStatusSucceeded,
@@ -282,6 +289,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 	taskID := uuid.New()
 	srcTask := &postgres.TaskRow{
+		TenantID:    fx.Tenant,
 		TaskID:      taskID,
 		ScheduleID:  srcID,
 		ServiceName: "svcA",
@@ -295,7 +303,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	_, err = fx.DB.ExecContext(context.Background(), `UPDATE tasks SET node_key = 'public.users' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -305,7 +313,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	scheduleID := uuid.MustParse(resp.RunId)
-	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), scheduleID)
+	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), fx.Tenant, scheduleID)
 	require.NoError(t, err)
 	require.Equal(t, "single_node_run", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)
@@ -333,6 +341,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
+		TenantID:             fx.Tenant,
 		ScheduleID:           runningID,
 		ScheduleName:         "running-src",
 		Status:               run.RunStatusRunning,
@@ -344,6 +353,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
 	terminalNoTaskID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
+		TenantID:             fx.Tenant,
 		ScheduleID:           terminalNoTaskID,
 		ScheduleName:         "terminal-no-task",
 		Status:               run.RunStatusSucceeded,
@@ -356,6 +366,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// svcA's public.users, for the FAILED_PRECONDITION of an unreadable source.
 	noReleaseID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
+		TenantID:             fx.Tenant,
 		ScheduleID:           noReleaseID,
 		ScheduleName:         "no-release",
 		Status:               run.RunStatusSucceeded,
@@ -364,7 +375,8 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 		InitializationStatus: "completed",
 	}))
 	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: noReleaseID, ServiceName: "svcA", SchemaName: "public", TableName: "users",
+		TenantID: fx.Tenant,
+		TaskID:   uuid.New(), ScheduleID: noReleaseID, ServiceName: "svcA", SchemaName: "public", TableName: "users",
 		Status: run.TaskStatusSucceeded, CreatedAt: time.Now(),
 	}))
 
@@ -400,7 +412,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			before := singleNodeRunsOf(t, fx.DB, tc.req)
-			_, err := fx.Handler.TriggerSingleNodeRun(context.Background(), tc.req)
+			_, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), tc.req)
 			require.Error(t, err)
 			require.Equal(t, tc.expect, status.Code(err), "wrong code for %s: %v", tc.name, err)
 			require.Equal(t, before, singleNodeRunsOf(t, fx.DB, tc.req), "a refused trigger creates no run")
@@ -444,6 +456,7 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 		t.Helper()
 		id := uuid.New()
 		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.RunRow{
+			TenantID:             fx.Tenant,
 			ScheduleID:           id,
 			ScheduleName:         "single-node-run-" + id.String()[:8],
 			Status:               run.RunStatusRunning,
@@ -463,7 +476,8 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 
 	elsewhere := createRun(t)
 	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: elsewhere, ServiceName: "svcA", SchemaName: "public", TableName: "users_snap",
+		TenantID: fx.Tenant,
+		TaskID:   uuid.New(), ScheduleID: elsewhere, ServiceName: "svcA", SchemaName: "public", TableName: "users_snap",
 		Status: run.TaskStatusPending, CreatedAt: time.Now(),
 	}))
 	require.Equal(t, before+1, singleNodeRunsOf(t, fx.DB, req), "a single-node run of another node is not counted")

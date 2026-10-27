@@ -109,17 +109,14 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	defer cleanupRedis()
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
-	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.
 	// removed_at IS NULL means active. The e2e test uses "daily" and "hourly".
 	_, err := db.Exec(`
-		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-		VALUES ('daily',  NOW(), NOW(), NULL, '{}'),
-		       ('hourly', NOW(), NOW(), NULL, '{}')
-		ON CONFLICT (schedule_name) DO NOTHING
+		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+		VALUES ('default', 'daily',  NOW(), NOW(), NULL, '{}'),
+		       ('default', 'hourly', NOW(), NOW(), NULL, '{}')
+		ON CONFLICT (tenant_id, schedule_name) DO NOTHING
 	`)
 	require.NoError(t, err, "Failed to seed schedule_catalog")
 	promoteSchedules(t, db, "daily", "hourly")
@@ -127,7 +124,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger)
 	}
 
 	// Initialize activation handler

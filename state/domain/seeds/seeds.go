@@ -205,11 +205,13 @@ func Adoptions(live []topology.Node, changedUniqueIDs []string, bootstrap, first
 	return out
 }
 
-// RunID is the id of the n-th promote-seed run planned for a release, counting
-// from 1. The first is the UUIDv5 of the release id alone and every later one
-// also carries its count; n below 1 names the first.
-func RunID(releaseID string, n int) uuid.UUID {
-	name := "schedule:" + releaseID
+// RunID is the id of the n-th promote-seed run planned for a release of a
+// tenant, counting from 1. The first is the UUIDv5 of the tenant and the
+// release id and every later one also carries its count; n below 1 names the
+// first. The tenant is part of the name, so one release id promoted under two
+// tenants plans two runs.
+func RunID(tenantID, releaseID string, n int) uuid.UUID {
+	name := tenantID + "\x00schedule:" + releaseID
 	if n >= 2 {
 		name += "#" + strconv.Itoa(n)
 	}

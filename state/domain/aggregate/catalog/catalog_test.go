@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 )
 
 func loadedCatalog(initial map[string]catalog.Entry) *catalog.ScheduleCatalog {
-	return catalog.Hydrate(initial, 0)
+	return catalog.Hydrate(pkgevents.DefaultTenantID, initial, 0)
 }
 
 func TestReconcile_RejectsEmptyList(t *testing.T) {
@@ -64,7 +65,7 @@ func TestReconcile_ReactivatesRemovedName(t *testing.T) {
 }
 
 func TestReconcile_RefusesAnOlderPromotionAndChangesNothing(t *testing.T) {
-	c := catalog.Hydrate(map[string]catalog.Entry{
+	c := catalog.Hydrate(pkgevents.DefaultTenantID, map[string]catalog.Entry{
 		"orders": {ScheduleName: "orders"},
 		"users":  {ScheduleName: "users"},
 	}, 5)
@@ -83,14 +84,14 @@ func TestReconcile_RefusesAnOlderPromotionAndChangesNothing(t *testing.T) {
 func TestReconcile_StaleCheckPrecedesTheEmptyListGuard(t *testing.T) {
 	// An older payload is acknowledged as stale even when its list is empty:
 	// it describes a release the catalog has already moved past.
-	c := catalog.Hydrate(map[string]catalog.Entry{"orders": {ScheduleName: "orders"}}, 5)
+	c := catalog.Hydrate(pkgevents.DefaultTenantID, map[string]catalog.Entry{"orders": {ScheduleName: "orders"}}, 5)
 	if err := c.Reconcile(4, nil, nil, time.Now()); !errors.Is(err, catalog.ErrStalePromotion) {
 		t.Fatalf("err: got %v want ErrStalePromotion", err)
 	}
 }
 
 func TestReconcile_ReappliesTheSamePromotion(t *testing.T) {
-	c := catalog.Hydrate(map[string]catalog.Entry{
+	c := catalog.Hydrate(pkgevents.DefaultTenantID, map[string]catalog.Entry{
 		"orders": {ScheduleName: "orders"},
 		"users":  {ScheduleName: "users"},
 	}, 5)
@@ -106,11 +107,18 @@ func TestReconcile_ReappliesTheSamePromotion(t *testing.T) {
 }
 
 func TestReconcile_RecordsANewerPromotion(t *testing.T) {
-	c := catalog.Hydrate(nil, 5)
+	c := catalog.Hydrate(pkgevents.DefaultTenantID, nil, 5)
 	if err := c.Reconcile(9, []string{"orders"}, nil, time.Now()); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if got := c.PromotionSeq(); got != 9 {
 		t.Fatalf("PromotionSeq: got %d want 9", got)
+	}
+}
+
+func TestHydrate_KeepsItsTenant(t *testing.T) {
+	c := catalog.Hydrate("acme", nil, 0)
+	if c.TenantID() != "acme" {
+		t.Fatalf("tenant: got %q want %q", c.TenantID(), "acme")
 	}
 }

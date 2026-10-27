@@ -13,53 +13,57 @@ import (
 
 // RunRepository is the port the application layer uses to load/save Run
 // aggregates and to ask narrow cross-Run queries (HasActiveRun,
-// GetActiveRun, GetLastRunPerSchedule). Implementations live in
-// state/adapters/postgres.
+// GetActiveRun, GetLastRunPerSchedule). Every read names the tenant it reads
+// for and sees only that tenant's runs: another tenant's run reads as not
+// found. A save writes the run under the run's own tenant. Implementations
+// live in state/adapters/postgres.
 type RunRepository interface {
-	// GetRun loads a Run snapshot for read-only use. No row lock. Returns
-	// the adapter's ErrNotFound when the run does not exist; the adapter
-	// wraps repo-level not-found into a domain-friendly form at the
+	// GetRun loads the tenant's Run snapshot for read-only use. No row lock.
+	// Returns the adapter's ErrNotFound when the tenant has no such run; the
+	// adapter wraps repo-level not-found into a domain-friendly form at the
 	// application boundary.
-	GetRun(ctx context.Context, id uuid.UUID) (*run.Run, error)
+	GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error)
 
-	// LoadRunForUpdate loads a Run inside the repository's bound transaction
-	// with SELECT ... FOR UPDATE. The aggregate is intended to be mutated; call
-	// SaveRun before tx commit.
-	LoadRunForUpdate(ctx context.Context, id uuid.UUID) (*run.Run, error)
+	// LoadRunForUpdate loads the tenant's Run inside the repository's bound
+	// transaction with SELECT ... FOR UPDATE. The aggregate is intended to be
+	// mutated; call SaveRun before tx commit.
+	LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error)
 
-	// SaveRun persists every dirty field of r. The adapter consults
-	// r.Changes() to dispatch to the existing tuned SQL methods. After a
-	// successful save the adapter calls r.ResetChanges() so the aggregate
-	// can be saved again within the same tx if necessary. Saving a newly
-	// constructed Run whose id is already persisted writes nothing and returns
-	// run.ErrRunAlreadyExists; the transaction stays usable.
+	// SaveRun persists every dirty field of r under r's tenant. The adapter
+	// consults r.Changes() to dispatch to the existing tuned SQL methods.
+	// After a successful save the adapter calls r.ResetChanges() so the
+	// aggregate can be saved again within the same tx if necessary. Saving a
+	// newly constructed Run whose id is already persisted writes nothing and
+	// returns run.ErrRunAlreadyExists; the transaction stays usable.
 	SaveRun(ctx context.Context, r *run.Run) error
 
-	// HasActiveRun returns true when a PENDING or RUNNING Run exists
-	// for `name`. Cross-aggregate query used by SchedulePolicy.
-	HasActiveRun(ctx context.Context, name string) (bool, error)
+	// HasActiveRun returns true when the tenant has a PENDING, RUNNING or
+	// CANCELLING Run for `name`. Cross-aggregate query used by
+	// SchedulePolicy.
+	HasActiveRun(ctx context.Context, tenantID, name string) (bool, error)
 
-	// GetActiveRun returns the active Run on `name`, or nil when
+	// GetActiveRun returns the tenant's active Run on `name`, or nil when
 	// none exists. Used by CancelSchedule to find which run to cancel.
-	GetActiveRun(ctx context.Context, name string) (*run.Run, error)
+	GetActiveRun(ctx context.Context, tenantID, name string) (*run.Run, error)
 
-	// GetLastRunPerSchedule returns the most recent Run per schedule name.
-	// Read-only projection for ListAllSchedules.
-	GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunSummary, error)
+	// GetLastRunPerSchedule returns the tenant's most recent Run per schedule
+	// name. Read-only projection for ListAllSchedules.
+	GetLastRunPerSchedule(ctx context.Context, tenantID string) (map[string]LastRunSummary, error)
 
-	// RunExists reports whether a run with id is persisted. It reads inside the
-	// bound transaction and needs one.
-	RunExists(ctx context.Context, id uuid.UUID) (bool, error)
+	// RunExists reports whether the tenant has a persisted run with id. It
+	// reads inside the bound transaction and needs one.
+	RunExists(ctx context.Context, tenantID string, id uuid.UUID) (bool, error)
 
-	// ListUnplannedActive returns the ids of the PENDING or RUNNING runs whose
-	// tasks state did not plan (planned_at is NULL), oldest first. It reads
-	// inside the bound transaction and needs one.
-	ListUnplannedActive(ctx context.Context) ([]uuid.UUID, error)
+	// ListUnplannedActive returns the PENDING, RUNNING or CANCELLING runs of
+	// every tenant whose tasks state did not plan (planned_at is NULL), each
+	// with its tenant, oldest first. It reads inside the bound transaction and
+	// needs one.
+	ListUnplannedActive(ctx context.Context) ([]RunRef, error)
 
-	// CountReleaseRuns counts the runs of kind whose release_id is releaseID.
-	// It reads inside the bound transaction, so it sees the runs the
-	// transaction wrote, and needs one.
-	CountReleaseRuns(ctx context.Context, releaseID string, kind run.Kind) (int, error)
+	// CountReleaseRuns counts the tenant's runs of kind whose release_id is
+	// releaseID. It reads inside the bound transaction, so it sees the runs
+	// the transaction wrote, and needs one.
+	CountReleaseRuns(ctx context.Context, tenantID, releaseID string, kind run.Kind) (int, error)
 }
 
 // LastRunSummary is the projection row returned by GetLastRunPerSchedule.

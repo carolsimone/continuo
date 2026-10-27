@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -45,7 +46,7 @@ func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 	require.NoError(t, h.db.Get(&out.Tasks, `SELECT count(*) FROM tasks WHERE run_id = $1`, id))
 	require.NoError(t, h.db.Select(&out.Dispatch, `
 		SELECT t.node_key FROM state_outbox o
-		JOIN tasks t ON t.task_id = (o.payload->>'task_id')::uuid
+		JOIN tasks t ON t.task_id = (o.payload->'payload'->>'task_id')::uuid
 		WHERE o.aggregate_id = $1 AND o.stream_name = $2
 		ORDER BY t.node_key COLLATE "C"`, id, streams.TaskDispatchV1))
 	return out
@@ -55,8 +56,8 @@ func (h *builtHarness) catalog(t *testing.T, schedules ...string) {
 	t.Helper()
 	for _, s := range schedules {
 		_, err := h.db.Exec(`
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ($1, now(), now())
-			ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL`, s)
+			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', $1, now(), now())
+			ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, s)
 		require.NoError(t, err)
 	}
 }
@@ -83,7 +84,7 @@ func TestRunCreation(t *testing.T) {
 		scheduledNode("mart", "creation_c", "dbt-model", "creation-daily"))
 
 	t.Run("a triggered run is planned and dispatched in its creating transaction", func(t *testing.T) {
-		id, outcome, err := activate.Handle(ctx, h.factory(), "creation-daily", run.KindTrigger, nil, alice, model.OperationRun)
+		id, outcome, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-daily", run.KindTrigger, nil, alice, model.OperationRun)
 		require.NoError(t, err)
 		require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 
@@ -96,14 +97,14 @@ func TestRunCreation(t *testing.T) {
 	})
 
 	t.Run("a test run of a schedule without data tests is recorded skipped", func(t *testing.T) {
-		id, _, err := activate.Handle(ctx, h.factory(), "creation-daily", run.KindTrigger, nil, alice, model.OperationTest)
+		id, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-daily", run.KindTrigger, nil, alice, model.OperationTest)
 		require.NoError(t, err)
 
 		assert.Equal(t, createdRun{Status: run.RunStatusSkipped, Completed: true}, h.created(t, id))
 	})
 
 	t.Run("a cron fire on a schedule with no node in the live release records a failed run", func(t *testing.T) {
-		id, _, err := activate.Handle(ctx, h.factory(), "creation-empty", run.KindCron, nil, identity.System(), model.OperationRun)
+		id, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindCron, nil, identity.System(), model.OperationRun)
 		require.NoError(t, err)
 
 		assert.Equal(t, createdRun{Status: run.RunStatusFailed, Completed: true, FailureReason: run.RunFailureEmptySelection},
@@ -114,9 +115,9 @@ func TestRunCreation(t *testing.T) {
 		var before int
 		require.NoError(t, db.Get(&before, `SELECT count(*) FROM runs WHERE schedule_name = 'creation-empty'`))
 
-		_, _, err := activate.Handle(ctx, h.factory(), "creation-empty", run.KindTrigger, nil, alice, model.OperationRun)
+		_, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindTrigger, nil, alice, model.OperationRun)
 		require.ErrorIs(t, err, runplan.ErrEmptySelection)
-		_, _, err = activate.Handle(ctx, h.factory(), "creation-empty", run.KindTrigger, nil, alice, model.OperationTest)
+		_, _, err = activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindTrigger, nil, alice, model.OperationTest)
 		require.ErrorIs(t, err, runplan.ErrEmptySelection, "a test run of an empty schedule is refused, not skipped")
 
 		var after int
@@ -129,7 +130,7 @@ func TestRunCreation(t *testing.T) {
 		source := promoteRelease(t, db,
 			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"))
-		srcID, _, err := activate.Handle(ctx, h.factory(), "creation-derived", run.KindTrigger, nil, alice, model.OperationRun)
+		srcID, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-derived", run.KindTrigger, nil, alice, model.OperationRun)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE tasks SET status = CASE node_key WHEN 'raw.derived_a' THEN 'succeeded' ELSE 'failed' END, attempt = 2 WHERE run_id = $1`, srcID)
 		require.NoError(t, err)
@@ -141,7 +142,7 @@ func TestRunCreation(t *testing.T) {
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"),
 			scheduledNode("mart", "derived_c", "dbt-model", "creation-derived"))
 
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, srcID, alice)
 		require.NoError(t, err)
 		assert.Equal(t, source, h.stampOf(t, rerunID))
 		assert.Equal(t, createdRun{Status: run.RunStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
@@ -150,7 +151,7 @@ func TestRunCreation(t *testing.T) {
 		releaseLeasesOf(t, db, rerunID)
 
 		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
-			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, rebaseID))
@@ -163,7 +164,7 @@ func TestRunCreation(t *testing.T) {
 		_, err := db.Exec(`UPDATE runs SET operation = 'test' WHERE run_id = $1`, src)
 		require.NoError(t, err)
 
-		_, _, err = svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), src, alice)
+		_, _, err = svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, src, alice)
 		require.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 		var n int
 		require.NoError(t, db.Get(&n, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
@@ -194,7 +195,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	promoteRelease(t, db,
 		scheduledNode("raw", "pool_a", "dbt-model", "pool-derived"),
 		scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
-	srcID, _, err := activate.Handle(context.Background(), h.factory(), "pool-derived", run.KindTrigger, nil, alice, model.OperationRun)
+	srcID, _, err := activate.Handle(context.Background(), h.factory(), pkgevents.DefaultTenantID, "pool-derived", run.KindTrigger, nil, alice, model.OperationRun)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE tasks SET status = CASE node_key WHEN 'raw.pool_a' THEN 'succeeded' ELSE 'failed' END, attempt = 2 WHERE run_id = $1`, srcID)
 	require.NoError(t, err)
@@ -211,7 +212,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	defer cancel()
 
 	t.Run("rerun", func(t *testing.T) {
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, srcID, alice)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, rerunID)
 		require.NoError(t, err)
@@ -220,7 +221,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	var rebaseID uuid.UUID
 	t.Run("rebase", func(t *testing.T) {
 		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
-			SourceRunID: srcID, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, Initiator: alice,
 		})
 		require.NoError(t, err)
 		rebaseID = id
@@ -233,7 +234,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	t.Run("preview", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
 		previewer := runreads.NewRebasePreviewer(defaultPlanner, h.factory, postgres.NewRunReadRepository(db))
-		pv, err := previewer.Preview(ctx, rebaseID, true)
+		pv, err := previewer.Preview(ctx, pkgevents.DefaultTenantID, rebaseID, true)
 		require.NoError(t, err)
 		require.Len(t, pv.Changed, 1, "the preview reads the release that built raw.pool_a and the duration of raw.pool_a")
 		assert.Equal(t, "pool_a", pv.Changed[0].TableName)
@@ -241,7 +242,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	t.Run("rebase of a rebase", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
 		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
-			SourceRunID: rebaseID, IncludeChangedUpstream: true, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, SourceRunID: rebaseID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"raw.pool_a"}, h.created(t, id).Dispatch)

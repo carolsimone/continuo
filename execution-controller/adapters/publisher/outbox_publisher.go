@@ -86,13 +86,17 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return values, nil
 
 	case event.EventTypeTaskStatusReport:
-		// The row's payload is the report; the envelope names the row as the
-		// event and the time it was written.
+		// The row stores the report beside its tenant; the envelope names the
+		// row as the event, the time it was written and the tenant.
+		tenantID, payload, err := outbox.UnwrapTenant(entry.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: task_status_report: %w", pkgevents.ErrPermanent, err)
+		}
 		var r pkgevents.TaskStatusReport
-		if err := json.Unmarshal(entry.Payload, &r); err != nil {
+		if err := json.Unmarshal(payload, &r); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_status_report: %v", pkgevents.ErrPermanent, err)
 		}
-		values, err := pkgevents.TaskStatusReportFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, r)
+		values, err := pkgevents.TaskStatusReportFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, r)
 		if err != nil {
 			return nil, fmt.Errorf("%w: render task_status_report: %v", pkgevents.ErrPermanent, err)
 		}

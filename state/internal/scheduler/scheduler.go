@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -134,10 +135,12 @@ func (s *CronScheduler) startScheduledRun(name string) {
 	s.logger.Info("Cron trigger fired", "schedule_name", name)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// A cron trigger has no authenticated user; the run is platform-initiated, so
-	// it carries the system identity sentinel.
-	_, _, err := s.activate.Handle(ctx, s.uowFactory(), name, run.KindCron, nil, identity.System(), model.OperationRun)
+	// The schedules file is the default tenant's, so a fire starts a run of that
+	// tenant's schedule. A cron trigger has no authenticated user; the run is
+	// platform-initiated, so it carries the system identity sentinel.
+	tenantID := pkgevents.DefaultTenantID
+	_, _, err := s.activate.Handle(ctx, s.uowFactory(), tenantID, name, run.KindCron, nil, identity.System(), model.OperationRun)
 	if err != nil {
-		s.logger.Error("Failed to activate schedule", "schedule_name", name, "error", err)
+		s.logger.Error("Failed to activate schedule", "tenant_id", tenantID, "schedule_name", name, "error", err)
 	}
 }

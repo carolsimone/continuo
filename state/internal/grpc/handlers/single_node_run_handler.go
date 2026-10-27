@@ -33,7 +33,9 @@ func NewSingleNodeRunHandler(
 	return &SingleNodeRunHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerSingleNodeRun validates the request and delegates to TriggerSingleNodeRunHandler.
+// TriggerSingleNodeRun validates the request and delegates to
+// TriggerSingleNodeRunHandler, for the request's tenant: another tenant's
+// source run is NotFound.
 func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *statev1.TriggerSingleNodeRunRequest) (*statev1.TriggerSingleNodeRunResponse, error) {
 	h.logger.Info("TriggerSingleNodeRun called",
 		"service_name", req.ServiceName,
@@ -41,6 +43,10 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 		"table_name", req.TableName,
 		"metadata_source", req.MetadataSource,
 	)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Validate identity fields.
 	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
@@ -75,6 +81,7 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
 	in := svchandlers.TriggerSingleNodeRunInput{
+		TenantID:       tenantID,
 		Target:         run.NodeID{ServiceName: req.ServiceName, SchemaName: req.SchemaName, TableName: req.TableName},
 		MetadataSource: run.MetadataSource(req.MetadataSource),
 		Operation:      op,

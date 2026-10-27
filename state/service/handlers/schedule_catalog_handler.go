@@ -44,7 +44,9 @@ func (h *ScheduleCatalogHandler) Handle(
 	evt events.ScheduleCatalogLoaded,
 	_ uuid.UUID, // msgProcID — catalog events do not propagate provenance today
 ) error {
-	c, err := u.Catalog().LoadCatalogForUpdate(ctx)
+	// schedules.loaded:v1 names no tenant: the catalog it reconciles is the
+	// default tenant's.
+	c, err := u.Catalog().LoadCatalogForUpdate(ctx, pkgevents.DefaultTenantID)
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
 	}

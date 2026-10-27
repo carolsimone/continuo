@@ -12,8 +12,8 @@ import (
 	"github.com/carolsimone/continuo/state/domain/repository"
 )
 
-// TaskAttemptReadRepository reads a run's task attempts from task_attempts,
-// reaching the run through each attempt's task row.
+// TaskAttemptReadRepository reads a tenant's run's task attempts from
+// task_attempts, reaching the run through each attempt's task row.
 type TaskAttemptReadRepository struct {
 	db *sqlx.DB
 }
@@ -45,15 +45,15 @@ type taskAttemptReadRow struct {
 
 // ListRunAttempts implements repository.TaskAttemptReader.
 func (r *TaskAttemptReadRepository) ListRunAttempts(
-	ctx context.Context, runID uuid.UUID, taskID *uuid.UUID, pageSize, pageOffset int,
+	ctx context.Context, tenantID string, runID uuid.UUID, taskID *uuid.UUID, pageSize, pageOffset int,
 ) ([]projection.TaskAttempt, int, error) {
 	const filter = `
 		FROM task_attempts a
-		JOIN tasks t ON t.task_id = a.task_id
-		WHERE t.run_id = $1 AND ($2::uuid IS NULL OR a.task_id = $2)`
+		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
+		WHERE t.tenant_id = $1 AND t.run_id = $2 AND ($3::uuid IS NULL OR a.task_id = $3)`
 
 	var total int
-	if err := r.db.GetContext(ctx, &total, `SELECT count(*)`+filter, runID, taskID); err != nil {
+	if err := r.db.GetContext(ctx, &total, `SELECT count(*)`+filter, tenantID, runID, taskID); err != nil {
 		return nil, 0, fmt.Errorf("count attempts of run %s: %w", runID, err)
 	}
 
@@ -63,7 +63,7 @@ func (r *TaskAttemptReadRepository) ListRunAttempts(
 		       a.dispatched_at, a.queued_at, a.started_at, a.finished_at, a.execution_seconds,
 		       a.error_message, a.log_s3_key, a.run_results_uri`+filter+`
 		ORDER BY a.task_id, a.attempt
-		LIMIT $3 OFFSET $4`, runID, taskID, pageSize, pageOffset); err != nil {
+		LIMIT $4 OFFSET $5`, tenantID, runID, taskID, pageSize, pageOffset); err != nil {
 		return nil, 0, fmt.Errorf("list attempts of run %s: %w", runID, err)
 	}
 

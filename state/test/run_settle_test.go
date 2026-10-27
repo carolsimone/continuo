@@ -32,12 +32,12 @@ type ownRunList struct {
 	ids []uuid.UUID
 }
 
-func (o ownRunList) ListUnplannedActive(ctx context.Context) ([]uuid.UUID, error) {
+func (o ownRunList) ListUnplannedActive(ctx context.Context) ([]repository.RunRef, error) {
 	all, err := o.RunRepository.ListUnplannedActive(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(all, func(id uuid.UUID) bool { return !slices.Contains(o.ids, id) }), nil
+	return slices.DeleteFunc(all, func(r repository.RunRef) bool { return !slices.Contains(o.ids, r.RunID) }), nil
 }
 
 // TestSettle cancels, against a real Postgres, the active runs state did not

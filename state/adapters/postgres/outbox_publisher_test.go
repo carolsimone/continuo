@@ -48,7 +48,7 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 
 	id := uuid.New()
 	err = pub.Append(ctx, []run.DomainEvent{
-		run.RunCancelled{ID: id, Name: "e2e-schedule", By: "tester", CancellationReason: "drift"},
+		run.RunCancelled{ID: id, TenantID: "acme", Name: "e2e-schedule", By: "tester", CancellationReason: "drift"},
 		run.RunFinalized{ID: id, Name: "e2e-schedule", Outcome: run.RunStatusCancelled},
 	}, uuid.Nil)
 	require.NoError(t, err)
@@ -70,8 +70,11 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	assert.Equal(t, streams.RunCancelledV1, rows[0].StreamName)
 
 	// The row carries the cancelling user (provenance).
+	tenantID, wire, err := pkgoutbox.UnwrapTenant(rows[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID, "the row stores the run's tenant")
 	var cancelled pkgevents.RunCancelled
-	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancelled))
+	require.NoError(t, json.Unmarshal(wire, &cancelled))
 	assert.Equal(t, "tester", cancelled.CancelledBy, "the cancel must carry cancelled_by")
 }
 
@@ -108,7 +111,7 @@ func TestTranslateRunEvent_RunCancelledIsARunCancelledV1Row(t *testing.T) {
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{
-				run.RunCancelled{ID: id, Name: "daily", By: "alice@example.com", CancellationReason: "bad upstream data", Attempts: tc.attempts},
+				run.RunCancelled{ID: id, TenantID: "acme", Name: "daily", By: "alice@example.com", CancellationReason: "bad upstream data", Attempts: tc.attempts},
 			}, uuid.Nil))
 			require.NoError(t, tx.Commit())
 
@@ -123,8 +126,11 @@ func TestTranslateRunEvent_RunCancelledIsARunCancelledV1Row(t *testing.T) {
 			assert.Equal(t, streams.RunCancelledV1, stored.StreamName)
 			assert.Equal(t, streams.RunCancelledV1, stored.EventType, "the row's event type is the stream name")
 			assert.Equal(t, "scheduler", stored.AggregateType, "the run's dispatches share its aggregate")
+			tenantID, wire, err := pkgoutbox.UnwrapTenant(stored.Payload)
+			require.NoError(t, err)
+			assert.Equal(t, "acme", tenantID, "the row stores the run's tenant")
 			var payload pkgevents.RunCancelled
-			require.NoError(t, json.Unmarshal(stored.Payload, &payload))
+			require.NoError(t, json.Unmarshal(wire, &payload))
 			assert.Equal(t, pkgevents.RunCancelled{
 				RunID: id.String(), CancelledBy: "alice@example.com", Reason: "bad upstream data", Attempts: tc.want,
 			}, payload)
@@ -146,7 +152,7 @@ func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
 	pub := postgres.NewOutboxPublisher(tx, discardLogger())
 	id := uuid.New()
 	require.NoError(t, pub.Append(ctx, []run.DomainEvent{
-		run.RunCancelled{ID: id, Name: "sched", By: "", CancellationReason: "drift"},
+		run.RunCancelled{ID: id, TenantID: "acme", Name: "sched", By: "", CancellationReason: "drift"},
 	}, uuid.Nil))
 	require.NoError(t, tx.Commit())
 	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
@@ -156,9 +162,38 @@ func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
 		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
 		id, streams.RunCancelledV1,
 	))
+	_, wire, err := pkgoutbox.UnwrapTenant(raw)
+	require.NoError(t, err)
 	var payload pkgevents.RunCancelled
-	require.NoError(t, json.Unmarshal(raw, &payload))
+	require.NoError(t, json.Unmarshal(wire, &payload))
 	assert.Equal(t, "system", payload.CancelledBy)
+}
+
+// A run event whose run names no tenant writes nothing: its row could not be
+// rendered, so Append refuses it before the insert.
+func TestOutboxPublisher_AnEventWithoutATenantWritesNoRow(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	for name, event := range map[string]func(uuid.UUID) run.DomainEvent{
+		"a cancel": func(id uuid.UUID) run.DomainEvent { return run.RunCancelled{ID: id, Name: "daily"} },
+		"a dispatch": func(id uuid.UUID) run.DomainEvent {
+			return run.TaskDispatched{ID: id, ScheduleName: "daily", TaskID: uuid.New()}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := uuid.New()
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+
+			err = postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{event(id)}, uuid.Nil)
+
+			require.ErrorIs(t, err, pkgoutbox.ErrNoTenant)
+			var count int
+			require.NoError(t, tx.GetContext(ctx, &count, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, id))
+			assert.Zero(t, count)
+		})
+	}
 }
 
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {
@@ -177,7 +212,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	}{
 		{
 			name:          "RunCancelled",
-			event:         run.RunCancelled{ID: scheduleID, Name: "sched"},
+			event:         run.RunCancelled{ID: scheduleID, TenantID: "acme", Name: "sched"},
 			wantStream:    streams.RunCancelledV1,
 			wantEventType: streams.RunCancelledV1,
 			wantAggType:   "scheduler",

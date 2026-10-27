@@ -31,8 +31,8 @@ func (f statusFlow) reportWith(t *testing.T, rep run.AttemptReport) {
 	u := newPlanningUoW(f.db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	require.NoError(t, handlers.NewAttemptReportHandler(f.tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: f.r.RunID(), Report: rep}, uuid.Nil))
+	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: f.tenant, RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	require.NoError(t, u.Commit())
 }
 
@@ -180,8 +180,8 @@ func TestAttemptReport_AReportNamingAnotherRunIsRefused(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	err := handlers.NewAttemptReportHandler(tenantA, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: a.r.RunID(), Report: run.AttemptReport{
+	err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: tenantA, RunID: a.r.RunID(), Report: run.AttemptReport{
 			TaskID:  run.TaskIDFor(tenantB, b.r.RunID(), "e2e_schema.ftable_a"),
 			Attempt: 0, Status: run.AttemptSucceeded,
 		}}, uuid.Nil)
@@ -240,7 +240,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	r, err := u.Run().LoadRunForUpdate(ctx, f.r.RunID())
+	r, err := u.Run().LoadRunForUpdate(ctx, f.tenant, f.r.RunID())
 	require.NoError(t, err)
 	check, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), u.TaskGraph(f.tenant), testTaskDefaults,
 		time.Now().Add(run.StallAfter+time.Minute))
@@ -259,7 +259,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	require.NotNil(t, row.Reason)
 	assert.Equal(t, "stalled", *row.Reason)
 	assert.Equal(t, int32(8), row.Terminal)
-	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.r.RunID())
+	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.tenant, f.r.RunID())
 	require.NoError(t, err)
 	require.NotNil(t, reloaded.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *reloaded.FailureReason())
