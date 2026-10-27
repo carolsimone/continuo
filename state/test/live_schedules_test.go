@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
+// defaultPlanner plans runs with the task defaults state's main uses.
+var defaultPlanner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // releaseLeasesOf deletes the node write leases the tasks of runID hold, as
 // the transactions that end those tasks do. A fixture that ends a run or its

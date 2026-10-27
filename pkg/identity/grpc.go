@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -11,6 +12,10 @@ import (
 // stored, so only this package can write it and external code must go through
 // FromContext.
 type ctxKey struct{}
+
+// tenantKey is the unexported context key under which the tenant a request
+// acts for is stored; WithTenant writes it and TenantFromContext reads it.
+type tenantKey struct{}
 
 // NewOutgoingContext attaches id to ctx's outgoing gRPC metadata under
 // MetadataKey. The ui Node client sets the same header directly; this
@@ -54,11 +59,29 @@ func withIdentity(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, ctxKey{}, id)
 }
 
+// WithTenant returns ctx carrying tenantID as the tenant the request acts
+// for. UnaryServerInterceptor writes it for every request a gRPC server
+// serves; a test builds the context of a request with it.
+func WithTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenantID)
+}
+
+// TenantFromContext returns the tenant the request acts for, or "" when no
+// interceptor placed one on ctx. Unlike FromContext it has no fallback: a
+// caller that finds no tenant refuses the request rather than act for a
+// tenant it guessed.
+func TenantFromContext(ctx context.Context) string {
+	tenantID, _ := ctx.Value(tenantKey{}).(string)
+	return tenantID
+}
+
 // UnaryServerInterceptor extracts the initiating-user Identity from incoming
-// gRPC metadata and places it on the request context before the handler runs.
-// It is the single adapter-boundary seam that converts transport metadata into
-// the domain Identity value; downstream application code reads it via
-// FromContext and never parses metadata itself.
+// gRPC metadata and places it on the request context before the handler runs,
+// beside the tenant the request acts for, which is always
+// events.DefaultTenantID: the edge resolves no other tenant. It is the single
+// adapter-boundary seam that converts transport metadata into the Identity
+// value and the tenant; downstream application code reads them via
+// FromContext and TenantFromContext and never parses metadata itself.
 func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
@@ -66,6 +89,7 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 		_ *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		return handler(withIdentity(ctx, FromIncomingContext(ctx)), req)
+		ctx = WithTenant(withIdentity(ctx, FromIncomingContext(ctx)), events.DefaultTenantID)
+		return handler(ctx, req)
 	}
 }

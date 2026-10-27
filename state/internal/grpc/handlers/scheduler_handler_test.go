@@ -70,6 +70,26 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// requestCtx is the context of a request the gRPC edge resolved to the
+// default tenant, as the identity interceptor does for every request.
+func requestCtx() context.Context {
+	return identity.WithTenant(context.Background(), pkgevents.DefaultTenantID)
+}
+
+// tenantCtx is the context of a request that acts for tenantID.
+func tenantCtx(tenantID string) context.Context {
+	return identity.WithTenant(context.Background(), tenantID)
+}
+
+// assertEveryTenant asserts got names at least one tenant and only want.
+func assertEveryTenant(t *testing.T, want string, got []string, what string) {
+	t.Helper()
+	require.NotEmpty(t, got, what)
+	for _, tenant := range got {
+		assert.Equal(t, want, tenant, what)
+	}
+}
+
 // noopUoWFactory returns a UoW factory whose UoW always panics on use. Used for
 // handler tests that do not exercise the activation or cancel paths.
 func noopUoWFactory() func() uow.UnitOfWork {
@@ -84,9 +104,12 @@ func noopUoWFactory() func() uow.UnitOfWork {
 // handler's activeSchedules, for handler unit tests.
 type stubCatalogRepo struct {
 	existsActive map[string]bool
+	// tenants records the tenant of each existence and metadata read.
+	tenants []string
 }
 
-func (s *stubCatalogRepo) ListActive(_ context.Context, _ string) ([]string, error) {
+func (s *stubCatalogRepo) ListActive(_ context.Context, tenantID string) ([]string, error) {
+	s.tenants = append(s.tenants, tenantID)
 	names := make([]string, 0)
 	for k, v := range s.existsActive {
 		if v {
@@ -95,10 +118,12 @@ func (s *stubCatalogRepo) ListActive(_ context.Context, _ string) ([]string, err
 	}
 	return names, nil
 }
-func (s *stubCatalogRepo) ExistsActive(_ context.Context, _, name string) (bool, error) {
+func (s *stubCatalogRepo) ExistsActive(_ context.Context, tenantID, name string) (bool, error) {
+	s.tenants = append(s.tenants, tenantID)
 	return s.existsActive[name], nil
 }
-func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _, _ string) (map[string]run.ServiceMetadata, error) {
+func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, tenantID, _ string) (map[string]run.ServiceMetadata, error) {
+	s.tenants = append(s.tenants, tenantID)
 	return map[string]run.ServiceMetadata{}, nil
 }
 func (s *stubCatalogRepo) GetCatalog(_ context.Context, _ string) (*catalog.ScheduleCatalog, error) {
@@ -111,25 +136,29 @@ func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCata
 	return nil
 }
 
-// stubSchedulerRepo serves fixed run reads to SchedulerHandler.
+// stubSchedulerRepo serves fixed run reads to SchedulerHandler and records
+// the tenant of each read.
 type stubSchedulerRepo struct {
 	lastRunData   map[string]repository.LastRunSummary
 	getByIDResult *postgres.RunRow
 	getByIDErr    error
+	tenants       []string
 }
 
-func (s *stubSchedulerRepo) GetByID(_ context.Context, _ string, _ uuid.UUID) (*postgres.RunRow, error) {
+func (s *stubSchedulerRepo) GetByID(_ context.Context, tenantID string, _ uuid.UUID) (*postgres.RunRow, error) {
+	s.tenants = append(s.tenants, tenantID)
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
+func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context, tenantID string) (map[string]repository.LastRunSummary, error) {
+	s.tenants = append(s.tenants, tenantID)
 	if s.lastRunData != nil {
 		return s.lastRunData, nil
 	}
 	return map[string]repository.LastRunSummary{}, nil
 }
 
-// defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
+// defaultPlanner plans runs with the task defaults state's main uses.
+var defaultPlanner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // ---- fake run repo for activation tests ----
 
@@ -140,6 +169,8 @@ type activateFakeRunRepo struct {
 	hasActive bool
 	savedRun  *run.Run
 	saveErr   error
+	// activeTenants records the tenant of each active-run check.
+	activeTenants []string
 }
 
 func (f *activateFakeRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
@@ -155,7 +186,8 @@ func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.savedRun = r
 	return nil
 }
-func (f *activateFakeRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
+func (f *activateFakeRunRepo) HasActiveRun(_ context.Context, tenantID, _ string) (bool, error) {
+	f.activeTenants = append(f.activeTenants, tenantID)
 	return f.hasActive, nil
 }
 func (f *activateFakeRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
@@ -197,9 +229,17 @@ func (f *activateFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _
 type scheduleTopology struct {
 	uow.LiveReleaseOnly
 	tested bool
+	// tenants records the tenant of each live-release and graph read.
+	tenants []string
 }
 
-func (s *scheduleTopology) ScheduleGraph(_ context.Context, _, _, schedule string) (topology.Graph, error) {
+func (s *scheduleTopology) LivePointer(ctx context.Context, tenantID string) (topology.Pointer, error) {
+	s.tenants = append(s.tenants, tenantID)
+	return s.LiveReleaseOnly.LivePointer(ctx, tenantID)
+}
+
+func (s *scheduleTopology) ScheduleGraph(_ context.Context, tenantID, _, schedule string) (topology.Graph, error) {
+	s.tenants = append(s.tenants, tenantID)
 	if schedule != "daily" && schedule != "e2e-schedule" {
 		return topology.NewGraph(nil, nil), nil
 	}
@@ -280,7 +320,7 @@ func TestSchedulerHandler_ActivateSchedule_EmptyName(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, noopUoWFactory(), newTestLogger())
 
-	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{})
+	_, err := h.ActivateSchedule(requestCtx(), &statev1.ActivateScheduleRequest{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "schedule_name is required")
@@ -295,7 +335,7 @@ func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+	resp, err := h.ActivateSchedule(requestCtx(), &statev1.ActivateScheduleRequest{
 		ScheduleName: "e2e-schedule",
 	})
 
@@ -316,7 +356,7 @@ func TestActivateSchedule_ARefusedSelectionRecordsAFailedRun(t *testing.T) {
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 	h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
-	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{ScheduleName: "empty"})
+	resp, err := h.ActivateSchedule(requestCtx(), &statev1.ActivateScheduleRequest{ScheduleName: "empty"})
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ScheduleId)
@@ -334,7 +374,7 @@ func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+	_, err := h.ActivateSchedule(requestCtx(), &statev1.ActivateScheduleRequest{
 		ScheduleName: "unknown-schedule",
 	})
 
@@ -353,7 +393,7 @@ func TestActivateSchedule_AlreadyActive_ReturnsEmptyID(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
+	resp, err := h.ActivateSchedule(requestCtx(), &statev1.ActivateScheduleRequest{
 		ScheduleName: "daily",
 	})
 
@@ -372,11 +412,34 @@ func TestTriggerSchedule_Success(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+	resp, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ScheduleId)
+}
+
+// A trigger plans for the tenant of the request it serves: its catalog and
+// active-run checks, the live release and the schedule's graph it reads, the
+// tasks it stores and the run it creates are all that tenant's.
+func TestTriggerSchedule_PlansForTheRequestsTenant(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+	runRepo := &activateFakeRunRepo{}
+	outbox := &activateFakeOutbox{}
+	fu, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+	h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
+
+	resp, err := h.TriggerSchedule(tenantCtx("acme"), &statev1.TriggerScheduleRequest{ScheduleName: "daily"})
+
+	require.NoError(t, err)
+	require.NotNil(t, runRepo.savedRun)
+	assert.Equal(t, resp.ScheduleId, runRepo.savedRun.RunID().String())
+	assert.Equal(t, "acme", runRepo.savedRun.TenantID())
+	assertEveryTenant(t, "acme", catalogRepo.tenants, "catalog reads")
+	assertEveryTenant(t, "acme", runRepo.activeTenants, "active-run checks")
+	assertEveryTenant(t, "acme", fu.TopologyRepo.(*scheduleTopology).tenants, "topology reads")
+	assertEveryTenant(t, "acme", fu.TaskCollectionTenants, "task collections")
+	assert.Len(t, dispatchedOperations(outbox.appended), 2, "both nodes of the schedule are dispatched")
 }
 
 // TestTriggerSchedule_Operation_ThreadsOntoTheDispatches verifies that the
@@ -401,7 +464,7 @@ func TestTriggerSchedule_Operation_ThreadsOntoTheDispatches(t *testing.T) {
 			fu.TopologyRepo.(*scheduleTopology).tested = true
 
 			h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
-			resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+			resp, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 				ScheduleName: "daily",
 				Operation:    tc.operation,
 			})
@@ -423,7 +486,7 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 		h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
-		_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "empty"})
+		_, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{ScheduleName: "empty"})
 
 		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 		assert.Contains(t, status.Convert(err).Message(), "the selection is empty")
@@ -438,7 +501,7 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 		h := NewSchedulerHandler(nil, svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
-		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "daily", Operation: "test"})
+		resp, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{ScheduleName: "daily", Operation: "test"})
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp.ScheduleId)
@@ -460,7 +523,7 @@ func TestTriggerSchedule_InvalidOperation(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+	_, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
 		Operation:    "bogus",
 	})
@@ -480,7 +543,7 @@ func TestTriggerSchedule_FullRefreshRejected(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+	_, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
 		Operation:    "full_refresh",
 	})
@@ -499,7 +562,7 @@ func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+	_, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.Error(t, err)
@@ -516,7 +579,7 @@ func TestTriggerSchedule_NotFound(t *testing.T) {
 	activate := svchandlers.NewStartRunHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
-	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+	_, err := h.TriggerSchedule(requestCtx(), &statev1.TriggerScheduleRequest{
 		ScheduleName: "nonexistent",
 	})
 	require.Error(t, err)
@@ -524,12 +587,30 @@ func TestTriggerSchedule_NotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code())
 }
 
+// The schedule list and the run reads by id read the request's tenant's rows.
+func TestSchedulerReads_ReadTheRequestsTenant(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+	repo := &stubSchedulerRepo{getByIDResult: &postgres.RunRow{ScheduleID: uuid.New(), ScheduleName: "daily", Status: run.RunStatusRunning}}
+	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
+	ctx := tenantCtx("acme")
+
+	_, err := h.ListAllSchedules(ctx, &statev1.ListAllSchedulesRequest{})
+	require.NoError(t, err)
+	_, err = h.GetScheduler(ctx, &statev1.GetSchedulerRequest{ScheduleId: uuid.NewString()})
+	require.NoError(t, err)
+	_, err = h.GetSchedulerInitStatus(ctx, &statev1.GetSchedulerInitStatusRequest{ScheduleId: uuid.NewString()})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme"}, catalogRepo.tenants)
+	assert.Equal(t, []string{"acme", "acme", "acme"}, repo.tenants)
+}
+
 func TestListAllSchedules_Empty(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{}}
 	repo := &stubSchedulerRepo{}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
+	resp, err := h.ListAllSchedules(requestCtx(), &statev1.ListAllSchedulesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Schedules)
 }
@@ -549,7 +630,7 @@ func TestListAllSchedules_MergesData(t *testing.T) {
 	}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, schedulesConfig, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
+	resp, err := h.ListAllSchedules(requestCtx(), &statev1.ListAllSchedulesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Schedules, 1)
 	assert.Equal(t, "daily", resp.Schedules[0].ScheduleName)
@@ -575,7 +656,7 @@ func TestListAllSchedules_PopulatesLastRunId(t *testing.T) {
 	}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
+	resp, err := h.ListAllSchedules(requestCtx(), &statev1.ListAllSchedulesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Schedules, 1)
 	assert.Equal(t, id.String(), resp.Schedules[0].LastRunId)
@@ -602,9 +683,14 @@ func (f *cancelFakeRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*r
 	panic("GetRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
+// LoadRunForUpdate serves the stored run under its own tenant only: another
+// tenant's run id reads as a run with no row.
+func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, tenantID string, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
+	}
+	if f.stored != nil && f.stored.TenantID() != tenantID {
+		return nil, postgres.ErrNotFound
 	}
 	return f.stored, nil
 }
@@ -622,9 +708,14 @@ func (f *cancelFakeRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, 
 	panic("HasActiveRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
+// GetActiveRun serves the stored run as the active run of its own tenant
+// only.
+func (f *cancelFakeRunRepo) GetActiveRun(_ context.Context, tenantID, _ string) (*run.Run, error) {
 	if f.getActiveErr != nil {
 		return nil, f.getActiveErr
+	}
+	if f.stored != nil && f.stored.TenantID() != tenantID {
+		return nil, nil
 	}
 	return f.stored, nil
 }
@@ -805,9 +896,15 @@ func newCancelUoWFactory(runRepo *cancelFakeRunRepo, outbox *cancelFakeOutbox, t
 	return fu, func() uow.UnitOfWork { return fu }
 }
 
-// newPendingRun builds a minimal PENDING Run aggregate for cancel handler tests.
+// newPendingRun builds a minimal PENDING Run aggregate of the default tenant
+// for cancel handler tests.
 func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
-	return run.HydrateRun(pkgevents.DefaultTenantID,
+	return newPendingRunOf(pkgevents.DefaultTenantID, scheduleID, name)
+}
+
+// newPendingRunOf builds a minimal PENDING Run aggregate of tenantID.
+func newPendingRunOf(tenantID string, scheduleID uuid.UUID, name string) *run.Run {
+	return run.HydrateRun(tenantID,
 		scheduleID, name,
 		run.RunStatusPending,
 		run.InitStatusCompleted,
@@ -826,11 +923,37 @@ func newPendingRun(scheduleID uuid.UUID, name string) *run.Run {
 
 // ---- CancelScheduler tests ----
 
+// A cancel acts on a run of the request's tenant only: another tenant's run
+// id is NotFound and that run is left as it was, while a request of the run's
+// own tenant cancels it, under the run's tenant. Cancelling by schedule name
+// finds no active run of another tenant either.
+func TestCancelScheduler_CancelsTheRunOfTheRequestsTenantOnly(t *testing.T) {
+	id := uuid.New()
+	runRepo := &cancelFakeRunRepo{stored: newPendingRunOf("acme", id, "daily")}
+	outbox := &cancelFakeOutbox{}
+	fu, factory := newCancelUoWFactory(runRepo, outbox, &cancelFakeTaskCollection{})
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	_, err := h.CancelScheduler(tenantCtx(pkgevents.DefaultTenantID), &statev1.CancelSchedulerRequest{ScheduleId: id.String()})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	_, err = h.CancelSchedule(tenantCtx(pkgevents.DefaultTenantID), &statev1.CancelScheduleRequest{ScheduleName: "daily"})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "no active run of the request's tenant")
+	assert.False(t, runRepo.saveCalled, "another tenant's run is not saved")
+	assert.Empty(t, outbox.appended)
+	assert.Equal(t, run.RunStatusPending, runRepo.stored.Status())
+	assert.Empty(t, fu.TaskCollectionTenants, "no task of another tenant's run is touched")
+
+	resp, err := h.CancelScheduler(tenantCtx("acme"), &statev1.CancelSchedulerRequest{ScheduleId: id.String()})
+	require.NoError(t, err)
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, resp.Scheduler.Status)
+	assert.Equal(t, []string{"acme"}, fu.TaskCollectionTenants, "the run's tasks are stopped under its tenant")
+}
+
 func TestCancelScheduler_EmptyScheduleID(t *testing.T) {
 	_, factory := newCancelUoWFactory(&cancelFakeRunRepo{}, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{})
+	_, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{})
 	require.Error(t, err)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
@@ -840,7 +963,7 @@ func TestCancelScheduler_InvalidScheduleIDFormat(t *testing.T) {
 	_, factory := newCancelUoWFactory(&cancelFakeRunRepo{}, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	_, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId: "not-a-uuid",
 	})
 	require.Error(t, err)
@@ -853,7 +976,7 @@ func TestCancelScheduler_NotFound(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	_, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId: uuid.NewString(),
 	})
 	require.Error(t, err)
@@ -883,7 +1006,7 @@ func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	_, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId: id.String(),
 	})
 	require.Error(t, err)
@@ -900,7 +1023,7 @@ func TestCancelScheduler_Success(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, outbox, tasks)
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	resp, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId:  id.String(),
 		CancelledBy: "ops-user",
 	})
@@ -937,7 +1060,7 @@ func TestCancelScheduler_CompletedAtMatchesPersistedRow(t *testing.T) {
 	fu.SetClock(fixedClock{now: pinned})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	resp, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId:  id.String(),
 		CancelledBy: "ops-user",
 	})
@@ -968,7 +1091,7 @@ func TestCancelScheduler_SaveError(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	_, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId: id.String(),
 	})
 	require.Error(t, err)
@@ -982,7 +1105,7 @@ func TestCancelSchedule_EmptyScheduleName(t *testing.T) {
 	_, factory := newCancelUoWFactory(&cancelFakeRunRepo{}, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{})
+	_, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{})
 	require.Error(t, err)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
@@ -994,7 +1117,7 @@ func TestCancelSchedule_NoActiveRun(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	_, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.Error(t, err)
@@ -1007,7 +1130,7 @@ func TestCancelSchedule_GetActiveRunError(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	_, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.Error(t, err)
@@ -1024,7 +1147,7 @@ func TestCancelSchedule_Success(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, outbox, tasks)
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	resp, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 		CancelledBy:  "ops-user",
 	})
@@ -1056,7 +1179,7 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	_, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.Error(t, err)
@@ -1097,7 +1220,7 @@ func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 	var logs bytes.Buffer
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, slog.New(slog.NewTextHandler(&logs, nil)))
 
-	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	resp, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 		CancelledBy:  "bob",
 	})
@@ -1127,7 +1250,7 @@ func TestCancelScheduler_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, outbox, &cancelFakeTaskCollection{})
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	resp, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId:  id.String(),
 		CancelledBy: "bob",
 	})
@@ -1151,7 +1274,7 @@ func TestCancelScheduler_AFirstCancelWithAttemptsInFlightAnswersCancelling(t *te
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, tasks)
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+	resp, err := h.CancelScheduler(requestCtx(), &statev1.CancelSchedulerRequest{
 		ScheduleId:  id.String(),
 		CancelledBy: "ops-user",
 	})
@@ -1171,7 +1294,7 @@ func TestCancelSchedule_AFirstCancelWithAttemptsInFlightLeavesTheRunCancelling(t
 	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, tasks)
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{ScheduleName: "daily"})
+	resp, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{ScheduleName: "daily"})
 
 	require.NoError(t, err)
 	assert.Equal(t, id.String(), resp.ScheduleId)
@@ -1191,7 +1314,7 @@ func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
 	}}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.GetScheduler(context.Background(), &statev1.GetSchedulerRequest{ScheduleId: id.String()})
+	resp, err := h.GetScheduler(requestCtx(), &statev1.GetSchedulerRequest{ScheduleId: id.String()})
 
 	require.NoError(t, err)
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, resp.Scheduler.Status)
@@ -1208,7 +1331,7 @@ func TestListAllSchedules_ACancellingLastRunIsRunning(t *testing.T) {
 	}}
 	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
+	resp, err := h.ListAllSchedules(requestCtx(), &statev1.ListAllSchedulesRequest{})
 
 	require.NoError(t, err)
 	require.Len(t, resp.Schedules, 1)
@@ -1238,7 +1361,7 @@ func TestCancelSchedule_OutboxError(t *testing.T) {
 	_, factory := newCancelUoWFactory(runRepo, outbox, tasks)
 	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
 
-	_, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+	_, err := h.CancelSchedule(requestCtx(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
 	})
 	require.Error(t, err)
@@ -1257,7 +1380,7 @@ func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
 	repo := &stubSchedulerRepo{getByIDResult: tracker}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
-	resp, err := h.GetSchedulerInitStatus(context.Background(), &statev1.GetSchedulerInitStatusRequest{
+	resp, err := h.GetSchedulerInitStatus(requestCtx(), &statev1.GetSchedulerInitStatusRequest{
 		ScheduleId: tracker.ScheduleID.String(),
 	})
 
@@ -1269,7 +1392,7 @@ func TestGetSchedulerInitStatus_NotFound(t *testing.T) {
 	repo := &stubSchedulerRepo{getByIDErr: postgres.ErrNotFound}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
-	_, err := h.GetSchedulerInitStatus(context.Background(), &statev1.GetSchedulerInitStatusRequest{
+	_, err := h.GetSchedulerInitStatus(requestCtx(), &statev1.GetSchedulerInitStatusRequest{
 		ScheduleId: uuid.NewString(),
 	})
 
@@ -1282,7 +1405,7 @@ func TestGetSchedulerInitStatus_EmptyScheduleID(t *testing.T) {
 	repo := &stubSchedulerRepo{}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
-	_, err := h.GetSchedulerInitStatus(context.Background(), &statev1.GetSchedulerInitStatusRequest{})
+	_, err := h.GetSchedulerInitStatus(requestCtx(), &statev1.GetSchedulerInitStatusRequest{})
 
 	require.Error(t, err)
 	st, _ := status.FromError(err)
@@ -1293,7 +1416,7 @@ func TestGetSchedulerInitStatus_InvalidScheduleIDFormat(t *testing.T) {
 	repo := &stubSchedulerRepo{}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
-	_, err := h.GetSchedulerInitStatus(context.Background(), &statev1.GetSchedulerInitStatusRequest{
+	_, err := h.GetSchedulerInitStatus(requestCtx(), &statev1.GetSchedulerInitStatusRequest{
 		ScheduleId: "not-a-uuid",
 	})
 

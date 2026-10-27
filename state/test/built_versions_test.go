@@ -82,7 +82,7 @@ func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation
 		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
 	require.NoError(t, err)
 	id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
-		schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
+		pkgevents.DefaultTenantID, schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
 	require.NoError(t, err)
 	return id
 }
@@ -116,7 +116,7 @@ func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.
 // reports is the handler of task.status.updated:v2 the harness reports
 // through.
 func (h *builtHarness) reports() *svchandlers.AttemptReportHandler {
-	return svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, defaultPlanner.Tasks, noRunMetrics{}, h.logger)
+	return svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, h.logger)
 }
 
 // finished is the report that attempt 0 of taskID ended with status; a
@@ -126,7 +126,7 @@ func finished(runID, taskID uuid.UUID, status run.AttemptStatus) events.AttemptR
 	if status == run.AttemptFailed {
 		rep.FailureReason = model.FailureReasonDeadlineExceeded
 	}
-	return events.AttemptReported{RunID: runID, Report: rep}
+	return events.AttemptReported{TenantID: pkgevents.DefaultTenantID, RunID: runID, Report: rep}
 }
 
 // task is the id of runID's task at key, for the default tenant.
@@ -255,7 +255,7 @@ func TestBuiltVersions(t *testing.T) {
 		changed.ContentHash = "sha256:rerun_orders-changed"
 		promoteRelease(t, db, changed)
 
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), pkgevents.DefaultTenantID, sourceID, identity.FromUserID("okta|alice"))
 		require.NoError(t, err)
 		h.finish(t, rerunID, task(rerunID, "raw.rerun_orders"), run.AttemptSucceeded)
 

@@ -162,14 +162,14 @@ func fakeUoW(live topology.Pointer, tasks []run.Task) (*uow.FakeUnitOfWork, *gra
 	return u, topo
 }
 
-var planner = runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
+var planner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // The topology lock is taken before the live release is read, so the release a
 // run names cannot be pruned before the run commits.
 func TestPlanner_LiveStampLocksTheTopologyBeforeReadingTheLiveRelease(t *testing.T) {
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
 
-	got, err := planner.LiveStamp(context.Background(), u)
+	got, err := planner.LiveStamp(context.Background(), u, pkgevents.DefaultTenantID)
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, got)
@@ -180,7 +180,7 @@ func TestPlanner_LiveStampLocksTheTopologyBeforeReadingTheLiveRelease(t *testing
 func TestPlanner_ScheduleSelectsTheScheduleGraphOnTheLiveRelease(t *testing.T) {
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
 
-	sel, err := planner.Schedule(context.Background(), u, "daily", model.OperationRun)
+	sel, err := planner.Schedule(context.Background(), u, pkgevents.DefaultTenantID, "daily", model.OperationRun)
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
@@ -194,18 +194,24 @@ func TestPlanner_ScheduleSelectsTheScheduleGraphOnTheLiveRelease(t *testing.T) {
 // carries the live release, so a cron fire can record its failed run on it.
 func TestPlanner_ScheduleRefusals(t *testing.T) {
 	u, _ := fakeUoW(topology.Pointer{}, nil)
-	_, err := planner.Schedule(context.Background(), u, "daily", model.OperationRun)
+	_, err := planner.Schedule(context.Background(), u, pkgevents.DefaultTenantID, "daily", model.OperationRun)
 	assert.ErrorIs(t, err, runplan.ErrEmptySelection)
 
 	u, _ = fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
-	sel, err := planner.Schedule(context.Background(), u, "daily", model.OperationTest)
+	sel, err := planner.Schedule(context.Background(), u, pkgevents.DefaultTenantID, "daily", model.OperationTest)
 	assert.ErrorIs(t, err, runplan.ErrNoTests)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
 }
 
 func sourceRun(t *testing.T, stamp run.ReleaseStamp) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
+	return sourceRunOf(t, pkgevents.DefaultTenantID, stamp)
+}
+
+// sourceRunOf is a pending daily run of tenantID on stamp.
+func sourceRunOf(t *testing.T, tenantID string, stamp run.ReleaseStamp) *run.Run {
+	t.Helper()
+	r, err := run.NewPendingRun(tenantID, "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
 	require.NoError(t, err)
 	return r
 }
@@ -245,7 +251,7 @@ func TestPlanner_RebaseReadsTheSourceScheduleOnTheLiveRelease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-3", "schedule default rel-7 daily"}, topo.calls)
-	assert.Empty(t, u.TaskCollection(planner.TenantID).(*sourceTasks).asked, "a source that inherited nothing reads no other run's release")
+	assert.Empty(t, u.TaskCollection(pkgevents.DefaultTenantID).(*sourceTasks).asked, "a source that inherited nothing reads no other run's release")
 	assert.Equal(t, []topology.NodeKey{"raw.a"}, sel.Plan.Ready, "mart.b waits for the changed raw.a; mart.c is new and waits for mart.b")
 	assert.Len(t, sel.Plan.Tasks, 3)
 	assert.Equal(t, pv.Plan, sel.Plan)
@@ -275,7 +281,7 @@ func TestPlanner_RebaseComparesAnInheritedSuccessWithTheReleaseThatBuiltIt(t *te
 	root := uuid.New()
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12},
 		[]run.Task{task("mart.b", run.TaskStatusFailed), inheritedTask("raw.a", root)})
-	tasks := u.TaskCollection(planner.TenantID).(*sourceTasks)
+	tasks := u.TaskCollection(pkgevents.DefaultTenantID).(*sourceTasks)
 	tasks.releases = map[uuid.UUID]string{root: "rel-3"}
 	topo.releases = map[string]topology.Graph{"rel-3": threeNodes(), "rel-5": withRawAChanged(), "rel-7": withRawAChanged()}
 	source := sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-5", PromotionSeq: 10})
@@ -301,7 +307,7 @@ func TestPlanner_RebaseComparesAnInheritedSuccessWithoutAKnownRootWithTheSourceR
 	sel, pv, err := planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{IncludeChangedUpstream: true})
 
 	require.NoError(t, err)
-	assert.Equal(t, [][]uuid.UUID{{root}}, u.TaskCollection(planner.TenantID).(*sourceTasks).asked)
+	assert.Equal(t, [][]uuid.UUID{{root}}, u.TaskCollection(pkgevents.DefaultTenantID).(*sourceTasks).asked)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-5", "schedule default rel-7 daily"}, topo.calls)
 	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready)
 	assert.Empty(t, pv.Changed)
@@ -345,7 +351,7 @@ func TestPlanner_ASourceWithoutAReleaseIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 	_, _, err = planner.Rebase(ctx, u, noRelease, runstart.RebaseOptions{})
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
-	_, err = planner.SingleNode(ctx, u, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease)
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 
 	u, _ = fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []run.Task{task("", run.TaskStatusFailed)})
@@ -362,19 +368,19 @@ func TestPlanner_SingleNodeReadsOneNodeOfTheLiveOrTheSourceRelease(t *testing.T)
 	target := run.NodeID{ServiceName: "svc", SchemaName: "mart", TableName: "b"}
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
 
-	sel, err := planner.SingleNode(ctx, u, target, model.OperationRun, nil)
+	sel, err := planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, nil)
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
 	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-7"}, topo.calls)
 
 	topo.calls = nil
-	sel, err = planner.SingleNode(ctx, u, target, model.OperationRun, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}))
+	sel, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}))
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}, sel.Stamp)
 	assert.Equal(t, []string{"graph default rel-3"}, topo.calls)
 
-	_, err = planner.SingleNode(ctx, u, run.NodeID{ServiceName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil)
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
 
@@ -383,7 +389,7 @@ func TestPlanner_SingleNodeReadsOneNodeOfTheLiveOrTheSourceRelease(t *testing.T)
 func TestPlanner_SeedsReadTheKeysOnTheGivenRelease(t *testing.T) {
 	u, topo := fakeUoW(topology.Pointer{}, nil)
 
-	sel, err := planner.Seeds(context.Background(), u, topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []topology.NodeKey{"raw.a"})
+	sel, err := planner.Seeds(context.Background(), u, pkgevents.DefaultTenantID, topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []topology.NodeKey{"raw.a"})
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
@@ -399,17 +405,71 @@ func TestPlanner_StartStoresTheTasksAndWritesTheDispatches(t *testing.T) {
 	runs, outbox := &savedRuns{}, &appendedEvents{}
 	u.SetRunRepo(runs)
 	u.SetOutboxPublisher(outbox)
-	sel, err := planner.Schedule(ctx, u, "daily", model.OperationRun)
+	sel, err := planner.Schedule(ctx, u, pkgevents.DefaultTenantID, "daily", model.OperationRun)
 	require.NoError(t, err)
 	r := sourceRun(t, sel.Stamp)
 
 	require.NoError(t, planner.Start(ctx, u, r, sel, uuid.Nil))
 
 	assert.Equal(t, 1, runs.saved)
-	assert.Len(t, u.TaskCollection(planner.TenantID).(*sourceTasks).created, 3)
+	assert.Len(t, u.TaskCollection(pkgevents.DefaultTenantID).(*sourceTasks).created, 3)
 	require.Len(t, outbox.events, 1)
 	d, ok := outbox.events[0].(run.TaskDispatched)
 	require.True(t, ok, "%T", outbox.events[0])
 	assert.Equal(t, run.TaskIDFor("default", r.RunID(), "raw.a"), d.TaskID)
 	assert.NotNil(t, r.PlannedAt())
+}
+
+// Each selection reads the releases of the tenant it is given, and a
+// selection derived from a source run reads the source's tenant's; Start
+// stores a run's tasks under the run's tenant, with that tenant's task ids.
+func TestPlanner_ReadsAndWritesTheTenantItIsGivenOrTheRunsTenant(t *testing.T) {
+	ctx := context.Background()
+	live := topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}
+	target := run.NodeID{ServiceName: "svc", SchemaName: "mart", TableName: "b"}
+
+	u, topo := fakeUoW(live, nil)
+	sel, err := planner.Schedule(ctx, u, "acme", "daily", model.OperationRun)
+	require.NoError(t, err)
+	_, err = planner.SingleNode(ctx, u, "acme", target, model.OperationRun, nil)
+	require.NoError(t, err)
+	_, err = planner.Seeds(ctx, u, "acme", live, []topology.NodeKey{"raw.a"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"lock", "live acme", "schedule acme rel-7 daily",
+		"lock", "live acme", "graph acme rel-7",
+		"graph acme rel-7",
+	}, topo.calls)
+
+	runs, outbox := &savedRuns{}, &appendedEvents{}
+	u.SetRunRepo(runs)
+	u.SetOutboxPublisher(outbox)
+	r := sourceRunOf(t, "acme", sel.Stamp)
+	require.NoError(t, planner.Start(ctx, u, r, sel, uuid.Nil))
+	assert.Equal(t, []string{"acme"}, u.TaskCollectionTenants)
+	require.Len(t, outbox.events, 1)
+	assert.Equal(t, run.TaskIDFor("acme", r.RunID(), "raw.a"), outbox.events[0].(run.TaskDispatched).TaskID)
+
+	tasks := []run.Task{task("mart.b", run.TaskStatusFailed), task("raw.a", run.TaskStatusSucceeded)}
+	u, topo = fakeUoW(live, tasks)
+	topo.releases = map[string]topology.Graph{"rel-3": threeNodes(), "rel-7": withRawAChanged()}
+	source := sourceRunOf(t, "acme", run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
+	_, err = planner.Rerun(ctx, u, source)
+	require.NoError(t, err)
+	_, _, err = planner.Rebase(ctx, u, source, runstart.RebaseOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"graph acme rel-3",
+		"lock", "live acme", "graph acme rel-3", "schedule acme rel-7 daily",
+	}, topo.calls)
+	assertEvery(t, "acme", u.TaskCollectionTenants)
+}
+
+// assertEvery asserts got is not empty and holds only want.
+func assertEvery(t *testing.T, want string, got []string) {
+	t.Helper()
+	require.NotEmpty(t, got)
+	for _, g := range got {
+		assert.Equal(t, want, g)
+	}
 }

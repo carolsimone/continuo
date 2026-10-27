@@ -14,31 +14,37 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// taskReads is the part of a tenant's task collection the task reads serve.
-type taskReads interface {
+// TaskReads is the part of one tenant's task collection the task reads serve.
+type TaskReads interface {
 	GetRow(ctx context.Context, taskID uuid.UUID) (*postgres.TaskRow, error)
 	GetRowByNode(ctx context.Context, runID uuid.UUID, serviceName, schemaName, tableName string) (*postgres.TaskRow, error)
 	ListByRunID(ctx context.Context, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*postgres.TaskRow, int, error)
 }
 
 // TaskHandler handles all task-related gRPC requests. It reads the tasks of
-// the tenant its repo is bound to.
+// the request's tenant, through the collection tasksOf returns for that
+// tenant: another tenant's task is NotFound.
 type TaskHandler struct {
-	repo   taskReads
-	logger *slog.Logger
+	tasksOf func(tenantID string) TaskReads
+	logger  *slog.Logger
 }
 
-// NewTaskHandler creates a new TaskHandler.
-func NewTaskHandler(repo taskReads, logger *slog.Logger) *TaskHandler {
+// NewTaskHandler creates a new TaskHandler; tasksOf returns the task reads of
+// one tenant.
+func NewTaskHandler(tasksOf func(tenantID string) TaskReads, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{
-		repo:   repo,
-		logger: logger,
+		tasksOf: tasksOf,
+		logger:  logger,
 	}
 }
 
 // GetTask retrieves a task by ID
 func (h *TaskHandler) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
 	h.logger.Debug("Getting task", "task_id", req.TaskId)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.TaskId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task_id is required")
@@ -49,7 +55,7 @@ func (h *TaskHandler) GetTask(ctx context.Context, req *statev1.GetTaskRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
 	}
 
-	task, err := h.repo.GetRow(ctx, taskID)
+	task, err := h.tasksOf(tenantID).GetRow(ctx, taskID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -71,6 +77,10 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 		"schema_name", req.SchemaName,
 		"table_name", req.TableName,
 	)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Validate required fields
 	if req.ScheduleId == "" {
@@ -86,7 +96,7 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	task, err := h.repo.GetRowByNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
+	task, err := h.tasksOf(tenantID).GetRowByNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -103,6 +113,10 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 // ListTasks lists tasks for a specific schedule with optional filters
 func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksRequest) (*statev1.ListTasksResponse, error) {
 	h.logger.Debug("Listing tasks", "schedule_id", req.ScheduleId, "status", req.Status)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
@@ -131,7 +145,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 		statusFilter = &s
 	}
 
-	tasks, total, err := h.repo.ListByRunID(ctx, scheduleID, statusFilter, limit, offset)
+	tasks, total, err := h.tasksOf(tenantID).ListByRunID(ctx, scheduleID, statusFilter, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list tasks", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to list tasks")

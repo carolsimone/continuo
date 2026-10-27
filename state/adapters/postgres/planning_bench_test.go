@@ -104,7 +104,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 	var keys []string
 	require.NoError(b, db.Select(&keys,
 		`SELECT node_key FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, r.RunID()))
-	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+	handler := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger())
 	u := newPlanningUoW(db)
 	reported := map[string]bool{}
 
@@ -119,7 +119,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 		}
 		reported[key] = true
 		require.NoError(b, u.Begin(ctx))
-		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.RunID(), Report: run.AttemptReport{
+		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{TenantID: tenant, RunID: r.RunID(), Report: run.AttemptReport{
 			TaskID:        run.TaskIDFor(tenant, r.RunID(), topology.NodeKey(key)),
 			Attempt:       0,
 			Status:        status,

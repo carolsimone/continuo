@@ -17,14 +17,16 @@ import (
 // summary's timestamps.
 const runSummaryTimeLayout = "2006-01-02T15:04:05Z"
 
-// RunReader is the read side of the run-read RPCs.
+// RunReader is the read side of the run-read RPCs; each read reads the rows
+// of the tenant it is given.
 type RunReader interface {
-	GetRunGraph(ctx context.Context, runID uuid.UUID) (projection.RunGraph, error)
-	ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int) ([]projection.RunSummary, int, error)
-	ListActiveRunDrifts(ctx context.Context) (int64, []projection.ActiveRunDrift, error)
+	GetRunGraph(ctx context.Context, tenantID string, runID uuid.UUID) (projection.RunGraph, error)
+	ListRuns(ctx context.Context, tenantID, scheduleName string, pageSize, pageOffset int) ([]projection.RunSummary, int, error)
+	ListActiveRunDrifts(ctx context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error)
 }
 
-// RunReadHandler serves GetRunGraph, ListRuns and ListActiveRunDrifts.
+// RunReadHandler serves GetRunGraph, ListRuns and ListActiveRunDrifts, each
+// over the rows of the request's tenant.
 type RunReadHandler struct {
 	reads  RunReader
 	logger *slog.Logger
@@ -35,13 +37,18 @@ func NewRunReadHandler(reads RunReader, logger *slog.Logger) *RunReadHandler {
 	return &RunReadHandler{reads: reads, logger: logger}
 }
 
-// GetRunGraph implements the StateService GetRunGraph RPC.
+// GetRunGraph implements the StateService GetRunGraph RPC. Another tenant's
+// run reads as a run with no row: a graph with no nodes.
 func (h *RunReadHandler) GetRunGraph(ctx context.Context, req *statev1.GetRunGraphRequest) (*statev1.GetRunGraphResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	runID, err := uuid.Parse(req.GetRunId())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "run_id must be a UUID: %q", req.GetRunId())
 	}
-	g, err := h.reads.GetRunGraph(ctx, runID)
+	g, err := h.reads.GetRunGraph(ctx, tenantID, runID)
 	if err != nil {
 		h.logger.Error("GetRunGraph failed", "run_id", runID, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetRunGraph: %v", err)
@@ -69,10 +76,14 @@ func (h *RunReadHandler) GetRunGraph(ctx context.Context, req *statev1.GetRunGra
 
 // ListRuns implements the StateService ListRuns RPC.
 func (h *RunReadHandler) ListRuns(ctx context.Context, req *statev1.ListRunsRequest) (*statev1.ListRunsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.GetScheduleName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-	runs, total, err := h.reads.ListRuns(ctx, req.GetScheduleName(), int(req.GetPageSize()), int(req.GetPageOffset()))
+	runs, total, err := h.reads.ListRuns(ctx, tenantID, req.GetScheduleName(), int(req.GetPageSize()), int(req.GetPageOffset()))
 	if err != nil {
 		h.logger.Error("ListRuns failed", "schedule_name", req.GetScheduleName(), "error", err)
 		return nil, status.Errorf(codes.Internal, "ListRuns: %v", err)
@@ -96,7 +107,11 @@ func (h *RunReadHandler) ListRuns(ctx context.Context, req *statev1.ListRunsRequ
 
 // ListActiveRunDrifts implements the StateService ListActiveRunDrifts RPC.
 func (h *RunReadHandler) ListActiveRunDrifts(ctx context.Context, _ *statev1.ListActiveRunDriftsRequest) (*statev1.ListActiveRunDriftsResponse, error) {
-	latest, drifts, err := h.reads.ListActiveRunDrifts(ctx)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	latest, drifts, err := h.reads.ListActiveRunDrifts(ctx, tenantID)
 	if err != nil {
 		h.logger.Error("ListActiveRunDrifts failed", "error", err)
 		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)

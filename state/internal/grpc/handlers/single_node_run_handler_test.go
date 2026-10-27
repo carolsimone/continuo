@@ -37,9 +37,9 @@ type singleNodeRunFixture struct {
 	SchedulerRepo *postgres.RunRepository
 	TaskRepo      *postgres.TaskCollection
 	DB            *sqlx.DB
-	// Tenant is the tenant the fixture plans for; it holds release rel-svca
-	// as its live release, with svcA's public.users (one data test) and
-	// public.users_snap (a dbt snapshot).
+	// Tenant is the tenant the fixture's requests act for; it holds release
+	// rel-svca as its live release, with svcA's public.users (one data test)
+	// and public.users_snap (a dbt snapshot).
 	Tenant string
 }
 
@@ -83,7 +83,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 	tenant := fixtureTenant(t, db)
 	promoteUsers(t, db, tenant)
-	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	// Register the DB close via t.Cleanup (not a bare defer in the calling
@@ -132,7 +132,7 @@ func promoteUsers(t *testing.T, db *sqlx.DB, tenant string) {
 func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -182,7 +182,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -208,7 +208,7 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -234,7 +234,7 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -296,7 +296,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	_, err = fx.DB.ExecContext(context.Background(), `UPDATE tasks SET node_key = 'public.users' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
-	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+	resp, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    "svcA",
 		SchemaName:     "public",
 		TableName:      "users",
@@ -405,7 +405,7 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			before := singleNodeRunsOf(t, fx.DB, tc.req)
-			_, err := fx.Handler.TriggerSingleNodeRun(context.Background(), tc.req)
+			_, err := fx.Handler.TriggerSingleNodeRun(tenantCtx(fx.Tenant), tc.req)
 			require.Error(t, err)
 			require.Equal(t, tc.expect, status.Code(err), "wrong code for %s: %v", tc.name, err)
 			require.Equal(t, before, singleNodeRunsOf(t, fx.DB, tc.req), "a refused trigger creates no run")

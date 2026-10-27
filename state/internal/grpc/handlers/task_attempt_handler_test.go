@@ -42,7 +42,7 @@ func newAttemptHandler(r *fakeAttemptReader) *TaskAttemptHandler {
 func TestListTaskAttempts_RejectsAMissingOrMalformedRunID(t *testing.T) {
 	for _, runID := range []string{"", "not-a-uuid"} {
 		reader := &fakeAttemptReader{}
-		_, err := newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{RunId: runID})
+		_, err := newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{RunId: runID})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "run_id %q: %v", runID, err)
 		assert.Zero(t, reader.calls, "run_id %q reaches no read", runID)
 	}
@@ -50,7 +50,7 @@ func TestListTaskAttempts_RejectsAMissingOrMalformedRunID(t *testing.T) {
 
 func TestListTaskAttempts_RejectsAMalformedTaskID(t *testing.T) {
 	reader := &fakeAttemptReader{}
-	_, err := newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{
+	_, err := newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{
 		RunId: uuid.NewString(), TaskId: "task-1",
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
@@ -71,7 +71,7 @@ func TestListTaskAttempts_ClampsPageSizeAndOffset(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &fakeAttemptReader{}
-			_, err := newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{
+			_, err := newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{
 				RunId: uuid.NewString(), PageSize: tc.size, PageOffset: tc.offset,
 			})
 			require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestListTaskAttempts_PassesTheTaskFilter(t *testing.T) {
 	runID, taskID := uuid.New(), uuid.New()
 
 	reader := &fakeAttemptReader{}
-	_, err := newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{
+	_, err := newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{
 		RunId: runID.String(), TaskId: taskID.String(),
 	})
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestListTaskAttempts_PassesTheTaskFilter(t *testing.T) {
 	assert.Equal(t, taskID, *reader.gotTaskID)
 
 	reader = &fakeAttemptReader{}
-	_, err = newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{RunId: runID.String()})
+	_, err = newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{RunId: runID.String()})
 	require.NoError(t, err)
 	assert.Nil(t, reader.gotTaskID, "an empty task_id lists every task of the run")
 }
@@ -113,7 +113,7 @@ func TestListTaskAttempts_MapsEveryField(t *testing.T) {
 	bare := projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, JobName: "job-orders", Status: "dispatched", DispatchedAt: at(5)}
 	reader := &fakeAttemptReader{rows: []projection.TaskAttempt{full, bare}, totalCount: 7}
 
-	resp, err := newAttemptHandler(reader).ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
+	resp, err := newAttemptHandler(reader).ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Equal(t, int32(7), resp.GetTotalCount())
 	require.Len(t, resp.GetAttempts(), 2)
@@ -155,7 +155,7 @@ func TestListTaskAttempts_ReportsAStoppedAttempt(t *testing.T) {
 	stopped := projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, JobName: "job-orders", Status: "stopped",
 		DispatchedAt: time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)}
 	resp, err := newAttemptHandler(&fakeAttemptReader{rows: []projection.TaskAttempt{stopped}, totalCount: 1}).
-		ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
+		ListTaskAttempts(requestCtx(), &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Equal(t, "stopped", resp.GetAttempts()[0].GetStatus())
 }

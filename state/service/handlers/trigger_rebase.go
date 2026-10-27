@@ -11,12 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// TriggerRebaseInput is a request to rebase a failed or cancelled run onto
-// the live release. IncludeChangedUpstream also re-executes the changed nodes
-// upstream of what the rebase re-executes; a non-empty ExpectedReleaseID is
-// the live release the caller previewed, and the rebase is refused when
-// another release is live.
+// TriggerRebaseInput is a request to rebase a failed or cancelled run of
+// TenantID onto the tenant's live release. IncludeChangedUpstream also
+// re-executes the changed nodes upstream of what the rebase re-executes; a
+// non-empty ExpectedReleaseID is the live release the caller previewed, and
+// the rebase is refused when another release is live.
 type TriggerRebaseInput struct {
+	TenantID               string
 	SourceRunID            uuid.UUID
 	IncludeChangedUpstream bool
 	ExpectedReleaseID      string
@@ -51,7 +52,7 @@ func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Tri
 // is, and nothing is written.
 func (h *TriggerRebaseHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerRebaseInput) (uuid.UUID, string, error) {
 	opts := runstart.RebaseOptions{IncludeChangedUpstream: in.IncludeChangedUpstream, ExpectedReleaseID: in.ExpectedReleaseID}
-	return h.creation.create(ctx, u, in.SourceRunID, in.Initiator, func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+	return h.creation.create(ctx, u, in.TenantID, in.SourceRunID, in.Initiator, func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
 		sel, _, err := h.creation.planner.Rebase(ctx, u, src, opts)
 		return sel, err
 	})

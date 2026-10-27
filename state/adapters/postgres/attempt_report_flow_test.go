@@ -31,8 +31,8 @@ func (f statusFlow) reportWith(t *testing.T, rep run.AttemptReport) {
 	u := newPlanningUoW(f.db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	require.NoError(t, handlers.NewAttemptReportHandler(f.tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: f.r.RunID(), Report: rep}, uuid.Nil))
+	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: f.tenant, RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	require.NoError(t, u.Commit())
 }
 
@@ -180,8 +180,8 @@ func TestAttemptReport_AReportNamingAnotherRunIsRefused(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	err := handlers.NewAttemptReportHandler(tenantA, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: a.r.RunID(), Report: run.AttemptReport{
+	err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: tenantA, RunID: a.r.RunID(), Report: run.AttemptReport{
 			TaskID:  run.TaskIDFor(tenantB, b.r.RunID(), "e2e_schema.ftable_a"),
 			Attempt: 0, Status: run.AttemptSucceeded,
 		}}, uuid.Nil)

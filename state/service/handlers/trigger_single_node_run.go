@@ -35,8 +35,11 @@ func NewTriggerSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logge
 	return &TriggerSingleNodeRunHandler{planner: planner, logger: logger}
 }
 
-// TriggerSingleNodeRunInput holds the parameters for Handle.
+// TriggerSingleNodeRunInput holds the parameters for Handle. TenantID is the
+// tenant the run is created for; its source run, in stale mode, is one of
+// that tenant's runs.
 type TriggerSingleNodeRunInput struct {
+	TenantID       string
 	Target         run.NodeID
 	MetadataSource run.MetadataSource
 	Operation      model.Operation
@@ -57,14 +60,14 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 			return uuid.Nil, "", fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
 		}
 		var err error
-		src, err = u.Run().GetRun(ctx, h.planner.TenantID, *in.SourceRunID)
+		src, err = u.Run().GetRun(ctx, in.TenantID, *in.SourceRunID)
 		if err != nil {
 			return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 		}
 		if !src.IsTerminal() {
 			return uuid.Nil, "", ErrSourceRunNotTerminal
 		}
-		ok, err := src.HasTaskAt(ctx, u.TaskCollection(h.planner.TenantID), in.Target)
+		ok, err := src.HasTaskAt(ctx, u.TaskCollection(src.TenantID()), in.Target)
 		if err != nil {
 			return uuid.Nil, "", err
 		}
@@ -83,13 +86,13 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		}
 	}()
 
-	sel, err := h.planner.SingleNode(ctx, u, in.Target, in.Operation, src)
+	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	id := uuid.New()
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	newRun, err := run.NewSingleNodeRun(h.planner.TenantID, scheduleName, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
+	newRun, err := run.NewSingleNodeRun(in.TenantID, scheduleName, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -104,7 +107,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 	}
 	committed = true
 
-	h.logger.Info("Single-node run triggered", "new_run_id", newRun.RunID(), "schedule_name", scheduleName, "target", in.Target,
+	h.logger.Info("Single-node run triggered", "tenant_id", in.TenantID, "new_run_id", newRun.RunID(), "schedule_name", scheduleName, "target", in.Target,
 		"release_id", sel.Stamp.ReleaseID)
 	return newRun.RunID(), newRun.ScheduleName(), nil
 }

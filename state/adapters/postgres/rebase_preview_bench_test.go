@@ -34,14 +34,14 @@ func BenchmarkPreviewRebase(b *testing.B) {
 	tenant, runID, changed := failedRunWithChangedAncestors(b, db, dag2000, "bench.n15_0000", 10)
 
 	b.Run("preview", func(b *testing.B) {
-		previewer := runreads.NewRebasePreviewer(runstart.Planner{TenantID: tenant, Tasks: testTaskDefaults},
+		previewer := runreads.NewRebasePreviewer(runstart.Planner{Tasks: testTaskDefaults},
 			func() uow.UnitOfWork { return newPlanningUoW(db) }, postgres.NewRunReadRepository(db))
-		pv, err := previewer.Preview(ctx, runID, true)
+		pv, err := previewer.Preview(ctx, tenant, runID, true)
 		require.NoError(b, err)
 		require.Len(b, pv.Preview.Changed, changed)
 		b.ResetTimer()
 		for range b.N {
-			_, err := previewer.Preview(ctx, runID, true)
+			_, err := previewer.Preview(ctx, tenant, runID, true)
 			require.NoError(b, err)
 		}
 	})

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
@@ -124,7 +123,7 @@ func TestMain(m *testing.M) {
 	}
 	activateHandler := svchandlers.NewStartRunHandler(defaultPlanner, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo.ForTenant(pkgevents.DefaultTenantID), logger)
+	taskHandler := handlers.NewTaskHandler(func(tenantID string) handlers.TaskReads { return taskRepo.ForTenant(tenantID) }, logger)
 	attemptHandler := handlers.NewTaskAttemptHandler(attemptRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(defaultPlanner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)
@@ -134,8 +133,10 @@ func TestMain(m *testing.M) {
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, integrationUoWFactory, logger)
 	runReadRepo := postgres.NewRunReadRepository(db)
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo), logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, 24*time.Hour, logger)
+	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
+		return postgres.NewNodeRunRepository(db, tenantID, logger)
+	}
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, 24*time.Hour, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// ---- Create gRPC server on a random port ----

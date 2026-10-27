@@ -304,8 +304,9 @@ func (lf leaseFlow) cronHoldingTableA(t *testing.T) statusFlow {
 func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	t.Helper()
 	ctx := context.Background()
-	h := handlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: lf.tenant, Tasks: testTaskDefaults}, discardLogger())
+	h := handlers.NewTriggerSingleNodeRunHandler(runstart.Planner{Tasks: testTaskDefaults}, discardLogger())
 	id, _, err := h.Handle(ctx, newPlanningUoW(lf.db), handlers.TriggerSingleNodeRunInput{
+		TenantID:       lf.tenant,
 		Target:         run.NodeID{ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table},
 		MetadataSource: run.MetadataSourceLatest,
 		Operation:      model.OperationRun,

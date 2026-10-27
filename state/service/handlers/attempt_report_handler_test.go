@@ -24,20 +24,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// errNoRunRow is what fakeTaskStatusRunRepo answers for a run it does not
+// hold, as a lock of a run with no row does.
+var errNoRunRow = errors.New("no run row")
+
 // fakeTaskStatusRunRepo is an in-memory RunRepository for
-// AttemptReportHandler tests. LoadRunForUpdate returns the stored run;
-// SaveRun records the call and stores the updated aggregate. Other methods
-// panic on accidental use.
+// AttemptReportHandler tests. LoadRunForUpdate returns the stored run under
+// its own tenant, and records the tenant of each lock; SaveRun records the
+// call and stores the updated aggregate. Other methods panic on accidental
+// use.
 type fakeTaskStatusRunRepo struct {
-	stored     *run.Run
-	loadErr    error
-	saveErr    error
-	saveCalled bool
+	stored      *run.Run
+	loadErr     error
+	saveErr     error
+	saveCalled  bool
+	loadTenants []string
 }
 
-func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, tenantID string, _ uuid.UUID) (*run.Run, error) {
+	f.loadTenants = append(f.loadTenants, tenantID)
 	if f.loadErr != nil {
 		return nil, f.loadErr
+	}
+	if f.stored != nil && f.stored.TenantID() != tenantID {
+		return nil, errNoRunRow
 	}
 	return f.stored, nil
 }
@@ -333,9 +343,9 @@ func (f *fakeTaskStatusTaskCollection) held(taskID uuid.UUID, n int32, status ru
 	return f
 }
 
-// report is a report of attempt n of taskID in runID.
+// report is a report, of the default tenant, of attempt n of taskID in runID.
 func report(runID, taskID uuid.UUID, n int32, status run.AttemptStatus) events.AttemptReported {
-	r := events.AttemptReported{RunID: runID, Report: run.AttemptReport{TaskID: taskID, Attempt: n, Status: status}}
+	r := events.AttemptReported{TenantID: pkgevents.DefaultTenantID, RunID: runID, Report: run.AttemptReport{TaskID: taskID, Attempt: n, Status: status}}
 	if status == run.AttemptFailed {
 		r.Report.FailureReason = model.FailureReasonExitCode
 	}
@@ -347,7 +357,7 @@ func newAttemptReportHandler() *handlers.AttemptReportHandler {
 }
 
 func newAttemptReportHandlerWith(metrics *fakeRunMetrics) *handlers.AttemptReportHandler {
-	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
+	return handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
 }
 
 // fakeRunMetrics records the cancel durations the handler observes.
@@ -544,6 +554,37 @@ func TestAttemptReport_AReportThatCanNeverApplyFailsTheMessage(t *testing.T) {
 			assert.False(t, runRepo.saveCalled, "SaveRun must not be called when RecordAttemptReport errors")
 			assert.Empty(t, outbox.appended)
 		})
+	}
+}
+
+// A report locks its run under the tenant it carries, its envelope's, and
+// applies under the run's tenant. A report naming a run of another tenant
+// finds no run: the lock's error is returned, which the binding marks
+// permanent, and nothing is read, saved or written.
+func TestAttemptReport_LoadsTheRunUnderTheReportsTenant(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 1, 0)}
+	outbox := &fakeTaskStatusOutboxPub{}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
+	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	rep := report(scheduleID, taskID, 0, run.AttemptSucceeded)
+	rep.TenantID = "acme"
+
+	err := newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New())
+
+	require.ErrorIs(t, err, errNoRunRow)
+	assert.Equal(t, []string{"acme"}, runRepo.loadTenants)
+	assert.False(t, runRepo.saveCalled)
+	assert.Empty(t, outbox.appended)
+	assert.Empty(t, taskColl.lockOrder, "no task or attempt of another tenant's run is read")
+
+	rep.TenantID = pkgevents.DefaultTenantID
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
+	assert.Equal(t, []string{"acme", pkgevents.DefaultTenantID}, runRepo.loadTenants)
+	assert.True(t, runRepo.saveCalled)
+	for _, tenant := range u.TaskCollectionTenants {
+		assert.Equal(t, pkgevents.DefaultTenantID, tenant, "the report applies under the run's tenant")
 	}
 }
 

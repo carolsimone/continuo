@@ -12,17 +12,22 @@ import (
 )
 
 // ParseTaskStatusReport decodes one task.status.updated:v2 entry, envelope
-// fields plus a typed payload, into the report state applies. A decode
-// failure (no envelope, an unknown schema_version, a run or task id that is not
-// a UUID, a missing or negative attempt, an unknown status, a failure without a
-// declared reason or with another class than its reason's) is permanent: the
-// consumer dead-letters the entry. A fact the report leaves empty is not
-// reported, so the attempt keeps what it holds.
+// fields plus a typed payload, into the report state applies, with the tenant
+// its envelope names. A decode failure (no envelope, an unknown
+// schema_version, a run or task id that is not a UUID, a missing or negative
+// attempt, an unknown status, a failure without a declared reason or with
+// another class than its reason's) or an envelope without a tenant_id is
+// permanent: the consumer dead-letters the entry. A fact the report leaves
+// empty is not reported, so the attempt keeps what it holds.
 func ParseTaskStatusReport(msg goredis.XMessage) (events.AttemptReported, error) {
-	_, p, err := pkgevents.DecodeTaskStatusReport(stringFields(msg.Values))
+	env, p, err := pkgevents.DecodeTaskStatusReport(stringFields(msg.Values))
 	if err != nil {
 		return events.AttemptReported{}, fmt.Errorf("%w: decode task status report (message %s): %v",
 			pkgevents.ErrPermanent, msg.ID, err)
+	}
+	if env.TenantID == "" {
+		return events.AttemptReported{}, fmt.Errorf("%w: task status report (message %s) carries no tenant_id",
+			pkgevents.ErrPermanent, msg.ID)
 	}
 	runID, err := uuid.Parse(p.RunID)
 	if err != nil {
@@ -32,7 +37,7 @@ func ParseTaskStatusReport(msg goredis.XMessage) (events.AttemptReported, error)
 	if err != nil {
 		return events.AttemptReported{}, fmt.Errorf("%w: task_id %q (message %s): %v", pkgevents.ErrPermanent, p.TaskID, msg.ID, err)
 	}
-	return events.AttemptReported{RunID: runID, Report: run.AttemptReport{
+	return events.AttemptReported{TenantID: env.TenantID, RunID: runID, Report: run.AttemptReport{
 		TaskID:           taskID,
 		Attempt:          p.Attempt,
 		JobName:          p.JobName,

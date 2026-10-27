@@ -310,8 +310,8 @@ func (f statusFlow) reportTo(t *testing.T, rep run.AttemptReport, beforeCommit f
 	u := newPlanningUoW(f.db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	require.NoError(t, handlers.NewAttemptReportHandler(f.tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: f.r.RunID(), Report: rep}, uuid.Nil))
+	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{TenantID: f.tenant, RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	beforeCommit()
 	require.NoError(t, u.Commit())
 }
@@ -421,8 +421,8 @@ func reportThrough(ctx context.Context, db *sqlx.DB, gate *leaseWriteGate, tenan
 		return err
 	}
 	defer func() { _ = u.Rollback() }()
-	if err := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
-		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{RunID: runID, Report: rep}, uuid.Nil); err != nil {
+	if err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
+		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{TenantID: tenant, RunID: runID, Report: rep}, uuid.Nil); err != nil {
 		return err
 	}
 	return u.Commit()

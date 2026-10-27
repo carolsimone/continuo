@@ -216,8 +216,8 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	for _, d := range toBuild {
 		keys = append(keys, d.Key)
 	}
-	planner := runstart.Planner{TenantID: tenantID, Tasks: r.tasks}
-	sel, err := planner.Seeds(ctx, u, live, keys)
+	planner := runstart.Planner{Tasks: r.tasks}
+	sel, err := planner.Seeds(ctx, u, tenantID, live, keys)
 	if err != nil {
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
 	}

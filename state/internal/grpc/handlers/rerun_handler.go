@@ -41,9 +41,13 @@ func NewRerunHandler(
 }
 
 // TriggerRerun validates the request and delegates to the TriggerRerunHandler
-// use case.
+// use case, for the request's tenant: another tenant's source run is NotFound.
 func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRerunRequest) (*statev1.TriggerRerunResponse, error) {
 	h.logger.Info("TriggerRerun called", "source_run_id", req.SourceRunId)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.SourceRunId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "source_run_id is required")
@@ -53,7 +57,7 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source_run_id format")
 	}
 
-	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID, identity.FromContext(ctx))
+	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), tenantID, srcID, identity.FromContext(ctx))
 	if err != nil {
 		if st, ok := planRefusal(err); ok {
 			return nil, st.Err()

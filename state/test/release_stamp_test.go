@@ -86,13 +86,13 @@ func TestReleaseStamp(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("a triggered run names the live release", func(t *testing.T) {
-		id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-trigger", run.KindTrigger, nil, alice, model.OperationRun)
+		id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "stamp-trigger", run.KindTrigger, nil, alice, model.OperationRun)
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
 	})
 
 	t.Run("a rerun names its source's release", func(t *testing.T) {
-		id, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), source, alice)
+		id, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, source, alice)
 		require.NoError(t, err)
 		assert.Equal(t, old, h.stampOf(t, id))
 	})
@@ -100,7 +100,7 @@ func TestReleaseStamp(t *testing.T) {
 	t.Run("a rebase names the live release", func(t *testing.T) {
 		src := h.finished(t, "stamp-rebase", old)
 		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
-			SourceRunID: src, IncludeChangedUpstream: true, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, SourceRunID: src, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
@@ -110,7 +110,7 @@ func TestReleaseStamp(t *testing.T) {
 
 	t.Run("a latest single-node run names the live release", func(t *testing.T) {
 		id, _, err := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerSingleNodeRunInput{
-			Target: target, MetadataSource: run.MetadataSourceLatest, Operation: model.OperationRun, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceLatest, Operation: model.OperationRun, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
@@ -119,7 +119,7 @@ func TestReleaseStamp(t *testing.T) {
 	t.Run("a snapshot_of_run single-node run names its source's release", func(t *testing.T) {
 		src := h.finished(t, "stamp-snapshot", old)
 		id, _, err := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerSingleNodeRunInput{
-			Target: target, MetadataSource: run.MetadataSourceSnapshotOfRun, SourceRunID: &src, Operation: model.OperationRun, Initiator: alice,
+			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceSnapshotOfRun, SourceRunID: &src, Operation: model.OperationRun, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, old, h.stampOf(t, id))

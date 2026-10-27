@@ -39,14 +39,15 @@ func (f *fakeRebaseStarter) Handle(_ context.Context, _ uow.UnitOfWork, in svcha
 // fakeRebasePreviewReader records what it was asked and answers with preview or
 // err.
 type fakeRebasePreviewReader struct {
+	tenantID string
 	sourceID uuid.UUID
 	include  bool
 	preview  runreads.RebasePreview
 	err      error
 }
 
-func (f *fakeRebasePreviewReader) Preview(_ context.Context, sourceID uuid.UUID, include bool) (runreads.RebasePreview, error) {
-	f.sourceID, f.include = sourceID, include
+func (f *fakeRebasePreviewReader) Preview(_ context.Context, tenantID string, sourceID uuid.UUID, include bool) (runreads.RebasePreview, error) {
+	f.tenantID, f.sourceID, f.include = tenantID, sourceID, include
 	return f.preview, f.err
 }
 
@@ -88,13 +89,14 @@ func TestRebaseHandler_PassesTheRequestToTheUseCase(t *testing.T) {
 	h := NewRebaseHandler(starter, func() uow.UnitOfWork { return &uow.FakeUnitOfWork{} }, newTestLogger())
 	src := uuid.New()
 
-	resp, err := h.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{
+	resp, err := h.TriggerRebase(tenantCtx("acme"), &statev1.TriggerRebaseRequest{
 		SourceRunId: src.String(), IncludeChangedUpstream: true, ExpectedReleaseId: "rel-7",
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "6f1d7f0e-3c55-4c4a-9d55-0f2d8f5b7c11", resp.RunId)
 	assert.Equal(t, "daily", resp.ScheduleName)
+	assert.Equal(t, "acme", starter.in.TenantID, "the rebase is the request's tenant's")
 	assert.Equal(t, src, starter.in.SourceRunID)
 	assert.True(t, starter.in.IncludeChangedUpstream)
 	assert.Equal(t, "rel-7", starter.in.ExpectedReleaseID)
@@ -105,7 +107,7 @@ func TestRebaseHandler_PassesTheRequestToTheUseCase(t *testing.T) {
 func TestRebaseHandler_AMovedLiveReleaseIsFailedPreconditionWithTheExactMessage(t *testing.T) {
 	h := NewRebaseHandler(&fakeRebaseStarter{err: runstart.ErrLiveReleaseMoved}, func() uow.UnitOfWork { return &uow.FakeUnitOfWork{} }, newTestLogger())
 
-	_, err := h.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: uuid.NewString(), ExpectedReleaseId: "rel-6"})
+	_, err := h.TriggerRebase(requestCtx(), &statev1.TriggerRebaseRequest{SourceRunId: uuid.NewString(), ExpectedReleaseId: "rel-6"})
 
 	assert.Equal(t, status.Error(codes.FailedPrecondition, "the live release changed; preview again"), err)
 }
@@ -113,7 +115,7 @@ func TestRebaseHandler_AMovedLiveReleaseIsFailedPreconditionWithTheExactMessage(
 func TestRebaseHandler_AnUnknownFailureIsInternal(t *testing.T) {
 	h := NewRebaseHandler(&fakeRebaseStarter{err: errors.New("connection reset")}, func() uow.UnitOfWork { return &uow.FakeUnitOfWork{} }, newTestLogger())
 
-	_, err := h.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: uuid.NewString()})
+	_, err := h.TriggerRebase(requestCtx(), &statev1.TriggerRebaseRequest{SourceRunId: uuid.NewString()})
 
 	requireGRPCCode(t, err, codes.Internal)
 }
@@ -121,7 +123,7 @@ func TestRebaseHandler_AnUnknownFailureIsInternal(t *testing.T) {
 func TestPreviewRebaseHandler_RejectsAMissingOrMalformedSourceRunID(t *testing.T) {
 	h := NewPreviewRebaseHandler(&fakeRebasePreviewReader{}, newTestLogger())
 	for _, id := range []string{"", "not-a-uuid"} {
-		_, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: id})
+		_, err := h.PreviewRebase(requestCtx(), &statev1.PreviewRebaseRequest{SourceRunId: id})
 		requireGRPCCode(t, err, codes.InvalidArgument)
 	}
 }
@@ -147,9 +149,10 @@ func TestPreviewRebaseHandler_MapsThePreview(t *testing.T) {
 	h := NewPreviewRebaseHandler(reader, newTestLogger())
 	src := uuid.New()
 
-	resp, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: src.String(), IncludeChangedUpstream: true})
+	resp, err := h.PreviewRebase(tenantCtx("acme"), &statev1.PreviewRebaseRequest{SourceRunId: src.String(), IncludeChangedUpstream: true})
 
 	require.NoError(t, err)
+	assert.Equal(t, "acme", reader.tenantID, "the preview reads the request's tenant's source")
 	assert.Equal(t, src, reader.sourceID)
 	assert.True(t, reader.include)
 	assert.Equal(t, "rel-7", resp.ReleaseId)
@@ -183,7 +186,7 @@ func TestPreviewRebaseHandler_MapsRefusals(t *testing.T) {
 		{errors.New("connection reset"), codes.Internal},
 	} {
 		h := NewPreviewRebaseHandler(&fakeRebasePreviewReader{err: tc.err}, newTestLogger())
-		_, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: uuid.NewString()})
+		_, err := h.PreviewRebase(requestCtx(), &statev1.PreviewRebaseRequest{SourceRunId: uuid.NewString()})
 		requireGRPCCode(t, err, tc.code)
 	}
 }

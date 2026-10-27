@@ -44,6 +44,7 @@ func TestParseTaskStatusReport_ReadsTheGoldenEntries(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			got, err := ParseTaskStatusReport(reportEntry(t, status))
 			require.NoError(t, err)
+			assert.Equal(t, pkgevents.DefaultTenantID, got.TenantID, "the report carries its envelope's tenant")
 			assert.Equal(t, uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"), got.RunID)
 			assert.Equal(t, uuid.MustParse("3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"), got.Report.TaskID)
 			assert.Equal(t, run.AttemptStatus(status), got.Report.Status)
@@ -78,6 +79,8 @@ func TestParseTaskStatusReport_AnEntryItCannotTrustIsPermanent(t *testing.T) {
 		},
 		"another schema version": func(v map[string]any) { v["schema_version"] = "2" },
 		"no payload":             func(v map[string]any) { delete(v, "payload") },
+		"no tenant":              func(v map[string]any) { delete(v, "tenant_id") },
+		"an empty tenant":        func(v map[string]any) { v["tenant_id"] = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

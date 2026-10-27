@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -62,9 +61,14 @@ func NewSchedulerHandler(
 	}
 }
 
-// GetScheduler retrieves a scheduler by ID.
+// GetScheduler retrieves a run of the request's tenant by ID; another
+// tenant's run is NotFound.
 func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Debug("Getting scheduler", "schedule_id", req.ScheduleId)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
@@ -75,7 +79,7 @@ func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSch
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	tracker, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
+	tracker, err := h.repo.GetByID(ctx, tenantID, scheduleID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")
@@ -89,11 +93,16 @@ func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSch
 	}, nil
 }
 
-// CancelScheduler cancels a run by its schedule_id UUID. It loads the Run
-// aggregate, calls Run.Cancel, and persists the result via SaveRun and
-// OutboxPublisher.Append inside a single transaction.
+// CancelScheduler cancels a run of the request's tenant by its schedule_id
+// UUID; another tenant's run is NotFound. It loads the Run aggregate, calls
+// Run.Cancel, and persists the result via SaveRun and OutboxPublisher.Append
+// inside a single transaction.
 func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.CancelSchedulerRequest) (*statev1.SchedulerResponse, error) {
 	h.logger.Info("Cancelling scheduler", "schedule_id", req.ScheduleId, "cancelled_by", req.CancelledBy)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
@@ -104,6 +113,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 	}
 
 	r, _, gerr := h.cancelRunTx(ctx, cancelParams{
+		tenantID:           tenantID,
 		scheduleID:         scheduleID,
 		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
@@ -136,8 +146,10 @@ func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string
 	return identity.SystemUserID
 }
 
-// cancelParams carries the per-call inputs to cancelRunTx.
+// cancelParams carries the per-call inputs to cancelRunTx. tenantID and
+// scheduleID name the run to cancel.
 type cancelParams struct {
+	tenantID           string
 	scheduleID         uuid.UUID
 	cancelledBy        string
 	cancellationReason string
@@ -153,7 +165,8 @@ type cancelParams struct {
 }
 
 // cancelRunTx runs the shared cancel transaction: begin → LoadRunForUpdate →
-// Run.Cancel → SaveRun → Outbox.Append → commit. It returns the cancelled Run
+// Run.Cancel, under the run's tenant → SaveRun → Outbox.Append → commit. It
+// returns the cancelled Run
 // aggregate and true, or a ready-to-return gRPC status error. A run that is
 // already cancelling is answered as it was loaded, with false: the
 // transaction rolls back, so the repeated cancel writes nothing and sends
@@ -171,7 +184,7 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, p.scheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, p.tenantID, p.scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, false, status.Errorf(p.loadNotFoundCode, "%s", p.loadNotFoundMsg)
@@ -201,13 +214,18 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 	return r, true, nil
 }
 
-// CancelSchedule cancels the active run of a named schedule. It looks up the
-// active run, then loads its Run aggregate, calls Run.Cancel, and persists the
-// result via SaveRun and OutboxPublisher.Append inside a single transaction.
+// CancelSchedule cancels the active run of the request's tenant's named
+// schedule. It looks up the active run, then loads its Run aggregate under the
+// run's tenant, calls Run.Cancel, and persists the result via SaveRun and
+// OutboxPublisher.Append inside a single transaction.
 func (h *SchedulerHandler) CancelSchedule(
 	ctx context.Context,
 	req *statev1.CancelScheduleRequest,
 ) (*statev1.CancelScheduleResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
@@ -215,7 +233,7 @@ func (h *SchedulerHandler) CancelSchedule(
 	// Look up the active run for the named schedule via a separate UoW
 	// (read-only path, no transaction needed).
 	lookup := h.uowFactory()
-	active, err := lookup.Run().GetActiveRun(ctx, pkgevents.DefaultTenantID, req.ScheduleName)
+	active, err := lookup.Run().GetActiveRun(ctx, tenantID, req.ScheduleName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get active: %v", err)
 	}
@@ -224,6 +242,7 @@ func (h *SchedulerHandler) CancelSchedule(
 	}
 
 	r, wrote, gerr := h.cancelRunTx(ctx, cancelParams{
+		tenantID:           active.TenantID(),
 		scheduleID:         active.RunID(),
 		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
@@ -341,17 +360,22 @@ func runToProto(r *run.Run) *statev1.Scheduler {
 	return s
 }
 
-// ActivateSchedule triggers a cron schedule run. Returns the new schedule_id,
-// or an empty string when a run was already active (silent skip for cron).
+// ActivateSchedule triggers a cron run of the request's tenant's schedule.
+// Returns the new schedule_id, or an empty string when a run was already
+// active (silent skip for cron).
 func (h *SchedulerHandler) ActivateSchedule(
 	ctx context.Context,
 	req *statev1.ActivateScheduleRequest,
 ) (*statev1.ActivateScheduleResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindCron, nil, identity.FromContext(ctx), pkg_model.OperationRun)
+	id, outcome, err := h.activate.Handle(ctx, u, tenantID, req.ScheduleName, run.KindCron, nil, identity.FromContext(ctx), pkg_model.OperationRun)
 	if err != nil {
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
@@ -366,18 +390,22 @@ func (h *SchedulerHandler) ActivateSchedule(
 	return &statev1.ActivateScheduleResponse{ScheduleId: id.String()}, nil
 }
 
-// ListAllSchedules returns a summary of all active schedules from the catalog,
-// merged with last-run data and cron config metadata.
+// ListAllSchedules returns a summary of all active schedules of the request's
+// tenant from the catalog, merged with last-run data and cron config metadata.
 func (h *SchedulerHandler) ListAllSchedules(
 	ctx context.Context,
 	req *statev1.ListAllSchedulesRequest,
 ) (*statev1.ListAllSchedulesResponse, error) {
-	names, err := h.catalogRepo.ListActive(ctx, pkgevents.DefaultTenantID)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names, err := h.catalogRepo.ListActive(ctx, tenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list active schedules: %v", err)
 	}
 
-	lastRuns, err := h.repo.GetLastRunPerSchedule(ctx, pkgevents.DefaultTenantID)
+	lastRuns, err := h.repo.GetLastRunPerSchedule(ctx, tenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get last runs: %v", err)
 	}
@@ -414,15 +442,20 @@ func (h *SchedulerHandler) ListAllSchedules(
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
 }
 
-// TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
-// when a run is already active or when the schedule's selection is refused (no
-// node of the schedule in the live release, or a node of an undeclared type),
-// NotFound when the schedule is not in catalog. A test run of a schedule with no
-// node with data tests is created, finished skipped.
+// TriggerSchedule manually triggers a run of the request's tenant's schedule.
+// Returns FailedPrecondition when a run is already active or when the
+// schedule's selection is refused (no node of the schedule in the live
+// release, or a node of an undeclared type), NotFound when the schedule is not
+// in catalog. A test run of a schedule with no node with data tests is
+// created, finished skipped.
 func (h *SchedulerHandler) TriggerSchedule(
 	ctx context.Context,
 	req *statev1.TriggerScheduleRequest,
 ) (*statev1.TriggerScheduleResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ScheduleName == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_name is required")
 	}
@@ -434,7 +467,7 @@ func (h *SchedulerHandler) TriggerSchedule(
 		return nil, status.Errorf(codes.InvalidArgument, "operation %q targets a single node; use TriggerSingleNodeRun", operation)
 	}
 	u := h.uowFactory()
-	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
+	id, outcome, err := h.activate.Handle(ctx, u, tenantID, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
 	if err != nil {
 		if st, ok := planRefusal(err); ok {
 			return nil, st.Err()
@@ -452,8 +485,13 @@ func (h *SchedulerHandler) TriggerSchedule(
 	return &statev1.TriggerScheduleResponse{ScheduleId: id.String()}, nil
 }
 
-// GetSchedulerInitStatus returns the initialization_status for a scheduler.
+// GetSchedulerInitStatus returns the initialization_status of a run of the
+// request's tenant; another tenant's run is NotFound.
 func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")
 	}
@@ -463,7 +501,7 @@ func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *stat
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	tracker, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
+	tracker, err := h.repo.GetByID(ctx, tenantID, scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")

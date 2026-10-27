@@ -46,21 +46,22 @@ func NewRebasePreviewer(planner runstart.Planner, newUoW func() uow.UnitOfWork, 
 	return &RebasePreviewer{planner: planner, newUoW: newUoW, reads: reads}
 }
 
-// Preview returns what a rebase of sourceID with includeChangedUpstream would
-// do on the live release. The source must be one a rebase accepts; a schedule
-// with an active run is no reason to refuse a preview. The selection is made
-// in a transaction that is rolled back, so a preview writes nothing. It takes
-// the topology lock, so a preview waits for and briefly holds off promotions
-// and run creation; the lock keeps the live release from being pruned between
-// reading the live pointer and reading its graph. The changed nodes'
-// durations are read after the rollback.
-func (p *RebasePreviewer) Preview(ctx context.Context, sourceID uuid.UUID, includeChangedUpstream bool) (RebasePreview, error) {
+// Preview returns what a rebase of tenantID's run sourceID with
+// includeChangedUpstream would do on the tenant's live release; another
+// tenant's sourceID is not found. The source must be one a rebase accepts; a
+// schedule with an active run is no reason to refuse a preview. The selection
+// is made in a transaction that is rolled back, so a preview writes nothing.
+// It takes the topology lock, so a preview waits for and briefly holds off
+// promotions and run creation; the lock keeps the live release from being
+// pruned between reading the live pointer and reading its graph. The changed
+// nodes' durations are read after the rollback.
+func (p *RebasePreviewer) Preview(ctx context.Context, tenantID string, sourceID uuid.UUID, includeChangedUpstream bool) (RebasePreview, error) {
 	u := p.newUoW()
-	src, err := u.Run().GetRun(ctx, p.planner.TenantID, sourceID)
+	src, err := u.Run().GetRun(ctx, tenantID, sourceID)
 	if err != nil {
 		return RebasePreview{}, fmt.Errorf("get source: %w", err)
 	}
-	if err := src.CanBeRebaseSource(ctx, u.TaskCollection(p.planner.TenantID)); err != nil {
+	if err := src.CanBeRebaseSource(ctx, u.TaskCollection(src.TenantID())); err != nil {
 		return RebasePreview{}, err
 	}
 

@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -21,8 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rebaseRuns holds one source run, answers whether its schedule has an active
-// run, and records the runs saved.
+// errNoRun is what rebaseRuns answers for a run it does not hold.
+var errNoRun = errors.New("no such run")
+
+// rebaseRuns holds one source run, under its own tenant only, answers whether
+// its schedule has an active run, and records the runs saved.
 type rebaseRuns struct {
 	repository.RunRepository
 	source *run.Run
@@ -30,7 +34,10 @@ type rebaseRuns struct {
 	saved  []*run.Run
 }
 
-func (r *rebaseRuns) GetRun(context.Context, string, uuid.UUID) (*run.Run, error) {
+func (r *rebaseRuns) GetRun(_ context.Context, tenantID string, _ uuid.UUID) (*run.Run, error) {
+	if tenantID != r.source.TenantID() {
+		return nil, errNoRun
+	}
 	return r.source, nil
 }
 func (r *rebaseRuns) HasActiveRun(context.Context, string, string) (bool, error) {
@@ -122,8 +129,14 @@ type rebaseFixture struct {
 
 func newRebaseFixture(t *testing.T) *rebaseFixture {
 	t.Helper()
+	return newRebaseFixtureOf(t, pkgevents.DefaultTenantID)
+}
+
+// newRebaseFixtureOf is newRebaseFixture with a source run of tenantID.
+func newRebaseFixtureOf(t *testing.T, tenantID string) *rebaseFixture {
+	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &rebaseFixture{
@@ -135,7 +148,7 @@ func newRebaseFixture(t *testing.T) *rebaseFixture {
 			{TaskID: uuid.New(), NodeKey: "mart.c", Status: run.TaskStatusSkipped},
 			{TaskID: uuid.New(), NodeKey: "raw.a", Status: run.TaskStatusSucceeded},
 		}},
-		planner: runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}},
+		planner: runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}},
 	}
 	f.u.TopologyRepo = &releaseGraphs{
 		LiveReleaseOnly: uow.LiveReleaseOnly{Live: topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}},
@@ -155,7 +168,7 @@ func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 	f := newRebaseFixture(t)
 
 	id, name, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
+		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
 		Initiator: identity.FromUserID("okta|alice"),
 	})
 
@@ -179,7 +192,7 @@ func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) 
 	f := newRebaseFixture(t)
 
 	id, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.RunID(), Initiator: identity.FromUserID("okta|alice"),
+		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), Initiator: identity.FromUserID("okta|alice"),
 	})
 
 	require.NoError(t, err)
@@ -194,7 +207,7 @@ func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 	f := newRebaseFixture(t)
 
 	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
+		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
 	})
 
 	require.ErrorIs(t, err, runstart.ErrLiveReleaseMoved)
@@ -210,10 +223,38 @@ func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 	f.runs.active = true
 
 	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
-		SourceRunID: f.runs.source.RunID(),
+		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
 	})
 
 	require.ErrorIs(t, err, run.ErrScheduleHasActiveRun)
 	assert.Equal(t, 0, f.u.BeginCalled)
 	assert.Empty(t, f.runs.saved)
+}
+
+// A rebase is derived under its source's tenant: the request's tenant finds
+// the source, and the new run, its tasks and their ids are that tenant's.
+// Another tenant's source is not found, and nothing is written.
+func TestTriggerRebase_DerivesTheRunUnderTheSourcesTenant(t *testing.T) {
+	f := newRebaseFixtureOf(t, "acme")
+	h := svchandlers.NewTriggerRebaseHandler(f.planner, discard())
+
+	_, _, err := h.Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
+	})
+	require.ErrorIs(t, err, errNoRun)
+	assert.Empty(t, f.runs.saved)
+	assert.Equal(t, 0, f.u.BeginCalled)
+
+	id, _, err := h.Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+		TenantID: "acme", SourceRunID: f.runs.source.RunID(),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, f.runs.saved)
+	assert.Equal(t, "acme", f.runs.saved[0].TenantID())
+	require.NotEmpty(t, f.u.TaskCollectionTenants)
+	for _, tenant := range f.u.TaskCollectionTenants {
+		assert.Equal(t, "acme", tenant)
+	}
+	require.Len(t, f.outbox.events, 1)
+	assert.Equal(t, run.TaskIDFor("acme", id, "mart.b"), f.outbox.events[0].(run.TaskDispatched).TaskID)
 }

@@ -14,7 +14,6 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -186,7 +185,7 @@ func main() {
 	runRepo := postgres.NewRunRepository(db, logger)
 	catalogRepo := postgres.NewCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskCollection(db, logger).ForTenant(pkgevents.DefaultTenantID)
+	taskCollection := postgres.NewTaskCollection(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -364,7 +363,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, logger), logger),
 		},
 		{
 			name:    "release_promoted",
@@ -418,9 +417,10 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
 	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
-	// The cron loop and the gRPC entry points plan their runs for the default
-	// tenant; the seed reconcile builds its own planner for each pass.
-	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: taskDefaults}
+	// The cron loop and the gRPC entry points plan each run for the tenant its
+	// entry point chose; the seed reconcile builds its own planner for each
+	// pass.
+	planner := runstart.Planner{Tasks: taskDefaults}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewStartRunHandler(planner, logger)
@@ -454,9 +454,11 @@ func main() {
 	}
 	logger.Info("Cron scheduler started")
 
-	// Initialize gRPC handlers
+	// Initialize gRPC handlers. Each request acts for the tenant the identity
+	// interceptor placed on its context; the task and node-run reads are bound
+	// to that tenant per request.
 	schedulerHandler := handlers.NewSchedulerHandler(runRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
-	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
+	taskHandler := handlers.NewTaskHandler(func(tenantID string) handlers.TaskReads { return taskCollection.ForTenant(tenantID) }, logger)
 	taskAttemptHandler := handlers.NewTaskAttemptHandler(taskAttemptReadRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
@@ -466,8 +468,10 @@ func main() {
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
+	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
+		return postgres.NewNodeRunRepository(db, tenantID, logger)
+	}
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server
