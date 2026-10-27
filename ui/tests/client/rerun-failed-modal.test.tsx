@@ -6,7 +6,8 @@ import RerunFailedModal from '../../src/client/RerunFailedModal';
 import type { ChangedUpstreamNode, RebasePreview } from '../../src/client/types';
 
 const RUN_ID = 'run-1';
-const PREVIEW_PATH = `/api/schedulers/${RUN_ID}/rebase-preview`;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const PREVIEW_PATH = `/api/runs/${RUN_ID}/rebase-preview`;
 
 const changedInvoices: ChangedUpstreamNode = {
   service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null,
@@ -177,7 +178,7 @@ describe('RerunFailedModal — shell', () => {
 });
 
 describe('RerunFailedModal — This snapshot', () => {
-  it('posts an empty rerun and reports the submitted mode', async () => {
+  it('RerunFailedModal rerun: posts the rerun with a request id and reports the submitted mode', async () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
@@ -188,8 +189,9 @@ describe('RerunFailedModal — This snapshot', () => {
     await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('this'));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`/api/schedulers/${RUN_ID}/rerun`);
-    expect(init).toMatchObject({ method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
+    expect(url).toBe(`/api/runs/${RUN_ID}/rerun`);
+    expect(init).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    expect(JSON.parse(String(init.body))).toEqual({ request_id: expect.stringMatching(UUID) });
   });
 
   it('keeps a refusal inside the dialog as an error strip and lets the user try again', async () => {
@@ -542,7 +544,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
 });
 
 describe('RerunFailedModal — Latest snapshot rebase', () => {
-  it('rebases on the previewed release with changed upstream nodes and reports the mode', async () => {
+  it('RerunFailedModal rebase: rebases on the previewed release with changed upstream nodes and a request id', async () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
@@ -553,9 +555,13 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
 
     await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('latest'));
     const [[url, init]] = postCalls(fetchMock) as [string, RequestInit][];
-    expect(url).toBe(`/api/schedulers/${RUN_ID}/rebase`);
+    expect(url).toBe(`/api/runs/${RUN_ID}/rebase`);
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
-    expect(JSON.parse(String(init.body))).toEqual({ include_changed_upstream: true, expected_release_id: 'rel-7' });
+    expect(JSON.parse(String(init.body))).toEqual({
+      request_id: expect.stringMatching(UUID),
+      include_changed_upstream: true,
+      expected_release_id: 'rel-7',
+    });
   });
 
   it('rebases without changed upstream nodes when unchecked', async () => {
@@ -572,7 +578,11 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
 
     await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
     const [[, init]] = postCalls(fetchMock) as [string, RequestInit][];
-    expect(JSON.parse(String(init.body))).toEqual({ include_changed_upstream: false, expected_release_id: 'rel-7' });
+    expect(JSON.parse(String(init.body))).toEqual({
+      request_id: expect.stringMatching(UUID),
+      include_changed_upstream: false,
+      expected_release_id: 'rel-7',
+    });
   });
 
   it('previews again and warns when the live release moved, then rebases on the new release', async () => {
@@ -669,5 +679,97 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(document.querySelector('.dialog-overlay') as HTMLElement);
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('RerunFailedModal — request id', () => {
+  function requestIdsOf(fetchMock: ReturnType<typeof apiFetch>): string[] {
+    return postCalls(fetchMock).map(c => JSON.parse(String((c[1] as RequestInit).body)).request_id);
+  }
+
+  it('requestId: a retry after a timeout inside the same dialog sends the id the first try sent', async () => {
+    let posts = 0;
+    const fetchMock = apiFetch(() => {
+      posts += 1;
+      if (posts === 1) throw new Error('timeout');
+      return { body: {} };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const props = renderModal();
+
+    await user.click(rerunButton());
+    await screen.findByText('Request failed — please try again');
+    await user.click(rerunButton());
+
+    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('this'));
+    const ids = requestIdsOf(fetchMock);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toMatch(UUID);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a retry after a refusal keeps the id too, because a refused call stores nothing', async () => {
+    let posts = 0;
+    const fetchMock = apiFetch(() => {
+      posts += 1;
+      return posts === 1 ? { status: 409, body: { error: 'schedule already has an active run' } } : { body: {} };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(rerunButton());
+    await screen.findByText('schedule already has an active run');
+    await user.click(rerunButton());
+
+    await waitFor(() => expect(requestIdsOf(fetchMock)).toHaveLength(2));
+    const ids = requestIdsOf(fetchMock);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: asking for something else mints a new one', async () => {
+    let posts = 0;
+    const fetchMock = apiFetch((method, url) => {
+      if (method === 'GET' && url.startsWith(PREVIEW_PATH)) {
+        return { body: url.endsWith('=true') ? PREVIEW : { ...WITHOUT_CHANGED, release_id: 'rel-7' } };
+      }
+      posts += 1;
+      if (posts === 1) throw new Error('timeout');
+      return { body: {} };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+    await chooseLatest(user);
+
+    await user.click(rerunButton());
+    await screen.findByText('Request failed — please try again');
+    await user.click(includeToggle());
+    await screen.findByText('of 2,000 nodes · 1,979 inherited');
+    await waitFor(() => expect(rerunButton()).toBeEnabled());
+    await user.click(rerunButton());
+
+    await waitFor(() => expect(requestIdsOf(fetchMock)).toHaveLength(2));
+    const ids = requestIdsOf(fetchMock);
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('requestId: a dialog opened again mints a new one', async () => {
+    const fetchMock = apiFetch(previewing());
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const first = render(<RerunFailedModal runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    await user.click(rerunButton());
+    await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(1));
+    first.unmount();
+
+    render(<RerunFailedModal runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    await user.click(rerunButton());
+    await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(2));
+
+    const ids = requestIdsOf(fetchMock);
+    expect(ids[1]).not.toBe(ids[0]);
   });
 });

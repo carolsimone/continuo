@@ -5,13 +5,15 @@ interface CancelConfig {
 }
 
 interface Props {
-  scheduleName: string;
+  // The run to cancel. A cancel is addressed to the run itself, so a run
+  // that ended and was followed by another is not cancelled by mistake.
+  runId: string;
   // Called once state has accepted the cancel, before the dialog closes.
   onCancelled: () => void;
   onClose: () => void;
 }
 
-export default function CancelDialog({ scheduleName, onCancelled, onClose }: Props) {
+export default function CancelDialog({ runId, onCancelled, onClose }: Props) {
   const [config, setConfig] = useState<CancelConfig | null>(null);
   const [configError, setConfigError] = useState(false);
   const [reason, setReason] = useState('');
@@ -48,7 +50,7 @@ export default function CancelDialog({ scheduleName, onCancelled, onClose }: Pro
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(scheduleName)}/cancel`, {
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cancellation_reason: effectiveReason }),
@@ -73,10 +75,10 @@ export default function CancelDialog({ scheduleName, onCancelled, onClose }: Pro
         className="dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby={`cancel-dialog-title-${scheduleName}`}
+        aria-labelledby={`cancel-dialog-title-${runId}`}
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="dialog-title" id={`cancel-dialog-title-${scheduleName}`}>Cancel run</h2>
+        <h2 className="dialog-title" id={`cancel-dialog-title-${runId}`}>Cancel run</h2>
         {configError ? (
           <p className="info-strip info-strip--error">Could not load configuration.</p>
         ) : !config ? (

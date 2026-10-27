@@ -4,10 +4,11 @@ import * as grpc from '@grpc/grpc-js';
 import path from 'path';
 import express from 'express';
 import request from 'supertest';
-import { createSchedulersRouter } from '../../src/server/routes/schedulers';
+import { createRunsRouter } from '../../src/server/routes/runs';
+import { createSchedulesRouter } from '../../src/server/routes/schedules';
 
 const PROTO_DIR = path.join(process.cwd(), 'proto');
-const PROTO_PATH = path.join(PROTO_DIR, 'state.proto');
+const PROTO_PATH = path.join(PROTO_DIR, 'run.proto');
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -19,64 +20,87 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 });
 
 const grpcObject = grpc.loadPackageDefinition(packageDefinition) as any;
-const Messages = grpcObject.state.v1;
+const Messages = grpcObject.run.v1;
 
 // requestRoundTrip drives the production RPC's request serializer/deserializer
 // pair — the same code path @grpc/grpc-js uses to encode arguments to a unary
 // call. Encoding then decoding the request reveals which fields cross the wire
 // vs. get silently dropped by a stale proto.
 function requestRoundTrip(rpcName: string, request: Record<string, unknown>): Record<string, unknown> {
-  const svc = (packageDefinition as Record<string, any>)['state.v1.StateService'];
+  const svc = (packageDefinition as Record<string, any>)['run.v1.RunService'];
   const method = svc[rpcName];
   expect(method, `missing rpc method: ${rpcName}`).toBeTruthy();
   const buf: Buffer = method.requestSerialize(request);
   return method.requestDeserialize(buf) as Record<string, unknown>;
 }
 
-// stateMethod returns the production serializer/deserializer pairs of one
-// StateService RPC.
-function stateMethod(rpcName: string): Record<string, any> {
-  const method = (packageDefinition as Record<string, any>)['state.v1.StateService'][rpcName];
+// runMethod returns the production serializer/deserializer pairs of one
+// RunService RPC.
+function runMethod(rpcName: string): Record<string, any> {
+  const method = (packageDefinition as Record<string, any>)['run.v1.RunService'][rpcName];
   expect(method, `missing rpc method: ${rpcName}`).toBeTruthy();
   return method;
 }
 
 // decodeResponse runs the production response deserializer of one
-// StateService RPC over raw wire bytes.
+// RunService RPC over raw wire bytes.
 function decodeResponse(rpcName: string, bytes: number[]): Record<string, any> {
-  const svc = (packageDefinition as Record<string, any>)['state.v1.StateService'];
+  const svc = (packageDefinition as Record<string, any>)['run.v1.RunService'];
   const method = svc[rpcName];
   expect(method, `missing rpc method: ${rpcName}`).toBeTruthy();
   return method.responseDeserialize(Buffer.from(bytes)) as Record<string, any>;
 }
 
-describe('proto wire: state.proto', () => {
-  it('TriggerRerun request round-trips source_run_id', () => {
+const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
+
+describe('proto wire: run.proto', () => {
+  it('run.proto loads RunService with every RPC the ui server calls', () => {
+    const svc = (packageDefinition as Record<string, any>)['run.v1.RunService'];
+    expect(svc).toBeTruthy();
+    for (const rpc of [
+      'StartRun', 'TriggerRerun', 'TriggerSingleNodeRun', 'TriggerRebase', 'PreviewRebase',
+      'CancelRun', 'GetRun', 'ListRuns', 'ListTasks', 'ListRunAttempts', 'GetRunGraph',
+      'ListNodeTasks', 'ListNodes', 'ListNodeNames', 'ListNodeServices',
+      'ListSchedules', 'GetScheduleGraph', 'ListScheduleTopologies',
+    ]) {
+      expect(svc[rpc], `missing rpc method: ${rpc}`).toBeTruthy();
+    }
+    expect((packageDefinition as Record<string, any>)['state.v1.StateService']).toBeUndefined();
+  });
+
+  it('TriggerRerun request round-trips request_id and source_run_id', () => {
     const result = requestRoundTrip('TriggerRerun', {
+      request_id: '5d21c0de-0000-4000-8000-000000000001',
       source_run_id: 'run-abc-123',
     });
-    expect(result.source_run_id).toBe('run-abc-123');
-    expect(Object.keys(result)).toContain('source_run_id');
+    expect(result).toEqual({ request_id: '5d21c0de-0000-4000-8000-000000000001', source_run_id: 'run-abc-123' });
     expect(Object.keys(result)).not.toContain('schedule_id');
-    expect(Object.keys(result)).not.toContain('table_name');
   });
 
-  it('TriggerSchedule request round-trips schedule_name', () => {
-    const result = requestRoundTrip('TriggerSchedule', {
-      schedule_name: 'seed',
-    });
-    expect(result.schedule_name).toBe('seed');
+  it('StartRun request round-trips request_id, schedule_name and operation', () => {
+    expect(requestRoundTrip('StartRun', {
+      request_id: '5d21c0de-0000-4000-8000-000000000001', schedule_name: 'seed', operation: 'test',
+    })).toEqual({ request_id: '5d21c0de-0000-4000-8000-000000000001', schedule_name: 'seed', operation: 'test' });
   });
 
-  it('CancelSchedule request round-trips schedule_name + cancelled_by + cancellation_reason', () => {
-    const result = requestRoundTrip('CancelSchedule', {
-      schedule_name: 'e2e-schedule',
-      cancelled_by: 'tester',
-      cancellation_reason: 'aborted by hand',
+  it('StartRun response decodes run_id at field 1', () => {
+    expect(decodeResponse('StartRun', [0x0a, 2, 0x72, 0x31]).run_id).toBe('r1');
+  });
+
+  it('CancelRun request round-trips run_id, cancelled_by and cancellation_reason', () => {
+    const result = requestRoundTrip('CancelRun', {
+      run_id: 'run-abc-123', cancelled_by: 'tester', cancellation_reason: 'aborted by hand',
     });
-    expect(result.schedule_name).toBe('e2e-schedule');
-    expect(result.cancelled_by).toBe('tester');
-    expect(result.cancellation_reason).toBe('aborted by hand');
+    expect(result).toEqual({ run_id: 'run-abc-123', cancelled_by: 'tester', cancellation_reason: 'aborted by hand' });
+    expect(Object.keys(result)).not.toContain('request_id');
+  });
+
+  it('TriggerSingleNodeRun request round-trips request_id and the node identity', () => {
+    const sent = {
+      request_id: '5d21c0de-0000-4000-8000-000000000001', service_name: 'svc', schema_name: 'sch',
+      table_name: 'tbl', metadata_source: 'snapshot_of_run', source_run_id: 'run-1', operation: 'full_refresh',
+    };
+    expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual(sent);
   });
 
   it('GetRunGraph decodes fields 3 and 4 as run_promotion_seq and latest_promotion_seq', () => {
@@ -92,19 +116,21 @@ describe('proto wire: state.proto', () => {
     expect(resp.active_runs[0].run_promotion_seq).toBe('4');
   });
 
-  it('TriggerRebase request carries include_changed_upstream as field 2 and expected_release_id as field 3', () => {
-    const method = stateMethod('TriggerRebase');
+  it('TriggerRebase request carries request_id as field 1, source_run_id as 2, include_changed_upstream as 3 and expected_release_id as 4', () => {
+    const method = runMethod('TriggerRebase');
     const bytes = [...method.requestSerialize({
-      source_run_id: 'r', include_changed_upstream: true, expected_release_id: 'x',
+      request_id: 'q', source_run_id: 'r', include_changed_upstream: true, expected_release_id: 'x',
     })];
-    expect(bytes).toEqual([0x0a, 1, 0x72, 0x10, 1, 0x1a, 1, 0x78]);
-    expect(requestRoundTrip('TriggerRebase', {
-      source_run_id: 'run-abc-123', include_changed_upstream: true, expected_release_id: 'rel-7',
-    })).toEqual({ source_run_id: 'run-abc-123', include_changed_upstream: true, expected_release_id: 'rel-7' });
+    expect(bytes).toEqual([0x0a, 1, 0x71, 0x12, 1, 0x72, 0x18, 1, 0x22, 1, 0x78]);
+    const sent = {
+      request_id: '5d21c0de-0000-4000-8000-000000000001', source_run_id: 'run-abc-123',
+      include_changed_upstream: true, expected_release_id: 'rel-7',
+    };
+    expect(requestRoundTrip('TriggerRebase', sent)).toEqual(sent);
   });
 
   it('PreviewRebase request carries source_run_id as field 1 and include_changed_upstream as field 2', () => {
-    const method = stateMethod('PreviewRebase');
+    const method = runMethod('PreviewRebase');
     expect([...method.requestSerialize({ source_run_id: 'r', include_changed_upstream: true })])
       .toEqual([0x0a, 1, 0x72, 0x10, 1]);
     expect(requestRoundTrip('PreviewRebase', { source_run_id: 'run-abc-123', include_changed_upstream: true }))
@@ -146,12 +172,12 @@ describe('proto wire: state.proto', () => {
     // and the assertions below see its default instead of the value.
     const sentRebase: Record<string, unknown>[] = [];
     const sentPreview: Record<string, unknown>[] = [];
-    const preview = stateMethod('PreviewRebase');
-    const rebase = stateMethod('TriggerRebase');
+    const preview = runMethod('PreviewRebase');
+    const rebase = runMethod('TriggerRebase');
     const client = {
       triggerRebase: (req: any, _md: unknown, cb: (err: unknown, res: unknown) => void) => {
         sentRebase.push(rebase.requestDeserialize(rebase.requestSerialize(req)));
-        cb(null, {});
+        cb(null, rebase.responseDeserialize(rebase.responseSerialize({ run_id: 'run-2', schedule_name: 'daily' })));
       },
       previewRebase: (req: any, cb: (err: unknown, res: unknown) => void) => {
         sentPreview.push(preview.requestDeserialize(preview.requestSerialize(req)));
@@ -164,11 +190,11 @@ describe('proto wire: state.proto', () => {
     };
     const app = express();
     app.use(express.json());
-    app.use('/api/schedulers', createSchedulersRouter(client as any));
+    app.use('/api/runs', createRunsRouter(client as any));
 
-    const got = await request(app).get('/api/schedulers/run-1/rebase-preview?include_changed_upstream=true');
-    const posted = await request(app).post('/api/schedulers/run-1/rebase')
-      .send({ include_changed_upstream: true, expected_release_id: 'rel-7' });
+    const got = await request(app).get('/api/runs/run-1/rebase-preview?include_changed_upstream=true');
+    const posted = await request(app).post('/api/runs/run-1/rebase')
+      .send({ request_id: REQUEST_ID, include_changed_upstream: true, expected_release_id: 'rel-7' });
 
     expect(sentPreview).toEqual([{ source_run_id: 'run-1', include_changed_upstream: true }]);
     expect(got.body).toEqual({
@@ -177,11 +203,76 @@ describe('proto wire: state.proto', () => {
       changed_nodes: [{ service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
     });
     expect(posted.status).toBe(200);
-    expect(sentRebase).toEqual([{ source_run_id: 'run-1', include_changed_upstream: true, expected_release_id: 'rel-7' }]);
+    expect(posted.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
+    expect(sentRebase).toEqual([{
+      request_id: REQUEST_ID, source_run_id: 'run-1', include_changed_upstream: true, expected_release_id: 'rel-7',
+    }]);
   });
 
-  it('ListTaskAttempts request round-trips run_id, task_id and paging', () => {
-    expect(requestRoundTrip('ListTaskAttempts', {
+  it('the run and schedule routes send and read the field names the proto declares', async () => {
+    // Every fake RPC runs its request and response through the real
+    // serializers, so a misspelled field is dropped and an assertion sees the
+    // default.
+    const sent: Record<string, Record<string, unknown>> = {};
+    const through = (rpc: string, req: any, res: Record<string, unknown>) => {
+      const m = runMethod(rpc);
+      sent[rpc] = m.requestDeserialize(m.requestSerialize(req));
+      return m.responseDeserialize(m.responseSerialize(res));
+    };
+    const client = {
+      getRun: (req: any, cb: any) => cb(null, through('GetRun', req, {
+        run: { run_id: 'run-1', schedule_name: 'daily', status: 'running', promotion_seq: 7, created_at: { seconds: 1792836300, nanos: 0 } },
+      })),
+      triggerRerun: (req: any, _md: unknown, cb: any) => cb(null, through('TriggerRerun', req, { run_id: 'run-2', schedule_name: 'daily' })),
+      cancelRun: (req: any, _md: unknown, cb: any) => cb(null, through('CancelRun', req, { run: { run_id: 'run-1', status: 'cancelling' } })),
+      listTasks: (req: any, cb: any) => cb(null, through('ListTasks', req, {
+        tasks: [{ task_id: 't1', run_id: 'run-1', status: 'pending', wait_reason: 'node_lease', waiting_on_run_id: 'run-9' }], total_count: 1,
+      })),
+      listRunAttempts: (req: any, cb: any) => cb(null, through('ListRunAttempts', req, { attempts: [{ task_id: 't1', attempt: 1, status: 'failed' }], total_count: 1 })),
+      startRun: (req: any, _md: unknown, cb: any) => cb(null, through('StartRun', req, { run_id: 'run-3' })),
+      listSchedules: (req: any, cb: any) => cb(null, through('ListSchedules', req, {
+        schedules: [{ schedule_name: 'daily', has_active_run: true, last_run_status: 'running', last_run_id: 'run-1' }],
+      })),
+      getScheduleGraph: (req: any, cb: any) => cb(null, through('GetScheduleGraph', req, {
+        nodes: [{ service_name: 's', schema_name: 'a', table_name: 'b', node_type: 'dbt-model', schedule_name: 'daily' }],
+        edges: [{ from_node_id: 's.a.b', to_node_id: 's.a.c' }], promotion_seq: 4,
+      })),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/runs', createRunsRouter(client as any));
+    app.use('/api/schedules', createSchedulesRouter(client as any));
+
+    const run = await request(app).get('/api/runs/run-1');
+    const rerun = await request(app).post('/api/runs/run-1/rerun').send({ request_id: REQUEST_ID });
+    const cancel = await request(app).post('/api/runs/run-1/cancel').send({ cancellation_reason: 'manual' });
+    const tasks = await request(app).get('/api/runs/run-1/tasks');
+    const attempts = await request(app).get('/api/runs/run-1/attempts?task_id=t1');
+    const trigger = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID, operation: 'test' });
+    const schedules = await request(app).get('/api/schedules');
+    const graph = await request(app).get('/api/schedules/daily/graph');
+
+    expect(sent.GetRun).toEqual({ run_id: 'run-1' });
+    expect(run.body).toMatchObject({ run_id: 'run-1', schedule_name: 'daily', status: 'running', promotion_seq: 7 });
+    expect(sent.TriggerRerun).toEqual({ request_id: REQUEST_ID, source_run_id: 'run-1' });
+    expect(rerun.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
+    expect(sent.CancelRun).toEqual({ run_id: 'run-1', cancelled_by: '', cancellation_reason: 'manual' });
+    expect(cancel.body).toMatchObject({ run_id: 'run-1', status: 'cancelling' });
+    expect(sent.ListTasks).toMatchObject({ run_id: 'run-1' });
+    expect(tasks.body.tasks[0]).toMatchObject({ run_id: 'run-1', wait_reason: 'node_lease', waiting_on_run_id: 'run-9' });
+    expect(sent.ListRunAttempts).toMatchObject({ run_id: 'run-1', task_id: 't1' });
+    expect(attempts.body.attempts[0]).toMatchObject({ task_id: 't1', attempt: 1, status: 'failed' });
+    expect(sent.StartRun).toEqual({ request_id: REQUEST_ID, schedule_name: 'daily', operation: 'test' });
+    expect(trigger.body).toEqual({ run_id: 'run-3' });
+    expect(schedules.body.schedules[0]).toMatchObject({ schedule_name: 'daily', has_active_run: true, last_run_id: 'run-1' });
+    expect(sent.GetScheduleGraph).toEqual({ schedule_name: 'daily' });
+    expect(graph.body.nodes[0]).toMatchObject({ node_id: 's.a.b', node_type: 'dbt-model', schedule_name: 'daily' });
+    expect(graph.body.edges).toEqual([{ from_node_id: 's.a.c', to_node_id: 's.a.b' }]);
+    expect(graph.body.promotion_seq).toBe(4);
+  });
+
+  it('ListRunAttempts request round-trips run_id, task_id and paging', () => {
+    expect(requestRoundTrip('ListRunAttempts', {
       run_id: 'run-abc-123', task_id: 'task-7', page_size: 200, page_offset: 400,
     })).toEqual({ run_id: 'run-abc-123', task_id: 'task-7', page_size: 200, page_offset: 400 });
   });
@@ -193,21 +284,22 @@ describe('proto wire: state.proto', () => {
     expect(Object.keys(resp.tasks[0]).filter(k => k.startsWith('retry'))).toEqual([]);
   });
 
-  it('ListNodeRuns response decodes attempt (field 7) and failure_class (field 18)', () => {
-    const nodeRun = [
+  it('ListNodeTasks response decodes attempt (field 7), failure_class (field 17) and failure_reason (field 18)', () => {
+    const nodeTask = [
       0x38, 3, // attempt = 3
-      0x92, 0x01, 4, ...Buffer.from('user'), // failure_class = "user" (field 18, wire type 2)
-      0x9a, 0x01, 3, ...Buffer.from('oom'), // failure_reason = "oom" (field 19, wire type 2)
+      0x8a, 0x01, 4, ...Buffer.from('user'), // failure_class = "user" (field 17, wire type 2)
+      0x92, 0x01, 3, ...Buffer.from('oom'), // failure_reason = "oom" (field 18, wire type 2)
     ];
-    const resp = decodeResponse('ListNodeRuns', [0x0a, nodeRun.length, ...nodeRun]);
-    expect(resp.runs).toHaveLength(1);
-    expect(resp.runs[0].attempt).toBe(3);
-    expect(resp.runs[0].failure_class).toBe('user');
-    expect(resp.runs[0].failure_reason).toBe('oom');
+    const resp = decodeResponse('ListNodeTasks', [0x0a, nodeTask.length, ...nodeTask]);
+    expect(resp.tasks).toHaveLength(1);
+    expect(resp.tasks[0].attempt).toBe(3);
+    expect(resp.tasks[0].failure_class).toBe('user');
+    expect(resp.tasks[0].failure_reason).toBe('oom');
+    expect(resp).not.toHaveProperty('runs');
   });
 
-  it('ListTaskAttempts response decodes every attempt', () => {
-    const method = stateMethod('ListTaskAttempts');
+  it('ListRunAttempts response decodes every attempt', () => {
+    const method = runMethod('ListRunAttempts');
     const attempt = {
       task_id: 'task-1', attempt: 2, job_name: 'core-sales-orders-2', status: 'failed',
       failure_class: 'user_code', failure_reason: 'compile_error', exit_code: 1,
@@ -228,7 +320,7 @@ describe('proto wire: state.proto', () => {
     expect(resp.attempts).toEqual([attempt, second]);
   });
 
-  it('StateService client constructor exists', () => {
-    expect(Messages.StateService).toBeTypeOf('function');
+  it('RunService client constructor exists', () => {
+    expect(Messages.RunService).toBeTypeOf('function');
   });
 });

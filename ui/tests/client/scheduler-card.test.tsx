@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
+import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary, Task } from '../../src/client/types';
@@ -11,9 +12,9 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
     cron_expression: '0 * * * *',
     description: '',
     timezone: 'UTC',
-    is_running: true,
+    has_active_run: true,
     last_run_at: null,
-    last_run_status: 'PENDING',
+    last_run_status: 'pending',
     last_run_id: 'run-1',
     ...overrides,
   };
@@ -41,7 +42,7 @@ function renderCardWithRouteProbe(schedule: ScheduleSummary) {
 }
 
 // Per-test fetch mock keyed by URL substring. Any unmatched URL resolves to an
-// empty body so unrelated polls (e.g. /api/schedulers/:id/tasks) don't blow up.
+// empty body so unrelated polls (e.g. /api/runs/:id/tasks) don't blow up.
 type FetchMap = { graph?: any; tasks?: any };
 
 function installFetch(map: FetchMap = {}) {
@@ -67,7 +68,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('SchedulerCard — trigger button uses .btn', () => {
   it('Trigger run button has .btn.btn--secondary, no legacy class', () => {
-    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }));
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
     const btn = screen.getByTitle('Trigger a full DAG run');
     expect(btn.className).toMatch(/\bbtn\b/);
     expect(btn.className).toMatch(/\bbtn--secondary\b/);
@@ -79,7 +80,7 @@ describe('SchedulerCard — trigger button uses .btn', () => {
 describe('SchedulerCard — operation selector', () => {
   it('trigger button verb tracks the operation select, POST carries operation', async () => {
     const handler = installFetch();
-    renderCard(baseSchedule({ is_running: false, last_run_id: 'r1' }));
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
 
     const btn = screen.getByTitle('Trigger a full DAG run');
     expect(btn).toHaveTextContent(/trigger run/i);
@@ -103,7 +104,7 @@ describe('SchedulerCard — operation selector', () => {
   });
 
   it('clicking the operation .form-field does not navigate the card, unlike the card body', async () => {
-    const schedule = baseSchedule({ is_running: false, last_run_id: 'r1' });
+    const schedule = baseSchedule({ has_active_run: false, last_run_id: 'r1' });
     renderCardWithRouteProbe(schedule);
 
     const formField = screen.getByLabelText(/operation/i).closest('.form-field');
@@ -122,7 +123,7 @@ describe('SchedulerCard — operation selector', () => {
   });
 
   it('pressing Enter on the operation select does not navigate, unlike Enter on the card', async () => {
-    const schedule = baseSchedule({ is_running: false, last_run_id: 'r1' });
+    const schedule = baseSchedule({ has_active_run: false, last_run_id: 'r1' });
     renderCardWithRouteProbe(schedule);
 
     // Enter on a nested control must not bubble up and navigate the card.
@@ -142,7 +143,7 @@ describe('SchedulerCard — operation selector', () => {
 
 describe('SchedulerCard — cancel button uses .btn', () => {
   it('Cancel button has .btn.btn--danger, no legacy class', () => {
-    renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }));
+    renderCard(baseSchedule({ has_active_run: true, last_run_id: 'r1' }));
     const btn = screen.getByTitle('Cancel the active run');
     expect(btn.className).toMatch(/\bbtn\b/);
     expect(btn.className).toMatch(/\bbtn--danger\b/);
@@ -152,7 +153,7 @@ describe('SchedulerCard — cancel button uses .btn', () => {
 
 describe('SchedulerCard — a cancelling run', () => {
   it('reads cancelling, counts as active and keeps Cancel available', () => {
-    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
+    const { container } = renderCard(baseSchedule({ has_active_run: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
     const badge = container.querySelector('.status-badge')!;
     expect(badge).toHaveTextContent('cancelling');
     expect(badge.className).toMatch(/\bstatus-cancelling\b/);
@@ -162,7 +163,7 @@ describe('SchedulerCard — a cancelling run', () => {
   });
 
   it('still reads running for a run that is not cancelling', () => {
-    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'running', last_run_id: 'r1' }));
+    const { container } = renderCard(baseSchedule({ has_active_run: true, last_run_status: 'running', last_run_id: 'r1' }));
     expect(container.querySelector('.status-badge')).toHaveTextContent('running');
   });
 
@@ -176,7 +177,7 @@ describe('SchedulerCard — a cancelling run', () => {
       const body = url.includes('/tasks') ? { total_count: tasks.length, tasks } : {};
       return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
     }));
-    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
+    const { container } = renderCard(baseSchedule({ has_active_run: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
     await waitFor(() => expect(container.querySelector('.summary-row')).not.toBeNull());
     expect(container.querySelector('.summary-row')!.textContent).toMatch(/2 stopping/);
   });
@@ -185,7 +186,7 @@ describe('SchedulerCard — a cancelling run', () => {
 describe('SchedulerCard — drift strip', () => {
   it('renders the stale strip when /api/runs/:id/graph reports stale (in-flight run)', async () => {
     installFetch({ graph: { run_promotion_seq: 5, latest_promotion_seq: 7 } });
-    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    renderCard(baseSchedule({ has_active_run: true, last_run_id: 'run-1' }));
     const strip = await screen.findByText(/source 2 releases behind latest/);
     expect(strip.closest('.info-strip')).toBeInTheDocument();
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
@@ -194,8 +195,8 @@ describe('SchedulerCard — drift strip', () => {
   it('renders the stale strip when the last finalised run is stale', async () => {
     installFetch({ graph: { run_promotion_seq: 3, latest_promotion_seq: 10 } });
     renderCard(baseSchedule({
-      is_running: false,
-      last_run_status: 'SUCCEEDED',
+      has_active_run: false,
+      last_run_status: 'succeeded',
       last_run_id: 'run-final',
     }));
     const strip = await screen.findByText(/source 7 releases behind latest/);
@@ -204,7 +205,7 @@ describe('SchedulerCard — drift strip', () => {
 
   it('does NOT render a strip when run_promotion_seq is 0 (unknown, pre-tracking run)', async () => {
     const handler = installFetch({ graph: { run_promotion_seq: 0, latest_promotion_seq: 7 } });
-    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    renderCard(baseSchedule({ has_active_run: true, last_run_id: 'run-1' }));
     await waitFor(() => {
       expect(handler).toHaveBeenCalled();
     });
@@ -214,7 +215,7 @@ describe('SchedulerCard — drift strip', () => {
 
   it('does NOT render the strip when drift is fresh', async () => {
     const handler = installFetch({ graph: { run_promotion_seq: 7, latest_promotion_seq: 7 } });
-    renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
+    renderCard(baseSchedule({ has_active_run: true, last_run_id: 'run-1' }));
     await waitFor(() => {
       expect(handler).toHaveBeenCalled();
     });
@@ -224,7 +225,7 @@ describe('SchedulerCard — drift strip', () => {
 
   it('does NOT fetch graph or render strip for a never-run schedule', async () => {
     const handler = installFetch({ graph: { run_promotion_seq: 1, latest_promotion_seq: 9 } });
-    renderCard(baseSchedule({ is_running: false, last_run_id: null, last_run_status: '' }));
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: null, last_run_status: '' }));
     await Promise.resolve();
     const calledGraph = handler.mock.calls.some(([input]) =>
       String(input).includes('/graph')
@@ -240,7 +241,7 @@ describe('SchedulerCard — activity badge', () => {
     const { container } = renderCard(baseSchedule({
       cron_expression: '0 1 * * *',
       timezone: 'Europe/Paris',
-      is_running: false,
+      has_active_run: false,
       last_run_id: 'r1',
     }));
     expect(screen.getByText('Active')).toBeInTheDocument();
@@ -255,7 +256,7 @@ describe('SchedulerCard — activity badge', () => {
     const { container } = renderCard(baseSchedule({
       cron_expression: '',
       timezone: '',
-      is_running: false,
+      has_active_run: false,
       last_run_id: 'r1',
     }));
     expect(screen.getByText('Inactive')).toBeInTheDocument();
@@ -277,7 +278,7 @@ describe('SchedulerCard — task counts', () => {
     ];
     const tasks = statuses.map((s, i) => mkTask(i, s));
     installFetch({ tasks: { tasks, total_count: tasks.length } });
-    const { container } = renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }));
+    const { container } = renderCard(baseSchedule({ has_active_run: true, last_run_id: 'r1' }));
 
     await waitFor(() => {
       expect(container.querySelector('.summary-row')).not.toBeNull();
@@ -291,5 +292,117 @@ describe('SchedulerCard — task counts', () => {
       ['dispatched', 1], ['queued', 2], ['stopping', 1], ['running', 1], ['pending', 3],
     ]);
     expect(counts.reduce((sum, [, n]) => sum + n, 0)).toBe(tasks.length);
+  });
+});
+
+describe('SchedulerCard — request id', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  // Answers the trigger with the next reply in order, a rejection standing
+  // for a request that got no answer, and returns the request ids it received.
+  function installTrigger(replies: Array<{ ok: boolean; status?: number; body?: unknown } | 'timeout'>) {
+    const ids: string[] = [];
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/trigger')) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        const reply = replies[n++];
+        if (reply === 'timeout') return Promise.reject(new Error('timeout'));
+        return Promise.resolve({ ok: reply.ok, status: reply.status ?? (reply.ok ? 200 : 409), json: () => Promise.resolve(reply.body ?? {}) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ tasks: [] }) } as Response);
+    }));
+    return ids;
+  }
+
+  it('SchedulerCard trigger: the body carries a request id', async () => {
+    const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }]);
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+    await waitFor(() => expect(ids).toHaveLength(1));
+    expect(ids[0]).toMatch(UUID);
+  });
+
+  it('requestId: a press after a timeout is a retry and sends the same id', async () => {
+    const ids = installTrigger(['timeout', { ok: true }]);
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+    const button = () => screen.getByTitle('Trigger a full DAG run');
+
+    fireEvent.click(button());
+    await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
+    fireEvent.click(button());
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a press after a 500 is a retry too, because the command may have committed', async () => {
+    const ids = installTrigger([{ ok: false, status: 500, body: { error: 'upstream timed out' } }, { ok: true }]);
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    await waitFor(() => expect(screen.getByText(/upstream timed out/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a press after the server answered mints a new id', async () => {
+    // The success cue disables the button for 3 s; fake that timer so the test
+    // does not wait for it.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }, { ok: true, body: { run_id: 'r3' } }]);
+      renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+      const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await flush();
+      expect(ids).toHaveLength(1);
+      expect(screen.getByTitle('Trigger a full DAG run')).toHaveTextContent('Triggered');
+      await act(async () => { vi.advanceTimersByTime(3000); });
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await flush();
+
+      expect(ids).toHaveLength(2);
+      expect(ids[1]).toMatch(UUID);
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
+      renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
+      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requestId: changing the operation mints a new id', async () => {
+    const ids = installTrigger(['timeout', { ok: true }]);
+    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'build' } });
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).not.toBe(ids[0]);
   });
 });

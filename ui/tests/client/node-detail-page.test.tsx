@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
@@ -30,9 +31,16 @@ function renderPage(from?: NodeDetailFrom, navOperation?: string) {
   );
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// bodyOf parses the JSON body of a recorded POST.
+function bodyOf(init: RequestInit | undefined): Record<string, unknown> {
+  return JSON.parse(String(init?.body));
+}
+
 const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null; failure_class: string | null; failure_reason: string | null }>) => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
-  terminal_status: 'succeeded', task_id: 't1',
+  run_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
   image_tag: 'v1',
   created_at: '2026-05-10T10:00:00Z',
@@ -44,20 +52,20 @@ const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; ta
 
 describe('NodeDetailPage', () => {
   it('renders the node FQN in the header', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     expect(await screen.findByText(/svc\.schema\.tbl/)).toBeInTheDocument();
   });
 
   it('shows the image tag column and no manifest column in the run history', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [mkRun({})] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({})] }));
     renderPage();
     expect(await screen.findByRole('columnheader', { name: 'Image tag' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: /manifest/i })).not.toBeInTheDocument();
   });
 
   it('renders Run-this-node and Run-with-old-snapshot buttons', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     expect(await screen.findByRole('button', { name: /run this node/i })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /run with old snapshot/i })).toBeInTheDocument();
@@ -69,7 +77,7 @@ describe('NodeDetailPage', () => {
       if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
         return jsonResp({ run_id: 'new-r', schedule_name: 'single-node-run-abc12345' });
       }
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
@@ -77,27 +85,28 @@ describe('NodeDetailPage', () => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
       expect(postCall).toBeDefined();
-      expect(postCall![1]).toMatchObject({ method: 'POST', body: JSON.stringify({ operation: '' }) });
+      expect(postCall![1]).toMatchObject({ method: 'POST' });
+      expect(bodyOf(postCall![1])).toEqual({ request_id: expect.stringMatching(UUID), operation: '' });
     });
   });
 
   it("shows a failed run's failure class and reason under its status", async () => {
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'failed', failure_class: 'task', failure_reason: 'exit_code' })],
+      tasks: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'failed', failure_class: 'task', failure_reason: 'exit_code' })],
     }));
     renderPage();
     expect(await screen.findByText('task · exit_code')).toBeInTheDocument();
   });
 
   it('titles a queued run "waiting for a slot"', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'queued' })] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'queued' })] }));
     renderPage();
     expect(await screen.findByTitle('waiting for a slot')).toHaveTextContent('queued');
   });
 
   it('shows node-history table with kindLabel and computed stats', async () => {
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [
+      tasks: [
         mkRun({ run_id: 'r1', task_id: 't1', kind: 'cron', task_status: 'succeeded' }),
         mkRun({ run_id: 'r2', task_id: 't2', kind: 'rerun', task_status: 'failed',
                 created_at: '2026-05-10T11:00:00Z',
@@ -114,7 +123,7 @@ describe('NodeDetailPage', () => {
 
   it('"Run with old snapshot" opens the picker dialog', async () => {
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [mkRun({ run_id: 'pick-me' })],
+      tasks: [mkRun({ run_id: 'pick-me' })],
     }));
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
@@ -128,7 +137,7 @@ describe('NodeDetailPage', () => {
       if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
         return jsonResp({ run_id: 'new-r', schedule_name: 'single-node-run-abc12345' });
       }
-      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+      return jsonResp({ tasks: [mkRun({ run_id: 'pick-me' })] });
     });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
@@ -137,9 +146,11 @@ describe('NodeDetailPage', () => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
       expect(postCall).toBeDefined();
-      expect(postCall![1]).toMatchObject({
-        method: 'POST',
-        body: JSON.stringify({ source_run_id: 'pick-me', operation: '' }),
+      expect(postCall![1]).toMatchObject({ method: 'POST' });
+      expect(bodyOf(postCall![1])).toEqual({
+        request_id: expect.stringMatching(UUID),
+        source_run_id: 'pick-me',
+        operation: '',
       });
     });
   });
@@ -149,7 +160,7 @@ describe('NodeDetailPage', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'build' } });
@@ -158,7 +169,7 @@ describe('NodeDetailPage', () => {
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
-      expect(post![1]!.body).toBe(JSON.stringify({ operation: 'build' }));
+      expect(bodyOf(post![1])).toEqual({ request_id: expect.stringMatching(UUID), operation: 'build' });
     });
   });
 
@@ -166,7 +177,7 @@ describe('NodeDetailPage', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
@@ -190,7 +201,7 @@ describe('NodeDetailPage', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
-      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+      return jsonResp({ tasks: [mkRun({ run_id: 'pick-me' })] });
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
@@ -201,7 +212,7 @@ describe('NodeDetailPage', () => {
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
-      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
+      expect(bodyOf(post![1])).toEqual({ request_id: expect.stringMatching(UUID), source_run_id: 'pick-me', operation: 'test' });
     });
   });
 
@@ -212,7 +223,7 @@ describe('NodeDetailPage', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: false });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
@@ -225,7 +236,7 @@ describe('NodeDetailPage', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
@@ -240,7 +251,7 @@ describe('NodeDetailPage', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage();
     expect(document.querySelector('.info-strip--info')).toBeNull();
@@ -255,7 +266,7 @@ describe('NodeDetailPage', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'r', schedule_name: 's' });
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 4, test_count_known: true });
-      return jsonResp({ runs: [mkRun({ run_id: 'pick-me' })] });
+      return jsonResp({ tasks: [mkRun({ run_id: 'pick-me' })] });
     });
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
@@ -264,14 +275,14 @@ describe('NodeDetailPage', () => {
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
-      expect(post![1]!.body).toBe(JSON.stringify({ source_run_id: 'pick-me', operation: 'test' }));
+      expect(bodyOf(post![1])).toEqual({ request_id: expect.stringMatching(UUID), source_run_id: 'pick-me', operation: 'test' });
     });
   });
 });
 
 describe('NodeDetailPage — section-header alignment', () => {
   it('renders the section title in .section-header__title', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     await waitFor(() => {
       const title = document.querySelector('.section-header__title');
@@ -282,7 +293,7 @@ describe('NodeDetailPage — section-header alignment', () => {
 
   it('renders the run count in .section-header__count', async () => {
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [
+      tasks: [
         mkRun({ run_id: 'r1', task_id: 't1' }),
         mkRun({ run_id: 'r2', task_id: 't2' }),
       ],
@@ -297,7 +308,7 @@ describe('NodeDetailPage — section-header alignment', () => {
 
   it('renders the metadata summary in .section-header__sub', async () => {
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [
+      tasks: [
         mkRun({ run_id: 'r1', task_id: 't1', task_status: 'succeeded' }),
       ],
     }));
@@ -311,7 +322,7 @@ describe('NodeDetailPage — section-header alignment', () => {
   });
 
   it('does not render the truly orphan classes anywhere', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     const { container } = renderPage();
     await waitFor(() => {
       expect(container.querySelector('.node-stats-summary')).toBeNull();
@@ -322,7 +333,7 @@ describe('NodeDetailPage — section-header alignment', () => {
 
 describe('NodeDetailPage — foundations', () => {
   it('wraps in .page + .page-header (legacy .node-detail-page is gone)', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     const { container } = renderPage();
     await screen.findByText(/svc\.schema\.tbl/);
     expect(container.querySelector('.page')).toBeInTheDocument();
@@ -331,7 +342,7 @@ describe('NodeDetailPage — foundations', () => {
   });
 
   it('both action buttons use .btn.btn--secondary (no legacy .rerun-btn)', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     renderPage();
     const runLatest = await screen.findByRole('button', { name: /run this node/i });
     const runOld = await screen.findByRole('button', { name: /run with old snapshot/i });
@@ -348,7 +359,7 @@ describe('NodeDetailPage — foundations', () => {
       if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
         return jsonResp({ run_id: 'new-r', schedule_name: 'single-node-run-abc12345' });
       }
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     const user = userEvent.setup();
     renderPage();
@@ -366,7 +377,7 @@ describe('NodeDetailPage — foundations', () => {
       if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
         return jsonResp({ error: 'server blew up' }, 500);
       }
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     const user = userEvent.setup();
     const { container } = renderPage();
@@ -380,7 +391,7 @@ describe('NodeDetailPage — foundations', () => {
   it('long error message in the runs table is truncated and expandable', async () => {
     const longError = 'A'.repeat(300) + ' this error message is very long and should be truncated';
     mockFetch.mockImplementation(() => jsonResp({
-      runs: [mkRun({ run_id: 'r-long', task_id: 't-long', task_status: 'failed', error_message: longError })],
+      tasks: [mkRun({ run_id: 'r-long', task_id: 't-long', task_status: 'failed', error_message: longError })],
     }));
     const user = userEvent.setup();
     renderPage();
@@ -402,7 +413,7 @@ describe('NodeDetailPage — foundations', () => {
 describe('NodeDetailPage — task timeout', () => {
   const mkSummary = (over: Partial<{ schema_name: string; timeout_seconds: number; timeout_declared: boolean }>) => ({
     service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
-    run_count: 1, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+    task_count: 1, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
     last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 86400, timeout_declared: false,
     ...over,
   });
@@ -422,7 +433,7 @@ describe('NodeDetailPage — task timeout', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.startsWith('/api/nodes?')) return summary(url);
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model' });
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
   }
 
@@ -488,7 +499,7 @@ describe('NodeDetailPage back link', () => {
   it('returns to the schedule (run mode) when from = schedule/run', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      if (url.includes('/runs')) return jsonResp({ tasks: [] });
       return jsonResp({});
     });
     renderPage({ type: 'schedule', name: 'daily', mode: 'run' });
@@ -500,7 +511,7 @@ describe('NodeDetailPage back link', () => {
   it('returns to the schedule (latest mode) when from = schedule/latest', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      if (url.includes('/runs')) return jsonResp({ tasks: [] });
       return jsonResp({});
     });
     renderPage({ type: 'schedule', name: 'daily', mode: 'latest' });
@@ -512,7 +523,7 @@ describe('NodeDetailPage back link', () => {
   it('defaults to the Nodes tab on a deep link with no state', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/runs')) return jsonResp({ runs: [] });
+      if (url.includes('/runs')) return jsonResp({ tasks: [] });
       return jsonResp({});
     });
     renderPage();
@@ -527,7 +538,7 @@ describe('NodeDetailPage — operation carried from catalog navigation', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({});
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage(undefined, 'test');
     const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
@@ -542,7 +553,7 @@ describe('NodeDetailPage — operation carried from catalog navigation', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({});
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage(undefined, 'bogus');
     const select = await screen.findByLabelText(/operation/i) as HTMLSelectElement;
@@ -553,7 +564,7 @@ describe('NodeDetailPage — operation carried from catalog navigation', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return jsonResp({});
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage({ type: 'schedule', name: 'daily', mode: 'run' }, 'build');
     expect(await screen.findByRole('button', { name: /back to daily/i })).toBeInTheDocument();
@@ -572,15 +583,15 @@ describe('NodeDetailPage — history fetch race guard', () => {
   it('a stale slow run response does not overwrite a newer test response', async () => {
     const runDeferred = deferred<Response>();
     const testDeferred = deferred<Response>();
-    const runResp = { runs: [mkRun({ run_id: 'r-run', task_id: 't-run' })].map(r => ({ ...r, image_tag: 'run-img' })) };
-    const testResp = { runs: [mkRun({ run_id: 'r-test', task_id: 't-test' })].map(r => ({ ...r, image_tag: 'test-img' })) };
+    const runResp = { tasks: [mkRun({ run_id: 'r-run', task_id: 't-run' })].map(r => ({ ...r, image_tag: 'run-img' })) };
+    const testResp = { tasks: [mkRun({ run_id: 'r-test', task_id: 't-test' })].map(r => ({ ...r, image_tag: 'test-img' })) };
 
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/runs?operation=run')) return runDeferred.promise;
       if (url.includes('/runs?operation=test')) return testDeferred.promise;
       if (url.endsWith('/meta')) return jsonResp({});
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
 
     renderPage();
@@ -608,7 +619,7 @@ describe('NodeDetailPage — history fetch race guard', () => {
 
 describe('NodeDetailPage — brand header', () => {
   it('starts the header with the brand, before the back link', async () => {
-    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [] }));
     const { container } = renderPage();
     await screen.findByText(/svc\.schema\.tbl/);
 
@@ -625,7 +636,7 @@ function metaAndRuns(nodeType: string, runs: unknown[] = [], meta: { inactive?: 
     const url = typeof input === 'string' ? input : input.toString();
     if (url.endsWith('/meta')) return jsonResp({ node_type: nodeType, test_count: 1, test_count_known: true, ...meta });
     if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'fr', schedule_name: 'single-node-run-00ff00ff' });
-    return jsonResp({ runs });
+    return jsonResp({ tasks: runs });
   };
 }
 
@@ -661,7 +672,7 @@ describe('NodeDetailPage full refresh', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(posts()[0][1]).toMatchObject({ body: JSON.stringify({ operation: 'full_refresh' }) });
+    expect(bodyOf(posts()[0][1])).toEqual({ request_id: expect.stringMatching(UUID), operation: 'full_refresh' });
   });
 
   it('cancelling the dialog sends nothing', async () => {
@@ -716,7 +727,7 @@ describe('NodeDetailPage full refresh', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
     await waitFor(() => expect(runPosts()).toHaveLength(1));
-    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'pick-me', operation: 'full_refresh' });
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ request_id: expect.stringMatching(UUID), source_run_id: 'pick-me', operation: 'full_refresh' });
   });
 
   it('names the picked snapshot in the full refresh confirmation', async () => {
@@ -757,7 +768,7 @@ describe('NodeDetailPage full refresh', () => {
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'run' } });
     await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
     await waitFor(() => expect(runPosts()).toHaveLength(1));
-    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ operation: 'full_refresh' });
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ request_id: expect.stringMatching(UUID), operation: 'full_refresh' });
   });
 
   it.each([
@@ -767,7 +778,7 @@ describe('NodeDetailPage full refresh', () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/meta')) return metaResp();
-      return jsonResp({ runs: [] });
+      return jsonResp({ tasks: [] });
     });
     renderPage(undefined, 'full_refresh');
     const trigger = await screen.findByRole('button', { name: /full refresh this node/i });
@@ -798,7 +809,7 @@ describe('NodeDetailPage full refresh', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
     await waitFor(() => expect(runPosts()).toHaveLength(1));
-    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'old-run', operation: 'full_refresh' });
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ request_id: expect.stringMatching(UUID), source_run_id: 'old-run', operation: 'full_refresh' });
   });
 
   it.each([
@@ -835,5 +846,98 @@ describe('NodeDetailPage full refresh', () => {
     await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
     expect(screen.getByRole('button', { name: /full refresh this node/i })).toBeEnabled();
     expect(screen.queryByText(/no longer active in the topology/i)).toBeNull();
+  });
+});
+
+describe('NodeDetailPage — request id', () => {
+  // Answers each run POST with the next reply (a rejection for a request that
+  // got no answer) and returns the request ids the POSTs carried.
+  function installRun(replies: Array<'timeout' | { status: number; body: unknown }>, history: unknown[] = []) {
+    const ids: string[] = [];
+    let n = 0;
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/nodes/svc/schema/tbl/run' && init?.method === 'POST') {
+        ids.push(JSON.parse(String(init.body)).request_id);
+        const reply = replies[n++];
+        if (reply === 'timeout') return Promise.reject(new Error('timeout'));
+        return jsonResp(reply.body, reply.status);
+      }
+      return jsonResp({ tasks: history });
+    });
+    return ids;
+  }
+
+  it('NodeDetailPage run: the body carries a request id', async () => {
+    const ids = installRun([{ status: 200, body: { run_id: 'new-r', schedule_name: 's' } }]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(1));
+    expect(ids[0]).toMatch(UUID);
+  });
+
+  it('requestId: a press after a timeout is a retry and sends the same id', async () => {
+    const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a press that asks for another snapshot after a timeout mints a new id', async () => {
+    const ids = installRun(
+      ['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }],
+      [mkRun({ run_id: 'pick-me' })],
+    );
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }]);
+      renderPage();
+
+      fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+      await screen.findByText('Request failed — please try again');
+      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requestId: a press after the server answered mints a new id', async () => {
+    const ids = installRun([
+      { status: 409, body: { error: 'schedule already has an active run' } },
+      { status: 200, body: { run_id: 'new-r', schedule_name: 's' } },
+    ]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('schedule already has an active run');
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
   });
 });

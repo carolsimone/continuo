@@ -27,8 +27,8 @@ export function sendMaintenance(res: Response): void {
 // to case or a trailing slash, as Express routes them.
 const GATED: ReadonlyArray<readonly [string, RegExp]> = [
   ['POST', /^\/schedules\/[^/]+\/trigger\/?$/i],
-  ['POST', /^\/schedulers\/[^/]+\/rerun\/?$/i],
-  ['POST', /^\/schedulers\/[^/]+\/rebase\/?$/i],
+  ['POST', /^\/runs\/[^/]+\/rerun\/?$/i],
+  ['POST', /^\/runs\/[^/]+\/rebase\/?$/i],
   ['POST', /^\/nodes\/[^/]+\/[^/]+\/[^/]+\/run\/?$/i],
   ['POST', /^\/v1\/releases\/?$/i],
   ['POST', /^\/releases\/[^/]+\/retry-remediation\/?$/i],

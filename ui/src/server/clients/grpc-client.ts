@@ -26,7 +26,7 @@ export function userMetadata(req: Request): grpc.Metadata {
 
 // process.cwd() is always the project root (ui/ in dev, /app in Docker).
 // Using __dirname would break prod: dist-server/ is 1 level deep, src/server/ is 2 levels deep.
-const PROTO_PATH = path.join(process.cwd(), 'proto/state.proto');
+const PROTO_PATH = path.join(process.cwd(), 'proto/run.proto');
 const PROTO_DIR = path.join(process.cwd(), 'proto');
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -40,27 +40,35 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 
 const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 
+type Callback = (err: any, res: any) => void;
+
+// GrpcClient is the RunService client of state: the one public API for runs,
+// their tasks and attempts, nodes, schedules and the live release's topology.
+// A call that changes state takes the caller's metadata (userMetadata) before
+// its callback; a read does not.
 export interface GrpcClient {
-  listAllSchedules: (request: any, callback: (err: any, res: any) => void) => void;
-  listTasks: (request: any, callback: (err: any, res: any) => void) => void;
-  getScheduler: (request: any, callback: (err: any, res: any) => void) => void;
-  listTaskAttempts: (request: any, callback: (err: any, res: any) => void) => void;
-  triggerRerun: (request: any, metadata: grpc.Metadata, callback: (err: any) => void) => void;
-  triggerSchedule: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;
-  cancelSchedule: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;
-  triggerSingleNodeRun: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;
-  triggerRebase: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;
-  previewRebase: (request: any, callback: (err: any, res: any) => void) => void;
-  listNodeRuns: (request: any, callback: (err: any, res: any) => void) => void;
-  listNodes: (request: any, callback: (err: any, res: any) => void) => void;
-  listNodeNames: (request: any, callback: (err: any, res: any) => void) => void;
-  listNodeServices: (request: any, callback: (err: any, res: any) => void) => void;
-  getRunGraph: (request: any, callback: (err: any, res: any) => void) => void;
-  listRuns: (request: any, callback: (err: any, res: any) => void) => void;
+  startRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  triggerRerun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  triggerRebase: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  triggerSingleNodeRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  cancelRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  previewRebase: (request: any, callback: Callback) => void;
+  getRun: (request: any, callback: Callback) => void;
+  listRuns: (request: any, callback: Callback) => void;
+  listTasks: (request: any, callback: Callback) => void;
+  listRunAttempts: (request: any, callback: Callback) => void;
+  getRunGraph: (request: any, callback: Callback) => void;
+  listNodeTasks: (request: any, callback: Callback) => void;
+  listNodes: (request: any, callback: Callback) => void;
+  listNodeNames: (request: any, callback: Callback) => void;
+  listNodeServices: (request: any, callback: Callback) => void;
+  listSchedules: (request: any, callback: Callback) => void;
+  getScheduleGraph: (request: any, callback: Callback) => void;
+  listScheduleTopologies: (request: any, callback: Callback) => void;
 }
 
 export function createGrpcClient(address: string): GrpcClient {
-  const client = new proto.state.v1.StateService(
+  const client = new proto.run.v1.RunService(
     address,
     grpc.credentials.createInsecure()
   );

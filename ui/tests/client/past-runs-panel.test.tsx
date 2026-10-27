@@ -10,7 +10,7 @@ function runs(n: number): RunSummary[] {
   return Array.from({ length: n }, (_, i) => ({
     run_id: `run-${i}`,
     schedule_name: 'daily',
-    terminal_status: 'succeeded',
+    status: 'succeeded',
     created_at: '2026-10-14T23:00:00Z',
     completed_at: '2026-10-14T23:03:00Z',
     failure_reason: null,

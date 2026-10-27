@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import PreviewList, { PreviewFacts, PreviewItem } from './PreviewList';
 import { formatDuration } from './node-helpers';
+import { useActionRequestId } from './request-id';
 import type { ChangedUpstreamNode, RebasePreview } from './types';
 
 // 'this' reruns the failed nodes on the run's own snapshot; 'latest' rebases
@@ -8,7 +9,7 @@ import type { ChangedUpstreamNode, RebasePreview } from './types';
 export type RerunFailedMode = 'this' | 'latest';
 
 const REQUEST_FAILED = 'Request failed — please try again';
-// The code POST /api/schedulers/:id/rebase answers with when the live release
+// The code POST /api/runs/:id/rebase answers with when the live release
 // is no longer the one the dialog previewed.
 const RELEASE_MOVED_CODE = 'release_moved';
 const TITLE_ID = 'rerun-failed-dialog-title';
@@ -92,6 +93,11 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   const [mode, setMode] = useState<RerunFailedMode>('this');
   const [includeChanged, setIncludeChanged] = useState(true);
   const [preview, setPreview] = useState<PreviewState>({ data: null, changedNodes: [], loading: false, error: null });
+  // One request id for the dialog: every submit of the same request sends it,
+  // so a submit repeated after a timeout returns the run the first one made.
+  // Asking for something else (the other mode, the other changed-upstream
+  // option) renews it.
+  const { id: requestId, renew: renewRequestId } = useActionRequestId();
   const [reloadKey, setReloadKey] = useState(0);
   const [releaseMoved, setReleaseMoved] = useState(false);
   const [buttonState, setButtonState] = useState<ButtonState>('idle');
@@ -110,7 +116,7 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
     const { signal } = controller;
     setPreview(p => ({ ...p, loading: true, error: null }));
     fetch(
-      `/api/schedulers/${encodeURIComponent(runId)}/rebase-preview?include_changed_upstream=${includeChanged}`,
+      `/api/runs/${encodeURIComponent(runId)}/rebase-preview?include_changed_upstream=${includeChanged}`,
       { signal },
     )
       .then(async res => {
@@ -138,6 +144,7 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   }, [onClose, submitting]);
 
   const chooseMode = (next: RerunFailedMode) => {
+    if (next !== mode) renewRequestId();
     setMode(next);
     setReleaseMoved(false);
     setSubmitError(null);
@@ -146,6 +153,7 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   // chooseIncludeChanged previews the other selection, so a moved-release
   // warning shown for the previous one goes.
   const chooseIncludeChanged = (next: boolean) => {
+    if (next !== includeChanged) renewRequestId();
     setIncludeChanged(next);
     setReleaseMoved(false);
   };
@@ -160,15 +168,16 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
     setReleaseMoved(false);
     try {
       const res = submitted === 'this'
-        ? await fetch(`/api/schedulers/${encodeURIComponent(runId)}/rerun`, {
+        ? await fetch(`/api/runs/${encodeURIComponent(runId)}/rerun`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: '{}',
+          body: JSON.stringify({ request_id: requestId }),
         })
-        : await fetch(`/api/schedulers/${encodeURIComponent(runId)}/rebase`, {
+        : await fetch(`/api/runs/${encodeURIComponent(runId)}/rebase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            request_id: requestId,
             include_changed_upstream: includeChanged,
             expected_release_id: preview.data?.release_id ?? '',
           }),

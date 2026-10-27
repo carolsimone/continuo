@@ -11,7 +11,7 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
     cron_expression: '0 0 * * *',
     description: '',
     timezone: 'UTC',
-    is_running: false,
+    has_active_run: false,
     last_run_at: null,
     last_run_status: 'SUCCEEDED',
     last_run_id: 'run-1',

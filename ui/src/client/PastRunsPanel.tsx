@@ -1,4 +1,5 @@
 import { RunSummary } from './types';
+import type { RunStatus } from '../server/generated/vocabulary.gen';
 
 interface Props {
   runs: RunSummary[];
@@ -39,22 +40,24 @@ function formatDuration(createdAt: string | null, completedAt: string | null): s
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-function pillClass(status: string): string {
-  const s = status.toLowerCase().replace(/\s+/g, '-');
-  if (s.includes('succeed')) return 'pill-sm--succeeded';
-  if (s.includes('fail')) return 'pill-sm--failed';
-  if (s.includes('cancelling')) return 'pill-sm--cancelling';
-  if (s.includes('cancel')) return 'pill-sm--cancelled';
-  if (s.includes('skip')) return 'pill-sm--skipped';
-  return 'pill-sm--pending';
+function pillClass(status: RunStatus): string {
+  switch (status) {
+    case 'succeeded': return 'pill-sm--succeeded';
+    case 'failed': return 'pill-sm--failed';
+    case 'cancelling': return 'pill-sm--cancelling';
+    case 'cancelled': return 'pill-sm--cancelled';
+    case 'skipped': return 'pill-sm--skipped';
+    default: return 'pill-sm--pending';
+  }
 }
 
-function dotClass(status: string): string {
-  const s = status.toLowerCase();
-  if (s.includes('succeed')) return 'run-dot--ok';
-  if (s.includes('fail')) return 'run-dot--fail';
-  if (s.includes('skip')) return 'run-dot--skipped';
-  return 'run-dot--current';
+function dotClass(status: RunStatus): string {
+  switch (status) {
+    case 'succeeded': return 'run-dot--ok';
+    case 'failed': return 'run-dot--fail';
+    case 'skipped': return 'run-dot--skipped';
+    default: return 'run-dot--current';
+  }
 }
 
 export default function PastRunsPanel({
@@ -95,13 +98,13 @@ export default function PastRunsPanel({
             className={`run-row${isSelected ? ' run-row--selected' : ''}`}
             onClick={() => onSelectRun(isSelected ? null : r.run_id)}
           >
-            <div className={`run-dot ${dotClass(r.terminal_status)}`} />
+            <div className={`run-dot ${dotClass(r.status)}`} />
             <div className="run-meta">
               <div className="run-date">{formatDate(r.created_at)}</div>
               <div className="run-duration">{formatDuration(r.created_at, r.completed_at)}</div>
             </div>
-            <span className={`pill-sm ${pillClass(r.terminal_status)}`}>
-              {r.terminal_status.toLowerCase()}
+            <span className={`pill-sm ${pillClass(r.status)}`}>
+              {r.status}
             </span>
           </button>
         );

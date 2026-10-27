@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
+import { settlesRequest, useActionRequestId } from './request-id';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import { taskPillClass, taskStatusTitle } from './detail-page-helpers';
@@ -79,7 +80,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>
         {r.log_s3_key
           ? <a
-               href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
+               href={`/api/attempts/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
                target="_blank" rel="noopener noreferrer">logs</a>
           : <span className="nodes-dash">—</span>}
       </td>
@@ -118,6 +119,12 @@ export default function NodeDetailPage() {
   // the node has no catalog row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
+  // The request id of the node run being asked for: a press that gets no
+  // answer and is repeated soon after, with the same node, operation and
+  // source, sends the same id, so the run the first press made is returned
+  // rather than made twice. The id is renewed once the server has given its
+  // final answer.
+  const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -135,7 +142,7 @@ export default function NodeDetailPage() {
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
         if (myGen !== genRef.current) return;
-        setRuns(data.runs || []);
+        setRuns(data.tasks || []);
       })
       .catch(() => {
         if (myGen !== genRef.current) return;
@@ -213,11 +220,13 @@ export default function NodeDetailPage() {
     setRunError(null);
     try {
       const op = opOverride ?? operation;
-      const withOp = { ...body, operation: op === 'run' ? '' : op };
+      const asked = { ...body, operation: op === 'run' ? '' : op };
+      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`) };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
       );
+      if (settlesRequest(res)) renewRunRequestId();
       if (res.ok) {
         setRunState('success');
         fetchRuns();
@@ -231,7 +240,7 @@ export default function NodeDetailPage() {
       setRunError('Request failed — please try again');
       setRunState('error');
     }
-  }, [service, schema, table, fetchRuns, operation]);
+  }, [service, schema, table, fetchRuns, operation, takeRequestId, renewRunRequestId]);
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {
