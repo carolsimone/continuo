@@ -7,15 +7,27 @@ name: cancel-closed-pr-ci
 # runners that `ci` and the release workflows share, and a release deploy or
 # tag waits behind it for as long as the e2e suite takes.
 #
+# It is triggered by pull_request_target, not pull_request: GitHub starts no
+# pull_request workflow for a pull request with merge conflicts, while
+# pull_request_target runs this file, as it is on the base branch, for every
+# pull request. pull_request_target runs with the base repository's token,
+# and that is safe here because the job checks out nothing and runs no code
+# from the pull request: it only calls the GitHub API with gh, and the one
+# value the pull request's author chooses (the head branch name) reaches the
+# shell through env: and is quoted, never written into the script.
+#
 # It cancels only ci.yml runs that a pull_request event started at the closed
-# pull request's head commit: a push run on main and every other pull
-# request's runs are never selected. It runs on a GitHub-hosted runner, so it
-# never queues behind the runs it cancels. scripts/check-closed-pr-ci-cancel.sh
-# guards the trigger, the permission and the runner, and runs the selection
-# below against fixture runs.
+# pull request's head commit no later than the closure that triggered it
+# (closed_at), so a run the pull request started after it was reopened is
+# never selected, and it re-reads the pull request before each cancel and
+# stops once the pull request is no longer closed. A push run on main and
+# every other pull request's runs are never selected. It runs on a
+# GitHub-hosted runner, so it never queues behind the runs it cancels.
+# scripts/check-closed-pr-ci-cancel.sh guards all of this and runs the cancel
+# step below against fixture runs.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
     branches:
       - main
@@ -30,9 +42,8 @@ concurrency:
 
 jobs:
   cancel:
-    # A pull request from a fork gets a read-only token, which cannot cancel a
-    # run; its ci runs on a GitHub-hosted runner (see ci.yml's runs-on) and
-    # holds no self-hosted one.
+    # A fork's pull request is skipped: its ci runs on a GitHub-hosted runner
+    # (see ci.yml's runs-on) and holds no self-hosted one.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -41,18 +52,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CLOSED_AT: ${{ github.event.pull_request.closed_at }}
         run: |
           ids="$(gh run list --workflow ci.yml --branch "$HEAD_REF" --event pull_request --limit 100 \
-            --json databaseId,event,headSha,status \
-            --jq '.[] | select(.event == "pull_request" and .headSha == env.HEAD_SHA and .status != "completed") | .databaseId')"
+            --json databaseId,workflowName,event,headSha,status,createdAt \
+            --jq '.[] | select(.workflowName == "ci" and .event == "pull_request" and .headSha == env.HEAD_SHA and .status != "completed" and (.createdAt | fromdateiso8601) <= (env.CLOSED_AT | fromdateiso8601)) | .databaseId')"
           if [ -z "$ids" ]; then
-            echo "No queued or running ci run of ${HEAD_SHA}."
+            echo "No ci run that #${PR_NUMBER} started at ${HEAD_SHA} before it closed is queued or running."
             exit 0
           fi
           rc=0
           for id in $ids; do
+            # A pull request reopened since this closure wants its ci again.
+            state="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq .state)"
+            if [ "$state" != "closed" ]; then
+              echo "#${PR_NUMBER} is ${state} again; its ci runs are left alone."
+              exit 0
+            fi
             if gh run cancel "$id"; then
               echo "Cancelled ci run ${id}."
             elif [ "$(gh run view "$id" --json status --jq .status)" = "completed" ]; then
