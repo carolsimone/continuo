@@ -7,19 +7,19 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
 
 // nodeRun is the JSON-serialisable representation of one run. Fields the state
 // service leaves empty while a run is in flight or on success are omitted.
 type nodeRun struct {
-	RunID          string `json:"run_id"`
-	ScheduleName   string `json:"schedule_name"`
-	Kind           string `json:"kind"`
-	TerminalStatus string `json:"terminal_status,omitempty"`
-	TaskID         string `json:"task_id"`
-	TaskStatus     string `json:"task_status"`
+	RunID        string `json:"run_id"`
+	ScheduleName string `json:"schedule_name"`
+	Kind         string `json:"kind"`
+	RunStatus    string `json:"run_status,omitempty"`
+	TaskID       string `json:"task_id"`
+	TaskStatus   string `json:"task_status"`
 	// Attempt is the zero-based number of the task's current attempt.
 	Attempt      int32  `json:"attempt"`
 	ImageTag     string `json:"image_tag"`
@@ -57,7 +57,7 @@ const nodeHistoryLimit int32 = 50
 var validHistoryOperations = map[string]bool{"run": true, "test": true, "build": true}
 
 // NewHistoryCommand builds `continuo node history <service> <schema> <table>`.
-func NewHistoryCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewHistoryCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history <service> <schema> <table>",
 		Short: "List the recent run history of one model node",
@@ -81,7 +81,7 @@ Flags:
 
 Output (stdout, JSON): up to 50 runs, newest first.
   {"runs":[{"run_id":string,"schedule_name":string,"kind":string,
-   "terminal_status":string,"task_id":string,"task_status":string,
+   "run_status":string,"task_id":string,"task_status":string,
    "attempt":number,"image_tag":string,
    "created_at":string,"started_at":string,"completed_at":string,
    "error_message":string,"failure_class":string,"failure_reason":string,
@@ -89,10 +89,10 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "content_hash":string,
    "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}]}
   attempt is the zero-based number of the task's current attempt (0 on the
-  first try). terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.
+  first try). run_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.
   task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   failure_class and failure_reason say why the latest attempt
-  failed. terminal_status, started_at, completed_at, error_message,
+  failed. run_status, started_at, completed_at, error_message,
   failure_class, failure_reason, log_s3_key, run_results_uri, and content_hash
   are omitted when empty. run_results_uri points at the structured result
   block the run's container printed — python-family nodes (python-node,
@@ -118,7 +118,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node history finance analytics orders --operation test",
 		Annotations: map[string]string{
-			"output_schema": `{"runs":[{"run_id":"string","schedule_name":"string","kind":"string","terminal_status":"string","task_id":"string","task_status":"string","attempt":"number","image_tag":"string","created_at":"string","started_at":"string","completed_at":"string","error_message":"string","failure_class":"string","failure_reason":"string","log_s3_key":"string","run_results_uri":"string","operation":"string","content_hash":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
+			"output_schema": `{"runs":[{"run_id":"string","schedule_name":"string","kind":"string","run_status":"string","task_id":"string","task_status":"string","attempt":"number","image_tag":"string","created_at":"string","started_at":"string","completed_at":"string","error_message":"string","failure_class":"string","failure_reason":"string","log_s3_key":"string","run_results_uri":"string","operation":"string","content_hash":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -149,9 +149,9 @@ Errors:
 			}
 
 			if cfg.Human {
-				return humanHistory(stderr, resp.GetRuns())
+				return humanHistory(stderr, resp.GetTasks())
 			}
-			return output.EmitSuccess(stdout, toHistoryPayload(resp.GetRuns()))
+			return output.EmitSuccess(stdout, toHistoryPayload(resp.GetTasks()))
 		},
 	}
 	cmd.Flags().String("operation", "run", "Filter history by operation: run | test | build (default \"run\")")
@@ -160,14 +160,14 @@ Errors:
 	return cmd
 }
 
-func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
+func toHistoryPayload(runs []*runv1.NodeTask) historyPayload {
 	out := make([]nodeRun, 0, len(runs))
 	for _, r := range runs {
 		out = append(out, nodeRun{
 			RunID:          r.GetRunId(),
 			ScheduleName:   r.GetScheduleName(),
 			Kind:           r.GetKind(),
-			TerminalStatus: r.GetTerminalStatus(),
+			RunStatus:      r.GetRunStatus(),
 			TaskID:         r.GetTaskId(),
 			TaskStatus:     r.GetTaskStatus(),
 			Attempt:        r.GetAttempt(),
@@ -202,7 +202,7 @@ const executedHashDisplayLen = 12
 //
 // executed_hash is the run's content_hash, truncated to executedHashDisplayLen
 // characters, or "-" when the run names no release.
-func humanHistory(stderr io.Writer, runs []*statev1.NodeRun) error {
+func humanHistory(stderr io.Writer, runs []*runv1.NodeTask) error {
 	if _, err := fmt.Fprintf(stderr, "RUN_ID  OPERATION  STATUS  KIND  COMPLETED_AT  EXECUTED_HASH\n"); err != nil {
 		return err
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -19,11 +19,11 @@ import (
 )
 
 // runTest invokes the test command end-to-end with the provided fake client and args.
-func runTest(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runTest(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewTestCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewTestCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -41,10 +41,10 @@ func runTest(t *testing.T, fake client.StateClient, args []string, human bool) (
 }
 
 func TestScheduleTest_ForwardsActor(t *testing.T) {
-	fake := &fakeState{testResp: &statev1.TriggerScheduleResponse{ScheduleId: "s1"}}
+	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "s1"}}
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "okta.example.com|alice"}
-	cmd := NewTestCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewTestCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"daily"})
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -53,7 +53,7 @@ func TestScheduleTest_ForwardsActor(t *testing.T) {
 }
 
 func TestScheduleTest_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{testResp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_456"}}
+	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runTest(t, fake, []string{"daily_ingest"}, false)
 
@@ -61,7 +61,7 @@ func TestScheduleTest_SuccessEmitsJSON(t *testing.T) {
 	assert.Empty(t, stderr)
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-	assert.Equal(t, "sched_456", payload["schedule_id"])
+	assert.Equal(t, "sched_456", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
 	_, err := time.Parse(time.RFC3339, payload["triggered_at"])
 	assert.NoError(t, err, "triggered_at must be RFC3339")
@@ -101,7 +101,7 @@ func TestScheduleTest_TooManyArgumentsExits2(t *testing.T) {
 }
 
 func TestScheduleTest_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{testResp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_456"}}
+	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runTest(t, fake, []string{"daily_ingest"}, true)
 

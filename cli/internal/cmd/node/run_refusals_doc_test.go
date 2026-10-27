@@ -15,7 +15,7 @@ import (
 // help text an LLM reads must say the refusal is the command's own error and no
 // run exists, not that the failure shows up later in a run's history.
 func TestNodeRunCommands_HelpDescribesTheRefusalsAtTheRPC(t *testing.T) {
-	factory := func(context.Context, string) (client.StateClient, error) { return nil, nil }
+	factory := func(context.Context, string) (client.RunClient, error) { return nil, nil }
 	cfg := &config.Config{}
 	commands := map[string]*cobra.Command{
 		"trigger":      NewTriggerCommand(factory, cfg, io.Discard, io.Discard),

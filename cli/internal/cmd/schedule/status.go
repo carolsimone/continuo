@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -33,15 +32,15 @@ type statusNode struct {
 type statusPayload struct {
 	ScheduleName  string       `json:"schedule_name"`
 	RunId         string       `json:"run_id"`
-	IsRunning     bool         `json:"is_running"`
+	HasActiveRun  bool         `json:"has_active_run"`
 	LastRunStatus string       `json:"last_run_status"`
 	Nodes         []statusNode `json:"nodes"`
 }
 
 // NewStatusCommand builds `continuo schedule status <schedule-name>`. It resolves
-// the schedule name to its latest run via ListAllSchedules, then pages through
+// the schedule name to its latest run via ListSchedules, then pages through
 // ListTasks to collect every node's status for that run.
-func NewStatusCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewStatusCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status <schedule-name>",
 		Short: "Show the per-node status of a schedule's latest run",
@@ -54,7 +53,7 @@ Arguments:
   <schedule-name>  The schedule to inspect (exact match).
 
 Output (stdout, JSON):
-  {"schedule_name":string,"run_id":string,"is_running":bool,
+  {"schedule_name":string,"run_id":string,"has_active_run":bool,
    "last_run_status":string,
    "nodes":[{"service_name":string,"schema_name":string,
              "table_name":string,"status":string,
@@ -71,7 +70,7 @@ Output (stdout, JSON):
   omitted when the task waits for nothing besides its upstreams.
   last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.
   cancelling: a cancel was accepted and the run waits for its Jobs to stop.
-  is_running is true while the run is pending, running or cancelling.
+  has_active_run is true while a pending, running or cancelling run holds the schedule.
   A schedule that has never run returns run_id:"" and nodes:[].
 
 Errors:
@@ -81,7 +80,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_name":"string","run_id":"string","is_running":"bool","last_run_status":"string","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","status":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
+			"output_schema": `{"schedule_name":"string","run_id":"string","has_active_run":"bool","last_run_status":"string","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","status":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +107,7 @@ Errors:
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
-			var match *statev1.ScheduleSummary
+			var match *runv1.ScheduleSummary
 			for _, s := range schedules.GetSchedules() {
 				if s.GetScheduleName() == scheduleName {
 					match = s
@@ -125,7 +124,7 @@ Errors:
 			payload := statusPayload{
 				ScheduleName:  scheduleName,
 				RunId:         match.GetLastRunId(),
-				IsRunning:     match.GetIsRunning(),
+				HasActiveRun:  match.GetHasActiveRun(),
 				LastRunStatus: match.GetLastRunStatus(),
 				Nodes:         []statusNode{},
 			}
@@ -138,7 +137,7 @@ Errors:
 			// Page through every task row of the latest run.
 			for offset := int32(0); ; offset += statusPageSize {
 				pageCtx, cancelPage := context.WithTimeout(cmd.Context(), cfg.Timeout)
-				resp, err := c.ListTasks(pageCtx, match.GetLastRunId(), statev1.TaskStatus_TASK_STATUS_UNSPECIFIED, statusPageSize, offset)
+				resp, err := c.ListTasks(pageCtx, match.GetLastRunId(), "", statusPageSize, offset)
 				cancelPage()
 				if err != nil {
 					return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
@@ -149,7 +148,7 @@ Errors:
 						ServiceName:    t.GetServiceName(),
 						SchemaName:     t.GetSchemaName(),
 						TableName:      t.GetTableName(),
-						Status:         taskStatusString(t.GetStatus()),
+						Status:         t.GetStatus(),
 						WaitReason:     t.GetWaitReason(),
 						WaitingOnRunID: t.GetWaitingOnRunId(),
 						WaitingSince:   timestampString(t.GetWaitingSince()),
@@ -174,7 +173,7 @@ Errors:
 func emitStatus(stdout, stderr io.Writer, human bool, p statusPayload) error {
 	if human {
 		state := "idle"
-		if p.IsRunning {
+		if p.HasActiveRun {
 			state = "running"
 		}
 		if _, err := fmt.Fprintf(stderr, "%s (%s): %d nodes\n", p.ScheduleName, state, len(p.Nodes)); err != nil {
@@ -196,16 +195,4 @@ func timestampString(ts *timestamppb.Timestamp) string {
 		return ""
 	}
 	return ts.AsTime().UTC().Format(time.RFC3339)
-}
-
-// taskStatusString maps the proto TaskStatus enum to its lowercase short form
-// ("TASK_STATUS_SUCCEEDED" -> "succeeded"); UNSPECIFIED maps to "".
-func taskStatusString(s statev1.TaskStatus) string {
-	const prefix = "TASK_STATUS_"
-	name := strings.TrimPrefix(s.String(), prefix)
-	lower := strings.ToLower(name)
-	if lower == "unspecified" {
-		return ""
-	}
-	return lower
 }

@@ -61,7 +61,7 @@ const sourceRunArgDoc = `  [source-run-id]  Optional. The id of a past run of th
 
 // sourceRunErrorsDoc lists the extra error codes snapshot mode can return.
 const sourceRunErrorsDoc = `  not_found  (exit 3)  the node is not in the release the run would use, or the source run does not exist
-  conflict   (exit 4)  the source run has not finished yet`
+  conflict   (exit 4)  the source run has not finished yet, the node's schedule has an active run, or the request id was used before with other arguments`
 
 // nodeRunExitCodes is the exit_codes annotation for node trigger, test, build and full_refresh.
 const nodeRunExitCodes = `[0,2,3,4,5,6,7]`

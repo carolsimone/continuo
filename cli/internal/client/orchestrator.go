@@ -20,7 +20,6 @@ const maxOrchestratorRecvMsgSize = 32 * 1024 * 1024
 
 // OrchestratorClient is the narrow interface the CLI depends on for orchestrator reads.
 type OrchestratorClient interface {
-	GetScheduleGraph(ctx context.Context, scheduleName string) (*orchestratorv1.GetScheduleGraphResponse, error)
 	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) (*orchestratorv1.GetNodeVersionsResponse, error)
 	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*orchestratorv1.GetNodeVersionDiffResponse, error)
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since string) (*orchestratorv1.GetUpstreamChangesResponse, error)
@@ -45,10 +44,6 @@ func NewOrchestratorClient(ctx context.Context, endpoint string) (OrchestratorCl
 		return nil, err
 	}
 	return &orchestratorGRPCClient{conn: conn, client: orchestratorv1.NewOrchestratorQueryClient(conn)}, nil
-}
-
-func (c *orchestratorGRPCClient) GetScheduleGraph(ctx context.Context, scheduleName string) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	return c.client.GetScheduleGraph(ctx, &orchestratorv1.GetScheduleGraphRequest{ScheduleName: scheduleName})
 }
 
 func (c *orchestratorGRPCClient) GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) (*orchestratorv1.GetNodeVersionsResponse, error) {

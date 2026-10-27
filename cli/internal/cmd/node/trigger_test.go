@@ -11,17 +11,17 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runTrigger(t *testing.T, fake client.StateClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
+func runTrigger(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cmd := NewTriggerCommand(func(context.Context, string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewTriggerCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -39,7 +39,7 @@ func runTrigger(t *testing.T, fake client.StateClient, cfg *config.Config, args 
 }
 
 func TestTriggerNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, stderr, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -54,7 +54,7 @@ func TestTriggerNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestTriggerNode_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
 	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -64,7 +64,7 @@ func TestTriggerNode_ForwardsActorFromConfig(t *testing.T) {
 }
 
 func TestTriggerNode_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, _ = runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -103,7 +103,7 @@ func TestTriggerNode_UnavailableExits5(t *testing.T) {
 }
 
 func TestTriggerNode_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
 	stdout, stderr, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -117,7 +117,7 @@ func TestTriggerNode_HumanModeUsesStderr(t *testing.T) {
 const snapshotSourceRun = "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
 func TestTriggerNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -127,7 +127,7 @@ func TestTriggerNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
 }
 
 func TestTriggerNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeState{trigResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{trigResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
@@ -182,5 +182,34 @@ func TestTriggerNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 		assert.Equal(t, output.CodeUsage, env["error"].Code)
 		assert.Equal(t, "", fake.gotTrigSvc, "the state service must not be called")
+	}
+}
+
+// Every command that starts a single-node run hands the client the request id
+// of the invocation, which CONTINUO_REQUEST_ID fixes, so the client can send it
+// on every try and the server can recognise a repeat.
+func TestNodeRunCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
+	const id = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+	t.Setenv("CONTINUO_REQUEST_ID", id)
+	resp := &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+	args := []string{"finance", "analytics", "orders"}
+
+	cases := map[string]func(*fakeNodeState) int{
+		"trigger": func(f *fakeNodeState) int { f.trigResp = resp; _, _, e := runTrigger(t, f, cfg, args); return e },
+		"test":    func(f *fakeNodeState) int { f.testResp = resp; _, _, e := runTest(t, f, cfg, args); return e },
+		"build":   func(f *fakeNodeState) int { f.buildResp = resp; _, _, e := runBuild(t, f, cfg, args); return e },
+		"full-refresh": func(f *fakeNodeState) int {
+			f.fullRefreshResp = resp
+			_, _, e := runFullRefresh(t, f, cfg, args)
+			return e
+		},
+	}
+	for name, invoke := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeNodeState{}
+			assert.Equal(t, 0, invoke(fake))
+			assert.Equal(t, []string{id}, fake.gotRequestIDs)
+		})
 	}
 }

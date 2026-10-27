@@ -11,17 +11,17 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runBuild(t *testing.T, fake client.StateClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
+func runBuild(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cmd := NewBuildCommand(func(context.Context, string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewBuildCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -39,7 +39,7 @@ func runBuild(t *testing.T, fake client.StateClient, cfg *config.Config, args []
 }
 
 func TestBuildNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, stderr, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -56,7 +56,7 @@ func TestBuildNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestBuildNode_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -66,7 +66,7 @@ func TestBuildNode_ForwardsActorFromConfig(t *testing.T) {
 }
 
 func TestBuildNode_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, _ = runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -105,7 +105,7 @@ func TestBuildNode_UnavailableExits5(t *testing.T) {
 }
 
 func TestBuildNode_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
 	stdout, stderr, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -117,7 +117,7 @@ func TestBuildNode_HumanModeUsesStderr(t *testing.T) {
 }
 
 func TestBuildNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -127,7 +127,7 @@ func TestBuildNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
 }
 
 func TestBuildNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeState{buildResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})

@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ type scheduleEntry struct {
 	CronExpression string `json:"cron_expression"`
 	Description    string `json:"description,omitempty"`
 	Timezone       string `json:"timezone"`
-	IsRunning      bool   `json:"is_running"`
+	HasActiveRun   bool   `json:"has_active_run"`
 	LastRunId      string `json:"last_run_id"`
 	LastRunStatus  string `json:"last_run_status"`
 	LastRunAt      string `json:"last_run_at,omitempty"`
@@ -34,7 +34,7 @@ type listPayload struct {
 }
 
 // NewListCommand builds `continuo schedule list`.
-func NewListCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewListCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all schedules and their last-run status",
@@ -47,12 +47,12 @@ Arguments: none.
 
 Output (stdout, JSON):
   {"schedules":[{"schedule_name":string,"cron_expression":string,
-   "description":string,"timezone":string,"is_running":bool,
+   "description":string,"timezone":string,"has_active_run":bool,
    "last_run_id":string,"last_run_status":string,"last_run_at":string}]}
   description and last_run_at are omitted when empty (e.g. never run).
   last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped;
   cancelling means a cancel was accepted and the run waits for its Jobs to
-  stop. is_running is true while the last run is pending, running or cancelling.
+  stop. has_active_run is true while a pending, running or cancelling run holds the schedule.
 
 Errors:
   unavailable(exit 5)  the state service is unreachable
@@ -95,7 +95,7 @@ Errors:
 }
 
 // toListPayload converts the proto slice into the JSON payload.
-func toListPayload(summaries []*statev1.ScheduleSummary) listPayload {
+func toListPayload(summaries []*runv1.ScheduleSummary) listPayload {
 	entries := make([]scheduleEntry, 0, len(summaries))
 	for _, s := range summaries {
 		e := scheduleEntry{
@@ -103,7 +103,7 @@ func toListPayload(summaries []*statev1.ScheduleSummary) listPayload {
 			CronExpression: s.GetCronExpression(),
 			Description:    s.GetDescription(),
 			Timezone:       s.GetTimezone(),
-			IsRunning:      s.GetIsRunning(),
+			HasActiveRun:   s.GetHasActiveRun(),
 			LastRunId:      s.GetLastRunId(),
 			LastRunStatus:  s.GetLastRunStatus(),
 		}
@@ -121,10 +121,10 @@ func toListPayload(summaries []*statev1.ScheduleSummary) listPayload {
 //	<name>  running  last: <status> <time>
 //	<name>  idle     last: <status> <time>
 //	<name>  idle
-func humanList(stderr io.Writer, summaries []*statev1.ScheduleSummary) error {
+func humanList(stderr io.Writer, summaries []*runv1.ScheduleSummary) error {
 	for _, s := range summaries {
 		state := "idle"
-		if s.GetIsRunning() {
+		if s.GetHasActiveRun() {
 			state = "running"
 		}
 

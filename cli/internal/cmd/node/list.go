@@ -8,19 +8,19 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
 
 // nodeSummary is the JSON-serialisable representation of one catalog row.
 // The three statistics the state service reports as -1 when it has nothing
-// to measure (no terminal run, no timed run) are pointers so that sentinel
+// to measure (no terminal task, no timed task) are pointers so that sentinel
 // is omitted rather than emitted as a misleading negative number.
 type nodeSummary struct {
 	ServiceName    string `json:"service_name"`
 	SchemaName     string `json:"schema_name"`
 	TableName      string `json:"table_name"`
-	RunCount       int32  `json:"run_count"`
+	TaskCount      int32  `json:"task_count"`
 	SuccessRatePct *int32 `json:"success_rate_pct,omitempty"`
 	AvgDurationSec *int32 `json:"avg_duration_sec,omitempty"`
 	P95DurationSec *int32 `json:"p95_duration_sec,omitempty"`
@@ -54,7 +54,7 @@ const maxListLimit int32 = 200
 var validListOperations = map[string]bool{"run": true, "test": true, "build": true}
 
 // NewListCommand builds `continuo node list`.
-func NewListCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewListCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the node catalog with per-node run statistics",
@@ -66,7 +66,7 @@ Each row carries the (service, schema, table) triple every other node
 subcommand takes as arguments, so this is the command that resolves a bare
 table name into an addressable node.
 
-Statistics cover each node's most recent 50 runs of the selected operation.
+Statistics cover each node's most recent 50 tasks of the selected operation.
 
 Arguments: none. Every filter is a flag.
 
@@ -75,7 +75,7 @@ Flags:
                table name, not a substring: "orders" matches "orders" and
                "Orders", never "orders_daily". Default "" (no filter).
   --service    Exact service name. Default "" (all services).
-  --operation  Which operation's runs feed the statistics: run | test |
+  --operation  Which operation's tasks feed the statistics: run | test |
                build. Default "run". An unrecognized value is a usage error.
   --limit      Page size, 1..200. Default 50. A value outside that range is
                a usage error.
@@ -84,15 +84,16 @@ Flags:
 Output (stdout, JSON):
   {"total_count":number,
    "nodes":[{"service_name":string,"schema_name":string,"table_name":string,
-   "run_count":number,"success_rate_pct":number,"avg_duration_sec":number,
+   "task_count":number,"success_rate_pct":number,"avg_duration_sec":number,
    "p95_duration_sec":number,"flaky_rate_pct":number,"last_status":string,
    "last_run_at":string,"operation":string,"timeout_seconds":number,
    "timeout_declared":bool}]}
-  total_count is the number of nodes matching the filters regardless of
+  task_count is the number of the node's tasks in the statistics window (at
+  most 50). total_count is the number of nodes matching the filters regardless of
   paging; when it exceeds offset + len(nodes), request the next page with a
   larger --offset. success_rate_pct is omitted when the node has no terminal
-  run in the window; avg_duration_sec and p95_duration_sec are omitted when
-  no run in the window was timed; last_run_at is omitted when the node has
+  task in the window; avg_duration_sec and p95_duration_sec are omitted when
+  no task in the window was timed; last_run_at is omitted when the node has
   never run. last_status is one of succeeded, failed, running, stopping, queued,
   dispatched, cancelled, skipped, pending. timeout_seconds is the task
   timeout the node's tasks get, always present: its declared timeout in the
@@ -158,7 +159,7 @@ Errors:
 	}
 	cmd.Flags().String("search", "", "Table name to look up (case-insensitive exact match; default \"\" = all)")
 	cmd.Flags().String("service", "", "Exact service name filter (default \"\" = all services)")
-	cmd.Flags().String("operation", "run", "Operation whose runs feed the statistics: run | test | build (default \"run\")")
+	cmd.Flags().String("operation", "run", "Operation whose tasks feed the statistics: run | test | build (default \"run\")")
 	cmd.Flags().Int32("limit", defaultListLimit, "Page size, 1..200 (default 50)")
 	cmd.Flags().Int32("offset", 0, "Number of matching rows to skip (default 0)")
 	cmd.SilenceErrors = true
@@ -175,14 +176,14 @@ func optionalStat(v int32) *int32 {
 	return &v
 }
 
-func toListPayload(resp *statev1.ListNodesResponse) listPayload {
+func toListPayload(resp *runv1.ListNodesResponse) listPayload {
 	out := make([]nodeSummary, 0, len(resp.GetNodes()))
 	for _, n := range resp.GetNodes() {
 		out = append(out, nodeSummary{
 			ServiceName:     n.GetServiceName(),
 			SchemaName:      n.GetSchemaName(),
 			TableName:       n.GetTableName(),
-			RunCount:        n.GetRunCount(),
+			TaskCount:       n.GetTaskCount(),
 			SuccessRatePct:  optionalStat(n.GetSuccessRatePct()),
 			AvgDurationSec:  optionalStat(n.GetAvgDurationSec()),
 			P95DurationSec:  optionalStat(n.GetP95DurationSec()),
@@ -199,21 +200,21 @@ func toListPayload(resp *statev1.ListNodesResponse) listPayload {
 
 // humanList writes a header, one line per node, and a page summary to stderr:
 //
-//	NODE  OPERATION  RUNS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT
-//	<service.schema.table>  <operation>  <runs>  <pct>  <avg>  <p95>  <status>  <at>
+//	NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT
+//	<service.schema.table>  <operation>  <tasks>  <pct>  <avg>  <p95>  <status>  <at>
 //	showing <first>-<last> of <total>
 //
 // A statistic the server could not measure, and a last_run_at for a node
 // that never ran, render as "-". The summary line makes truncation visible:
 // first and last are 1-based positions within the full match set, and an
 // empty page renders as "showing 0 of <total>".
-func humanList(stderr io.Writer, resp *statev1.ListNodesResponse, offset int32) error {
-	if _, err := fmt.Fprintf(stderr, "NODE  OPERATION  RUNS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT\n"); err != nil {
+func humanList(stderr io.Writer, resp *runv1.ListNodesResponse, offset int32) error {
+	if _, err := fmt.Fprintf(stderr, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT\n"); err != nil {
 		return err
 	}
 	for _, n := range resp.GetNodes() {
 		if _, err := fmt.Fprintf(stderr, "%s.%s.%s  %s  %d  %s  %s  %s  %s  %s\n",
-			n.GetServiceName(), n.GetSchemaName(), n.GetTableName(), n.GetOperation(), n.GetRunCount(),
+			n.GetServiceName(), n.GetSchemaName(), n.GetTableName(), n.GetOperation(), n.GetTaskCount(),
 			dashIfNegative(n.GetSuccessRatePct()), dashIfNegative(n.GetAvgDurationSec()), dashIfNegative(n.GetP95DurationSec()),
 			n.GetLastStatus(), dashIfEmpty(n.GetLastRunAt())); err != nil {
 			return err

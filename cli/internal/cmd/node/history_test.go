@@ -13,7 +13,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -21,7 +21,9 @@ import (
 )
 
 type fakeNodeState struct {
-	runsResp     *statev1.ListNodeRunsResponse
+	client.RunClient
+
+	runsResp     *runv1.ListNodeTasksResponse
 	runsErr      error
 	gotSvc       string
 	gotSchema    string
@@ -29,13 +31,14 @@ type fakeNodeState struct {
 	gotOperation string
 	gotLimit     int32
 
-	trigResp         *statev1.TriggerSingleNodeRunResponse
+	trigResp         *runv1.TriggerSingleNodeRunResponse
 	trigErr          error
 	gotActor         string
+	gotRequestIDs    []string
 	gotTrigSvc       string
 	gotTrigSourceRun string
 
-	testResp         *statev1.TriggerSingleNodeRunResponse
+	testResp         *runv1.TriggerSingleNodeRunResponse
 	testErr          error
 	gotTestActor     string
 	gotTestSvc       string
@@ -43,7 +46,7 @@ type fakeNodeState struct {
 	gotTestTable     string
 	gotTestSourceRun string
 
-	buildResp         *statev1.TriggerSingleNodeRunResponse
+	buildResp         *runv1.TriggerSingleNodeRunResponse
 	buildErr          error
 	gotBuildActor     string
 	gotBuildSvc       string
@@ -51,7 +54,7 @@ type fakeNodeState struct {
 	gotBuildTable     string
 	gotBuildSourceRun string
 
-	fullRefreshResp         *statev1.TriggerSingleNodeRunResponse
+	fullRefreshResp         *runv1.TriggerSingleNodeRunResponse
 	fullRefreshErr          error
 	gotFullRefreshActor     string
 	gotFullRefreshSvc       string
@@ -59,7 +62,7 @@ type fakeNodeState struct {
 	gotFullRefreshTable     string
 	gotFullRefreshSourceRun string
 
-	listResp         *statev1.ListNodesResponse
+	listResp         *runv1.ListNodesResponse
 	listErr          error
 	gotListSearch    string
 	gotListService   string
@@ -68,63 +71,49 @@ type fakeNodeState struct {
 	gotListOffset    int32
 }
 
-func (f *fakeNodeState) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*statev1.ListNodesResponse, error) {
+func (f *fakeNodeState) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error) {
 	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListLimit, f.gotListOffset = search, service, operation, limit, offset
 	return f.listResp, f.listErr
 }
 
-func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error) {
+func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
 	f.gotSvc, f.gotSchema, f.gotTable, f.gotOperation, f.gotLimit = service, schema, table, operation, limit
 	return f.runsResp, f.runsErr
 }
 
-func (f *fakeNodeState) TriggerNodeRun(_ context.Context, service, _, _, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeState) TriggerNodeRun(_ context.Context, requestID, service, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTrigSvc, f.gotTrigSourceRun, f.gotActor = service, sourceRunID, actor
 	return f.trigResp, f.trigErr
 }
 
-func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeState) TriggerNodeTest(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = service, schema, table, sourceRunID, actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = service, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeState) TriggerNodeFullRefresh(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeState) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
 	return f.fullRefreshResp, f.fullRefreshErr
 }
 
-func (f *fakeNodeState) TriggerSchedule(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerSchedule should not be called in node tests")
-}
-func (f *fakeNodeState) TriggerScheduleTest(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerScheduleTest should not be called in node tests")
-}
-func (f *fakeNodeState) TriggerScheduleBuild(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
-	return nil, nil
-}
-func (f *fakeNodeState) ListAllSchedules(context.Context) (*statev1.ListAllSchedulesResponse, error) {
-	panic("ListAllSchedules should not be called in node tests")
-}
-func (f *fakeNodeState) ListTasks(context.Context, string, statev1.TaskStatus, int32, int32) (*statev1.ListTasksResponse, error) {
-	panic("ListTasks should not be called in node tests")
-}
-func (f *fakeNodeState) CancelSchedule(context.Context, string, string, string) (*statev1.CancelScheduleResponse, error) {
-	panic("CancelSchedule should not be called in node tests")
-}
 func (f *fakeNodeState) Close() error { return nil }
 
 // runHistory invokes the history command against fake.
-func runHistory(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runHistory(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
 	cmd := NewHistoryCommand(
-		func(context.Context, string) (client.StateClient, error) { return fake, nil },
+		func(context.Context, string) (client.RunClient, error) { return fake, nil },
 		cfg, &outBuf, &errBuf,
 	)
 	cmd.SetArgs(args)
@@ -144,9 +133,9 @@ func runHistory(t *testing.T, fake client.StateClient, args []string, human bool
 }
 
 func TestHistory_SuccessMapsAllFields(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
-		TerminalStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
+		RunStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
 		Attempt: 1, FailureClass: "task", FailureReason: "exit_code",
 		ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
 		RunResultsUri: "run-results/task-executions/finance/analytics/orders/e1.json",
@@ -170,7 +159,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	r := payload.Runs[0]
 	assert.Equal(t, "run_1", r["run_id"])
 	assert.Equal(t, "single_node_run", r["kind"])
-	assert.Equal(t, "succeeded", r["terminal_status"])
+	assert.Equal(t, "succeeded", r["run_status"])
 	assert.Equal(t, "img:v9", r["image_tag"])
 	assert.NotContains(t, r, "manifest_version")
 	// The attempt number is reported as "attempt"; the retry_count key does not exist.
@@ -185,7 +174,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 }
 
 func TestHistory_OperationFlagIsForwarded(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", TaskStatus: "succeeded", Operation: "test",
 	}}}}
 
@@ -212,18 +201,18 @@ func TestHistory_InvalidOperationFlagExits2(t *testing.T) {
 }
 
 func TestHistory_EmptyResultIsEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: nil}}
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: nil}}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, `"runs":[]`)
 }
 
 func TestHistory_OmitsEmptyOptionalFields(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
-		RunId: "run_1", TaskStatus: "running", // no terminal_status/completed_at/error/log key
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+		RunId: "run_1", TaskStatus: "running", // no run_status/completed_at/error/log key
 	}}}}
 	stdout, _, _ := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
-	assert.NotContains(t, stdout, "terminal_status")
+	assert.NotContains(t, stdout, "run_status")
 	assert.NotContains(t, stdout, "completed_at")
 	assert.NotContains(t, stdout, "error_message")
 	assert.NotContains(t, stdout, "log_s3_key")
@@ -248,7 +237,7 @@ func TestHistory_UnavailableExits5(t *testing.T) {
 }
 
 func TestHistory_ContentHashComesWithEachRun(t *testing.T) {
-	stateFake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+	stateFake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_1", TaskStatus: "succeeded", ContentHash: "c1"},
 		{RunId: "run_2", TaskStatus: "succeeded"}, // names no release
 	}}}
@@ -267,7 +256,7 @@ func TestHistory_ContentHashComesWithEachRun(t *testing.T) {
 }
 
 func TestHistory_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", TaskStatus: "succeeded", Kind: "single_node_run", CompletedAt: "2026-07-10T10:05:00Z",
 	}}}}
 	stdout, stderr, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, true)
@@ -279,7 +268,7 @@ func TestHistory_HumanModeUsesStderr(t *testing.T) {
 
 // Human mode renders the same content hash the JSON payload carries.
 func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
-	stateFake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+	stateFake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_1", TaskStatus: "succeeded", ContentHash: "sha256:abcdef123456789"},
 		{RunId: "run_2", TaskStatus: "succeeded"}, // names no release
 	}}}
@@ -287,7 +276,7 @@ func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 	cmd := NewHistoryCommand(
-		func(context.Context, string) (client.StateClient, error) { return stateFake, nil },
+		func(context.Context, string) (client.RunClient, error) { return stateFake, nil },
 		cfg, &outBuf, &errBuf,
 	)
 	cmd.SetArgs([]string{"finance", "analytics", "orders"})
@@ -312,14 +301,14 @@ func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
 func TestHistory_LongNamesTheRunAndTaskStatuses(t *testing.T) {
 	long := NewHistoryCommand(nil, nil, io.Discard, io.Discard).Long
 
-	assert.Contains(t, long, "terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.")
+	assert.Contains(t, long, "run_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.")
 	assert.Contains(t, long, "task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.")
 }
 
 // A run whose task waits for the node's lease says why, on which run and since
 // when; a run that waits for nothing omits all three.
 func TestHistory_ReportsALeaseWaitAndItsHolder(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_2", TaskStatus: "pending", WaitReason: "node_lease", WaitingOnRunId: "run_1", WaitingSince: "2026-10-24T10:05:00Z"},
 		{RunId: "run_1", TaskStatus: "running"},
 	}}}
@@ -343,9 +332,9 @@ func TestHistory_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 // The output_schema annotation declares every field a run can carry: a run
 // with every field set emits exactly the keys its runs item declares.
 func TestHistory_OutputSchemaDeclaresEveryRunField(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_2", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
-		TerminalStatus: "running", TaskId: "task_2", TaskStatus: "pending", Attempt: 1,
+		RunStatus: "running", TaskId: "task_2", TaskStatus: "pending", Attempt: 1,
 		ImageTag: "img:v9", CreatedAt: "2026-10-24T10:00:00Z", StartedAt: "2026-10-24T10:01:00Z",
 		CompletedAt: "2026-10-24T10:02:00Z", ErrorMessage: "boom", FailureClass: "task", FailureReason: "exit_code",
 		LogS3Key: "logs/k", RunResultsUri: "results/k", Operation: "run", ContentHash: "c1",
