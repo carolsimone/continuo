@@ -33,7 +33,7 @@ expect 'security(ui): refuse an unsigned session cookie' 'security'
 expect 'feat(ui,cli): show attempts' 'enhancement'
 expect 'fix(ui/cli): align the run card' 'bug'
 expect 'feat(cli)!: rename node trigger to node run' $'enhancement\nbreaking-change'
-expect 'refactor!: rename ui-service to ui' $'refactoring\nbreaking-change'
+expect 'refactor!: rename node trigger to node run' $'refactoring\nbreaking-change'
 expect 'Revert "feat: add a node list command"' 'chore'
 
 reject ''
