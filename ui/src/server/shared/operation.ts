@@ -2,19 +2,24 @@
 // client alike. The module depends on nothing, so the client bundle can import
 // it without pulling in server code.
 
+import { OPERATIONS, SINGLE_NODE_ONLY_OPERATIONS, type Operation, type SingleNodeOnlyOperation } from '../generated/vocabulary.gen';
+
 // RUN_OPERATIONS are the operations a run applies to its nodes: a schedule
 // trigger and a single-node run both offer them, and a node's run history is
-// filtered by them.
-export const RUN_OPERATIONS = ['run', 'test', 'build'] as const;
-export type RunOperation = (typeof RUN_OPERATIONS)[number];
+// filtered by them. They are every contract operation that is not
+// single-node-only.
+export type RunOperation = Exclude<Operation, SingleNodeOnlyOperation>;
+export const RUN_OPERATIONS: readonly RunOperation[] = OPERATIONS.filter(
+  (op): op is RunOperation => !(SINGLE_NODE_ONLY_OPERATIONS as readonly Operation[]).includes(op),
+);
 
 // NODE_ONLY_OPERATIONS exist only for a single-node run: full_refresh rebuilds
 // one dbt model or seed from scratch.
-export const NODE_ONLY_OPERATIONS = ['full_refresh'] as const;
+export const NODE_ONLY_OPERATIONS: readonly SingleNodeOnlyOperation[] = SINGLE_NODE_ONLY_OPERATIONS;
 
 // NODE_RUN_OPERATIONS are every operation a single-node run accepts.
-export const NODE_RUN_OPERATIONS = [...RUN_OPERATIONS, ...NODE_ONLY_OPERATIONS] as const;
-export type NodeOperation = (typeof NODE_RUN_OPERATIONS)[number];
+export const NODE_RUN_OPERATIONS: readonly NodeOperation[] = OPERATIONS;
+export type NodeOperation = Operation;
 
 export function isNodeOperation(v: unknown): v is NodeOperation {
   return typeof v === 'string' && (NODE_RUN_OPERATIONS as readonly string[]).includes(v);

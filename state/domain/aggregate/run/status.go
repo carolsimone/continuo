@@ -3,24 +3,26 @@ package run
 import (
 	"fmt"
 	"slices"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // RunStatus is the lifecycle status of a Run.
 type RunStatus string
 
 const (
-	RunStatusPending RunStatus = "pending"
-	RunStatusRunning RunStatus = "running"
+	RunStatusPending RunStatus = RunStatus(model.RunStatusPending)
+	RunStatusRunning RunStatus = RunStatus(model.RunStatusRunning)
 	// RunStatusCancelling is a run whose cancel has been requested and
 	// whose work is still being stopped. It is active, not terminal: it ends
 	// cancelled once every attempt of it has ended.
-	RunStatusCancelling RunStatus = "cancelling"
-	RunStatusSucceeded  RunStatus = "succeeded"
-	RunStatusFailed     RunStatus = "failed"
-	RunStatusCancelled  RunStatus = "cancelled"
+	RunStatusCancelling RunStatus = RunStatus(model.RunStatusCancelling)
+	RunStatusSucceeded  RunStatus = RunStatus(model.RunStatusSucceeded)
+	RunStatusFailed     RunStatus = RunStatus(model.RunStatusFailed)
+	RunStatusCancelled  RunStatus = RunStatus(model.RunStatusCancelled)
 	// RunStatusSkipped is the terminal status for a run that had no work
 	// to do — a Test run over nodes with no dbt tests. It is a benign non-failure.
-	RunStatusSkipped RunStatus = "skipped"
+	RunStatusSkipped RunStatus = RunStatus(model.RunStatusSkipped)
 )
 
 func (s RunStatus) IsValid() bool {
@@ -97,15 +99,15 @@ func ActiveRunStatuses() []RunStatus {
 type TaskStatus string
 
 const (
-	TaskStatusPending    TaskStatus = "pending"
-	TaskStatusDispatched TaskStatus = "dispatched"
-	TaskStatusQueued     TaskStatus = "queued"
-	TaskStatusRunning    TaskStatus = "running"
-	TaskStatusStopping   TaskStatus = "stopping"
-	TaskStatusSucceeded  TaskStatus = "succeeded"
-	TaskStatusFailed     TaskStatus = "failed"
-	TaskStatusCancelled  TaskStatus = "cancelled"
-	TaskStatusSkipped    TaskStatus = "skipped"
+	TaskStatusPending    TaskStatus = TaskStatus(model.TaskStatusPending)
+	TaskStatusDispatched TaskStatus = TaskStatus(model.TaskStatusDispatched)
+	TaskStatusQueued     TaskStatus = TaskStatus(model.TaskStatusQueued)
+	TaskStatusRunning    TaskStatus = TaskStatus(model.TaskStatusRunning)
+	TaskStatusStopping   TaskStatus = TaskStatus(model.TaskStatusStopping)
+	TaskStatusSucceeded  TaskStatus = TaskStatus(model.TaskStatusSucceeded)
+	TaskStatusFailed     TaskStatus = TaskStatus(model.TaskStatusFailed)
+	TaskStatusCancelled  TaskStatus = TaskStatus(model.TaskStatusCancelled)
+	TaskStatusSkipped    TaskStatus = TaskStatus(model.TaskStatusSkipped)
 )
 
 // TaskStatuses lists every TaskStatus. The CHECK constraint on

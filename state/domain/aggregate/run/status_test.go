@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -130,5 +131,37 @@ func TestInFlightTaskStatuses_AreTheStatusesWithAnAttemptInFlight(t *testing.T) 
 	}
 	if want := []run.TaskStatus{run.TaskStatusDispatched, run.TaskStatusQueued, run.TaskStatusRunning, run.TaskStatusStopping}; !slices.Equal(run.InFlightTaskStatuses(), want) {
 		t.Fatalf("InFlightTaskStatuses() = %v, want %v", run.InFlightTaskStatuses(), want)
+	}
+}
+
+// TestRunStatuses_MatchTheContractVocabulary: the run aggregate lists exactly
+// the run statuses the contract declares, in the contract's order.
+func TestRunStatuses_MatchTheContractVocabulary(t *testing.T) {
+	var want []string
+	for _, s := range model.RunStatusValues() {
+		want = append(want, string(s))
+	}
+	var got []string
+	for _, s := range run.RunStatuses() {
+		got = append(got, string(s))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("run.RunStatuses() = %v, contract = %v", got, want)
+	}
+}
+
+// TestTaskStatuses_MatchTheContractVocabulary: the run aggregate lists exactly
+// the task statuses the contract declares, in the contract's order.
+func TestTaskStatuses_MatchTheContractVocabulary(t *testing.T) {
+	var want []string
+	for _, s := range model.TaskStatusValues() {
+		want = append(want, string(s))
+	}
+	var got []string
+	for _, s := range run.TaskStatuses() {
+		got = append(got, string(s))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("run.TaskStatuses() = %v, contract = %v", got, want)
 	}
 }

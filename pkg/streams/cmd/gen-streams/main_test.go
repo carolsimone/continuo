@@ -978,3 +978,155 @@ func TestEmitGo_GroupsAndRetired(t *testing.T) {
 		}
 	}
 }
+
+const operationYAML = `
+streams: []
+vocabularies:
+  - name: operation
+    const: Operation
+    description: The verb a run applies to a node.
+    values:
+      - {value: run, const: Run, default: true, description: the default verb.}
+      - {value: test, const: Test, description: test.}
+      - {value: full_refresh, const: FullRefresh, single_node_only: true, description: rebuild one node.}
+`
+
+// TestGenStreams_OperationEmitsSingleNodeOnlyAndTheDefault: a vocabulary whose
+// values carry single_node_only and a default emits the single-node-only
+// predicate and a parser that takes the default's empty wire form in Go, and
+// the full and single-node-only lists in TypeScript.
+func TestGenStreams_OperationEmitsSingleNodeOnlyAndTheDefault(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(operationYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"OperationRun Operation = \"\"",
+		"OperationFullRefresh Operation = \"full_refresh\"",
+		"func (v Operation) IsSingleNodeOnly() bool {\n\tswitch v {\n\tcase OperationFullRefresh:\n\t\treturn true\n\t}\n\treturn false\n}",
+		"func ParseOperation(s string) (Operation, error) {",
+		"case OperationRun, \"run\":\n\t\treturn OperationRun, nil",
+		"case OperationTest:\n\t\treturn OperationTest, nil",
+		"func (v Operation) IsValid() bool {",
+	} {
+		if !strings.Contains(goSrc, want) {
+			t.Errorf("go: missing %q\n%s", want, goSrc)
+		}
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"export type Operation = 'run' | 'test' | 'full_refresh';",
+		"export const OPERATIONS: readonly Operation[] = ['run', 'test', 'full_refresh'];",
+		"export type SingleNodeOnlyOperation = 'full_refresh';",
+		"export const SINGLE_NODE_ONLY_OPERATIONS: readonly SingleNodeOnlyOperation[] = ['full_refresh'];",
+	} {
+		if !strings.Contains(tsSrc, want) {
+			t.Errorf("ts: missing %q\n%s", want, tsSrc)
+		}
+	}
+}
+
+// TestGenStreams_AVocabularyWithoutSingleNodeOnlyEmitsNone: a contract that
+// marks no value single_node_only or default emits neither surface in any
+// language.
+func TestGenStreams_AVocabularyWithoutSingleNodeOnlyEmitsNone(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(nodeTypeYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pySrc, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for lang, src := range map[string]string{"go": goSrc, "python": pySrc, "ts": tsSrc} {
+		for _, banned := range []string{"IsSingleNodeOnly", "SINGLE_NODE_ONLY", "func ParseNodeType"} {
+			if strings.Contains(src, banned) {
+				t.Errorf("%s: unexpected %q\n%s", lang, banned, src)
+			}
+		}
+	}
+	if strings.Contains(goSrc, "import \"fmt\"") {
+		t.Errorf("go: a contract with no parser must not import fmt\n%s", goSrc)
+	}
+}
+
+// TestValidate_DefaultAndSingleNodeOnlyRules: at most one value is the default,
+// and a value cannot be both the default and single_node_only.
+func TestValidate_DefaultAndSingleNodeOnlyRules(t *testing.T) {
+	cases := map[string]string{
+		"two defaults": `
+streams: []
+vocabularies:
+  - name: operation
+    const: Operation
+    description: d.
+    values:
+      - {value: run, const: Run, default: true, description: a.}
+      - {value: test, const: Test, default: true, description: b.}
+`,
+		"default and single node only": `
+streams: []
+vocabularies:
+  - name: operation
+    const: Operation
+    description: d.
+    values:
+      - {value: run, const: Run, default: true, single_node_only: true, description: a.}
+`,
+	}
+	for name, y := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadAndValidate(strings.NewReader(y)); err == nil {
+				t.Fatal("expected a validation error")
+			}
+		})
+	}
+}
+
+// TestEmitGoVocabulary_ListFunc: list_func renames the Go function that lists
+// a vocabulary's values; the TypeScript list keeps the plural-derived name.
+func TestEmitGoVocabulary_ListFunc(t *testing.T) {
+	y := `
+streams: []
+vocabularies:
+  - name: run_status
+    const: RunStatus
+    list_func: RunStatusValues
+    description: Run status.
+    values:
+      - {value: pending, const: Pending, description: p.}
+`
+	c, err := loadAndValidate(strings.NewReader(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(goSrc, "func RunStatusValues() []RunStatus {") || strings.Contains(goSrc, "RunStatuses") {
+		t.Errorf("go list func not renamed\n%s", goSrc)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tsSrc, "export const RUN_STATUSES: readonly RunStatus[]") {
+		t.Errorf("ts list name changed\n%s", tsSrc)
+	}
+}

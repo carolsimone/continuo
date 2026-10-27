@@ -77,6 +77,38 @@ NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntim
 """Which toolchain builds each NodeType."""
 
 
+class RunStatus(StrEnum):
+    """Where a run stands. A run is active while pending, running or cancelling, and holds its schedule; it is terminal once succeeded, failed, cancelled or skipped."""
+    PENDING = "pending"
+    RUNNING = "running"
+    CANCELLING = "cancelling"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
+class TaskStatus(StrEnum):
+    """Where one task of a run stands. A task waits pending until it is ready; state then dispatches an attempt of it, and the task follows that attempt through queued and running. A failed attempt with retries left dispatches the next one, so a task is failed only once it will not run again."""
+    PENDING = "pending"
+    DISPATCHED = "dispatched"
+    QUEUED = "queued"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
+class Operation(StrEnum):
+    """The verb a run applies to its nodes. It is orthogonal to the node type: the type is what a node is, the operation is which verb runs against it. The default (run) is the empty string on the wire, so a message that names no operation reads as a plain run; state stores it as run."""
+    RUN = "run"
+    TEST = "test"
+    BUILD = "build"
+    FULL_REFRESH = "full_refresh"
+
+
 class AttemptStatus(StrEnum):
     """Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2."""
     DISPATCHED = "dispatched"

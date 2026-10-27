@@ -426,6 +426,98 @@ vocabularies:
         runtime: dbt
         description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
 
+  - name: run_status
+    const: RunStatus
+    list_func: RunStatusValues
+    description: >-
+      Where a run stands. A run is active while pending, running or
+      cancelling, and holds its schedule; it is terminal once succeeded,
+      failed, cancelled or skipped.
+    values:
+      - value: pending
+        const: Pending
+        description: state created the run and no task of it has been dispatched yet.
+      - value: running
+        const: Running
+        description: at least one task of the run has been dispatched and the run has not ended.
+      - value: cancelling
+        const: Cancelling
+        description: a cancel was requested and the run's open attempts are still being stopped; the run ends cancelled once every attempt has ended.
+      - value: succeeded
+        const: Succeeded
+        description: every task of the run succeeded.
+      - value: failed
+        const: Failed
+        description: a task of the run failed for good, or state failed the run as stalled or unplannable.
+      - value: cancelled
+        const: Cancelled
+        description: the run was cancelled and every attempt of it has ended.
+      - value: skipped
+        const: Skipped
+        description: the run had no work to do, such as a test run over nodes with no tests; a benign non-failure.
+
+  - name: task_status
+    const: TaskStatus
+    list_func: TaskStatusValues
+    description: >-
+      Where one task of a run stands. A task waits pending until it is ready;
+      state then dispatches an attempt of it, and the task follows that attempt
+      through queued and running. A failed attempt with retries left dispatches
+      the next one, so a task is failed only once it will not run again.
+    values:
+      - value: pending
+        const: Pending
+        description: the task waits for its upstream tasks, or for the write lease on its node.
+      - value: dispatched
+        const: Dispatched
+        description: state dispatched an attempt of the task and has no report of it yet.
+      - value: queued
+        const: Queued
+        description: execution-controller accepted the attempt; it waits for a slot or its Job.
+      - value: running
+        const: Running
+        description: the main container of the attempt's pod started.
+      - value: stopping
+        const: Stopping
+        description: the run is being cancelled while the task's attempt is still open.
+      - value: succeeded
+        const: Succeeded
+        description: the task succeeded.
+      - value: failed
+        const: Failed
+        description: the task failed and will not run again.
+      - value: cancelled
+        const: Cancelled
+        description: the run was cancelled before the task ran, or its attempt was stopped.
+      - value: skipped
+        const: Skipped
+        description: an upstream task failed, so the task will not run.
+
+  - name: operation
+    const: Operation
+    description: >-
+      The verb a run applies to its nodes. It is orthogonal to the node type: the
+      type is what a node is, the operation is which verb runs against it. The
+      default (run) is the empty string on the wire, so a message that names no
+      operation reads as a plain run; state stores it as run.
+    # single_node_only: true marks an operation that may target only one node.
+    # default: true marks the operation a message that names none stands for.
+    values:
+      - value: run
+        const: Run
+        default: true
+        description: dbt run, seed or snapshot, chosen by the node's type.
+      - value: test
+        const: Test
+        description: dbt test over the node.
+      - value: build
+        const: Build
+        description: dbt build over the node, which materializes and tests it in one invocation.
+      - value: full_refresh
+        const: FullRefresh
+        single_node_only: true
+        description: rebuilds one model or seed from scratch; it drops and rebuilds a table, so it is never fanned out across a schedule.
+
   - name: attempt_status
     const: AttemptStatus
     description: >-
