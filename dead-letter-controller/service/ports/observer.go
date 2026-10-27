@@ -9,10 +9,3 @@ type Observer interface {
 	Redriven(dl deadletter.DeadLetter)
 	Expired(dl deadletter.DeadLetter)
 }
-
-// NopObserver discards every notification.
-type NopObserver struct{}
-
-func (NopObserver) Recorded(deadletter.DeadLetter) {}
-func (NopObserver) Redriven(deadletter.DeadLetter) {}
-func (NopObserver) Expired(deadletter.DeadLetter)  {}
