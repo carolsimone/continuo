@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Fails a PR that changes the continuo chart's user-facing surface (values.yaml,
 # values.schema.json, Chart.yaml, templates/**) without also updating
-# CHANGELOG.md. Needs BASE_SHA (the PR's base commit) in the environment;
-# install-test.yml sets it from github.event.pull_request.base.sha and fetches
-# it before calling this script.
+# CHANGELOG.md, and a PR whose CHANGELOG.md change adds a line under an
+# already released version (changelog-placement-check.sh). Needs BASE_SHA (the
+# PR's base commit) in the environment; install-test.yml sets it from
+# github.event.pull_request.base.sha and fetches it before calling this script.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -23,6 +24,9 @@ echo "deploy/continuo files changed in this PR:"
 echo "$changed"
 
 if grep -q '^deploy/continuo/CHANGELOG\.md$' <<<"$changed"; then
+  if ! bash scripts/install-test/changelog-placement-check.sh; then
+    exit 1
+  fi
   echo "CHANGELOG.md updated alongside chart changes. OK."
   exit 0
 fi

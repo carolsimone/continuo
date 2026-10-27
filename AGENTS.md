@@ -107,13 +107,15 @@ It is append-only and historical: a design or plan describes the system **as of 
 
 Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Chart.yaml`, or `templates/**`:
 - **Update `values.schema.json` to match.** `additionalProperties: false` is set throughout on purpose — adding, renaming, or removing a values key without updating the schema fails `helm lint` (`scripts/install-test/lint.sh`), which is the intended forcing function.
-- **Add an entry under `## [Unreleased]`** in `deploy/continuo/CHANGELOG.md` (Added/Changed/Removed/Breaking, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). CI (`scripts/install-test/changelog-check.sh`, wired into `install-test.yml`) fails a PR that touches the chart's user-facing surface without this.
+- **Add an entry under `## [Unreleased]`** in `deploy/continuo/CHANGELOG.md` (Added/Changed/Removed/Breaking, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). CI (`scripts/install-test/changelog-check.sh`, wired into `install-test.yml`) fails a PR that touches the chart's user-facing surface without this, and a PR whose diff adds a line under an already released `## [x.y.z]` section — which a merge of main after a release cut does without a conflict — unless the diff adds that version's heading (the release cut itself).
 - **Decide the semver bump** the change implies, scoped to the values contract rather than internal service APIs:
   - PATCH — template/default fixes, no values schema change.
   - MINOR — new values added with safe defaults; existing overrides keep working unmodified.
   - MAJOR/Breaking — anything that breaks an unmodified existing values file on upgrade: a renamed/removed key, a previously-optional value becoming required, an immutable field changing (Service selector, PVC size, StatefulSet volumeClaimTemplates), or dropping support for an older `kubeVersion`.
 - **If a value becomes newly required**, add an `{{ if .Release.IsUpgrade }}` warning to `templates/NOTES.txt` telling operators what to set — the changelog is easy to miss, but NOTES.txt is what actually prints at `helm upgrade` time.
 - Validate with `bash scripts/install-test/lint.sh` (helm lint + template + kube-linter across all four values topologies) before pushing.
+
+After a release: once `release.yml` has succeeded for `vX.Y.Z` and the docs-pin PR (the one pinning this repository's install guides to `X.Y.Z` and adding its release notes) has merged, run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in `carolsimone/continuo-site` that moves the public site's quickstart `chartVersion` to `X.Y.Z`; nothing else bumps that pin. It runs with your own `gh` login, and `release.yml` does not call it, because it needs push access to that second repository.
 
 # How to run it
 Everything needs to run against docker images within my host machine. I use MacOS M4 and colima to be precise.

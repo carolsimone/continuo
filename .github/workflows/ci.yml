@@ -14,7 +14,8 @@ on:
 
 # A new push to a PR cancels any still-running build for that same PR. The single
 # self-hosted runner serializes jobs, so without this it would tie up finishing a
-# build for a commit that has already been superseded.
+# build for a commit that has already been superseded. Closing or merging the PR
+# does not touch this group; cancel-closed-pr-ci.yml cancels that PR's build.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

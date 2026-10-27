@@ -257,6 +257,15 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # - check-release-tag-trigger: release.yml's tag glob must not claim another
 #   workflow's tag family, which would run the product release pipeline on a
 #   tag that has no release images behind it.
+# - check-closed-pr-ci-cancel: cancel-closed-pr-ci.yml must fire on
+#   pull_request_target `closed` (a conflicted pull request starts no
+#   pull_request workflow), hold `actions: write`, run on a GitHub-hosted
+#   runner, check out nothing and write no `${{ }}` into a shell, and cancel
+#   only the closed pull request's own unfinished ci runs started before the
+#   closure, nothing once it is reopened and never a push run on main, so a
+#   closed pull request's ci stops holding the self-hosted runners a release
+#   deploy waits for. It runs the workflow's cancel step with a stub gh; its
+#   _test.sh runs it against edited copies of the workflow.
 # - check-validation-image-pin: the hand-maintained continuo-python-runtime
 #   image tag must not drift between the Makefile, setup/e2e scripts,
 #   docker-compose, the execution-controller Go test fixtures, and the chart's
@@ -282,6 +291,16 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #   generator produces from the contract, so a contract edit cannot land
 #   without its regenerated bindings. It leaves the tree as it found it.
 #
+# install-test/changelog-check_test.sh runs the chart's CHANGELOG gate
+# (changelog-check.sh, which install-test.yml runs on every chart PR) against
+# fixture repositories: an entry belongs under [Unreleased], a line added
+# under a released version fails unless the diff is that version's release
+# cut, and a merge of main after a cut cannot slip a bullet under it.
+# release/open-site-bump-pr_test.sh runs the script that opens the site's
+# chart-pin pull request against a local bare repository and a stub gh: the
+# one-line edit, the branch, the commit's sign-off and trailers, the pull
+# request, and the failures that push nothing.
+#
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
 # remediation e2e scenarios read as an LLM's answers, whose tests run against
@@ -304,6 +323,8 @@ guards: bench-test
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
 	bash scripts/check-release-tag-trigger.sh
+	bash scripts/check-closed-pr-ci-cancel.sh
+	bash scripts/check-closed-pr-ci-cancel_test.sh
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-python-kind-parity.sh
 	bash scripts/check-agent-remediation-runtime-pin.sh
@@ -314,6 +335,8 @@ guards: bench-test
 	bash scripts/check-standalone-modules.sh
 	bash scripts/check-generated-streams.sh
 	bash scripts/deploy/last-deployed-commit_test.sh
+	bash scripts/install-test/changelog-check_test.sh
+	bash scripts/release/open-site-bump-pr_test.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
