@@ -11,6 +11,7 @@ export function grpcToHttpStatus(code: number | undefined): number {
     case grpc.status.NOT_FOUND:
       return 404;
     case grpc.status.FAILED_PRECONDITION:
+    case grpc.status.ALREADY_EXISTS:
       return 409;
     default:
       return 500;

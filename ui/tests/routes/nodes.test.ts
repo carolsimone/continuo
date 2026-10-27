@@ -4,7 +4,7 @@ import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { createNodesRouter } from '../../src/server/routes/nodes';
 
-const mockListNodeRuns = vi.fn();
+const mockListNodeTasks = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
@@ -13,12 +13,14 @@ const mockGetNode = vi.fn();
 const mockGetNodeVersions = vi.fn();
 
 const mockStateClient = {
-  listNodeRuns: mockListNodeRuns,
+  listNodeTasks: mockListNodeTasks,
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
   listNodes: mockListNodes,
   listNodeNames: mockListNodeNames,
   listNodeServices: mockListNodeServices,
 };
+
+const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
 
 const mockGraphClient = { getNode: mockGetNode, getNodeVersions: mockGetNodeVersions };
 
@@ -31,7 +33,7 @@ function makeApp() {
 
 describe('nodes router', () => {
   beforeEach(() => {
-    mockListNodeRuns.mockReset();
+    mockListNodeTasks.mockReset();
     mockTriggerSingleNodeRun.mockReset();
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
@@ -40,13 +42,13 @@ describe('nodes router', () => {
     mockGetNodeVersions.mockReset();
   });
 
-  it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
-    mockListNodeRuns.mockImplementation((_req, cb) =>
+  it('GET /:svc/:schema/:table/runs returns the node\'s tasks under tasks', async () => {
+    mockListNodeTasks.mockImplementation((_req, cb) =>
       cb(null, {
-        runs: [
+        tasks: [
           {
             run_id: 'r1', schedule_name: 'daily', kind: 'cron',
-            terminal_status: 'succeeded', task_id: 't1',
+            run_status: 'succeeded', task_id: 't1',
             task_status: 'failed', attempt: 2,
             failure_class: 'user_code', failure_reason: 'compile_error',
             image_tag: 'v1',
@@ -62,19 +64,23 @@ describe('nodes router', () => {
 
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
     expect(res.status).toBe(200);
-    expect(res.body.runs).toHaveLength(1);
-    expect(res.body.runs[0].run_id).toBe('r1');
-    expect(res.body.runs[0].kind).toBe('cron');
+    expect(res.body).not.toHaveProperty('runs');
+    expect(res.body.tasks).toHaveLength(1);
+    expect(res.body.tasks[0].run_id).toBe('r1');
+    expect(res.body.tasks[0].kind).toBe('cron');
+    expect(res.body.tasks[0].run_status).toBe('succeeded');
+    expect(res.body.tasks[0].task_status).toBe('failed');
+    expect(res.body.tasks[0]).not.toHaveProperty('terminal_status');
     // The structured result key must survive the DTO reconstruction: this route
     // rebuilds each run field by field, so a new state field is dropped unless
     // it is mapped explicitly.
-    expect(res.body.runs[0].run_results_uri).toBe('run-results/task-executions/svc/schema/tbl/e1.json');
-    expect(res.body.runs[0].attempt).toBe(2);
-    expect(Object.keys(res.body.runs[0]).filter(k => k.startsWith('retry'))).toEqual([]);
-    expect(res.body.runs[0].failure_class).toBe('user_code');
-    expect(res.body.runs[0].failure_reason).toBe('compile_error');
-    expect(res.body.runs[0].operation).toBe('run');
-    expect(mockListNodeRuns).toHaveBeenCalledWith(
+    expect(res.body.tasks[0].run_results_uri).toBe('run-results/task-executions/svc/schema/tbl/e1.json');
+    expect(res.body.tasks[0].attempt).toBe(2);
+    expect(Object.keys(res.body.tasks[0]).filter(k => k.startsWith('retry'))).toEqual([]);
+    expect(res.body.tasks[0].failure_class).toBe('user_code');
+    expect(res.body.tasks[0].failure_reason).toBe('compile_error');
+    expect(res.body.tasks[0].operation).toBe('run');
+    expect(mockListNodeTasks).toHaveBeenCalledWith(
       { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'run' },
       expect.any(Function),
     );
@@ -84,13 +90,13 @@ describe('nodes router', () => {
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=bogus');
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid operation');
-    expect(mockListNodeRuns).not.toHaveBeenCalled();
+    expect(mockListNodeTasks).not.toHaveBeenCalled();
   });
 
   it('GET /:svc/:schema/:table/runs forwards operation=test to the state client', async () => {
-    mockListNodeRuns.mockImplementation((_req, cb) => cb(null, { runs: [] }));
+    mockListNodeTasks.mockImplementation((_req, cb) => cb(null, { tasks: [] }));
     await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=test');
-    expect(mockListNodeRuns).toHaveBeenCalledWith(
+    expect(mockListNodeTasks).toHaveBeenCalledWith(
       { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'test' },
       expect.any(Function),
     );
@@ -101,19 +107,19 @@ describe('nodes router', () => {
     ['full_refresh', 'full_refresh', 'full_refresh'],
     ['an unknown value from a newer backend', 'vacuum', 'vacuum'],
   ])('GET /:svc/:schema/:table/runs maps %s', async (_label, wire, want) => {
-    mockListNodeRuns.mockImplementation((_req, cb) =>
-      cb(null, { runs: [{ run_id: 'r3', schedule_name: 'x', kind: 'cron', operation: wire }] }),
+    mockListNodeTasks.mockImplementation((_req, cb) =>
+      cb(null, { tasks: [{ run_id: 'r3', schedule_name: 'x', kind: 'cron', operation: wire }] }),
     );
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
-    expect(res.body.runs[0].operation).toBe(want);
+    expect(res.body.tasks[0].operation).toBe(want);
   });
 
   it('GET /:svc/:schema/:table/runs defaults a run missing operation to "run"', async () => {
-    mockListNodeRuns.mockImplementation((_req, cb) =>
-      cb(null, { runs: [{ run_id: 'r2', schedule_name: 'x', kind: 'cron' }] }),
+    mockListNodeTasks.mockImplementation((_req, cb) =>
+      cb(null, { tasks: [{ run_id: 'r2', schedule_name: 'x', kind: 'cron' }] }),
     );
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
-    expect(res.body.runs[0].operation).toBe('run');
+    expect(res.body.tasks[0].operation).toBe('run');
   });
 
   it('POST /:svc/:schema/:table/run (latest mode) calls TriggerSingleNodeRun', async () => {
@@ -123,13 +129,13 @@ describe('nodes router', () => {
 
     const res = await request(makeApp())
       .post('/api/nodes/svc/schema/tbl/run')
-      .send({});
+      .send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(200);
     expect(res.body.run_id).toBe('new-r');
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       {
-        service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+        request_id: REQUEST_ID, service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
         metadata_source: 'latest', source_run_id: '', operation: '',
       },
       expect.any(Object),
@@ -144,10 +150,11 @@ describe('nodes router', () => {
 
     await request(makeApp())
       .post('/api/nodes/svc/schema/tbl/run')
-      .send({ source_run_id: 'src-run-id' });
+      .send({ request_id: REQUEST_ID, source_run_id: 'src-run-id' });
 
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({
+        request_id: REQUEST_ID,
         metadata_source: 'snapshot_of_run',
         source_run_id: 'src-run-id',
       }),
@@ -163,14 +170,14 @@ describe('nodes router', () => {
         nodes: [
           {
             service_name: 'svc', schema_name: 'an', table_name: 'fct',
-            run_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
+            task_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
             p95_duration_sec: 21, flaky_rate_pct: 4,
             last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
             operation: 'run', timeout_seconds: 28800, timeout_declared: true,
           },
           {
             service_name: 'svc', schema_name: 'an', table_name: 'dim',
-            run_count: 10, success_rate_pct: 90, avg_duration_sec: 5,
+            task_count: 10, success_rate_pct: 90, avg_duration_sec: 5,
             p95_duration_sec: 9, flaky_rate_pct: 0,
             last_status: '', last_run_at: '', operation: 'test',
           },
@@ -182,6 +189,8 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body.total_count).toBe(2);
     expect(res.body.nodes).toHaveLength(2);
+    expect(res.body.nodes[0].task_count).toBe(48);
+    expect(res.body.nodes[0]).not.toHaveProperty('run_count');
     expect(res.body.nodes[0].success_rate_pct).toBeNull(); // -1 -> null
     expect(res.body.nodes[0].avg_duration_sec).toBeNull();
     expect(res.body.nodes[0].p95_duration_sec).toBe(21);
@@ -264,7 +273,7 @@ describe('nodes router', () => {
 
     const res = await request(makeApp())
       .post('/api/nodes/svc/schema/tbl/run')
-      .send({ source_run_id: 'src-run-id' });
+      .send({ request_id: REQUEST_ID, source_run_id: 'src-run-id' });
 
     expect(res.status).toBe(404);
     expect(res.body.error).toContain('source run missing');
@@ -447,7 +456,7 @@ describe('nodes router', () => {
     mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
     );
-    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'build' });
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'build' });
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'build', metadata_source: 'latest' }),
       expect.any(Object),
@@ -459,7 +468,7 @@ describe('nodes router', () => {
     mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
       cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
     );
-    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'full_refresh' });
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'full_refresh' });
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'full_refresh', metadata_source: 'latest' }),
       expect.any(Object),
@@ -468,8 +477,30 @@ describe('nodes router', () => {
   });
 
   it('POST /run rejects a bad operation with 400', async () => {
-    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'nope' });
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID, operation: 'nope' });
     expect(res.status).toBe(400);
     expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no body', undefined],
+    ['an empty body', {}],
+    ['an empty request_id', { request_id: '' }],
+    ['a request_id that is not a UUID', { request_id: 'nope', operation: 'build' }],
+  ])('POST /run refuses a missing or malformed request_id with 400: %s', async (_label, body) => {
+    const req = request(makeApp()).post('/api/nodes/svc/schema/tbl/run');
+    const res = await (body === undefined ? req : req.send(body));
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'request_id must be a UUID' });
+    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+  });
+
+  it('POST /run maps ALREADY_EXISTS (request_id reused with different parameters) to 409', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb({ code: grpc.status.ALREADY_EXISTS, message: 'request_id reused with different parameters' }),
+    );
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ request_id: REQUEST_ID });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/request_id reused/);
   });
 });

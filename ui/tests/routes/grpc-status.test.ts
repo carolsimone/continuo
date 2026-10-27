@@ -15,6 +15,10 @@ describe('grpcToHttpStatus', () => {
     expect(grpcToHttpStatus(grpc.status.FAILED_PRECONDITION)).toBe(409);
   });
 
+  it('maps ALREADY_EXISTS (a request_id reused with different parameters) to 409', () => {
+    expect(grpcToHttpStatus(grpc.status.ALREADY_EXISTS)).toBe(409);
+  });
+
   it('maps INTERNAL to 500', () => {
     expect(grpcToHttpStatus(grpc.status.INTERNAL)).toBe(500);
   });

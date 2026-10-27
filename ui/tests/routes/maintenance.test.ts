@@ -27,8 +27,8 @@ function gatedApp(enabled: boolean) {
 
 const GATED = [
   '/api/schedules/daily/trigger',
-  '/api/schedulers/abc/rerun',
-  '/api/schedulers/abc/rebase',
+  '/api/runs/abc/rerun',
+  '/api/runs/abc/rebase',
   '/api/nodes/svc/sch/tbl/run',
   '/api/v1/releases',
   '/api/releases/r1/retry-remediation',
@@ -44,11 +44,11 @@ describe('maintenanceGate', () => {
     expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });
   });
   it.each([
-    ['POST', '/api/schedules/daily/cancel'],
+    ['POST', '/api/runs/abc/cancel'],
     ['POST', '/api/remediation/proposals/p1/pull-request'],
     ['GET', '/api/schedules'],
     ['GET', '/api/v1/releases/r1'],
-    ['GET', '/api/schedulers/abc/rebase-preview'],
+    ['GET', '/api/runs/abc/rebase-preview'],
   ])('lets %s %s through', async (method, path) => {
     const res = await (method === 'GET' ? request(gatedApp(true)).get(path) : request(gatedApp(true)).post(path).send({}));
     expect(res.status).toBe(200);

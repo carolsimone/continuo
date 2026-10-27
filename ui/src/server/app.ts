@@ -1,11 +1,10 @@
 import express from 'express';
 import { GrpcClient } from './clients/grpc-client';
 import { GrpcGraphClient } from './clients/grpc-graph-client';
-import { createSchedulersRouter } from './routes/schedulers';
+import { createRunsRouter } from './routes/runs';
 import { createNodesRouter } from './routes/nodes';
-import { createSchedulesRouter, createRunsRouter } from './routes/schedules';
+import { createSchedulesRouter } from './routes/schedules';
 import { createAttemptsRouter } from './routes/attempts';
-import { createTaskExecutionRouter } from './routes/task-execution';
 import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
 import { createTopologyRouter } from './routes/topology';
@@ -52,13 +51,11 @@ export function createApp(
   // guards so an unauthenticated caller still gets its 401.
   app.use('/api', maintenanceGate(maintenanceEnabled));
 
-  app.use('/api/schedulers', createSchedulersRouter(client));
-  app.use('/api/nodes', createNodesRouter(client, graphClient));
-  app.use('/api/schedules', createSchedulesRouter(client, graphClient));
   app.use('/api/runs', createRunsRouter(client));
-  app.use('/api/schedulers', createAttemptsRouter(client));
-  app.use('/api/task-execution', createTaskExecutionRouter());
-  app.use('/api/topology', createTopologyRouter(graphClient));
+  app.use('/api/nodes', createNodesRouter(client, graphClient));
+  app.use('/api/schedules', createSchedulesRouter(client));
+  app.use('/api/attempts', createAttemptsRouter());
+  app.use('/api/topology', createTopologyRouter(client));
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled, maintenanceEnabled));
   const releaseClient = createReleaseClient(releaseControllerUrl);
