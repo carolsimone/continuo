@@ -68,6 +68,17 @@ describe('GET /api/schedules', () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/state down/);
   });
+
+  it('maps the gRPC status of a refused read', async () => {
+    mockListSchedules.mockImplementation((_req: any, cb: any) =>
+      cb(Object.assign(new Error('bad request'), { code: grpc.status.INVALID_ARGUMENT }))
+    );
+
+    const res = await request(app).get('/api/schedules');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/bad request/);
+  });
 });
 
 describe('GET /api/schedules/:name/runs', () => {
@@ -94,6 +105,17 @@ describe('GET /api/schedules/:name/runs', () => {
         created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
     ]);
     expect(res.body.total_count).toBe(2);
+  });
+
+  it('answers 400 when state refuses the request as INVALID_ARGUMENT', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) =>
+      cb(Object.assign(new Error('schedule_name is required'), { code: grpc.status.INVALID_ARGUMENT }))
+    );
+
+    const res = await request(app).get('/api/schedules/daily/runs');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/schedule_name is required/);
   });
 
   it('forwards limit and offset as page_size and page_offset and returns the total', async () => {

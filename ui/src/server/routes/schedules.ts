@@ -19,7 +19,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   // GET /api/schedules — every schedule with its cron and its last run
   router.get('/', (_req, res) => {
     client.listSchedules({}, (err: any, response: any) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       const schedules = (response.schedules || []).map((s: any) => ({
         schedule_name: s.schedule_name,
         cron_expression: s.cron_expression,
@@ -61,7 +61,7 @@ export function createSchedulesRouter(client: GrpcClient) {
       page_offset: parseOffset(req.query.offset),
     };
     client.listRuns(request, (err: any, resp: any) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       const runs = (resp.runs || []).map((r: any) => ({
         run_id: r.run_id,
         schedule_name: r.schedule_name,
