@@ -63,7 +63,7 @@ describe('SchedulerCard progress', () => {
   it('reports the complete task total across pages, not just the first page', async () => {
     render(
       <MemoryRouter>
-        <SchedulerCard schedule={baseSchedule()} />
+        <SchedulerCard schedule={baseSchedule()} onRunChanged={() => {}} />
       </MemoryRouter>
     );
 

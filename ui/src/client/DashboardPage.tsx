@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyListResponse } from './types';
 import SchedulerCard from './SchedulerCard';
 import SnapshotTile from './SnapshotTile';
@@ -18,21 +18,32 @@ export default function DashboardPage() {
   const [nodeTotal, setNodeTotal] = useState(0);
   const [openPrCount, setOpenPrCount] = useState(0);
 
-  useEffect(() => {
-    const fetch_ = () =>
-      fetch('/api/schedules')
-        .then(r => r.json())
-        .then((data: SchedulesResponse) => {
-          setSchedules(data.schedules || []);
-          setLoaded(true);
-          setError(null);
-        })
-        .catch(e => setError(e.message));
-
-    fetch_();
-    const id = setInterval(fetch_, 5000);
-    return () => clearInterval(id);
+  // Reads of /api/schedules are numbered as they are sent. An answer is shown
+  // only when no later read has been shown already: a poll that was in flight
+  // when a card asked for a fresh read (after a trigger or a cancel) can answer
+  // after that read, and must not put back the state from before the action.
+  const schedulesSent = useRef(0);
+  const schedulesShown = useRef(0);
+  const loadSchedules = useCallback(() => {
+    const seq = ++schedulesSent.current;
+    const isStale = () => seq < schedulesShown.current;
+    fetch('/api/schedules')
+      .then(r => r.json())
+      .then((data: SchedulesResponse) => {
+        if (isStale()) return;
+        schedulesShown.current = seq;
+        setSchedules(data.schedules || []);
+        setLoaded(true);
+        setError(null);
+      })
+      .catch(e => { if (!isStale()) setError(e.message); });
   }, []);
+
+  useEffect(() => {
+    loadSchedules();
+    const id = setInterval(loadSchedules, 5000);
+    return () => clearInterval(id);
+  }, [loadSchedules]);
 
   useEffect(() => {
     const fetch_ = () =>
@@ -103,7 +114,7 @@ export default function DashboardPage() {
               <p className="empty">No schedules found.</p>
             )}
             {schedules.map(s => (
-              <SchedulerCard key={s.schedule_name} schedule={s} />
+              <SchedulerCard key={s.schedule_name} schedule={s} onRunChanged={loadSchedules} />
             ))}
           </>
         )}

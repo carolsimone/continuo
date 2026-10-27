@@ -1,9 +1,9 @@
 import { Task } from './types';
 
-// A task is done once it has ended. A stopping task has not: its Job is still
-// being deleted.
+// A task is done once it has ended: it succeeded, failed, was skipped or was
+// cancelled. A stopping task has not ended: its Job is still being deleted.
 function isTerminalStatus(status: string): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+  return status === 'succeeded' || status === 'failed' || status === 'skipped' || status === 'cancelled';
 }
 
 export function getCompletedCount(tasks: Task[]): number {

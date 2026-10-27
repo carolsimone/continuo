@@ -26,6 +26,12 @@ describe('scheduler card helpers', () => {
     expect(getScheduleProgressLabel(tasks)).toBe('Completed: 2/3');
   });
 
+  it('counts a skipped task as completed, so a failed run whose failure skipped the tasks below it reads 100%', () => {
+    const tasks = [makeTask('succeeded', 'a'), makeTask('failed', 'b'), makeTask('skipped', 'c'), makeTask('skipped', 'd')];
+    expect(getScheduleProgressLabel(tasks)).toBe('Completed: 4/4');
+    expect(getScheduleProgressPercent(tasks)).toBe(100);
+  });
+
   it('shows completed nodes out of total instead of running nodes', () => {
     const tasks = [
       makeTask('succeeded', 'a'),
