@@ -74,7 +74,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 
 // cleanupK8s removes test jobs from Kubernetes
 func cleanupK8s(t *testing.T, ctx context.Context) {
-	// Use the run-id label to match what execution-controller actually creates
+	// Delete every Job execution-controller creates for a task, by its app=dbt-job label
 	cmd := exec.CommandContext(ctx, "kubectl", "delete", "jobs",
 		"-n", "default",
 		"-l", "app=dbt-job",

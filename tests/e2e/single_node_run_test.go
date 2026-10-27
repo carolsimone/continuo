@@ -86,12 +86,12 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	require.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node run")
 
 	// Assert image_tag is populated.
-	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, runID)
+	imageTag := queryFirstTaskImageTag(t, clients.stateDB, runID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be non-empty")
 	t.Logf("tasks image_tag=%s", imageTag)
 
 	// Assert the run's kind is "single_node_run".
-	runKind := queryPostgresTrackerKind(t, clients.stateDB, runID)
+	runKind := queryRunKind(t, clients.stateDB, runID)
 	assert.Equal(t, "single_node_run", runKind, "runs.kind must be 'single_node_run'")
 
 	// Assert the run has no source run (latest mode has none).

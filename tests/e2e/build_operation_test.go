@@ -205,7 +205,7 @@ func TestBuildOperationRerun(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err, "rerun run_id must be a valid UUID")
 
-	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
 	t.Log("Waiting for rerun tasks rows to materialise...")

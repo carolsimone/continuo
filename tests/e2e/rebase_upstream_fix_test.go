@@ -294,7 +294,7 @@ func triggerRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, 
 	assert.Equal(t, failureTestScheduleName, resp.GetScheduleName())
 	t.Logf("Rebase run created: run_id=%s include_changed_upstream=%v", runID, includeChangedUpstream)
 
-	assert.Equal(t, "rebase", queryPostgresTrackerKind(t, clients.stateDB, runID))
+	assert.Equal(t, "rebase", queryRunKind(t, clients.stateDB, runID))
 	assert.Equal(t, source.String(), queryRunSourceRunID(t, clients, runID))
 	assert.Equal(t, runStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, readRunStamp(t, ctx, clients, runID),
 		"a rebase runs on the live release")

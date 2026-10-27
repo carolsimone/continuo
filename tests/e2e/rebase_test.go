@@ -65,11 +65,11 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	t.Logf("Rebase run created: run_id=%s schedule_name=%s", newRunID, rebaseResp.ScheduleName)
 
 	// ── Source row stays unchanged ──────────────────────────────────────────
-	srcKind := queryPostgresTrackerKind(t, clients.stateDB, srcID)
+	srcKind := queryRunKind(t, clients.stateDB, srcID)
 	assert.Equal(t, "cron", srcKind, "source row must NOT mutate — kind stays 'cron'")
 
 	// ── New run row: kind='rebase', source_run_id=src ───────────────────────
-	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rebase", newKind, "new run must have kind='rebase'")
 
 	var newSourceRunID *uuid.UUID

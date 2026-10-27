@@ -81,10 +81,10 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// ── Audit fields: the run's kind and its tasks' images are stored ──
 	t.Log("Verifying audit fields (kind, image_tag)...")
 
-	trackerKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	trackerKind := queryRunKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", trackerKind, "runs.kind must be cron after fresh activation")
 
-	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, schedulerID)
+	imageTag := queryFirstTaskImageTag(t, clients.stateDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be populated")
 
 	t.Log("✅ audit assertions passed")

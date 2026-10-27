@@ -174,7 +174,7 @@ func TestRunTableRepository_GetByID(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err, "Failed to get run")
-	require.NotNil(t, retrieved, "Retrieved runRow is nil")
+	require.NotNil(t, retrieved, "Retrieved run is nil")
 	assert.Equal(t, scheduleID, retrieved.ScheduleID)
 	assert.Equal(t, "test-schedule-get", retrieved.ScheduleName)
 	assert.Equal(t, run.RunStatusRunning, retrieved.Status)
@@ -195,7 +195,7 @@ func TestRunTableRepository_GetByID_NotFound(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, postgres.ErrNotFound, "Expected ErrNotFound")
-	assert.Nil(t, retrieved, "Expected nil runRow")
+	assert.Nil(t, retrieved, "Expected nil run")
 }
 
 // TestRunTableRepository_Create_WithNullableFields tests creating with nullable fields
@@ -362,7 +362,7 @@ func TestRunTableRepository_GetActiveRun(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
-	t.Run("returns runRow when pending run exists", func(t *testing.T) {
+	t.Run("returns the run when a pending run exists", func(t *testing.T) {
 		schedID := uuid.New()
 		runRow := &postgres.RunRow{
 			ScheduleID:           schedID,
@@ -380,7 +380,7 @@ func TestRunTableRepository_GetActiveRun(t *testing.T) {
 		assert.Equal(t, run.RunStatusPending, result.Status)
 	})
 
-	t.Run("returns runRow when running run exists", func(t *testing.T) {
+	t.Run("returns the run when a running run exists", func(t *testing.T) {
 		schedID := uuid.New()
 		runRow := &postgres.RunRow{
 			ScheduleID:           schedID,

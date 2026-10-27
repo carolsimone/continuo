@@ -75,10 +75,10 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err)
 
-	sourceKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	sourceKind := queryRunKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", sourceKind, "source row must NOT be mutated")
 
-	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
 	t.Log("Waiting for rerun tasks rows to materialise...")

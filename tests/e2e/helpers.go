@@ -440,9 +440,9 @@ func jobStartTimeout(t *testing.T, ctx context.Context) time.Duration {
 	return 0
 }
 
-// queryPostgresTrackerKind returns runs.kind for a run identified by
-// its schedule_id.
-func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
+// queryRunKind returns runs.kind for a run identified by
+// its run_id.
+func queryRunKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
 	var kind string
 	require.NoError(t, db.GetContext(context.Background(), &kind,
@@ -482,10 +482,10 @@ func countRunsOfKind(t *testing.T, clients *testClients, kind string) int {
 	return n
 }
 
-// queryFirstTaskTrackerImageTag returns the image_tag of any tasks row
-// for the given schedule_id, so assertions can verify the per-task image is
+// queryFirstTaskImageTag returns the image_tag of any tasks row
+// of the given run, so assertions can verify the per-task image is
 // populated after a successful run.
-func queryFirstTaskTrackerImageTag(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
+func queryFirstTaskImageTag(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
 	var imageTag string
 	require.NoError(t, db.GetContext(context.Background(), &imageTag,

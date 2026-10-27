@@ -190,14 +190,14 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	dailyRun := findRunByName(runRows, "daily")
 	hourlyRun := findRunByName(runRows, "hourly")
 
-	require.NotNil(t, dailyRun, "Expected to find daily schedule runRow")
-	require.NotNil(t, hourlyRun, "Expected to find hourly schedule runRow")
+	require.NotNil(t, dailyRun, "Expected to find daily schedule run")
+	require.NotNil(t, hourlyRun, "Expected to find hourly schedule run")
 
 	assert.Equal(t, run.RunStatusRunning, dailyRun.Status)
 	assert.Equal(t, run.RunStatusRunning, hourlyRun.Status)
 
-	t.Logf("Found daily runRow: %s (status: %s)", dailyRun.ScheduleID, dailyRun.Status)
-	t.Logf("Found hourly runRow: %s (status: %s)", hourlyRun.ScheduleID, hourlyRun.Status)
+	t.Logf("Found daily run: %s (status: %s)", dailyRun.ScheduleID, dailyRun.Status)
+	t.Logf("Found hourly run: %s (status: %s)", hourlyRun.ScheduleID, hourlyRun.Status)
 
 	// Test 2: Verify Redis stream events exist (published by OutboxProcessor)
 	t.Log("Verifying Redis stream events...")
@@ -249,9 +249,9 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotNil(t, hourlyEvent, "Expected to find hourly event in Redis")
 
 	assert.Equal(t, dailyRun.ScheduleID.String(), dailyEvent.RunID,
-		"Daily runRow run_id should match the dispatch's run_id")
+		"Daily run's run_id should match the dispatch's run_id")
 	assert.Equal(t, hourlyRun.ScheduleID.String(), hourlyEvent.RunID,
-		"Hourly runRow run_id should match the dispatch's run_id")
+		"Hourly run's run_id should match the dispatch's run_id")
 
 	t.Log("E2E test passed: run records match Redis events")
 
@@ -276,7 +276,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	t.Log("Duplicate run prevention working correctly")
 }
 
-// findRunByName finds a scheduler runRow by schedule_name
+// findRunByName finds a run by schedule_name
 func findRunByName(runRows []postgres.RunRow, name string) *postgres.RunRow {
 	for _, runRow := range runRows {
 		if runRow.ScheduleName == name {

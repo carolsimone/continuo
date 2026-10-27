@@ -251,7 +251,7 @@ func (r *runTableRepository) GetByID(ctx context.Context, runID uuid.UUID) (*Run
 	err := r.db.GetContext(ctx, &row, query, runID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			r.logger.Debug("Scheduler row not found",
+			r.logger.Debug("Run not found",
 				"run_id", runID,
 			)
 			return nil, ErrNotFound
@@ -435,7 +435,7 @@ func (r *runTableRepository) UpdateInitializationStatusTx(ctx context.Context, t
 	return nil
 }
 
-// SetTotalTaskCountTx sets total_task_count for the given schedule.
+// SetTotalTaskCountTx sets total_task_count for the given run.
 func (r *runTableRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE runs
@@ -511,7 +511,7 @@ func (r *runTableRepository) LoadByIDForUpdateTx(ctx context.Context, tx *sqlx.T
 	return &row, nil
 }
 
-// UpdateStatusTx updates the status column for the given schedule within a transaction.
+// UpdateStatusTx updates the status column of the given run within a transaction.
 func (r *runTableRepository) UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error {
 	res, err := tx.ExecContext(ctx,
 		`UPDATE runs SET status = $2 WHERE run_id = $1`,

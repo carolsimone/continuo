@@ -59,7 +59,7 @@ type TaskRepository interface {
 	// dispatched, queued, running or stopping, or is pending and waits for a
 	// node lease whose holder is one of those.
 	HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) (bool, error)
-	// HasFailedTaskTx reports whether any task for the given schedule has status
+	// HasFailedTaskTx reports whether any task of the given run has status
 	// 'failed' or 'cancelled'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) (bool, error)
 	// HasNonSucceededTask returns true iff at least one task for the given run_id
@@ -159,7 +159,7 @@ func (r *taskRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*TaskRo
 	err := r.db.GetContext(ctx, &task, taskReadQuery+` WHERE t.task_id = $2`, r.tenantID, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			r.logger.Debug("Task runRow not found",
+			r.logger.Debug("Task not found",
 				"task_id", taskID,
 			)
 			return nil, ErrNotFound
@@ -236,7 +236,7 @@ func (r *taskRepository) GetByRunAndNode(ctx context.Context, runID uuid.UUID, s
 		r.tenantID, runID, serviceName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			r.logger.Debug("Task runRow not found by schedule and node",
+			r.logger.Debug("Task not found by run and node",
 				"run_id", runID,
 				"service_name", serviceName,
 				"schema_name", schemaName,
@@ -244,7 +244,7 @@ func (r *taskRepository) GetByRunAndNode(ctx context.Context, runID uuid.UUID, s
 			)
 			return nil, ErrNotFound
 		}
-		r.logger.Error("Failed to get task by schedule and node",
+		r.logger.Error("Failed to get task by run and node",
 			"run_id", runID,
 			"service_name", serviceName,
 			"error", err,
@@ -252,7 +252,7 @@ func (r *taskRepository) GetByRunAndNode(ctx context.Context, runID uuid.UUID, s
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
 
-	r.logger.Debug("Retrieved task by schedule and node",
+	r.logger.Debug("Retrieved task by run and node",
 		"task_id", task.TaskID,
 		"run_id", runID,
 		"status", task.Status,
@@ -494,7 +494,7 @@ func (r *taskRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, run
 	return exists, nil
 }
 
-// HasFailedTaskTx reports whether any task row for the given schedule
+// HasFailedTaskTx reports whether any task row of the given run
 // has status 'failed' or 'cancelled': a task that ended unsuccessfully (pending
 // and running tasks do not match), so its run finalizes failed.
 func (r *taskRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) (bool, error) {

@@ -236,7 +236,7 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	require.NotNil(t, got.SourceRunID)
 	assert.Equal(t, sourceRunID, *got.SourceRunID)
 
-	// Default kind for a runRow constructed without setting Kind.
+	// Default kind for a RunRow constructed without setting Kind.
 	defaultRun := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "kdf-" + shortSuffix(),

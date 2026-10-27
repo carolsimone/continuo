@@ -102,7 +102,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	t.Logf("Phase 3 complete: fresh run triggered (run_id=%s)", freshID)
 
 	// ── Phase 4: Verify fresh run completes ───────────────────────────────────
-	// Verify by schedule_id — two runs share the same schedule_name in the DB,
+	// Verify by run_id — two runs share the same schedule_name in the DB,
 	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
 	verifyRootNodesDispatched(t, ctx, dispatchTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})

@@ -7,14 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// oldRunNames matches the names that must not remain in the state schema: the
-// two retired table names, the retired run key column and the retired progress
-// clock column.
+// oldRunNames matches the table and column names no object of the state
+// schema may carry: scheduler_tracker, task_tracker, schedule_id and
+// last_heartbeat_at.
 const oldRunNames = `scheduler_tracker|task_tracker|schedule_id|last_heartbeat_at`
 
-// No constraint, index, trigger, function or column of the state schema is
-// named after a retired run table or column, and none of their definitions
-// refers to one.
+// No constraint, index, trigger, function, table or column of the state
+// schema matches oldRunNames, by name or in its definition.
 func TestRunNamesSchema_NoObjectNamesTheOldTables(t *testing.T) {
 	db := newTestDB(t)
 
@@ -70,8 +69,9 @@ func TestRunNamesSchema_RunsAndTasksExist(t *testing.T) {
 	}
 }
 
-// The constraints and indexes of the run tables are named after runs and
-// tasks.
+// Every constraint and index of the run tables that carries a table-derived
+// name is named after runs or tasks. The lists are the full set of such names;
+// an object a later migration adds to either table does not disturb them.
 func TestRunNamesSchema_ObjectsTakeTheNewNames(t *testing.T) {
 	db := newTestDB(t)
 
@@ -80,13 +80,20 @@ func TestRunNamesSchema_ObjectsTakeTheNewNames(t *testing.T) {
 		SELECT conname FROM pg_constraint c
 		  JOIN pg_namespace n ON n.oid = c.connamespace
 		 WHERE n.nspname = 'public' AND conrelid IN ('public.runs'::regclass, 'public.tasks'::regclass)`))
-	assert.Subset(t, constraints, []string{"runs_pkey", "tasks_pkey", "tasks_run_id_fkey"})
+	assert.Subset(t, constraints, []string{
+		"runs_pkey", "runs_failure_reason_check", "runs_initialization_status_check", "runs_kind_check",
+		"runs_operation_check", "runs_status_check",
+		"tasks_pkey", "tasks_run_id_fkey", "tasks_operation_check", "tasks_status_check", "tasks_wait_reason_check",
+	})
 
 	var indexes []string
 	require.NoError(t, db.Select(&indexes, `
 		SELECT indexname FROM pg_indexes
 		 WHERE schemaname = 'public' AND tablename IN ('runs', 'tasks')`))
 	assert.Subset(t, indexes, []string{
-		"uq_runs_active_per_schedule", "idx_runs_kind", "idx_tasks_lease_waiters", "uq_tasks_run_node",
+		"runs_pkey", "idx_runs_finalization", "idx_runs_init_status", "idx_runs_kind", "idx_runs_release_id",
+		"idx_runs_schedule_name_created", "idx_runs_source_run_id", "uq_runs_active_per_schedule",
+		"tasks_pkey", "idx_tasks_inherited_from", "idx_tasks_job_name", "idx_tasks_lease_waiters",
+		"idx_tasks_node_identity", "idx_tasks_run_id", "uq_tasks_run_node",
 	})
 }
