@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
+import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary, Task } from '../../src/client/types';
@@ -350,18 +351,46 @@ describe('SchedulerCard — request id', () => {
   });
 
   it('requestId: a press after the server answered mints a new id', async () => {
-    const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }, { ok: true, body: { run_id: 'r3' } }]);
-    renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+    // The success cue disables the button for 3 s; fake that timer so the test
+    // does not wait for it.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const ids = installTrigger([{ ok: true, body: { run_id: 'r2' } }, { ok: true, body: { run_id: 'r3' } }]);
+      renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+      const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
-    await waitFor(() => expect(ids).toHaveLength(1));
-    // The success cue keeps the button disabled for a moment; wait for it to settle.
-    await waitFor(() => expect(screen.getByTitle('Trigger a full DAG run')).toHaveTextContent(/trigger run/i), { timeout: 4000 });
-    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await flush();
+      expect(ids).toHaveLength(1);
+      expect(screen.getByTitle('Trigger a full DAG run')).toHaveTextContent('Triggered');
+      await act(async () => { vi.advanceTimersByTime(3000); });
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await flush();
 
-    await waitFor(() => expect(ids).toHaveLength(2));
-    expect(ids[1]).toMatch(UUID);
-    expect(ids[1]).not.toBe(ids[0]);
+      expect(ids).toHaveLength(2);
+      expect(ids[1]).toMatch(UUID);
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
+      renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+      await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
+      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('requestId: changing the operation mints a new id', async () => {

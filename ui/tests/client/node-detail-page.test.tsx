@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
@@ -851,7 +852,7 @@ describe('NodeDetailPage full refresh', () => {
 describe('NodeDetailPage — request id', () => {
   // Answers each run POST with the next reply (a rejection for a request that
   // got no answer) and returns the request ids the POSTs carried.
-  function installRun(replies: Array<'timeout' | { status: number; body: unknown }>) {
+  function installRun(replies: Array<'timeout' | { status: number; body: unknown }>, history: unknown[] = []) {
     const ids: string[] = [];
     let n = 0;
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -862,7 +863,7 @@ describe('NodeDetailPage — request id', () => {
         if (reply === 'timeout') return Promise.reject(new Error('timeout'));
         return jsonResp(reply.body, reply.status);
       }
-      return jsonResp({ tasks: [] });
+      return jsonResp({ tasks: history });
     });
     return ids;
   }
@@ -887,6 +888,41 @@ describe('NodeDetailPage — request id', () => {
 
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a press that asks for another snapshot after a timeout mints a new id', async () => {
+    const ids = installRun(
+      ['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }],
+      [mkRun({ run_id: 'pick-me' })],
+    );
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }]);
+      renderPage();
+
+      fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+      await screen.findByText('Request failed — please try again');
+      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('requestId: a press after the server answered mints a new id', async () => {

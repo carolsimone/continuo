@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 // newRequestId mints a version 4 UUID. crypto.randomUUID exists only in a
 // secure context (https or localhost), so a page served over plain http mints
@@ -20,22 +20,61 @@ export function settlesRequest(res: { ok: boolean; status: number }): boolean {
   return res.ok || res.status < 500;
 }
 
+// A request id stays valid for a retry only while the first send may still be
+// in flight or lost in transit. A send made longer ago than this (more than
+// any request timeout between the browser and state) is settled by now, so a
+// press that finds the id this old starts a new action with a new id.
+export const REQUEST_ID_IN_DOUBT_MS = 2 * 60 * 1000;
+
 export interface ActionRequestId {
-  // The request id every send of the current action carries. Run-creating
-  // commands run once per request id, so a send that is repeated with the
-  // same id returns the run the first send made instead of making another.
+  // The id a dialog sends for its whole lifetime: run-creating commands run
+  // once per request id, so a send repeated with the same id returns the run
+  // the first send made instead of making another.
   id: string;
   // renew mints the id of the next action. It is stable across renders.
   renew: () => void;
+  // take returns the id for a press made now. It is the current id when this
+  // press repeats the one already sent (the same fingerprint, within
+  // REQUEST_ID_IN_DOUBT_MS), and a new id otherwise: a press with other
+  // parameters, or one so late that the earlier send has long since settled,
+  // is another action. It is stable across renders.
+  take: (fingerprint?: string) => string;
+}
+
+interface Sent {
+  id: string;
+  at: number | null;
+  fingerprint: string;
 }
 
 // useActionRequestId holds the request id of one user action. The id is
 // minted when the component mounts and kept across re-renders, so a retry
 // (the same press repeated after a timeout, or a dialog submitted again)
-// sends the id the first try sent. A component calls renew once the action
-// has ended or what it asks for has changed, so the next press sends a new id.
+// sends the id the first try sent. A component calls renew once the server
+// has given its final answer, so the next press sends a new id.
 export function useActionRequestId(): ActionRequestId {
   const [id, setId] = useState(newRequestId);
-  const renew = useCallback(() => setId(newRequestId()), []);
-  return { id, renew };
+  const sent = useRef<Sent | null>(null);
+  if (sent.current === null) sent.current = { id, at: null, fingerprint: '' };
+
+  const renew = useCallback(() => {
+    const next = newRequestId();
+    sent.current = { id: next, at: null, fingerprint: '' };
+    setId(next);
+  }, []);
+
+  const take = useCallback((fingerprint = '') => {
+    const cur = sent.current as Sent;
+    if (cur.at !== null && (cur.fingerprint !== fingerprint || Date.now() - cur.at > REQUEST_ID_IN_DOUBT_MS)) {
+      renew();
+    }
+    const next = sent.current as Sent;
+    if (next.at === null) {
+      next.at = Date.now();
+      next.fingerprint = fingerprint;
+    }
+    return next.id;
+  }, [renew]);
+
+  return { id, renew, take };
 }

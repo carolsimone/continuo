@@ -4,6 +4,7 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter, Routes, Route } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
 import { TaskAttempt } from '../../src/client/types';
+import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 
 // The `url` argument lets a route handler inspect query params (e.g. `offset`)
 // to serve a distinct page per request. Existing handlers that ignore the
@@ -397,6 +398,33 @@ describe('DetailPage — Trigger run topbar button', () => {
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[0]).toMatch(UUID);
     expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('DetailPage trigger: a press long after an unanswered one is a new action with a new id', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+      await screen.findByText('Request failed — please try again');
+      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).not.toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('disables the topbar Trigger run button while a run is live', async () => {

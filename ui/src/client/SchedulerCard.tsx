@@ -42,11 +42,11 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
-  // The trigger button's request id: a press that gets no answer is repeated
-  // with the same id, so the run the first press made is returned rather than
-  // made twice. The id is renewed once the server has given its final answer
-  // and when the operation changes, since another operation is another request.
-  const { id: triggerId, renew: renewTriggerId } = useActionRequestId();
+  // The trigger button's request id: a press that gets no answer and is
+  // repeated soon after, for the same operation, sends the same id, so the run
+  // the first press made is returned rather than made twice. The id is
+  // renewed once the server has given its final answer.
+  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
 
   // Reads the run's tasks now and every 5 s after. A change of run or a bump
   // of tasksReload starts the reads over; the reads already in flight are
@@ -139,7 +139,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_id: triggerId, operation: operation === 'run' ? '' : operation }),
+      body: JSON.stringify({ request_id: takeRequestId(operation), operation: operation === 'run' ? '' : operation }),
     })
       .then(async r => {
         if (settlesRequest(r)) renewTriggerId();
@@ -222,7 +222,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
               id={`op-${schedule.schedule_name}`}
               value={operation}
               disabled={schedule.has_active_run || triggerLoading}
-              onChange={e => { setOperation(e.target.value as RunOperation); renewTriggerId(); }}
+              onChange={e => setOperation(e.target.value as RunOperation)}
             >
               <option value="run">Run</option>
               <option value="test">Test</option>

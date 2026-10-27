@@ -106,11 +106,11 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
-  // The trigger button's request id: a press that gets no answer is repeated
-  // with the same id, so the run the first press made is returned rather than
-  // made twice. The id is renewed once the server has given its final answer
-  // and when the page opens another schedule.
-  const { id: triggerId, renew: renewTriggerId } = useActionRequestId();
+  // The trigger button's request id: a press that gets no answer and is
+  // repeated soon after, for the same schedule, sends the same id, so the run
+  // the first press made is returned rather than made twice. The id is
+  // renewed once the server has given its final answer.
+  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
@@ -140,7 +140,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setSelectedNodeId(null);
     setExpandedServices(new Set());
     setGraphState('loading');
-    renewTriggerId();
     if (!name || hintedLastRunId !== undefined) return;
 
     let cancelled = false;
@@ -368,7 +367,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request_id: triggerId }),
+        body: JSON.stringify({ request_id: takeRequestId(name) }),
       });
       if (settlesRequest(res)) renewTriggerId();
       if (res.ok) {
@@ -383,7 +382,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       setTriggerError('Request failed — please try again');
       setTriggerState('error');
     }
-  }, [name, triggerId, renewTriggerId]);
+  }, [name, takeRequestId, renewTriggerId]);
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 

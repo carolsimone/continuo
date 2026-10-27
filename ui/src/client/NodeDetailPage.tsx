@@ -120,14 +120,11 @@ export default function NodeDetailPage() {
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
   // The request id of the node run being asked for: a press that gets no
-  // answer is repeated with the same id, so the run the first press made is
-  // returned rather than made twice. The id is renewed once the server has
-  // given its final answer and when what is asked for changes (the
-  // operation, the node).
-  const { id: runRequestId, renew: renewRunRequestId } = useActionRequestId();
-
-  // Another node is another request.
-  useEffect(() => { renewRunRequestId(); }, [fqn, renewRunRequestId]);
+  // answer and is repeated soon after, with the same node, operation and
+  // source, sends the same id, so the run the first press made is returned
+  // rather than made twice. The id is renewed once the server has given its
+  // final answer.
+  const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -223,7 +220,8 @@ export default function NodeDetailPage() {
     setRunError(null);
     try {
       const op = opOverride ?? operation;
-      const withOp = { ...body, request_id: runRequestId, operation: op === 'run' ? '' : op };
+      const asked = { ...body, operation: op === 'run' ? '' : op };
+      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`) };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
@@ -242,7 +240,7 @@ export default function NodeDetailPage() {
       setRunError('Request failed — please try again');
       setRunState('error');
     }
-  }, [service, schema, table, fetchRuns, operation, runRequestId, renewRunRequestId]);
+  }, [service, schema, table, fetchRuns, operation, takeRequestId, renewRunRequestId]);
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {
@@ -335,7 +333,7 @@ export default function NodeDetailPage() {
             id="node-operation"
             value={operation}
             disabled={runState === 'loading'}
-            onChange={e => { setOperation(e.target.value as NodeOperation); renewRunRequestId(); }}
+            onChange={e => setOperation(e.target.value as NodeOperation)}
           >
             <option value="run">Run</option>
             <option value="test">Test</option>

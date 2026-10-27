@@ -2,12 +2,13 @@
 import { StrictMode, createElement, type ReactNode } from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { newRequestId, settlesRequest, useActionRequestId } from '../../src/client/request-id';
+import { REQUEST_ID_IN_DOUBT_MS, newRequestId, settlesRequest, useActionRequestId } from '../../src/client/request-id';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('requestId', () => {
@@ -52,6 +53,53 @@ describe('requestId', () => {
     const renew = result.current.renew;
     act(() => renew());
     expect(result.current.renew).toBe(renew);
+  });
+
+  describe('take', () => {
+    it('requestId: a quick press after an unanswered one is a retry and gets the same id', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('daily');
+
+      vi.advanceTimersByTime(REQUEST_ID_IN_DOUBT_MS - 1);
+
+      expect(result.current.take('daily')).toBe(first);
+    });
+
+    it('requestId: a press after the in-doubt window starts a new action with a new id', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('daily');
+
+      vi.advanceTimersByTime(REQUEST_ID_IN_DOUBT_MS + 1);
+      const later = result.current.take('daily');
+
+      expect(later).toMatch(UUID);
+      expect(later).not.toBe(first);
+      // The new id is itself retryable from then on.
+      expect(result.current.take('daily')).toBe(later);
+    });
+
+    it('requestId: a press that asks for something else gets a new id', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('run');
+
+      expect(result.current.take('build')).not.toBe(first);
+    });
+
+    it('requestId: an id that was never sent does not expire, and renew restarts the window', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const { result } = renderHook(() => useActionRequestId());
+      const minted = result.current.id;
+
+      vi.advanceTimersByTime(10 * REQUEST_ID_IN_DOUBT_MS);
+      expect(result.current.take('a')).toBe(minted);
+
+      act(() => result.current.renew());
+      const renewed = result.current.take('a');
+      expect(renewed).not.toBe(minted);
+      expect(result.current.id).toBe(renewed);
+    });
   });
 
   it('settlesRequest: a success and a refusal are final, a 5xx leaves the request open', () => {
