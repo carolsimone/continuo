@@ -129,7 +129,7 @@ func readRunPromotionSeq(t *testing.T, ctx context.Context, clients *testClients
 	t.Helper()
 	var seq sql.NullInt64
 	require.NoError(t, clients.stateDB.GetContext(ctx, &seq,
-		`SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID),
+		`SELECT promotion_seq FROM runs WHERE run_id = $1`, scheduleID),
 		"failed to read promotion_seq for run %s", scheduleID)
 	require.True(t, seq.Valid, "run %s names no release", scheduleID)
 	return seq.Int64

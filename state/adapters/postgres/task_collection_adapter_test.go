@@ -19,15 +19,15 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	logger := discardLogger()
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	sched := createScheduler(t, schedRepo, "get-by-id-"+uuid.NewString()[:8])
 	taskID := uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM task_tracker WHERE task_id = $1`, taskID)
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sched.ScheduleID)
+		_, _ = db.Exec(`DELETE FROM tasks WHERE task_id = $1`, taskID)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, sched.ScheduleID)
 	})
-	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
 		TaskID: taskID, ScheduleID: sched.ScheduleID, CreatedAt: time.Now(), ServiceName: "service-1",
 		SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		ImageTag: "service-1:v3",
@@ -53,21 +53,21 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	suffix := uuid.NewString()[:8]
 	release := "rel-" + suffix
 	stamped := createScheduler(t, schedRepo, "run-releases-stamped-"+suffix)
 	legacy := createScheduler(t, schedRepo, "run-releases-legacy-"+suffix)
 	stampedTask, legacyTask := uuid.New(), uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM task_tracker WHERE task_id IN ($1, $2)`, stampedTask, legacyTask)
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, stamped.ScheduleID, legacy.ScheduleID)
+		_, _ = db.Exec(`DELETE FROM tasks WHERE task_id IN ($1, $2)`, stampedTask, legacyTask)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id IN ($1, $2)`, stamped.ScheduleID, legacy.ScheduleID)
 	})
-	_, err := db.Exec(`UPDATE scheduler_tracker SET release_id = $2, promotion_seq = 1 WHERE schedule_id = $1`, stamped.ScheduleID, release)
+	_, err := db.Exec(`UPDATE runs SET release_id = $2, promotion_seq = 1 WHERE run_id = $1`, stamped.ScheduleID, release)
 	require.NoError(t, err)
 	for id, sched := range map[uuid.UUID]uuid.UUID{stampedTask: stamped.ScheduleID, legacyTask: legacy.ScheduleID} {
-		require.NoError(t, taskRepo.Create(context.Background(), &postgres.TaskTracker{
+		require.NoError(t, taskRepo.Create(context.Background(), &postgres.TaskRow{
 			TaskID: id, ScheduleID: sched, CreatedAt: time.Now(), ServiceName: "service-1",
 			SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		}))

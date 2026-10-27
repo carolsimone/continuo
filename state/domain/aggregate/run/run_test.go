@@ -32,13 +32,13 @@ func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 	if r.ScheduleName() != "daily_orders" {
 		t.Fatalf("schedule_name: got %q want %q", r.ScheduleName(), "daily_orders")
 	}
-	if r.Status() != run.SchedulerStatusPending {
+	if r.Status() != run.RunStatusPending {
 		t.Fatalf("status: got %q want pending", r.Status())
 	}
 	if r.Kind() != run.KindCron {
 		t.Fatalf("kind: got %q want cron", r.Kind())
 	}
-	if r.ScheduleID() == uuid.Nil {
+	if r.RunID() == uuid.Nil {
 		t.Fatalf("schedule_id should be generated")
 	}
 	if r.Operation() != model.OperationTest {
@@ -497,11 +497,11 @@ func TestMarkDispatchTerminal_BenignFinalizesSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Status() != run.SchedulerStatusSkipped {
+	if r.Status() != run.RunStatusSkipped {
 		t.Fatalf("status=%q, want skipped", r.Status())
 	}
 	fin, ok := evts[0].(run.RunFinalized)
-	if !ok || fin.Outcome != run.SchedulerStatusSkipped {
+	if !ok || fin.Outcome != run.RunStatusSkipped {
 		t.Fatalf("expected RunFinalized{Outcome=skipped}, got %+v", evts[0])
 	}
 }
@@ -513,11 +513,11 @@ func TestMarkDispatchTerminal_NonBenignFinalizesFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Status() != run.SchedulerStatusFailed {
+	if r.Status() != run.RunStatusFailed {
 		t.Fatalf("status=%q, want failed", r.Status())
 	}
 	fin, ok := evts[0].(run.RunFinalized)
-	if !ok || fin.Outcome != run.SchedulerStatusFailed {
+	if !ok || fin.Outcome != run.RunStatusFailed {
 		t.Fatalf("expected RunFinalized{Outcome=failed}, got %+v", evts[0])
 	}
 }
@@ -542,7 +542,7 @@ func TestMarkDispatchTerminal_RefusesAFailureWithoutADeclaredReason(t *testing.T
 			if len(evts) != 0 {
 				t.Fatalf("events=%v, want none", evts)
 			}
-			if r.Status() != run.SchedulerStatusRunning {
+			if r.Status() != run.RunStatusRunning {
 				t.Fatalf("status=%q, want the run left running", r.Status())
 			}
 			if r.FailureReason() != nil {
@@ -630,13 +630,13 @@ func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
 func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time, ids ...uuid.UUID) *run.Run {
 	t.Helper()
 	total := int32(len(ids)) //nolint:gosec // G115: test fixture; a handful of ids.
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil,
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, dispatchedAt, &dispatchedAt, nil, &dispatchedAt, nil, nil, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	tasks := make([]run.Task, 0, len(ids))
 	for i, id := range ids {
 		tasks = append(tasks, run.Task{
-			TaskID: id, ScheduleID: r.ScheduleID(), ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			TaskID: id, ScheduleID: r.RunID(), ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
 			Status: run.TaskStatusPending, MaxRetries: 3,
 		})
 	}
@@ -648,8 +648,8 @@ func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time,
 
 func TestNewPendingRun_LeavesProgressClockUnset(t *testing.T) {
 	r := freshPendingRun(t)
-	if r.LastHeartbeatAt() != nil {
-		t.Fatalf("LastHeartbeatAt = %v, want nil before the run is dispatched", *r.LastHeartbeatAt())
+	if r.LastProgressAt() != nil {
+		t.Fatalf("LastProgressAt = %v, want nil before the run is dispatched", *r.LastProgressAt())
 	}
 	if r.Changes().IsHeartbeatDirty() {
 		t.Fatal("a new run must not mark the progress clock dirty")
@@ -665,10 +665,10 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPromotedSeedsRun: %v", err)
 	}
-	if r.ScheduleID() != id || r.Release() != (run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 7}) {
-		t.Fatalf("id/release = %s/%+v, want %s/rel-1 7", r.ScheduleID(), r.Release(), id)
+	if r.RunID() != id || r.Release() != (run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 7}) {
+		t.Fatalf("id/release = %s/%+v, want %s/rel-1 7", r.RunID(), r.Release(), id)
 	}
-	if r.Kind() != run.KindPromoteSeed || r.Status() != run.SchedulerStatusRunning {
+	if r.Kind() != run.KindPromoteSeed || r.Status() != run.RunStatusRunning {
 		t.Fatalf("kind/status = %q/%q, want promote_seed/running", r.Kind(), r.Status())
 	}
 }
@@ -676,7 +676,7 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 // A run rebuilt from its row gets its release back only through
 // HydrateReleaseID; a run that names none reports "".
 func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
-	r := run.HydrateRun(uuid.New(), "promote-seed-abc12345", run.SchedulerStatusRunning, run.InitStatusCompleted,
+	r := run.HydrateRun(uuid.New(), "promote-seed-abc12345", run.RunStatusRunning, run.InitStatusCompleted,
 		run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
 		nil, nil, nil, nil, nil, nil, nil, 0, map[string]run.ServiceMetadata{})
 	if r.ReleaseID() != "" {
@@ -717,9 +717,9 @@ func TestCancel_MovesTasksInFlightToStoppingAndTheRunToCancelling(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{run.RunCancelled{
-		ID: r.ScheduleID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
+		ID: r.RunID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
 	}}, events)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	assert.Equal(t, run.RunStatusCancelling, r.Status())
 	assert.True(t, r.IsActive())
 	assert.False(t, r.IsTerminal())
 	assert.Nil(t, r.CompletedAt(), "a cancelling run has not ended")
@@ -727,7 +727,7 @@ func TestCancel_MovesTasksInFlightToStoppingAndTheRunToCancelling(t *testing.T) 
 	assert.Equal(t, cancelAt, *r.CancelledAt())
 	assert.Equal(t, "alice", *r.CancelledBy())
 	assert.Equal(t, "bad data", *r.CancellationReason())
-	assert.Equal(t, cancelAt, *r.LastHeartbeatAt(), "the cancel moves the run's tasks")
+	assert.Equal(t, cancelAt, *r.LastProgressAt(), "the cancel moves the run's tasks")
 	assert.True(t, r.Changes().IsCancelDirty())
 
 	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
@@ -752,10 +752,10 @@ func TestCancel_ARunWithNothingInFlightIsCancelledAtOnce(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{
-		run.RunCancelled{ID: r.ScheduleID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
-		run.RunFinalized{ID: r.ScheduleID(), Name: "daily", Outcome: run.SchedulerStatusCancelled},
+		run.RunCancelled{ID: r.RunID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
+		run.RunFinalized{ID: r.RunID(), Name: "daily", Outcome: run.RunStatusCancelled},
 	}, events)
-	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	assert.Equal(t, run.RunStatusCancelled, r.Status())
 	require.NotNil(t, r.CompletedAt())
 	assert.Equal(t, now, *r.CompletedAt())
 	assert.Equal(t, now, *r.CancelledAt())
@@ -779,7 +779,7 @@ func TestCancel_ATaskInFlightWithNoOpenAttemptIsCancelled(t *testing.T) {
 	_, err := r.Cancel(context.Background(), tc, "alice", "bad data", cancelAt)
 
 	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status(), "ftable_a's attempt is open")
+	assert.Equal(t, run.RunStatusCancelling, r.Status(), "ftable_a's attempt is open")
 	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
 	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_b")], "no attempt of it is open")
 	assert.Equal(t, map[attemptKey]bool{{taskOf(r, "ftable_a"), 0}: true}, tc.stopRequested)
@@ -798,7 +798,7 @@ func TestCancel_AStoppingTaskWithNoStopRequestedFailsTheCancel(t *testing.T) {
 
 	require.ErrorIs(t, err, run.ErrStopUnanswerable)
 	assert.Empty(t, events)
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Nil(t, r.CancelledAt())
 	assert.False(t, r.Changes().IsCancelDirty())
 }
@@ -815,7 +815,7 @@ func TestCancel_ACancellingRunIsRefusedAsAlreadyCancelling(t *testing.T) {
 	require.ErrorIs(t, err, run.ErrAlreadyCancelling)
 	assert.Empty(t, events)
 	assert.Len(t, tc.stopsBegun, 1)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	assert.Equal(t, run.RunStatusCancelling, r.Status())
 	assert.Equal(t, "alice", *r.CancelledBy())
 	assert.Equal(t, reportAt, *r.CancelledAt())
 }

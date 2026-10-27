@@ -16,12 +16,12 @@ import (
 
 // TaskHandler handles all task-related gRPC requests
 type TaskHandler struct {
-	repo   postgres.TaskTrackerRepository
+	repo   postgres.TaskRepository
 	logger *slog.Logger
 }
 
 // NewTaskHandler creates a new TaskHandler.
-func NewTaskHandler(repo postgres.TaskTrackerRepository, logger *slog.Logger) *TaskHandler {
+func NewTaskHandler(repo postgres.TaskRepository, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{
 		repo:   repo,
 		logger: logger,
@@ -78,7 +78,7 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	task, err := h.repo.GetByScheduleAndNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
+	task, err := h.repo.GetByRunAndNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -123,7 +123,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 		statusFilter = &s
 	}
 
-	tasks, total, err := h.repo.ListByScheduleID(ctx, scheduleID, statusFilter, limit, offset)
+	tasks, total, err := h.repo.ListByRunID(ctx, scheduleID, statusFilter, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list tasks", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to list tasks")
@@ -197,7 +197,7 @@ func domainToProtoTaskStatus(s run.TaskStatus) statev1.TaskStatus {
 }
 
 // domainToProtoTask converts domain model to proto message
-func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
+func domainToProtoTask(t *postgres.TaskRow) *statev1.Task {
 	task := &statev1.Task{
 		TaskId:      t.TaskID.String(),
 		ScheduleId:  t.ScheduleID.String(),

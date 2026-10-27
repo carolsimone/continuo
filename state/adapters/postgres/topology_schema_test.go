@@ -132,25 +132,25 @@ func TestTopologySchema_MaterializationSourceIsBuildOrAdopted(t *testing.T) {
 	assert.False(t, row.MaterializedAt.Valid)
 }
 
-// scheduler_tracker.release_id is optional: a run without a release stores NULL.
-func TestTopologySchema_SchedulerTrackerReleaseIDIsOptional(t *testing.T) {
+// runs.release_id is optional: a run without a release stores NULL.
+func TestTopologySchema_RunReleaseIDIsOptional(t *testing.T) {
 	db := newTestDB(t)
 	without, with := uuid.New(), uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, without, with)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id IN ($1, $2)`, without, with)
 	})
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status)
 		VALUES ($1, $2, 'succeeded', now(), 'completed')`, without, "rel-null-"+without.String()[:8])
 	require.NoError(t, err)
 	_, err = db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, release_id)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, release_id)
 		VALUES ($1, $2, 'succeeded', now(), 'completed', 'rel-x')`, with, "rel-set-"+with.String()[:8])
 	require.NoError(t, err)
 
 	var got []sql.NullString
 	require.NoError(t, db.Select(&got, `
-		SELECT release_id FROM scheduler_tracker WHERE schedule_id IN ($1, $2) ORDER BY release_id NULLS FIRST`, without, with))
+		SELECT release_id FROM runs WHERE run_id IN ($1, $2) ORDER BY release_id NULLS FIRST`, without, with))
 	assert.Equal(t, []sql.NullString{{}, {String: "rel-x", Valid: true}}, got)
 }
 

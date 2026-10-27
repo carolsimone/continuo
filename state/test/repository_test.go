@@ -85,109 +85,109 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	return db, cleanup
 }
 
-// TestSchedulerTrackerRepository_Create tests creating a scheduler_tracker record
-func TestSchedulerTrackerRepository_Create(t *testing.T) {
+// TestRunTableRepository_Create tests creating a run record
+func TestRunTableRepository_Create(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule",
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
 
 	// Execute
-	err := repo.Create(context.Background(), tracker)
+	err := repo.Create(context.Background(), runRow)
 
 	// Assert
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	require.NoError(t, err, "Failed to create run")
 
 	// Verify the record exists in the database
 	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	err = db.Get(&count, "SELECT COUNT(*) FROM runs WHERE run_id = $1", scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "Expected 1 record in database")
 }
 
-// TestSchedulerTrackerRepository_Create_DuplicateKey tests duplicate key handling
-func TestSchedulerTrackerRepository_Create_DuplicateKey(t *testing.T) {
+// TestRunTableRepository_Create_DuplicateKey tests duplicate key handling
+func TestRunTableRepository_Create_DuplicateKey(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule",
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
 
 	// Create first record
-	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create first scheduler_tracker")
+	err := repo.Create(context.Background(), runRow)
+	require.NoError(t, err, "Failed to create first run")
 
 	// Try to create duplicate
-	err = repo.Create(context.Background(), tracker)
+	err = repo.Create(context.Background(), runRow)
 
 	// Assert
 	assert.ErrorIs(t, err, postgres.ErrDuplicateKey, "Expected ErrDuplicateKey")
 }
 
-// TestSchedulerTrackerRepository_GetByID tests retrieving a scheduler_tracker by ID
-func TestSchedulerTrackerRepository_GetByID(t *testing.T) {
+// TestRunTableRepository_GetByID tests retrieving a run by ID
+func TestRunTableRepository_GetByID(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 
 	// Create test data
 	scheduleID := uuid.New()
 	startedAt := time.Now().Add(-1 * time.Hour)
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-get",
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now().Add(-2 * time.Hour),
 		StartedAt:            &startedAt,
 		InitializationStatus: "pending",
 	}
 
 	// Create record
-	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	err := repo.Create(context.Background(), runRow)
+	require.NoError(t, err, "Failed to create run")
 
 	// Execute GetByID
 	retrieved, err := repo.GetByID(context.Background(), scheduleID)
 
 	// Assert
-	require.NoError(t, err, "Failed to get scheduler_tracker")
-	require.NotNil(t, retrieved, "Retrieved tracker is nil")
+	require.NoError(t, err, "Failed to get run")
+	require.NotNil(t, retrieved, "Retrieved run is nil")
 	assert.Equal(t, scheduleID, retrieved.ScheduleID)
 	assert.Equal(t, "test-schedule-get", retrieved.ScheduleName)
-	assert.Equal(t, run.SchedulerStatusRunning, retrieved.Status)
+	assert.Equal(t, run.RunStatusRunning, retrieved.Status)
 	assert.NotNil(t, retrieved.StartedAt)
 }
 
-// TestSchedulerTrackerRepository_GetByID_NotFound tests error handling for non-existent record
-func TestSchedulerTrackerRepository_GetByID_NotFound(t *testing.T) {
+// TestRunTableRepository_GetByID_NotFound tests error handling for non-existent record
+func TestRunTableRepository_GetByID_NotFound(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 
 	// Try to get non-existent record
 	nonExistentID := uuid.New()
@@ -195,16 +195,16 @@ func TestSchedulerTrackerRepository_GetByID_NotFound(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, postgres.ErrNotFound, "Expected ErrNotFound")
-	assert.Nil(t, retrieved, "Expected nil tracker")
+	assert.Nil(t, retrieved, "Expected nil run")
 }
 
-// TestSchedulerTrackerRepository_Create_WithNullableFields tests creating with nullable fields
-func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
+// TestRunTableRepository_Create_WithNullableFields tests creating with nullable fields
+func TestRunTableRepository_Create_WithNullableFields(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 
 	// Create test data with nullable fields set
 	scheduleID := uuid.New()
@@ -212,10 +212,10 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 	cancellationReason := "Test cancellation"
 	cancelledAt := time.Now()
 
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-cancelled",
-		Status:               run.SchedulerStatusCancelled,
+		Status:               run.RunStatusCancelled,
 		CreatedAt:            time.Now(),
 		CancelledAt:          &cancelledAt,
 		CancelledBy:          &cancelledBy,
@@ -224,12 +224,12 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 	}
 
 	// Execute
-	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	err := repo.Create(context.Background(), runRow)
+	require.NoError(t, err, "Failed to create run")
 
 	// Retrieve and verify
 	retrieved, err := repo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err, "Failed to get scheduler_tracker")
+	require.NoError(t, err, "Failed to get run")
 	assert.NotNil(t, retrieved.CancelledBy)
 	assert.Equal(t, "test-user", *retrieved.CancelledBy)
 	assert.NotNil(t, retrieved.CancellationReason)
@@ -307,28 +307,28 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	repo := postgres.NewSchedulerTrackerRepository(db, slog.Default())
+	repo := postgres.NewRunTableRepository(db, slog.Default())
 	ctx := context.Background()
 
 	// Insert two runs for "daily", one for "hourly"
-	dailyOld := &postgres.SchedulerTracker{
+	dailyOld := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now().Add(-2 * time.Hour),
 		InitializationStatus: "completed",
 	}
-	dailyNew := &postgres.SchedulerTracker{
+	dailyNew := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "daily",
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 	}
-	hourly := &postgres.SchedulerTracker{
+	hourly := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "hourly",
-		Status:               run.SchedulerStatusFailed,
+		Status:               run.RunStatusFailed,
 		CreatedAt:            time.Now().Add(-30 * time.Minute),
 		InitializationStatus: "completed",
 	}
@@ -340,58 +340,58 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, lastRuns, "daily")
-	assert.Equal(t, run.SchedulerStatusRunning, lastRuns["daily"].Status)
-	assert.True(t, lastRuns["daily"].IsRunning)
+	assert.Equal(t, run.RunStatusRunning, lastRuns["daily"].Status)
+	assert.True(t, lastRuns["daily"].IsActive)
 
 	assert.Contains(t, lastRuns, "hourly")
-	assert.Equal(t, run.SchedulerStatusFailed, lastRuns["hourly"].Status)
-	assert.False(t, lastRuns["hourly"].IsRunning)
+	assert.Equal(t, run.RunStatusFailed, lastRuns["hourly"].Status)
+	assert.False(t, lastRuns["hourly"].IsActive)
 }
 
-func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
+func TestRunTableRepository_GetActiveRun(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	repo := postgres.NewSchedulerTrackerRepository(db, logger)
+	repo := postgres.NewRunTableRepository(db, logger)
 	ctx := context.Background()
 
 	t.Run("returns nil when no active run exists", func(t *testing.T) {
-		result, err := repo.GetActiveScheduler(ctx, "nonexistent-schedule")
+		result, err := repo.GetActiveRun(ctx, "nonexistent-schedule")
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
-	t.Run("returns tracker when pending run exists", func(t *testing.T) {
+	t.Run("returns the run when a pending run exists", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &postgres.SchedulerTracker{
+		runRow := &postgres.RunRow{
 			ScheduleID:           schedID,
 			ScheduleName:         "active-pending",
-			Status:               run.SchedulerStatusPending,
+			Status:               run.RunStatusPending,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "pending",
 		}
-		require.NoError(t, repo.Create(ctx, tracker))
+		require.NoError(t, repo.Create(ctx, runRow))
 
-		result, err := repo.GetActiveScheduler(ctx, "active-pending")
+		result, err := repo.GetActiveRun(ctx, "active-pending")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, schedID, result.ScheduleID)
-		assert.Equal(t, run.SchedulerStatusPending, result.Status)
+		assert.Equal(t, run.RunStatusPending, result.Status)
 	})
 
-	t.Run("returns tracker when running run exists", func(t *testing.T) {
+	t.Run("returns the run when a running run exists", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &postgres.SchedulerTracker{
+		runRow := &postgres.RunRow{
 			ScheduleID:           schedID,
 			ScheduleName:         "active-running",
-			Status:               run.SchedulerStatusRunning,
+			Status:               run.RunStatusRunning,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "in_progress",
 		}
-		require.NoError(t, repo.Create(ctx, tracker))
+		require.NoError(t, repo.Create(ctx, runRow))
 
-		result, err := repo.GetActiveScheduler(ctx, "active-running")
+		result, err := repo.GetActiveRun(ctx, "active-running")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, schedID, result.ScheduleID)
@@ -399,20 +399,20 @@ func TestSchedulerTrackerRepository_GetActiveScheduler(t *testing.T) {
 
 	t.Run("returns nil after run is cancelled", func(t *testing.T) {
 		schedID := uuid.New()
-		tracker := &postgres.SchedulerTracker{
+		runRow := &postgres.RunRow{
 			ScheduleID:           schedID,
 			ScheduleName:         "post-cancel",
-			Status:               run.SchedulerStatusRunning,
+			Status:               run.RunStatusRunning,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "pending",
 		}
-		require.NoError(t, repo.Create(ctx, tracker))
+		require.NoError(t, repo.Create(ctx, runRow))
 		tx, err := db.BeginTxx(ctx, nil)
 		require.NoError(t, err)
-		require.NoError(t, repo.CancelTx(ctx, tx, schedID, run.SchedulerStatusCancelled, "test", "", time.Now().UTC()))
+		require.NoError(t, repo.CancelTx(ctx, tx, schedID, run.RunStatusCancelled, "test", "", time.Now().UTC()))
 		require.NoError(t, tx.Commit())
 
-		result, err := repo.GetActiveScheduler(ctx, "post-cancel")
+		result, err := repo.GetActiveRun(ctx, "post-cancel")
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})

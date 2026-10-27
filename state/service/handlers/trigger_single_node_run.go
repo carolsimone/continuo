@@ -104,7 +104,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 	}
 	committed = true
 
-	h.logger.Info("Single-node run triggered", "new_run_id", newRun.ScheduleID(), "schedule_name", scheduleName, "target", in.Target,
+	h.logger.Info("Single-node run triggered", "new_run_id", newRun.RunID(), "schedule_name", scheduleName, "target", in.Target,
 		"release_id", sel.Stamp.ReleaseID)
-	return newRun.ScheduleID(), newRun.ScheduleName(), nil
+	return newRun.RunID(), newRun.ScheduleName(), nil
 }

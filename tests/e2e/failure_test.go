@@ -75,28 +75,28 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err)
 
-	sourceKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
+	sourceKind := queryRunKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", sourceKind, "source row must NOT be mutated")
 
-	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
-	t.Log("Waiting for rerun task_tracker rows to materialise...")
+	t.Log("Waiting for rerun tasks rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
 		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, newRunID,
+			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
 			return false, qErr
 		}
 		return count >= 8, nil
-	}, "task_tracker rows for rerun run did not materialise (expected 8)")
+	}, "tasks rows for rerun run did not materialise (expected 8)")
 
 	rows, err := clients.stateDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NULL AS is_real
-		FROM task_tracker
-		WHERE schedule_id = $1
+		FROM tasks
+		WHERE run_id = $1
 		ORDER BY table_name`, newRunID)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -123,7 +123,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 		case "ftable_e", "ftable_f", "ftable_g", "ftable_h":
 			assert.True(t, r.isReal, "%s should be rebased (inherited_from_task_id NULL)", r.tableName)
 		default:
-			t.Errorf("unexpected table_name in rerun task_tracker: %s", r.tableName)
+			t.Errorf("unexpected table_name in rerun tasks: %s", r.tableName)
 		}
 	}
 

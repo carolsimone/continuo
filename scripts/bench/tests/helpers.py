@@ -22,7 +22,7 @@ def job(run_id, table, created, finished=None, failed=False, name=None):
         status["completionTime"] = iso(finished)
     return {
         "metadata": {"name": name or f"bench-bench-{table}", "creationTimestamp": iso(created),
-                     "labels": {"schedule-id": run_id}},
+                     "labels": {"run-id": run_id}},
         "spec": {"template": {"spec": {"containers": [
             {"name": "dbt-job", "env": [{"name": "TABLE_NAME", "value": table}]}]}}},
         "status": status,

@@ -5,37 +5,37 @@ import (
 	"slices"
 )
 
-// SchedulerStatus is the lifecycle status of a Run.
-type SchedulerStatus string
+// RunStatus is the lifecycle status of a Run.
+type RunStatus string
 
 const (
-	SchedulerStatusPending SchedulerStatus = "pending"
-	SchedulerStatusRunning SchedulerStatus = "running"
-	// SchedulerStatusCancelling is a run whose cancel has been requested and
+	RunStatusPending RunStatus = "pending"
+	RunStatusRunning RunStatus = "running"
+	// RunStatusCancelling is a run whose cancel has been requested and
 	// whose work is still being stopped. It is active, not terminal: it ends
 	// cancelled once every attempt of it has ended.
-	SchedulerStatusCancelling SchedulerStatus = "cancelling"
-	SchedulerStatusSucceeded  SchedulerStatus = "succeeded"
-	SchedulerStatusFailed     SchedulerStatus = "failed"
-	SchedulerStatusCancelled  SchedulerStatus = "cancelled"
-	// SchedulerStatusSkipped is the terminal status for a run that had no work
+	RunStatusCancelling RunStatus = "cancelling"
+	RunStatusSucceeded  RunStatus = "succeeded"
+	RunStatusFailed     RunStatus = "failed"
+	RunStatusCancelled  RunStatus = "cancelled"
+	// RunStatusSkipped is the terminal status for a run that had no work
 	// to do — a Test run over nodes with no dbt tests. It is a benign non-failure.
-	SchedulerStatusSkipped SchedulerStatus = "skipped"
+	RunStatusSkipped RunStatus = "skipped"
 )
 
-func (s SchedulerStatus) IsValid() bool {
+func (s RunStatus) IsValid() bool {
 	switch s {
-	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling, SchedulerStatusSucceeded,
-		SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped:
+	case RunStatusPending, RunStatusRunning, RunStatusCancelling, RunStatusSucceeded,
+		RunStatusFailed, RunStatusCancelled, RunStatusSkipped:
 		return true
 	}
 	return false
 }
 
-func (s SchedulerStatus) IsTerminal() bool {
+func (s RunStatus) IsTerminal() bool {
 	switch s {
-	case SchedulerStatusSucceeded, SchedulerStatusFailed, SchedulerStatusCancelled,
-		SchedulerStatusSkipped:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled,
+		RunStatusSkipped:
 		return true
 	}
 	return false
@@ -43,30 +43,30 @@ func (s SchedulerStatus) IsTerminal() bool {
 
 // IsActive reports whether a run in status s holds its schedule: it is
 // pending, running or cancelling, so no other run of the schedule starts.
-func (s SchedulerStatus) IsActive() bool {
+func (s RunStatus) IsActive() bool {
 	switch s {
-	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling:
+	case RunStatusPending, RunStatusRunning, RunStatusCancelling:
 		return true
 	}
 	return false
 }
 
-// schedulerStatuses lists every SchedulerStatus value.
-var schedulerStatuses = []SchedulerStatus{
-	SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling, SchedulerStatusSucceeded,
-	SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped,
+// runStatuses lists every RunStatus value.
+var runStatuses = []RunStatus{
+	RunStatusPending, RunStatusRunning, RunStatusCancelling, RunStatusSucceeded,
+	RunStatusFailed, RunStatusCancelled, RunStatusSkipped,
 }
 
-// SchedulerStatuses returns every SchedulerStatus. The CHECK constraint on
-// scheduler_tracker.status lists exactly these.
-func SchedulerStatuses() []SchedulerStatus { return slices.Clone(schedulerStatuses) }
+// RunStatuses returns every RunStatus. The CHECK constraint on
+// runs.status lists exactly these.
+func RunStatuses() []RunStatus { return slices.Clone(runStatuses) }
 
-// TerminalSchedulerStatuses returns every SchedulerStatus for which IsTerminal
+// TerminalRunStatuses returns every RunStatus for which IsTerminal
 // reports true, so a storage guard against terminal runs names the same set the
 // aggregate checks.
-func TerminalSchedulerStatuses() []SchedulerStatus {
-	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
-	for _, s := range schedulerStatuses {
+func TerminalRunStatuses() []RunStatus {
+	out := make([]RunStatus, 0, len(runStatuses))
+	for _, s := range runStatuses {
 		if s.IsTerminal() {
 			out = append(out, s)
 		}
@@ -74,12 +74,12 @@ func TerminalSchedulerStatuses() []SchedulerStatus {
 	return out
 }
 
-// ActiveSchedulerStatuses returns every SchedulerStatus for which IsActive
+// ActiveRunStatuses returns every RunStatus for which IsActive
 // reports true, so a query for the active runs names the same set the
 // aggregate checks.
-func ActiveSchedulerStatuses() []SchedulerStatus {
-	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
-	for _, s := range schedulerStatuses {
+func ActiveRunStatuses() []RunStatus {
+	out := make([]RunStatus, 0, len(runStatuses))
+	for _, s := range runStatuses {
 		if s.IsActive() {
 			out = append(out, s)
 		}
@@ -109,7 +109,7 @@ const (
 )
 
 // TaskStatuses lists every TaskStatus. The CHECK constraint on
-// task_tracker.status lists exactly these.
+// tasks.status lists exactly these.
 func TaskStatuses() []TaskStatus {
 	return []TaskStatus{TaskStatusPending, TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning,
 		TaskStatusStopping, TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped}
@@ -165,7 +165,7 @@ const (
 )
 
 // WaitReasons lists every WaitReason. The CHECK constraint on
-// task_tracker.wait_reason lists exactly these.
+// tasks.wait_reason lists exactly these.
 func WaitReasons() []WaitReason { return []WaitReason{WaitReasonNodeLease} }
 
 func (w WaitReason) IsValid() bool { return slices.Contains(WaitReasons(), w) }
@@ -181,7 +181,7 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 }
 
 // Kind discriminates run kinds. Wire-stable string values, matches the CHECK
-// constraint on scheduler_tracker.kind.
+// constraint on runs.kind.
 type Kind string
 
 const (

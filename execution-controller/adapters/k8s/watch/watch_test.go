@@ -180,7 +180,7 @@ func TestWatch_JobNamesLeavesOutFinishedAndDeletingJobs(t *testing.T) {
 // inRun labels o with the run runID.
 func inRun[T metav1.Object](o T, runID string) T {
 	labels := o.GetLabels()
-	labels["schedule-id"] = runID
+	labels["run-id"] = runID
 	o.SetLabels(labels)
 	return o
 }

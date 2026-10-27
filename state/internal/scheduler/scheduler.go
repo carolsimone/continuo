@@ -54,7 +54,7 @@ func LoadSchedulesConfig(path string) (*SchedulesConfig, error) {
 // CronScheduler manages scheduled activations driven by schedules.yaml.
 type CronScheduler struct {
 	cron        *cron.Cron
-	activate    *svchandlers.ActivateScheduleHandler
+	activate    *svchandlers.StartRunHandler
 	uowFactory  func() uow.UnitOfWork
 	config      *SchedulesConfig
 	logger      *slog.Logger
@@ -65,7 +65,7 @@ type CronScheduler struct {
 // Fails if the timezone is invalid or any cron expression is malformed.
 // While maintenance is true every fire is skipped and logged; skipped fires are
 // not caught up later.
-func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, uowFactory func() uow.UnitOfWork, logger *slog.Logger, cfg *SchedulesConfig, maintenance bool) (*CronScheduler, error) {
+func NewCronSchedulerWithConfig(activate *svchandlers.StartRunHandler, uowFactory func() uow.UnitOfWork, logger *slog.Logger, cfg *SchedulesConfig, maintenance bool) (*CronScheduler, error) {
 	location, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timezone %q: %w", cfg.Timezone, err)
@@ -90,7 +90,7 @@ func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, u
 	for _, entry := range cfg.Schedules {
 		name := entry.Name // capture for closure
 		_, err := cronScheduler.AddFunc(entry.Cron, func() {
-			s.activateSchedule(name)
+			s.startScheduledRun(name)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("invalid cron expression for schedule %q: %w", name, err)
@@ -126,7 +126,7 @@ func (s *CronScheduler) Stop(ctx context.Context) error {
 	}
 }
 
-func (s *CronScheduler) activateSchedule(name string) {
+func (s *CronScheduler) startScheduledRun(name string) {
 	if s.maintenance {
 		s.logger.Info("Cron fire skipped: maintenance mode is on", "schedule_name", name)
 		return

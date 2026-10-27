@@ -44,3 +44,40 @@ func TestCheckSchema_ReadFailureIsNotAMissingSchema(t *testing.T) {
 		t.Fatalf("err = %v, want a read error", err)
 	}
 }
+
+// schemaWithout is a SchemaColumns over a database holding every required
+// column but one.
+type schemaWithout struct{ absent string }
+
+func (s schemaWithout) Missing(_ context.Context, want []string) ([]string, error) {
+	var missing []string
+	for _, col := range want {
+		if col == s.absent {
+			missing = append(missing, col)
+		}
+	}
+	return missing, nil
+}
+
+func TestCheckSchema_RefusesADatabaseLackingAnyRequiredColumn(t *testing.T) {
+	for _, col := range RequiredColumns {
+		t.Run(col, func(t *testing.T) {
+			err := CheckSchema(context.Background(), schemaWithout{absent: col})
+			if !errors.Is(err, ErrSchemaNotReady) {
+				t.Fatalf("err = %v, want ErrSchemaNotReady", err)
+			}
+			if !strings.Contains(err.Error(), col) {
+				t.Fatalf("err = %q, want %s named", err, col)
+			}
+		})
+	}
+}
+
+func TestRequiredColumns_CoverTheRunColumns(t *testing.T) {
+	have := strings.Join(RequiredColumns, ",")
+	for _, col := range []string{"deployments.run_id", "cancelled_runs.run_id"} {
+		if !strings.Contains(have, col) {
+			t.Fatalf("RequiredColumns = %v, want %s", RequiredColumns, col)
+		}
+	}
+}

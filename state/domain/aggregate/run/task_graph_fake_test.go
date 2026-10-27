@@ -109,7 +109,7 @@ func startedFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGra
 }
 
 func taskOf(r *run.Run, table string) uuid.UUID {
-	return run.TaskIDFor("default", r.ScheduleID(), fkey(table))
+	return run.TaskIDFor("default", r.RunID(), fkey(table))
 }
 
 // attemptOf returns the stored attempt n of the task of r at table.

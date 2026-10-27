@@ -52,7 +52,7 @@ type RunGraph struct {
 type RunSummary struct {
 	RunID          uuid.UUID
 	ScheduleName   string
-	TerminalStatus run.SchedulerStatus
+	TerminalStatus run.RunStatus
 	// FailureReason is why the run failed when no task of it failed; empty
 	// otherwise.
 	FailureReason run.RunFailureReason

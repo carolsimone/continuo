@@ -17,7 +17,7 @@ import (
 // read node $4 directly over release $3's edges, with their Job names and the
 // statuses of their upstream tasks in the run. Each lookup is an index probe:
 // topology_edges by its primary key prefix (tenant, release, upstream) or by
-// idx_topology_edges_downstream, task_tracker by uq_task_tracker_run_node.
+// idx_topology_edges_downstream, tasks by uq_tasks_run_node.
 const readyCandidatesQuery = `
 	SELECT t.task_id, t.job_name,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
@@ -25,15 +25,15 @@ const readyCandidatesQuery = `
 	       ARRAY(
 	           SELECT ut.status::text
 	           FROM topology_edges ue
-	           JOIN task_tracker ut
-	             ON ut.schedule_id = t.schedule_id AND ut.node_key = ue.upstream_key
+	           JOIN tasks ut
+	             ON ut.run_id = t.run_id AND ut.node_key = ue.upstream_key
 	           WHERE ue.tenant_id = e.tenant_id AND ue.release_id = e.release_id
 	             AND ue.downstream_key = e.downstream_key
 	           ORDER BY ue.upstream_key COLLATE "C"
 	       ) AS upstream_statuses
 	FROM topology_edges e
-	JOIN task_tracker t
-	  ON t.schedule_id = $2 AND t.node_key = e.downstream_key
+	JOIN tasks t
+	  ON t.run_id = $2 AND t.node_key = e.downstream_key
 	JOIN topology_nodes n
 	  ON n.tenant_id = e.tenant_id AND n.release_id = e.release_id AND n.node_key = e.downstream_key
 	WHERE e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = $4
@@ -48,8 +48,8 @@ const pendingDescendantsQuery = `
 	WITH RECURSIVE blocked(node_key, task_id) AS (
 	    SELECT t.node_key, t.task_id
 	    FROM topology_edges e
-	    JOIN task_tracker t
-	      ON t.schedule_id = $2 AND t.node_key = e.downstream_key
+	    JOIN tasks t
+	      ON t.run_id = $2 AND t.node_key = e.downstream_key
 	    WHERE e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = $4
 	      AND t.status = 'pending' AND t.dispatched_at IS NULL
 	  UNION
@@ -57,13 +57,13 @@ const pendingDescendantsQuery = `
 	    FROM blocked b
 	    JOIN topology_edges e
 	      ON e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = b.node_key
-	    JOIN task_tracker t
-	      ON t.schedule_id = $2 AND t.node_key = e.downstream_key
+	    JOIN tasks t
+	      ON t.run_id = $2 AND t.node_key = e.downstream_key
 	    WHERE t.status = 'pending' AND t.dispatched_at IS NULL
 	)
 	SELECT task_id FROM blocked ORDER BY node_key COLLATE "C"`
 
-// TaskGraph implements run.TaskGraph over task_tracker and the topology
+// TaskGraph implements run.TaskGraph over tasks and the topology
 // tables of one tenant, inside the unit of work's transaction.
 type TaskGraph struct {
 	tx       *sqlx.Tx

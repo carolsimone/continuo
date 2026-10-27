@@ -16,7 +16,7 @@ type Command interface {
 // both to create the Job and to report the attempt afterwards.
 type DeployTask struct {
 	TaskID       string
-	ScheduleID   string
+	RunID        string
 	ScheduleName string
 	ServiceName  string
 	SchemaName   string
@@ -91,7 +91,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 	return deploy.JobSpec{
 		JobName:        c.JobName,
 		TaskID:         c.TaskID,
-		ScheduleID:     c.ScheduleID,
+		RunID:          c.RunID,
 		ScheduleName:   c.ScheduleName,
 		ServiceName:    c.ServiceName,
 		SchemaName:     c.SchemaName,

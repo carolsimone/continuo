@@ -52,11 +52,11 @@ func TestTaskStatusConversion_NoDomainStatusIsUnspecified(t *testing.T) {
 
 // fakeTaskRepo serves fixed tasks to TaskHandler's reads.
 type fakeTaskRepo struct {
-	postgres.TaskTrackerRepository
-	tasks []*postgres.TaskTracker
+	postgres.TaskRepository
+	tasks []*postgres.TaskRow
 }
 
-func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskTracker, error) {
+func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskRow, error) {
 	for _, t := range f.tasks {
 		if t.TaskID == id {
 			return t, nil
@@ -65,15 +65,15 @@ func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskT
 	return nil, postgres.ErrNotFound
 }
 
-func (f *fakeTaskRepo) ListByScheduleID(_ context.Context, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskTracker, int, error) {
+func (f *fakeTaskRepo) ListByRunID(_ context.Context, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskRow, int, error) {
 	return f.tasks, len(f.tasks), nil
 }
 
 // stampedTask is a task of status s that a cancel stamped with its instant and author.
-func stampedTask(s run.TaskStatus) *postgres.TaskTracker {
+func stampedTask(s run.TaskStatus) *postgres.TaskRow {
 	at := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
 	by := "alice"
-	return &postgres.TaskTracker{
+	return &postgres.TaskRow{
 		TaskID: uuid.New(), ScheduleID: uuid.New(), CreatedAt: at.Add(-time.Hour),
 		Status: s, CancelledAt: &at, CancelledBy: &by,
 	}
@@ -82,7 +82,7 @@ func stampedTask(s run.TaskStatus) *postgres.TaskTracker {
 // ListTasks and GetTask report a stopping task as STOPPING.
 func TestTaskHandler_AStoppingTaskIsStopping(t *testing.T) {
 	stopping := stampedTask(run.TaskStatusStopping)
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskTracker{stopping}}, newTestLogger())
+	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{stopping}}, newTestLogger())
 
 	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: stopping.ScheduleID.String()})
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestDomainToProtoTask_CancelStampsOnlyOnACancelledTask(t *testing.T) {
 // succeeded after its stop was requested.
 func TestTaskHandler_ASucceededTaskThatWasAskedToStopShowsNoCancel(t *testing.T) {
 	done := stampedTask(run.TaskStatusSucceeded)
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskTracker{done}}, newTestLogger())
+	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{done}}, newTestLogger())
 
 	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: done.ScheduleID.String()})
 	require.NoError(t, err)
@@ -134,12 +134,12 @@ func TestTaskHandler_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 	holderRun := uuid.New()
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	reason := string(run.WaitReasonNodeLease)
-	waiting := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: uuid.New(), Status: run.TaskStatusPending,
+	waiting := &postgres.TaskRow{TaskID: uuid.New(), ScheduleID: uuid.New(), Status: run.TaskStatusPending,
 		WaitReason: &reason, LeaseWaitSince: &since, WaitingOnRunID: &holderRun}
-	freed := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending,
+	freed := &postgres.TaskRow{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending,
 		WaitReason: &reason, LeaseWaitSince: &since}
-	idle := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending}
-	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskTracker{waiting, freed, idle}}, newTestLogger())
+	idle := &postgres.TaskRow{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending}
+	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskRow{waiting, freed, idle}}, newTestLogger())
 
 	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: waiting.ScheduleID.String()})
 	require.NoError(t, err)

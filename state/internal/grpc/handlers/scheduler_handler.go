@@ -22,8 +22,8 @@ import (
 
 // SchedulerHandler handles all scheduler-related gRPC requests.
 type SchedulerHandler struct {
-	repo            postgres.SchedulerTrackerRepository
-	activate        *svchandlers.ActivateScheduleHandler
+	repo            postgres.RunTableRepository
+	activate        *svchandlers.StartRunHandler
 	catalogRepo     postgres.ScheduleCatalogRepository
 	schedulesConfig *schedulerpkg.SchedulesConfig // may be nil
 	uowFactory      func() uow.UnitOfWork
@@ -32,8 +32,8 @@ type SchedulerHandler struct {
 
 // NewSchedulerHandler creates a new SchedulerHandler.
 func NewSchedulerHandler(
-	repo postgres.SchedulerTrackerRepository,
-	activate *svchandlers.ActivateScheduleHandler,
+	repo postgres.RunTableRepository,
+	activate *svchandlers.StartRunHandler,
 	catalogRepo postgres.ScheduleCatalogRepository,
 	schedulesConfig *schedulerpkg.SchedulesConfig,
 	uowFactory func() uow.UnitOfWork,
@@ -110,7 +110,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 // request's cancelled_by so internal callers that supply their own label keep
 // recording it. When neither is present — a platform cancel with no metadata
 // and no request label — it resolves to the system sentinel so the
-// authoritative scheduler_tracker.cancelled_by row keeps provenance rather
+// authoritative runs.cancelled_by row keeps provenance rather
 // than going blank.
 func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string {
 	id := identity.FromContext(ctx)
@@ -204,7 +204,7 @@ func (h *SchedulerHandler) CancelSchedule(
 	// Look up the active run for the named schedule via a separate UoW
 	// (read-only path, no transaction needed).
 	lookup := h.uowFactory()
-	active, err := lookup.Run().GetActiveScheduler(ctx, req.ScheduleName)
+	active, err := lookup.Run().GetActiveRun(ctx, req.ScheduleName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get active: %v", err)
 	}
@@ -213,7 +213,7 @@ func (h *SchedulerHandler) CancelSchedule(
 	}
 
 	r, wrote, gerr := h.cancelRunTx(ctx, cancelParams{
-		scheduleID:         active.ScheduleID(),
+		scheduleID:         active.RunID(),
 		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
 		loadNotFoundCode:   codes.Internal,
@@ -225,12 +225,12 @@ func (h *SchedulerHandler) CancelSchedule(
 	}
 
 	if wrote {
-		h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+		h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.RunID())
 	} else {
 		h.logger.Info("Schedule already cancelling; the repeated cancel wrote nothing",
-			"schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+			"schedule_name", req.ScheduleName, "schedule_id", r.RunID())
 	}
-	return &statev1.CancelScheduleResponse{ScheduleId: r.ScheduleID().String()}, nil
+	return &statev1.CancelScheduleResponse{ScheduleId: r.RunID().String()}, nil
 }
 
 // ============================================================================
@@ -238,31 +238,31 @@ func (h *SchedulerHandler) CancelSchedule(
 // ============================================================================
 
 // domainToProtoSchedulerStatus converts domain model status to proto status.
-func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus {
+func domainToProtoSchedulerStatus(s run.RunStatus) statev1.SchedulerStatus {
 	switch s {
-	case run.SchedulerStatusPending:
+	case run.RunStatusPending:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_PENDING
-	case run.SchedulerStatusRunning:
+	case run.RunStatusRunning:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_RUNNING
-	case run.SchedulerStatusSucceeded:
+	case run.RunStatusSucceeded:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_SUCCEEDED
-	case run.SchedulerStatusFailed:
+	case run.RunStatusFailed:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_FAILED
-	case run.SchedulerStatusCancelled:
+	case run.RunStatusCancelled:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED
-	case run.SchedulerStatusSkipped:
+	case run.RunStatusSkipped:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_SKIPPED
-	case run.SchedulerStatusCancelling:
+	case run.RunStatusCancelling:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING
 	default:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
 	}
 }
 
-// domainToProtoScheduler converts a SchedulerTracker domain model to its proto
+// domainToProtoScheduler converts a RunRow domain model to its proto
 // representation. Used by GetScheduler, which works against the low-level
 // tracker repo rather than the Run aggregate.
-func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
+func domainToProtoScheduler(t *postgres.RunRow) *statev1.Scheduler {
 	s := &statev1.Scheduler{
 		ScheduleId:           t.ScheduleID.String(),
 		ScheduleName:         t.ScheduleName,
@@ -277,8 +277,8 @@ func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 	if t.CompletedAt != nil {
 		s.CompletedAt = timestamppb.New(*t.CompletedAt)
 	}
-	if t.LastHeartbeatAt != nil {
-		s.LastHeartbeatAt = timestamppb.New(*t.LastHeartbeatAt)
+	if t.LastProgressAt != nil {
+		s.LastHeartbeatAt = timestamppb.New(*t.LastProgressAt)
 	}
 	if t.CancelledAt != nil {
 		s.CancelledAt = timestamppb.New(*t.CancelledAt)
@@ -300,7 +300,7 @@ func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 // Used by cancel methods that operate on the Run aggregate directly.
 func runToProto(r *run.Run) *statev1.Scheduler {
 	s := &statev1.Scheduler{
-		ScheduleId:           r.ScheduleID().String(),
+		ScheduleId:           r.RunID().String(),
 		ScheduleName:         r.ScheduleName(),
 		Status:               domainToProtoSchedulerStatus(r.Status()),
 		CreatedAt:            timestamppb.New(r.CreatedAt()),
@@ -312,8 +312,8 @@ func runToProto(r *run.Run) *statev1.Scheduler {
 	if r.CompletedAt() != nil {
 		s.CompletedAt = timestamppb.New(*r.CompletedAt())
 	}
-	if r.LastHeartbeatAt() != nil {
-		s.LastHeartbeatAt = timestamppb.New(*r.LastHeartbeatAt())
+	if r.LastProgressAt() != nil {
+		s.LastHeartbeatAt = timestamppb.New(*r.LastProgressAt())
 	}
 	if r.CancelledAt() != nil {
 		s.CancelledAt = timestamppb.New(*r.CancelledAt())
@@ -392,10 +392,10 @@ func (h *SchedulerHandler) ListAllSchedules(
 			s.Description = entry.Description
 		}
 		if run, ok := lastRuns[name]; ok {
-			s.IsRunning = run.IsRunning
+			s.IsRunning = run.IsActive
 			s.LastRunStatus = string(run.Status)
 			s.LastRunAt = timestamppb.New(run.CreatedAt)
-			s.LastRunId = run.ScheduleID.String()
+			s.LastRunId = run.RunID.String()
 		}
 		summaries = append(summaries, s)
 	}

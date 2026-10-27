@@ -35,7 +35,7 @@ func TestRecordAttemptReport_QueuedAndRunningMoveTheTask(t *testing.T) {
 
 	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptQueued, ""))
 	assert.Equal(t, run.TaskStatusQueued, tc.statuses[taskOf(r, "ftable_a")])
-	assert.Equal(t, reportAt, *r.LastHeartbeatAt())
+	assert.Equal(t, reportAt, *r.LastProgressAt())
 
 	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptRunning, ""))
 	assert.Equal(t, run.TaskStatusRunning, tc.statuses[taskOf(r, "ftable_a")])
@@ -50,7 +50,7 @@ func TestRecordAttemptReport_AnEqualRankReportMovesNoStatus(t *testing.T) {
 	r, tc, g := startedFailureRun(t)
 	report(t, r, tc, g, "ftable_a", 0, run.AttemptRunning, "")
 	saves := len(tc.saves)
-	heartbeat := *r.LastHeartbeatAt()
+	heartbeat := *r.LastProgressAt()
 
 	_, _, err := r.RecordAttemptReport(context.Background(), tc, g, run.AttemptReport{
 		TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptRunning, LogS3Key: ptrTo("logs/a")}, taskDefaults, reportAt.Add(time.Hour))
@@ -58,7 +58,7 @@ func TestRecordAttemptReport_AnEqualRankReportMovesNoStatus(t *testing.T) {
 
 	require.Len(t, tc.saves, saves+1, "the attempt's facts are saved")
 	assert.Equal(t, "logs/a", *tc.saves[saves].LogS3Key)
-	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+	assert.Equal(t, heartbeat, *r.LastProgressAt())
 	assert.Equal(t, run.TaskStatusRunning, tc.statuses[taskOf(r, "ftable_a")])
 }
 
@@ -76,7 +76,7 @@ func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady
 	created := createdByKey(tc)[fkey("ftable_g")]
 	node, _ := failureSchedule().Node(fkey("ftable_g"))
 	assert.Equal(t, run.TaskDispatched{
-		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Attempt: 0,
+		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Attempt: 0,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: created.JobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}, events[0])
@@ -129,11 +129,11 @@ func TestRecordAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testin
 	events := report(t, r, tc, g, "ftable_a", 0, run.AttemptFailed, model.FailureReasonOOMKilled)
 
 	id := taskOf(r, "ftable_a")
-	jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_a", r.ScheduleID().String(), 1)
+	jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_a", r.RunID().String(), 1)
 	require.NoError(t, err)
 	node, _ := failureSchedule().Node(fkey("ftable_a"))
 	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
-		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: id, Attempt: 1,
+		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: id, Attempt: 1,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: jobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}}, events)
@@ -261,7 +261,7 @@ func TestRecordAttemptReport_ATaskOfAnotherRunIsNotHeld(t *testing.T) {
 	other.ScheduleID = uuid.New()
 	tc.created[id] = other
 	tc.lockOrder, tc.saves, tc.added = nil, nil, nil
-	heartbeat := *r.LastHeartbeatAt()
+	heartbeat := *r.LastProgressAt()
 
 	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
 		run.AttemptReport{TaskID: id, Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
@@ -276,7 +276,7 @@ func TestRecordAttemptReport_ATaskOfAnotherRunIsNotHeld(t *testing.T) {
 	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
 	assert.Equal(t, run.AttemptDispatched, a.Status)
 	assert.Zero(t, r.TerminalTaskCount())
-	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+	assert.Equal(t, heartbeat, *r.LastProgressAt())
 }
 
 // A report for a run that has ended writes nothing: every attempt of it has
@@ -321,7 +321,7 @@ func TestRecordAttemptReport_TheExampleRunFinalizesFailed(t *testing.T) {
 	require.Len(t, events, 1)
 	fin, ok := events[0].(run.RunFinalized)
 	require.True(t, ok, "%T", events[0])
-	assert.Equal(t, run.SchedulerStatusFailed, fin.Outcome)
+	assert.Equal(t, run.RunStatusFailed, fin.Outcome)
 	assert.Equal(t, int32(8), r.TerminalTaskCount())
 	assert.Nil(t, r.FailureReason(), "a run whose task failed records no run failure reason")
 	assert.ElementsMatch(t, []uuid.UUID{taskOf(r, "ftable_f"), taskOf(r, "ftable_h")}, tc.skipped)
@@ -344,7 +344,7 @@ func TestRecordAttemptReport_TheLastSuccessFinalizesTheRunSucceeded(t *testing.T
 		require.NotEmpty(t, events)
 		fin, ok := events[len(events)-1].(run.RunFinalized)
 		require.True(t, ok, "%T", events[len(events)-1])
-		assert.Equal(t, run.SchedulerStatusSucceeded, fin.Outcome)
+		assert.Equal(t, run.RunStatusSucceeded, fin.Outcome)
 	}
 	assert.Equal(t, int32(8), r.TerminalTaskCount())
 }
@@ -371,7 +371,7 @@ func TestRecordAttemptReport_ANonRetryableFailureWithBudgetLeftLetsTheRunFinaliz
 	events := report(t, r, tc, g, "ftable_a", 0, run.AttemptFailed, model.FailureReasonStartTimeout)
 
 	require.Len(t, events, 1)
-	assert.Equal(t, run.SchedulerStatusFailed, events[0].(run.RunFinalized).Outcome)
+	assert.Equal(t, run.RunStatusFailed, events[0].(run.RunFinalized).Outcome)
 }
 
 // A run with no attempt in flight and no progress for five minutes fails as
@@ -392,7 +392,7 @@ func TestFailStalled_FailsARunWithNothingInFlight(t *testing.T) {
 	assert.True(t, check.Stalled)
 	assert.Empty(t, check.Granted)
 	require.Len(t, check.Events, 1)
-	assert.Equal(t, run.SchedulerStatusFailed, check.Events[0].(run.RunFinalized).Outcome)
+	assert.Equal(t, run.RunStatusFailed, check.Events[0].(run.RunFinalized).Outcome)
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Len(t, tc.skipped, 6, "every task left pending is skipped")
@@ -416,7 +416,7 @@ func TestFailStalled_LeavesARunWithWorkInFlightOrRecentProgress(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, check.Stalled, "the run moved under five minutes ago")
 	assert.Empty(t, tc.grantableReads, "a run that moved within five minutes is not read")
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 }
 
 // A cron fire whose selection cannot run fails with the reason that says why.
@@ -441,7 +441,7 @@ func cancellingFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTask
 	r, tc, g := startedFailureRun(t)
 	_, err := r.Cancel(context.Background(), tc, "alice", "bad data", reportAt)
 	require.NoError(t, err)
-	require.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	require.Equal(t, run.RunStatusCancelling, r.Status())
 	return r, tc, g
 }
 
@@ -456,7 +456,7 @@ func TestRecordAttemptReport_AStoppedReportCancelsTheStoppingTask(t *testing.T) 
 	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
 	assert.Equal(t, run.AttemptStopped, a.Status)
 	assert.Equal(t, int32(7), r.TerminalTaskCount())
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status(), "ftable_b is still stopping")
+	assert.Equal(t, run.RunStatusCancelling, r.Status(), "ftable_b is still stopping")
 }
 
 // A stopping task whose container exited 0 before it was stopped wrote its
@@ -498,7 +498,7 @@ func TestRecordAttemptReport_AStoppingTaskThatFailsIsNotRetried(t *testing.T) {
 // it, and the attempt's next check stays the one the stop set.
 func TestRecordAttemptReport_ARunningReportLeavesTheTaskStopping(t *testing.T) {
 	r, tc, g := cancellingFailureRun(t)
-	heartbeat := *r.LastHeartbeatAt()
+	heartbeat := *r.LastProgressAt()
 	saves := len(tc.saves)
 
 	_, _, err := r.RecordAttemptReport(context.Background(), tc, g,
@@ -509,7 +509,7 @@ func TestRecordAttemptReport_ARunningReportLeavesTheTaskStopping(t *testing.T) {
 	require.Len(t, tc.saves, saves+1)
 	assert.Equal(t, run.AttemptRunning, tc.saves[saves].Status)
 	assert.Zero(t, tc.saves[saves].NextCheckIn, "the attempt's next check stays the one the stop set")
-	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+	assert.Equal(t, heartbeat, *r.LastProgressAt())
 }
 
 // A cancelling run dispatches nothing: no task a success makes ready, no
@@ -522,8 +522,8 @@ func TestRecordAttemptReport_ACancellingRunDispatchesNothing(t *testing.T) {
 	last := report(t, r, tc, g, "ftable_b", 0, run.AttemptFailed, model.FailureReasonOOMKilled)
 
 	assert.Empty(t, first)
-	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
-		Outcome: run.SchedulerStatusCancelled}}, last)
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.RunID(), Name: "e2e-schedule-failure",
+		Outcome: run.RunStatusCancelled}}, last)
 	assert.Len(t, tc.added, added, "no attempt is dispatched")
 	assert.Equal(t, reads, g.reads, "the run's graph is not read")
 }
@@ -536,9 +536,9 @@ func TestRecordAttemptReport_TheLastStoppedTaskEndsTheRunCancelled(t *testing.T)
 
 	events := report(t, r, tc, g, "ftable_b", 0, run.AttemptStopped, "")
 
-	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
-		Outcome: run.SchedulerStatusCancelled}}, events)
-	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.RunID(), Name: "e2e-schedule-failure",
+		Outcome: run.RunStatusCancelled}}, events)
+	assert.Equal(t, run.RunStatusCancelled, r.Status())
 	require.NotNil(t, r.CompletedAt())
 	assert.Equal(t, reportAt, *r.CompletedAt())
 	assert.Nil(t, r.FailureReason())
@@ -598,10 +598,10 @@ func TestFailStalled_EndsACancellingRunWithNothingInFlightCancelled(t *testing.T
 
 	require.NoError(t, err)
 	assert.True(t, check.Stalled)
-	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
-		Outcome: run.SchedulerStatusCancelled}}, check.Events)
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.RunID(), Name: "e2e-schedule-failure",
+		Outcome: run.RunStatusCancelled}}, check.Events)
 	assert.Empty(t, tc.grantableReads, "a cancelling run is granted nothing")
-	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	assert.Equal(t, run.RunStatusCancelled, r.Status())
 	assert.Nil(t, r.FailureReason())
 }
 

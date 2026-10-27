@@ -15,7 +15,7 @@ The fakes keep their state in FAKE_DIR:
                      fails when FAKE_STATUS_FAIL is set or the file
                      FAKE_STATUS_FAIL_WHEN_EXISTS names exists, and `schedule cancel` when FAKE_CANCEL_FAIL is
                      set; with FAKE_CANCEL_NOOP a cancel is accepted and the run stays live
-  deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
+  deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or tasks
                      (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
                      `docker exec <container> printenv VAR` prints fake_<var>
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
@@ -151,7 +151,7 @@ elif args[0] == "exec":
         with open(os.path.join(fake, "docker-calls.jsonl"), "a") as calls:
             calls.write(json.dumps({"argv": args}) + "\n")
         sql = rest[rest.index("-c") + 1]
-        for name, marker in (("deployments.json", "FROM deployments"), ("tasks.json", "FROM task_tracker")):
+        for name, marker in (("deployments.json", "FROM deployments"), ("tasks.json", "FROM tasks")):
             path = os.path.join(fake, name)
             if marker in sql and os.path.exists(path):
                 sys.stdout.write(open(path).read())
@@ -173,7 +173,7 @@ else:
 def job(run_id: str, table: str = "n00_0000") -> dict:
     return {
         "metadata": {"name": f"bench-bench-{table.replace('_', '-')}-{run_id}", "creationTimestamp": "2026-10-03T09:00:01Z",
-                     "labels": {"schedule-id": run_id}},
+                     "labels": {"run-id": run_id}},
         "spec": {"template": {"spec": {"containers": [
             {"name": "dbt-job", "env": [{"name": "TABLE_NAME", "value": table}]}]}}},
         "status": {"succeeded": 1, "completionTime": "2026-10-03T09:00:02Z"},

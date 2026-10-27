@@ -22,8 +22,8 @@ import (
 type PostgresUnitOfWork struct {
 	db            *sqlx.DB
 	tx            *sqlx.Tx
-	schedulerRepo SchedulerTrackerRepository
-	taskRepo      TaskTrackerRepository
+	schedulerRepo RunTableRepository
+	taskRepo      TaskRepository
 	catalogRepo   ScheduleCatalogRepository
 	clock         ports.Clock
 	logger        *slog.Logger
@@ -39,8 +39,8 @@ type PostgresUnitOfWork struct {
 // tenantID.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
-	schedulerRepo SchedulerTrackerRepository,
-	taskRepo TaskTrackerRepository,
+	schedulerRepo RunTableRepository,
+	taskRepo TaskRepository,
 	catalogRepo ScheduleCatalogRepository,
 	clock ports.Clock,
 	logger *slog.Logger,

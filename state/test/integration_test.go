@@ -113,8 +113,8 @@ func TestMain(m *testing.M) {
 	stateDB = db
 
 	// ---- Build repositories ----
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build handlers ----
@@ -123,7 +123,7 @@ func TestMain(m *testing.M) {
 	integrationUoWFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
-	activateHandler := svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
+	activateHandler := svchandlers.NewStartRunHandler(defaultPlanner, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	attemptHandler := handlers.NewTaskAttemptHandler(attemptRepo, logger)
@@ -204,7 +204,7 @@ func TestStateService(t *testing.T) {
 		// until that attempt reports stopped.
 		var stored string
 		require.NoError(t, stateDB.GetContext(ctx, &stored,
-			`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, schedID))
+			`SELECT status FROM runs WHERE run_id = $1`, schedID))
 		assert.Equal(t, "cancelling", stored)
 
 		// Verify via GetScheduler
@@ -236,7 +236,7 @@ func TestStateService(t *testing.T) {
 		}
 		var before cancelRow
 		require.NoError(t, stateDB.GetContext(ctx, &before,
-			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM scheduler_tracker WHERE schedule_id = $1`, trigResp.ScheduleId))
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, trigResp.ScheduleId))
 		require.Equal(t, "cancelling", before.Status)
 		var outboxBefore int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxBefore,
@@ -253,7 +253,7 @@ func TestStateService(t *testing.T) {
 
 		var after cancelRow
 		require.NoError(t, stateDB.GetContext(ctx, &after,
-			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM scheduler_tracker WHERE schedule_id = $1`, trigResp.ScheduleId))
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM runs WHERE run_id = $1`, trigResp.ScheduleId))
 		assert.Equal(t, before, after, "a second cancel changes nothing")
 		var outboxAfter int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxAfter,
@@ -301,12 +301,12 @@ func seedActiveSchedule(t *testing.T, scheduleName string) {
 }
 
 // schedulerKind reads the persisted kind discriminator for a run directly from
-// scheduler_tracker, bypassing the proto surface (which does not expose kind).
+// runs, bypassing the proto surface (which does not expose kind).
 func schedulerKind(t *testing.T, scheduleID string) string {
 	t.Helper()
 	var kind string
 	err := stateDB.GetContext(context.Background(), &kind,
-		`SELECT kind FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		`SELECT kind FROM runs WHERE run_id = $1`, scheduleID)
 	require.NoError(t, err)
 	return kind
 }

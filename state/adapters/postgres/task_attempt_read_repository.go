@@ -13,7 +13,7 @@ import (
 )
 
 // TaskAttemptReadRepository reads a run's task attempts from task_attempts,
-// reaching the run through each attempt's task_tracker row.
+// reaching the run through each attempt's task row.
 type TaskAttemptReadRepository struct {
 	db *sqlx.DB
 }
@@ -49,8 +49,8 @@ func (r *TaskAttemptReadRepository) ListRunAttempts(
 ) ([]projection.TaskAttempt, int, error) {
 	const filter = `
 		FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		WHERE t.schedule_id = $1 AND ($2::uuid IS NULL OR a.task_id = $2)`
+		JOIN tasks t ON t.task_id = a.task_id
+		WHERE t.run_id = $1 AND ($2::uuid IS NULL OR a.task_id = $2)`
 
 	var total int
 	if err := r.db.GetContext(ctx, &total, `SELECT count(*)`+filter, runID, taskID); err != nil {

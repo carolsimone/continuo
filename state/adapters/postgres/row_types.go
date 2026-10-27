@@ -9,18 +9,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// SchedulerTracker is the storage row carrier for the scheduler_tracker table.
+// RunRow is the storage row carrier for the runs table.
 // It mirrors the table schema one-to-one and is used exclusively within this
 // package by the repository implementations. Domain logic operates on
 // run.Run aggregates; hydrateRun / dehydrateRun translate between the two.
-type SchedulerTracker struct {
-	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"schedule_id"`
+type RunRow struct {
+	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"run_id"`
 	ScheduleName         string                         `json:"schedule_name" db:"schedule_name"`
-	Status               run.SchedulerStatus            `json:"status" db:"status"`
+	Status               run.RunStatus                  `json:"status" db:"status"`
 	CreatedAt            time.Time                      `json:"created_at" db:"created_at"`
 	StartedAt            *time.Time                     `json:"started_at,omitempty" db:"started_at"`
 	CompletedAt          *time.Time                     `json:"completed_at,omitempty" db:"completed_at"`
-	LastHeartbeatAt      *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
+	LastProgressAt       *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_progress_at"`
 	CancelledAt          *time.Time                     `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy          *string                        `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	CancellationReason   *string                        `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
@@ -45,26 +45,26 @@ type SchedulerTracker struct {
 // A malformed service_metadata JSONB is surfaced as an error rather than
 // silently coerced to an empty map, which would erase a run's per-service
 // pinning and corrupt downstream dispatch.
-func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata, error) {
+func (s *RunRow) GetServiceMetadata() (map[string]run.ServiceMetadata, error) {
 	if len(s.ServiceMetadata) > 0 {
 		return s.ServiceMetadata, nil
 	}
 	meta, err := unmarshalServiceMetadata(s.ServiceMetadataRaw)
 	if err != nil {
-		return nil, fmt.Errorf("decode service_metadata for schedule_id %s: %w", s.ScheduleID, err)
+		return nil, fmt.Errorf("decode service_metadata for run_id %s: %w", s.ScheduleID, err)
 	}
 	return meta, nil
 }
 
-// TaskTracker is the storage row carrier for the task_tracker table.
+// TaskRow is the storage row carrier for the tasks table.
 // It mirrors the table schema one-to-one, plus WaitingOnRunID, which the task
 // reads join from node_leases. The repository implementations read and write
 // it, and the gRPC task handler maps the rows the task reads return; domain
 // logic operates on run.Task values, and the adapters translate between the
 // two.
-type TaskTracker struct {
+type TaskRow struct {
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
-	ScheduleID          uuid.UUID      `json:"schedule_id" db:"schedule_id"`
+	ScheduleID          uuid.UUID      `json:"schedule_id" db:"run_id"`
 	CreatedAt           time.Time      `json:"created_at" db:"created_at"`
 	ServiceName         string         `json:"service_name" db:"service_name"`
 	SchemaName          string         `json:"schema_name" db:"schema_name"`
@@ -84,7 +84,7 @@ type TaskTracker struct {
 	LeaseWaitSince      *time.Time     `json:"lease_wait_since,omitempty" db:"lease_wait_since"`
 	// WaitingOnRunID is not a column: it is the run whose task holds the node
 	// lease this task waits for, read by the task reads (GetByID,
-	// GetByScheduleAndNode, ListByScheduleID); nil when the task waits for no
+	// GetByRunAndNode, ListByRunID); nil when the task waits for no
 	// lease, no task holds its node, or the row was read by any other query.
 	WaitingOnRunID *uuid.UUID `json:"waiting_on_run_id,omitempty" db:"waiting_on_run_id"`
 }

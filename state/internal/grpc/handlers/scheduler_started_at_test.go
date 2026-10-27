@@ -18,10 +18,10 @@ import (
 // and CLI once it is persisted.
 func TestDomainToProtoScheduler_PopulatesStartedAt(t *testing.T) {
 	started := time.Now()
-	tracker := &postgres.SchedulerTracker{
+	tracker := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "s",
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            started.Add(-time.Minute),
 		StartedAt:            &started,
 		InitializationStatus: "completed",
@@ -41,7 +41,7 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 	rn := run.HydrateRun(
 		uuid.New(),
 		"s",
-		run.SchedulerStatusRunning,
+		run.RunStatusRunning,
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
@@ -63,12 +63,12 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 // A run that failed without a failed task says why, on both mappers.
 func TestSchedulerMappers_CarryTheRunFailureReason(t *testing.T) {
 	reason := "stalled"
-	tracker := &postgres.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "s", Status: run.SchedulerStatusFailed,
+	tracker := &postgres.RunRow{ScheduleID: uuid.New(), ScheduleName: "s", Status: run.RunStatusFailed,
 		CreatedAt: time.Now(), FailureReason: &reason}
 	assert.Equal(t, "stalled", domainToProtoScheduler(tracker).GetFailureReason())
 
 	total := int32(1)
-	rn := run.HydrateRun(uuid.New(), "s", run.SchedulerStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	rn := run.HydrateRun(uuid.New(), "s", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, time.Now(), nil, nil, nil, nil, nil, nil, &total, 1,
 		map[string]run.ServiceMetadata{})
 	assert.Empty(t, runToProto(rn).GetFailureReason(), "a run whose task failed names no run failure reason")

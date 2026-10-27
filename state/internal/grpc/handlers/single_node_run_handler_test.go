@@ -34,8 +34,8 @@ import (
 
 type singleNodeRunFixture struct {
 	Handler       *SingleNodeRunHandler
-	SchedulerRepo postgres.SchedulerTrackerRepository
-	TaskRepo      postgres.TaskTrackerRepository
+	SchedulerRepo postgres.RunTableRepository
+	TaskRepo      postgres.TaskRepository
 	DB            *sqlx.DB
 	// Tenant is the tenant the fixture plans for; it holds release rel-svca
 	// as its live release, with svcA's public.users (one data test) and
@@ -75,8 +75,8 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -153,7 +153,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	require.Nil(t, tracker.SourceRunID)
 	require.Equal(t, resp.ScheduleName, tracker.ScheduleName)
 
-	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
+	require.Equal(t, run.RunStatusRunning, tracker.Status)
 
 	// The run's one task is dispatched on the live release: the outbox row is
 	// its task.dispatch:v1 dispatch, read directly by aggregate_id rather than
@@ -176,7 +176,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -202,7 +202,7 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -228,7 +228,7 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -254,12 +254,12 @@ func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
 
 	var stored string
 	require.NoError(t, fx.DB.QueryRowContext(context.Background(),
-		`SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID).Scan(&stored))
+		`SELECT operation FROM runs WHERE run_id = $1`, scheduleID).Scan(&stored))
 	require.Equal(t, "full_refresh", stored)
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -268,20 +268,20 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
-	srcTracker := &postgres.SchedulerTracker{
+	srcTracker := &postgres.RunRow{
 		ScheduleID:           srcID,
 		ScheduleName:         "src-schedule",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now().Add(-time.Hour),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
 	}
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), srcTracker))
-	_, err := fx.DB.ExecContext(context.Background(), `UPDATE scheduler_tracker SET release_id = 'rel-svca', promotion_seq = 1 WHERE schedule_id = $1`, srcID)
+	_, err := fx.DB.ExecContext(context.Background(), `UPDATE runs SET release_id = 'rel-svca', promotion_seq = 1 WHERE run_id = $1`, srcID)
 	require.NoError(t, err)
 
 	taskID := uuid.New()
-	srcTask := &postgres.TaskTracker{
+	srcTask := &postgres.TaskRow{
 		TaskID:      taskID,
 		ScheduleID:  srcID,
 		ServiceName: "svcA",
@@ -292,7 +292,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 		CreatedAt:   time.Now().Add(-time.Hour),
 	}
 	require.NoError(t, fx.TaskRepo.Create(context.Background(), srcTask))
-	_, err = fx.DB.ExecContext(context.Background(), `UPDATE task_tracker SET node_key = 'public.users' WHERE task_id = $1`, taskID)
+	_, err = fx.DB.ExecContext(context.Background(), `UPDATE tasks SET node_key = 'public.users' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
 	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
@@ -321,9 +321,9 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM task_tracker WHERE task_id = $1`, taskID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, srcID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM tasks WHERE task_id = $1`, taskID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, srcID)
 	})
 }
 
@@ -332,10 +332,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           runningID,
 		ScheduleName:         "running-src",
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -343,10 +343,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
 	terminalNoTaskID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           terminalNoTaskID,
 		ScheduleName:         "terminal-no-task",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -355,23 +355,23 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// Seed a terminal source run that names no release, with a task at
 	// svcA's public.users, for the FAILED_PRECONDITION of an unreadable source.
 	noReleaseID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           noReleaseID,
 		ScheduleName:         "no-release",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
 	}))
-	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskTracker{
+	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskRow{
 		TaskID: uuid.New(), ScheduleID: noReleaseID, ServiceName: "svcA", SchemaName: "public", TableName: "users",
 		Status: run.TaskStatusSucceeded, CreatedAt: time.Now(),
 	}))
 
 	t.Cleanup(func() {
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runningID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, terminalNoTaskID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, noReleaseID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, runningID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, terminalNoTaskID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, noReleaseID)
 	})
 
 	cases := []struct {
@@ -415,18 +415,18 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 // Other test packages create and delete single-node runs of their own nodes
 // in the same database at the same time, and the count stays blind to them: a
 // run is created and planned in one transaction, and deleting a run deletes
-// its tasks in the same statement (task_tracker's foreign key to
-// scheduler_tracker is ON DELETE CASCADE), so the one snapshot this query
+// its tasks in the same statement (tasks's foreign key to
+// runs is ON DELETE CASCADE), so the one snapshot this query
 // reads never holds another package's single-node run without its tasks.
 func singleNodeRunsOf(t *testing.T, db *sqlx.DB, req *statev1.TriggerSingleNodeRunRequest) int {
 	t.Helper()
 	var n int
 	require.NoError(t, db.Get(&n, `
-		SELECT count(*) FROM scheduler_tracker s
+		SELECT count(*) FROM runs s
 		WHERE s.kind = 'single_node_run' AND (
-			NOT EXISTS (SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id)
+			NOT EXISTS (SELECT 1 FROM tasks tt WHERE tt.run_id = s.run_id)
 			OR EXISTS (
-				SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id
+				SELECT 1 FROM tasks tt WHERE tt.run_id = s.run_id
 				  AND tt.service_name = $1 AND tt.schema_name = $2 AND tt.table_name = $3))`,
 		req.ServiceName, req.SchemaName, req.TableName))
 	return n
@@ -443,16 +443,16 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 	createRun := func(t *testing.T) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
-		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.SchedulerTracker{
+		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.RunRow{
 			ScheduleID:           id,
 			ScheduleName:         "single-node-run-" + id.String()[:8],
-			Status:               run.SchedulerStatusRunning,
+			Status:               run.RunStatusRunning,
 			CreatedAt:            time.Now(),
 			Kind:                 string(run.KindSingleNodeRun),
 			InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() {
-			fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+			fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 		})
 		return id
 	}
@@ -462,7 +462,7 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 	require.Equal(t, before+1, singleNodeRunsOf(t, fx.DB, req), "a single-node run without tasks is counted")
 
 	elsewhere := createRun(t)
-	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskTracker{
+	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskRow{
 		TaskID: uuid.New(), ScheduleID: elsewhere, ServiceName: "svcA", SchemaName: "public", TableName: "users_snap",
 		Status: run.TaskStatusPending, CreatedAt: time.Now(),
 	}))

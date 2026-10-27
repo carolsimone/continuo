@@ -37,7 +37,7 @@ func (h *builtHarness) stampOf(t *testing.T, id uuid.UUID) run.ReleaseStamp {
 		ReleaseID    *string `db:"release_id"`
 		PromotionSeq *int64  `db:"promotion_seq"`
 	}
-	require.NoError(t, h.db.Get(&row, `SELECT release_id, promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, id))
+	require.NoError(t, h.db.Get(&row, `SELECT release_id, promotion_seq FROM runs WHERE run_id = $1`, id))
 	var s run.ReleaseStamp
 	if row.ReleaseID != nil {
 		s.ReleaseID = *row.ReleaseID
@@ -55,10 +55,10 @@ func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStam
 	rn, err := run.NewPendingRun(name, run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, time.Now())
 	require.NoError(t, err)
 	id := h.saveRun(t, rn)
-	_, err = h.db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, id)
+	_, err = h.db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, id)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ($1, $2, 'service-1', 'raw', 'stamp_orders', 'job', 'failed', 2, 'raw.stamp_orders')`, uuid.New(), id)
 	require.NoError(t, err)
 	return id
@@ -86,7 +86,7 @@ func TestReleaseStamp(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("a triggered run names the live release", func(t *testing.T) {
-		id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-trigger", run.KindTrigger, nil, alice, model.OperationRun)
+		id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-trigger", run.KindTrigger, nil, alice, model.OperationRun)
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
 	})

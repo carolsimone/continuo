@@ -17,12 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedProduction inserts a pending production row of run scheduleID, due at due.
-func seedProduction(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, due time.Time) uuid.UUID {
+// seedProduction inserts a pending production row of run runID, due at due.
+func seedProduction(t *testing.T, db *sqlx.DB, runID uuid.UUID, due time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db.Exec(`INSERT INTO deployments (id, task_id, schedule_id, job_params, next_attempt_at)
-		VALUES ($1, $2, $3, '{}'::jsonb, $4)`, id, uuid.New(), scheduleID, due)
+	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at)
+		VALUES ($1, $2, $3, '{}'::jsonb, $4)`, id, uuid.New(), runID, due)
 	require.NoError(t, err)
 	return id
 }
@@ -31,7 +31,7 @@ func seedProduction(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID, due time.Ti
 func seedCandidate(t *testing.T, db *sqlx.DB, releaseID string, due time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	_, err := db.Exec(`INSERT INTO deployments (id, task_id, schedule_id, job_params, mode, release_id, node_id, next_attempt_at)
+	_, err := db.Exec(`INSERT INTO deployments (id, task_id, run_id, job_params, mode, release_id, node_id, next_attempt_at)
 		VALUES ($1, $2, $3, '{}'::jsonb, 'validation', $4, $5, $6)`,
 		id, uuid.New(), uuid.New(), releaseID, uuid.NewString(), due)
 	require.NoError(t, err)

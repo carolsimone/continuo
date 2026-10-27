@@ -32,7 +32,7 @@ const jobTTLSecondsAfterFinished = int32(86400)
 type JobParams struct {
 	JobName      string
 	TaskID       string
-	ScheduleID   string
+	RunID        string
 	ScheduleName string // used for the schedule label
 	ServiceName  string
 	SchemaName   string

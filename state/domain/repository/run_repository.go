@@ -12,8 +12,8 @@ import (
 )
 
 // RunRepository is the port the application layer uses to load/save Run
-// aggregates and to ask narrow cross-Run queries (HasActiveSchedule,
-// GetActiveScheduler, GetLastRunPerSchedule). Implementations live in
+// aggregates and to ask narrow cross-Run queries (HasActiveRun,
+// GetActiveRun, GetLastRunPerSchedule). Implementations live in
 // state/adapters/postgres.
 type RunRepository interface {
 	// GetRun loads a Run snapshot for read-only use. No row lock. Returns
@@ -35,13 +35,13 @@ type RunRepository interface {
 	// run.ErrRunAlreadyExists; the transaction stays usable.
 	SaveRun(ctx context.Context, r *run.Run) error
 
-	// HasActiveSchedule returns true when a PENDING or RUNNING Run exists
+	// HasActiveRun returns true when a PENDING or RUNNING Run exists
 	// for `name`. Cross-aggregate query used by SchedulePolicy.
-	HasActiveSchedule(ctx context.Context, name string) (bool, error)
+	HasActiveRun(ctx context.Context, name string) (bool, error)
 
-	// GetActiveScheduler returns the active Run on `name`, or nil when
+	// GetActiveRun returns the active Run on `name`, or nil when
 	// none exists. Used by CancelSchedule to find which run to cancel.
-	GetActiveScheduler(ctx context.Context, name string) (*run.Run, error)
+	GetActiveRun(ctx context.Context, name string) (*run.Run, error)
 
 	// GetLastRunPerSchedule returns the most recent Run per schedule name.
 	// Read-only projection for ListAllSchedules.
@@ -65,8 +65,8 @@ type RunRepository interface {
 // LastRunSummary is the projection row returned by GetLastRunPerSchedule.
 type LastRunSummary struct {
 	ScheduleName string
-	ScheduleID   uuid.UUID
-	Status       run.SchedulerStatus
+	RunID        uuid.UUID
+	Status       run.RunStatus
 	CreatedAt    time.Time
-	IsRunning    bool
+	IsActive     bool
 }

@@ -61,7 +61,7 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 		// Resolve schedule_id for outbox cleanup (best effort).
 		var scheduleID string
 		_ = clients.stateDB.GetContext(bg, &scheduleID,
-			`SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName)
+			`SELECT run_id FROM runs WHERE schedule_name = $1`, scheduleName)
 
 		if scheduleID != "" {
 			if _, err := clients.stateDB.ExecContext(bg,
@@ -71,10 +71,10 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 		}
 
 		_, _ = clients.stateDB.ExecContext(bg,
-			`DELETE FROM task_tracker WHERE schedule_id IN (
-				SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1)`, scheduleName)
+			`DELETE FROM tasks WHERE run_id IN (
+				SELECT run_id FROM runs WHERE schedule_name = $1)`, scheduleName)
 		_, _ = clients.stateDB.ExecContext(bg,
-			`DELETE FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName)
+			`DELETE FROM runs WHERE schedule_name = $1`, scheduleName)
 		_, _ = clients.stateDB.ExecContext(bg,
 			`DELETE FROM schedule_catalog WHERE schedule_name = $1`, scheduleName)
 	})
@@ -96,18 +96,18 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		var dbStatus string
 		qErr := clients.stateDB.GetContext(ctx, &dbStatus,
-			`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+			`SELECT status FROM runs WHERE run_id = $1`, scheduleID)
 		if qErr != nil {
 			return false, nil // row not yet visible — retry
 		}
 		return dbStatus == "failed", nil
-	}, fmt.Sprintf("Timeout: scheduler_tracker for empty-DAG run %s did not reach status='failed'", scheduleID))
+	}, fmt.Sprintf("Timeout: runs for empty-DAG run %s did not reach status='failed'", scheduleID))
 
-	t.Logf("scheduler_tracker reached status='failed' for empty-DAG run %s", scheduleID)
+	t.Logf("runs reached status='failed' for empty-DAG run %s", scheduleID)
 
 	var taskCount int
 	require.NoError(t, clients.stateDB.GetContext(ctx, &taskCount,
-		`SELECT count(*) FROM task_tracker WHERE schedule_id = $1`, scheduleID))
+		`SELECT count(*) FROM tasks WHERE run_id = $1`, scheduleID))
 	assert.Zero(t, taskCount, "an empty selection stores no task")
 
 	// A manual trigger of the same schedule is refused and creates no run,
@@ -123,6 +123,6 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	}
 	var runs int
 	require.NoError(t, clients.stateDB.GetContext(ctx, &runs,
-		`SELECT count(*) FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName))
+		`SELECT count(*) FROM runs WHERE schedule_name = $1`, scheduleName))
 	assert.Equal(t, 1, runs, "a refused trigger creates no run")
 }

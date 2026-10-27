@@ -18,7 +18,7 @@ func seedDeploymentReferencing(t *testing.T, db *sqlx.DB, messageProcessingID uu
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO deployments (id, message_processing_id, task_id, schedule_id, job_params)
+		`INSERT INTO deployments (id, message_processing_id, task_id, run_id, job_params)
 		 VALUES ($1, $2, gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)`,
 		id, messageProcessingID,
 	)

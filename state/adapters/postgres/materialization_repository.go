@@ -53,7 +53,7 @@ func (r *MaterializationRepository) List(ctx context.Context, tenantID string) (
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		SELECT m.node_key, m.content_hash, m.attempt_content_hash, m.attempt_run_id, s.status AS attempt_run_status
 		FROM node_materializations m
-		LEFT JOIN scheduler_tracker s ON s.schedule_id = m.attempt_run_id
+		LEFT JOIN runs s ON s.run_id = m.attempt_run_id
 		WHERE m.tenant_id = $1`, tenantID); err != nil {
 		return nil, fmt.Errorf("read the materializations of tenant %s: %w", tenantID, err)
 	}
@@ -78,10 +78,10 @@ func attemptState(runID uuid.NullUUID, status sql.NullString) seeds.AttemptState
 	if !runID.Valid || !status.Valid {
 		return seeds.AttemptNone
 	}
-	switch run.SchedulerStatus(status.String) {
-	case run.SchedulerStatusSucceeded:
+	switch run.RunStatus(status.String) {
+	case run.RunStatusSucceeded:
 		return seeds.AttemptSucceeded
-	case run.SchedulerStatusFailed, run.SchedulerStatusCancelled, run.SchedulerStatusSkipped:
+	case run.RunStatusFailed, run.RunStatusCancelled, run.RunStatusSkipped:
 		return seeds.AttemptFailed
 	default:
 		return seeds.AttemptInFlight
@@ -129,7 +129,7 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 // running or cancelling): that row is the only record of the load in flight, and a release
 // that brings the node back before the run ends must find it there.
 func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error) {
-	unfinished := pq.Array(activeSchedulerStatuses())
+	unfinished := pq.Array(activeRunStatuses())
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM node_materializations m
 		WHERE m.tenant_id = $1
@@ -137,8 +137,8 @@ func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenant
 		      SELECT 1 FROM topology_nodes n
 		      WHERE n.tenant_id = m.tenant_id AND n.release_id = $2 AND n.node_key = m.node_key)
 		  AND NOT EXISTS (
-		      SELECT 1 FROM scheduler_tracker s
-		      WHERE s.schedule_id = m.attempt_run_id AND s.status = ANY($3))`,
+		      SELECT 1 FROM runs s
+		      WHERE s.run_id = m.attempt_run_id AND s.status = ANY($3))`,
 		tenantID, releaseID, unfinished)
 	if err != nil {
 		return 0, fmt.Errorf("delete materializations absent from release %s: %w", releaseID, err)

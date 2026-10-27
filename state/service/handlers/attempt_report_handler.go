@@ -79,7 +79,7 @@ func (h *AttemptReportHandler) observeCancel(u uow.UnitOfWork, r *run.Run, event
 		return
 	}
 	for _, evt := range events {
-		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.SchedulerStatusCancelled {
+		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.RunStatusCancelled {
 			d := now.Sub(*r.CancelledAt())
 			u.AfterCommit(func() { h.metrics.RunCancelled(d) })
 			return

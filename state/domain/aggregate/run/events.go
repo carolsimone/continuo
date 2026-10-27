@@ -16,7 +16,7 @@ import (
 // add their own events.
 type DomainEvent interface {
 	runDomainEvent()
-	ScheduleID() uuid.UUID
+	RunID() uuid.UUID
 }
 
 // RunFinalized is recorded by Run.RecordAttemptReport when every task of the
@@ -27,11 +27,11 @@ type DomainEvent interface {
 type RunFinalized struct {
 	ID      uuid.UUID
 	Name    string
-	Outcome SchedulerStatus
+	Outcome RunStatus
 }
 
-func (RunFinalized) runDomainEvent()         {}
-func (e RunFinalized) ScheduleID() uuid.UUID { return e.ID }
+func (RunFinalized) runDomainEvent()    {}
+func (e RunFinalized) RunID() uuid.UUID { return e.ID }
 
 // RunCancelled is the cancel of a run: who cancelled it, why, and the
 // attempts state still waits for. Run.Cancel records it naming no attempt;
@@ -45,8 +45,8 @@ type RunCancelled struct {
 	Attempts           []StopTarget
 }
 
-func (RunCancelled) runDomainEvent()         {}
-func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
+func (RunCancelled) runDomainEvent()    {}
+func (e RunCancelled) RunID() uuid.UUID { return e.ID }
 
 // TaskDispatched is recorded for each attempt of a task state dispatches: by
 // Run.Start for each ready task, by Run.RecordAttemptReport for each task a
@@ -72,8 +72,8 @@ type TaskDispatched struct {
 	Timeout      time.Duration
 }
 
-func (TaskDispatched) runDomainEvent()         {}
-func (e TaskDispatched) ScheduleID() uuid.UUID { return e.ID }
+func (TaskDispatched) runDomainEvent()    {}
+func (e TaskDispatched) RunID() uuid.UUID { return e.ID }
 
 // RunDispatchTerminal is recorded by Run.MarkDispatchTerminal next to the
 // RunFinalized that carries the outcome (skipped for a benign no_tests
@@ -85,5 +85,5 @@ type RunDispatchTerminal struct {
 	Reason string
 }
 
-func (RunDispatchTerminal) runDomainEvent()         {}
-func (e RunDispatchTerminal) ScheduleID() uuid.UUID { return e.ID }
+func (RunDispatchTerminal) runDomainEvent()    {}
+func (e RunDispatchTerminal) RunID() uuid.UUID { return e.ID }

@@ -113,7 +113,7 @@ func triggerScheduleHTTP(t *testing.T, base, scheduleName string) string {
 	return scheduleID
 }
 
-// waitForAllTasksSucceeded polls task_tracker until all given tables reach
+// waitForAllTasksSucceeded polls tasks until all given tables reach
 // "succeeded" status for the specified schedule_id. Unlike verifyJobsCompleted
 // (which filters by schedule_name), this filters by schedule_id to support
 // multiple runs of the same schedule in a single test.
@@ -129,8 +129,8 @@ func waitForAllTasksSucceeded(
 		for _, table := range tables {
 			var status string
 			err := clients.stateDB.QueryRowContext(ctx, `
-				SELECT status FROM task_tracker
-				WHERE schedule_id = $1 AND table_name = $2
+				SELECT status FROM tasks
+				WHERE run_id = $1 AND table_name = $2
 			`, scheduleID, table).Scan(&status)
 			if err != nil {
 				return false, nil
