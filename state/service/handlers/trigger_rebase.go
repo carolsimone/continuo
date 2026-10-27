@@ -45,18 +45,12 @@ func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Tri
 	}}
 }
 
-// Handle creates the rebase in.SourceRunID asks for and returns (newRunID,
-// scheduleName). A non-empty in.ExpectedReleaseID must name the live release,
-// or the rebase is runstart.ErrLiveReleaseMoved; an empty one skips the
-// check. That refusal and every selection the planner refuses are returned as
-// is, and nothing is written.
-func (h *TriggerRebaseHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerRebaseInput) (uuid.UUID, string, error) {
-	return h.creation.create(ctx, u, in.TenantID, in.SourceRunID, in.Initiator, h.selectRebase(in))
-}
-
-// HandleInTransaction creates the rebase runID in asks for, as Handle does,
-// inside u's open transaction, which the caller commits or rolls back. It
-// returns the rebase's schedule name.
+// HandleInTransaction creates the rebase runID in asks for inside u's open
+// transaction, which the caller commits or rolls back, and returns the
+// rebase's schedule name. A non-empty in.ExpectedReleaseID must name the live
+// release, or the rebase is runstart.ErrLiveReleaseMoved; an empty one skips
+// the check. That refusal and every selection the planner refuses are
+// returned as is, and the caller rolls back.
 func (h *TriggerRebaseHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerRebaseInput) (string, error) {
 	return h.creation.createInTransaction(ctx, u, runID, in.TenantID, in.SourceRunID, in.Initiator, h.selectRebase(in))
 }

@@ -16,8 +16,8 @@ import (
 // derivedRunCreation creates a run derived from a source run: it enforces the
 // source's eligibility through the aggregate and the schedule's active-run
 // policy, then creates the run, stores its tasks and dispatches the ready ones
-// in one transaction. A rerun and a rebase differ in the run kind, the
-// eligibility check, the selection and the log label.
+// in the caller's transaction. A rerun and a rebase differ in the run kind,
+// the eligibility check, the selection and the log label.
 type derivedRunCreation struct {
 	policy  policy.SchedulePolicy
 	planner runstart.Planner
@@ -37,41 +37,11 @@ type derivedRunCreation struct {
 // inside the creating transaction.
 type selectDerived func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
 
-// create creates the run derived from tenantID's run sourceID with the tasks
-// selectRun chooses, under the source's tenant, in a transaction of its own,
-// and returns its id and schedule name. Another tenant's sourceID is not
-// found. A selection the planner refuses is returned as is, and nothing is
-// written.
-func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, tenantID string, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
-	src, err := c.source(ctx, u, tenantID, sourceID)
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-
-	if err := u.Begin(ctx); err != nil {
-		return uuid.Nil, "", fmt.Errorf("begin: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = u.Rollback()
-		}
-	}()
-
-	runID := uuid.New()
-	if err := c.write(ctx, u, runID, src, initiator, selectRun); err != nil {
-		return uuid.Nil, "", err
-	}
-	if err := u.Commit(); err != nil {
-		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
-	}
-	committed = true
-	return runID, src.ScheduleName(), nil
-}
-
 // createInTransaction creates the run runID derived from tenantID's run
-// sourceID, as create does, inside u's open transaction, which the caller
-// commits or rolls back. It returns the new run's schedule name.
+// sourceID with the tasks selectRun chooses, under the source's tenant,
+// inside u's open transaction, which the caller commits or rolls back, and
+// returns the new run's schedule name. Another tenant's sourceID is not
+// found. A selection the planner refuses is returned as is.
 func (c derivedRunCreation) createInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, tenantID string, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (string, error) {
 	src, err := c.source(ctx, u, tenantID, sourceID)
 	if err != nil {

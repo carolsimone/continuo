@@ -142,7 +142,7 @@ func TestRunCreation(t *testing.T) {
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"),
 			scheduledNode("mart", "derived_c", "dbt-model", "creation-derived"))
 
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, srcID, alice)
+		rerunID, err := h.rerun(ctx, srcID, alice)
 		require.NoError(t, err)
 		assert.Equal(t, source, h.stampOf(t, rerunID))
 		assert.Equal(t, createdRun{Status: run.RunStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
@@ -150,7 +150,7 @@ func TestRunCreation(t *testing.T) {
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, rerunID)
 
-		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+		rebaseID, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestRunCreation(t *testing.T) {
 		_, err := db.Exec(`UPDATE runs SET operation = 'test' WHERE run_id = $1`, src)
 		require.NoError(t, err)
 
-		_, _, err = svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, src, alice)
+		_, err = h.rerun(ctx, src, alice)
 		require.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 		var n int
 		require.NoError(t, db.Get(&n, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
@@ -212,7 +212,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	defer cancel()
 
 	t.Run("rerun", func(t *testing.T) {
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, srcID, alice)
+		rerunID, err := h.rerun(ctx, srcID, alice)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, rerunID)
 		require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	})
 	var rebaseID uuid.UUID
 	t.Run("rebase", func(t *testing.T) {
-		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+		id, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: srcID, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -241,10 +241,72 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	})
 	t.Run("rebase of a rebase", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
-		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+		id, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: rebaseID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"raw.pool_a"}, h.created(t, id).Dispatch)
+	})
+}
+
+// Every command plans and claims inside one transaction of RunCommands, so
+// every read it makes there (the catalog, the schedule's active run, the
+// source run) must reuse the transaction's connection: with a pool of one, a
+// read through a second connection would wait on the connection the command
+// itself holds.
+func TestRunCommands_NeedOneConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	h := newBuiltHarness(db)
+	alice := identity.FromUserID("okta|alice")
+
+	h.catalog(t, "pool-commands")
+	promoteRelease(t, db,
+		scheduledNode("raw", "pool_cmd_a", "dbt-model", "pool-commands"),
+		scheduledNode("mart", "pool_cmd_b", "dbt-model", "pool-commands", "raw.pool_cmd_a"))
+
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.SetMaxOpenConns(0) })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmds := h.commands()
+
+	var started uuid.UUID
+	t.Run("StartRun", func(t *testing.T) {
+		res, err := cmds.StartRun(ctx, svchandlers.StartRunCommand{
+			TenantID: pkgevents.DefaultTenantID, RequestID: uuid.New(), ScheduleName: "pool-commands", Initiator: alice,
+		})
+		require.NoError(t, err)
+		started = res.RunID
+	})
+	t.Run("CancelActiveRun", func(t *testing.T) {
+		require.NotEqual(t, uuid.Nil, started, "the StartRun subtest started the run")
+		res, err := cmds.CancelActiveRun(ctx, svchandlers.CancelActiveRunCommand{
+			TenantID: pkgevents.DefaultTenantID, RequestID: uuid.New(), ScheduleName: "pool-commands", CancelledBy: "alice",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, started, res.RunID)
+	})
+	t.Run("TriggerSingleNodeRun from a snapshot", func(t *testing.T) {
+		require.NotEqual(t, uuid.Nil, started, "the StartRun subtest started the run")
+		_, err := db.Exec(`UPDATE runs SET status = 'cancelled', completed_at = now() WHERE run_id = $1`, started)
+		require.NoError(t, err)
+		releaseLeasesOf(t, db, started)
+		res, err := cmds.TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{
+			RequestID: uuid.New(),
+			TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+				TenantID:       pkgevents.DefaultTenantID,
+				Target:         run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "pool_cmd_a"},
+				MetadataSource: run.MetadataSourceSnapshotOfRun,
+				SourceRunID:    &started,
+				Operation:      model.OperationRun,
+				Initiator:      alice,
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"raw.pool_cmd_a"}, h.created(t, res.RunID).Dispatch)
 	})
 }

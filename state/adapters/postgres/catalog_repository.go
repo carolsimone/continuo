@@ -41,9 +41,19 @@ func NewCatalogRepository(db *sqlx.DB, logger *slog.Logger) *CatalogRepository {
 }
 
 // WithTx returns a CatalogRepository over the same db that runs its
-// transactional methods in tx.
+// transactional methods, and the reads conn serves, in tx.
 func (r *CatalogRepository) WithTx(tx *sqlx.Tx) *CatalogRepository {
 	return &CatalogRepository{db: r.db, tx: tx, logger: r.logger}
+}
+
+// conn is what ExistsActive and GetServiceMetadata read on: the bound
+// transaction, so a command never waits for a second connection while it
+// holds its own, else the autocommit db.
+func (r *CatalogRepository) conn() sqlx.ExtContext {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
 }
 
 // ListActive returns all of the tenant's schedule names that are currently
@@ -63,7 +73,7 @@ func (r *CatalogRepository) ListActive(ctx context.Context, tenantID string) ([]
 // ExistsActive returns true when the tenant's named schedule has an active row.
 func (r *CatalogRepository) ExistsActive(ctx context.Context, tenantID, scheduleName string) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx,
+	err := r.conn().QueryRowxContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM schedule_catalog WHERE tenant_id = $2 AND schedule_name = $1 AND removed_at IS NULL)`,
 		scheduleName, tenantID,
 	).Scan(&exists)
@@ -77,7 +87,7 @@ func (r *CatalogRepository) ExistsActive(ctx context.Context, tenantID, schedule
 // schedule of the tenant.
 func (r *CatalogRepository) GetServiceMetadata(ctx context.Context, tenantID, scheduleName string) (map[string]run.ServiceMetadata, error) {
 	var raw []byte
-	err := r.db.QueryRowContext(ctx,
+	err := r.conn().QueryRowxContext(ctx,
 		`SELECT service_metadata FROM schedule_catalog WHERE tenant_id = $2 AND schedule_name = $1`,
 		scheduleName, tenantID,
 	).Scan(&raw)

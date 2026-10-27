@@ -92,14 +92,14 @@ func TestReleaseStamp(t *testing.T) {
 	})
 
 	t.Run("a rerun names its source's release", func(t *testing.T) {
-		id, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, source, alice)
+		id, err := h.rerun(ctx, source, alice)
 		require.NoError(t, err)
 		assert.Equal(t, old, h.stampOf(t, id))
 	})
 
 	t.Run("a rebase names the live release", func(t *testing.T) {
 		src := h.finished(t, "stamp-rebase", old)
-		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+		id, err := h.rebase(ctx, svchandlers.TriggerRebaseInput{
 			TenantID: pkgevents.DefaultTenantID, SourceRunID: src, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestReleaseStamp(t *testing.T) {
 	target := run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "stamp_orders"}
 
 	t.Run("a latest single-node run names the live release", func(t *testing.T) {
-		id, _, err := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerSingleNodeRunInput{
+		id, err := h.singleNode(ctx, svchandlers.TriggerSingleNodeRunInput{
 			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceLatest, Operation: model.OperationRun, Initiator: alice,
 		})
 		require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestReleaseStamp(t *testing.T) {
 
 	t.Run("a snapshot_of_run single-node run names its source's release", func(t *testing.T) {
 		src := h.finished(t, "stamp-snapshot", old)
-		id, _, err := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerSingleNodeRunInput{
+		id, err := h.singleNode(ctx, svchandlers.TriggerSingleNodeRunInput{
 			TenantID: pkgevents.DefaultTenantID, Target: target, MetadataSource: run.MetadataSourceSnapshotOfRun, SourceRunID: &src, Operation: model.OperationRun, Initiator: alice,
 		})
 		require.NoError(t, err)

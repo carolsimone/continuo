@@ -51,6 +51,36 @@ func (h *builtHarness) inTx(t *testing.T, fn func(ctx context.Context, u uow.Uni
 	require.NoError(t, u.Commit())
 }
 
+// commands returns the RunService commands over h's database: every
+// run-creating command claims its request id and creates its run in one
+// transaction of RunCommands.
+func (h *builtHarness) commands() *svchandlers.RunCommands {
+	return svchandlers.NewRunCommands(h.factory, noRunMetrics{}, defaultPlanner, h.logger)
+}
+
+// rerun reruns the default tenant's run source for initiator under a fresh
+// request id and returns the rerun's id.
+func (h *builtHarness) rerun(ctx context.Context, source uuid.UUID, initiator identity.Identity) (uuid.UUID, error) {
+	res, err := h.commands().TriggerRerun(ctx, svchandlers.TriggerRerunCommand{
+		TenantID: pkgevents.DefaultTenantID, RequestID: uuid.New(), SourceRunID: source, Initiator: initiator,
+	})
+	return res.RunID, err
+}
+
+// rebase creates the rebase in asks for under a fresh request id and returns
+// its id.
+func (h *builtHarness) rebase(ctx context.Context, in svchandlers.TriggerRebaseInput) (uuid.UUID, error) {
+	res, err := h.commands().TriggerRebase(ctx, svchandlers.TriggerRebaseCommand{RequestID: uuid.New(), TriggerRebaseInput: in})
+	return res.RunID, err
+}
+
+// singleNode creates the single-node run in asks for under a fresh request id
+// and returns its id.
+func (h *builtHarness) singleNode(ctx context.Context, in svchandlers.TriggerSingleNodeRunInput) (uuid.UUID, error) {
+	res, err := h.commands().TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{RequestID: uuid.New(), TriggerSingleNodeRunInput: in})
+	return res.RunID, err
+}
+
 // storeRelease stores releaseID for the default tenant.
 func (h *builtHarness) storeRelease(t *testing.T, releaseID string, specs ...topology.NodeSpec) {
 	t.Helper()
@@ -255,7 +285,7 @@ func TestBuiltVersions(t *testing.T) {
 		changed.ContentHash = "sha256:rerun_orders-changed"
 		promoteRelease(t, db, changed)
 
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), pkgevents.DefaultTenantID, sourceID, identity.FromUserID("okta|alice"))
+		rerunID, err := h.rerun(context.Background(), sourceID, identity.FromUserID("okta|alice"))
 		require.NoError(t, err)
 		h.finish(t, rerunID, task(rerunID, "raw.rerun_orders"), run.AttemptSucceeded)
 

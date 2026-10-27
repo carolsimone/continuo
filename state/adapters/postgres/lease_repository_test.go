@@ -23,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	"github.com/carolsimone/continuo/state/service/runstart"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -301,20 +302,26 @@ func (lf leaseFlow) cronHoldingTableA(t *testing.T) statusFlow {
 }
 
 // triggerSingleNode creates a single-node run of table on the live release
-// through TriggerSingleNodeRunHandler; the run, its tasks and its outbox rows
-// are deleted when the test ends.
+// through RunCommands.TriggerSingleNodeRun under a fresh request id; the run,
+// its tasks, its command record and its outbox rows are deleted when the test
+// ends.
 func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	t.Helper()
 	ctx := context.Background()
-	h := handlers.NewTriggerSingleNodeRunHandler(runstart.Planner{Tasks: testTaskDefaults}, discardLogger())
-	id, _, err := h.Handle(ctx, newPlanningUoW(lf.db), handlers.TriggerSingleNodeRunInput{
-		TenantID:       lf.tenant,
-		Target:         run.NodeID{ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table},
-		MetadataSource: run.MetadataSourceLatest,
-		Operation:      model.OperationRun,
-		Initiator:      identity.System(),
+	cmds := handlers.NewRunCommands(func() uow.UnitOfWork { return newPlanningUoW(lf.db) }, noRunMetrics{},
+		runstart.Planner{Tasks: testTaskDefaults}, discardLogger())
+	res, err := cmds.TriggerSingleNodeRun(ctx, handlers.TriggerSingleNodeRunCommand{
+		RequestID: uuid.New(),
+		TriggerSingleNodeRunInput: handlers.TriggerSingleNodeRunInput{
+			TenantID:       lf.tenant,
+			Target:         run.NodeID{ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table},
+			MetadataSource: run.MetadataSourceLatest,
+			Operation:      model.OperationRun,
+			Initiator:      identity.System(),
+		},
 	})
 	require.NoError(t, err)
+	id := res.RunID
 	t.Cleanup(func() {
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, id)
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)

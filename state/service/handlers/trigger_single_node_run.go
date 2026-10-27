@@ -21,9 +21,10 @@ var ErrSourceRunNotTerminal = errors.New("source run is not in a terminal state"
 
 // TriggerSingleNodeRunHandler is the use case behind the TriggerSingleNodeRun
 // gRPC method. It creates a single-task Run, stores its task and dispatches it
-// in one transaction: on the live release, or, in stale mode (MetadataSource =
-// snapshot_of_run), on the source run's release, after validating that the
-// source run is terminal and carries a task at the requested node.
+// in the caller's transaction: on the live release, or, in stale mode
+// (MetadataSource = snapshot_of_run), on the source run's release, after
+// validating that the source run is terminal and carries a task at the
+// requested node.
 type TriggerSingleNodeRunHandler struct {
 	planner runstart.Planner
 	logger  *slog.Logger
@@ -35,9 +36,9 @@ func NewTriggerSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logge
 	return &TriggerSingleNodeRunHandler{planner: planner, logger: logger}
 }
 
-// TriggerSingleNodeRunInput holds the parameters for Handle. TenantID is the
-// tenant the run is created for; its source run, in stale mode, is one of
-// that tenant's runs.
+// TriggerSingleNodeRunInput holds the parameters for HandleInTransaction.
+// TenantID is the tenant the run is created for; its source run, in stale
+// mode, is one of that tenant's runs.
 type TriggerSingleNodeRunInput struct {
 	TenantID       string
 	Target         run.NodeID
@@ -47,44 +48,14 @@ type TriggerSingleNodeRunInput struct {
 	Initiator      identity.Identity
 }
 
-// Handle synthesises a single-task Run in a transaction of its own. In stale
-// mode (MetadataSource = snapshot_of_run) it requires the source run to be
-// terminal and to carry a task at the requested node. A selection the planner
-// refuses (the node is not in the release or another service owns it, a test
-// of a node without data tests, a full refresh of a type that cannot be
-// rebuilt, a source that names no release) is returned as is, and nothing is
-// written.
-func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (uuid.UUID, string, error) {
-	src, err := h.source(ctx, u, in)
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-
-	if err := u.Begin(ctx); err != nil {
-		return uuid.Nil, "", fmt.Errorf("begin: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = u.Rollback()
-		}
-	}()
-
-	runID := uuid.New()
-	name, err := h.write(ctx, u, runID, in, src)
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-	if err := u.Commit(); err != nil {
-		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
-	}
-	committed = true
-	return runID, name, nil
-}
-
-// HandleInTransaction synthesises the single-task Run runID, as Handle does,
-// inside u's open transaction, which the caller commits or rolls back. It
-// returns the run's schedule name.
+// HandleInTransaction synthesises the single-task Run runID inside u's open
+// transaction, which the caller commits or rolls back, and returns the run's
+// schedule name. In stale mode (MetadataSource = snapshot_of_run) it requires
+// the source run to be terminal and to carry a task at the requested node. A
+// selection the planner refuses (the node is not in the release or another
+// service owns it, a test of a node without data tests, a full refresh of a
+// type that cannot be rebuilt, a source that names no release) is returned as
+// is, and the caller rolls back.
 func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput) (string, error) {
 	src, err := h.source(ctx, u, in)
 	if err != nil {

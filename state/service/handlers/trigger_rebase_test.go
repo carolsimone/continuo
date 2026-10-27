@@ -12,6 +12,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/commandrequest"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -96,6 +97,27 @@ func (r *releaseGraphs) Graph(_ context.Context, _, releaseID string, keys []top
 	return r.graphs[releaseID].Restrict(keys), nil
 }
 
+// requestRecords is an in-memory CommandRequestRepository: Claim stores a
+// record under an id it does not hold yet.
+type requestRecords struct{ rows map[uuid.UUID]commandrequest.Record }
+
+var _ repository.CommandRequestRepository = (*requestRecords)(nil)
+
+func (r *requestRecords) Find(_ context.Context, _ string, id uuid.UUID) (commandrequest.Record, bool, error) {
+	rec, ok := r.rows[id]
+	return rec, ok, nil
+}
+func (r *requestRecords) Claim(_ context.Context, rec commandrequest.Record) (bool, error) {
+	if _, ok := r.rows[rec.RequestID]; ok {
+		return false, nil
+	}
+	r.rows[rec.RequestID] = rec
+	return true, nil
+}
+func (r *requestRecords) DeleteOlderThan(context.Context, time.Duration) (int64, error) {
+	return 0, nil
+}
+
 type recordedEvents struct{ events []run.DomainEvent }
 
 func (o *recordedEvents) Append(_ context.Context, events []run.DomainEvent, _ uuid.UUID) error {
@@ -157,7 +179,15 @@ func newRebaseFixtureOf(t *testing.T, tenantID string) *rebaseFixture {
 	f.u.SetRunRepo(f.runs)
 	f.u.SetTaskCollection(f.tasks)
 	f.u.SetOutboxPublisher(f.outbox)
+	f.u.CommandRequestRepo = &requestRecords{rows: map[uuid.UUID]commandrequest.Record{}}
 	return f
+}
+
+// rebase runs the rebase in asks for as the TriggerRebase RPC does, through
+// RunCommands over f's unit of work, under a fresh request id.
+func (f *rebaseFixture) rebase(in svchandlers.TriggerRebaseInput) (svchandlers.CommandResult, error) {
+	cmds := svchandlers.NewRunCommands(func() uow.UnitOfWork { return f.u }, &fakeRunMetrics{}, f.planner, discard())
+	return cmds.TriggerRebase(context.Background(), svchandlers.TriggerRebaseCommand{RequestID: uuid.New(), TriggerRebaseInput: in})
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -167,13 +197,14 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	id, name, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-7",
 		Initiator: identity.FromUserID("okta|alice"),
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "daily", name)
+	id := res.RunID
+	assert.Equal(t, "daily", res.ScheduleName)
 	assert.Equal(t, 1, f.u.CommitCalled)
 	require.NotEmpty(t, f.runs.saved)
 	r := f.runs.saved[0]
@@ -191,11 +222,12 @@ func TestTriggerRebase_CreatesTheRunOnTheLiveRelease(t *testing.T) {
 func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	id, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), Initiator: identity.FromUserID("okta|alice"),
 	})
 
 	require.NoError(t, err)
+	id := res.RunID
 	require.Len(t, f.outbox.events, 1)
 	d, ok := f.outbox.events[0].(run.TaskDispatched)
 	require.True(t, ok, "%T", f.outbox.events[0])
@@ -206,7 +238,7 @@ func TestTriggerRebase_WithoutTheOptionInheritsTheChangedUpstream(t *testing.T) 
 func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 	f := newRebaseFixture(t)
 
-	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(), IncludeChangedUpstream: true, ExpectedReleaseID: "rel-6",
 	})
 
@@ -217,18 +249,22 @@ func TestTriggerRebase_RefusesAMovedLiveReleaseAndWritesNothing(t *testing.T) {
 	assert.Empty(t, f.outbox.events)
 }
 
-// A schedule with an active run is refused before the transaction begins.
+// A schedule with an active run is refused before the rebase is planned, and
+// the command's transaction is rolled back with nothing written.
 func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 	f := newRebaseFixture(t)
 	f.runs.active = true
 
-	_, _, err := svchandlers.NewTriggerRebaseHandler(f.planner, discard()).Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
 	})
 
 	require.ErrorIs(t, err, run.ErrScheduleHasActiveRun)
-	assert.Equal(t, 0, f.u.BeginCalled)
+	assert.Equal(t, 0, f.u.CommitCalled)
+	assert.Equal(t, 1, f.u.RollbackCalled)
 	assert.Empty(t, f.runs.saved)
+	assert.Empty(t, f.tasks.created)
+	assert.Empty(t, f.outbox.events)
 }
 
 // A rebase is derived under its source's tenant: the request's tenant finds
@@ -236,19 +272,19 @@ func TestTriggerRebase_RefusesAScheduleWithAnActiveRun(t *testing.T) {
 // Another tenant's source is not found, and nothing is written.
 func TestTriggerRebase_DerivesTheRunUnderTheSourcesTenant(t *testing.T) {
 	f := newRebaseFixtureOf(t, "acme")
-	h := svchandlers.NewTriggerRebaseHandler(f.planner, discard())
 
-	_, _, err := h.Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	_, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: pkgevents.DefaultTenantID, SourceRunID: f.runs.source.RunID(),
 	})
 	require.ErrorIs(t, err, errNoRun)
 	assert.Empty(t, f.runs.saved)
-	assert.Equal(t, 0, f.u.BeginCalled)
+	assert.Equal(t, 0, f.u.CommitCalled)
 
-	id, _, err := h.Handle(context.Background(), f.u, svchandlers.TriggerRebaseInput{
+	res, err := f.rebase(svchandlers.TriggerRebaseInput{
 		TenantID: "acme", SourceRunID: f.runs.source.RunID(),
 	})
 	require.NoError(t, err)
+	id := res.RunID
 	require.NotEmpty(t, f.runs.saved)
 	assert.Equal(t, "acme", f.runs.saved[0].TenantID())
 	require.NotEmpty(t, f.u.TaskCollectionTenants)

@@ -62,9 +62,12 @@ const runColumns = `
 // RunRepository implements repository.RunRepository over the runs table. Every
 // method that names a run or a schedule takes the tenant it belongs to, and
 // reads and writes only that tenant's rows; a row carries its own tenant on
-// insert. Reads use the autocommit db; LoadRunForUpdate, SaveRun, RunExists,
-// ListUnplannedActive and CountReleaseRuns run inside the transaction bound by
-// WithTx, and return an error when none is bound. SaveRun consults
+// insert. GetRun, GetActiveRun and HasActiveRun read in the transaction bound
+// by WithTx when there is one, so a command never waits for a second
+// connection while it holds its own, and on the autocommit db otherwise; the
+// other reads use the autocommit db. LoadRunForUpdate, SaveRun, RunExists,
+// ListUnplannedActive and CountReleaseRuns run inside the bound transaction
+// only, and return an error when none is bound. SaveRun consults
 // run.Run.Changes() to dispatch column by column.
 type RunRepository struct {
 	db     *sqlx.DB
@@ -81,9 +84,18 @@ func NewRunRepository(db *sqlx.DB, logger *slog.Logger) *RunRepository {
 }
 
 // WithTx returns a RunRepository over the same db that runs its transactional
-// methods in tx.
+// methods, and the reads conn serves, in tx.
 func (r *RunRepository) WithTx(tx *sqlx.Tx) *RunRepository {
 	return &RunRepository{db: r.db, tx: tx, logger: r.logger}
+}
+
+// conn is what GetRun, GetActiveRun and HasActiveRun read on: the bound
+// transaction, else the autocommit db.
+func (r *RunRepository) conn() sqlx.ExtContext {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
 }
 
 // Create inserts a new run record into the database, under the row's tenant.
@@ -232,7 +244,7 @@ func (r *RunRepository) GetByID(ctx context.Context, tenantID string, runID uuid
 	`
 
 	var row RunRow
-	err := r.db.GetContext(ctx, &row, query, tenantID, runID)
+	err := sqlx.GetContext(ctx, r.conn(), &row, query, tenantID, runID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Run not found",
@@ -339,7 +351,7 @@ func (r *RunRepository) HasActiveRun(ctx context.Context, tenantID, scheduleName
 	`
 
 	var exists bool
-	err := r.db.GetContext(ctx, &exists, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
+	err := sqlx.GetContext(ctx, r.conn(), &exists, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
 	if err != nil {
 		r.logger.Error("Failed to check active schedule",
 			"schedule_name", scheduleName,
@@ -368,7 +380,7 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 	`
 
 	var row RunRow
-	err := r.db.GetContext(ctx, &row, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
+	err := sqlx.GetContext(ctx, r.conn(), &row, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("No active scheduler found", "schedule_name", scheduleName)
