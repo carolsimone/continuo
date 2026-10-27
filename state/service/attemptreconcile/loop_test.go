@@ -39,6 +39,9 @@ type fakeAttempts struct {
 	cancelling    [2]int
 	overdueAfter  time.Duration
 	lockQuestions int
+
+	// calls, when set, records each listing of the stalled runs.
+	calls *[]string
 }
 
 func (f *fakeAttempts) DueAttempts(context.Context, int) ([]repository.AttemptKey, error) {
@@ -47,6 +50,9 @@ func (f *fakeAttempts) DueAttempts(context.Context, int) ([]repository.AttemptKe
 func (f *fakeAttempts) StalledRuns(_ context.Context, idle time.Duration, _ int) ([]uuid.UUID, error) {
 	if idle != run.StallAfter {
 		panic("a run is stalled after run.StallAfter")
+	}
+	if f.calls != nil {
+		*f.calls = append(*f.calls, "stalled runs")
 	}
 	return f.stalled, nil
 }
@@ -94,6 +100,9 @@ func (m *countingMetrics) RunsCancelling(total, overdue int) {
 func (m *countingMetrics) RunCancelled(after time.Duration) {
 	m.cancelDurations = append(m.cancelDurations, after)
 }
+func (*countingMetrics) LeaseWaiters(int)           {}
+func (*countingMetrics) LeaseGranted(time.Duration) {}
+func (*countingMetrics) LeaseRepaired()             {}
 
 // runs serves one run for update and records saves.
 type runs struct {
@@ -105,17 +114,31 @@ type runs struct {
 func (s *runs) LoadRunForUpdate(context.Context, uuid.UUID) (*run.Run, error) { return s.r, nil }
 func (s *runs) SaveRun(context.Context, *run.Run) error                       { s.saved++; return nil }
 
-// idleTasks is a run with no task in flight and one pending task.
+// idleTasks is a run with no task in flight and one pending task. The first
+// grantFailures reads of the waits next in line fail; grantReads counts the
+// reads.
 type idleTasks struct {
 	run.TaskCollection
-	inFlight bool
+	inFlight      bool
+	grantFailures int
+	grantReads    int
 }
 
 func (t *idleTasks) HasInFlight(context.Context, uuid.UUID) (bool, error) { return t.inFlight, nil }
 func (t *idleTasks) SkipPending(context.Context, uuid.UUID) (int, error)  { return 1, nil }
 
+// GrantableWaits fails while grantFailures allows, then finds no task of the
+// run next in line for a free node.
+func (t *idleTasks) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	t.grantReads++
+	if t.grantReads <= t.grantFailures {
+		return nil, errors.New("grant failed: duplicate attempt")
+	}
+	return nil, nil
+}
+
 func newLoop(f *uow.FakeUnitOfWork, metrics *countingMetrics) *attemptreconcile.Loop {
-	return attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics,
+	return attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
@@ -168,18 +191,18 @@ func TestPass_LeavesAnAttemptItCannotLock(t *testing.T) {
 func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
 	outbox := &recordingOutbox{}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, outbox)
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
 
 	require.NoError(t, newLoop(f, metrics).Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, run.RunStatusFailed, r.Status())
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Equal(t, 1, runRepo.saved)
@@ -272,7 +295,7 @@ func TestPass_LogsAnOverdueCancelNamingItsAttempts(t *testing.T) {
 	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID, young.RunID},
 		stops: map[uuid.UUID]run.StopQuestion{runID: overdue, young.RunID: young}}
 	var logs bytes.Buffer
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults, &countingMetrics{},
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults, &countingMetrics{}, nil,
 		slog.New(slog.NewTextHandler(&logs, nil)))
 
 	require.NoError(t, loop.Pass(context.Background()))
@@ -299,13 +322,13 @@ func (failingCommit) Commit() error { return errors.New("commit failed") }
 func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(&runs{r: r})
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return failingCommit{f} }, "default", defaults, metrics,
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return failingCommit{f} }, "default", defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	require.Error(t, loop.Pass(context.Background()))
@@ -318,17 +341,184 @@ func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{inFlight: true})
 	metrics := &countingMetrics{}
 
 	require.NoError(t, newLoop(f, metrics).Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Zero(t, runRepo.saved)
 	assert.Zero(t, metrics.stalled)
+}
+
+// staleRun is a running run whose progress clock is older than run.StallAfter.
+func staleRun() *run.Run { return idleRun(run.StallAfter + time.Minute) }
+
+// idleRun is a running run that has made no progress for idle.
+func idleRun(idle time.Duration) *run.Run {
+	stale := now.Add(-idle)
+	total := int32(2)
+	return run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
+}
+
+// errorLines returns the lines of logs logged at error level.
+func errorLines(logs *bytes.Buffer) []string {
+	var out []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=ERROR") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// A stall check whose grant fails is rolled back and tried once more at once:
+// a grant that fails only once is not taken for a defect, and the run, with
+// nothing to grant and nothing in flight, fails as stalled on the retry.
+func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
+	r := staleRun()
+	tasks := &idleTasks{grantFailures: 1}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
+	f.SetRunRepo(&runs{r: r})
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+		slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, 2, tasks.grantReads, "the grant is tried twice")
+	assert.Equal(t, run.RunStatusFailed, r.Status())
+	assert.Equal(t, 1, metrics.stalled)
+	lines := errorLines(&logs)
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "grant_error", "the retry's check failed the run with nothing to grant")
+}
+
+// A grant that fails on every try ends its run once the run has made no
+// progress for run.StallAfterFailedGrant: after the grant fails twice the run
+// is checked without it and failed as stalled, counted, and logged at error
+// level with the grant's error. The pass itself succeeds.
+func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.T) {
+	r := idleRun(run.StallAfterFailedGrant + time.Minute)
+	runRepo := &runs{r: r}
+	tasks := &idleTasks{grantFailures: 100}
+	outbox := &recordingOutbox{}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+		slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, 2, tasks.grantReads, "the check without the grant reads no waits")
+	assert.Equal(t, run.RunStatusFailed, r.Status())
+	require.NotNil(t, r.FailureReason())
+	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
+	assert.Equal(t, 1, runRepo.saved)
+	assert.Equal(t, 1, metrics.stalled)
+	require.Len(t, outbox.events, 1)
+	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
+	lines := errorLines(&logs)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], r.RunID().String())
+	assert.Contains(t, lines[0], "grant_error=")
+	assert.Contains(t, lines[0], "duplicate attempt")
+}
+
+// A run idle for less than run.StallAfterFailedGrant whose grant fails is left
+// running for the next pass, which tries the grant again; the pass returns the
+// grant's error.
+func TestPass_LeavesARunWhoseGrantFailsWhileItIsIdleForLessThanTheBound(t *testing.T) {
+	r := idleRun(run.StallAfterFailedGrant - time.Minute)
+	runRepo := &runs{r: r}
+	tasks := &idleTasks{grantFailures: 100}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+
+	err := newLoop(f, metrics).Pass(context.Background())
+
+	require.ErrorIs(t, err, run.ErrGrantFailed)
+	assert.Equal(t, run.RunStatusRunning, r.Status())
+	assert.Zero(t, runRepo.saved)
+	assert.Zero(t, metrics.stalled)
+	assert.Equal(t, 2, tasks.grantReads)
+}
+
+// The pass runs its beforeStall hook once, before it lists the stalled runs.
+func TestPass_RunsItsHookBeforeItListsTheStalledRuns(t *testing.T) {
+	var calls []string
+	attempts := &fakeAttempts{calls: &calls}
+	hook := func(context.Context) error {
+		calls = append(calls, "hook")
+		return nil
+	}
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults,
+		&countingMetrics{}, hook, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, []string{"hook", "stalled runs"}, calls)
+}
+
+// A run whose waiting task the hook dispatches (the lease waker granting a node
+// freed since its last pass) is no longer stalled when the pass lists the
+// stalled runs, so it is left running.
+func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
+	r := staleRun()
+	runRepo := &runs{r: r}
+	attempts := &fakeAttempts{stalled: []uuid.UUID{r.RunID()}}
+	f := newFake(attempts, &recordingOutbox{})
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(&idleTasks{})
+	hook := func(context.Context) error {
+		attempts.stalled = nil
+		return nil
+	}
+	metrics := &countingMetrics{}
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, hook,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, run.RunStatusRunning, r.Status())
+	assert.Zero(t, runRepo.saved)
+	assert.Zero(t, metrics.stalled)
+}
+
+// A hook that fails is logged as an error and does not stop the pass: the
+// stalled runs are still listed and failed.
+func TestPass_AFailedHookIsLoggedAndTheStallScanStillRuns(t *testing.T) {
+	r := staleRun()
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
+	f.SetRunRepo(&runs{r: r})
+	f.SetTaskCollection(&idleTasks{})
+	metrics := &countingMetrics{}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics,
+		func(context.Context) error { return errors.New("grant failed") }, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, run.RunStatusFailed, r.Status())
+	assert.Equal(t, 1, metrics.stalled)
+	var hookErrors []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=ERROR") && strings.Contains(line, "grant failed") {
+			hookErrors = append(hookErrors, line)
+		}
+	}
+	assert.Len(t, hookErrors, 1, "the hook's failure is logged once")
 }

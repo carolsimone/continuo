@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,13 +32,13 @@ func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 	if r.ScheduleName() != "daily_orders" {
 		t.Fatalf("schedule_name: got %q want %q", r.ScheduleName(), "daily_orders")
 	}
-	if r.Status() != run.SchedulerStatusPending {
+	if r.Status() != run.RunStatusPending {
 		t.Fatalf("status: got %q want pending", r.Status())
 	}
 	if r.Kind() != run.KindCron {
 		t.Fatalf("kind: got %q want cron", r.Kind())
 	}
-	if r.ScheduleID() == uuid.Nil {
+	if r.RunID() == uuid.Nil {
 		t.Fatalf("schedule_id should be generated")
 	}
 	if r.Operation() != model.OperationTest {
@@ -100,15 +101,15 @@ type fakeTaskCollection struct {
 	// unansweredStops makes RequestStops ask none.
 	stopRequested   map[attemptKey]bool
 	unansweredStops bool
-	statuses      map[uuid.UUID]run.TaskStatus
-	attempts      map[uuid.UUID]int32
-	hasFailed     bool
-	hasNonSucc    bool
-	byNode        map[run.NodeID]run.Task
-	updateApplied map[uuid.UUID]int
-	loadErr       error
-	maxRetries    map[uuid.UUID]int32
-	keys          map[uuid.UUID]topology.NodeKey
+	statuses        map[uuid.UUID]run.TaskStatus
+	attempts        map[uuid.UUID]int32
+	hasFailed       bool
+	hasNonSucc      bool
+	byNode          map[run.NodeID]run.Task
+	updateApplied   map[uuid.UUID]int
+	loadErr         error
+	maxRetries      map[uuid.UUID]int32
+	keys            map[uuid.UUID]topology.NodeKey
 	// attemptRows holds the stored attempts; lockOrder the LoadAttemptState
 	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
 	attemptRows map[attemptKey]run.Attempt
@@ -117,8 +118,8 @@ type fakeTaskCollection struct {
 	// every attempt AddAttempts inserted.
 	saves []run.Attempt
 	added []run.Attempt
-	// created holds each task BulkCreate stored, with the dispatch time
-	// BulkCreate or MarkDispatched stamped on it.
+	// created holds each task BulkCreate stored, with the status and dispatch
+	// time MarkDispatched stamped on it.
 	created map[uuid.UUID]run.Task
 	// dispatched holds the tasks stamped dispatched, by BulkCreate or
 	// MarkDispatched; skipped the tasks MarkSkipped changed, in call order.
@@ -127,6 +128,25 @@ type fakeTaskCollection struct {
 	// derived makes HasFailed read the stored statuses instead of
 	// hasFailed.
 	derived bool
+	// leases holds the task that holds each node's write lease; waits the
+	// tasks waiting for one. leaseTakes holds the claims of each TakeLeases
+	// call, waiterTakes the claim of each TakeLeaseForWaiter call and
+	// releases the task of each ReleaseLease call, in call order. leaseWrites
+	// holds every TakeLeases ("take <node keys>") and ReleaseLease ("release
+	// <node key>") call in one list, in call order.
+	leases      map[topology.NodeKey]uuid.UUID
+	waits       map[uuid.UUID]run.WaitReason
+	leaseTakes  [][]run.LeaseClaim
+	waiterTakes []run.LeaseClaim
+	releases    []uuid.UUID
+	leaseWrites []string
+	// waitSince holds when each waiting task began to wait, and
+	// grantableReads the runs GrantableWaits was called for. nextInLine, when
+	// set, is what GrantableWaits returns, as a read taken before another
+	// transaction took the node would.
+	waitSince      map[uuid.UUID]time.Time
+	grantableReads []uuid.UUID
+	nextInLine     []run.LeaseWait
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -141,7 +161,99 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		keys:          map[uuid.UUID]topology.NodeKey{},
 		attemptRows:   map[attemptKey]run.Attempt{},
 		created:       map[uuid.UUID]run.Task{},
+		leases:        map[topology.NodeKey]uuid.UUID{},
+		waits:         map[uuid.UUID]run.WaitReason{},
+		waitSince:     map[uuid.UUID]time.Time{},
 	}
+}
+
+// GrantableWaits returns the pending tasks of runID that wait for a node no
+// task holds, in node-key order; a test builds one run, so each such task is
+// its node's oldest waiter. With nextInLine set it returns that.
+func (f *fakeTaskCollection) GrantableWaits(_ context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	f.grantableReads = append(f.grantableReads, runID)
+	if f.nextInLine != nil {
+		return f.nextInLine, nil
+	}
+	var out []run.LeaseWait
+	for id, w := range f.waits {
+		if _, held := f.leases[f.keys[id]]; held || w != run.WaitReasonNodeLease ||
+			f.statuses[id] != run.TaskStatusPending || f.created[id].ScheduleID != runID {
+			continue
+		}
+		out = append(out, run.LeaseWait{TaskID: id, NodeKey: f.keys[id], WaitingSince: f.waitSince[id]})
+	}
+	slices.SortFunc(out, func(a, b run.LeaseWait) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
+	return out, nil
+}
+
+// TakeLeases takes, in node-key order, each claimed node no task holds and no
+// other pending task waits for, and returns the claiming tasks that hold their
+// node's lease afterwards, as the real adapter does.
+func (f *fakeTaskCollection) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	f.leaseTakes = append(f.leaseTakes, slices.Clone(claims))
+	keys := make([]string, 0, len(claims))
+	for _, c := range claims {
+		keys = append(keys, string(c.NodeKey))
+	}
+	f.leaseWrites = append(f.leaseWrites, "take "+strings.Join(keys, ","))
+	ordered := slices.Clone(claims)
+	slices.SortFunc(ordered, func(a, b run.LeaseClaim) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
+	var taken []uuid.UUID
+	for _, c := range ordered {
+		holder, held := f.leases[c.NodeKey]
+		switch {
+		case held && holder == c.TaskID:
+			taken = append(taken, c.TaskID)
+		case !held && !f.othersWaitFor(c.NodeKey, c.TaskID):
+			f.leases[c.NodeKey] = c.TaskID
+			taken = append(taken, c.TaskID)
+		}
+	}
+	return taken, nil
+}
+
+// othersWaitFor reports whether a pending task other than self waits for the
+// lease on key.
+func (f *fakeTaskCollection) othersWaitFor(key topology.NodeKey, self uuid.UUID) bool {
+	for id, w := range f.waits {
+		if id != self && w == run.WaitReasonNodeLease && f.keys[id] == key && f.statuses[id] == run.TaskStatusPending {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitForLeases marks each task waiting for its node's lease.
+func (f *fakeTaskCollection) WaitForLeases(_ context.Context, ids []uuid.UUID) error {
+	for _, id := range ids {
+		f.waits[id] = run.WaitReasonNodeLease
+	}
+	return nil
+}
+
+// ReleaseLease deletes the lease the task holds, if any.
+func (f *fakeTaskCollection) ReleaseLease(_ context.Context, id uuid.UUID) error {
+	f.releases = append(f.releases, id)
+	f.leaseWrites = append(f.leaseWrites, "release "+string(f.keys[id]))
+	for k, holder := range f.leases {
+		if holder == id {
+			delete(f.leases, k)
+		}
+	}
+	return nil
+}
+
+// TakeLeaseForWaiter takes the claimed node for its task when no task holds
+// it, without looking at the node's other waiters.
+func (f *fakeTaskCollection) TakeLeaseForWaiter(_ context.Context, c run.LeaseClaim) (bool, error) {
+	f.waiterTakes = append(f.waiterTakes, c)
+	holder, held := f.leases[c.NodeKey]
+	if held {
+		return holder == c.TaskID, nil
+	}
+	f.leases[c.NodeKey] = c.TaskID
+	return true, nil
 }
 
 // attemptKey identifies one stored attempt.
@@ -189,6 +301,7 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 	for id, s := range f.statuses {
 		if s == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.statuses[id] = run.TaskStatusSkipped
+			delete(f.waits, id)
 			f.skipped = append(f.skipped, id)
 			n++
 		}
@@ -198,8 +311,8 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 
 // BeginStop makes the dispatched, queued and running tasks the fake holds
 // whose current attempt is open stopping, and cancels the pending ones and
-// those with no open current attempt: a test builds one run, so every stored
-// task belongs to it.
+// those with no open current attempt, ending their waits and releasing their
+// leases: a test builds one run, so every stored task belongs to it.
 func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by string, _ time.Time) (run.StopCounts, error) {
 	f.stopsBegun = append(f.stopsBegun, runID)
 	var counts run.StopCounts
@@ -212,6 +325,12 @@ func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by st
 				continue
 			}
 			f.statuses[id] = run.TaskStatusCancelled
+			delete(f.waits, id)
+			for k, holder := range f.leases {
+				if holder == id {
+					delete(f.leases, k)
+				}
+			}
 			f.cancelledBy[id] = by
 			counts.Cancelled++
 		}
@@ -257,7 +376,7 @@ func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (
 		RunID:  c.ScheduleID,
 		Status: s, Attempt: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id],
 		JobName: c.JobName, ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName,
-		DispatchedAt: c.DispatchedAt,
+		DispatchedAt: c.DispatchedAt, WaitReason: f.waits[id],
 	}, ok, nil
 }
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -318,9 +437,11 @@ func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, 
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.dispatched = append(f.dispatched, id)
 			f.statuses[id] = run.TaskStatusDispatched
+			delete(f.waits, id)
 			if c, ok := f.created[id]; ok {
 				stampedAt := at
 				c.DispatchedAt = &stampedAt
+				c.Status = run.TaskStatusDispatched
 				f.created[id] = c
 			}
 			stamped = append(stamped, id)
@@ -339,6 +460,7 @@ func (f *fakeTaskCollection) MarkSkipped(_ context.Context, ids []uuid.UUID) (in
 	for _, id := range ids {
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.statuses[id] = run.TaskStatusSkipped
+			delete(f.waits, id)
 			f.skipped = append(f.skipped, id)
 			n++
 		}
@@ -375,11 +497,11 @@ func TestMarkDispatchTerminal_BenignFinalizesSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Status() != run.SchedulerStatusSkipped {
+	if r.Status() != run.RunStatusSkipped {
 		t.Fatalf("status=%q, want skipped", r.Status())
 	}
 	fin, ok := evts[0].(run.RunFinalized)
-	if !ok || fin.Outcome != run.SchedulerStatusSkipped {
+	if !ok || fin.Outcome != run.RunStatusSkipped {
 		t.Fatalf("expected RunFinalized{Outcome=skipped}, got %+v", evts[0])
 	}
 }
@@ -391,11 +513,11 @@ func TestMarkDispatchTerminal_NonBenignFinalizesFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Status() != run.SchedulerStatusFailed {
+	if r.Status() != run.RunStatusFailed {
 		t.Fatalf("status=%q, want failed", r.Status())
 	}
 	fin, ok := evts[0].(run.RunFinalized)
-	if !ok || fin.Outcome != run.SchedulerStatusFailed {
+	if !ok || fin.Outcome != run.RunStatusFailed {
 		t.Fatalf("expected RunFinalized{Outcome=failed}, got %+v", evts[0])
 	}
 }
@@ -420,7 +542,7 @@ func TestMarkDispatchTerminal_RefusesAFailureWithoutADeclaredReason(t *testing.T
 			if len(evts) != 0 {
 				t.Fatalf("events=%v, want none", evts)
 			}
-			if r.Status() != run.SchedulerStatusRunning {
+			if r.Status() != run.RunStatusRunning {
 				t.Fatalf("status=%q, want the run left running", r.Status())
 			}
 			if r.FailureReason() != nil {
@@ -508,13 +630,13 @@ func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
 func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time, ids ...uuid.UUID) *run.Run {
 	t.Helper()
 	total := int32(len(ids)) //nolint:gosec // G115: test fixture; a handful of ids.
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil,
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, dispatchedAt, &dispatchedAt, nil, &dispatchedAt, nil, nil, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	tasks := make([]run.Task, 0, len(ids))
 	for i, id := range ids {
 		tasks = append(tasks, run.Task{
-			TaskID: id, ScheduleID: r.ScheduleID(), ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			TaskID: id, ScheduleID: r.RunID(), ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
 			Status: run.TaskStatusPending, MaxRetries: 3,
 		})
 	}
@@ -526,8 +648,8 @@ func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time,
 
 func TestNewPendingRun_LeavesProgressClockUnset(t *testing.T) {
 	r := freshPendingRun(t)
-	if r.LastHeartbeatAt() != nil {
-		t.Fatalf("LastHeartbeatAt = %v, want nil before the run is dispatched", *r.LastHeartbeatAt())
+	if r.LastProgressAt() != nil {
+		t.Fatalf("LastProgressAt = %v, want nil before the run is dispatched", *r.LastProgressAt())
 	}
 	if r.Changes().IsHeartbeatDirty() {
 		t.Fatal("a new run must not mark the progress clock dirty")
@@ -543,10 +665,10 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPromotedSeedsRun: %v", err)
 	}
-	if r.ScheduleID() != id || r.Release() != (run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 7}) {
-		t.Fatalf("id/release = %s/%+v, want %s/rel-1 7", r.ScheduleID(), r.Release(), id)
+	if r.RunID() != id || r.Release() != (run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 7}) {
+		t.Fatalf("id/release = %s/%+v, want %s/rel-1 7", r.RunID(), r.Release(), id)
 	}
-	if r.Kind() != run.KindPromoteSeed || r.Status() != run.SchedulerStatusRunning {
+	if r.Kind() != run.KindPromoteSeed || r.Status() != run.RunStatusRunning {
 		t.Fatalf("kind/status = %q/%q, want promote_seed/running", r.Kind(), r.Status())
 	}
 }
@@ -554,7 +676,7 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 // A run rebuilt from its row gets its release back only through
 // HydrateReleaseID; a run that names none reports "".
 func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
-	r := run.HydrateRun(uuid.New(), "promote-seed-abc12345", run.SchedulerStatusRunning, run.InitStatusCompleted,
+	r := run.HydrateRun(uuid.New(), "promote-seed-abc12345", run.RunStatusRunning, run.InitStatusCompleted,
 		run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
 		nil, nil, nil, nil, nil, nil, nil, 0, map[string]run.ServiceMetadata{})
 	if r.ReleaseID() != "" {
@@ -595,9 +717,9 @@ func TestCancel_MovesTasksInFlightToStoppingAndTheRunToCancelling(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{run.RunCancelled{
-		ID: r.ScheduleID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
+		ID: r.RunID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
 	}}, events)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	assert.Equal(t, run.RunStatusCancelling, r.Status())
 	assert.True(t, r.IsActive())
 	assert.False(t, r.IsTerminal())
 	assert.Nil(t, r.CompletedAt(), "a cancelling run has not ended")
@@ -605,7 +727,7 @@ func TestCancel_MovesTasksInFlightToStoppingAndTheRunToCancelling(t *testing.T) 
 	assert.Equal(t, cancelAt, *r.CancelledAt())
 	assert.Equal(t, "alice", *r.CancelledBy())
 	assert.Equal(t, "bad data", *r.CancellationReason())
-	assert.Equal(t, cancelAt, *r.LastHeartbeatAt(), "the cancel moves the run's tasks")
+	assert.Equal(t, cancelAt, *r.LastProgressAt(), "the cancel moves the run's tasks")
 	assert.True(t, r.Changes().IsCancelDirty())
 
 	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
@@ -630,10 +752,10 @@ func TestCancel_ARunWithNothingInFlightIsCancelledAtOnce(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{
-		run.RunCancelled{ID: r.ScheduleID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
-		run.RunFinalized{ID: r.ScheduleID(), Name: "daily", Outcome: run.SchedulerStatusCancelled},
+		run.RunCancelled{ID: r.RunID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
+		run.RunFinalized{ID: r.RunID(), Name: "daily", Outcome: run.RunStatusCancelled},
 	}, events)
-	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	assert.Equal(t, run.RunStatusCancelled, r.Status())
 	require.NotNil(t, r.CompletedAt())
 	assert.Equal(t, now, *r.CompletedAt())
 	assert.Equal(t, now, *r.CancelledAt())
@@ -657,7 +779,7 @@ func TestCancel_ATaskInFlightWithNoOpenAttemptIsCancelled(t *testing.T) {
 	_, err := r.Cancel(context.Background(), tc, "alice", "bad data", cancelAt)
 
 	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status(), "ftable_a's attempt is open")
+	assert.Equal(t, run.RunStatusCancelling, r.Status(), "ftable_a's attempt is open")
 	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
 	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_b")], "no attempt of it is open")
 	assert.Equal(t, map[attemptKey]bool{{taskOf(r, "ftable_a"), 0}: true}, tc.stopRequested)
@@ -676,7 +798,7 @@ func TestCancel_AStoppingTaskWithNoStopRequestedFailsTheCancel(t *testing.T) {
 
 	require.ErrorIs(t, err, run.ErrStopUnanswerable)
 	assert.Empty(t, events)
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Nil(t, r.CancelledAt())
 	assert.False(t, r.Changes().IsCancelDirty())
 }
@@ -693,7 +815,7 @@ func TestCancel_ACancellingRunIsRefusedAsAlreadyCancelling(t *testing.T) {
 	require.ErrorIs(t, err, run.ErrAlreadyCancelling)
 	assert.Empty(t, events)
 	assert.Len(t, tc.stopsBegun, 1)
-	assert.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	assert.Equal(t, run.RunStatusCancelling, r.Status())
 	assert.Equal(t, "alice", *r.CancelledBy())
 	assert.Equal(t, reportAt, *r.CancelledAt())
 }

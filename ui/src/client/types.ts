@@ -39,6 +39,13 @@ export interface Task {
   attempt: number;  // 0-based number of the task's current attempt
   max_retries: number;
   created_at: string | null;
+  // Why a pending task waits besides its upstreams: 'node_lease' while another
+  // run's task writes its node. waiting_on_run_id is that run, null when no
+  // task holds the node (the task is about to be granted it); waiting_since is
+  // when the wait began. All three are null when the task waits for nothing.
+  wait_reason?: string | null;
+  waiting_on_run_id?: string | null;
+  waiting_since?: string | null;
 }
 
 export interface GraphNode {
@@ -46,6 +53,11 @@ export interface GraphNode {
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
   status?: string | null;
+  // A run graph node's wait for its node's lease, as on Task; absent on a
+  // schedule's topology graph.
+  wait_reason?: string | null;
+  waiting_on_run_id?: string | null;
+  waiting_since?: string | null;
 }
 
 // A dependency edge in execution order: `from` runs first, `to` reads its
@@ -78,6 +90,10 @@ export interface RunGraphNode {
   node_type: string;
   schedule_name: string;
   status: string | null;
+  // The task's wait for its node's lease, as on Task.
+  wait_reason?: string | null;
+  waiting_on_run_id?: string | null;
+  waiting_since?: string | null;
 }
 
 export interface RunGraph {

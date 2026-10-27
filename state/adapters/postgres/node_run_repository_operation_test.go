@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/google/uuid"
 )
@@ -16,23 +17,23 @@ import (
 // slice.
 func TestListNodes_FiltersByOperation(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	seed := func(op, taskStatus string) {
 		sid, tid := uuid.New(), uuid.New()
-		if _, err := db.Exec(`INSERT INTO scheduler_tracker
-			(schedule_id, schedule_name, status, created_at, initialization_status, operation)
+		if _, err := db.Exec(`INSERT INTO runs
+			(run_id, schedule_name, status, created_at, initialization_status, operation)
 			VALUES ($1,'op-node','succeeded',now(),'completed',$2)`, sid, op); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO task_tracker
-			(task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		if _, err := db.Exec(`INSERT INTO tasks
+			(task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
 			VALUES ($1,$2,now(),'svc','analytics','opnode',$3,$4,3,$5)`,
 			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sid) })
+		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 	}
 	seed("run", "succeeded")
 	seed("test", "failed")
@@ -60,22 +61,22 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 // nothing for the same node identity.
 func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	sid, tid := uuid.New(), uuid.New()
-	if _, err := db.Exec(`INSERT INTO scheduler_tracker
-		(schedule_id, schedule_name, status, created_at, initialization_status, operation)
+	if _, err := db.Exec(`INSERT INTO runs
+		(run_id, schedule_name, status, created_at, initialization_status, operation)
 		VALUES ($1,'op-runs','succeeded',now(),'completed','test')`, sid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO task_tracker
-		(task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+	if _, err := db.Exec(`INSERT INTO tasks
+		(task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ($1,$2,now(),'svc','analytics','opruns',$3,'failed',3,'test')`,
 		tid, sid, "j-"+tid.String()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sid) })
+	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 
 	testRuns, err := repo.List(ctx, "svc", "analytics", "opruns", "test", 50)
 	if err != nil {
@@ -98,23 +99,23 @@ func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 // the node, whose stats span both and whose last status is the full refresh's.
 func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	seed := func(op, taskStatus string) {
 		sid, tid := uuid.New(), uuid.New()
-		if _, err := db.Exec(`INSERT INTO scheduler_tracker
-			(schedule_id, schedule_name, status, created_at, initialization_status, operation)
+		if _, err := db.Exec(`INSERT INTO runs
+			(run_id, schedule_name, status, created_at, initialization_status, operation)
 			VALUES ($1,'fr-node','succeeded',now(),'completed',$2)`, sid, op); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO task_tracker
-			(task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		if _, err := db.Exec(`INSERT INTO tasks
+			(task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
 			VALUES ($1,$2,now(),'svc','analytics','frnode',$3,$4,3,$5)`,
 			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sid) })
+		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 	}
 	seed("run", "succeeded")
 	time.Sleep(10 * time.Millisecond)
@@ -136,22 +137,22 @@ func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 // node lists its full refreshes, each carrying its own operation.
 func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	sid, tid := uuid.New(), uuid.New()
-	if _, err := db.Exec(`INSERT INTO scheduler_tracker
-		(schedule_id, schedule_name, status, created_at, initialization_status, operation)
+	if _, err := db.Exec(`INSERT INTO runs
+		(run_id, schedule_name, status, created_at, initialization_status, operation)
 		VALUES ($1,'fr-runs','succeeded',now(),'completed','full_refresh')`, sid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO task_tracker
-		(task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+	if _, err := db.Exec(`INSERT INTO tasks
+		(task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ($1,$2,now(),'svc','analytics','frruns',$3,'succeeded',3,'full_refresh')`,
 		tid, sid, "j-"+tid.String()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, sid) })
+	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 
 	runs, err := repo.List(ctx, "svc", "analytics", "frruns", "run", 50)
 	if err != nil {

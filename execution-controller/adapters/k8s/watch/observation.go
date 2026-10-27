@@ -18,7 +18,7 @@ func observation(job *batchv1.Job, pods []*corev1.Pod) model.JobObservation {
 	if job != nil {
 		o.JobPresent = true
 		o.JobTaskID, o.JobAttempt = job.Labels[k8s.LabelTaskID], job.Labels[k8s.LabelAttempt]
-		o.JobRunID = job.Labels[k8s.LabelScheduleID]
+		o.JobRunID = job.Labels[k8s.LabelRunID]
 		o.JobDeleting = job.DeletionTimestamp != nil
 		for _, c := range job.Status.Conditions {
 			if c.Status != corev1.ConditionTrue {

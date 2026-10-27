@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -38,7 +39,7 @@ func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logg
 		}
 		if done {
 			cancelled++
-			logger.Warn("Cancelled a run whose tasks state did not plan", "schedule_id", id, "reason", Reason)
+			logger.Warn("Cancelled a run whose tasks state did not plan", "run_id", id, "reason", Reason)
 		}
 	}
 	return cancelled, nil
@@ -76,7 +77,9 @@ func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
 	if !r.IsActive() || r.PlannedAt() != nil {
 		return false, nil
 	}
-	events, err := r.Cancel(ctx, u.TaskCollection(), identity.SystemUserID, Reason, u.Clock().Now())
+	// The cancel takes no node lease, so the tenant its tasks are bound to,
+	// the install's single tenant, changes nothing it writes.
+	events, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), identity.SystemUserID, Reason, u.Clock().Now())
 	if errors.Is(err, run.ErrAlreadyCancelling) {
 		return false, nil
 	}

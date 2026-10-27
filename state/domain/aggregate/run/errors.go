@@ -14,6 +14,12 @@ var (
 	// nothing.
 	ErrAlreadyCancelling = errors.New("run is already cancelling")
 
+	// ErrGrantFailed is returned, wrapping the cause, by Run.FailStalled when
+	// it could not grant a waiting task of the run its node's lease. The
+	// caller rolls the check back; FailStalledWithoutGrants ends a run whose
+	// grant keeps failing.
+	ErrGrantFailed = errors.New("a waiting task could not be granted its node's lease")
+
 	// ErrStopUnanswerable is returned by Run.Cancel when it made more tasks
 	// stopping than it asked attempts to stop: a stopping task with no open
 	// attempt would never be answered and its run would stay cancelling, so
@@ -89,7 +95,8 @@ var (
 	// or another run does. A run's tasks are stored in the transaction that
 	// creates it, before any of them is dispatched, and a task never moves to
 	// another run, so such a report never becomes valid; the stream binding
-	// dead-letters it at once.
+	// dead-letters it at once. Run.GrantLease returns it in the same case for
+	// the task it is asked to grant a lease to.
 	ErrTaskNotHeld = errors.New("the run holds no such task")
 
 	// ErrAttemptNotIssued is returned by Run.RecordAttemptReport when the task

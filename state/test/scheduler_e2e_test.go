@@ -82,9 +82,9 @@ func setupRedis(t *testing.T) (*goredis.Client, func()) {
 }
 
 // TestSchedulerActivation_E2E tests the full scheduler activation flow using the
-// transactional outbox pattern: ActivateScheduleHandler writes the run, its
-// tasks and the dispatch of each ready task atomically to scheduler_tracker,
-// task_tracker and state_outbox, then OutboxProcessor publishes the dispatches
+// transactional outbox pattern: StartRunHandler writes the run, its
+// tasks and the dispatch of each ready task atomically to runs,
+// tasks and state_outbox, then OutboxProcessor publishes the dispatches
 // to Redis.
 func TestSchedulerActivation_E2E(t *testing.T) {
 	if testing.Short() {
@@ -109,8 +109,8 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	defer cleanupRedis()
 
 	// Initialize repositories
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.
@@ -131,7 +131,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	}
 
 	// Initialize activation handler
-	activateHandler := svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
+	activateHandler := svchandlers.NewStartRunHandler(defaultPlanner, logger)
 
 	// Start outbox processor in background — picks up pending outbox entries and
 	// publishes them to Redis.
@@ -173,31 +173,31 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	t.Log("Waiting for first activation (max 35 seconds)...")
 	time.Sleep(35 * time.Second)
 
-	// Test 1: Verify scheduler_tracker record exists
-	t.Log("Verifying scheduler_tracker records...")
-	var trackers []postgres.SchedulerTracker
-	err = db.Select(&trackers, `
-		SELECT schedule_id, schedule_name, status, created_at
-		FROM scheduler_tracker
+	// Test 1: Verify run record exists
+	t.Log("Verifying run records...")
+	var runRows []postgres.RunRow
+	err = db.Select(&runRows, `
+		SELECT run_id, schedule_name, status, created_at
+		FROM runs
 		ORDER BY created_at DESC
 	`)
-	require.NoError(t, err, "Failed to query scheduler_tracker")
-	require.NotEmpty(t, trackers, "Expected at least one scheduler_tracker record")
+	require.NoError(t, err, "Failed to query runs")
+	require.NotEmpty(t, runRows, "Expected at least one run record")
 
 	// Should have 2 records (daily and hourly)
-	assert.GreaterOrEqual(t, len(trackers), 2, "Expected at least 2 scheduler records (daily and hourly)")
+	assert.GreaterOrEqual(t, len(runRows), 2, "Expected at least 2 scheduler records (daily and hourly)")
 
-	dailyTracker := findTrackerByName(trackers, "daily")
-	hourlyTracker := findTrackerByName(trackers, "hourly")
+	dailyRun := findRunByName(runRows, "daily")
+	hourlyRun := findRunByName(runRows, "hourly")
 
-	require.NotNil(t, dailyTracker, "Expected to find daily schedule tracker")
-	require.NotNil(t, hourlyTracker, "Expected to find hourly schedule tracker")
+	require.NotNil(t, dailyRun, "Expected to find daily schedule run")
+	require.NotNil(t, hourlyRun, "Expected to find hourly schedule run")
 
-	assert.Equal(t, run.SchedulerStatusRunning, dailyTracker.Status)
-	assert.Equal(t, run.SchedulerStatusRunning, hourlyTracker.Status)
+	assert.Equal(t, run.RunStatusRunning, dailyRun.Status)
+	assert.Equal(t, run.RunStatusRunning, hourlyRun.Status)
 
-	t.Logf("Found daily tracker: %s (status: %s)", dailyTracker.ScheduleID, dailyTracker.Status)
-	t.Logf("Found hourly tracker: %s (status: %s)", hourlyTracker.ScheduleID, hourlyTracker.Status)
+	t.Logf("Found daily run: %s (status: %s)", dailyRun.ScheduleID, dailyRun.Status)
+	t.Logf("Found hourly run: %s (status: %s)", hourlyRun.ScheduleID, hourlyRun.Status)
 
 	// Test 2: Verify Redis stream events exist (published by OutboxProcessor)
 	t.Log("Verifying Redis stream events...")
@@ -241,19 +241,19 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotEmpty(t, events, "No events found in Redis stream")
 	assert.GreaterOrEqual(t, len(events), 2, "Expected at least 2 Redis events")
 
-	// Verify runner_ids match scheduler_tracker schedule_ids
+	// Verify runner_ids match the run ids
 	dailyEvent := findEventByName(events, "daily")
 	hourlyEvent := findEventByName(events, "hourly")
 
 	require.NotNil(t, dailyEvent, "Expected to find daily event in Redis")
 	require.NotNil(t, hourlyEvent, "Expected to find hourly event in Redis")
 
-	assert.Equal(t, dailyTracker.ScheduleID.String(), dailyEvent.RunID,
-		"Daily tracker schedule_id should match the dispatch's schedule_id")
-	assert.Equal(t, hourlyTracker.ScheduleID.String(), hourlyEvent.RunID,
-		"Hourly tracker schedule_id should match the dispatch's schedule_id")
+	assert.Equal(t, dailyRun.ScheduleID.String(), dailyEvent.RunID,
+		"Daily run's run_id should match the dispatch's run_id")
+	assert.Equal(t, hourlyRun.ScheduleID.String(), hourlyEvent.RunID,
+		"Hourly run's run_id should match the dispatch's run_id")
 
-	t.Log("E2E test passed: scheduler_tracker records match Redis events")
+	t.Log("E2E test passed: run records match Redis events")
 
 	// Test 3: Verify duplicate run prevention
 	t.Log("Testing duplicate run prevention...")
@@ -261,26 +261,26 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wait for another 30 seconds - should NOT create new records because status is RUNNING
 	time.Sleep(32 * time.Second)
 
-	var trackersAfter []postgres.SchedulerTracker
-	err = db.Select(&trackersAfter, `
-		SELECT schedule_id, schedule_name, status, created_at
-		FROM scheduler_tracker
+	var runRowsAfter []postgres.RunRow
+	err = db.Select(&runRowsAfter, `
+		SELECT run_id, schedule_name, status, created_at
+		FROM runs
 		ORDER BY created_at DESC
 	`)
-	require.NoError(t, err, "Failed to query scheduler_tracker after second activation")
+	require.NoError(t, err, "Failed to query runs after second activation")
 
 	// Should still have only 2 records (blocked by RUNNING status)
-	assert.Equal(t, len(trackers), len(trackersAfter),
+	assert.Equal(t, len(runRows), len(runRowsAfter),
 		"Should not create new records when previous run is RUNNING")
 
 	t.Log("Duplicate run prevention working correctly")
 }
 
-// findTrackerByName finds a scheduler tracker by schedule_name
-func findTrackerByName(trackers []postgres.SchedulerTracker, name string) *postgres.SchedulerTracker {
-	for _, tracker := range trackers {
-		if tracker.ScheduleName == name {
-			return &tracker
+// findRunByName finds a run by schedule_name
+func findRunByName(runRows []postgres.RunRow, name string) *postgres.RunRow {
+	for _, runRow := range runRows {
+		if runRow.ScheduleName == name {
+			return &runRow
 		}
 	}
 	return nil

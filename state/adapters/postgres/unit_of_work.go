@@ -22,8 +22,8 @@ import (
 type PostgresUnitOfWork struct {
 	db            *sqlx.DB
 	tx            *sqlx.Tx
-	schedulerRepo SchedulerTrackerRepository
-	taskRepo      TaskTrackerRepository
+	schedulerRepo RunTableRepository
+	taskRepo      TaskRepository
 	catalogRepo   ScheduleCatalogRepository
 	clock         ports.Clock
 	logger        *slog.Logger
@@ -33,13 +33,14 @@ type PostgresUnitOfWork struct {
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
-// and the low-level repositories its aggregate accessors compose. The
-// Run(), Catalog(), Outbox() and TaskCollection() accessors
-// each return an adapter bound to the current transaction.
+// and the low-level repositories its aggregate accessors compose. Run(),
+// Catalog(), Outbox() and TaskCollection(tenantID) each return an adapter
+// bound to the current transaction; TaskCollection's takes the node leases of
+// tenantID.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
-	schedulerRepo SchedulerTrackerRepository,
-	taskRepo TaskTrackerRepository,
+	schedulerRepo RunTableRepository,
+	taskRepo TaskRepository,
 	catalogRepo ScheduleCatalogRepository,
 	clock ports.Clock,
 	logger *slog.Logger,
@@ -136,11 +137,11 @@ func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
 
 func (u *PostgresUnitOfWork) Clock() ports.Clock { return u.clock }
 
-// TaskCollection returns a TaskCollectionAdapter bound to the current
-// transaction (or nil tx if no transaction is in progress). Each call
+// TaskCollection returns a TaskCollectionAdapter of tenantID bound to the
+// current transaction (or nil tx if no transaction is in progress). Each call
 // returns a fresh adapter so callers always see the active tx.
-func (u *PostgresUnitOfWork) TaskCollection() run.TaskCollection {
-	return NewTaskCollectionAdapter(u.taskRepo, u.tx)
+func (u *PostgresUnitOfWork) TaskCollection(tenantID string) run.TaskCollection {
+	return NewTaskCollectionAdapter(u.taskRepo, u.tx, tenantID)
 }
 
 // Topology returns a TopologyRepository bound to the current transaction.
@@ -163,6 +164,12 @@ func (u *PostgresUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 // the current transaction.
 func (u *PostgresUnitOfWork) Attempts(tenantID string) repository.AttemptRepository {
 	return NewAttemptRepository(u.db, u.tx, tenantID)
+}
+
+// Leases returns the lease waker's repository for tenantID, bound to the
+// current transaction.
+func (u *PostgresUnitOfWork) Leases(tenantID string) repository.LeaseRepository {
+	return NewLeaseRepository(u.db, u.tx, tenantID)
 }
 
 // Compile-time interface assertion.

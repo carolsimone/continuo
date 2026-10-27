@@ -125,7 +125,7 @@ However a start failure ends, normally or on INT, TERM or HUP, `bench_start_fail
 | overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the capture is not counted (the capture holds no lifetime for it) |
 | observe | An upstream's last Job finishing to execution-controller recording its result (`deployments.outcome_at`) |
 | round trip | That result recorded to the node's first deployment queued (`deployments.created_at`), both on execution-controller's clock |
-| to dispatch, to queue | The round trip split at state's first dispatch of the node (`task_tracker.dispatched_at`) |
+| to dispatch, to queue | The round trip split at state's first dispatch of the node (`tasks.dispatched_at`) |
 | admit | The node's first deployment queued to its Job created (`deployments.deployed_at`) |
 | CPU-seconds per 1,000 tasks | CPU integrated over the run (5 s samples) ÷ executed tasks × 1,000 |
 | peak memory | Highest per-service memory during the run, replicas summed per instant |

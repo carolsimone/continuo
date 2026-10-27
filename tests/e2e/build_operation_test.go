@@ -205,20 +205,20 @@ func TestBuildOperationRerun(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err, "rerun run_id must be a valid UUID")
 
-	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
-	t.Log("Waiting for rerun task_tracker rows to materialise...")
+	t.Log("Waiting for rerun tasks rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
 		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, newRunID,
+			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
 			return false, qErr
 		}
 		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
-	}, "task_tracker rows for rerun run did not materialise (expected 8)")
+	}, "tasks rows for rerun run did not materialise (expected 8)")
 
 	// Operation inheritance: the rerun run must itself be recorded as build.
 	assert.Equal(t, "build", queryRunOperation(t, clients, newRunID),
@@ -231,9 +231,9 @@ func TestBuildOperationRerun(t *testing.T) {
 	// node (ftable_e) as a build Job, proving DispatchDerivedRun threaded
 	// operation through the rerun's frontier, not just the initial trigger.
 	// The source run also dispatched a Job for ftable_e (it's the node that
-	// failed there too), so the selector must scope to THIS run's schedule-id
+	// failed there too), so the selector must scope to THIS run's run-id
 	// label, not just table_name, or it could pick up the source run's Job.
-	jobs, err := getK8sJobs(ctx, fmt.Sprintf("table_name=ftable_e,schedule-id=%s", newRunID.String()))
+	jobs, err := getK8sJobs(ctx, fmt.Sprintf("table_name=ftable_e,run-id=%s", newRunID.String()))
 	require.NoError(t, err, "failed to query K8s jobs for ftable_e")
 	require.NotEmpty(t, jobs.Items, "ftable_e must have been re-dispatched on the rerun")
 	cmd := strings.Join(jobs.Items[0].Spec.Template.Spec.Containers[0].Command, " ")

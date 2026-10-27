@@ -70,7 +70,7 @@ func TestNewCronSchedulerWithConfig_DynamicSchedules(t *testing.T) {
 		WithSeconds: true,
 	}
 
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, testLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, testLogger())
 	// The UoW factory panics if called — the constructor test does not fire cron
 	// ticks so no activation occurs during this test.
 	uowFactory := func() uow.UnitOfWork {
@@ -86,7 +86,7 @@ func TestNewCronSchedulerWithConfig_InvalidTimezone(t *testing.T) {
 		Timezone:  "Not/ATimezone",
 		Schedules: []scheduler.ScheduleEntry{{Name: "x", Cron: "0 * * * *"}},
 	}
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, testLogger())
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, testLogger())
 	_, err := scheduler.NewCronSchedulerWithConfig(activate, nil, testLogger(), cfg, false)
 	require.Error(t, err)
 }

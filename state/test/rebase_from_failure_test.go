@@ -28,15 +28,17 @@ func rebaseTasks(t *testing.T, runID string) []rebaseTask {
 	var out []rebaseTask
 	require.NoError(t, stateDB.Select(&out, `
 		SELECT node_key, status, inherited_from_task_id IS NOT NULL AS inherited
-		FROM task_tracker WHERE schedule_id = $1 ORDER BY node_key COLLATE "C"`, runID))
+		FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, runID))
 	return out
 }
 
-// finishRun records runID failed, so its schedule has no active run.
+// finishRun records runID failed, so its schedule has no active run, and
+// releases its tasks' node leases.
 func finishRun(t *testing.T, runID string) {
 	t.Helper()
-	_, err := stateDB.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, runID)
+	_, err := stateDB.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
 	require.NoError(t, err)
+	releaseLeasesOf(t, stateDB, uuid.MustParse(runID))
 }
 
 // TestRebaseFromFailure previews and rebases a failed run through state's
@@ -67,14 +69,14 @@ func TestRebaseFromFailure(t *testing.T) {
 	require.NoError(t, err)
 	srcID := trig.ScheduleId
 	_, err = stateDB.Exec(`
-		UPDATE task_tracker SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, attempt = 2
-		WHERE schedule_id = $1`, srcID)
+		UPDATE tasks SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, attempt = 2
+		WHERE run_id = $1`, srcID)
 	require.NoError(t, err)
 	finishRun(t, srcID)
 	at := time.Now().UTC().Add(-time.Hour)
 	_, err = stateDB.Exec(`
 		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
-		SELECT task_id, 0, job_name, 'succeeded', $2, $2, 42.5 FROM task_tracker WHERE schedule_id = $1 AND node_key = 'mart.rff_y'`, srcID, at)
+		SELECT task_id, 0, job_name, 'succeeded', $2, $2, 42.5 FROM tasks WHERE run_id = $1 AND node_key = 'mart.rff_y'`, srcID, at)
 	require.NoError(t, err)
 
 	live := promoteRelease(t, stateDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)
@@ -117,7 +119,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	})
 
 	t.Run("a rebase previewed on another live release is refused and creates no run", func(t *testing.T) {
-		before := countOf(t, stateDB, `SELECT count(*) FROM scheduler_tracker`)
+		before := countOf(t, stateDB, `SELECT count(*) FROM runs`)
 
 		_, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
 			SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: source.ReleaseID,
@@ -125,7 +127,7 @@ func TestRebaseFromFailure(t *testing.T) {
 
 		require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 		assert.Equal(t, "the live release changed; preview again", status.Convert(err).Message())
-		assert.Equal(t, before, countOf(t, stateDB, `SELECT count(*) FROM scheduler_tracker`))
+		assert.Equal(t, before, countOf(t, stateDB, `SELECT count(*) FROM runs`))
 	})
 
 	var activeID string
@@ -162,7 +164,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	// built it with the live rff_y, and so still offers the fix.
 	t.Run("a rebase of a rebase compares an inherited success with the release that built it", func(t *testing.T) {
 		require.NotEmpty(t, activeID, "the rebase without the option is the source")
-		_, err := stateDB.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 2 WHERE schedule_id = $1 AND node_key = 'mart.rff_z'`, activeID)
+		_, err := stateDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1 AND node_key = 'mart.rff_z'`, activeID)
 		require.NoError(t, err)
 
 		pv, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})

@@ -898,7 +898,7 @@ Then set the LLM key (and the PAT, if you made one), and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.13.0 -n continuo --reuse-values \
+  --version 0.16.0 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
@@ -971,7 +971,7 @@ file, not a flag value (a PEM has newlines that `--set` mangles), so pass it wit
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.13.0 -n continuo --reuse-values \
+  --version 0.16.0 -n continuo --reuse-values \
   --set-string github.appId='<app-id>' \
   --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem

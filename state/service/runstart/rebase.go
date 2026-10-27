@@ -45,12 +45,12 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 	if err != nil {
 		return Selection{Stamp: stamp}, runplan.Preview{}, err
 	}
-	if err := builtOnRootReleases(ctx, u, src); err != nil {
-		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the releases that built the results run %s inherited: %w", source.ScheduleID(), err)
+	if err := builtOnRootReleases(ctx, u.TaskCollection(p.TenantID), src); err != nil {
+		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the releases that built the results run %s inherited: %w", source.RunID(), err)
 	}
 	sourceGraphs, err := p.sourceGraphs(ctx, u, src, keys)
 	if err != nil {
-		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the nodes of run %s: %w", source.ScheduleID(), err)
+		return Selection{Stamp: stamp}, runplan.Preview{}, fmt.Errorf("read the nodes of run %s: %w", source.RunID(), err)
 	}
 	sel, err := p.scheduleGraph(ctx, u, stamp, source.ScheduleName())
 	if err != nil {
@@ -64,11 +64,11 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 }
 
 // builtOnRootReleases sets the BuiltOn of each inherited task of src to the
-// release of the run its InheritedFrom task belongs to, read in u's
-// transaction. A task whose InheritedFrom task is gone, or whose run names no
-// release, keeps the source run's release: nothing records the release that
-// built it, and the source run's is the nearest one that held its result.
-func builtOnRootReleases(ctx context.Context, u uow.UnitOfWork, src runplan.Source) error {
+// release of the run its InheritedFrom task belongs to, read through tasks. A
+// task whose InheritedFrom task is gone, or whose run names no release, keeps
+// the source run's release: nothing records the release that built it, and
+// the source run's is the nearest one that held its result.
+func builtOnRootReleases(ctx context.Context, tasks run.TaskCollection, src runplan.Source) error {
 	var roots []uuid.UUID
 	for _, t := range src.Tasks {
 		if t.InheritedFrom != uuid.Nil {
@@ -78,7 +78,7 @@ func builtOnRootReleases(ctx context.Context, u uow.UnitOfWork, src runplan.Sour
 	if len(roots) == 0 {
 		return nil
 	}
-	releases, err := u.TaskCollection().RunReleasesOf(ctx, roots)
+	releases, err := tasks.RunReleasesOf(ctx, roots)
 	if err != nil {
 		return err
 	}

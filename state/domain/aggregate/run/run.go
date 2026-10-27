@@ -18,11 +18,11 @@ import (
 // HydrateRun constructor to rebuild a Run from persisted rows; application
 // code never calls Hydrate.
 type Run struct {
-	scheduleID   uuid.UUID
+	runID        uuid.UUID
 	scheduleName string
 
-	// scheduler_tracker columns
-	status      SchedulerStatus
+	// runs columns
+	status      RunStatus
 	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
@@ -40,7 +40,7 @@ type Run struct {
 	createdAt          time.Time
 	startedAt          *time.Time
 	completedAt        *time.Time
-	lastHeartbeatAt    *time.Time
+	lastProgressAt     *time.Time
 	cancelledAt        *time.Time
 	cancelledBy        *string
 	cancellationReason *string
@@ -61,7 +61,7 @@ type Run struct {
 	changes changeSet
 }
 
-// changeSet records which scheduler_tracker columns were mutated since the
+// changeSet records which runs columns were mutated since the
 // aggregate was loaded. The repository adapter consults it on SaveRun to
 // dispatch to the correct tuned SQL method.
 type changeSet struct {
@@ -77,27 +77,27 @@ type changeSet struct {
 	plannedDirty           bool
 }
 
-// HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
+// HydrateRun rebuilds a Run from persisted runs columns. Used by
 // the postgres adapter inside LoadRunForUpdate / GetRun. Application code MUST
 // NOT call this — use one of the New* constructors instead.
 func HydrateRun(
-	scheduleID uuid.UUID,
+	runID uuid.UUID,
 	scheduleName string,
-	status SchedulerStatus,
+	status RunStatus,
 	initStatus InitStatus,
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
 	operation model.Operation,
 	createdAt time.Time,
-	startedAt, completedAt, lastHeartbeatAt, cancelledAt *time.Time,
+	startedAt, completedAt, lastProgressAt, cancelledAt *time.Time,
 	cancelledBy, cancellationReason *string,
 	total *int32,
 	terminal int32,
 	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
 	return &Run{
-		scheduleID:         scheduleID,
+		runID:              runID,
 		scheduleName:       scheduleName,
 		status:             status,
 		initStatus:         initStatus,
@@ -108,7 +108,7 @@ func HydrateRun(
 		createdAt:          createdAt,
 		startedAt:          startedAt,
 		completedAt:        completedAt,
-		lastHeartbeatAt:    lastHeartbeatAt,
+		lastProgressAt:     lastProgressAt,
 		cancelledAt:        cancelledAt,
 		cancelledBy:        cancelledBy,
 		cancellationReason: cancellationReason,
@@ -118,21 +118,21 @@ func HydrateRun(
 	}
 }
 
-// HydrateRelease restores the release stamp read from scheduler_tracker.
+// HydrateRelease restores the release stamp read from runs.
 // Adapter-only: domain code receives the stamp through a constructor.
 func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
 
-// HydratePlannedAt restores planned_at read from scheduler_tracker.
+// HydratePlannedAt restores planned_at read from runs.
 // Adapter-only: domain code plans a run through Start.
 func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 
-// HydrateFailureReason restores failure_reason read from scheduler_tracker.
+// HydrateFailureReason restores failure_reason read from runs.
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
 // NewPendingRun creates a fresh PENDING Run of a schedule, fired by cron or
 // triggered. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
-// SchedulePolicy.IsScheduleAvailable → NewPendingRun → SaveRun → Start → SaveRun.
+// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start → SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual TriggerSchedule (cron, etc.) pass
@@ -159,9 +159,9 @@ func NewPendingRun(
 		metadata = map[string]ServiceMetadata{}
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusPending,
+		status:          RunStatusPending,
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     sourceRunID,
@@ -178,7 +178,7 @@ func NewPendingRun(
 // NewDerivedRun creates a PENDING Run for rerun/rebase. The derived run
 // inherits the source run's operation: rerun/rebase re-issue the source
 // run's dbt verb (run/build) against the derived task set; the planner refuses
-// a test source. Stamps last_heartbeat_at so dashboards show the new run
+// a test source. Stamps last_progress_at so dashboards show the new run
 // immediately.
 //
 // stamp is the release the run runs on: the source run's for a rerun, the
@@ -199,9 +199,9 @@ func NewDerivedRun(
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusPending,
+		status:          RunStatusPending,
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
@@ -209,7 +209,7 @@ func NewDerivedRun(
 		operation:       operation,
 		release:         stamp,
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -232,9 +232,9 @@ func NewSingleNodeRun(
 		return nil, ErrScheduleNameRequired
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusRunning,
+		status:          RunStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
@@ -242,7 +242,7 @@ func NewSingleNodeRun(
 		operation:       operation,
 		release:         stamp,
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -277,15 +277,15 @@ func NewPromotedSeedsRun(
 		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
-		scheduleID:      id,
+		runID:           id,
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusRunning,
+		status:          RunStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
 		release:         stamp,
 		initiatedBy:     "system",
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -296,9 +296,9 @@ func NewPromotedSeedsRun(
 // Getters (read-only — adapters and gRPC mappers use these)
 // ============================================================================
 
-func (r *Run) ScheduleID() uuid.UUID            { return r.scheduleID }
+func (r *Run) RunID() uuid.UUID                 { return r.runID }
 func (r *Run) ScheduleName() string             { return r.scheduleName }
-func (r *Run) Status() SchedulerStatus          { return r.status }
+func (r *Run) Status() RunStatus                { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
 func (r *Run) Release() ReleaseStamp            { return r.release }
@@ -309,7 +309,7 @@ func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }
 func (r *Run) CompletedAt() *time.Time          { return r.completedAt }
-func (r *Run) LastHeartbeatAt() *time.Time      { return r.lastHeartbeatAt }
+func (r *Run) LastProgressAt() *time.Time       { return r.lastProgressAt }
 func (r *Run) CancelledAt() *time.Time          { return r.cancelledAt }
 func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
@@ -326,7 +326,7 @@ func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
 }
 
 func (r *Run) IsTerminal() bool { return r.status.IsTerminal() }
-func (r *Run) IsActive() bool { return r.status.IsActive() }
+func (r *Run) IsActive() bool   { return r.status.IsActive() }
 
 // ============================================================================
 // Change tracking exposed to the repository adapter
@@ -359,13 +359,17 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 // its node's Job name, r's operation and the node's image. A pending task gets
 // status pending and the retry budget of d; an inherited task gets status
 // succeeded, no retry budget and the task it inherits from, and is never
-// dispatched. Each ready task is made dispatched at now, with its attempt 0
-// stored dispatched and due for its first check (NextCheckAfter), and recorded
-// as a TaskDispatched of attempt 0, in key order, with its node's timeout
-// (TaskTimeout). The run records the plan: planned_at, the total task count,
-// the inherited tasks as terminal, init status completed, status running,
-// started_at and its progress clock. A plan without a pending task leaves
-// nothing to run, so the run finalizes succeeded at once.
+// dispatched. Every task is stored first; then, on a run that writes its nodes
+// (every operation but test), each ready task claims its node's write lease,
+// and a ready task whose node another task holds or waits for stays pending,
+// waiting for the lease, undispatched. Each other ready task is made
+// dispatched at now, with its attempt 0 stored dispatched and due for its
+// first check (NextCheckAfter), and recorded as a TaskDispatched of attempt 0,
+// in key order, with its node's timeout (TaskTimeout). The run records the
+// plan: planned_at, the total task count, the inherited tasks as terminal,
+// init status completed, status running, started_at and its progress clock. A
+// plan without a pending task leaves nothing to run, so the run finalizes
+// succeeded at once.
 //
 // Start refuses, before it stores anything: a terminal run (ErrAlreadyTerminal),
 // a run whose tasks are already stored (ErrAlreadyPlanned), a plan without
@@ -405,21 +409,20 @@ func (r *Run) Start(
 	}
 
 	built := make([]Task, 0, len(plan.Tasks))
-	var events []DomainEvent
-	var attempts []Attempt
+	var toDispatch []readyTask
 	inherited := int32(0)
 	for _, p := range plan.Tasks {
 		n, ok := g.Node(p.Key)
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrPlanNodeNotInGraph, p.Key)
 		}
-		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.scheduleID.String(), 0)
+		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.runID.String(), 0)
 		if err != nil {
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
 		t := Task{
-			TaskID:      TaskIDFor(tenantID, r.scheduleID, p.Key),
-			ScheduleID:  r.scheduleID,
+			TaskID:      TaskIDFor(tenantID, r.runID, p.Key),
+			ScheduleID:  r.runID,
 			CreatedAt:   now,
 			ServiceName: n.ServiceName,
 			SchemaName:  n.SchemaName,
@@ -439,11 +442,7 @@ func (r *Run) Start(
 			t.InheritedFromTaskID = &root
 			inherited++
 		case ready[p.Key]:
-			at := now
-			t.Status = TaskStatusDispatched
-			t.DispatchedAt = &at
-			attempts = append(attempts, firstAttempt(t.TaskID, jobName, &at))
-			events = append(events, r.dispatchEvent(t.TaskID, 0, n, jobName, d))
+			toDispatch = append(toDispatch, readyTask{taskID: t.TaskID, node: n, jobName: jobName})
 		}
 		built = append(built, t)
 	}
@@ -451,8 +450,9 @@ func (r *Run) Start(
 	if err := tasks.BulkCreate(ctx, built); err != nil {
 		return nil, fmt.Errorf("bulk create tasks: %w", err)
 	}
-	if err := tasks.AddAttempts(ctx, attempts); err != nil {
-		return nil, fmt.Errorf("add the first attempts: %w", err)
+	events, err := r.dispatch(ctx, tasks, toDispatch, d, now)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch the ready tasks: %w", err)
 	}
 
 	total := num.ClampInt32(len(built))
@@ -461,7 +461,7 @@ func (r *Run) Start(
 	r.initStatus = InitStatusCompleted
 	planned := now
 	r.plannedAt = &planned
-	r.status = SchedulerStatusRunning
+	r.status = RunStatusRunning
 	started := now
 	r.startedAt = &started
 	r.changes.totalTaskCountDirty = true
@@ -473,17 +473,18 @@ func (r *Run) Start(
 	r.recordProgress(now)
 
 	if !plan.HasPending() {
-		return append(events, r.finalize(SchedulerStatusSucceeded, now)...), nil
+		return append(events, r.finalize(RunStatusSucceeded, now)...), nil
 	}
 	return events, nil
 }
 
 // Cancel cancels r at now, by by for reason, and stops its work. Its tasks in
 // flight (dispatched, queued or running) whose current attempt is open become
-// stopping, and that attempt of each is asked to stop; its other unended
-// tasks, the pending ones and those with no open attempt, are cancelled and
-// count terminal. r records cancelled_at, cancelled_by and
-// cancellation_reason, and RunCancelled, naming no attempt, is recorded.
+// stopping, and that attempt of each is asked to stop, each keeping its node's
+// write lease until the report that ends it; its other unended tasks, the
+// pending ones and those with no open attempt, are cancelled, release their
+// leases (BeginStop) and count terminal. r records cancelled_at, cancelled_by
+// and cancellation_reason, and RunCancelled, naming no attempt, is recorded.
 //
 // With a task stopping, r becomes cancelling: it stays active, starts nothing
 // more, and ends cancelled on the report that ends its last task
@@ -504,21 +505,21 @@ func (r *Run) Cancel(
 	if r.IsTerminal() {
 		return nil, ErrAlreadyTerminal
 	}
-	if r.status == SchedulerStatusCancelling {
+	if r.status == RunStatusCancelling {
 		return nil, ErrAlreadyCancelling
 	}
-	counts, err := tasks.BeginStop(ctx, r.scheduleID, by, now)
+	counts, err := tasks.BeginStop(ctx, r.runID, by, now)
 	if err != nil {
-		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.scheduleID, err)
+		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.runID, err)
 	}
 	if counts.Stopping > 0 {
-		targets, err := tasks.RequestStops(ctx, r.scheduleID)
+		targets, err := tasks.RequestStops(ctx, r.runID)
 		if err != nil {
-			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.scheduleID, err)
+			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.runID, err)
 		}
 		if len(targets) != counts.Stopping {
 			return nil, fmt.Errorf("run %s: %d tasks stopping, %d attempts asked to stop: %w",
-				r.scheduleID, counts.Stopping, len(targets), ErrStopUnanswerable)
+				r.runID, counts.Stopping, len(targets), ErrStopUnanswerable)
 		}
 	}
 	if counts.Cancelled > 0 {
@@ -538,26 +539,26 @@ func (r *Run) Cancel(
 	}
 	r.changes.cancelDirty = true
 	r.changes.statusDirty = true
-	events := []DomainEvent{RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}}
+	events := []DomainEvent{RunCancelled{ID: r.runID, Name: r.scheduleName, By: by, CancellationReason: reason}}
 
 	if counts.Stopping > 0 {
-		r.status = SchedulerStatusCancelling
+		r.status = RunStatusCancelling
 		r.recordProgress(now)
 		return events, nil
 	}
 	// The cancel path persists the run through cancelDirty (Changes), which
 	// writes completed_at with the status; completedDirty stays clear.
-	r.status = SchedulerStatusCancelled
+	r.status = RunStatusCancelled
 	completedAt := now
 	r.completedAt = &completedAt
-	return append(events, RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}), nil
+	return append(events, RunFinalized{ID: r.runID, Name: r.scheduleName, Outcome: RunStatusCancelled}), nil
 }
 
 // recordProgress stamps the run's progress clock with now. The clock reads the
 // last dispatch or move of a task; FailStalled measures StallAfter from it.
 func (r *Run) recordProgress(now time.Time) {
 	at := now
-	r.lastHeartbeatAt = &at
+	r.lastProgressAt = &at
 	r.changes.heartbeatDirty = true
 }
 
@@ -569,32 +570,70 @@ func (r *Run) fillSlot() {
 
 // dispatchReady dispatches the tasks of r that the success of the task at key
 // makes ready: its pending, undispatched downstream tasks whose every in-run
-// upstream has succeeded. Each one MarkDispatched makes dispatched gets its
-// attempt 0, stored dispatched and due for its first check, and records a
-// TaskDispatched of attempt 0, in key order, with its node's timeout. Only a
-// running run dispatches: a cancelling one starts nothing.
+// upstream has succeeded, in key order (dispatch). Only a running run
+// dispatches: a cancelling one starts nothing.
 func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, nil
 	}
-	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
+	candidates, err := graph.ReadyCandidates(ctx, r.runID, r.release.ReleaseID, key)
 	if err != nil {
 		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
 	}
-	var ready []ReadyCandidate
-	ids := make([]uuid.UUID, 0, len(candidates))
+	var ready []readyTask
 	for _, c := range candidates {
 		if c.Ready() {
-			ready = append(ready, c)
-			ids = append(ids, c.TaskID)
+			ready = append(ready, readyTask{taskID: c.TaskID, node: c.Node, jobName: c.JobName})
 		}
 	}
+	events, err := r.dispatch(ctx, tasks, ready, d, now)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch the tasks %s's success made ready: %w", key, err)
+	}
+	return events, nil
+}
+
+// readyTask is a pending, undispatched task of a run that is ready to
+// dispatch: its id, its node as the run's release holds it, and its Job name.
+type readyTask struct {
+	taskID  uuid.UUID
+	node    topology.Node
+	jobName string
+}
+
+// dispatch dispatches attempt 0 of each ready task of r, in the order given.
+// On a writing run each task first claims its node's write lease, and a task
+// that gets none waits for it and is not dispatched (takeLeases); a test run
+// claims none. Each remaining task is dispatched as dispatchAttemptZero does.
+func (r *Run) dispatch(ctx context.Context, tasks TaskCollection, ready []readyTask, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if len(ready) == 0 {
 		return nil, nil
 	}
+	if r.writes() {
+		leased, err := r.takeLeases(ctx, tasks, ready)
+		if err != nil {
+			return nil, err
+		}
+		ready = leased
+	}
+	return r.dispatchAttemptZero(ctx, tasks, ready, d, now)
+}
+
+// dispatchAttemptZero makes each task of ready dispatched at now
+// (MarkDispatched). Each one it makes dispatched gets its attempt 0, stored
+// dispatched and due for its first check, and records a TaskDispatched of
+// attempt 0, in the order given, with its node's timeout.
+func (r *Run) dispatchAttemptZero(ctx context.Context, tasks TaskCollection, ready []readyTask, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
+	if len(ready) == 0 {
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, 0, len(ready))
+	for _, t := range ready {
+		ids = append(ids, t.taskID)
+	}
 	stamped, err := tasks.MarkDispatched(ctx, ids, now)
 	if err != nil {
-		return nil, fmt.Errorf("mark the tasks %s's success made ready dispatched: %w", key, err)
+		return nil, fmt.Errorf("mark %d ready tasks dispatched: %w", len(ids), err)
 	}
 	isStamped := make(map[uuid.UUID]bool, len(stamped))
 	for _, id := range stamped {
@@ -603,15 +642,15 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 	events := make([]DomainEvent, 0, len(stamped))
 	attempts := make([]Attempt, 0, len(stamped))
 	at := now
-	for _, c := range ready {
-		if !isStamped[c.TaskID] {
+	for _, t := range ready {
+		if !isStamped[t.taskID] {
 			continue
 		}
-		attempts = append(attempts, firstAttempt(c.TaskID, c.JobName, &at))
-		events = append(events, r.dispatchEvent(c.TaskID, 0, c.Node, c.JobName, d))
+		attempts = append(attempts, firstAttempt(t.taskID, t.jobName, &at))
+		events = append(events, r.dispatchEvent(t.taskID, 0, t.node, t.jobName, d))
 	}
 	if err := tasks.AddAttempts(ctx, attempts); err != nil {
-		return nil, fmt.Errorf("add the first attempts of the tasks %s's success made ready: %w", key, err)
+		return nil, fmt.Errorf("add the first attempts of %d ready tasks: %w", len(attempts), err)
 	}
 	return events, nil
 }
@@ -627,7 +666,7 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 // r's run, with its node's timeout (d's when the node declares none).
 func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
-		ID:           r.scheduleID,
+		ID:           r.runID,
 		ScheduleName: r.scheduleName,
 		TaskID:       taskID,
 		Attempt:      n,
@@ -642,7 +681,7 @@ func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobNa
 // skipBlocked skips the pending, undispatched tasks of r below the task at
 // key, which has failed for good, and counts each one it skips as terminal.
 func (r *Run) skipBlocked(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey) error {
-	blocked, err := graph.PendingDescendants(ctx, r.scheduleID, r.release.ReleaseID, key)
+	blocked, err := graph.PendingDescendants(ctx, r.runID, r.release.ReleaseID, key)
 	if err != nil {
 		return fmt.Errorf("read the tasks %s's failure blocks: %w", key, err)
 	}
@@ -672,24 +711,24 @@ func (r *Run) MarkDispatchTerminal(benign bool, failure RunFailureReason, reason
 	if r.IsTerminal() {
 		return nil, nil
 	}
-	outcome := SchedulerStatusFailed
+	outcome := RunStatusFailed
 	if benign {
-		outcome = SchedulerStatusSkipped
+		outcome = RunStatusSkipped
 	} else {
 		r.failureReason = &failure
 	}
 	evts := r.finalize(outcome, now)
-	side := RunDispatchTerminal{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}
+	side := RunDispatchTerminal{ID: r.runID, Name: r.scheduleName, Reason: reason}
 	return append(evts, side), nil
 }
 
-func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
+func (r *Run) finalize(outcome RunStatus, now time.Time) []DomainEvent {
 	r.status = outcome
 	completedAt := now
 	r.completedAt = &completedAt
 	r.changes.statusDirty = true
 	r.changes.completedDirty = true
-	evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
+	evt := RunFinalized{ID: r.runID, Name: r.scheduleName, Outcome: outcome}
 	return []DomainEvent{evt}
 }
 
@@ -715,10 +754,10 @@ func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error
 // returned when no non-SUCCEEDED task exists, so callers can tell the two
 // trigger paths apart.
 func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, nothingErr error) error {
-	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
+	if r.status != RunStatusFailed && r.status != RunStatusCancelled {
 		return ErrSourceMustBeTerminallyFailedOrCancelled
 	}
-	has, err := tasks.HasNonSucceeded(ctx, r.scheduleID)
+	has, err := tasks.HasNonSucceeded(ctx, r.runID)
 	if err != nil {
 		return fmt.Errorf("has non-succeeded: %w", err)
 	}
@@ -731,7 +770,7 @@ func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, noth
 // HasTaskAt is used by TriggerSingleNodeRun's stale-mode precondition: the
 // source run must carry a task at the requested node.
 func (r *Run) HasTaskAt(ctx context.Context, tasks TaskCollection, node NodeID) (bool, error) {
-	_, err := tasks.GetByNode(ctx, r.scheduleID, node)
+	_, err := tasks.GetByNode(ctx, r.runID, node)
 	if err == ErrTaskNotFound {
 		return false, nil
 	}

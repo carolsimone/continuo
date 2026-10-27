@@ -57,6 +57,8 @@ func (h *RunReadHandler) GetRunGraph(ctx context.Context, req *statev1.GetRunGra
 			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
 			ScheduleName: n.ScheduleName, NodeType: n.NodeType,
 			Status: string(n.Status), TaskId: n.TaskID.String(),
+			WaitReason: string(n.WaitReason), WaitingOnRunId: uuidPtrOrEmpty(n.WaitingOnRunID),
+			WaitingSince: timePtrToRFC(n.WaitingSince),
 		})
 	}
 	for _, e := range g.Edges {

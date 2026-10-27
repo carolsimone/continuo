@@ -49,7 +49,7 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, succeeded, err := r.RecordAttemptReport(ctx, u.TaskCollection(), u.TaskGraph(h.tenantID), evt.Report, h.tasks, u.Clock().Now())
+	domainEvents, succeeded, err := r.RecordAttemptReport(ctx, u.TaskCollection(h.tenantID), u.TaskGraph(h.tenantID), evt.Report, h.tasks, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record attempt report: %w", err)
 	}
@@ -79,7 +79,7 @@ func (h *AttemptReportHandler) observeCancel(u uow.UnitOfWork, r *run.Run, event
 		return
 	}
 	for _, evt := range events {
-		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.SchedulerStatusCancelled {
+		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.RunStatusCancelled {
 			d := now.Sub(*r.CancelledAt())
 			u.AfterCommit(func() { h.metrics.RunCancelled(d) })
 			return

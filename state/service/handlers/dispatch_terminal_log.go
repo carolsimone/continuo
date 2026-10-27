@@ -11,11 +11,11 @@ import (
 // among evts: the event maps to no stream and no column, so this line is where
 // the reason a dispatch finalized a run is visible. label names the inbound
 // stream in the message.
-func logDispatchTerminal(logger *slog.Logger, label string, scheduleID uuid.UUID, evts []run.DomainEvent) {
+func logDispatchTerminal(logger *slog.Logger, label string, runID uuid.UUID, evts []run.DomainEvent) {
 	for _, e := range evts {
 		if t, ok := e.(run.RunDispatchTerminal); ok {
 			logger.Warn(label+": dispatch finalized the run",
-				"schedule_id", scheduleID,
+				"run_id", runID,
 				"schedule_name", t.Name,
 				"reason", t.Reason,
 			)

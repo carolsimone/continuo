@@ -56,7 +56,7 @@ def attempts_for_run(jobs_doc: dict, run_id: str) -> list:
     attempts = []
     for job in jobs_doc.get("items", []):
         labels = job.get("metadata", {}).get("labels") or {}
-        if labels.get("schedule-id") != run_id:
+        if labels.get("run-id") != run_id:
             continue
         table = _env(job, "TABLE_NAME")
         if table is None:

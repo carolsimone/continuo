@@ -18,7 +18,8 @@ import (
 
 // RunReadRepository reads run graphs, run lists and drift from Postgres. A
 // run's graph joins its task rows to the nodes and edges of the run's own
-// release, so a later promotion never changes a past run's graph.
+// release, so a later promotion never changes a past run's graph, and joins a
+// task waiting for its node's lease to the lease held on that node now.
 type RunReadRepository struct {
 	db *sqlx.DB
 }
@@ -31,13 +32,16 @@ func NewRunReadRepository(db *sqlx.DB) *RunReadRepository {
 }
 
 type runGraphNodeRow struct {
-	TaskID       uuid.UUID `db:"task_id"`
-	ServiceName  string    `db:"service_name"`
-	SchemaName   string    `db:"schema_name"`
-	TableName    string    `db:"table_name"`
-	Status       string    `db:"status"`
-	ScheduleName string    `db:"schedule_name"`
-	NodeType     string    `db:"node_type"`
+	TaskID         uuid.UUID  `db:"task_id"`
+	ServiceName    string     `db:"service_name"`
+	SchemaName     string     `db:"schema_name"`
+	TableName      string     `db:"table_name"`
+	Status         string     `db:"status"`
+	ScheduleName   string     `db:"schedule_name"`
+	NodeType       string     `db:"node_type"`
+	WaitReason     string     `db:"wait_reason"`
+	WaitingSince   *time.Time `db:"lease_wait_since"`
+	WaitingOnRunID *uuid.UUID `db:"waiting_on_run_id"`
 }
 
 type runGraphEdgeRow struct {
@@ -54,7 +58,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	g := projection.RunGraph{LatestPromotionSeq: latest}
 
 	var seq sql.NullInt64
-	err = r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+	err = r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM runs WHERE run_id = $1`, runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -63,16 +67,26 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	}
 	g.RunPromotionSeq = seq.Int64
 
+	// A task waiting for its node's lease is joined to the lease another task
+	// of the tenant holds on that node, which names the holder's run. A node
+	// has at most one lease per tenant, so the join adds at most one row to a
+	// task, and a task never reads its own lease as the one it waits for.
 	var nodes []runGraphNodeRow
 	if err := r.db.SelectContext(ctx, &nodes, `
 		SELECT t.task_id, t.service_name, t.schema_name, t.table_name, t.status,
 		       COALESCE(n.schedule_name, '') AS schedule_name,
-		       COALESCE(n.node_type, '')     AS node_type
-		FROM task_tracker t
-		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		       COALESCE(n.node_type, '')     AS node_type,
+		       COALESCE(t.wait_reason, '')   AS wait_reason,
+		       t.lease_wait_since,
+		       l.run_id                      AS waiting_on_run_id
+		FROM tasks t
+		JOIN runs s ON s.run_id = t.run_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
-		WHERE t.schedule_id = $1
+		LEFT JOIN node_leases l
+		  ON t.wait_reason = 'node_lease' AND l.tenant_id = $2
+		 AND l.node_key = t.node_key AND l.task_id <> t.task_id
+		WHERE t.run_id = $1
 		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
 	}
@@ -81,6 +95,8 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
 			ScheduleName: n.ScheduleName, NodeType: n.NodeType,
 			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
+			WaitReason: run.WaitReason(n.WaitReason), WaitingSince: n.WaitingSince,
+			WaitingOnRunID: n.WaitingOnRunID,
 		})
 	}
 
@@ -88,11 +104,11 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	if err := r.db.SelectContext(ctx, &edges, `
 		SELECT d.service_name || '.' || d.schema_name || '.' || d.table_name AS from_node_id,
 		       u.service_name || '.' || u.schema_name || '.' || u.table_name AS to_node_id
-		FROM scheduler_tracker s
+		FROM runs s
 		JOIN topology_edges e ON e.tenant_id = $2 AND e.release_id = s.release_id
-		JOIN task_tracker u ON u.schedule_id = s.schedule_id AND u.node_key = e.upstream_key
-		JOIN task_tracker d ON d.schedule_id = s.schedule_id AND d.node_key = e.downstream_key
-		WHERE s.schedule_id = $1
+		JOIN tasks u ON u.run_id = s.run_id AND u.node_key = e.upstream_key
+		JOIN tasks d ON d.run_id = s.run_id AND d.node_key = e.downstream_key
+		WHERE s.run_id = $1
 		ORDER BY from_node_id, to_node_id`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read edges of run %s: %w", runID, err)
 	}
@@ -103,7 +119,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 }
 
 type runSummaryRow struct {
-	RunID        uuid.UUID `db:"schedule_id"`
+	RunID        uuid.UUID `db:"run_id"`
 	ScheduleName string    `db:"schedule_name"`
 	Status       string    `db:"status"`
 	FailReason   *string   `db:"failure_reason"`
@@ -115,16 +131,16 @@ type runSummaryRow struct {
 func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error) {
 	var total int
 	if err := r.db.GetContext(ctx, &total, `
-		SELECT count(*) FROM scheduler_tracker
+		SELECT count(*) FROM runs
 		WHERE schedule_name = $1 AND completed_at IS NOT NULL`, scheduleName); err != nil {
 		return nil, 0, fmt.Errorf("count completed runs of %s: %w", scheduleName, err)
 	}
 	var rows []runSummaryRow
 	if err := r.db.SelectContext(ctx, &rows, `
-		SELECT schedule_id, schedule_name, status, failure_reason, created_at, completed_at
-		FROM scheduler_tracker
+		SELECT run_id, schedule_name, status, failure_reason, created_at, completed_at
+		FROM runs
 		WHERE schedule_name = $1 AND completed_at IS NOT NULL
-		ORDER BY created_at DESC, schedule_id
+		ORDER BY created_at DESC, run_id
 		LIMIT $2 OFFSET $3`, scheduleName, limit, offset); err != nil {
 		return nil, 0, fmt.Errorf("list completed runs of %s: %w", scheduleName, err)
 	}
@@ -132,7 +148,7 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName 
 	for _, row := range rows {
 		s := projection.RunSummary{
 			RunID: row.RunID, ScheduleName: row.ScheduleName,
-			TerminalStatus: run.SchedulerStatus(row.Status),
+			TerminalStatus: run.RunStatus(row.Status),
 			CreatedAt:      row.CreatedAt, CompletedAt: row.CompletedAt,
 		}
 		if row.FailReason != nil {
@@ -145,7 +161,7 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName 
 
 type activeRunRow struct {
 	ScheduleName string        `db:"schedule_name"`
-	RunID        uuid.UUID     `db:"schedule_id"`
+	RunID        uuid.UUID     `db:"run_id"`
 	PromotionSeq sql.NullInt64 `db:"promotion_seq"`
 }
 
@@ -157,10 +173,10 @@ func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID st
 	}
 	var rows []activeRunRow
 	if err := r.db.SelectContext(ctx, &rows, `
-		SELECT DISTINCT ON (schedule_name) schedule_name, schedule_id, promotion_seq
-		FROM scheduler_tracker
+		SELECT DISTINCT ON (schedule_name) schedule_name, run_id, promotion_seq
+		FROM runs
 		WHERE status = ANY($1::text[])
-		ORDER BY schedule_name, created_at DESC`, pq.Array(activeSchedulerStatuses())); err != nil {
+		ORDER BY schedule_name, created_at DESC`, pq.Array(activeRunStatuses())); err != nil {
 		return 0, nil, fmt.Errorf("list active runs: %w", err)
 	}
 	drifts := make([]projection.ActiveRunDrift, 0, len(rows))

@@ -265,7 +265,7 @@ func readRunStamp(t *testing.T, ctx context.Context, clients *testClients, runID
 	var releaseID sql.NullString
 	var seq sql.NullInt64
 	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
-		`SELECT release_id, promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, runID).Scan(&releaseID, &seq))
+		`SELECT release_id, promotion_seq FROM runs WHERE run_id = $1`, runID).Scan(&releaseID, &seq))
 	return runStamp{ReleaseID: releaseID.String, PromotionSeq: seq.Int64}
 }
 
@@ -274,7 +274,7 @@ func countScheduleRuns(t *testing.T, ctx context.Context, clients *testClients, 
 	t.Helper()
 	var n int
 	require.NoError(t, clients.stateDB.GetContext(ctx, &n,
-		`SELECT count(*) FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName))
+		`SELECT count(*) FROM runs WHERE schedule_name = $1`, scheduleName))
 	return n
 }
 
@@ -294,7 +294,7 @@ func triggerRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, 
 	assert.Equal(t, failureTestScheduleName, resp.GetScheduleName())
 	t.Logf("Rebase run created: run_id=%s include_changed_upstream=%v", runID, includeChangedUpstream)
 
-	assert.Equal(t, "rebase", queryPostgresTrackerKind(t, clients.stateDB, runID))
+	assert.Equal(t, "rebase", queryRunKind(t, clients.stateDB, runID))
 	assert.Equal(t, source.String(), queryRunSourceRunID(t, clients, runID))
 	assert.Equal(t, runStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, readRunStamp(t, ctx, clients, runID),
 		"a rebase runs on the live release")
@@ -313,8 +313,8 @@ func readRebaseTasks(t *testing.T, ctx context.Context, clients *testClients, ru
 	t.Helper()
 	rows, err := clients.stateDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NOT NULL AS inherited
-		FROM task_tracker
-		WHERE schedule_id = $1`, runID)
+		FROM tasks
+		WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	defer rows.Close()
 

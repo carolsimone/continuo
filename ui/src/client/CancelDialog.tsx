@@ -6,10 +6,12 @@ interface CancelConfig {
 
 interface Props {
   scheduleName: string;
+  // Called once state has accepted the cancel, before the dialog closes.
+  onCancelled: () => void;
   onClose: () => void;
 }
 
-export default function CancelDialog({ scheduleName, onClose }: Props) {
+export default function CancelDialog({ scheduleName, onCancelled, onClose }: Props) {
   const [config, setConfig] = useState<CancelConfig | null>(null);
   const [configError, setConfigError] = useState(false);
   const [reason, setReason] = useState('');
@@ -52,6 +54,7 @@ export default function CancelDialog({ scheduleName, onClose }: Props) {
         body: JSON.stringify({ cancellation_reason: effectiveReason }),
       });
       if (res.ok) {
+        onCancelled();
         onClose();
       } else {
         const body = await res.json().catch(() => ({}));

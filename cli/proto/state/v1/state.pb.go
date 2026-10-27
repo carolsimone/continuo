@@ -289,21 +289,24 @@ func (x *Scheduler) GetFailureReason() string {
 }
 
 type Task struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ScheduleId    string                 `protobuf:"bytes,2,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	SchemaName    string                 `protobuf:"bytes,5,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
-	TableName     string                 `protobuf:"bytes,6,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	JobName       string                 `protobuf:"bytes,7,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"` // K8s job identifier (computed from service-schema-table)
-	Status        TaskStatus             `protobuf:"varint,8,opt,name=status,proto3,enum=state.v1.TaskStatus" json:"status,omitempty"`
-	Attempt       int32                  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"` // 0-based number of the task's current attempt
-	MaxRetries    int32                  `protobuf:"varint,10,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
-	CancelledAt   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"` // set only while status is CANCELLED
-	CancelledBy   string                 `protobuf:"bytes,12,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"` // set only while status is CANCELLED
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	TaskId         string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ScheduleId     string                 `protobuf:"bytes,2,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ServiceName    string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	SchemaName     string                 `protobuf:"bytes,5,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
+	TableName      string                 `protobuf:"bytes,6,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	JobName        string                 `protobuf:"bytes,7,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"` // K8s job identifier (computed from service-schema-table)
+	Status         TaskStatus             `protobuf:"varint,8,opt,name=status,proto3,enum=state.v1.TaskStatus" json:"status,omitempty"`
+	Attempt        int32                  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"` // 0-based number of the task's current attempt
+	MaxRetries     int32                  `protobuf:"varint,10,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
+	CancelledAt    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"`              // set only while status is CANCELLED
+	CancelledBy    string                 `protobuf:"bytes,12,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"`              // set only while status is CANCELLED
+	WaitReason     string                 `protobuf:"bytes,13,opt,name=wait_reason,json=waitReason,proto3" json:"wait_reason,omitempty"`                 // node_lease while the task waits for another run to release its node; empty otherwise
+	WaitingOnRunId string                 `protobuf:"bytes,14,opt,name=waiting_on_run_id,json=waitingOnRunId,proto3" json:"waiting_on_run_id,omitempty"` // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
+	WaitingSince   *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=waiting_since,json=waitingSince,proto3" json:"waiting_since,omitempty"`           // when the task began waiting for wait_reason; unset when it has none
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Task) Reset() {
@@ -418,6 +421,27 @@ func (x *Task) GetCancelledBy() string {
 		return x.CancelledBy
 	}
 	return ""
+}
+
+func (x *Task) GetWaitReason() string {
+	if x != nil {
+		return x.WaitReason
+	}
+	return ""
+}
+
+func (x *Task) GetWaitingOnRunId() string {
+	if x != nil {
+		return x.WaitingOnRunId
+	}
+	return ""
+}
+
+func (x *Task) GetWaitingSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WaitingSince
+	}
+	return nil
 }
 
 // TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
@@ -2405,16 +2429,19 @@ type NodeRun struct {
 	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
 	Attempt        int32                  `protobuf:"varint,7,opt,name=attempt,proto3" json:"attempt,omitempty"`                        // 0-based number of the task's current attempt
 	ImageTag       string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
-	CreatedAt      string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
-	StartedAt      string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`               // RFC3339, "" if no execution yet
-	CompletedAt    string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`         // RFC3339, "" if not finished
-	ErrorMessage   string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`      // "" when none
-	LogS3Key       string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // "" when none
-	Operation      string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build | full_refresh
-	RunResultsUri  string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // "" when none
-	ContentHash    string                 `protobuf:"bytes,17,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`         // node's content hash in the run's release; "" when the run names no release
-	FailureClass   string                 `protobuf:"bytes,18,opt,name=failure_class,json=failureClass,proto3" json:"failure_class,omitempty"`      // why the latest attempt failed; "" unless it failed
-	FailureReason  string                 `protobuf:"bytes,19,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`   // the specific failure within failure_class; "" unless it failed
+	CreatedAt      string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                    // RFC3339
+	StartedAt      string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                    // RFC3339, "" if no execution yet
+	CompletedAt    string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`              // RFC3339, "" if not finished
+	ErrorMessage   string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`           // "" when none
+	LogS3Key       string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                     // "" when none
+	Operation      string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build | full_refresh
+	RunResultsUri  string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"`      // "" when none
+	ContentHash    string                 `protobuf:"bytes,17,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`              // node's content hash in the run's release; "" when the run names no release
+	FailureClass   string                 `protobuf:"bytes,18,opt,name=failure_class,json=failureClass,proto3" json:"failure_class,omitempty"`           // why the latest attempt failed; "" unless it failed
+	FailureReason  string                 `protobuf:"bytes,19,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`        // the specific failure within failure_class; "" unless it failed
+	WaitReason     string                 `protobuf:"bytes,20,opt,name=wait_reason,json=waitReason,proto3" json:"wait_reason,omitempty"`                 // node_lease while the task waits for another run to release its node; empty otherwise
+	WaitingOnRunId string                 `protobuf:"bytes,21,opt,name=waiting_on_run_id,json=waitingOnRunId,proto3" json:"waiting_on_run_id,omitempty"` // the run whose task holds the node the task waits for; "" when it waits for nothing or no task holds the node
+	WaitingSince   string                 `protobuf:"bytes,22,opt,name=waiting_since,json=waitingSince,proto3" json:"waiting_since,omitempty"`           // RFC3339, when the task began waiting for wait_reason; "" when it has none
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2571,6 +2598,27 @@ func (x *NodeRun) GetFailureClass() string {
 func (x *NodeRun) GetFailureReason() string {
 	if x != nil {
 		return x.FailureReason
+	}
+	return ""
+}
+
+func (x *NodeRun) GetWaitReason() string {
+	if x != nil {
+		return x.WaitReason
+	}
+	return ""
+}
+
+func (x *NodeRun) GetWaitingOnRunId() string {
+	if x != nil {
+		return x.WaitingOnRunId
+	}
+	return ""
+}
+
+func (x *NodeRun) GetWaitingSince() string {
+	if x != nil {
+		return x.WaitingSince
 	}
 	return ""
 }
@@ -3012,16 +3060,19 @@ func (x *ListNodeServicesResponse) GetServiceNames() []string {
 }
 
 type RunGraphNode struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
-	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	ScheduleName  string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the node's schedule in the run's release; "" when unknown
-	NodeType      string                 `protobuf:"bytes,5,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`             // "" when the run names no release
-	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
-	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ServiceName    string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	SchemaName     string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
+	TableName      string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	ScheduleName   string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the node's schedule in the run's release; "" when unknown
+	NodeType       string                 `protobuf:"bytes,5,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`             // "" when the run names no release
+	Status         string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
+	TaskId         string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	WaitReason     string                 `protobuf:"bytes,8,opt,name=wait_reason,json=waitReason,proto3" json:"wait_reason,omitempty"`                 // node_lease while the task waits for another run to release its node; empty otherwise
+	WaitingOnRunId string                 `protobuf:"bytes,9,opt,name=waiting_on_run_id,json=waitingOnRunId,proto3" json:"waiting_on_run_id,omitempty"` // the run whose task holds the node the task waits for; "" when it waits for nothing or no task holds the node
+	WaitingSince   string                 `protobuf:"bytes,10,opt,name=waiting_since,json=waitingSince,proto3" json:"waiting_since,omitempty"`          // RFC3339, when the task began waiting for wait_reason; "" when it has none
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RunGraphNode) Reset() {
@@ -3099,6 +3150,27 @@ func (x *RunGraphNode) GetStatus() string {
 func (x *RunGraphNode) GetTaskId() string {
 	if x != nil {
 		return x.TaskId
+	}
+	return ""
+}
+
+func (x *RunGraphNode) GetWaitReason() string {
+	if x != nil {
+		return x.WaitReason
+	}
+	return ""
+}
+
+func (x *RunGraphNode) GetWaitingOnRunId() string {
+	if x != nil {
+		return x.WaitingOnRunId
+	}
+	return ""
+}
+
+func (x *RunGraphNode) GetWaitingSince() string {
+	if x != nil {
+		return x.WaitingSince
 	}
 	return ""
 }
@@ -3632,7 +3704,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x13cancellation_reason\x18\n" +
 	" \x01(\tR\x12cancellationReason\x123\n" +
 	"\x15initialization_status\x18\v \x01(\tR\x14initializationStatus\x12%\n" +
-	"\x0efailure_reason\x18\f \x01(\tR\rfailureReason\"\xc4\x03\n" +
+	"\x0efailure_reason\x18\f \x01(\tR\rfailureReason\"\xd1\x04\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vschedule_id\x18\x02 \x01(\tR\n" +
@@ -3651,7 +3723,11 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	" \x01(\x05R\n" +
 	"maxRetries\x12=\n" +
 	"\fcancelled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vcancelledAt\x12!\n" +
-	"\fcancelled_by\x18\f \x01(\tR\vcancelledBy\"\xe6\x04\n" +
+	"\fcancelled_by\x18\f \x01(\tR\vcancelledBy\x12\x1f\n" +
+	"\vwait_reason\x18\r \x01(\tR\n" +
+	"waitReason\x12)\n" +
+	"\x11waiting_on_run_id\x18\x0e \x01(\tR\x0ewaitingOnRunId\x12?\n" +
+	"\rwaiting_since\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\fwaitingSince\"\xe6\x04\n" +
 	"\vTaskAttempt\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\x05R\aattempt\x12\x19\n" +
@@ -3813,7 +3889,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1c\n" +
 	"\toperation\x18\x05 \x01(\tR\toperation\"=\n" +
 	"\x14ListNodeRunsResponse\x12%\n" +
-	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xe4\x04\n" +
+	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xd5\x05\n" +
 	"\aNodeRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x12\x12\n" +
@@ -3837,7 +3913,11 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x0frun_results_uri\x18\x10 \x01(\tR\rrunResultsUri\x12!\n" +
 	"\fcontent_hash\x18\x11 \x01(\tR\vcontentHash\x12#\n" +
 	"\rfailure_class\x18\x12 \x01(\tR\ffailureClass\x12%\n" +
-	"\x0efailure_reason\x18\x13 \x01(\tR\rfailureReasonJ\x04\b\t\x10\n" +
+	"\x0efailure_reason\x18\x13 \x01(\tR\rfailureReason\x12\x1f\n" +
+	"\vwait_reason\x18\x14 \x01(\tR\n" +
+	"waitReason\x12)\n" +
+	"\x11waiting_on_run_id\x18\x15 \x01(\tR\x0ewaitingOnRunId\x12#\n" +
+	"\rwaiting_since\x18\x16 \x01(\tR\fwaitingSinceJ\x04\b\t\x10\n" +
 	"R\x10manifest_version\"\x99\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
@@ -3874,7 +3954,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"tableNames\"\x19\n" +
 	"\x17ListNodeServicesRequest\"?\n" +
 	"\x18ListNodeServicesResponse\x12#\n" +
-	"\rservice_names\x18\x01 \x03(\tR\fserviceNames\"\xe4\x01\n" +
+	"\rservice_names\x18\x01 \x03(\tR\fserviceNames\"\xd5\x02\n" +
 	"\fRunGraphNode\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -3884,7 +3964,12 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rschedule_name\x18\x04 \x01(\tR\fscheduleName\x12\x1b\n" +
 	"\tnode_type\x18\x05 \x01(\tR\bnodeType\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12\x17\n" +
-	"\atask_id\x18\a \x01(\tR\x06taskId\"N\n" +
+	"\atask_id\x18\a \x01(\tR\x06taskId\x12\x1f\n" +
+	"\vwait_reason\x18\b \x01(\tR\n" +
+	"waitReason\x12)\n" +
+	"\x11waiting_on_run_id\x18\t \x01(\tR\x0ewaitingOnRunId\x12#\n" +
+	"\rwaiting_since\x18\n" +
+	" \x01(\tR\fwaitingSince\"N\n" +
 	"\fRunGraphEdge\x12 \n" +
 	"\ffrom_node_id\x18\x01 \x01(\tR\n" +
 	"fromNodeId\x12\x1c\n" +
@@ -4051,73 +4136,74 @@ var file_proto_state_v1_state_proto_depIdxs = []int32{
 	55, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: state.v1.Task.status:type_name -> state.v1.TaskStatus
 	55, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
-	55, // 9: state.v1.TaskAttempt.dispatched_at:type_name -> google.protobuf.Timestamp
-	55, // 10: state.v1.TaskAttempt.queued_at:type_name -> google.protobuf.Timestamp
-	55, // 11: state.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
-	55, // 12: state.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	2,  // 13: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
-	1,  // 14: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
-	3,  // 15: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
-	3,  // 16: state.v1.TaskResponse.task:type_name -> state.v1.Task
-	4,  // 17: state.v1.ListTaskAttemptsResponse.attempts:type_name -> state.v1.TaskAttempt
-	55, // 18: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
-	18, // 19: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
-	33, // 20: state.v1.PreviewRebaseResponse.changed_nodes:type_name -> state.v1.ChangedUpstreamNode
-	37, // 21: state.v1.ListNodeRunsResponse.runs:type_name -> state.v1.NodeRun
-	40, // 22: state.v1.ListNodesResponse.nodes:type_name -> state.v1.NodeSummary
-	45, // 23: state.v1.GetRunGraphResponse.nodes:type_name -> state.v1.RunGraphNode
-	46, // 24: state.v1.GetRunGraphResponse.edges:type_name -> state.v1.RunGraphEdge
-	50, // 25: state.v1.ListRunsResponse.runs:type_name -> state.v1.RunSummary
-	53, // 26: state.v1.ListActiveRunDriftsResponse.active_runs:type_name -> state.v1.ActiveRunDrift
-	5,  // 27: state.v1.StateService.GetScheduler:input_type -> state.v1.GetSchedulerRequest
-	6,  // 28: state.v1.StateService.CancelScheduler:input_type -> state.v1.CancelSchedulerRequest
-	15, // 29: state.v1.StateService.ActivateSchedule:input_type -> state.v1.ActivateScheduleRequest
-	17, // 30: state.v1.StateService.ListAllSchedules:input_type -> state.v1.ListAllSchedulesRequest
-	20, // 31: state.v1.StateService.TriggerSchedule:input_type -> state.v1.TriggerScheduleRequest
-	22, // 32: state.v1.StateService.CancelSchedule:input_type -> state.v1.CancelScheduleRequest
-	8,  // 33: state.v1.StateService.GetTask:input_type -> state.v1.GetTaskRequest
-	9,  // 34: state.v1.StateService.GetTaskByScheduleAndNode:input_type -> state.v1.GetTaskByScheduleAndNodeRequest
-	10, // 35: state.v1.StateService.ListTasks:input_type -> state.v1.ListTasksRequest
-	24, // 36: state.v1.StateService.GetSchedulerInitStatus:input_type -> state.v1.GetSchedulerInitStatusRequest
-	26, // 37: state.v1.StateService.TriggerRerun:input_type -> state.v1.TriggerRerunRequest
-	28, // 38: state.v1.StateService.TriggerSingleNodeRun:input_type -> state.v1.TriggerSingleNodeRunRequest
-	30, // 39: state.v1.StateService.TriggerRebase:input_type -> state.v1.TriggerRebaseRequest
-	32, // 40: state.v1.StateService.PreviewRebase:input_type -> state.v1.PreviewRebaseRequest
-	35, // 41: state.v1.StateService.ListNodeRuns:input_type -> state.v1.ListNodeRunsRequest
-	38, // 42: state.v1.StateService.ListNodes:input_type -> state.v1.ListNodesRequest
-	41, // 43: state.v1.StateService.ListNodeNames:input_type -> state.v1.ListNodeNamesRequest
-	43, // 44: state.v1.StateService.ListNodeServices:input_type -> state.v1.ListNodeServicesRequest
-	47, // 45: state.v1.StateService.GetRunGraph:input_type -> state.v1.GetRunGraphRequest
-	49, // 46: state.v1.StateService.ListRuns:input_type -> state.v1.ListRunsRequest
-	52, // 47: state.v1.StateService.ListActiveRunDrifts:input_type -> state.v1.ListActiveRunDriftsRequest
-	13, // 48: state.v1.StateService.ListTaskAttempts:input_type -> state.v1.ListTaskAttemptsRequest
-	7,  // 49: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
-	7,  // 50: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
-	16, // 51: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
-	19, // 52: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
-	21, // 53: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
-	23, // 54: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
-	12, // 55: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
-	12, // 56: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
-	11, // 57: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
-	25, // 58: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
-	27, // 59: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
-	29, // 60: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
-	31, // 61: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
-	34, // 62: state.v1.StateService.PreviewRebase:output_type -> state.v1.PreviewRebaseResponse
-	36, // 63: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
-	39, // 64: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
-	42, // 65: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
-	44, // 66: state.v1.StateService.ListNodeServices:output_type -> state.v1.ListNodeServicesResponse
-	48, // 67: state.v1.StateService.GetRunGraph:output_type -> state.v1.GetRunGraphResponse
-	51, // 68: state.v1.StateService.ListRuns:output_type -> state.v1.ListRunsResponse
-	54, // 69: state.v1.StateService.ListActiveRunDrifts:output_type -> state.v1.ListActiveRunDriftsResponse
-	14, // 70: state.v1.StateService.ListTaskAttempts:output_type -> state.v1.ListTaskAttemptsResponse
-	49, // [49:71] is the sub-list for method output_type
-	27, // [27:49] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	55, // 9: state.v1.Task.waiting_since:type_name -> google.protobuf.Timestamp
+	55, // 10: state.v1.TaskAttempt.dispatched_at:type_name -> google.protobuf.Timestamp
+	55, // 11: state.v1.TaskAttempt.queued_at:type_name -> google.protobuf.Timestamp
+	55, // 12: state.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	55, // 13: state.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	2,  // 14: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
+	1,  // 15: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
+	3,  // 16: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
+	3,  // 17: state.v1.TaskResponse.task:type_name -> state.v1.Task
+	4,  // 18: state.v1.ListTaskAttemptsResponse.attempts:type_name -> state.v1.TaskAttempt
+	55, // 19: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
+	18, // 20: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
+	33, // 21: state.v1.PreviewRebaseResponse.changed_nodes:type_name -> state.v1.ChangedUpstreamNode
+	37, // 22: state.v1.ListNodeRunsResponse.runs:type_name -> state.v1.NodeRun
+	40, // 23: state.v1.ListNodesResponse.nodes:type_name -> state.v1.NodeSummary
+	45, // 24: state.v1.GetRunGraphResponse.nodes:type_name -> state.v1.RunGraphNode
+	46, // 25: state.v1.GetRunGraphResponse.edges:type_name -> state.v1.RunGraphEdge
+	50, // 26: state.v1.ListRunsResponse.runs:type_name -> state.v1.RunSummary
+	53, // 27: state.v1.ListActiveRunDriftsResponse.active_runs:type_name -> state.v1.ActiveRunDrift
+	5,  // 28: state.v1.StateService.GetScheduler:input_type -> state.v1.GetSchedulerRequest
+	6,  // 29: state.v1.StateService.CancelScheduler:input_type -> state.v1.CancelSchedulerRequest
+	15, // 30: state.v1.StateService.ActivateSchedule:input_type -> state.v1.ActivateScheduleRequest
+	17, // 31: state.v1.StateService.ListAllSchedules:input_type -> state.v1.ListAllSchedulesRequest
+	20, // 32: state.v1.StateService.TriggerSchedule:input_type -> state.v1.TriggerScheduleRequest
+	22, // 33: state.v1.StateService.CancelSchedule:input_type -> state.v1.CancelScheduleRequest
+	8,  // 34: state.v1.StateService.GetTask:input_type -> state.v1.GetTaskRequest
+	9,  // 35: state.v1.StateService.GetTaskByScheduleAndNode:input_type -> state.v1.GetTaskByScheduleAndNodeRequest
+	10, // 36: state.v1.StateService.ListTasks:input_type -> state.v1.ListTasksRequest
+	24, // 37: state.v1.StateService.GetSchedulerInitStatus:input_type -> state.v1.GetSchedulerInitStatusRequest
+	26, // 38: state.v1.StateService.TriggerRerun:input_type -> state.v1.TriggerRerunRequest
+	28, // 39: state.v1.StateService.TriggerSingleNodeRun:input_type -> state.v1.TriggerSingleNodeRunRequest
+	30, // 40: state.v1.StateService.TriggerRebase:input_type -> state.v1.TriggerRebaseRequest
+	32, // 41: state.v1.StateService.PreviewRebase:input_type -> state.v1.PreviewRebaseRequest
+	35, // 42: state.v1.StateService.ListNodeRuns:input_type -> state.v1.ListNodeRunsRequest
+	38, // 43: state.v1.StateService.ListNodes:input_type -> state.v1.ListNodesRequest
+	41, // 44: state.v1.StateService.ListNodeNames:input_type -> state.v1.ListNodeNamesRequest
+	43, // 45: state.v1.StateService.ListNodeServices:input_type -> state.v1.ListNodeServicesRequest
+	47, // 46: state.v1.StateService.GetRunGraph:input_type -> state.v1.GetRunGraphRequest
+	49, // 47: state.v1.StateService.ListRuns:input_type -> state.v1.ListRunsRequest
+	52, // 48: state.v1.StateService.ListActiveRunDrifts:input_type -> state.v1.ListActiveRunDriftsRequest
+	13, // 49: state.v1.StateService.ListTaskAttempts:input_type -> state.v1.ListTaskAttemptsRequest
+	7,  // 50: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
+	7,  // 51: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
+	16, // 52: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
+	19, // 53: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
+	21, // 54: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
+	23, // 55: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
+	12, // 56: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
+	12, // 57: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
+	11, // 58: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
+	25, // 59: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
+	27, // 60: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
+	29, // 61: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
+	31, // 62: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
+	34, // 63: state.v1.StateService.PreviewRebase:output_type -> state.v1.PreviewRebaseResponse
+	36, // 64: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
+	39, // 65: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
+	42, // 66: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
+	44, // 67: state.v1.StateService.ListNodeServices:output_type -> state.v1.ListNodeServicesResponse
+	48, // 68: state.v1.StateService.GetRunGraph:output_type -> state.v1.GetRunGraphResponse
+	51, // 69: state.v1.StateService.ListRuns:output_type -> state.v1.ListRunsResponse
+	54, // 70: state.v1.StateService.ListActiveRunDrifts:output_type -> state.v1.ListActiveRunDriftsResponse
+	14, // 71: state.v1.StateService.ListTaskAttempts:output_type -> state.v1.ListTaskAttemptsResponse
+	50, // [50:72] is the sub-list for method output_type
+	28, // [28:50] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_proto_state_v1_state_proto_init() }

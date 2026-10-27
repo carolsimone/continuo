@@ -19,11 +19,11 @@ const retryHashLen = 6
 
 // ComputeJobName generates the Kubernetes Job name of one attempt of a task:
 // the sanitized {service}-{schema}-{table} prefix, the first 8 characters of
-// the run id (scheduleID), and -r{attempt} for every attempt after the first.
+// the run id (runID), and -r{attempt} for every attempt after the first.
 // It follows DNS-1123 label rules: lowercase alphanumerics and hyphens,
 // starting and ending alphanumeric, at most 63 characters.
 //
-// Format: {prefix}-{scheduleID[:8]} for attempt 0, {prefix}-{scheduleID[:8]}-r{attempt}
+// Format: {prefix}-{runID[:8]} for attempt 0, {prefix}-{runID[:8]}-r{attempt}
 // after it.
 //
 // The prefix is lowercased, invalid characters become hyphens, runs of hyphens
@@ -36,7 +36,7 @@ const retryHashLen = 6
 // full prefix's SHA-256, so two nodes whose prefixes differ only past the cut
 // keep distinct retry names. A negative attempt, or a name that is empty after
 // sanitization, is an error.
-func ComputeJobName(serviceName, schemaName, tableName, scheduleID string, attempt int) (string, error) {
+func ComputeJobName(serviceName, schemaName, tableName, runID string, attempt int) (string, error) {
 	if attempt < 0 {
 		return "", fmt.Errorf("attempt %d is negative", attempt)
 	}
@@ -46,7 +46,7 @@ func ComputeJobName(serviceName, schemaName, tableName, scheduleID string, attem
 	}
 
 	// Clamp suffix to 8 chars.
-	idSuffix := scheduleID
+	idSuffix := runID
 	if len(idSuffix) > 8 {
 		idSuffix = idSuffix[:8]
 	}

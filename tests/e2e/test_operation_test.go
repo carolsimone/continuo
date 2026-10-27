@@ -66,8 +66,8 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	// Exactly one task was dispatched (the tested node).
 	var taskCount int
 	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
+		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, runID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count tasks rows")
 	assert.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node test run")
 
 	// The run was created as a test run — proves operation threaded end-to-end.
@@ -208,8 +208,8 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	// Flat fan-out: only the tested nodes get a task; seed_table_2 (no tests) is
 	// excluded. Assert the dispatched set is exactly {seed_table_1, seed_table_3}.
 	rows, err := clients.stateDB.QueryContext(ctx,
-		`SELECT table_name FROM task_tracker WHERE schedule_id = $1 ORDER BY table_name`, scheduleID)
-	require.NoError(t, err, "failed to query task_tracker rows")
+		`SELECT table_name FROM tasks WHERE run_id = $1 ORDER BY table_name`, scheduleID)
+	require.NoError(t, err, "failed to query tasks rows")
 	defer rows.Close()
 
 	var tables []string
@@ -235,7 +235,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 // e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
 // TriggerSchedule with operation="test" selects no node, and state records the
 // run 'skipped' — a benign non-failure — rather than 'failed'. No Job is
-// dispatched, so no task_tracker row exists.
+// dispatched, so no tasks row exists.
 func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -270,12 +270,12 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	t.Log("Waiting for the all-gated whole-DAG test run to finalize 'skipped'...")
 	verifySchedulerSkipped(t, ctx, clients, scheduleID)
 
-	// No node had tests, so no Job was dispatched — zero task_tracker rows.
+	// No node had tests, so no Job was dispatched — zero tasks rows.
 	var taskCount int
 	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, scheduleID).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
-	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for an all-gated whole-DAG test run")
+		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, scheduleID).Scan(&taskCount)
+	require.NoError(t, err, "failed to count tasks rows")
+	assert.Equal(t, 0, taskCount, "no tasks rows must exist for an all-gated whole-DAG test run")
 
 	t.Log("TestWholeDAGTestOperationNoTestsFinalizesSkipped passed")
 }
@@ -286,11 +286,11 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 // against the SAME node (seed_table_1, test_count=2), each populating a
 // DISTINCT catalog slice under its own operation: operation=run reflects the
 // model run's terminal status, operation=test reflects the test run's. A
-// node with no tests (seed_table_2, test_count=0) never gets a task_tracker
+// node with no tests (seed_table_2, test_count=0) never gets a tasks
 // row under operation=test — the no_tests gate rejects it before dispatch
 // (see TestSingleNodeTestOperationNoTests) — so it must be entirely ABSENT
 // from the operation=test catalog rather than present with zero/null stats,
-// since ListNodes inner-joins task_tracker filtered by operation and never
+// since ListNodes inner-joins tasks filtered by operation and never
 // left-joins against the topology.
 func TestNodeCatalogOperationScoping(t *testing.T) {
 	if testing.Short() {

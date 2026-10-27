@@ -336,6 +336,18 @@
           "minimum": 1,
           "maximum": 120,
           "description": "How long a Job's pod may take, after the Job is created, to start any container (init or main). Past it execution-controller deletes the Job and fails the attempt with start_timeout."
+        },
+        "kubeClientQPS": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Requests per second execution-controller's Kubernetes client sends once running steadily."
+        },
+        "kubeClientBurst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "description": "Requests execution-controller's Kubernetes client may send at once in a spike; at least kubeClientQPS."
         }
       }
     },
@@ -414,11 +426,32 @@
     "egress": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional: a release installed before egress existed has none and runs the proxy with these defaults. The entries of allowedDomains and privateDomains are checked by the chart's templates as written, including their type, so that the error names the entry.",
+      "description": "Optional: a values file without an egress block (for example after helm upgrade --reuse-values) runs the proxy with these defaults. The entries of allowedDomains and privateDomains are checked by the chart's templates as written, including their type, so that the error names the entry.",
       "properties": {
         "enabled": {"type": "boolean"},
         "allowedDomains": {"type": "array", "items": {"description": "A host name with an optional port, as host or host:port; checked by the chart's templates"}},
         "privateDomains": {"type": "array", "items": {"description": "A host name with an optional port, as host or host:port; checked by the chart's templates"}},
+        "directDestinations": {
+          "type": "array",
+          "description": "Addresses the agents reach without the proxy. The chart's templates also check each entry as written (a valid CIDR outside loopback, link-local and cloud metadata ranges, no address bit past the prefix length) and name it in the error.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cidr", "ports"],
+            "properties": {
+              "cidr": {
+                "type": "string",
+                "description": "An IPv4 or IPv6 range with its prefix length, e.g. 203.0.113.10/32",
+                "pattern": "^(?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(?:3[0-2]|[12][0-9]|[1-9])|[0-9A-Fa-f:]*:[0-9A-Fa-f:]*/(?:12[0-8]|1[01][0-9]|[1-9][0-9]|[1-9]))$"
+              },
+              "ports": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "integer", "minimum": 1, "maximum": 65535}
+              }
+            }
+          }
+        },
         "proxy": {
           "type": "object",
           "additionalProperties": false,

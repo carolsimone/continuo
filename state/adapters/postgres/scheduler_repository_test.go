@@ -31,66 +31,66 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func createScheduler(t *testing.T, repo postgres.SchedulerTrackerRepository, scheduleName string) *postgres.SchedulerTracker {
+func createScheduler(t *testing.T, repo postgres.RunTableRepository, scheduleName string) *postgres.RunRow {
 	t.Helper()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         scheduleName,
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}
-	err := repo.Create(context.Background(), tracker)
+	err := repo.Create(context.Background(), runRow)
 	require.NoError(t, err)
-	return tracker
+	return runRow
 }
 
 func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 
-	tracker := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", tracker.ScheduleID)
+	runRow := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", runRow.ScheduleID)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	err = repo.UpdateInitializationStatusTx(context.Background(), tx, tracker.ScheduleID, "pending")
+	err = repo.UpdateInitializationStatusTx(context.Background(), tx, runRow.ScheduleID, "pending")
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	updated, err := repo.GetByID(context.Background(), tracker.ScheduleID)
+	updated, err := repo.GetByID(context.Background(), runRow.ScheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, "pending", updated.InitializationStatus)
 }
 
-func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
+func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "test-schedule-" + uuid.New().String(),
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		ServiceMetadataRaw:   []byte(`{"svc-a":{"image_tag":""}}`),
 	}
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	err = repo.CreateTx(context.Background(), tx, tracker)
+	err = repo.CreateTx(context.Background(), tx, runRow)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
 	got, err := repo.GetByID(context.Background(), scheduleID)
 	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusPending, got.Status)
+	assert.Equal(t, run.RunStatusPending, got.Status)
 	assert.Equal(t, "pending", got.InitializationStatus)
 	gotMeta, metaErr := got.GetServiceMetadata()
 	require.NoError(t, metaErr)
@@ -102,76 +102,76 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 // ErrRunExists, and leaves the transaction usable.
 func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "exists-" + id.String()[:8],
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	require.NoError(t, repo.CreateTx(ctx, tx, tracker))
-	assert.ErrorIs(t, repo.CreateTx(ctx, tx, tracker), postgres.ErrRunExists)
+	require.NoError(t, repo.CreateTx(ctx, tx, runRow))
+	assert.ErrorIs(t, repo.CreateTx(ctx, tx, runRow), postgres.ErrRunExists)
 
 	// The transaction is still usable: a failed statement would have aborted it.
-	_, err = repo.GetByIDForUpdateTx(ctx, tx, id)
+	_, err = repo.LoadByIDForUpdateTx(ctx, tx, id)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
 	var rows int
-	require.NoError(t, db.GetContext(ctx, &rows, "SELECT count(*) FROM scheduler_tracker WHERE schedule_id = $1", id))
+	require.NoError(t, db.GetContext(ctx, &rows, "SELECT count(*) FROM runs WHERE run_id = $1", id))
 	assert.Equal(t, 1, rows)
 }
 
 // TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises confirms the
-// schedule_id conflict target does not swallow the one-active-run-per-schedule
+// run_id conflict target does not swallow the one-active-run-per-schedule
 // index: a different id with the same active schedule_name still fails.
 func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
 	name := "active-" + uuid.New().String()[:8]
 	first, second := uuid.New(), uuid.New()
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)", first, second)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id IN ($1, $2)", first, second)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	newTracker := func(id uuid.UUID) *postgres.SchedulerTracker {
-		return &postgres.SchedulerTracker{
+	newRunRow := func(id uuid.UUID) *postgres.RunRow {
+		return &postgres.RunRow{
 			ScheduleID:           id,
 			ScheduleName:         name,
-			Status:               run.SchedulerStatusPending,
+			Status:               run.RunStatusPending,
 			CreatedAt:            time.Now(),
 			InitializationStatus: "in_progress",
 		}
 	}
-	require.NoError(t, repo.CreateTx(ctx, tx, newTracker(first)))
-	assert.ErrorIs(t, repo.CreateTx(ctx, tx, newTracker(second)), postgres.ErrActiveScheduleConflict)
+	require.NoError(t, repo.CreateTx(ctx, tx, newRunRow(first)))
+	assert.ErrorIs(t, repo.CreateTx(ctx, tx, newRunRow(second)), postgres.ErrActiveRunConflict)
 }
 
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	id := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, repo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "s1-" + id.String(),
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		InitializationStatus: "pending",
 		CreatedAt:            time.Now(),
 	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
@@ -188,20 +188,20 @@ func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 
 func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 
 	id := uuid.New()
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "test_schedule",
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		InitializationStatus: "pending",
 		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
 		TerminalTaskCount:    2,
 		CreatedAt:            time.Now(),
 	}
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
-	require.NoError(t, repo.Create(context.Background(), tracker))
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
+	require.NoError(t, repo.Create(context.Background(), runRow))
 
 	got, err := repo.GetByID(context.Background(), id)
 	require.NoError(t, err)
@@ -212,73 +212,73 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 
 func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 
 	ctx := context.Background()
 	sourceRunID := uuid.New()
 	// Schedule names are varchar(50); keep prefix + 8-char suffix safely under limit.
 	shortSuffix := func() string { return uuid.New().String()[:8] }
-	tracker := &postgres.SchedulerTracker{
+	runRow := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "krt-" + shortSuffix(),
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "rerun",
 		SourceRunID:          &sourceRunID,
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", tracker.ScheduleID)
-	require.NoError(t, repo.Create(ctx, tracker))
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", runRow.ScheduleID)
+	require.NoError(t, repo.Create(ctx, runRow))
 
-	got, err := repo.GetByID(ctx, tracker.ScheduleID)
+	got, err := repo.GetByID(ctx, runRow.ScheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, "rerun", got.Kind)
 	require.NotNil(t, got.SourceRunID)
 	assert.Equal(t, sourceRunID, *got.SourceRunID)
 
-	// Default kind for a tracker constructed without setting Kind.
-	defaultTracker := &postgres.SchedulerTracker{
+	// Default kind for a RunRow constructed without setting Kind.
+	defaultRun := &postgres.RunRow{
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "kdf-" + shortSuffix(),
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
 		Kind:                 "cron",
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", defaultTracker.ScheduleID)
-	require.NoError(t, repo.Create(ctx, defaultTracker))
-	gotDefault, err := repo.GetByID(ctx, defaultTracker.ScheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", defaultRun.ScheduleID)
+	require.NoError(t, repo.Create(ctx, defaultRun))
+	gotDefault, err := repo.GetByID(ctx, defaultRun.ScheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, "cron", gotDefault.Kind)
 	assert.Nil(t, gotDefault.SourceRunID)
 }
 
-func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
+func TestRunTableRepository_CancelTx(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "test-cancel-" + id.String(),
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	cancelledAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelled, "test-user", "test reason", cancelledAt))
+	require.NoError(t, repo.CancelTx(ctx, tx, id, run.RunStatusCancelled, "test-user", "test reason", cancelledAt))
 	require.NoError(t, tx.Commit())
 
 	got, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
+	assert.Equal(t, run.RunStatusCancelled, got.Status)
 	assert.NotNil(t, got.CancelledAt)
 	assert.Equal(t, "test-user", *got.CancelledBy)
 	assert.Equal(t, "test reason", *got.CancellationReason)
@@ -290,38 +290,38 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.True(t, got.CancelledAt.Equal(cancelledAt), "cancelled_at must equal the supplied instant")
 	assert.True(t, got.CompletedAt.Equal(cancelledAt), "completed_at must equal the supplied instant")
 
-	// Second cancel on already-cancelled row must return ErrNotCancellable.
+	// Second cancel on already-cancelled row must return ErrRunNotCancellable.
 	tx2, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx2.Rollback()
-	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, run.SchedulerStatusCancelled, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
+	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, run.RunStatusCancelled, "test-user", "duplicate", time.Now().UTC()), postgres.ErrRunNotCancellable)
 }
 
 // A cancel that waits for its stops writes the run cancelling with who
 // cancelled it, why and when, and no completed_at: the run has not ended.
-func TestSchedulerTrackerRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
+func TestRunTableRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
-		ScheduleID: id, ScheduleName: "cxl-cancelling-" + id.String()[:8], Status: run.SchedulerStatusRunning,
+	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
+		ScheduleID: id, ScheduleName: "cxl-cancelling-" + id.String()[:8], Status: run.RunStatusRunning,
 		CreatedAt: time.Now(), InitializationStatus: "completed",
 	}))
-	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id) })
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id) })
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	cancelledAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelling, "test-user", "test reason", cancelledAt))
-	assert.Error(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusFailed, "test-user", "", cancelledAt),
+	require.NoError(t, repo.CancelTx(ctx, tx, id, run.RunStatusCancelling, "test-user", "test reason", cancelledAt))
+	assert.Error(t, repo.CancelTx(ctx, tx, id, run.RunStatusFailed, "test-user", "", cancelledAt),
 		"a cancel writes only cancelling or cancelled")
 	require.NoError(t, tx.Commit())
 
 	got, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, run.SchedulerStatusCancelling, got.Status)
+	assert.Equal(t, run.RunStatusCancelling, got.Status)
 	require.NotNil(t, got.CancelledAt)
 	assert.True(t, got.CancelledAt.Equal(cancelledAt))
 	assert.Equal(t, "test-user", *got.CancelledBy)
@@ -329,26 +329,26 @@ func TestSchedulerTrackerRepository_CancelTx_CancellingLeavesCompletedAtNull(t *
 	assert.Nil(t, got.CompletedAt, "a cancelling run has not ended")
 }
 
-// TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus drives
+// TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus drives
 // CancelTx against a run in every status. Only an active run is cancelled; a
-// run in any terminal status, skipped included, returns ErrNotCancellable and
+// run in any terminal status, skipped included, returns ErrRunNotCancellable and
 // its row is left exactly as it was.
-func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
+func TestRunTableRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
-	for _, status := range []run.SchedulerStatus{
-		run.SchedulerStatusPending,
-		run.SchedulerStatusRunning,
-		run.SchedulerStatusSucceeded,
-		run.SchedulerStatusFailed,
-		run.SchedulerStatusCancelled,
-		run.SchedulerStatusSkipped,
+	for _, status := range []run.RunStatus{
+		run.RunStatusPending,
+		run.RunStatusRunning,
+		run.RunStatusSucceeded,
+		run.RunStatusFailed,
+		run.RunStatusCancelled,
+		run.RunStatusSkipped,
 	} {
 		t.Run(string(status), func(t *testing.T) {
 			id := uuid.New()
-			require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+			require.NoError(t, repo.Create(ctx, &postgres.RunRow{
 				ScheduleID:           id,
 				ScheduleName:         "cxl-" + string(status) + "-" + id.String()[:8],
 				Status:               status,
@@ -356,31 +356,31 @@ func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testi
 				InitializationStatus: "completed",
 			}))
 			t.Cleanup(func() {
-				db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+				db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 			})
 
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			err = repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelled, "test-user", "table test", time.Now().UTC())
+			err = repo.CancelTx(ctx, tx, id, run.RunStatusCancelled, "test-user", "table test", time.Now().UTC())
 			require.NoError(t, tx.Commit())
 
 			got, getErr := repo.GetByID(ctx, id)
 			require.NoError(t, getErr)
 			if status.IsTerminal() {
-				assert.ErrorIs(t, err, postgres.ErrNotCancellable)
+				assert.ErrorIs(t, err, postgres.ErrRunNotCancellable)
 				assert.Equal(t, status, got.Status, "a terminal run keeps its status")
 				assert.Nil(t, got.CancelledAt, "a terminal run is not stamped cancelled")
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
+			assert.Equal(t, run.RunStatusCancelled, got.Status)
 			assert.NotNil(t, got.CancelledAt)
 		})
 	}
 }
 
-// TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full
+// TestRunTableRepository_TerminalCountSurvivesRetryFlow walks the full
 // FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
 // retry-exhausting task produces in production. The aggregate increments the
 // counter in memory on each FAILED and decrements it on each FAILED→RUNNING
@@ -390,21 +390,21 @@ func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testi
 //
 // This is the unit-level guard against the inflation bug that broke
 // TestE2E_FailurePath_RerunRebasesBothFailureSubtrees in PR #61 CI.
-func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
+func TestRunTableRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "retry-flow-" + id.String(),
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 		TotalTaskCount:       sql.NullInt32{Int32: 1, Valid: true},
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	// Each row models one SaveRun call from the aggregate after a task event.
 	// The "want" column is what terminal_task_count must equal in the DB
@@ -434,24 +434,24 @@ func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T)
 	}
 }
 
-// TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
+// TestRunTableRepository_SetTerminalTaskCountTx_AbsoluteWrite asserts
 // that SetTerminalTaskCountTx writes the value absolutely — including
 // decreasing writes. This replaces the deleted _GREATEST test, which guarded
 // the old monotonic-MAX semantics that the aggregate refactor obsoleted.
-func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
+func TestRunTableRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 	ctx := context.Background()
 
 	id := uuid.New()
-	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
 		ScheduleID:           id,
 		ScheduleName:         "abs-" + id.String()[:8],
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	// Set to 5, then 3 (decrease), then 7 (increase). Each must land verbatim.
 	for _, want := range []int32{5, 3, 7} {

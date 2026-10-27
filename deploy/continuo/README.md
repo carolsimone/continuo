@@ -137,11 +137,18 @@ Notes that matter before you commit to this path:
 - **The Postgres connection must be session-mode.** Each outbox relay (state,
   orchestrator, execution-controller, release-controller, remediation,
   agent-remediation, dead-letter-controller) wakes on a Postgres `LISTEN`/`NOTIFY` notification sent
-  when a row is committed, over one dedicated connection per pod. `LISTEN`
+  when a row is committed, over one dedicated connection per pod. Two services
+  hold a second such connection per pod: execution-controller's dispatcher
+  wakes when a deployment is accepted or a slot is released, and state's lease
+  waker wakes when a task releases the write lease on its node. `LISTEN`
   needs a session-mode connection: behind a transaction-mode pooler (for
-  example PgBouncer in transaction mode) it does not work, and delivery
-  continues on each relay's 5 s poll instead of immediately. Point
-  `externalDatabase.host` at Postgres directly or at a session-mode pooler.
+  example PgBouncer in transaction mode) it does not work. Delivery then
+  continues on each relay's 5 s poll instead of immediately, the dispatcher
+  starts queued work on its 5 s poll, and state grants a freed node to the
+  task waiting for it on the lease waker's 60 s pass or the attempt
+  reconcile's pass, which grants freed nodes before it looks for stalled runs.
+  Point `externalDatabase.host` at Postgres directly or at a session-mode
+  pooler.
 - **In-cluster encryption is your responsibility.** The chart does not
   configure mTLS (mutual TLS) between pods; service-to-service traffic inside
   the cluster is plaintext unless you run a service mesh (Istio, Linkerd) or
@@ -201,6 +208,10 @@ Every container in this chart, bundled or not, gets:
   on a cluster that can't act on it. Scrapers are admitted only through
   `metrics.scrapeNamespaceSelector` (empty by default, so none), and only to the
   metrics port.
+  agent-chat and agent-remediation, the two services where a language model
+  decides what happens next, also reach the outside world only through
+  egress-proxy, which admits the hosts on its allowlist
+  ([Outbound traffic](https://github.com/carolsimone/continuo/blob/main/deploy/README.md#outbound-traffic)).
 - **No committed credentials.** Every credential value in `values.yaml`
   defaults to an empty string. Bundled datastores auto-generate a password on
   first install via a Helm `lookup` against the live Secret, so upgrades reuse
@@ -229,10 +240,11 @@ Every container in this chart, bundled or not, gets:
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
 | `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 152 pooled connections plus one `LISTEN` connection per pod of the seven services that run an outbox relay (every Go service except agent-chat), 159 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` applies to every service, orchestrator included, whose 13 consumers need about two connections each: do not set it below about 30, or handlers that hold a transaction and need a second connection stall until their deadline. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
 | `maintenance.enabled` | Refuse new work while letting running work finish. When enabled (default false), ui, the public release API and the CLI refuse new runs, triggers, releases, remediation retries and dead-letter redrives with HTTP 503 / gRPC `UNAVAILABLE` and the message "continuo is in maintenance mode"; state skips cron fires (they are not caught up afterwards); release-controller activates no queued release; agent-remediation records each fix attempt that comes due as skipped, and **Retry remediation** in the UI starts it once maintenance is off. Runs, releases and fix verifications already in progress complete. Changing it restarts every continuo service (the shared ConfigMap changes); turn it on with `helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true` and off again with `--set maintenance.enabled=false`. Five services (`state`, `release-controller`, `agent-remediation`, `dead-letter-controller`, `ui`) refuse to start unless `MAINTENANCE_ENABLED` is exactly `true` or `false`. The chart always sets it; a deployment that does not use the chart must set it. |
-| `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph. |
-| `egress.enabled` | Runs egress-proxy, a forward proxy that admits a connection only to a host and port on its allowlist (default true). The chart renders the allowlist into the ConfigMap `<release>-egress-proxy`, from `llm.baseUrl` (else the provider's public API), the `GITHUB_BASE_URL` of agent-remediation's `services` entry (its `env` only; with `codeload.<host>` for archive downloads), `s3.endpointUrl` when `minio.enabled` is false, and the two lists below. A URL whose host is an IP address or no valid host name, or whose port is outside 1-65535, is left out: the proxy admits host names only. When nothing is left to allow, or with `egress.enabled` false, no egress-proxy object renders. The chart does not point the agents at the proxy. |
+| `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph and, with `egress.enabled`, the egress rules that keep the agents behind egress-proxy (default true). Inert on a CNI that does not enforce NetworkPolicy. With it false nothing stops a connection that skips the proxy. |
+| `egress.enabled` | Sends the outbound HTTP and gRPC traffic of agent-chat and agent-remediation through egress-proxy, a forward proxy that admits a connection only to a host and port on its allowlist (default true). The chart sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` on both agents, and with `networkPolicy.enabled` adds NetworkPolicies that drop every connection that skips the proxy (see [Outbound traffic](https://github.com/carolsimone/continuo/blob/main/deploy/README.md#outbound-traffic)). It renders the allowlist into the ConfigMap `<release>-egress-proxy`, from `llm.baseUrl` (else the provider's public API), the `GITHUB_BASE_URL` of agent-remediation's `services` entry (its `env` only; with `codeload.<host>` for archive downloads), `s3.endpointUrl` when `minio.enabled` is false, and the two lists below. A URL whose host is an IP address stays out of the allowlist, as does every other IP address the agents are given: egress-proxy admits host names only, and the agents reach those directly (see `egress.directDestinations`). A URL whose host is no valid host name (an underscore, for one) or whose port is outside 1-65535 fails the render, naming the setting. When nothing is left to allow, no egress-proxy object renders and the agents get no proxy variable; their NetworkPolicy still applies. With `egress.enabled` false no proxy runs, no proxy variable is set and the agents' egress is open: set your own proxy variables in their `env`, or manage egress natively (Cilium, GKE Dataplane V2). While it is true, a `services` entry for either agent that sets `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` or `S3_ENDPOINT_URL`, or a `GITHUB_BASE_URL` in the `secretEnv` of either agent, fails the render. |
 | `egress.allowedDomains` | Extra hosts the proxy admits (default `[]`): `host` or `host:port` (port 443 when omitted), or `*.example.com` for every name below `example.com`. An entry is a DNS name with at most 253 characters, in labels of 1-63 letters, digits and inner hyphens. Rendering fails, naming the key and the entry, on an entry that holds whitespace, a scheme, path, query, fragment or `user@`, an IP address (including forms such as `127.1` or `2130706433`), a bare `*` or a wildcard with fewer than two labels after it, a port outside 1-65535 or with a leading zero (`:0443`), or anything that is not a string. An internationalised name is written in its punycode (`xn--`) form: a non-ASCII entry fails the render, and a non-ASCII URL host is left out of the allowlist. |
 | `egress.privateDomains` | The same, for hosts that may resolve to private addresses, such as `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` and `fc00::/7`. The hosts of `llm.baseUrl`, a GitHub Enterprise `GITHUB_BASE_URL` and `s3.endpointUrl` may resolve to private addresses without being listed. The proxy never connects to loopback, unspecified, link-local (`169.254.0.0/16`, `fe80::/10`) or cloud-metadata addresses, whatever the entry says. |
+| `egress.directDestinations` | Addresses the agents reach without the proxy (default `[]`), as `{cidr, ports}` entries such as `{cidr: 203.0.113.10/32, ports: [5432]}`: a Postgres or Redis on a public address, for one. `cidr` is an IPv4 or IPv6 range with a prefix length of 1 or more and no address bit set past it; `ports` are whole numbers from 1 to 65535, written without a leading zero: YAML reads an unquoted `0443` as the octal number 291, which the chart cannot detect. Rendering fails, naming the entry, on a malformed one and on a range that overlaps loopback, link-local, the unspecified network, a cloud metadata address, IPv4-mapped IPv6 or a NAT64 address of those: a whole `100.64.0.0/10` or `fc00::/7` fails because it contains a metadata address, so list the narrower ranges you need. Every IP address the agents are given (the host of `llm.baseUrl`, `GITHUB_BASE_URL`, `s3.endpointUrl`, or of a URL or `host:port` in their `env` or a `global.*GrpcAddr`) and an `externalDatabase.host` or `externalRedis.host` that is a public IP address are added for you, on their ports. An external Postgres or Redis on a private network, or running as a pod of another namespace, needs no entry; one at a host name that resolves to a public address does. |
 | `egress.proxy.replicas` | Replicas of egress-proxy (default 2). |
 | `egress.proxy.maxTunnels` | The most tunnels and forwarded requests one replica holds open at once (default 1024, `EGRESS_MAX_TUNNELS`); further ones are refused. |
 | `egress.proxy.resources` | Resource requests and limits of the proxy container (default requests `50m` / `64Mi`, limits `500m` / `256Mi`). |
@@ -288,6 +300,13 @@ Pushing a `vX.Y.Z` git tag runs `release.yml`:
    publish.
 3. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and
    pushed to `oci://ghcr.io/carolsimone/charts/continuo`.
+
+After the release workflow succeeds and the docs-pin PR (pinning this
+repository's install guides to `X.Y.Z` and adding its release notes) merges,
+run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in
+`carolsimone/continuo-site` that moves the public site's quickstart
+`chartVersion` to `X.Y.Z`. It runs with your own `gh` login, which needs push
+access to that repository; the release workflow does not call it.
 
 ghcr packages created by CI start private, and GitHub has no API for
 container-package visibility — the first publish needs a one-time manual flip

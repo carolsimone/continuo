@@ -17,6 +17,7 @@ reference.
 | Configure real OIDC authentication | [AUTH.md](AUTH.md) |
 | Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
 | Release by hand, or try the API on a local install | [Releasing with your own token](#releasing-with-your-own-token) — mint an ID token and call `/api/v1` with it |
+| Control which hosts the assistant and the fix proposer can reach | [Outbound traffic](#outbound-traffic) — the egress proxy and its allowlist |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
 | Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#5-release-flow-and-ci-gates) |
 
@@ -221,10 +222,10 @@ one read every few seconds.
   it.
 - The `ui` pod fetches the issuer's signing keys over HTTPS, so it must reach
   `token.actions.githubusercontent.com` (or your GitHub Enterprise Server host)
-  on port 443. The chart's NetworkPolicies restrict ingress only, so this works
-  by default; a cluster-wide egress policy or a forced proxy must allow it. While
-  the issuer is unreachable, bearer calls answer `503` `auth_unavailable` and
-  the browser login is unaffected.
+  on port 443. The chart's NetworkPolicies restrict the `ui`'s ingress only, so
+  this works by default; a cluster-wide egress policy or a forced proxy must
+  allow it. While the issuer is unreachable, bearer calls answer `503`
+  `auth_unavailable` and the browser login is unaffected.
 - Where egress must go through a proxy, add `HTTPS_PROXY` together with
   `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
   `NO_PROXY` covering the in-cluster service names the `ui` calls
@@ -298,6 +299,190 @@ docker-image continuo-chart-echo:test --name <cluster>`), then run:
 docker build -t continuo-chart-echo:test scripts/install-test/fixtures/service-controls
 python3 scripts/install-test/test-service-controls-live.py continuo-chart-echo:test
 ```
+
+## Outbound traffic
+
+agent-chat and agent-remediation are the two services where a language model
+decides what happens next, so they reach the outside world only through
+**egress-proxy** (`egress.enabled`, on by default). The proxy admits a
+connection only to a host and port on its allowlist, resolves the name itself,
+refuses loopback, unspecified, link-local and cloud-metadata addresses always
+and private addresses unless the entry allows them, and connects only to the
+addresses it checked. The chart sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`
+on both agents, and, with `networkPolicy.enabled`, their NetworkPolicy drops
+every other outbound connection.
+
+**The allowlist follows your settings.** The chart builds it from:
+
+| Setting | Allowed |
+|---|---|
+| `llm.baseUrl` empty, `llm.provider: anthropic` | `api.anthropic.com:443` |
+| `llm.baseUrl` empty, `llm.provider: openai` | `api.openai.com:443` |
+| `llm.baseUrl` set | its host and port, which may resolve to a private address |
+| `GITHUB_BASE_URL` in the `env` of agent-remediation's `services` entry (default `https://api.github.com`) | `api.github.com:443` and `codeload.github.com:443` |
+| a GitHub Enterprise `GITHUB_BASE_URL` | its host and `codeload.<host>` on its port, which may resolve to private addresses |
+| `s3.endpointUrl` (with `minio.enabled: false`) | its host and port, which may resolve to a private address |
+| `egress.allowedDomains` / `egress.privateDomains` | the entries listed |
+
+See what it holds with `kubectl -n <namespace> get configmap
+<release>-egress-proxy -o yaml` (for a release named `continuo`, the ConfigMap
+is `continuo-egress-proxy`). The agents' S3 client reaches the endpoint through
+the proxy, and signs its requests with the static keys the chart gives it
+(`s3.accessKeyId` and `s3.secretKey`, or `s3.existingSecret`; an external bucket
+requires them), so it makes no call to STS or the instance metadata service.
+
+**A model you host.** Point the chart at its root URL:
+
+```yaml
+llm:
+  provider: openai-compatible
+  baseUrl: http://gpu-box.internal:8000   # the root, without /v1
+  model: llama-3.3-70b
+```
+
+A host name goes through the proxy and may resolve to a private address. An IP
+address (`http://10.0.0.7:8000`) is reached directly: the chart leaves it out of
+the allowlist, adds it to `NO_PROXY` and admits it, on its port, in the agents'
+NetworkPolicy. Either way nothing else needs configuring, as long as the port is
+one the model's pod listens on:
+
+A NetworkPolicy sees a connection after a Service has translated it, as the
+**pod's** address and port. So a port you configure must be one the pod listens
+on, whether the address is reached directly or through the proxy: a Service
+that maps port 80 to a pod port 8000 is not reachable on port 80, because the
+proxy reaches private addresses only on the port of the allowlist entry, and
+the agents only on the port of the direct destination. An IP address is for a
+machine or a pod, not for a Service.
+
+A host must be a DNS name of letters, digits and inner hyphens, or an IP
+address. A `llm.baseUrl`, `GITHUB_BASE_URL` or `s3.endpointUrl` whose host is
+anything else (`http://vllm_x:8000`, with an underscore, for one) fails the
+render with a message that names the setting and the value; use a DNS-valid
+name or the IP address. The same holds for a port outside 1-65535.
+
+**Something else the agents reach.** Add a host name to `egress.allowedDomains`
+(`host` or `host:port`, port 443 when omitted; `*.example.com` for every name
+below it), or to `egress.privateDomains` when it resolves to a private address.
+
+**An address that is not reached through the proxy** goes in
+`egress.directDestinations`:
+
+```yaml
+egress:
+  directDestinations:
+    - {cidr: 203.0.113.10/32, ports: [5432]}
+```
+
+Postgres and Redis speak their own protocols and ignore the proxy. With
+`networkPolicy.enabled`, an external Postgres or Redis on a private network, or
+running as a pod of any namespace, is already admitted on its configured port
+(`externalDatabase.port`, `externalRedis.port`), and one whose
+`externalDatabase.host` or `externalRedis.host` is a public IP address is added
+for you. One whose host is a name that resolves to a public address needs an
+entry: the chart cannot know where the name points, and `helm upgrade` prints
+the configured host as a reminder. Each entry is checked as written, and the
+render fails naming it unless:
+
+- `cidr` is an IPv4 or IPv6 range with a prefix length of 1 or more and no address
+  bit set past it. `0.0.0.0/0` and `::/0` are refused.
+- the range overlaps none of loopback, link-local, the unspecified network, a
+  cloud metadata address, IPv4-mapped IPv6 and a NAT64 address standing for one
+  of those. A whole `100.64.0.0/10` and a whole `fc00::/7` are refused because
+  they contain metadata addresses (`100.100.100.200`, `fd00:ec2::/32`): list the
+  narrower ranges you need.
+- `ports` is a non-empty list of whole numbers from 1 to 65535. Write them
+  without a leading zero: YAML reads an unquoted `0443` as the octal number 291,
+  which the chart cannot tell from `291`, so it opens port 291 and renders
+  silently. A quoted `"0443"` is not a number and fails the render.
+
+**How the agents are kept to those rules.** `NO_PROXY` lists, so that the
+agents reach them directly:
+
+- `localhost`, `127.0.0.1` and `::1`;
+- the release's own Services, in every form (`name`, `name.<namespace>`,
+  `name.<namespace>.svc`, `name.<namespace>.svc.cluster.local`) and on every port;
+- every other in-cluster address the agents are given (a `global.*GrpcAddr`, or a
+  URL or `host:port` in their `env`) as `host:port`, when its host has no dot or
+  ends in `.svc` or `.svc.cluster.local`, unless the allowlist admits that host
+  and port, in which case the proxy carries it;
+- every IP address the agents are given (the host of a URL, or of a URL or
+  `host:port` in their `env` or a `global.*GrpcAddr`, which egress-proxy would
+  refuse because it admits host names only), an external Postgres or Redis at a
+  public IP address, and each `egress.directDestinations` range. A loopback
+  address needs no entry, nor does a listen address (`0.0.0.0`) in their `env`;
+  one in link-local or a cloud metadata range fails the render, naming the
+  setting.
+
+Every other address goes through the proxy. A `<name>.<namespace>` address in
+another namespace written without `.svc`, and a name with a trailing dot, are not
+treated as in-cluster: they go through the proxy, which refuses them unless the
+allowlist names them. Write `<name>.<namespace>.svc`.
+
+With `networkPolicy.enabled`, the agents may reach:
+
+- DNS (port 53);
+- every pod of the release namespace on any port: the proxy, the services and the
+  bundled datastores;
+- an external Postgres or Redis on its configured port, on the private ranges and
+  on pods of any namespace;
+- every pod of another namespace on the port of each in-cluster address the
+  agents are given there (`foo.tools.svc:80` admits every pod of `tools` on port
+  80, not only the target pods);
+- the `egress.directDestinations` ranges and every IP address they are given,
+  including an external Postgres or Redis at a public IP address, on their ports.
+
+egress-proxy itself may resolve names, reach public addresses on its allowlisted
+ports, and reach private addresses and pods of any namespace only on the ports of
+entries that allow private addresses. Only the two agents may connect to it, on
+its proxy port.
+
+**When there is no proxy.** An install whose every destination is an IP address
+(a model, GitHub Enterprise and S3 at IP addresses, or the bundled MinIO) and
+that lists no `egress.allowedDomains` or `egress.privateDomains` has an empty
+allowlist, which the proxy refuses to start on. The chart then renders no
+egress-proxy object and sets no proxy variable; the agents reach those addresses
+directly, and their NetworkPolicy still limits them to the destinations above.
+
+**When a call is refused,** egress-proxy logs a warning `egress denied` with the
+host, port, client address, method and reason, and counts it in
+`continuo_egress_requests_total{decision="denied"}`:
+
+```bash
+kubectl -n <namespace> logs -l app.kubernetes.io/name=egress-proxy --tail=-1 | grep "egress denied"
+```
+
+| Reason | Meaning |
+|---|---|
+| `not_allowed` | The host and port are not on the allowlist. An IP address, which the proxy never admits, belongs in `egress.directDestinations`. |
+| `private_address` | The name resolved to a loopback, unspecified or link-local address, or to a private address its entry does not allow. |
+| `metadata` | The name resolved to a cloud metadata address. |
+| `resolve_failed` | The name did not resolve. |
+| `dial_failed` | The connection to the destination failed. |
+| `upstream_error` | The exchange with the destination failed other than while connecting. |
+| `capacity` | The replica holds its maximum number of open tunnels and forwarded requests (`egress.proxy.maxTunnels`). |
+| `bad_request` | The destination host and port of the request cannot be read. |
+| `unsupported` | The method is neither `CONNECT` nor an absolute-form HTTP request, or the request asks for a protocol upgrade, which is not forwarded. |
+
+**Your own egress controls.** On Cilium or GKE Dataplane V2 you can write
+host-name rules natively. Set `egress.enabled: false` to run no proxy and manage
+the agents' egress yourself: the chart then sets no proxy variable and renders no
+egress NetworkPolicy, so you may set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in
+the agents' `env`.
+
+**What it does not stop.**
+
+- A CNI that does not enforce NetworkPolicy, or `networkPolicy.enabled: false`:
+  the proxy variables only direct the agents' own clients, and nothing stops a
+  connection that skips the proxy. `helm upgrade` warns when
+  `networkPolicy.enabled` is false.
+- Name resolution: the agents may resolve any name, so a DNS query can carry data
+  to a name server.
+- An allowed host: the proxy sees host names and ports, not the encrypted
+  traffic. It cannot stop a client that opens a tunnel to an allowed host and then
+  reaches another site through a shared network behind it, nor a request to an
+  allowed provider made with another account's key.
+- Everything inside the release namespace, and the namespaces and ports the lists
+  above open.
 
 ## Requirements at a glance
 

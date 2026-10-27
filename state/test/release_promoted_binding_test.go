@@ -54,8 +54,8 @@ type promotionHarness struct {
 
 func newPromotionHarness(db *sqlx.DB) *promotionHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)

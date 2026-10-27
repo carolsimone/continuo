@@ -156,10 +156,10 @@ func requestStops(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) ([]run.Stop
 		SET stop_requested_at = now(),
 		    checks_sent       = 0,
 		    next_check_at     = now() + make_interval(secs => $2::float8)
-		FROM task_tracker t
+		FROM tasks t
 		WHERE a.task_id = t.task_id
 		  AND a.attempt = t.attempt
-		  AND t.schedule_id = $1
+		  AND t.run_id = $1
 		  AND t.status = 'stopping'
 		  AND a.status IN ('dispatched', 'queued', 'running')
 		RETURNING a.task_id, a.attempt, a.job_name, a.checks_sent`,

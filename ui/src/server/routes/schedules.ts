@@ -3,6 +3,11 @@ import { GrpcClient, userMetadata } from '../clients/grpc-client';
 import { GrpcGraphClient } from '../clients/grpc-graph-client';
 import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
 import { parseOperation } from './operation';
+import { parseLimit, parseOffset } from './paging';
+
+const DEFAULT_RUNS_PAGE = 10;
+// State clamps ListRuns page_size to this ceiling.
+const MAX_RUNS_PAGE = 200;
 
 interface ProtoTimestamp {
   seconds: string;
@@ -71,9 +76,15 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
     });
   });
 
-  // GET /api/schedules/:name/runs — list completed runs for a schedule (newest first), from the state service
+  // GET /api/schedules/:name/runs?limit=&offset= — one page of a schedule's runs (newest first)
+  // from the state service, with the schedule's total run count.
   router.get('/:name/runs', (req, res) => {
-    stateClient.listRuns({ schedule_name: req.params.name }, (err: any, resp: any) => {
+    const request = {
+      schedule_name: req.params.name,
+      page_size: parseLimit(req.query.limit, { def: DEFAULT_RUNS_PAGE, max: MAX_RUNS_PAGE }),
+      page_offset: parseOffset(req.query.offset),
+    };
+    stateClient.listRuns(request, (err: any, resp: any) => {
       if (err) return res.status(500).json({ error: err.message });
       const runs = (resp.runs || []).map((r: any) => ({
         run_id: r.run_id,
@@ -83,7 +94,7 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
         completed_at: r.completed_at || null,
         failure_reason: r.failure_reason || null,
       }));
-      res.json({ runs });
+      res.json({ runs, total_count: Number(resp.total_count ?? 0) });
     });
   });
 
@@ -140,6 +151,9 @@ export function createRunsRouter(stateClient: GrpcClient) {
         node_type: n.node_type,
         schedule_name: n.schedule_name,
         status: typeof n.status === 'string' ? n.status.toLowerCase() : null,
+        wait_reason: n.wait_reason || null,
+        waiting_on_run_id: n.waiting_on_run_id || null,
+        waiting_since: n.waiting_since || null,
       }));
       const edges = executionOrderEdges(resp.edges);
       res.json({

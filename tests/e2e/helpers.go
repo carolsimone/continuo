@@ -180,9 +180,9 @@ func pollUntilDescribed(
 
 // waitForParseCache polls state's task_attempts rows for the given
 // schedule's most recently reported attempt until parse_cache equals want
-// ("hydrated" or "degraded"). task_attempts has no schedule_id column of its
-// own — it joins through task_tracker (task_attempts.task_id ->
-// task_tracker.task_id -> task_tracker.schedule_id) to scope the query to a
+// ("hydrated" or "degraded"). task_attempts has no run_id column of its
+// own — it joins through tasks (task_attempts.task_id ->
+// tasks.task_id -> tasks.run_id) to scope the query to a
 // single triggered run.
 // parse_cache_reason (only ever populated alongside "degraded") is polled
 // alongside parse_cache and logged on every change and in the timeout failure
@@ -212,8 +212,8 @@ func waitForParseCache(t *testing.T, ctx context.Context, db *sqlx.DB, scheduleI
 			err := db.QueryRowx(`
 				SELECT a.parse_cache, a.parse_cache_reason
 				  FROM task_attempts a
-				  JOIN task_tracker t ON t.task_id = a.task_id
-				 WHERE t.schedule_id = $1
+				  JOIN tasks t ON t.task_id = a.task_id
+				 WHERE t.run_id = $1
 				 ORDER BY a.last_report_at DESC NULLS LAST
 				 LIMIT 1`, scheduleID).Scan(&got, &reason)
 			if err != nil {
@@ -331,8 +331,25 @@ type k8sPodList struct {
 		} `json:"metadata"`
 		Status struct {
 			Phase string `json:"phase"`
+			// StartTime is when the kubelet accepted the pod, before any of its
+			// containers started; nil until then.
+			StartTime             *time.Time           `json:"startTime"`
+			InitContainerStatuses []k8sContainerStatus `json:"initContainerStatuses"`
+			ContainerStatuses     []k8sContainerStatus `json:"containerStatuses"`
 		} `json:"status"`
 	} `json:"items"`
+}
+
+// k8sContainerStatus is the part of a pod's container status the tests read:
+// when the container ran, once it has terminated.
+type k8sContainerStatus struct {
+	Name  string `json:"name"`
+	State struct {
+		Terminated *struct {
+			StartedAt  time.Time `json:"startedAt"`
+			FinishedAt time.Time `json:"finishedAt"`
+		} `json:"terminated"`
+	} `json:"state"`
 }
 
 // getK8sPods lists the pods matching labelSelector in the namespace the Jobs
@@ -423,55 +440,55 @@ func jobStartTimeout(t *testing.T, ctx context.Context) time.Duration {
 	return 0
 }
 
-// queryPostgresTrackerKind returns scheduler_tracker.kind for a run identified by
-// its schedule_id.
-func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
+// queryRunKind returns runs.kind for a run identified by
+// its run_id.
+func queryRunKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
 	var kind string
 	require.NoError(t, db.GetContext(context.Background(), &kind,
-		`SELECT kind FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID))
+		`SELECT kind FROM runs WHERE run_id = $1`, scheduleID))
 	return kind
 }
 
-// queryRunOperation returns scheduler_tracker.operation for a run: run, test,
+// queryRunOperation returns runs.operation for a run: run, test,
 // build or full_refresh.
 func queryRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) string {
 	t.Helper()
 	var operation string
 	require.NoError(t, clients.stateDB.GetContext(context.Background(), &operation,
-		`SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+		`SELECT operation FROM runs WHERE run_id = $1`, runID))
 	return operation
 }
 
-// queryRunSourceRunID returns scheduler_tracker.source_run_id for a run, or ""
+// queryRunSourceRunID returns runs.source_run_id for a run, or ""
 // when the run has no source run.
 func queryRunSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) string {
 	t.Helper()
 	var source *string
 	require.NoError(t, clients.stateDB.GetContext(context.Background(), &source,
-		`SELECT source_run_id::text FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+		`SELECT source_run_id::text FROM runs WHERE run_id = $1`, runID))
 	if source == nil {
 		return ""
 	}
 	return *source
 }
 
-// countRunsOfKind counts the scheduler_tracker rows of kind.
+// countRunsOfKind counts the runs rows of kind.
 func countRunsOfKind(t *testing.T, clients *testClients, kind string) int {
 	t.Helper()
 	var n int
 	require.NoError(t, clients.stateDB.GetContext(context.Background(), &n,
-		`SELECT count(*) FROM scheduler_tracker WHERE kind = $1`, kind))
+		`SELECT count(*) FROM runs WHERE kind = $1`, kind))
 	return n
 }
 
-// queryFirstTaskTrackerImageTag returns the image_tag of any task_tracker row
-// for the given schedule_id, so assertions can verify the per-task image is
+// queryFirstTaskImageTag returns the image_tag of any tasks row
+// of the given run, so assertions can verify the per-task image is
 // populated after a successful run.
-func queryFirstTaskTrackerImageTag(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
+func queryFirstTaskImageTag(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
 	var imageTag string
 	require.NoError(t, db.GetContext(context.Background(), &imageTag,
-		`SELECT image_tag FROM task_tracker WHERE schedule_id = $1 LIMIT 1`, scheduleID))
+		`SELECT image_tag FROM tasks WHERE run_id = $1 LIMIT 1`, scheduleID))
 	return imageTag
 }

@@ -416,7 +416,7 @@ func (r *TopologyRepository) PruneReleases(ctx context.Context, loadedBefore tim
 		      SELECT 1 FROM live_release live
 		      WHERE live.tenant_id = rel.tenant_id AND live.release_id = rel.release_id)
 		  AND NOT EXISTS (
-		      SELECT 1 FROM scheduler_tracker s
+		      SELECT 1 FROM runs s
 		      WHERE s.release_id = rel.release_id)`,
 		loadedBefore)
 	if err != nil {

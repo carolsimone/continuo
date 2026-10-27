@@ -71,6 +71,27 @@ describe('GET /api/schedulers/:id/tasks', () => {
     expect(res.body.tasks[0].status).toBe('stopping');
   });
 
+  it('carries a lease wait: its reason, the holder run and when it began', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, {
+        tasks: [
+          { task_id: 't1', schedule_id: 'abc-123', status: 'TASK_STATUS_PENDING', attempt: 0, max_retries: 0,
+            wait_reason: 'node_lease', waiting_on_run_id: 'run-9', waiting_since: { seconds: '1792836300', nanos: 0 } },
+          { task_id: 't2', schedule_id: 'abc-123', status: 'TASK_STATUS_PENDING', attempt: 0, max_retries: 0,
+            wait_reason: '', waiting_on_run_id: '' },
+        ],
+        total_count: 2,
+      });
+    });
+    const res = await request(app).get('/api/schedulers/abc-123/tasks');
+    expect(res.body.tasks[0].wait_reason).toBe('node_lease');
+    expect(res.body.tasks[0].waiting_on_run_id).toBe('run-9');
+    expect(res.body.tasks[0].waiting_since).toBe('2026-10-24T10:05:00.000Z');
+    expect(res.body.tasks[1].wait_reason).toBeNull();
+    expect(res.body.tasks[1].waiting_on_run_id).toBeNull();
+    expect(res.body.tasks[1].waiting_since).toBeNull();
+  });
+
   it('passes schedule_id to gRPC call', async () => {
     mockListTasks.mockImplementation((_req: any, callback: any) => {
       callback(null, { tasks: [], total_count: 0 });

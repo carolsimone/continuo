@@ -20,7 +20,7 @@ func TestFakeK8sClient_CreateQueryJob(t *testing.T) {
 	params := k8s.JobParams{
 		JobName:     "test-job",
 		TaskID:      uuid.New().String(),
-		ScheduleID:  uuid.New().String(),
+		RunID:       uuid.New().String(),
 		ServiceName: "dbt",
 		SchemaName:  "public",
 		TableName:   "users",

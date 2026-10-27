@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -31,7 +32,7 @@ func NewNodeRunHandler(repo postgres.NodeRunRepository, defaultTimeout time.Dura
 }
 
 // ListNodeRuns returns the most recent task instances for a node, ordered by
-// scheduler_tracker.created_at DESC. Identity fields are required; an empty
+// runs.created_at DESC. Identity fields are required; an empty
 // triple returns InvalidArgument. limit is clamped to (0, 50] by the repository — passing 0 or >50 yields 50.
 func (h *NodeRunHandler) ListNodeRuns(
 	ctx context.Context,
@@ -71,6 +72,9 @@ func (h *NodeRunHandler) ListNodeRuns(
 			ContentHash:    r.ContentHash,
 			FailureClass:   stringPtrOrEmpty(r.FailureClass),
 			FailureReason:  stringPtrOrEmpty(r.FailureReason),
+			WaitReason:     string(r.WaitReason),
+			WaitingOnRunId: uuidPtrOrEmpty(r.WaitingOnRunID),
+			WaitingSince:   timePtrToRFC(r.WaitingSince),
 		})
 	}
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil
@@ -154,4 +158,12 @@ func stringPtrOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// uuidPtrOrEmpty renders id, or "" when it is nil.
+func uuidPtrOrEmpty(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
 }

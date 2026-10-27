@@ -32,7 +32,7 @@ const jobTTLSecondsAfterFinished = int32(86400)
 type JobParams struct {
 	JobName      string
 	TaskID       string
-	ScheduleID   string
+	RunID        string
 	ScheduleName string // used for the schedule label
 	ServiceName  string
 	SchemaName   string
@@ -65,11 +65,25 @@ type K8sClient struct {
 	commands  ports.CommandResolver
 }
 
-// NewK8sClient creates a new K8sClient.
+// RateLimit is the request rate limit of the Kubernetes client: QPS requests
+// per second once it runs steadily, and Burst requests at once in a spike.
+// Requests beyond it wait in the client until the Kubernetes API server is
+// allowed another.
+type RateLimit struct {
+	QPS   int
+	Burst int
+}
+
+func (l RateLimit) apply(rc *rest.Config) {
+	rc.QPS = float32(l.QPS)
+	rc.Burst = l.Burst
+}
+
+// NewK8sClient creates a new K8sClient limited to limit.
 // Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
 // in-cluster config (K8s pod with a ServiceAccount). commands resolves the
 // per-service dbt command dialect for every Job this client builds.
-func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClient, error) {
+func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit RateLimit) (*K8sClient, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -84,6 +98,8 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClie
 			return nil, fmt.Errorf("failed to build in-cluster config: %w", err)
 		}
 	}
+
+	limit.apply(restConfig)
 
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {

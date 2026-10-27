@@ -35,15 +35,15 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestSchedulerTracker_OperationRoundTrip persists a run created with a test
+// TestRunRow_OperationRoundTrip persists a run created with a test
 // operation and asserts the reloaded aggregate reports OperationTest.
-func TestSchedulerTracker_OperationRoundTrip(t *testing.T) {
+func TestRunRow_OperationRoundTrip(t *testing.T) {
 	db := newTestDB(t)
-	// The brief's sample passes a nil logger; schedulerTrackerRepository.Create
+	// The brief's sample passes a nil logger; runTableRepository.Create
 	// logs unconditionally on its success path (r.logger.Info(...)), which
 	// panics on a nil *slog.Logger. Use a discard logger instead, matching the
 	// sibling helper in scheduler_repository_test.go.
-	repo := NewSchedulerTrackerRepository(db, discardLogger())
+	repo := NewRunTableRepository(db, discardLogger())
 
 	r, err := run.NewPendingRun("op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
@@ -56,9 +56,9 @@ func TestSchedulerTracker_OperationRoundTrip(t *testing.T) {
 	if err := repo.Create(context.Background(), tr); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID()) })
+	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.RunID()) })
 
-	got, err := repo.GetByID(context.Background(), r.ScheduleID())
+	got, err := repo.GetByID(context.Background(), r.RunID())
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}

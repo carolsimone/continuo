@@ -17,7 +17,7 @@ type SchedulePolicy struct{}
 // RunRepo is the narrow contract SchedulePolicy needs from the run repository.
 // The same interface is satisfied by repository.RunRepository in production code.
 type RunRepo interface {
-	HasActiveSchedule(ctx context.Context, name string) (bool, error)
+	HasActiveRun(ctx context.Context, name string) (bool, error)
 }
 
 // CatalogRepo is the narrow contract SchedulePolicy needs from the catalog
@@ -26,10 +26,10 @@ type CatalogRepo interface {
 	ExistsActive(ctx context.Context, name string) (bool, error)
 }
 
-// IsScheduleAvailable returns run.ErrScheduleHasActiveRun when a PENDING or
+// EnsureNoActiveRun returns run.ErrScheduleHasActiveRun when a PENDING or
 // RUNNING run already exists on `name`.
-func (SchedulePolicy) IsScheduleAvailable(ctx context.Context, repo RunRepo, name string) error {
-	active, err := repo.HasActiveSchedule(ctx, name)
+func (SchedulePolicy) EnsureNoActiveRun(ctx context.Context, repo RunRepo, name string) error {
+	active, err := repo.HasActiveRun(ctx, name)
 	if err != nil {
 		return err
 	}

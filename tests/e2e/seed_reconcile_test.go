@@ -107,7 +107,7 @@ func promoteSeedRuns(t *testing.T, ctx context.Context, clients *testClients, re
 	t.Helper()
 	var ids []uuid.UUID
 	require.NoError(t, clients.stateDB.SelectContext(ctx, &ids,
-		`SELECT schedule_id FROM scheduler_tracker WHERE kind = 'promote_seed' AND release_id = $1 ORDER BY created_at`, releaseID))
+		`SELECT run_id FROM runs WHERE kind = 'promote_seed' AND release_id = $1 ORDER BY created_at`, releaseID))
 	return ids
 }
 

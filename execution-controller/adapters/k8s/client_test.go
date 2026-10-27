@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
 func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
@@ -152,7 +153,7 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 	params := JobParams{
 		JobName:      "prod-svc-analytics-orders-abc456",
 		TaskID:       "task-2",
-		ScheduleID:   "sched-2",
+		RunID:        "sched-2",
 		ScheduleName: "daily",
 		ServiceName:  "svc",
 		SchemaName:   "analytics",
@@ -187,7 +188,7 @@ func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	params := JobParams{
 		JobName:      "prod-svc-analytics-orders-abc456",
 		TaskID:       "task-3",
-		ScheduleID:   "sched-3",
+		RunID:        "sched-3",
 		ScheduleName: "daily",
 		ServiceName:  "svc",
 		SchemaName:   "analytics",
@@ -221,7 +222,7 @@ func TestEveryJobKindCarriesTheLabelTheWatchSelects(t *testing.T) {
 	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ServiceName: "svc", SchemaName: "public",
 		TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", CandidateSchema: "_cand_r1",
 		CandidateArtifactURI: "s3://b/sql", ManifestS3URI: "s3://b/manifest.json", Namespace: "ns"}
-	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", ScheduleID: "s", ServiceName: "svc",
+	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ServiceName: "svc",
 		SchemaName: "public", TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", Namespace: "ns"}))
 	v := cand
 	v.JobName = "validate"
@@ -240,4 +241,11 @@ func TestEveryJobKindCarriesTheLabelTheWatchSelects(t *testing.T) {
 		assert.True(t, sel.Matches(labels.Set(j.Labels)), "Job %s", j.Name)
 		assert.True(t, sel.Matches(labels.Set(j.Spec.Template.Labels)), "pod template of Job %s", j.Name)
 	}
+}
+
+func TestRateLimit_AppliesToTheRestConfig(t *testing.T) {
+	rc := &rest.Config{}
+	RateLimit{QPS: 50, Burst: 100}.apply(rc)
+	assert.InDelta(t, 50, rc.QPS, 0)
+	assert.Equal(t, 100, rc.Burst)
 }

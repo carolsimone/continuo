@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -55,11 +56,11 @@ func explainWithoutSeqScan(t *testing.T, db *sqlx.DB, q string) string {
 // newActivationStack wires the repositories, UoW factory, and activation handler
 // against the test database. removed_at IS NULL rows in schedule_catalog are the
 // activation precondition; the named schedules are seeded as active.
-func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.ActivateScheduleHandler) {
+func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.StartRunHandler) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	for _, n := range names {
@@ -75,12 +76,12 @@ func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
-	return factory, svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
+	return factory, svchandlers.NewStartRunHandler(defaultPlanner, logger)
 }
 
 // TestConcurrentActivation_OneWinnerOneActiveRunError fires two simultaneous
 // activations for the same schedule. The partial unique index
-// uq_scheduler_tracker_active_per_schedule guarantees exactly one active run is
+// uq_runs_active_per_schedule guarantees exactly one active run is
 // inserted; the loser receives the same active-run outcome as the check-first
 // path. This is the DB-level backstop for the activation TOCTOU race.
 func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
@@ -116,7 +117,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	for i := 0; i < n; i++ {
 		require.NoError(t, errs[i], "neither concurrent activation should hard-error")
 		switch outcomes[i] {
-		case svchandlers.OutcomeActivated:
+		case svchandlers.OutcomeRunStarted:
 			activated++
 		case svchandlers.OutcomeSkippedActive:
 			skipped++
@@ -128,14 +129,14 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	// Exactly one active (pending|running) row survives in the database.
 	var active int
 	require.NoError(t, rawDB.Get(&active, `
-		SELECT count(*) FROM scheduler_tracker
+		SELECT count(*) FROM runs
 		WHERE schedule_name = 'race-schedule' AND status IN ('pending','running')
 	`))
 	assert.Equal(t, 1, active, "the partial unique index allows only one active run")
 }
 
-// TestActivePerScheduleIndexUsedByHasActiveSchedule asserts the active-run
-// lookup uses an index scan over idx_scheduler_tracker_schedule_name_created
+// TestActivePerScheduleIndexUsedByHasActiveRun asserts the active-run
+// lookup uses an index scan over idx_runs_schedule_name_created
 // rather than a sequential scan.
 func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 	if testing.Short() {
@@ -146,21 +147,21 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 
 	for i := 0; i < 200; i++ {
 		_, err := rawDB.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at)
+			INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at)
 			VALUES (gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
 		`, fmt.Sprintf("sched-%d", i%20), i)
 		require.NoError(t, err)
 	}
-	_, err := rawDB.Exec(`ANALYZE scheduler_tracker`)
+	_, err := rawDB.Exec(`ANALYZE runs`)
 	require.NoError(t, err)
 
 	plan := explainWithoutSeqScan(t, rawDB, `
-		SELECT 1 FROM scheduler_tracker
+		SELECT 1 FROM runs
 		WHERE schedule_name = 'sched-3' AND status IN ('pending','running')
 		ORDER BY created_at DESC LIMIT 1
 	`)
-	assert.Contains(t, plan, "idx_scheduler_tracker_schedule_name_created",
-		"HasActiveSchedule must be able to use the schedule_name index; plan was:\n%s", plan)
+	assert.Contains(t, plan, "idx_runs_schedule_name_created",
+		"HasActiveRun must be able to use the schedule_name index; plan was:\n%s", plan)
 }
 
 // TestGetLastRunPerSchedule_UsesIndex asserts the DISTINCT ON last-run scan,
@@ -174,19 +175,19 @@ func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 
 	for i := 0; i < 200; i++ {
 		_, err := rawDB.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at)
+			INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at)
 			VALUES (gen_random_uuid(), $1, 'succeeded', NOW() - ($2 || ' minutes')::interval, NOW())
 		`, fmt.Sprintf("sched-%d", i%20), i)
 		require.NoError(t, err)
 	}
-	_, err := rawDB.Exec(`ANALYZE scheduler_tracker`)
+	_, err := rawDB.Exec(`ANALYZE runs`)
 	require.NoError(t, err)
 
 	plan := explainWithoutSeqScan(t, rawDB, `
-		SELECT DISTINCT ON (schedule_name) schedule_name, schedule_id, status, created_at
-		FROM scheduler_tracker
+		SELECT DISTINCT ON (schedule_name) schedule_name, run_id, status, created_at
+		FROM runs
 		ORDER BY schedule_name, created_at DESC
 	`)
-	assert.Contains(t, plan, "idx_scheduler_tracker_schedule_name_created",
+	assert.Contains(t, plan, "idx_runs_schedule_name_created",
 		"DISTINCT ON last-run scan must be able to use the schedule_name index; plan was:\n%s", plan)
 }

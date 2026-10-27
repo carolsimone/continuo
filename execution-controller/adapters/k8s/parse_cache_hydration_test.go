@@ -58,7 +58,7 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 	wantEnv := []corev1.EnvVar{
 		{Name: "TASK_ID", Value: params.TaskID},
 		{Name: "TASK_ATTEMPT", Value: "0"},
-		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
+		{Name: "SCHEDULE_ID", Value: params.RunID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
 		{Name: "SERVICE_NAME", Value: params.ServiceName},
 		{Name: "SCHEMA", Value: params.SchemaName},

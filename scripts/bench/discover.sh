@@ -23,7 +23,7 @@ if bench_env_value state REDIS_PASSWORD >/dev/null 2>&1; then
 else
   echo "REDIS_PASSWORD: MISSING"
 fi
-for var in DOCKERHUB_USERNAME MAX_CONCURRENT_JOBS JOB_START_TIMEOUT_SECONDS; do
+for var in DOCKERHUB_USERNAME MAX_CONCURRENT_JOBS JOB_START_TIMEOUT_SECONDS K8S_CLIENT_QPS K8S_CLIENT_BURST; do
   printf '%s=%s\n' "${var}" "$(bench_env_value execution-controller "${var}" 2>/dev/null || echo unset)"
 done
 echo "datastore pods (candidates for BENCH_REDIS_POD and BENCH_PG_POD):"

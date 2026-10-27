@@ -57,7 +57,7 @@ func (r *admissionRepository) CountInFlight(ctx context.Context) (int, error) {
 }
 
 // reserveNextQuery ranks due pending rows in three steps. grp_turn numbers each
-// row within its run (production, by schedule_id) or release (candidates, by
+// row within its run (production, by run_id) or release (candidates, by
 // release_id). lane_turn interleaves the runs or releases of one lane by those
 // turns. The final order alternates the two lanes, so a lane with many queued
 // rows cannot starve the other, and one large run or release cannot starve the
@@ -68,10 +68,10 @@ const reserveNextQuery = `
 	WITH due AS (
 		SELECT id, next_attempt_at,
 		       CASE WHEN mode = 'production' THEN 'production' ELSE 'candidate' END AS lane,
-		       CASE WHEN mode = 'production' THEN schedule_id::text ELSE release_id END AS grp
+		       CASE WHEN mode = 'production' THEN run_id::text ELSE release_id END AS grp
 		FROM deployments d
 		WHERE status = $2 AND next_attempt_at <= NOW()
-		  AND (mode <> 'production' OR NOT EXISTS (SELECT 1 FROM cancelled_runs c WHERE c.run_id = d.schedule_id))
+		  AND (mode <> 'production' OR NOT EXISTS (SELECT 1 FROM cancelled_runs c WHERE c.run_id = d.run_id))
 	), turns AS (
 		SELECT id, lane, next_attempt_at,
 		       row_number() OVER (PARTITION BY lane, grp ORDER BY next_attempt_at, id) AS grp_turn

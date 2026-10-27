@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Task is a child entity of a Run. Fields mirror the columns of task_tracker.
+// Task is a child entity of a Run. Fields mirror the columns of tasks.
 // Construction goes through NewTask / NewInheritedTask; mutation goes through
 // the Run aggregate's methods (Run is the consistency boundary).
 type Task struct {

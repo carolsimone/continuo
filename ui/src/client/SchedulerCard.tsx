@@ -24,12 +24,17 @@ function cardBorderClass(status: string): string {
 
 interface Props {
   schedule: ScheduleSummary;
+  // Reads the schedule list again at once. The card calls it after a trigger
+  // or a cancel succeeds, so the card shows the new run or the cancelling run
+  // without waiting for the next poll.
+  onRunChanged: () => void;
 }
 
-export default function SchedulerCard({ schedule }: Props) {
+export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const navigate = useNavigate();
   const neverRun = !schedule.last_run_id;
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksReload, setTasksReload] = useState(0);
   const [drift, setDrift] = useState<{ run: number; latest: number } | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
@@ -37,6 +42,10 @@ export default function SchedulerCard({ schedule }: Props) {
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
+  // Reads the run's tasks now and every 5 s after. A change of run or a bump
+  // of tasksReload starts the reads over; the reads already in flight are
+  // aborted and their answers dropped, so an answer from before a cancel never
+  // replaces one from after it.
   useEffect(() => {
     if (neverRun) return;
     let cancelled = false;
@@ -50,7 +59,7 @@ export default function SchedulerCard({ schedule }: Props) {
     fetch_();
     const id = setInterval(fetch_, 5000);
     return () => { cancelled = true; controller.abort(); clearInterval(id); };
-  }, [schedule.last_run_id]);
+  }, [schedule.last_run_id, tasksReload]);
 
   useEffect(() => {
     if (!schedule.last_run_id) {
@@ -95,6 +104,8 @@ export default function SchedulerCard({ schedule }: Props) {
   const total = tasks.length;
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
   const failed = tasks.filter(t => t.status === 'failed').length;
+  const skipped = tasks.filter(t => t.status === 'skipped').length;
+  const cancelledTasks = tasks.filter(t => t.status === 'cancelled').length;
   const dispatched = tasks.filter(t => t.status === 'dispatched').length;
   const queued = tasks.filter(t => t.status === 'queued').length;
   const stopping = tasks.filter(t => t.status === 'stopping').length;
@@ -131,6 +142,9 @@ export default function SchedulerCard({ schedule }: Props) {
         }
         setTriggerStatus('success');
         setTimeout(() => setTriggerStatus('idle'), 3000);
+        // The new run reaches the card through the schedule list, whose new
+        // last_run_id starts the task reads of that run.
+        onRunChanged();
       })
       .catch(err => setTriggerError(err.message))
       .finally(() => setTriggerLoading(false));
@@ -141,6 +155,13 @@ export default function SchedulerCard({ schedule }: Props) {
     setCancelDialogOpen(true);
   };
 
+  // A cancel keeps the same run, so the card reads both the schedule list (the
+  // run's status) and the run's tasks (now stopping or cancelled) again.
+  const handleCancelled = () => {
+    setTasksReload(n => n + 1);
+    onRunChanged();
+  };
+
   const triggerIdleLabel =
     operation === 'test' ? 'Trigger test' : operation === 'build' ? 'Trigger build' : 'Trigger run';
 
@@ -149,6 +170,7 @@ export default function SchedulerCard({ schedule }: Props) {
       {cancelDialogOpen && createPortal(
         <CancelDialog
           scheduleName={schedule.schedule_name}
+          onCancelled={handleCancelled}
           onClose={() => setCancelDialogOpen(false)}
         />,
         document.body,
@@ -247,6 +269,8 @@ export default function SchedulerCard({ schedule }: Props) {
             <div className="summary-row">
               <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
               <span><span aria-hidden="true">❌</span> {failed} failed</span>
+              <span><span aria-hidden="true">⏭️</span> {skipped} skipped</span>
+              <span><span aria-hidden="true">🚫</span> {cancelledTasks} cancelled</span>
               <span><span aria-hidden="true">📤</span> {dispatched} dispatched</span>
               <span><span aria-hidden="true">🕒</span> {queued} queued</span>
               <span><span aria-hidden="true">✋</span> {stopping} stopping</span>

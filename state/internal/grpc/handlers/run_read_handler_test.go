@@ -73,7 +73,7 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 	runID := uuid.New()
 	at := time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC)
 	f := &fakeRunReader{runs: []projection.RunSummary{{RunID: runID, ScheduleName: "daily",
-		TerminalStatus: run.SchedulerStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
+		TerminalStatus: run.RunStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
 	h := NewRunReadHandler(f, newTestLogger())
 
 	resp, err := h.ListRuns(context.Background(), &statev1.ListRunsRequest{ScheduleName: "daily", PageSize: 20, PageOffset: 40})
@@ -114,4 +114,34 @@ func TestRunReadHandler_GetRunGraph_ReportsAStoppingTask(t *testing.T) {
 	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Equal(t, "stopping", resp.Nodes[0].Status)
+}
+
+// A node waiting for its node's lease carries the reason, the holder's run and
+// when it began waiting; a waiter whose node no task holds names no run, and a
+// node that waits for nothing carries none of the three.
+func TestRunReadHandler_GetRunGraph_ReportsALeaseWaitAndItsHolder(t *testing.T) {
+	holderRun := uuid.New()
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	h := NewRunReadHandler(&fakeRunReader{graph: projection.RunGraph{
+		Nodes: []projection.RunGraphNode{
+			{ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: run.TaskStatusPending, TaskID: uuid.New(),
+				WaitReason: run.WaitReasonNodeLease, WaitingOnRunID: &holderRun, WaitingSince: &since},
+			{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: run.TaskStatusPending, TaskID: uuid.New(),
+				WaitReason: run.WaitReasonNodeLease, WaitingSince: &since},
+			{ServiceName: "svc", SchemaName: "raw", TableName: "c", Status: run.TaskStatusPending, TaskID: uuid.New()},
+		},
+	}}, newTestLogger())
+
+	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	require.NoError(t, err)
+	require.Len(t, resp.Nodes, 3)
+	assert.Equal(t, "node_lease", resp.Nodes[0].WaitReason)
+	assert.Equal(t, holderRun.String(), resp.Nodes[0].WaitingOnRunId)
+	assert.Equal(t, "2026-10-24T10:05:00Z", resp.Nodes[0].WaitingSince)
+	assert.Equal(t, "node_lease", resp.Nodes[1].WaitReason)
+	assert.Empty(t, resp.Nodes[1].WaitingOnRunId, "no task holds its node")
+	assert.Equal(t, "2026-10-24T10:05:00Z", resp.Nodes[1].WaitingSince)
+	assert.Empty(t, resp.Nodes[2].WaitReason)
+	assert.Empty(t, resp.Nodes[2].WaitingOnRunId)
+	assert.Empty(t, resp.Nodes[2].WaitingSince)
 }

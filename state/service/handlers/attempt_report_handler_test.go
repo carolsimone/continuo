@@ -54,11 +54,11 @@ func (f *fakeTaskStatusRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
-	panic("HasActiveSchedule not implemented in fake")
+func (f *fakeTaskStatusRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+	panic("HasActiveRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) GetActiveScheduler(_ context.Context, _ string) (*run.Run, error) {
-	panic("GetActiveScheduler not implemented in fake")
+func (f *fakeTaskStatusRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+	panic("GetActiveRun not implemented in fake")
 }
 func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
@@ -216,6 +216,25 @@ func (f *fakeTaskStatusTaskCollection) HasNonSucceeded(_ context.Context, _ uuid
 	panic("HasNonSucceeded not implemented in fake")
 }
 
+// ReleaseLease accepts the release a final report makes; no task in these
+// tests holds a lease.
+func (f *fakeTaskStatusTaskCollection) ReleaseLease(context.Context, uuid.UUID) error {
+	return nil
+}
+func (f *fakeTaskStatusTaskCollection) TakeLeases(context.Context, []run.LeaseClaim) ([]uuid.UUID, error) {
+	panic("TakeLeases not implemented in fake")
+}
+func (f *fakeTaskStatusTaskCollection) WaitForLeases(context.Context, []uuid.UUID) error {
+	panic("WaitForLeases not implemented in fake")
+}
+func (f *fakeTaskStatusTaskCollection) TakeLeaseForWaiter(context.Context, run.LeaseClaim) (bool, error) {
+	panic("TakeLeaseForWaiter not implemented in fake")
+}
+
+func (f *fakeTaskStatusTaskCollection) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	panic("GrantableWaits not implemented in fake")
+}
+
 func taskStatusTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -229,7 +248,7 @@ func newTaskStatusHandlerUoW(
 	taskColl *fakeTaskStatusTaskCollection,
 ) *uow.FakeUnitOfWork {
 	if taskColl.runID == uuid.Nil && runRepo.stored != nil {
-		taskColl.runID = runRepo.stored.ScheduleID()
+		taskColl.runID = runRepo.stored.RunID()
 	}
 	u := &uow.FakeUnitOfWork{Graph: unconnectedTasks{}}
 	u.SetRunRepo(runRepo)
@@ -264,7 +283,7 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, total, terminal int32) *run.Run {
 	return run.HydrateRun(
 		id, name,
-		run.SchedulerStatusRunning,
+		run.RunStatusRunning,
 		run.InitStatusCompleted,
 		kind,
 		nil,
@@ -280,12 +299,12 @@ func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, tot
 }
 
 // newTerminalTaskStatusRun builds a terminal Run for idempotency tests.
-func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.SchedulerStatus) *run.Run {
+func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.RunStatus) *run.Run {
 	return newTerminalTaskStatusRunOfKind(run.KindCron, id, name, status)
 }
 
 // newTerminalTaskStatusRunOfKind is newTerminalTaskStatusRun for a run of kind.
-func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, status run.SchedulerStatus) *run.Run {
+func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, status run.RunStatus) *run.Run {
 	now := time.Now()
 	return run.HydrateRun(
 		id, name,
@@ -337,6 +356,9 @@ type fakeRunMetrics struct{ cancelled []time.Duration }
 func (*fakeRunMetrics) RunStalled()                    {}
 func (*fakeRunMetrics) RunsCancelling(_, _ int)        {}
 func (m *fakeRunMetrics) RunCancelled(d time.Duration) { m.cancelled = append(m.cancelled, d) }
+func (*fakeRunMetrics) LeaseWaiters(int)               {}
+func (*fakeRunMetrics) LeaseGranted(time.Duration)     {}
+func (*fakeRunMetrics) LeaseRepaired()                 {}
 
 type fixedClock struct{ t time.Time }
 
@@ -348,7 +370,7 @@ func (c fixedClock) Now() time.Time { return c.t }
 func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.FakeUnitOfWork, events.AttemptReported) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	total, by := int32(1), "alice"
-	cancelling := run.HydrateRun(scheduleID, "daily", run.SchedulerStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
+	cancelling := run.HydrateRun(scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
@@ -370,7 +392,7 @@ func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *
 
 	require.NoError(t, newAttemptReportHandlerWith(metrics).Handle(context.Background(), u, rep, uuid.New()))
 
-	assert.Equal(t, run.SchedulerStatusCancelled, runRepo.stored.Status())
+	assert.Equal(t, run.RunStatusCancelled, runRepo.stored.Status())
 	assert.Empty(t, metrics.cancelled, "nothing is observed before the commit")
 	require.NoError(t, u.Commit())
 	assert.Equal(t, []time.Duration{90 * time.Second}, metrics.cancelled)
@@ -401,7 +423,7 @@ func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *
 		require.NoError(t, newAttemptReportHandlerWith(m).Handle(context.Background(), u, report(id, task, 0, run.AttemptSucceeded), uuid.New()))
 		require.NoError(t, u.Commit())
 
-		assert.Equal(t, run.SchedulerStatusSucceeded, repo.stored.Status())
+		assert.Equal(t, run.RunStatusSucceeded, repo.stored.Status())
 		assert.Empty(t, m.cancelled)
 	})
 }
@@ -444,7 +466,7 @@ func TestAttemptReport_TheLastSuccessFinalizesTheRun(t *testing.T) {
 	finalized, ok := outbox.appended[0].(run.RunFinalized)
 	require.True(t, ok, "event must be RunFinalized")
 	assert.Equal(t, scheduleID, finalized.ID)
-	assert.Equal(t, run.SchedulerStatusSucceeded, finalized.Outcome)
+	assert.Equal(t, run.RunStatusSucceeded, finalized.Outcome)
 }
 
 // nodeGraph is a run.TaskGraph holding one node and no edges.
@@ -482,7 +504,7 @@ func TestAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testing.T) {
 // A report for a run that has ended changes nothing: every attempt of such a
 // run has ended.
 func TestAttemptReport_ARunThatEndedChangesNothing(t *testing.T) {
-	for _, status := range []run.SchedulerStatus{run.SchedulerStatusSucceeded, run.SchedulerStatusFailed, run.SchedulerStatusCancelled} {
+	for _, status := range []run.RunStatus{run.RunStatusSucceeded, run.RunStatusFailed, run.RunStatusCancelled} {
 		t.Run(string(status), func(t *testing.T) {
 			scheduleID, taskID := uuid.New(), uuid.New()
 			runRepo := &fakeTaskStatusRunRepo{stored: newTerminalTaskStatusRun(scheduleID, "terminal-guard", status)}
@@ -613,7 +635,7 @@ func (c taskStatusClock) Now() time.Time { return c.at }
 func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32) *run.Run {
 	r := run.HydrateRun(
 		id, "daily",
-		run.SchedulerStatusRunning,
+		run.RunStatusRunning,
 		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
@@ -770,7 +792,7 @@ func TestAttemptReport_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
 		}
 	}
 	cancelledRun := func() *run.Run {
-		r := newTerminalTaskStatusRunOfKind(run.KindPromoteSeed, scheduleID, "promote-seed-abc12345", run.SchedulerStatusCancelled)
+		r := newTerminalTaskStatusRunOfKind(run.KindPromoteSeed, scheduleID, "promote-seed-abc12345", run.RunStatusCancelled)
 		r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1"})
 		return r
 	}

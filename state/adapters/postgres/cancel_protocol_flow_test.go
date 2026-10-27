@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -24,21 +25,21 @@ func cancelByID(t *testing.T, db *sqlx.DB, id uuid.UUID, by, reason string) {
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
 		r, err := u.Run().LoadRunForUpdate(ctx, id)
 		require.NoError(t, err)
-		events, err := r.Cancel(ctx, u.TaskCollection(), by, reason, u.Clock().Now())
+		events, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), by, reason, u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, r))
 		require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
 	})
 }
 
-// cancelRow is the cancel columns of one scheduler_tracker row.
+// cancelRow is the cancel columns of one run row.
 type cancelRow struct {
-	Status      run.SchedulerStatus `db:"status"`
-	CancelledAt *time.Time          `db:"cancelled_at"`
-	CompletedAt *time.Time          `db:"completed_at"`
-	CancelledBy *string             `db:"cancelled_by"`
-	Reason      *string             `db:"cancellation_reason"`
-	Terminal    int32               `db:"terminal_task_count"`
+	Status      run.RunStatus `db:"status"`
+	CancelledAt *time.Time    `db:"cancelled_at"`
+	CompletedAt *time.Time    `db:"completed_at"`
+	CancelledBy *string       `db:"cancelled_by"`
+	Reason      *string       `db:"cancellation_reason"`
+	Terminal    int32         `db:"terminal_task_count"`
 }
 
 func readCancelRow(t *testing.T, db *sqlx.DB, id uuid.UUID) cancelRow {
@@ -46,7 +47,7 @@ func readCancelRow(t *testing.T, db *sqlx.DB, id uuid.UUID) cancelRow {
 	var row cancelRow
 	require.NoError(t, db.Get(&row, `
 		SELECT status, cancelled_at, completed_at, cancelled_by, cancellation_reason, terminal_task_count
-		FROM scheduler_tracker WHERE schedule_id = $1`, id))
+		FROM runs WHERE run_id = $1`, id))
 	return row
 }
 
@@ -57,7 +58,7 @@ func (f statusFlow) stopRequested(t *testing.T, key string, n int32) bool {
 	var requested bool
 	require.NoError(t, f.db.Get(&requested, `
 		SELECT stop_requested_at IS NOT NULL FROM task_attempts WHERE task_id = $1 AND attempt = $2`,
-		run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(key)), n))
+		run.TaskIDFor(f.tenant, f.r.RunID(), topology.NodeKey(key)), n))
 	return requested
 }
 
@@ -73,10 +74,10 @@ func TestCancel_SavesTheRunCancellingWithItsStoppingTasksAndRequestedStops(t *te
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptSucceeded, "")
 	before := f.outboxRows(t)
 
-	cancelByID(t, db, f.r.ScheduleID(), "alice", "bad data")
+	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
 
-	row := readCancelRow(t, db, f.r.ScheduleID())
-	assert.Equal(t, run.SchedulerStatusCancelling, row.Status)
+	row := readCancelRow(t, db, f.r.RunID())
+	assert.Equal(t, run.RunStatusCancelling, row.Status)
 	assert.NotNil(t, row.CancelledAt)
 	assert.Nil(t, row.CompletedAt, "a cancelling run has not ended")
 	require.NotNil(t, row.CancelledBy)
@@ -117,7 +118,7 @@ func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 	cancelByID(t, db, runID, "alice", "bad data")
 
 	row := readCancelRow(t, db, runID)
-	assert.Equal(t, run.SchedulerStatusCancelled, row.Status)
+	assert.Equal(t, run.RunStatusCancelled, row.Status)
 	require.NotNil(t, row.CancelledAt)
 	require.NotNil(t, row.CompletedAt)
 	assert.True(t, row.CompletedAt.Equal(*row.CancelledAt), "the run ends at its cancel")
@@ -126,7 +127,7 @@ func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 		"ftable_a": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusCancelled, "ftable_d": run.TaskStatusCancelled,
 	} {
 		var got run.TaskStatus
-		require.NoError(t, db.Get(&got, `SELECT status FROM task_tracker WHERE task_id = $1`, ids[table]))
+		require.NoError(t, db.Get(&got, `SELECT status FROM tasks WHERE task_id = $1`, ids[table]))
 		assert.Equal(t, want, got, table)
 	}
 	var outbox int
@@ -142,7 +143,7 @@ func TestAttemptReport_AStoppedReportCancelsTheTaskAndTheLastEndsTheRun(t *testi
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	cancelByID(t, db, f.r.ScheduleID(), "alice", "bad data")
+	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
 	outbox := f.outboxRows(t)
 
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptStopped, "")
@@ -154,7 +155,7 @@ func TestAttemptReport_AStoppedReportCancelsTheTaskAndTheLastEndsTheRun(t *testi
 	assert.Equal(t, []attemptRow{{Attempt: 0, JobName: job, Status: "stopped"}}, f.attempts(t, "e2e_schema.ftable_a"))
 	assert.Nil(t, f.dueIn(t, "e2e_schema.ftable_a", 0), "a stopped attempt has no next check")
 	status, terminal := f.run(t)
-	assert.Equal(t, run.SchedulerStatusCancelling, status)
+	assert.Equal(t, run.RunStatusCancelling, status)
 	assert.Equal(t, int32(7), terminal)
 
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptRunning, "")
@@ -165,8 +166,8 @@ func TestAttemptReport_AStoppedReportCancelsTheTaskAndTheLastEndsTheRun(t *testi
 
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptStopped, "")
 
-	row := readCancelRow(t, db, f.r.ScheduleID())
-	assert.Equal(t, run.SchedulerStatusCancelled, row.Status)
+	row := readCancelRow(t, db, f.r.RunID())
+	assert.Equal(t, run.RunStatusCancelled, row.Status)
 	assert.NotNil(t, row.CompletedAt)
 	assert.Equal(t, int32(8), row.Terminal)
 	assert.Equal(t, run.TaskStatusCancelled, f.statuses(t)["e2e_schema.ftable_b"])
@@ -185,7 +186,7 @@ func TestAttemptReport_AStoppingSuccessRecordsTheLoadedVersion(t *testing.T) {
 	})
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptRunning, "")
-	cancelByID(t, db, f.r.ScheduleID(), "alice", "bad data")
+	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
 
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptSucceeded, "")
 
@@ -200,13 +201,13 @@ func TestAttemptReport_AStoppingSuccessRecordsTheLoadedVersion(t *testing.T) {
 		SELECT content_hash, run_id, task_id, release_id FROM node_materializations
 		WHERE tenant_id = $1 AND node_key = 'e2e_schema.ftable_a'`, tenant))
 	assert.Equal(t, "h-ftable_a", built.ContentHash)
-	assert.Equal(t, f.r.ScheduleID(), built.RunID)
-	assert.Equal(t, run.TaskIDFor(tenant, f.r.ScheduleID(), "e2e_schema.ftable_a"), built.TaskID)
+	assert.Equal(t, f.r.RunID(), built.RunID)
+	assert.Equal(t, run.TaskIDFor(tenant, f.r.RunID(), "e2e_schema.ftable_a"), built.TaskID)
 	assert.Equal(t, "rel-1", built.ReleaseID)
 
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptStopped, "")
 	status, _ := f.run(t)
-	assert.Equal(t, run.SchedulerStatusCancelled, status, "the run ends cancelled though a task succeeded")
+	assert.Equal(t, run.RunStatusCancelled, status, "the run ends cancelled though a task succeeded")
 }
 
 // A cancelling run still holds its schedule: it blocks a new run of the
@@ -217,25 +218,25 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
-	id := insertSeedRun(t, db, run.SchedulerStatusCancelling)
+	id := insertSeedRun(t, db, run.RunStatusCancelling)
 	var schedule string
-	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM scheduler_tracker WHERE schedule_id = $1`, id))
-	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM runs WHERE run_id = $1`, id))
+	repo := postgres.NewRunTableRepository(db, discardLogger())
 
-	blocked, err := repo.HasActiveSchedule(ctx, schedule)
+	blocked, err := repo.HasActiveRun(ctx, schedule)
 	require.NoError(t, err)
 	assert.True(t, blocked, "a cancelling run blocks its schedule")
 
-	active, err := repo.GetActiveScheduler(ctx, schedule)
+	active, err := repo.GetActiveRun(ctx, schedule)
 	require.NoError(t, err)
 	require.NotNil(t, active)
 	assert.Equal(t, id, active.ScheduleID)
-	assert.Equal(t, run.SchedulerStatusCancelling, active.Status)
+	assert.Equal(t, run.RunStatusCancelling, active.Status)
 
 	last, err := repo.GetLastRunPerSchedule(ctx)
 	require.NoError(t, err)
 	require.Contains(t, last, schedule)
-	assert.True(t, last[schedule].IsRunning, "a cancelling run is still running")
+	assert.True(t, last[schedule].IsActive, "a cancelling run is still running")
 
 	_, drifts, err := postgres.NewRunReadRepository(db).ListActiveRunDrifts(ctx, tenant)
 	require.NoError(t, err)

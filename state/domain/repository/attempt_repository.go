@@ -26,10 +26,13 @@ type AttemptRepository interface {
 	// longest due first.
 	DueAttempts(ctx context.Context, limit int) ([]AttemptKey, error)
 
-	// StalledRuns returns up to limit pending or running runs that have no
-	// task dispatched, queued or running and whose progress clock is older
-	// than idle, the oldest first. It reads the runs of every tenant: a run
-	// names no tenant, and failing a stalled run reads no tenant's topology.
+	// StalledRuns returns up to limit pending, running or cancelling runs
+	// that have no task dispatched, queued, running or stopping, no task
+	// waiting for a node lease whose holder is one of those, and whose
+	// progress clock is older than idle, the oldest first: a task waiting
+	// behind another run's task in flight counts as in flight. It reads the
+	// runs of every tenant: a run names no tenant, and failing a stalled run
+	// reads no tenant's topology.
 	StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error)
 
 	// LockQuestion locks the attempt FOR UPDATE SKIP LOCKED and returns what

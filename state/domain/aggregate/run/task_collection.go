@@ -17,15 +17,15 @@ import (
 // Write methods are targeted SQL operations the aggregate orchestrates
 // inside its own method bodies.
 type TaskCollection interface {
-	// LoadAttemptState returns what an attempt report needs of one task: the
-	// run that holds it, its status, the attempt it is at, its retry budget,
-	// its node key, its identity (job name and node) and its first dispatch
-	// time, locking the row FOR UPDATE so concurrent writers of the task
-	// serialize. The attempt is what the aggregate compares a report's
-	// attempt with: a report for the task's current attempt moves the task,
-	// one for an older attempt moves only that attempt's row. The second
-	// return is false when the row does not exist; err is non-nil only for
-	// genuine I/O failures.
+	// LoadAttemptState returns what an attempt report or a lease grant needs
+	// of one task: the run that holds it, its status, the attempt it is at,
+	// its retry budget, its node key, its identity (job name and node), its
+	// first dispatch time and its wait reason, locking the row FOR UPDATE so
+	// concurrent writers of the task serialize. The attempt is what the
+	// aggregate compares a report's attempt with: a report for the task's
+	// current attempt moves the task, one for an older attempt moves only
+	// that attempt's row. The second return is false when the row does not
+	// exist; err is non-nil only for genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
 	// LoadAttempt returns attempt number attempt of the task, locking its row
@@ -53,8 +53,13 @@ type TaskCollection interface {
 	// not match. The run's finalized outcome is failed when it is true.
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
-	// HasInFlight reports whether any task of the given run is dispatched,
-	// queued, running or stopping: an attempt of it is in flight.
+	// HasInFlight reports whether the given run has work in flight: a task of
+	// it is dispatched, queued, running or stopping; a pending task of it
+	// waits for a node lease whose holder is one of those, so an attempt it
+	// waits on is in flight; or a pending task of it waits for a node lease
+	// behind an older waiter of a running run (the earlier lease wait, then
+	// the lower task id: the order the lease waker grants in), which the
+	// node's next grant serves first.
 	HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasNonSucceeded reports whether any task in the given run is in a
@@ -88,28 +93,65 @@ type TaskCollection interface {
 	BulkCreate(ctx context.Context, tasks []Task) error
 
 	// MarkDispatched makes each task of taskIDs that is still pending and
-	// undispatched dispatched, stamping dispatched_at with at, and returns the
-	// ids it changed.
+	// undispatched dispatched, stamping dispatched_at with at and ending its
+	// wait for a lease, and returns the ids it changed.
 	MarkDispatched(ctx context.Context, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error)
 
 	// MarkSkipped sets status skipped on each task of taskIDs that is still
-	// pending and undispatched, and returns how many tasks it changed.
+	// pending and undispatched, ending its wait for a lease, and returns how
+	// many tasks it changed.
 	MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error)
 
 	// SkipPending sets status skipped on every task of the given run that is
-	// still pending and undispatched, and returns how many tasks it changed.
+	// still pending and undispatched, ending its wait for a lease, and returns
+	// how many tasks it changed.
 	SkipPending(ctx context.Context, runID uuid.UUID) (int, error)
 
 	// BeginStop stops every task of the given run that has not ended: a
 	// dispatched, queued or running task whose current attempt is open
 	// (dispatched, queued or running) becomes stopping, and every other one,
 	// a pending task or a task with no open current attempt, is cancelled, as
-	// no attempt of it can answer a stop. Each one is stamped cancelled_by and
-	// cancelled_at with cancelledAt, the instant the Run aggregate cancelled
-	// the run at, and stays locked until the transaction ends. A task that
-	// succeeded, failed, was skipped or was cancelled is left as it is. It
-	// returns how many tasks it cancelled and how many it made stopping.
+	// no attempt of it can answer a stop; a pending task's wait for a lease
+	// ends, and the write lease of each task it cancels is released, since
+	// the cancel ends that task (a stopping task keeps its lease). Each one is
+	// stamped cancelled_by and cancelled_at with cancelledAt, the instant the
+	// Run aggregate cancelled the run at, and stays locked until the
+	// transaction ends. A task that succeeded, failed, was skipped or was
+	// cancelled is left as it is. It returns how many tasks it cancelled and
+	// how many it made stopping.
 	BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (StopCounts, error)
+
+	// TakeLeases takes the write lease on the node of each claim, in node-key
+	// order, and returns the claiming tasks that hold their node's lease when
+	// it returns. A node is taken only when no task holds it and no other
+	// task waits for it, so a newly ready task never goes ahead of an older
+	// waiter; a claiming task that already holds its node's lease keeps it.
+	TakeLeases(ctx context.Context, claims []LeaseClaim) (taken []uuid.UUID, err error)
+
+	// WaitForLeases marks each pending task of taskIDs as waiting for its
+	// node's write lease: wait_reason node_lease, lease_wait_since the
+	// database clock. A task already waiting keeps the time it began to wait,
+	// and with it its place among the node's waiters.
+	WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error
+
+	// ReleaseLease deletes the write lease the task holds; a task that holds
+	// none is left as it is.
+	ReleaseLease(ctx context.Context, taskID uuid.UUID) error
+
+	// TakeLeaseForWaiter takes the write lease on the claim's node for the
+	// claiming task, which is the node's waiter being served, when no task
+	// holds it; unlike TakeLeases it does not look at the node's other
+	// waiters. It reports whether the claiming task holds the lease.
+	TakeLeaseForWaiter(ctx context.Context, claim LeaseClaim) (bool, error)
+
+	// GrantableWaits returns the tasks of the given run that wait for their
+	// node's write lease and are next in line for it: no task holds the node
+	// for the collection's tenant, and the task is the node's oldest waiter
+	// (the earliest lease wait, then the lowest task id) among the waiters
+	// whose run is running and whose node the tenant holds in their run's
+	// release, the waiter the lease waker grants the node to. They come in
+	// node-key order, the order every take of leases follows.
+	GrantableWaits(ctx context.Context, runID uuid.UUID) ([]LeaseWait, error)
 
 	// RequestStops asks the current attempt of each stopping task of the
 	// given run to stop, when that attempt is open (dispatched, queued or
@@ -119,11 +161,13 @@ type TaskCollection interface {
 	RequestStops(ctx context.Context, runID uuid.UUID) ([]StopTarget, error)
 }
 
-// TaskAttemptState is one task as an attempt report reads it: the run that
-// holds it, its status, the attempt it is at, its retry budget, its node in
-// the run's release, its identity (the job name and node it was planned with)
-// and when it was first dispatched. NodeKey is empty on a task whose run names
-// no release; DispatchedAt is nil on a task that was never dispatched.
+// TaskAttemptState is one task as an attempt report or a lease grant reads it:
+// the run that holds it, its status, the attempt it is at, its retry budget,
+// its node in the run's release, its identity (the job name and node it was
+// planned with), when it was first dispatched and what it waits for besides
+// its upstream tasks. NodeKey is empty on a task whose run names no release;
+// DispatchedAt is nil on a task that was never dispatched; WaitReason is empty
+// on a task that waits for nothing else.
 type TaskAttemptState struct {
 	RunID        uuid.UUID
 	Status       TaskStatus
@@ -135,6 +179,7 @@ type TaskAttemptState struct {
 	SchemaName   string
 	TableName    string
 	DispatchedAt *time.Time
+	WaitReason   WaitReason
 }
 
 // StopCounts is what BeginStop changed: the pending tasks it cancelled and the

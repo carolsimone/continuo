@@ -37,6 +37,13 @@ import (
 // attempt state never asked to stop is refused with ErrStopNotRequested
 // before anything is written.
 //
+// A task of a run that writes its nodes holds the write lease on its node from
+// its dispatch until the report that ends it: that report releases the lease,
+// whether it ends the task succeeded, failed or cancelled; a retry keeps the
+// lease, and a stopping task keeps it until its report ends it. Each task a
+// success makes ready claims its own node's lease as it is dispatched, as
+// Start describes, before the ended task's lease is released.
+//
 // Every move of a task stamps the run's progress clock. A task that has ended
 // counts terminal once, and the run finalizes when every task has ended: a
 // cancelling run cancelled, a running one failed if any task failed or was
@@ -69,7 +76,7 @@ func (r *Run) RecordAttemptReport(
 	if !exists {
 		return nil, false, ErrTaskNotHeld
 	}
-	if task.RunID != r.scheduleID {
+	if task.RunID != r.runID {
 		return nil, false, fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, rep.TaskID, task.RunID)
 	}
 	a, held, err := tasks.LoadAttempt(ctx, rep.TaskID, rep.Attempt)
@@ -109,7 +116,7 @@ func (r *Run) RecordAttemptReport(
 		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusSucceeded, d, now)
 		return events, err == nil, err
 	case AttemptFailed:
-		if r.status == SchedulerStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
+		if r.status == RunStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
 			events, err := r.dispatchNextAttempt(ctx, tasks, graph, rep.TaskID, task, d, now)
 			return events, false, err
 		}
@@ -133,8 +140,14 @@ func (r *Run) moveTask(ctx context.Context, tasks TaskCollection, taskID uuid.UU
 }
 
 // endTask makes the task final with status and moves the run: on a running
-// run a success dispatches what it makes ready and a failure skips the pending
-// tasks it blocks, and the run finalizes once every task has ended.
+// run a success dispatches what it makes ready, taking their nodes' leases,
+// and a failure skips the pending tasks it blocks; then the task's write lease
+// on its node is released, and the run finalizes once every task has ended.
+// The release follows every lease the report takes, so the report's
+// transaction takes all its leases before it deletes one, as a run's start
+// does, and cannot wait in a cycle with a concurrent take of the same nodes.
+// The run releases a task's lease nowhere else, so a task keeps its lease
+// across every retry and while it is stopping, until the report that ends it.
 func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID, task TaskAttemptState,
 	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if err := r.moveTask(ctx, tasks, taskID, status, task.Attempt, now); err != nil {
@@ -142,7 +155,7 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 	}
 	r.fillSlot()
 	var events []DomainEvent
-	if r.plannedAt != nil && r.status == SchedulerStatusRunning {
+	if r.plannedAt != nil && r.status == RunStatusRunning {
 		switch status {
 		case TaskStatusSucceeded:
 			dispatched, err := r.dispatchReady(ctx, tasks, graph, task.NodeKey, d, now)
@@ -156,6 +169,9 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 			}
 		}
 	}
+	if err := tasks.ReleaseLease(ctx, taskID); err != nil {
+		return nil, fmt.Errorf("release the lease of task %s: %w", taskID, err)
+	}
 	finalized, err := r.finalizeWhenEveryTaskEnded(ctx, tasks, now)
 	if err != nil {
 		return nil, err
@@ -165,7 +181,8 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 
 // dispatchNextAttempt adds the attempt after the task's current one,
 // dispatched and due for its first check, makes the task dispatched at it and
-// records its TaskDispatched, built from the node the run's release holds.
+// records its TaskDispatched, built from the node the run's release holds. The
+// task keeps the write lease it holds on its node.
 func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID,
 	task TaskAttemptState, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	node, found, err := graph.Node(ctx, r.release.ReleaseID, task.NodeKey)
@@ -176,7 +193,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 		return nil, fmt.Errorf("retry task %s: release %s holds no node %s", taskID, r.release.ReleaseID, task.NodeKey)
 	}
 	next := task.Attempt + 1
-	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.scheduleID.String(), int(next))
+	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.runID.String(), int(next))
 	if err != nil {
 		return nil, fmt.Errorf("name attempt %d of task %s: %w", next, taskID, err)
 	}
@@ -197,47 +214,111 @@ func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollecti
 	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount || r.initStatus != InitStatusCompleted {
 		return nil, nil
 	}
-	if r.status == SchedulerStatusCancelling {
-		return r.finalize(SchedulerStatusCancelled, now), nil
+	if r.status == RunStatusCancelling {
+		return r.finalize(RunStatusCancelled, now), nil
 	}
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, nil
 	}
-	anyFailed, err := tasks.HasFailed(ctx, r.scheduleID)
+	anyFailed, err := tasks.HasFailed(ctx, r.runID)
 	if err != nil {
 		return nil, fmt.Errorf("has failed: %w", err)
 	}
-	outcome := SchedulerStatusSucceeded
+	outcome := RunStatusSucceeded
 	if anyFailed {
-		outcome = SchedulerStatusFailed
+		outcome = RunStatusFailed
 	}
 	return r.finalize(outcome, now), nil
 }
 
-// FailStalled ends r when it is active, has no attempt in flight (no task
-// dispatched, queued, running or stopping) and has made no progress for
-// StallAfter: only a defect in state leaves a run so. A cancelling run ends
-// cancelled, with no failure reason: its cancel asked for nothing more. Any
-// other run fails as stalled, its pending tasks skipped and counted terminal.
-// It reports whether it ended the run; a run that has ended, has an attempt in
-// flight or moved within StallAfter is left as it is.
-func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, bool, error) {
-	if !r.IsActive() || r.lastHeartbeatAt == nil || now.Sub(*r.lastHeartbeatAt) < StallAfter {
-		return nil, false, nil
+// StallCheck is what FailStalled did to a run.
+type StallCheck struct {
+	// Events are what the run recorded: the dispatch of each waiting task it
+	// granted its node's lease, or the run's end.
+	Events []DomainEvent
+	// Granted are the waits it ended by granting the task its node's write
+	// lease and dispatching it; a run granted any is not stalled.
+	Granted []LeaseWait
+	// Stalled reports whether it ended the run.
+	Stalled bool
+}
+
+// FailStalled ends r when it is active, has made no progress for StallAfter
+// and has no work in flight: only a defect in state leaves a run so.
+//
+// A running run's task that waits for a node lease and is next in line for a
+// free node (GrantableWaits: no task holds the node, and the task is its
+// oldest waiter among the waiters of running runs) is first granted that
+// node's lease and dispatched (GrantLease), as the lease waker would grant it,
+// so a node released after the waker's last pass, or one a waker pass left for
+// its next, is served under r's lock instead of reading as a stall. A run
+// granted any task is not stalled. A grant that fails returns its error
+// wrapped in ErrGrantFailed, and the caller rolls the check back.
+//
+// Work in flight (HasInFlight) is a task dispatched, queued, running or
+// stopping, a task waiting for a node lease whose holder is one of those, and
+// a task waiting behind an older waiter of a running run for its node, which
+// the node's next grant serves first. A lease wait therefore ends its run only
+// when no grant serves it, which only a defect in state causes: its node is
+// held by a task that has ended without releasing it, the run's release holds
+// no such node for the tenant, or its grant keeps failing
+// (FailStalledWithoutGrants).
+//
+// A cancelling run ends cancelled, with no failure reason: its cancel asked
+// for nothing more. Any other run fails as stalled, its pending tasks skipped
+// and counted terminal. A run that has ended, has work in flight or moved
+// within StallAfter is left as it is.
+func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, graph TaskGraph, d TaskDefaults, now time.Time) (StallCheck, error) {
+	if !r.idleFor(StallAfter, now) {
+		return StallCheck{}, nil
 	}
-	inFlight, err := tasks.HasInFlight(ctx, r.scheduleID)
+	events, granted, err := r.grantWaitingTasks(ctx, tasks, graph, d, now)
 	if err != nil {
-		return nil, false, fmt.Errorf("has in flight: %w", err)
+		return StallCheck{}, fmt.Errorf("%w: %w", ErrGrantFailed, err)
+	}
+	if len(granted) > 0 {
+		return StallCheck{Events: events, Granted: granted}, nil
+	}
+	return r.endWhenNothingInFlight(ctx, tasks, now)
+}
+
+// FailStalledWithoutGrants is FailStalled without its grant step, for a run
+// whose grant failed (ErrGrantFailed): it ends r, as FailStalled ends a run
+// with nothing to grant, once r is active, has made no progress for
+// StallAfterFailedGrant and has no work in flight. Its pending tasks are
+// skipped, so a waiting task whose grant keeps failing leaves its node's queue
+// to the next waiter. A run that moved within StallAfterFailedGrant, or has
+// work in flight, is left as it is, for the next check to grant again.
+func (r *Run) FailStalledWithoutGrants(ctx context.Context, tasks TaskCollection, now time.Time) (StallCheck, error) {
+	if !r.idleFor(StallAfterFailedGrant, now) {
+		return StallCheck{}, nil
+	}
+	return r.endWhenNothingInFlight(ctx, tasks, now)
+}
+
+// idleFor reports whether r is active and has made no progress for idle at
+// now.
+func (r *Run) idleFor(idle time.Duration, now time.Time) bool {
+	return r.IsActive() && r.lastProgressAt != nil && now.Sub(*r.lastProgressAt) >= idle
+}
+
+// endWhenNothingInFlight ends r when it has no work in flight (HasInFlight): a
+// cancelling run cancelled, any other run failed as stalled with its pending
+// tasks skipped and counted terminal.
+func (r *Run) endWhenNothingInFlight(ctx context.Context, tasks TaskCollection, now time.Time) (StallCheck, error) {
+	inFlight, err := tasks.HasInFlight(ctx, r.runID)
+	if err != nil {
+		return StallCheck{}, fmt.Errorf("has in flight: %w", err)
 	}
 	if inFlight {
-		return nil, false, nil
+		return StallCheck{}, nil
 	}
-	if r.status == SchedulerStatusCancelling {
-		return r.finalize(SchedulerStatusCancelled, now), true, nil
+	if r.status == RunStatusCancelling {
+		return StallCheck{Events: r.finalize(RunStatusCancelled, now), Stalled: true}, nil
 	}
-	skipped, err := tasks.SkipPending(ctx, r.scheduleID)
+	skipped, err := tasks.SkipPending(ctx, r.runID)
 	if err != nil {
-		return nil, false, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.scheduleID, err)
+		return StallCheck{}, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.runID, err)
 	}
 	if skipped > 0 {
 		r.terminalTaskCount += num.ClampInt32(skipped)
@@ -245,5 +326,5 @@ func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Ti
 	}
 	reason := RunFailureStalled
 	r.failureReason = &reason
-	return r.finalize(SchedulerStatusFailed, now), true, nil
+	return StallCheck{Events: r.finalize(RunStatusFailed, now), Stalled: true}, nil
 }

@@ -1,10 +1,10 @@
 // Package postgres provides PostgreSQL-backed repository implementations.
 //
 // NodeRunRepository is the read-only audit projection of the per-node history
-// surface. It joins scheduler_tracker × task_tracker × task_attempts filtered
+// surface. It joins runs × tasks × task_attempts filtered
 // by node identity and emits a flat NodeRun row per task instance.
 //
-// Why a separate repo (not a method on TaskTrackerRepository):
+// Why a separate repo (not a method on TaskRepository):
 //   - The query joins three tables; living on the per-table CRUD repo would
 //     pull cross-table concerns into single-table code.
 //   - The shape is read-only (no Create/Update/Delete) and audit-shaped (one
@@ -21,7 +21,6 @@ import (
 	"math"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
@@ -37,23 +36,28 @@ type NodeRunRepository interface {
 }
 
 type nodeRunRepository struct {
-	db     *sqlx.DB
-	logger *slog.Logger
+	db *sqlx.DB
+	// tenantID is the tenant whose topology and node leases the reads join.
+	tenantID string
+	logger   *slog.Logger
 }
 
 var _ NodeRunRepository = (*nodeRunRepository)(nil)
 
-// NewNodeRunRepository constructs a NodeRunRepository backed by Postgres.
-func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
-	return &nodeRunRepository{db: db, logger: logger}
+// NewNodeRunRepository constructs a NodeRunRepository backed by Postgres that
+// reads the topology and node leases of tenantID.
+func NewNodeRunRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) NodeRunRepository {
+	return &nodeRunRepository{db: db, tenantID: tenantID, logger: logger}
 }
 
 // List returns the most recent task instances for the given node identity,
-// ordered by scheduler_tracker.created_at DESC.
+// ordered by runs.created_at DESC.
 //
 // Each row carries:
 //   - run-level: run_id, schedule_name, kind, terminal_status
-//   - task-level: task_status, attempt, image_tag
+//   - task-level: task_status, attempt, image_tag, and, while the task waits
+//     for the node's lease, wait_reason, lease_wait_since and the run whose
+//     task holds the lease in the repository's tenant
 //   - attempt-level (latest attempt per task): started_at, completed_at
 //     (the attempt's finished_at), error_message, log_s3_key, run_results_uri,
 //     failure_class, failure_reason
@@ -77,9 +81,10 @@ func (r *nodeRunRepository) List(
 
 	const query = `
 		WITH target_tasks AS (
-			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.attempt, t.image_tag, t.operation, t.node_key
-			FROM task_tracker t
+			SELECT t.task_id, t.run_id, t.status AS task_status,
+			       t.attempt, t.image_tag, t.operation, t.node_key,
+			       t.wait_reason, t.lease_wait_since
+			FROM tasks t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
@@ -95,7 +100,7 @@ func (r *nodeRunRepository) List(
 			JOIN target_tasks tt ON tt.task_id = a.task_id
 			ORDER BY a.task_id, a.attempt DESC
 		)
-		SELECT s.schedule_id        AS run_id,
+		SELECT s.run_id,
 		       s.schedule_name      AS schedule_name,
 		       s.kind               AS kind,
 		       s.status             AS terminal_status,
@@ -112,19 +117,27 @@ func (r *nodeRunRepository) List(
 		       le.failure_class     AS failure_class,
 		       le.failure_reason    AS failure_reason,
 		       tt.operation         AS operation,
-		       COALESCE(n.content_hash, '') AS content_hash
+		       COALESCE(n.content_hash, '') AS content_hash,
+		       COALESCE(tt.wait_reason, '') AS wait_reason,
+		       tt.lease_wait_since  AS waiting_since,
+		       l.run_id             AS waiting_on_run_id
 		FROM target_tasks tt
-		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
+		JOIN runs s ON s.run_id = tt.run_id
 		LEFT JOIN latest_attempt le ON le.task_id = tt.task_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $6 AND n.release_id = s.release_id AND n.node_key = tt.node_key
+		-- the lease another task holds on the node a waiting task waits for: at
+		-- most one per tenant and node, and never the task's own
+		LEFT JOIN node_leases l
+		  ON tt.wait_reason = 'node_lease' AND l.tenant_id = $6
+		 AND l.node_key = tt.node_key AND l.task_id <> tt.task_id
 		ORDER BY s.created_at DESC
 		LIMIT $5
 	`
 
 	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
-		serviceName, schemaName, tableName, operation, limit, pkgevents.DefaultTenantID); err != nil {
+		serviceName, schemaName, tableName, operation, limit, r.tenantID); err != nil {
 		r.logger.Error("Failed to list node runs",
 			"service", serviceName, "schema", schemaName, "table", tableName,
 			"error", err)
@@ -159,6 +172,9 @@ type nodeRunRow struct {
 	FailureReason  *string        `db:"failure_reason"`
 	Operation      string         `db:"operation"`
 	ContentHash    string         `db:"content_hash"`
+	WaitReason     string         `db:"wait_reason"`
+	WaitingSince   *time.Time     `db:"waiting_since"`
+	WaitingOnRunID *uuid.UUID     `db:"waiting_on_run_id"`
 }
 
 func toNodeRun(row nodeRunRow) *projection.NodeRun {
@@ -181,6 +197,9 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		FailureReason:  row.FailureReason,
 		Operation:      row.Operation,
 		ContentHash:    row.ContentHash,
+		WaitReason:     run.WaitReason(row.WaitReason),
+		WaitingSince:   row.WaitingSince,
+		WaitingOnRunID: row.WaitingOnRunID,
 	}
 }
 
@@ -239,7 +258,7 @@ func (r *nodeRunRepository) ListNodes(
 	// dimension via $3 (an exact match — always non-empty, since the caller
 	// defaults it to "run"). The run dimension includes full_refresh tasks and
 	// reports them as operation 'run', so a node keeps one catalog row per
-	// dimension. The window-function scan over task_tracker ⋈ scheduler_tracker
+	// dimension. The window-function scan over tasks ⋈ runs
 	// runs ONCE: the page query layers the per-node aggregation and a
 	// COUNT(*) OVER () total on top of this single scan, so the match count no
 	// longer requires a second pass.
@@ -252,8 +271,8 @@ func (r *nodeRunRepository) ListNodes(
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
 			         ORDER BY s.created_at DESC
 			       ) AS rn
-			FROM task_tracker t
-			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+			FROM tasks t
+			JOIN runs s ON s.run_id = t.run_id
 			WHERE ($1 = '' OR lower(t.table_name) = lower($1))
 			  AND ($2 = '' OR t.service_name = $2)
 			  AND (t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))
@@ -319,7 +338,7 @@ func (r *nodeRunRepository) ListNodes(
 		LIMIT $4 OFFSET $5`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, pkgevents.DefaultTenantID); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, r.tenantID); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -355,7 +374,7 @@ func (r *nodeRunRepository) ListNodes(
 func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName string) ([]string, error) {
 	const query = `
 		SELECT DISTINCT table_name
-		FROM task_tracker
+		FROM tasks
 		WHERE ($1 = '' OR service_name = $1)
 		ORDER BY table_name`
 	names := []string{}
@@ -372,7 +391,7 @@ func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName strin
 func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
 	const query = `
 		SELECT DISTINCT service_name COLLATE "C" AS service_name
-		FROM task_tracker
+		FROM tasks
 		ORDER BY service_name`
 	services := []string{}
 	if err := r.db.SelectContext(ctx, &services, query); err != nil {

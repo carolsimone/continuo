@@ -245,7 +245,7 @@ func TestPublisher_NodeUpdatedRowIsUnknown(t *testing.T) {
 	pub := publisher.NewOutboxPublisher(newRedis(t), slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	err := pub.Publish(context.Background(), &outbox.Entry{
 		ID: uuid.New(), EventType: "node_updated", StreamName: "node.updated:v1",
-		Payload: []byte(`{"task_id":"t1","schedule_id":"s1","status":"FAILED"}`),
+		Payload: []byte(`{"task_id":"t1","run_id":"s1","status":"FAILED"}`),
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown event_type")

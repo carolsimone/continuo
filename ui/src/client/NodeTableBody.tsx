@@ -8,10 +8,12 @@ import {
   attemptWaitSeconds,
   formatAttemptSeconds,
   latestAttempt,
+  leaseWaitOf,
   taskNodeId,
   taskPillClass,
   taskStatusTitle,
 } from './detail-page-helpers';
+import LeaseWaitPill from './LeaseWaitPill';
 
 interface Props {
   groups: ServiceGroup[];
@@ -134,6 +136,7 @@ export default function NodeTableBody({
               {isExpanded && orderedTasks.map(task => {
                 const attempts = attemptsByTask.get(task.task_id) ?? [];
                 const latest = latestAttempt(attempts);
+                const leaseWait = leaseWaitOf(task);
                 const nid = taskNodeId(task);
                 const isSelected = nid === selectedNodeId;
                 const isRunning = task.status === 'running';
@@ -200,7 +203,10 @@ export default function NodeTableBody({
                         )}
                       </td>
                       <td>
-                        <span className={`pill-sm ${taskPillClass(task.status)}`} title={taskStatusTitle(task.status)}>{task.status}</span>
+                        <span className="nodes-pills">
+                          <span className={`pill-sm ${taskPillClass(task.status)}`} title={taskStatusTitle(task.status)}>{task.status}</span>
+                          {leaseWait && <LeaseWaitPill wait={leaseWait} />}
+                        </span>
                       </td>
                       <td>
                         <span className="nodes-attempt">

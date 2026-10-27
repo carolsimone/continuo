@@ -22,6 +22,7 @@ var handlerDirs = []string{
 	"orchestrator/service",
 	"state/service/attemptreconcile",
 	"state/service/handlers",
+	"state/service/leasewaker",
 	"state/service/runreads",
 	"state/service/runsettle",
 	"state/service/runstart",

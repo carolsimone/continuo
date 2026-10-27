@@ -13,7 +13,7 @@ import (
 // keeps. A failure names its reason's class.
 func ReportFromDomain(cmd command.DeployTask, r model.Report) pkgevents.TaskStatusReport {
 	p := pkgevents.TaskStatusReport{
-		RunID: cmd.ScheduleID, TaskID: cmd.TaskID, Attempt: num.ClampInt32(cmd.Attempt), JobName: cmd.JobName,
+		RunID: cmd.RunID, TaskID: cmd.TaskID, Attempt: num.ClampInt32(cmd.Attempt), JobName: cmd.JobName,
 		Status: r.Status, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ExecutionSeconds: r.ExecutionSeconds, ExitCode: r.ExitCode,
 		ErrorMessage: r.ErrorMessage, LogS3Key: r.LogKey, RunResultsURI: r.RunResultsKey,

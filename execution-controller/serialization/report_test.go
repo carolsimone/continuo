@@ -16,7 +16,7 @@ import (
 func TestReport_IsEmittedAsItsPayloadAndReadsBack(t *testing.T) {
 	queued := time.Date(2026, 10, 20, 23, 1, 20, 0, time.UTC)
 	code, secs := int32(1), 12.5
-	cmd := command.DeployTask{ScheduleID: "run-1", TaskID: "task-1", Attempt: 2, JobName: "svc-sch-tbl-7f3e1a2b-r2"}
+	cmd := command.DeployTask{RunID: "run-1", TaskID: "task-1", Attempt: 2, JobName: "svc-sch-tbl-7f3e1a2b-r2"}
 	r := model.Report{Status: pkgmodel.AttemptStatusFailed, QueuedAt: &queued, ExitCode: &code, ExecutionSeconds: &secs,
 		FailureReason: pkgmodel.FailureReasonExitCode, ErrorMessage: "boom", LogKey: "logs/k"}
 

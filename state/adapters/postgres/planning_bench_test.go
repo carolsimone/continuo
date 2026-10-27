@@ -46,7 +46,7 @@ func BenchmarkStartRun(b *testing.B) {
 			for range b.N {
 				r := startScheduleRun(b, db, tenant, shape.schedule(), op)
 				b.StopTimer()
-				deleteRun(b, db, r.ScheduleID())
+				deleteRun(b, db, r.RunID())
 				b.StartTimer()
 			}
 		})
@@ -104,7 +104,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 	r := startScheduleRun(b, db, tenant, shape.schedule(), model.OperationRun)
 	var keys []string
 	require.NoError(b, db.Select(&keys,
-		`SELECT node_key FROM task_tracker WHERE schedule_id = $1 ORDER BY node_key COLLATE "C"`, r.ScheduleID()))
+		`SELECT node_key FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, r.RunID()))
 	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
 	u := newPlanningUoW(db)
 	reported := map[string]bool{}
@@ -114,14 +114,14 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 		key, status, reason := next(keys, i)
 		if reported[key] {
 			b.StopTimer()
-			restoreRun(b, db, r.ScheduleID())
+			restoreRun(b, db, r.RunID())
 			clear(reported)
 			b.StartTimer()
 		}
 		reported[key] = true
 		require.NoError(b, u.Begin(ctx))
-		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.ScheduleID(), Report: run.AttemptReport{
-			TaskID:        run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey(key)),
+		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.RunID(), Report: run.AttemptReport{
+			TaskID:        run.TaskIDFor(tenant, r.RunID(), topology.NodeKey(key)),
 			Attempt:       0,
 			Status:        status,
 			FailureReason: reason,
@@ -142,29 +142,29 @@ func BenchmarkReconcileDue(b *testing.B) {
 	r := startScheduleRun(b, db, tenant, dag2000.schedule(), model.OperationRun)
 	_, err := db.Exec(`
 		INSERT INTO task_attempts (task_id, attempt, job_name, status, dispatched_at, next_check_at)
-		SELECT task_id, 0, job_name, 'dispatched', now(), now() FROM task_tracker WHERE schedule_id = $1
-		ON CONFLICT (task_id, attempt) DO NOTHING`, r.ScheduleID())
+		SELECT task_id, 0, job_name, 'dispatched', now(), now() FROM tasks WHERE run_id = $1
+		ON CONFLICT (task_id, attempt) DO NOTHING`, r.RunID())
 	require.NoError(b, err)
-	_, err = db.Exec(`UPDATE task_tracker SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
-		WHERE schedule_id = $1`, r.ScheduleID())
+	_, err = db.Exec(`UPDATE tasks SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
+		WHERE run_id = $1`, r.RunID())
 	require.NoError(b, err)
 	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults,
-		noRunMetrics{}, discardLogger())
+		noRunMetrics{}, nil, discardLogger())
 
 	b.ResetTimer()
 	for range b.N {
 		b.StopTimer()
 		_, err := db.Exec(`
 			UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
-			FROM task_tracker t WHERE a.task_id = t.task_id AND t.schedule_id = $1`, r.ScheduleID())
+			FROM tasks t WHERE a.task_id = t.task_id AND t.run_id = $1`, r.RunID())
 		require.NoError(b, err)
-		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
+		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
 		require.NoError(b, err)
 		b.StartTimer()
 		require.NoError(b, loop.Pass(ctx))
 		b.StopTimer()
 		var asked int
-		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID()))
+		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.RunID()))
 		require.Equalf(b, attemptreconcile.DueLimit, asked,
 			"with %d attempts due, a pass must ask about exactly DueLimit (%d) of them, one dispatch each; it asked about %d",
 			dag2000.nodes, attemptreconcile.DueLimit, asked)
@@ -177,6 +177,9 @@ type noRunMetrics struct{}
 func (noRunMetrics) RunStalled()                {}
 func (noRunMetrics) RunsCancelling(_, _ int)    {}
 func (noRunMetrics) RunCancelled(time.Duration) {}
+func (noRunMetrics) LeaseWaiters(int)           {}
+func (noRunMetrics) LeaseGranted(time.Duration) {}
+func (noRunMetrics) LeaseRepaired()             {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)
@@ -186,24 +189,24 @@ func (noRunMetrics) RunCancelled(time.Duration) {}
 func restoreRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
 	_, err := db.Exec(`
-		DELETE FROM task_attempts a USING task_tracker t
-		WHERE a.task_id = t.task_id AND t.schedule_id = $1
+		DELETE FROM task_attempts a USING tasks t
+		WHERE a.task_id = t.task_id AND t.run_id = $1
 		  AND (a.attempt > 0 OR t.dispatched_at IS DISTINCT FROM t.created_at)`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`
 		UPDATE task_attempts a SET status = 'dispatched', finished_at = NULL, failure_class = NULL, failure_reason = NULL,
 		       next_check_at = now() + interval '5 minutes', last_report_at = NULL
-		FROM task_tracker t WHERE a.task_id = t.task_id AND t.schedule_id = $1`, runID)
+		FROM tasks t WHERE a.task_id = t.task_id AND t.run_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`
-		UPDATE task_tracker
+		UPDATE tasks
 		SET status = CASE WHEN dispatched_at = created_at THEN 'dispatched' ELSE 'pending' END, attempt = 0,
 		    dispatched_at = CASE WHEN dispatched_at = created_at THEN dispatched_at END
-		WHERE schedule_id = $1`, runID)
+		WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`
-		UPDATE scheduler_tracker SET status = 'running', terminal_task_count = 0, completed_at = NULL
-		WHERE schedule_id = $1`, runID)
+		UPDATE runs SET status = 'running', terminal_task_count = 0, completed_at = NULL
+		WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
 	require.NoError(tb, err)
@@ -214,6 +217,6 @@ func deleteRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
 	_, err := db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
 	require.NoError(tb, err)
-	_, err = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+	_, err = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
 }
