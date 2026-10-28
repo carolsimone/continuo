@@ -217,7 +217,7 @@ func (m *memorySchedules) ListDue(context.Context, time.Time, int) ([]*schedule.
 	return nil, uow.ErrNotFaked
 }
 
-func (m *memorySchedules) EarliestFire(context.Context) (time.Time, bool, error) {
+func (m *memorySchedules) EarliestFireAfter(context.Context, time.Time) (time.Time, bool, error) {
 	return time.Time{}, false, uow.ErrNotFaked
 }
 

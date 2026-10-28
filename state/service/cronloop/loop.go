@@ -7,7 +7,8 @@
 // was down, are counted and logged. In maintenance mode, or while the
 // schedule's previous run is active, the slot is consumed with no run. Each
 // fire is bounded by FireTimeout. The loop sleeps until the earliest next
-// fire, a wake signal (a change to the schedules) or its tick.
+// fire after its last pass, a wake signal (a change to the schedules) or its
+// tick.
 package cronloop
 
 import (
@@ -33,15 +34,6 @@ const DueLimit = 100
 // in the pass. A fire still going at FireTimeout rolls back and leaves its
 // slot due, and a later pass fires it.
 const FireTimeout = 30 * time.Second
-
-// minWait is the shortest sleep between two passes when a schedule is still
-// due after a pass that fired one: a schedule past DueLimit, or one whose fire
-// a run started at that moment rolled back. It keeps such a schedule from
-// making the loop pass again at once. A schedule still due after a pass that
-// fired none is one no pass can fire yet, such as one whose stored cron no
-// longer parses or whose fire keeps failing, and the loop waits its tick
-// instead.
-const minWait = time.Second
 
 // The outcomes a fire counts, as continuo_cron_fires_total names them.
 const (
@@ -70,18 +62,21 @@ func New(newUoW func() uow.UnitOfWork, starter *handlers.StartRunHandler, metric
 	return &Loop{newUoW: newUoW, starter: starter, metrics: metrics, maintenance: maintenance, logger: logger, fireTimeout: FireTimeout}
 }
 
-// Run passes now, then again when the earliest next fire of any schedule
+// Run passes now, then again when the earliest next fire after the last pass
 // comes, on every signal from wake and at least every tick, until ctx ends. A
-// nil wake leaves the next fire and the tick. When a schedule is still due
-// after a pass, Run waits minWait before the next one if the pass fired a
-// schedule, and tick if it fired none.
+// nil wake leaves the next fire and the tick. A schedule a pass leaves due,
+// one past DueLimit or one it could not fire (its stored cron no longer
+// parses, its fire failed or ran out of time, or another transaction held its
+// row), is tried again by the pass a wake signal or the tick brings. With wake
+// the schedules channel, as state runs it, every committed fire notifies it,
+// so a pass that fired DueLimit schedules is followed by another at once.
 func (l *Loop) Run(ctx context.Context, wake <-chan struct{}, tick time.Duration) {
 	for {
-		fired, err := l.Pass(ctx)
-		if err != nil && ctx.Err() == nil {
+		now := l.newUoW().Clock().Now()
+		if err := l.Pass(ctx, now); err != nil && ctx.Err() == nil {
 			l.logger.Error("Cron loop pass failed", "error", err)
 		}
-		timer := time.NewTimer(l.untilNextFire(ctx, tick, fired > 0))
+		timer := time.NewTimer(l.untilNextFire(ctx, now, tick))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -93,15 +88,22 @@ func (l *Loop) Run(ctx context.Context, wake <-chan struct{}, tick time.Duration
 	}
 }
 
-// untilNextFire is how long Run sleeps after a pass: until the earliest next
-// fire of any schedule, at most tick, and tick when no schedule has a next
-// fire or it cannot be read. A next fire that is not after now is a schedule
-// the pass left due: after a pass that fired a schedule it waits minWait, for
-// the next pass to fire the rest, and after a pass that fired none it waits
-// tick, since no pass can fire that schedule yet.
-func (l *Loop) untilNextFire(ctx context.Context, tick time.Duration, fired bool) time.Duration {
+// untilNextFire is how long Run sleeps after a pass at passedAt: until the
+// earliest next fire after passedAt, no time at all when that has already
+// come, at most tick, and tick when there is none or it cannot be read.
+//
+// A schedule the pass left due has a next fire at or before passedAt, so it
+// does not count, and its next try comes with a wake signal or the tick: a
+// schedule no pass can fire, such as one whose stored cron no longer parses,
+// neither delays the others nor makes the loop pass again and again. No
+// shortest sleep is needed against such a spin either. A next fire after
+// passedAt that has come by now, such as one that came due while the pass
+// ran, makes the loop pass again at once; that pass fires it, and if it
+// cannot, the fire is at or before that pass's own instant and no longer
+// counts. So each next fire brings at most one pass that fires nothing.
+func (l *Loop) untilNextFire(ctx context.Context, passedAt time.Time, tick time.Duration) time.Duration {
 	u := l.newUoW()
-	next, ok, err := u.Schedules().EarliestFire(ctx)
+	next, ok, err := u.Schedules().EarliestFireAfter(ctx, passedAt)
 	if err != nil {
 		if ctx.Err() == nil {
 			l.logger.Error("Cron loop could not read the next fire; it passes again at its tick", "error", err)
@@ -111,66 +113,48 @@ func (l *Loop) untilNextFire(ctx context.Context, tick time.Duration, fired bool
 	if !ok {
 		return tick
 	}
-	wait := next.Sub(u.Clock().Now())
-	if wait <= 0 {
-		if !fired {
-			return tick
-		}
-		wait = minWait
-	}
-	return min(wait, tick)
+	return min(max(next.Sub(u.Clock().Now()), 0), tick)
 }
 
 // Pass fires every schedule of any tenant due at now, up to DueLimit of them,
 // each in a transaction of its own that FireTimeout bounds, then sets the
-// schedules gauge, and returns how many schedules it fired. The due schedules
-// are read without a lock, leaving out those another pass holds; each fire
-// locks its schedule's row and reads it again, so two passes fire a slot once.
-// A fire counts as fired when it consumed its slot, and when a run of the
-// schedule started at that moment rolled it back, which leaves the slot for
-// the next pass to consume. A schedule whose fire fails or runs out of time
-// keeps its slot for a later pass and does not stop the others; Pass returns
-// every failure.
-func (l *Loop) Pass(ctx context.Context) (int, error) {
-	u := l.newUoW()
-	schedules := u.Schedules()
-	now := u.Clock().Now()
+// schedules gauge. The due schedules are read without a lock, leaving out
+// those another pass holds; each fire locks its schedule's row and reads it
+// again, so two passes fire a slot once. A schedule whose fire fails or runs
+// out of time keeps its slot for a later pass and does not stop the others;
+// Pass returns every failure.
+func (l *Loop) Pass(ctx context.Context, now time.Time) error {
+	schedules := l.newUoW().Schedules()
 	due, err := schedules.ListDue(ctx, now, DueLimit)
 	if err != nil {
-		return 0, fmt.Errorf("read the due schedules: %w", err)
+		return fmt.Errorf("read the due schedules: %w", err)
 	}
-	fired := 0
 	var errs []error
 	for _, s := range due {
-		ok, err := l.fireWithin(ctx, s.TenantID(), s.Name(), now)
-		if err != nil {
+		if err := l.fireWithin(ctx, s.TenantID(), s.Name(), now); err != nil {
 			errs = append(errs, err)
-			continue
-		}
-		if ok {
-			fired++
 		}
 	}
 	scheduled, paused, err := schedules.Count(ctx)
 	if err != nil {
-		return fired, errors.Join(append(errs, err)...)
+		return errors.Join(append(errs, err)...)
 	}
 	l.metrics.Schedules(scheduled, paused)
-	return fired, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // fireWithin fires tenantID's schedule name as fire does, within the loop's
 // fire timeout. A fire that runs out of time has rolled back, and its error
 // says so.
-func (l *Loop) fireWithin(ctx context.Context, tenantID, name string, now time.Time) (bool, error) {
+func (l *Loop) fireWithin(ctx context.Context, tenantID, name string, now time.Time) error {
 	fireCtx, cancel := context.WithTimeout(ctx, l.fireTimeout)
 	defer cancel()
-	fired, err := l.fire(fireCtx, tenantID, name, now)
+	err := l.fire(fireCtx, tenantID, name, now)
 	if err != nil && ctx.Err() == nil && errors.Is(fireCtx.Err(), context.DeadlineExceeded) {
-		return false, fmt.Errorf("the fire of schedule %q of tenant %q did not end within %s and rolled back; a later pass fires its slot: %w",
+		return fmt.Errorf("the fire of schedule %q of tenant %q did not end within %s and rolled back; a later pass fires its slot: %w",
 			name, tenantID, l.fireTimeout, err)
 	}
-	return fired, err
+	return err
 }
 
 // fire fires the slot tenantID's schedule name is due for at now, in one
@@ -179,14 +163,12 @@ func (l *Loop) fireWithin(ctx context.Context, tenantID, name string, now time.T
 // is active, and moves the next fire on to the slot after it. A schedule that
 // is gone, or no longer due because another pass fired it or an edit moved its
 // next fire, is left as it is. A run another caller started at the moment of
-// the insert rolls the fire back; the next pass finds that run active. The
-// outcome is counted and logged once the transaction has committed. fire
-// reports whether it fired: it committed the fire, or a run started at that
-// moment rolled it back.
-func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) (bool, error) {
+// the insert rolls the fire back; a later pass finds that run active. The
+// outcome is counted and logged once the transaction has committed.
+func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) error {
 	u := l.newUoW()
 	if err := u.Begin(ctx); err != nil {
-		return false, fmt.Errorf("begin the fire of schedule %q of tenant %q: %w", name, tenantID, err)
+		return fmt.Errorf("begin the fire of schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	committed := false
 	defer func() {
@@ -196,14 +178,14 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) (
 	}()
 	s, ok, err := u.Schedules().LoadForUpdate(ctx, tenantID, name)
 	if err != nil {
-		return false, fmt.Errorf("lock schedule %q of tenant %q: %w", name, tenantID, err)
+		return fmt.Errorf("lock schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	if !ok {
-		return false, nil
+		return nil
 	}
 	slot, missed, due := s.Due(now)
 	if !due {
-		return false, nil
+		return nil
 	}
 	firstMissed, _ := s.NextFireAt()
 
@@ -214,10 +196,10 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) (
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			l.logger.Info("Cron fire rolled back: a run of the schedule started at the moment of the fire; the next pass consumes the slot",
 				"tenant_id", tenantID, "schedule_name", name, "slot", slot)
-			return true, nil
+			return nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("fire the %s slot of schedule %q of tenant %q: %w", slot.UTC().Format(time.RFC3339), name, tenantID, err)
+			return fmt.Errorf("fire the %s slot of schedule %q of tenant %q: %w", slot.UTC().Format(time.RFC3339), name, tenantID, err)
 		}
 		fired, outcome = res, outcomeOf(res)
 	}
@@ -225,17 +207,17 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) (
 	// version read always matches.
 	s.Fired(slot)
 	if err := u.Schedules().Save(ctx, s, s.Version()); err != nil {
-		return false, fmt.Errorf("move the next fire of schedule %q of tenant %q: %w", name, tenantID, err)
+		return fmt.Errorf("move the next fire of schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	next, _ := s.NextFireAt()
 	u.AfterCommit(func() {
 		l.record(tenantID, name, slot, next, fired, outcome, missed, firstMissed)
 	})
 	if err := u.Commit(); err != nil {
-		return false, fmt.Errorf("commit the fire of schedule %q of tenant %q: %w", name, tenantID, err)
+		return fmt.Errorf("commit the fire of schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	committed = true
-	return true, nil
+	return nil
 }
 
 // outcomeOf is the outcome a fire counts for what starting its run did: a

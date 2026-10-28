@@ -179,8 +179,7 @@ func (r *ScheduleRepository) List(ctx context.Context, tenantID string) ([]*sche
 
 // ListStoredCronInvalid reads the cron and timezone of each of the tenant's
 // schedules, ordered by name as List orders them, and names the ones the
-// parser refuses. A
-// repository with no parser cannot tell, so it is an error.
+// parser refuses. A repository with no parser cannot tell, so it is an error.
 func (r *ScheduleRepository) ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error) {
 	if r.parser == nil {
 		return nil, fmt.Errorf("list the unparsable schedules of tenant %q: the repository has no cron parser", tenantID)
@@ -288,10 +287,16 @@ func (r *ScheduleRepository) ListDue(ctx context.Context, now time.Time, limit i
 	return r.hydrateAll(rows)
 }
 
-// EarliestFire reads the earliest next fire among the schedules of every tenant.
-func (r *ScheduleRepository) EarliestFire(ctx context.Context) (time.Time, bool, error) {
+// EarliestFireAfter reads the earliest next fire after `after` among the
+// schedules of every tenant. next_fire_at holds microseconds, and Postgres
+// rounds a finer parameter to the nearest one, which would leave out a fire
+// less than half a microsecond after `after`. So `after` is truncated to the
+// microsecond first: no stored microsecond lies between the two, and the
+// comparison stays exactly "strictly after".
+func (r *ScheduleRepository) EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error) {
 	var earliest sql.NullTime
-	if err := sqlx.GetContext(ctx, r.conn(), &earliest, `SELECT min(next_fire_at) FROM schedules`); err != nil {
+	if err := sqlx.GetContext(ctx, r.conn(), &earliest,
+		`SELECT min(next_fire_at) FROM schedules WHERE next_fire_at > $1`, after.Truncate(time.Microsecond)); err != nil {
 		return time.Time{}, false, fmt.Errorf("read the earliest schedule fire: %w", err)
 	}
 	if !earliest.Valid {

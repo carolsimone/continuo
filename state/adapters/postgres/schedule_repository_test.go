@@ -24,10 +24,10 @@ import (
 var _ repository.ScheduleRepository = (*postgres.ScheduleRepository)(nil)
 
 // The database these tests use is shared with every other test of the module,
-// which run at the same time in other packages, and ListDue and EarliestFire
+// which run at the same time in other packages, and ListDue and EarliestFireAfter
 // read the schedules of every tenant. So that no other session meets a row of
 // these tests:
-//   - A test that scans (ListDue, EarliestFire, an unparseable row) inserts its
+//   - A test that scans (ListDue, EarliestFireAfter, an unparseable row) inserts its
 //     rows in a transaction that is rolled back, which no other session sees.
 //   - The one test that needs two sessions commits rows whose next fires are in
 //     the year 2999 and reads them with a `now` just after, which a pass at the
@@ -448,29 +448,49 @@ func TestSchedules_ListDueSkipsARowAnotherTransactionHolds(t *testing.T) {
 	assert.True(t, ok)
 }
 
-// EarliestFire is the earliest next fire among the schedules of every tenant;
-// a schedule with none, which is what a paused one has, is not counted.
-func TestSchedules_EarliestFireSpansTenants(t *testing.T) {
+// EarliestFireAfter is the earliest next fire strictly after its bound among
+// the schedules of every tenant; a schedule with none, which is what a paused
+// one has, is not counted. A fire at the bound is not after it, and a bound
+// finer than the column's microseconds still counts a fire less than a
+// microsecond after it. The rows are in 1971 and 1972, earlier than any row
+// another test commits, and are inserted in a transaction that is rolled back.
+func TestSchedules_EarliestFireAfterSpansTenantsAndIsStrict(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
 	tx := scratchTx(t, db)
 	repo := newScheduleRepo(db, tx, parser)
 	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
-	later := time.Date(1972, 1, 1, 0, 0, 0, 0, time.UTC)
-	earliest := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
-	rawSchedule(t, tx, tenant, "later", "0 * * * *", "UTC", &later)
-	got, ok, err := repo.EarliestFire(ctx)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.True(t, later.Equal(got), "one tenant's next fire: got %s", got)
-
-	rawSchedule(t, tx, other, "earliest", "0 * * * *", "UTC", &earliest)
+	first := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
+	second := time.Date(1972, 1, 1, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, tx, tenant, "second", "0 * * * *", "UTC", &second)
+	rawSchedule(t, tx, other, "first", "0 * * * *", "UTC", &first)
 	rawSchedule(t, tx, other, "paused", "0 * * * *", "UTC", nil)
-	got, ok, err = repo.EarliestFire(ctx)
+
+	for _, c := range []struct {
+		name        string
+		after, want time.Time
+	}{
+		{"before both: the earlier of two tenants' fires", time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), first},
+		{"a microsecond before the first", first.Add(-time.Microsecond), first},
+		{"less than a microsecond before the first", first.Add(-time.Nanosecond), first},
+		{"at the first, which is not after it", first, second},
+		{"just after the first", first.Add(time.Nanosecond), second},
+	} {
+		got, ok, err := repo.EarliestFireAfter(ctx, c.after)
+		require.NoError(t, err, c.name)
+		require.True(t, ok, c.name)
+		assert.True(t, c.want.Equal(got), "%s: got %s", c.name, got)
+	}
+
+	got, ok, err := repo.EarliestFireAfter(ctx, second)
 	require.NoError(t, err)
-	require.True(t, ok)
-	assert.True(t, earliest.Equal(got), "the earlier of two tenants' next fires: got %s", got)
+	if ok {
+		assert.True(t, got.After(second), "a fire after the last of these rows is another test's: got %s", got)
+	}
+	_, ok, err = repo.EarliestFireAfter(ctx, time.Date(9000, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.False(t, ok, "no schedule fires after the year 9000")
 }
 
 // A stored cron or timezone the parser refuses does not stop a pass: ListDue

@@ -447,7 +447,7 @@ func main() {
 	// cronLoopTick. Each fire is bounded by cronloop.FireTimeout. Maintenance
 	// mode consumes each due slot with no run. Its goroutine is tracked, and
 	// shutdown cancels its context before draining it: a fire in progress
-	// rolls back, and its slot fires once, late, when state starts again.
+	// rolls back, and its slot fires once, late, on a later pass.
 	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.SchedulesChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the schedules listener")

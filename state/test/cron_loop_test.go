@@ -249,8 +249,7 @@ func (c *cronTenant) passUntil(t *testing.T, loop *cronloop.Loop, done func() bo
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		_, err := loop.Pass(context.Background())
-		require.NoError(t, err)
+		require.NoError(t, loop.Pass(context.Background(), c.clock.Now()))
 		if done() {
 			return
 		}
@@ -311,8 +310,7 @@ func TestCronLoop_TwoPassesOnOneSlotMakeOneRun(t *testing.T) {
 	for range 2 {
 		go func() {
 			<-start
-			_, err := c.loop(false).Pass(context.Background())
-			errs <- err
+			errs <- c.loop(false).Pass(context.Background(), c.clock.Now())
 		}()
 	}
 	close(start)
@@ -335,9 +333,7 @@ func TestCronLoop_ARestartAcrossADueSlotFiresItOnceLate(t *testing.T) {
 	c.schedule(t, "daily", "0 1 * * *", slot)
 
 	c.passUntil(t, c.loop(false), c.movedFrom(t, "daily", slot))
-	fired, err := c.loop(false).Pass(context.Background())
-	require.NoError(t, err)
-	assert.Zero(t, fired, "the slot that fired is not fired again")
+	require.NoError(t, c.loop(false).Pass(context.Background(), c.clock.Now()))
 
 	runs := c.runs(t, "daily")
 	require.Len(t, runs, 1)
@@ -541,8 +537,7 @@ func TestCronLoop_AnUpsertRacingTheFireLeavesOneRunAndTheNewCron(t *testing.T) {
 
 	fired := make(chan error, 1)
 	go func() {
-		_, err := c.loop(false).Pass(ctx)
-		fired <- err
+		fired <- c.loop(false).Pass(ctx, c.clock.Now())
 	}()
 	waitForLockWaiters(t, 1)
 	saved := make(chan error, 1)
@@ -597,9 +592,10 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 }
 
 // A due schedule whose stored cron no longer parses is left out of every pass
-// and keeps its past next fire. A pass that fired nothing cannot fire it
-// either, so the loop waits its hour-long tick rather than passing again a
-// second later: in a second and a half it passes, and logs the row, once.
+// and keeps its past next fire, which is not after the pass and so does not
+// count toward the next fire the loop sleeps until. The loop waits its
+// hour-long tick rather than passing again and again: in a second and a half
+// it passes, and logs the row, once.
 func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

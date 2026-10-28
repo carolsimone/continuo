@@ -69,9 +69,11 @@ type ScheduleRepository interface {
 	// stop the others; it still counts toward limit.
 	ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
 
-	// EarliestFire returns the earliest next fire of any tenant's schedules,
-	// and false when none has one: a paused schedule has none.
-	EarliestFire(ctx context.Context) (time.Time, bool, error)
+	// EarliestFireAfter returns the earliest next fire of any tenant's
+	// schedules that is strictly after `after`, and false when none has one:
+	// a paused schedule has none. Every row counts, whether or not its stored
+	// cron still parses; a next fire at or before `after` does not.
+	EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error)
 
 	// Count returns how many schedules of every tenant are scheduled, which
 	// is every schedule not paused, and how many are paused.
