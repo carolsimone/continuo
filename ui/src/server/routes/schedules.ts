@@ -52,6 +52,15 @@ function toISOList(times: any): string[] {
   return (times || []).map(toISO).filter((t: string | null): t is string => t !== null);
 }
 
+// grpcDetails is the text of a failed RunService call that the cron routes
+// answer with: state's own message (the parser's, for a refused cron), which
+// grpc-js keeps in details while its message prefixes it with the status
+// code and name. An error raised before the call reached state has no
+// details and keeps its own message.
+function grpcDetails(err: any): string {
+  return (typeof err?.details === 'string' && err.details) || err?.message || '';
+}
+
 // queryString reads a query parameter sent once; an absent or repeated one is
 // empty.
 function queryString(value: unknown): string {
@@ -102,7 +111,7 @@ export function createSchedulesRouter(client: GrpcClient) {
     client.listSchedules({}, (listErr: any, listResp: any) => {
       const current = listErr ? undefined : (listResp?.schedules || []).find((s: any) => s.schedule_name === name);
       const updatedBy = current?.cron ? current.updated_by || null : null;
-      res.status(409).json({ error: err.message, code: STALE_VERSION_CODE, updated_by: updatedBy });
+      res.status(409).json({ error: grpcDetails(err), code: STALE_VERSION_CODE, updated_by: updatedBy });
     });
   };
 
@@ -119,7 +128,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   router.get('/cron-preview', (req, res) => {
     const request = { cron: queryString(req.query.cron), timezone: queryString(req.query.timezone) };
     client.previewSchedule(request, (err: any, response: any) => {
-      if (err) return sendGrpcError(res, err);
+      if (err) return sendGrpcError(res, err, grpcDetails(err));
       res.json({ cron_words: response.cron_words ?? '', next_fire_times: toISOList(response.next_fire_times) });
     });
   });
@@ -197,7 +206,7 @@ export function createSchedulesRouter(client: GrpcClient) {
       userMetadata(req),
       (err: any, response: any) => {
         if (err?.code === grpc.status.ABORTED) return sendStaleVersion(res, req.params.name, err);
-        if (err) return sendGrpcError(res, err);
+        if (err) return sendGrpcError(res, err, grpcDetails(err));
         res.json({
           schedule: response.schedule ? toSchedule(response.schedule) : null,
           next_fire_times: toISOList(response.next_fire_times),
@@ -211,7 +220,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   // succeeds.
   router.delete('/:name/cron', (req, res) => {
     client.deleteSchedule({ schedule_name: req.params.name }, userMetadata(req), (err: any) => {
-      if (err) return sendGrpcError(res, err);
+      if (err) return sendGrpcError(res, err, grpcDetails(err));
       res.status(204).end();
     });
   });

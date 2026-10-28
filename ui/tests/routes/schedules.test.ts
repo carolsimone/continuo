@@ -4,7 +4,7 @@ import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { createSchedulesRouter } from '../../src/server/routes/schedules';
 import { USER_ID_METADATA_KEY } from '../../src/server/clients/grpc-client';
-import { MAINTENANCE_CODE, MAINTENANCE_TRAILER_KEY } from '../../src/server/maintenance';
+import { MAINTENANCE_CODE, MAINTENANCE_MESSAGE, MAINTENANCE_TRAILER_KEY } from '../../src/server/maintenance';
 
 const mockStartRun = vi.fn();
 const mockListSchedules = vi.fn();
@@ -24,9 +24,13 @@ const mockStateClient = {
   previewSchedule: mockPreviewSchedule,
 };
 
-// grpcError builds a failed call as @grpc/grpc-js reports one.
-function grpcError(code: grpc.status, message: string, metadata?: grpc.Metadata) {
-  return Object.assign(new Error(message), { code, details: message, metadata: metadata ?? new grpc.Metadata() });
+// grpcError builds a failed call as @grpc/grpc-js reports one: details is
+// the server's own text, and message prefixes it with the status code and
+// name (callErrorFromStatus).
+function grpcError(code: grpc.status, details: string, metadata?: grpc.Metadata) {
+  return Object.assign(new Error(`${code} ${grpc.status[code]}: ${details}`), {
+    code, details, metadata: metadata ?? new grpc.Metadata(),
+  });
 }
 
 function maintenanceError() {
@@ -465,7 +469,7 @@ describe('routes/schedules: PUT /:name/cron', () => {
     const res = await request(app).put('/api/schedules/ghost/cron').send(body);
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toMatch(/no model of the live release/);
+    expect(res.body).toEqual({ error: 'schedule "ghost": no model of the live release belongs to this schedule' });
   });
 
   it('answers 503 maintenance when state refuses the edit in maintenance mode', async () => {
@@ -474,7 +478,7 @@ describe('routes/schedules: PUT /:name/cron', () => {
     const res = await request(app).put('/api/schedules/daily/cron').send(body);
 
     expect(res.status).toBe(503);
-    expect(res.body.code).toBe(MAINTENANCE_CODE);
+    expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });
   });
 
   it.each([
@@ -517,7 +521,17 @@ describe('routes/schedules: DELETE /:name/cron', () => {
     const res = await request(app).delete('/api/schedules/daily/cron');
 
     expect(res.status).toBe(503);
-    expect(res.body.code).toBe(MAINTENANCE_CODE);
+    expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });
+  });
+
+  it("answers a refused removal with state's own message", async () => {
+    mockDeleteSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required')));
+
+    const res = await request(app).delete('/api/schedules/%20/cron');
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'schedule_name is required' });
   });
 });
 
@@ -569,5 +583,30 @@ describe('routes/schedules: GET /cron-preview', () => {
     await request(app).get('/api/schedules/cron-preview?timezone=UTC&timezone=Europe%2FParis');
 
     expect(mockPreviewSchedule).toHaveBeenCalledWith({ cron: '', timezone: '' }, expect.any(Function));
+  });
+});
+
+// A failure raised before a call reached the server (no status details) is
+// answered with its own message, never an empty body.
+describe('routes/schedules: a cron route failure with no details', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it.each([
+    ['GET /cron-preview', () => {
+      mockPreviewSchedule.mockImplementation((_req: any, cb: any) => cb(new Error('boom')));
+      return request(app).get('/api/schedules/cron-preview?cron=%40daily&timezone=UTC');
+    }],
+    ['PUT /:name/cron', () => {
+      mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(new Error('boom')));
+      return request(app).put('/api/schedules/daily/cron').send({ cron: '@daily', timezone: 'UTC' });
+    }],
+    ['DELETE /:name/cron', () => {
+      mockDeleteSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(new Error('boom')));
+      return request(app).delete('/api/schedules/daily/cron');
+    }],
+  ])('%s answers 500 with the error itself', async (_label, send) => {
+    const res = await send();
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'boom' });
   });
 });
