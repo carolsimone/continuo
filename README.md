@@ -56,9 +56,10 @@ into one dependency graph, and it heals broken pipelines by having an LLM
   ([how](deploy/README.md#releasing-with-your-own-token)). continuo compiles
   the project and derives the rest.
 - **Also:** dbt, Python scripts, and contract-only CSV loads on one contract;
-  bring your own dbt image; schedules in one YAML file; each node runs as its
-  own Kubernetes Job in dependency order; circular dependencies fail at CD;
-  runs on your Kubernetes via Helm, so data stays inside your perimeter.
+  bring your own dbt image; crons set in the ui or with the CLI; each node
+  runs as its own Kubernetes Job in dependency order; circular dependencies
+  fail at CD; runs on your Kubernetes via Helm, so data stays inside your
+  perimeter.
 
 What is not there yet — remediation for failed production runs, streaming and
 batch under one control plane, performance regression detection — is in the

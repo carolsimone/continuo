@@ -4,18 +4,39 @@ import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { createSchedulesRouter } from '../../src/server/routes/schedules';
 import { USER_ID_METADATA_KEY } from '../../src/server/clients/grpc-client';
+import { MAINTENANCE_CODE, MAINTENANCE_TRAILER_KEY } from '../../src/server/maintenance';
 
 const mockStartRun = vi.fn();
 const mockListSchedules = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetScheduleGraph = vi.fn();
+const mockUpsertSchedule = vi.fn();
+const mockDeleteSchedule = vi.fn();
+const mockPreviewSchedule = vi.fn();
 
 const mockStateClient = {
   startRun: mockStartRun,
   listSchedules: mockListSchedules,
   listRuns: mockListRuns,
   getScheduleGraph: mockGetScheduleGraph,
+  upsertSchedule: mockUpsertSchedule,
+  deleteSchedule: mockDeleteSchedule,
+  previewSchedule: mockPreviewSchedule,
 };
+
+// grpcError builds a failed call as @grpc/grpc-js reports one.
+function grpcError(code: grpc.status, message: string, metadata?: grpc.Metadata) {
+  return Object.assign(new Error(message), { code, details: message, metadata: metadata ?? new grpc.Metadata() });
+}
+
+function maintenanceError() {
+  const md = new grpc.Metadata();
+  md.set(MAINTENANCE_TRAILER_KEY, 'true');
+  return grpcError(grpc.status.UNAVAILABLE, 'maintenance mode is on', md);
+}
+
+// A Timestamp as @grpc/grpc-js decodes it, int64 seconds as a string.
+const ts = (iso: string) => ({ seconds: String(Date.parse(iso) / 1000), nanos: 0 });
 
 const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
 
@@ -26,14 +47,17 @@ app.use('/api/schedules', createSchedulesRouter(mockStateClient as any));
 describe('GET /api/schedules', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('returns the state schedule catalog without drift fields', async () => {
+  it('returns each schedule with its cron, its models and its last run', async () => {
     mockListSchedules.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         schedules: [
-          { schedule_name: 'daily', cron_expression: '0 0 * * *', description: '', timezone: 'UTC',
-            has_active_run: true, last_run_at: null, last_run_status: 'running', last_run_id: 'run-1' },
-          { schedule_name: 'hourly', cron_expression: '0 * * * *', description: '', timezone: 'UTC',
-            has_active_run: false, last_run_at: null, last_run_status: 'succeeded', last_run_id: 'run-0' },
+          { schedule_name: 'daily', cron: '0 1 * * *', description: 'Runs daily at 1am CET', timezone: 'Europe/Paris',
+            paused: false, next_fire_at: ts('2026-10-28T00:00:00Z'), version: '3', updated_by: 'alice@example.com',
+            updated_at: ts('2026-10-21T12:02:00Z'), model_count: 41, cron_words: 'every day at 01:00',
+            has_active_run: true, last_run_at: ts('2026-10-27T00:00:04Z'), last_run_status: 'running', last_run_id: 'run-1' },
+          { schedule_name: 'e2e-schedule', cron: '', description: '', timezone: '', paused: false, next_fire_at: null,
+            version: '0', updated_by: '', updated_at: null, model_count: 5, cron_words: '',
+            has_active_run: false, last_run_at: null, last_run_status: '', last_run_id: '' },
         ],
       })
     );
@@ -41,20 +65,19 @@ describe('GET /api/schedules', () => {
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(200);
-    expect(res.body.schedules).toHaveLength(2);
-
-    const daily = res.body.schedules.find((s: any) => s.schedule_name === 'daily');
-    expect(daily).toMatchObject({
-      schedule_name: 'daily',
-      cron_expression: '0 0 * * *',
-      has_active_run: true,
-      last_run_id: 'run-1',
-      last_run_status: 'running',
-    });
-    expect(daily).not.toHaveProperty('is_running');
-    expect(daily).not.toHaveProperty('active_run_promotion_seq');
-    expect(daily).not.toHaveProperty('active_run_id');
-
+    expect(res.body.schedules).toEqual([
+      {
+        schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily at 1am CET',
+        paused: false, next_fire_at: '2026-10-28T00:00:00.000Z', version: 3, updated_by: 'alice@example.com',
+        updated_at: '2026-10-21T12:02:00.000Z', model_count: 41, cron_words: 'every day at 01:00',
+        has_active_run: true, last_run_at: '2026-10-27T00:00:04.000Z', last_run_status: 'running', last_run_id: 'run-1',
+      },
+      {
+        schedule_name: 'e2e-schedule', cron: '', timezone: '', description: '', paused: false, next_fire_at: null,
+        version: 0, updated_by: '', updated_at: null, model_count: 5, cron_words: '',
+        has_active_run: false, last_run_at: null, last_run_status: '', last_run_id: null,
+      },
+    ]);
     expect(res.body).not.toHaveProperty('latest_promotion_seq');
   });
 
@@ -344,5 +367,207 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
       .mockImplementationOnce((_req: any, cb: any) => cb(new Error('grpc error')));
     expect((await request(app).get('/api/schedules/%20/graph')).status).toBe(400);
     expect((await request(app).get('/api/schedules/bad-name/graph')).status).toBe(500);
+  });
+});
+
+describe('routes/schedules: PUT /:name/cron', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const body = { cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: true, expected_version: 3 };
+
+  it('saves the cron with the caller as metadata and answers with the schedule as saved', async () => {
+    let seenUserId: string | undefined;
+    mockUpsertSchedule.mockImplementation((req: any, md: any, cb: any) => {
+      expect(req).toEqual({ schedule_name: 'daily', ...body });
+      seenUserId = md.get(USER_ID_METADATA_KEY)[0];
+      cb(null, {
+        schedule: { schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily',
+          paused: true, next_fire_at: null, version: '4', updated_by: 'system', updated_at: ts('2026-10-28T09:00:00Z') },
+        next_fire_times: [],
+      });
+    });
+
+    const res = await request(app).put('/api/schedules/daily/cron').send(body);
+
+    expect(res.status).toBe(200);
+    expect(seenUserId).toBe('system');
+    expect(res.body).toEqual({
+      schedule: { schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily',
+        paused: true, next_fire_at: null, version: 4, updated_by: 'system', updated_at: '2026-10-28T09:00:00.000Z' },
+      next_fire_times: [],
+    });
+  });
+
+  it('sends the optional fields as their zero values and takes no request id', async () => {
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(null, { schedule: null, next_fire_times: [] }));
+
+    await request(app).put('/api/schedules/daily/cron').send({ cron: '@daily', timezone: 'UTC' });
+
+    expect(mockUpsertSchedule).toHaveBeenCalledWith(
+      { schedule_name: 'daily', cron: '@daily', timezone: 'UTC', description: '', paused: false, expected_version: 0 },
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('routes/schedules PUT /:name/cron maps Aborted to 409', async () => {
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.ABORTED, 'schedule was changed by another edit')));
+    mockListSchedules.mockImplementation((_req: any, cb: any) => cb(null, {
+      schedules: [
+        { schedule_name: 'hourly', cron: '0 * * * *', updated_by: 'carol@example.com' },
+        { schedule_name: 'daily', cron: '0 2 * * *', updated_by: 'bob@example.com' },
+      ],
+    }));
+
+    const res = await request(app).put('/api/schedules/daily/cron').send(body);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: 'schedule was changed by another edit', code: 'stale_version', updated_by: 'bob@example.com',
+    });
+    expect(res.headers['retry-after']).toBeUndefined();
+  });
+
+  it('names nobody in a 409 when the cron was removed meanwhile or the re-read fails', async () => {
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.ABORTED, 'schedule was changed by another edit')));
+    mockListSchedules
+      .mockImplementationOnce((_req: any, cb: any) => cb(null, {
+        schedules: [{ schedule_name: 'daily', cron: '', updated_by: '' }],
+      }))
+      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('state down')));
+
+    const removed = await request(app).put('/api/schedules/daily/cron').send(body);
+    const unread = await request(app).put('/api/schedules/daily/cron').send(body);
+
+    for (const res of [removed, unread]) {
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'stale_version', updated_by: null });
+    }
+  });
+
+  it("answers 400 with the parser's message for a refused cron", async () => {
+    const message = 'cron "0 25 * * *": end of range (25) above maximum (23): 25';
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.INVALID_ARGUMENT, message)));
+
+    const res = await request(app).put('/api/schedules/daily/cron').send({ ...body, cron: '0 25 * * *' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: message });
+  });
+
+  it('answers 404 for a first cron of a name no model of the live release has', async () => {
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.NOT_FOUND, 'schedule "ghost": no model of the live release belongs to this schedule')));
+
+    const res = await request(app).put('/api/schedules/ghost/cron').send(body);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/no model of the live release/);
+  });
+
+  it('answers 503 maintenance when state refuses the edit in maintenance mode', async () => {
+    mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
+
+    const res = await request(app).put('/api/schedules/daily/cron').send(body);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe(MAINTENANCE_CODE);
+  });
+
+  it.each([
+    ['no body', undefined],
+    ['a cron that is not a string', { cron: 5, timezone: 'UTC' }],
+    ['a missing timezone', { cron: '@daily' }],
+    ['a description that is not a string', { cron: '@daily', timezone: 'UTC', description: 3 }],
+    ['paused that is not a boolean', { cron: '@daily', timezone: 'UTC', paused: 'yes' }],
+    ['a negative expected_version', { cron: '@daily', timezone: 'UTC', expected_version: -1 }],
+    ['a fractional expected_version', { cron: '@daily', timezone: 'UTC', expected_version: 1.5 }],
+  ])('refuses %s with 400 and no gRPC call', async (_label, payload) => {
+    const req = request(app).put('/api/schedules/daily/cron');
+    const res = await (payload === undefined ? req : req.send(payload));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toEqual(expect.any(String));
+    expect(mockUpsertSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('routes/schedules: DELETE /:name/cron', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('removes the cron with the caller as metadata and answers 204', async () => {
+    let seenUserId: string | undefined;
+    mockDeleteSchedule.mockImplementation((req: any, md: any, cb: any) => {
+      expect(req).toEqual({ schedule_name: 'daily' });
+      seenUserId = md.get(USER_ID_METADATA_KEY)[0];
+      cb(null, {});
+    });
+
+    const res = await request(app).delete('/api/schedules/daily/cron');
+
+    expect(res.status).toBe(204);
+    expect(seenUserId).toBe('system');
+  });
+
+  it('answers 503 maintenance when state refuses the removal in maintenance mode', async () => {
+    mockDeleteSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
+
+    const res = await request(app).delete('/api/schedules/daily/cron');
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe(MAINTENANCE_CODE);
+  });
+});
+
+describe('routes/schedules: GET /cron-preview', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('answers with the cron in words and its next three fires', async () => {
+    mockPreviewSchedule.mockImplementation((req: any, cb: any) => {
+      expect(req).toEqual({ cron: '0 1 * * *', timezone: 'Europe/Paris' });
+      cb(null, {
+        cron_words: 'every day at 01:00',
+        next_fire_times: [ts('2026-10-28T00:00:00Z'), ts('2026-10-29T00:00:00Z'), ts('2026-10-30T00:00:00Z')],
+      });
+    });
+
+    const res = await request(app).get('/api/schedules/cron-preview').query({ cron: '0 1 * * *', timezone: 'Europe/Paris' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      cron_words: 'every day at 01:00',
+      next_fire_times: ['2026-10-28T00:00:00.000Z', '2026-10-29T00:00:00.000Z', '2026-10-30T00:00:00.000Z'],
+    });
+  });
+
+  it('is served by the preview, not by a route of a schedule named cron-preview', async () => {
+    mockPreviewSchedule.mockImplementation((_req: any, cb: any) => cb(null, { cron_words: '', next_fire_times: [] }));
+
+    const res = await request(app).get('/api/schedules/cron-preview?cron=%40daily&timezone=UTC');
+
+    expect(res.status).toBe(200);
+    expect(mockPreviewSchedule).toHaveBeenCalledTimes(1);
+    expect(mockGetScheduleGraph).not.toHaveBeenCalled();
+    expect(mockListRuns).not.toHaveBeenCalled();
+  });
+
+  it("answers 400 with the parser's message", async () => {
+    mockPreviewSchedule.mockImplementation((_req: any, cb: any) =>
+      cb(grpcError(grpc.status.INVALID_ARGUMENT, 'unknown timezone "Mars/Olympus": use an IANA zone such as Europe/Paris or UTC')));
+
+    const res = await request(app).get('/api/schedules/cron-preview?cron=%40daily&timezone=Mars%2FOlympus');
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'unknown timezone "Mars/Olympus": use an IANA zone such as Europe/Paris or UTC' });
+  });
+
+  it('sends an absent or repeated query value as empty, for state to refuse', async () => {
+    mockPreviewSchedule.mockImplementation((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'cron is empty')));
+
+    await request(app).get('/api/schedules/cron-preview?timezone=UTC&timezone=Europe%2FParis');
+
+    expect(mockPreviewSchedule).toHaveBeenCalledWith({ cron: '', timezone: '' }, expect.any(Function));
   });
 });
