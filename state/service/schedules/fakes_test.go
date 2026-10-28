@@ -120,9 +120,9 @@ func (m *memorySchedules) Get(_ context.Context, tenantID, name string) (*schedu
 	return s, true, nil
 }
 
-// GetForUpdate reads the row as Get does, without running afterGet: the fake
+// LoadForUpdate reads the row as Get does, without running afterGet: the fake
 // holds no transaction, so there is no row lock to take.
-func (m *memorySchedules) GetForUpdate(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+func (m *memorySchedules) LoadForUpdate(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	if m.failWith != nil {
 		return nil, false, m.failWith
 	}
@@ -213,7 +213,7 @@ func (m *memorySchedules) Delete(_ context.Context, tenantID, name string) (bool
 	return ok, nil
 }
 
-func (m *memorySchedules) LockDue(context.Context, time.Time, int) ([]*schedule.Schedule, error) {
+func (m *memorySchedules) ListDue(context.Context, time.Time, int) ([]*schedule.Schedule, error) {
 	return nil, uow.ErrNotFaked
 }
 

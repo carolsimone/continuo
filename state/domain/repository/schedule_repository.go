@@ -22,11 +22,11 @@ type ScheduleRepository interface {
 	// or not its stored cron still parses.
 	Exists(ctx context.Context, tenantID, name string) (bool, error)
 
-	// GetForUpdate is Get inside the open transaction, and locks the
-	// schedule's row until the transaction ends: it waits for a transaction
-	// that holds the row, then reads the row as that transaction left it. A
-	// call outside a transaction is an error.
-	GetForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
+	// LoadForUpdate is the write path's read: Get inside the open
+	// transaction, which locks the schedule's row until the transaction ends.
+	// It waits for a transaction that holds the row, then reads the row as
+	// that transaction left it. A call outside a transaction is an error.
+	LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
 	// List returns the tenant's schedules, ordered by name. A schedule whose
 	// stored cron or timezone no longer parses is left out and logged, not
@@ -58,14 +58,16 @@ type ScheduleRepository interface {
 	// there was one, whether or not its stored cron still parses.
 	Delete(ctx context.Context, tenantID, name string) (bool, error)
 
-	// LockDue returns, oldest next fire first, up to limit schedules of any
-	// tenant whose next fire is at or before now, and locks them until the
-	// transaction ends. A schedule another transaction has locked is left out
-	// rather than waited for, so concurrent passes take different schedules. A
-	// schedule whose stored cron or timezone no longer parses is left out and
-	// logged, not returned, so one bad row does not stop the others; its row
-	// stays locked and counts toward limit.
-	LockDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
+	// ListDue returns, oldest next fire first, up to limit schedules of any
+	// tenant whose next fire is at or before now. A schedule whose row another
+	// transaction holds at that moment, such as one a fire has locked, is left
+	// out rather than waited for, so a pass does not queue behind another
+	// pass's fire. Outside a transaction ListDue holds no lock once it has
+	// returned; inside one, the rows it returns stay locked until the
+	// transaction ends. A schedule whose stored cron or timezone no longer
+	// parses is left out and logged, not returned, so one bad row does not
+	// stop the others; it still counts toward limit.
+	ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
 
 	// EarliestFire returns the earliest next fire of any tenant's schedules,
 	// and false when none has one: a paused schedule has none.

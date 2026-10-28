@@ -16,7 +16,7 @@ var (
 	// ErrStoredCronInvalid is returned by ScheduleRepository.Get when the
 	// cron or timezone stored for a schedule no longer parses (a zone the
 	// timezone database has dropped, or a row written by hand), as a
-	// *StoredCronInvalidError. List and LockDue leave such a schedule out and
+	// *StoredCronInvalidError. List and ListDue leave such a schedule out and
 	// log it, and Save and Delete work on its row.
 	ErrStoredCronInvalid = errors.New("stored cron or timezone does not parse")
 

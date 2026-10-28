@@ -16,6 +16,11 @@ const (
 	everyHour = 1<<24 - 1
 )
 
+var (
+	_ schedule.Expression = elapsedExpression{}
+	_ schedule.Expression = wallClockExpression{}
+)
+
 // newExpression returns the expression of spec in loc.
 //
 // A cron that fires in every hour of the day (`0 * * * *`, `*/15 * * * *`,

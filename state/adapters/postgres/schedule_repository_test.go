@@ -24,10 +24,10 @@ import (
 var _ repository.ScheduleRepository = (*postgres.ScheduleRepository)(nil)
 
 // The database these tests use is shared with every other test of the module,
-// which run at the same time in other packages, and LockDue and EarliestFire
+// which run at the same time in other packages, and ListDue and EarliestFire
 // read the schedules of every tenant. So that no other session meets a row of
 // these tests:
-//   - A test that scans (LockDue, EarliestFire, an unparseable row) inserts its
+//   - A test that scans (ListDue, EarliestFire, an unparseable row) inserts its
 //     rows in a transaction that is rolled back, which no other session sees.
 //   - The one test that needs two sessions commits rows whose next fires are in
 //     the year 2999 and reads them with a `now` just after, which a pass at the
@@ -368,10 +368,10 @@ func TestSchedules_TwoCreatorsOfOneNameLeaveOneRow(t *testing.T) {
 	assert.Equal(t, int64(1), stored.Version())
 }
 
-// LockDue takes the due schedules of every tenant, the earliest next fire
+// ListDue takes the due schedules of every tenant, the earliest next fire
 // first, up to the limit, and leaves the rest and the schedules with no next
 // fire alone.
-func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
+func TestSchedules_ListDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -388,7 +388,7 @@ func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 	rawSchedule(t, tx, tenant, "d-not-yet", "0 * * * *", "UTC", at(1975, 6, 1))
 	rawSchedule(t, tx, tenant, "e-no-fire", "0 * * * *", "UTC", nil)
 
-	all, err := repo.LockDue(ctx, *at(1975, 2, 1), 10)
+	all, err := repo.ListDue(ctx, *at(1975, 2, 1), 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b-second", "c-third"}, namesOf(tenant, all))
 	assert.Equal(t, []string{"a-first"}, namesOf(other, all), "every tenant's due schedules are taken")
@@ -396,18 +396,20 @@ func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 	assert.Equal(t, other, all[0].TenantID(), "the earliest next fire comes first")
 	assert.Equal(t, "a-first", all[0].Name())
 
-	limited, err := repo.LockDue(ctx, *at(1975, 2, 1), 2)
+	limited, err := repo.ListDue(ctx, *at(1975, 2, 1), 2)
 	require.NoError(t, err)
 	require.Len(t, limited, 2)
 	assert.Equal(t, "a-first", limited[0].Name())
 	assert.Equal(t, "b-second", limited[1].Name())
 }
 
-// A pass that finds a schedule locked by another pass leaves it out instead of
-// waiting for that pass, so two passes never take the same schedule, and takes
-// it once the other pass has ended. The rows are committed, for the passes are
-// two sessions; their next fires are in the year 2999.
-func TestSchedules_LockDueSkipsARowAnotherPassHolds(t *testing.T) {
+// A pass leaves out a due schedule whose row another transaction holds, such
+// as another replica's fire of it, instead of waiting for that transaction,
+// and takes it once the transaction has ended. Called outside a transaction,
+// as the cron loop calls it, ListDue keeps no lock once it has returned. The
+// rows are committed, for the holder and the pass are two sessions; their next
+// fires are in the year 2999.
+func TestSchedules_ListDueSkipsARowAnotherTransactionHolds(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -421,29 +423,29 @@ func TestSchedules_LockDueSkipsARowAnotherPassHolds(t *testing.T) {
 	holder := scheduleUnitOfWork(db, parser)
 	require.NoError(t, holder.Begin(ctx))
 	defer func() { _ = holder.Rollback() }()
-	held, err := holder.Schedules().LockDue(ctx, first.Add(time.Hour), 1000)
+	_, ok, err := holder.Schedules().LoadForUpdate(ctx, tenant, "first")
 	require.NoError(t, err)
-	require.Equal(t, []string{"first"}, namesOf(tenant, held))
+	require.True(t, ok)
 
-	// A wait for the held row would end in the deadline, not in the answer.
+	// A wait for a held row would end in the deadline, not in the answer.
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	skipper := scheduleUnitOfWork(db, parser)
-	require.NoError(t, skipper.Begin(bounded))
-	defer func() { _ = skipper.Rollback() }()
-	got, err := skipper.Schedules().LockDue(bounded, second.Add(time.Hour), 1000)
+	pass := newScheduleRepo(db, nil, parser)
+	got, err := pass.ListDue(bounded, second.Add(time.Hour), 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"second"}, namesOf(tenant, got), "the row the holder has is left out")
 
 	require.NoError(t, holder.Rollback())
-	require.NoError(t, skipper.Rollback())
-
-	later := scheduleUnitOfWork(db, parser)
-	require.NoError(t, later.Begin(ctx))
-	defer func() { _ = later.Rollback() }()
-	again, err := later.Schedules().LockDue(ctx, second.Add(time.Hour), 1000)
+	again, err := pass.ListDue(bounded, second.Add(time.Hour), 1000)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"first", "second"}, namesOf(tenant, again), "both are free once the other passes have ended")
+	assert.Equal(t, []string{"first", "second"}, namesOf(tenant, again), "both are taken once the holder has ended")
+
+	fire := scheduleUnitOfWork(db, parser)
+	require.NoError(t, fire.Begin(bounded))
+	defer func() { _ = fire.Rollback() }()
+	_, ok, err = fire.Schedules().LoadForUpdate(bounded, tenant, "first")
+	require.NoError(t, err, "the pass's read keeps no lock a fire would wait for")
+	assert.True(t, ok)
 }
 
 // EarliestFire is the earliest next fire among the schedules of every tenant;
@@ -471,10 +473,10 @@ func TestSchedules_EarliestFireSpansTenants(t *testing.T) {
 	assert.True(t, earliest.Equal(got), "the earlier of two tenants' next fires: got %s", got)
 }
 
-// A stored cron or timezone the parser refuses does not stop a pass: LockDue
+// A stored cron or timezone the parser refuses does not stop a pass: ListDue
 // returns the schedules that parse, leaves the others out, and logs each one it
 // left out with its tenant, name, cron and zone.
-func TestSchedules_LockDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
+func TestSchedules_ListDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -488,7 +490,7 @@ func TestSchedules_LockDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	rawSchedule(t, tx, tenant, "broken-cron", "not a cron", "UTC", &brokenCron)
 	rawSchedule(t, tx, tenant, "broken-zone", "0 * * * *", "Mars/Olympus", &brokenZone)
 
-	got, err := repo.LockDue(ctx, time.Date(1991, 1, 1, 0, 0, 0, 0, time.UTC), 10)
+	got, err := repo.ListDue(ctx, time.Date(1991, 1, 1, 0, 0, 0, 0, time.UTC), 10)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"good"}, namesOf(tenant, got))
@@ -499,7 +501,7 @@ func TestSchedules_LockDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	assert.NotContains(t, logged, "schedule_name=good")
 }
 
-// List, like LockDue, returns the schedules that parse and logs the ones that
+// List, like ListDue, returns the schedules that parse and logs the ones that
 // do not.
 func TestSchedules_ListSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	ctx := context.Background()
@@ -521,6 +523,30 @@ func TestSchedules_ListSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	for _, want := range []string{"level=ERROR", tenant, "a-broken-cron", "not a cron", "c-broken-zone", "Mars/Olympus"} {
 		assert.Contains(t, logged, want)
 	}
+}
+
+// List and ListStoredCronInvalid order names byte by byte, as Go compares
+// strings: an upper-case name comes before every lower-case one, whatever the
+// database's collation.
+func TestSchedules_ListsOrderNamesByteByByte(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	for _, name := range []string{"b-daily", "Z-daily", "a-daily"} {
+		rawSchedule(t, tx, tenant, name, "0 * * * *", "UTC", nil)
+		rawSchedule(t, tx, tenant, name+"-broken", "not a cron", "UTC", nil)
+	}
+
+	listed, err := repo.List(ctx, tenant)
+	require.NoError(t, err)
+	broken, err := repo.ListStoredCronInvalid(ctx, tenant)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"Z-daily", "a-daily", "b-daily"}, namesOf(tenant, listed))
+	assert.Equal(t, []string{"Z-daily-broken", "a-daily-broken", "b-daily-broken"}, broken)
 }
 
 // ListStoredCronInvalid names, by name, the tenant's rows whose stored cron or
@@ -699,7 +725,7 @@ func TestSchedules_WithoutACronParserALoadIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron parser")
 
-	_, err = repo.LockDue(ctx, due.Add(time.Hour), 10)
+	_, err = repo.ListDue(ctx, due.Add(time.Hour), 10)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron parser")
 
@@ -785,9 +811,9 @@ func TestSchedules_TheUnitOfWorkBindsTheRepositoryToItsTransaction(t *testing.T)
 	_, ok, err = u.Schedules().Get(ctx, tenant, "dropped")
 	require.NoError(t, err)
 	assert.True(t, ok, "the transaction sees its own save")
-	locked, err := u.Schedules().LockDue(ctx, due.Add(time.Hour), 10)
+	locked, err := u.Schedules().ListDue(ctx, due.Add(time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"due"}, namesOf(tenant, locked), "LockDue runs in the transaction")
+	assert.Equal(t, []string{"due"}, namesOf(tenant, locked), "ListDue runs in the transaction")
 
 	require.NoError(t, u.Rollback())
 	_, ok, err = pool.Get(ctx, tenant, "dropped")
@@ -803,10 +829,10 @@ func TestSchedules_TheUnitOfWorkBindsTheRepositoryToItsTransaction(t *testing.T)
 	mustGet(t, pool, tenant, "kept")
 }
 
-// GetForUpdate reads the schedule and holds its row until the transaction
-// ends: a second transaction's GetForUpdate waits for the first, then reads
+// LoadForUpdate reads the schedule and holds its row until the transaction
+// ends: a second transaction's LoadForUpdate waits for the first, then reads
 // the row as the first left it. The schedules are created in 2099.
-func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) {
+func TestSchedules_LoadForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -816,7 +842,7 @@ func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) 
 	holder := scheduleUnitOfWork(db, parser)
 	require.NoError(t, holder.Begin(ctx))
 	defer func() { _ = holder.Rollback() }()
-	held, ok, err := holder.Schedules().GetForUpdate(ctx, tenant, "nightly")
+	held, ok, err := holder.Schedules().LoadForUpdate(ctx, tenant, "nightly")
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "nightly", held.Name())
@@ -828,7 +854,7 @@ func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) 
 	read := make(chan error, 1)
 	var seen string
 	go func() {
-		s, _, err := waiter.Schedules().GetForUpdate(ctx, tenant, "nightly")
+		s, _, err := waiter.Schedules().LoadForUpdate(ctx, tenant, "nightly")
 		if err == nil {
 			seen = s.Description()
 		}
@@ -836,7 +862,7 @@ func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) 
 	}()
 	select {
 	case err := <-read:
-		t.Fatalf("the second GetForUpdate did not wait for the first transaction: %v", err)
+		t.Fatalf("the second LoadForUpdate did not wait for the first transaction: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
 
@@ -849,33 +875,33 @@ func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) 
 	case err := <-read:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("the second GetForUpdate never finished after the first committed")
+		t.Fatal("the second LoadForUpdate never finished after the first committed")
 	}
 	assert.Equal(t, "edited by the holder", seen, "the waiter reads the row the holder committed")
 }
 
-// GetForUpdate locks inside a transaction only: outside one it is an error. A
+// LoadForUpdate locks inside a transaction only: outside one it is an error. A
 // schedule that is not stored is not found, and one whose stored cron no
 // longer parses is the error Get returns for it.
-func TestSchedules_GetForUpdateNeedsATransaction(t *testing.T) {
+func TestSchedules_LoadForUpdateNeedsATransaction(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
 	tenant := scheduleRepoTenant(t, db)
 
-	_, _, err := newScheduleRepo(db, nil, parser).GetForUpdate(ctx, tenant, "nightly")
+	_, _, err := newScheduleRepo(db, nil, parser).LoadForUpdate(ctx, tenant, "nightly")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction")
 
 	tx := scratchTx(t, db)
 	repo := newScheduleRepo(db, tx, parser)
-	got, ok, err := repo.GetForUpdate(ctx, tenant, "absent")
+	got, ok, err := repo.LoadForUpdate(ctx, tenant, "absent")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, got)
 
 	rawSchedule(t, tx, tenant, "broken", "not a cron", "UTC", nil)
-	_, ok, err = repo.GetForUpdate(ctx, tenant, "broken")
+	_, ok, err = repo.LoadForUpdate(ctx, tenant, "broken")
 	require.ErrorIs(t, err, schedule.ErrStoredCronInvalid)
 	assert.False(t, ok)
 }

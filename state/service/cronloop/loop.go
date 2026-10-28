@@ -112,7 +112,7 @@ func (l *Loop) Pass(ctx context.Context) error {
 	u := l.newUoW()
 	schedules := u.Schedules()
 	now := u.Clock().Now()
-	due, err := schedules.LockDue(ctx, now, DueLimit)
+	due, err := schedules.ListDue(ctx, now, DueLimit)
 	if err != nil {
 		return fmt.Errorf("read the due schedules: %w", err)
 	}
@@ -149,7 +149,7 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 			_ = u.Rollback()
 		}
 	}()
-	s, ok, err := u.Schedules().GetForUpdate(ctx, tenantID, name)
+	s, ok, err := u.Schedules().LoadForUpdate(ctx, tenantID, name)
 	if err != nil {
 		return fmt.Errorf("lock schedule %q of tenant %q: %w", name, tenantID, err)
 	}

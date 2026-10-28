@@ -22,7 +22,7 @@ const SchedulesChannel = "schedules"
 // Each method is one statement, which runs in the unit of work's transaction
 // when one is open, else on the autocommit db. It rebuilds the expression of
 // each schedule it loads by parsing the stored cron with parser. A stored cron
-// that no longer parses fails Get and GetForUpdate; List and LockDue log it to
+// that no longer parses fails Get and LoadForUpdate; List and ListDue log it to
 // logger and return the other schedules.
 type ScheduleRepository struct {
 	db     *sqlx.DB
@@ -141,13 +141,13 @@ func (r *ScheduleRepository) Exists(ctx context.Context, tenantID, name string) 
 	return exists, nil
 }
 
-// GetForUpdate reads the tenant's schedule of that name with FOR UPDATE in the
+// LoadForUpdate reads the tenant's schedule of that name with FOR UPDATE in the
 // bound transaction, so the row stays locked until it ends. A stored cron or
 // timezone that no longer parses is a *schedule.StoredCronInvalidError, and the
 // row stays locked.
-func (r *ScheduleRepository) GetForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+func (r *ScheduleRepository) LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	if r.tx == nil {
-		return nil, false, fmt.Errorf("lock schedule %q of tenant %q: GetForUpdate requires an active transaction", name, tenantID)
+		return nil, false, fmt.Errorf("lock schedule %q of tenant %q: LoadForUpdate requires an active transaction", name, tenantID)
 	}
 	var row scheduleRow
 	err := r.tx.GetContext(ctx, &row,
@@ -165,19 +165,21 @@ func (r *ScheduleRepository) GetForUpdate(ctx context.Context, tenantID, name st
 	return s, true, nil
 }
 
-// List reads the tenant's schedules, ordered by name, leaving out and logging
-// each whose stored cron or timezone no longer parses.
+// List reads the tenant's schedules, ordered by name byte by byte (the "C"
+// collation, Go's string order), leaving out and logging each whose stored
+// cron or timezone no longer parses.
 func (r *ScheduleRepository) List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error) {
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows,
-		`SELECT `+scheduleColumns+` FROM schedules WHERE tenant_id = $1 ORDER BY name`, tenantID); err != nil {
+		`SELECT `+scheduleColumns+` FROM schedules WHERE tenant_id = $1 ORDER BY name COLLATE "C"`, tenantID); err != nil {
 		return nil, fmt.Errorf("list schedules of tenant %q: %w", tenantID, err)
 	}
 	return r.hydrateAll(rows)
 }
 
 // ListStoredCronInvalid reads the cron and timezone of each of the tenant's
-// schedules, ordered by name, and names the ones the parser refuses. A
+// schedules, ordered by name as List orders them, and names the ones the
+// parser refuses. A
 // repository with no parser cannot tell, so it is an error.
 func (r *ScheduleRepository) ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error) {
 	if r.parser == nil {
@@ -266,12 +268,13 @@ func (r *ScheduleRepository) Delete(ctx context.Context, tenantID, name string) 
 	return deleted > 0, nil
 }
 
-// LockDue selects the due schedules of every tenant with FOR UPDATE SKIP
-// LOCKED, so the rows stay locked to the open transaction and a row another
-// transaction holds is passed over. Outside a transaction the lock ends with
-// the statement. A due row whose stored cron or timezone no longer parses is
-// locked like the others, then logged and left out of the result.
-func (r *ScheduleRepository) LockDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
+// ListDue selects the due schedules of every tenant with FOR UPDATE SKIP
+// LOCKED, so a row another transaction holds at that moment is passed over.
+// Outside a transaction, as the cron loop calls it, the lock ends with the
+// statement; inside one, the rows stay locked to that transaction. A due row
+// whose stored cron or timezone no longer parses is selected like the others,
+// then logged and left out of the result.
+func (r *ScheduleRepository) ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		SELECT `+scheduleColumns+`
@@ -280,7 +283,7 @@ func (r *ScheduleRepository) LockDue(ctx context.Context, now time.Time, limit i
 		 ORDER BY next_fire_at, tenant_id, name
 		 LIMIT $2
 		   FOR UPDATE SKIP LOCKED`, now, limit); err != nil {
-		return nil, fmt.Errorf("lock the due schedules: %w", err)
+		return nil, fmt.Errorf("list the due schedules: %w", err)
 	}
 	return r.hydrateAll(rows)
 }

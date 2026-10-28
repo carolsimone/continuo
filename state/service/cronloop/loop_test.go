@@ -81,7 +81,7 @@ func (c *fixedClock) set(now time.Time) {
 func key(tenantID, name string) string { return tenantID + "/" + name }
 
 // storedSchedule is one row of scheduleRows: the fields the schedules table
-// stores. broken marks a row whose stored cron no longer parses, which LockDue
+// stores. broken marks a row whose stored cron no longer parses, which ListDue
 // leaves out and EarliestFire still counts, as the Postgres adapter does.
 type storedSchedule struct {
 	tenantID, name, cron, timezone, description string
@@ -101,7 +101,7 @@ type scheduleRows struct {
 	repository.ScheduleRepository
 	mu      sync.Mutex
 	rows    map[string]*storedSchedule
-	lockDue int
+	listDue int
 	gets    map[string]int
 	saves   int
 	failGet map[string]error
@@ -136,10 +136,10 @@ func (r *scheduleRows) setNext(tenantID, name string, next time.Time) {
 	r.rows[key(tenantID, name)].next = &n
 }
 
-func (r *scheduleRows) lockDueCalls() int {
+func (r *scheduleRows) listDueCalls() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.lockDue
+	return r.listDue
 }
 
 func (s *storedSchedule) aggregate() *schedule.Schedule {
@@ -147,10 +147,10 @@ func (s *storedSchedule) aggregate() *schedule.Schedule {
 		s.version, s.updatedBy, s.updatedAt, s.expr)
 }
 
-func (r *scheduleRows) LockDue(_ context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
+func (r *scheduleRows) ListDue(_ context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.lockDue++
+	r.listDue++
 	var due []*storedSchedule
 	for _, s := range r.rows {
 		if s.next != nil && !s.next.After(now) {
@@ -190,7 +190,7 @@ func (r *scheduleRows) EarliestFire(context.Context) (time.Time, bool, error) {
 	return *earliest, true, nil
 }
 
-func (r *scheduleRows) GetForUpdate(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+func (r *scheduleRows) LoadForUpdate(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	k := key(tenantID, name)
@@ -757,7 +757,7 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 		defer close(done)
 		w.loop(false).Run(ctx, wake, time.Hour)
 	}()
-	require.Eventually(t, func() bool { return w.schedules.lockDueCalls() >= 1 }, 5*time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return w.schedules.listDueCalls() >= 1 }, 5*time.Second, 10*time.Millisecond,
 		"the loop passes when it starts")
 
 	// An edit makes the schedule due now and notifies.
@@ -799,7 +799,7 @@ func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	cancel()
 	<-done
 
-	passes := w.schedules.lockDueCalls()
+	passes := w.schedules.listDueCalls()
 	assert.GreaterOrEqual(t, passes, 1)
 	assert.LessOrEqual(t, passes, 3, "a pass a second at most, not a spin")
 	assert.Empty(t, w.runs.of(tenant, "broken"))
