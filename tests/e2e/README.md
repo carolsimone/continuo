@@ -353,7 +353,7 @@ colima start --disk 100  # 100GB
 
 **Test fails with "table does not exist":**
 - Verify flyway migrations completed: `docker compose logs flyway-orchestrator`
-- Check the orchestrator outbox table exists: `docker compose exec postgres psql -U continuo_svc -d continuo_orchestrator -c '\dt orchestrator_outbox'`
+- Check the execution outbox table exists: `docker compose exec postgres psql -U continuo_svc -d continuo_execution -c '\dt execution_outbox'`
 
 **Services not starting:**
 ```bash

@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+### Removed
+
+- The orchestrator's outbox. Orchestrator migration V17 drops `orchestrator_outbox` and `continuo_outbox_notify()`, and the orchestrator no longer runs an outbox relay: it holds one `LISTEN` connection fewer per pod (nine outside the pools with the defaults, 161 connections in all) and no longer exposes `continuo_outbox_*` series with `table="orchestrator_outbox"`. Since 0.17.0 the orchestrator writes no row, so the table holds only rows an earlier version wrote, and they go with it, including one never published. Upgrade through 0.17.0 and let its rollout finish first: the migration applies before the new pods roll, and until the previous pods are replaced their relay keeps polling the missing table and logging the error. No values change. PATCH.
+
 ## [0.17.0] - 2026-10-28
 
 Schedules are data: an operator sets a schedule's cron in the ui (Edit cron) or with `continuo schedule set-cron`, state fires it from its own database (one run per slot; after a downtime only the latest missed slot fires), and the chart carries no schedules file, so **every cron stops until it is set again**. `helm upgrade` deletes the `<fullname>-schedules` ConfigMap, so copy the crons out of it first. The same release moves every run command to `run.v1.RunService` (each command that starts a run requires a `request_id` and runs once), names state's tables for runs, keys them by tenant, and adds the `continuo run` command group. State migrations V52 to V56 run on upgrade and state replicas of the previous release fail while it rolls out: deploy with no run in flight, cancel every pending or running run once the new release has deployed, and roll back only together with a database restore. The changes are breaking, and while continuo is in beta they ship as a 0.x MINOR. **MINOR.**
