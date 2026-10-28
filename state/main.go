@@ -444,8 +444,10 @@ func main() {
 	// the latest due slot and moves the schedule's next fire on. It passes at
 	// startup, when the earliest next fire comes, on every notification the
 	// schedules table's trigger sends once a change to it commits, and every
-	// cronLoopTick. Maintenance mode consumes each due slot with no run. Its
-	// goroutine is tracked, so shutdown waits for a fire in progress.
+	// cronLoopTick. Each fire is bounded by cronloop.FireTimeout. Maintenance
+	// mode consumes each due slot with no run. Its goroutine is tracked, and
+	// shutdown cancels its context before draining it: a fire in progress
+	// rolls back, and its slot fires once, late, when state starts again.
 	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.SchedulesChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the schedules listener")

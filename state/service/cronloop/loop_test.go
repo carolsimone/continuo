@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -105,10 +106,31 @@ type scheduleRows struct {
 	gets    map[string]int
 	saves   int
 	failGet map[string]error
+	// deadlines holds the deadline of the context each schedule's row was
+	// last loaded with; a row in stuck waits for that context to end, as a
+	// fire waiting on a lock does.
+	deadlines map[string]time.Time
+	stuck     map[string]bool
 }
 
 func newScheduleRows() *scheduleRows {
-	return &scheduleRows{rows: map[string]*storedSchedule{}, gets: map[string]int{}, failGet: map[string]error{}}
+	return &scheduleRows{
+		rows: map[string]*storedSchedule{}, gets: map[string]int{}, failGet: map[string]error{},
+		deadlines: map[string]time.Time{}, stuck: map[string]bool{},
+	}
+}
+
+func (r *scheduleRows) deadlineOf(tenantID, name string) (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.deadlines[key(tenantID, name)]
+	return d, ok
+}
+
+func (r *scheduleRows) setStuck(tenantID, name string, stuck bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stuck[key(tenantID, name)] = stuck
 }
 
 // add stores a schedule last edited by alice@example.com at version 3 whose next
@@ -190,11 +212,21 @@ func (r *scheduleRows) EarliestFire(context.Context) (time.Time, bool, error) {
 	return *earliest, true, nil
 }
 
-func (r *scheduleRows) LoadForUpdate(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+func (r *scheduleRows) LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	k := key(tenantID, name)
+	r.mu.Lock()
+	r.gets[k]++
+	if d, ok := ctx.Deadline(); ok {
+		r.deadlines[k] = d
+	}
+	stuck := r.stuck[k]
+	r.mu.Unlock()
+	if stuck {
+		<-ctx.Done()
+		return nil, false, ctx.Err()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	k := key(tenantID, name)
-	r.gets[k]++
 	if err := r.failGet[k]; err != nil {
 		return nil, false, err
 	}
@@ -298,6 +330,12 @@ func (r *cronRuns) SaveRun(_ context.Context, rn *run.Run) error {
 		}
 	}
 	return nil
+}
+
+func (r *cronRuns) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.saved)
 }
 
 func (r *cronRuns) of(tenantID, name string) []*run.Run {
@@ -530,6 +568,15 @@ func (w *world) nextFire(name string) time.Time {
 	return *row.next
 }
 
+// pass runs one pass of l, requires it to succeed and returns how many
+// schedules it fired.
+func pass(t *testing.T, ctx context.Context, l *cronloop.Loop) int {
+	t.Helper()
+	fired, err := l.Pass(ctx)
+	require.NoError(t, err)
+	return fired
+}
+
 // The trace of a fire: the due slot fires once, as one run of kind cron for
 // the slot, initiated by the system, of the row's tenant, on the live release,
 // with its ready tasks dispatched; the next fire moves to the next slot, and
@@ -542,7 +589,7 @@ func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	w := newWorld(slot)
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	assert.Equal(t, 1, pass(t, ctx, w.loop(false)), "the pass fired one schedule")
 
 	runs := w.runs.of(tenant, "daily")
 	require.Len(t, runs, 1)
@@ -573,9 +620,9 @@ func TestCronLoop_TwoPassesOnOneSlotMakeOneRun(t *testing.T) {
 	w := newWorld(slot)
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
-	require.NoError(t, w.loop(false).Pass(ctx))
-	require.NoError(t, w.loop(false).Pass(ctx))
+	assert.Equal(t, 1, pass(t, ctx, w.loop(false)))
+	assert.Zero(t, pass(t, ctx, w.loop(false)), "a slot already fired is not fired again")
+	assert.Zero(t, pass(t, ctx, w.loop(false)))
 
 	assert.Len(t, w.runs.of(tenant, "daily"), 1)
 	assert.Equal(t, 1, w.schedules.saves, "the passes after the fire write nothing")
@@ -590,8 +637,8 @@ func TestCronLoop_ARestartAcrossADueSlotFiresItOnceLate(t *testing.T) {
 	w := newWorld(nov(2, 3, 10))
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
+	pass(t, ctx, w.loop(false))
 
 	runs := w.runs.of(tenant, "daily")
 	require.Len(t, runs, 1)
@@ -607,7 +654,7 @@ func TestCronLoop_OnlyTheLatestMissedSlotFires(t *testing.T) {
 	w := newWorld(nov(2, 3, 10))
 	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, nov(2, 1, 0))
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	runs := w.runs.of(tenant, "hourly")
 	require.Len(t, runs, 1)
@@ -628,7 +675,7 @@ func TestCronLoop_MaintenanceConsumesTheSlot(t *testing.T) {
 	w := newWorld(slot)
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 
-	require.NoError(t, w.loop(true).Pass(ctx))
+	pass(t, ctx, w.loop(true))
 
 	assert.Empty(t, w.runs.of(tenant, "daily"))
 	assert.True(t, nov(3, 1, 0).Equal(w.nextFire("daily")), "the slot is consumed")
@@ -647,7 +694,7 @@ func TestCronLoop_AnActiveRunConsumesTheSlot(t *testing.T) {
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 	w.runs.active[key(tenant, "daily")] = true
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	assert.Empty(t, w.runs.of(tenant, "daily"))
 	assert.True(t, nov(3, 1, 0).Equal(w.nextFire("daily")), "the slot is consumed")
@@ -656,7 +703,7 @@ func TestCronLoop_AnActiveRunConsumesTheSlot(t *testing.T) {
 	// The run ends; the next day's slot fires.
 	delete(w.runs.active, key(tenant, "daily"))
 	w.clock.set(nov(3, 1, 0))
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	runs := w.runs.of(tenant, "daily")
 	require.Len(t, runs, 1)
@@ -672,7 +719,7 @@ func TestCronLoop_AScheduleWithNoModelsRecordsAFailedRun(t *testing.T) {
 	w := newWorld(slot)
 	w.schedules.add(tenant, "weekly", "0 3 * * 1", daily{3, 0, paris}, slot)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	runs := w.runs.of(tenant, "weekly")
 	require.Len(t, runs, 1)
@@ -697,7 +744,7 @@ func TestCronLoop_AScheduleWithAnInvalidNodeTypeRecordsAFailedRun(t *testing.T) 
 	w := newWorld(slot)
 	w.schedules.add(tenant, "legacy", "0 1 * * *", daily{1, 0, paris}, slot)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	runs := w.runs.of(tenant, "legacy")
 	require.Len(t, runs, 1)
@@ -721,7 +768,7 @@ func TestCronLoop_ASlotThatHasItsRunIsConsumedWithoutASecondRun(t *testing.T) {
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 	w.runs.taken[slotKey(tenant, "daily", slot)] = true
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	assert.Empty(t, w.runs.of(tenant, "daily"))
 	assert.Empty(t, w.outbox.dispatched())
@@ -732,7 +779,8 @@ func TestCronLoop_ASlotThatHasItsRunIsConsumedWithoutASecondRun(t *testing.T) {
 
 // A run another caller starts between the fire's check and its insert ends the
 // fire's transaction: the pass writes nothing and reports no failure, and the
-// next pass finds that run active and consumes the slot.
+// next pass finds that run active and consumes the slot. The rolled-back fire
+// counts as fired, since the next pass can consume its slot.
 func TestCronLoop_ARunStartedDuringTheFireIsSkippedOnTheNextPass(t *testing.T) {
 	ctx := context.Background()
 	slot := nov(2, 1, 0)
@@ -740,14 +788,14 @@ func TestCronLoop_ARunStartedDuringTheFireIsSkippedOnTheNextPass(t *testing.T) {
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 	w.runs.raceOnce[key(tenant, "daily")] = true
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	assert.Equal(t, 1, pass(t, ctx, w.loop(false)))
 
 	assert.Empty(t, w.runs.of(tenant, "daily"))
 	assert.Zero(t, w.schedules.saves, "the fire wrote nothing")
 	assert.True(t, slot.Equal(w.nextFire("daily")))
 	assert.Equal(t, 1, w.u.RollbackCalled)
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	assert.True(t, nov(3, 1, 0).Equal(w.nextFire("daily")), "the next pass consumes the slot")
 	assert.Equal(t, map[string]int{"skipped_active": 1}, w.metrics.counted())
@@ -763,9 +811,10 @@ func TestCronLoop_ARowThatFailsDoesNotStopTheOthers(t *testing.T) {
 	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, slot)
 	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
 
-	err := w.loop(false).Pass(ctx)
+	fired, err := w.loop(false).Pass(ctx)
 
 	require.Error(t, err)
+	assert.Equal(t, 1, fired, "the row that did not fail is fired")
 	assert.Contains(t, err.Error(), "connection reset")
 	assert.Contains(t, err.Error(), "daily")
 	assert.Equal(t, 1, w.schedules.gets[key(tenant, "daily")], "the failed row is tried once")
@@ -784,7 +833,7 @@ func TestCronLoop_GaugesTheScheduledAndPausedSchedules(t *testing.T) {
 	w.schedules.rows[key(tenant, "hourly")].paused = true
 	w.schedules.rows[key(tenant, "hourly")].next = nil
 
-	require.NoError(t, w.loop(false).Pass(ctx))
+	pass(t, ctx, w.loop(false))
 
 	assert.Equal(t, 2, w.metrics.scheduled)
 	assert.Equal(t, 1, w.metrics.paused)
@@ -827,9 +876,146 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 	}
 }
 
+// wallClock is the real clock, for a test of how long Run sleeps.
+type wallClock struct{}
+
+func (wallClock) Now() time.Time { return time.Now() }
+
+// With nothing due, Run sleeps until the earliest next fire rather than its
+// tick: a slot due 50 ms after the loop starts fires at about 50 ms, with no
+// wake signal and an hour-long tick.
+func TestCronLoop_SleepsUntilTheEarliestFire(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := time.Now()
+	slot := start.Add(50 * time.Millisecond)
+	w := newWorld(start)
+	w.u.SetClock(wallClock{})
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.runs.created = make(chan *run.Run, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.loop(false).Run(ctx, nil, time.Hour)
+	}()
+
+	select {
+	case r := <-w.runs.created:
+		elapsed := time.Since(start)
+		assert.True(t, slot.Equal(*r.ScheduledFor()), "the run is of the slot")
+		assert.GreaterOrEqual(t, elapsed, 50*time.Millisecond, "the slot fires once it is due")
+		assert.Less(t, elapsed, 900*time.Millisecond, "the loop slept until the slot, not a second or its tick")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop did not fire the slot it slept until")
+	}
+	cancel()
+	<-done
+}
+
+// Each fire runs with a deadline of its own, FireTimeout after it starts, so
+// a fire that waits on a lock cannot hold up the rest of the pass for longer.
+func TestCronLoop_EachFireHasADeadlineOfItsOwn(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, slot)
+	before := time.Now()
+
+	assert.Equal(t, 2, pass(t, ctx, w.loop(false)))
+
+	after := time.Now()
+	assert.Equal(t, 30*time.Second, cronloop.FireTimeout)
+	for _, name := range []string{"daily", "hourly"} {
+		deadline, ok := w.schedules.deadlineOf(tenant, name)
+		require.True(t, ok, "%s: the fire has a deadline", name)
+		assert.False(t, deadline.Before(before.Add(cronloop.FireTimeout)), "%s: deadline %s", name, deadline)
+		assert.False(t, deadline.After(after.Add(cronloop.FireTimeout)), "%s: deadline %s", name, deadline)
+	}
+}
+
+// A fire still waiting when its deadline comes, as one waiting for the
+// topology lock while a promotion holds it, rolls back and keeps its slot; the
+// fires after it in the pass go on, and a later pass fires the slot.
+func TestCronLoop_AFireThatRunsOutOfTimeRollsBackAndLeavesTheOthers(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, slot)
+	w.schedules.setStuck(tenant, "daily", true)
+	loop := w.loop(false)
+	cronloop.SetFireTimeout(loop, 50*time.Millisecond)
+
+	started := time.Now()
+	fired, err := loop.Pass(ctx)
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(started), time.Second, "the stuck fire held the pass up for its timeout only")
+	assert.Contains(t, err.Error(), `schedule "daily" of tenant "acme" did not end within 50ms`)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, 1, fired, "the fire after the stuck one goes on")
+	assert.Len(t, w.runs.of(tenant, "hourly"), 1)
+	assert.Empty(t, w.runs.of(tenant, "daily"))
+	assert.True(t, slot.Equal(w.nextFire("daily")), "the stuck fire keeps its slot")
+	assert.Equal(t, 1, w.u.RollbackCalled, "the stuck fire rolled back")
+
+	w.schedules.setStuck(tenant, "daily", false)
+	assert.Equal(t, 1, pass(t, ctx, loop), "a later pass fires the slot")
+	runs := w.runs.of(tenant, "daily")
+	require.Len(t, runs, 1)
+	assert.True(t, slot.Equal(*runs[0].ScheduledFor()))
+}
+
+// A schedule left due by a pass that fired others, here one past DueLimit, is
+// fired a second later, not at the tick.
+func TestCronLoop_ARowLeftDueByAPassThatFiredIsFiredASecondLater(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	for i := range cronloop.DueLimit + 1 {
+		w.schedules.add(tenant, fmt.Sprintf("s%03d", i), "0 1 * * *", daily{1, 0, paris}, slot)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.loop(false).Run(ctx, nil, time.Hour)
+	}()
+
+	require.Eventually(t, func() bool { return w.runs.count() == cronloop.DueLimit+1 }, 5*time.Second, 20*time.Millisecond,
+		"every due row fires")
+	assert.Equal(t, 2, w.schedules.listDueCalls(), "a pass of DueLimit, then a second for the rest")
+	cancel()
+	<-done
+}
+
+// A fire that a run started at that moment rolls back leaves its slot for the
+// next pass, which Run makes a second later, not at the tick.
+func TestCronLoop_ARolledBackFireIsConsumedASecondLater(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.runs.raceOnce[key(tenant, "daily")] = true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.loop(false).Run(ctx, nil, time.Hour)
+	}()
+
+	require.Eventually(t, func() bool { return w.metrics.counted()["skipped_active"] == 1 }, 5*time.Second, 20*time.Millisecond,
+		"the next pass consumes the slot")
+	assert.True(t, nov(3, 1, 0).Equal(w.nextFire("daily")))
+	cancel()
+	<-done
+}
+
 // A due row the pass cannot fire, such as one whose stored cron no longer
-// parses, leaves the earliest next fire in the past. Run then waits a second
-// between passes instead of passing again at once.
+// parses, leaves the earliest next fire in the past. A pass that fired nothing
+// cannot fire it either, so Run waits its tick rather than passing again a
+// second later: in a second and a half it passes once.
 func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -847,9 +1033,7 @@ func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	cancel()
 	<-done
 
-	passes := w.schedules.listDueCalls()
-	assert.GreaterOrEqual(t, passes, 1)
-	assert.LessOrEqual(t, passes, 3, "a pass a second at most, not a spin")
+	assert.Equal(t, 1, w.schedules.listDueCalls(), "the pass at the start, then nothing until the tick")
 	assert.Empty(t, w.runs.of(tenant, "broken"))
 	assert.True(t, strings.Count(w.logs.String(), "level=ERROR") == 0, "a row the pass cannot fire is not a pass failure")
 }
