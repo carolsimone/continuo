@@ -273,6 +273,12 @@ jobs:
         working-directory: ui
         run: npm ci && npm test
 
+      - name: Check ui for dead code
+        # knip in production mode: an export that no entry point reaches (only a
+        # test imports it) fails. Config in ui/knip.jsonc.
+        working-directory: ui
+        run: npm run knip
+
       # ── E2E test ────────────────────────────────────────────────────────────
       - name: Start services for e2e
         # Build and start all service binaries the e2e suite depends on.

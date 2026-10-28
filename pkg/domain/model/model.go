@@ -13,18 +13,6 @@ const (
 	Failed     ExecutionStatus = "failed"
 )
 
-// FQN represents a Fully Qualified Name (service.schema.table)
-type FQN struct {
-	ServiceName string
-	SchemaName  string
-	TableName   string
-}
-
-// ToString converts FQN to string format: service.schema.table
-func (f FQN) ToString() string {
-	return fmt.Sprintf("%s.%s.%s", f.ServiceName, f.SchemaName, f.TableName)
-}
-
 // NodeType, its values, NodeTypes(), IsValid() and Runtime() are generated from
 // the node_type vocabulary in pkg/streams/contract.yaml (vocabulary.gen.go).
 
