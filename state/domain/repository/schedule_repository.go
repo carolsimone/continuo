@@ -12,9 +12,13 @@ import (
 // transaction a call sees, and a write belongs to, that transaction.
 type ScheduleRepository interface {
 	// Get returns the tenant's schedule of that name and whether there is one.
+	// A schedule whose stored cron or timezone no longer parses is an error
+	// wrapping schedule.ErrStoredCronInvalid, so a lookup fails loudly.
 	Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
-	// List returns the tenant's schedules, ordered by name.
+	// List returns the tenant's schedules, ordered by name. A schedule whose
+	// stored cron or timezone no longer parses is left out and logged, not
+	// returned.
 	List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error)
 
 	// Save stores s exactly as it stands, its version, author and edit time
@@ -27,17 +31,21 @@ type ScheduleRepository interface {
 	// that no longer exists is stale too. With expectedVersion 0 there is no
 	// check: Save inserts the schedule when it has no row and overwrites the
 	// row when it has one, so of two saves that create the same schedule the
-	// later one wins, and neither fails.
+	// later one wins, and neither fails. Save reads no stored cron, so a save
+	// over a row whose cron or timezone no longer parses repairs it.
 	Save(ctx context.Context, s *schedule.Schedule, expectedVersion int64) error
 
 	// Delete removes the tenant's schedule of that name and reports whether
-	// there was one.
+	// there was one, whether or not its stored cron still parses.
 	Delete(ctx context.Context, tenantID, name string) (bool, error)
 
 	// LockDue returns, oldest next fire first, up to limit schedules of any
 	// tenant whose next fire is at or before now, and locks them until the
 	// transaction ends. A schedule another transaction has locked is left out
-	// rather than waited for, so concurrent passes take different schedules.
+	// rather than waited for, so concurrent passes take different schedules. A
+	// schedule whose stored cron or timezone no longer parses is left out and
+	// logged, not returned, so one bad row does not stop the others; its row
+	// stays locked and counts toward limit.
 	LockDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
 
 	// EarliestFire returns the earliest next fire of any tenant's schedules,

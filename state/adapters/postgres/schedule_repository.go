@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -16,19 +17,26 @@ import (
 // ScheduleRepository implements repository.ScheduleRepository over schedules.
 // Each method is one statement, which runs in the unit of work's transaction
 // when one is open, else on the autocommit db. It rebuilds the expression of
-// each schedule it loads by parsing the stored cron with parser.
+// each schedule it loads by parsing the stored cron with parser. A stored cron
+// that no longer parses fails Get; List and LockDue log it to logger and
+// return the other schedules.
 type ScheduleRepository struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
 	parser ports.CronParser
+	logger *slog.Logger
 }
 
 var _ repository.ScheduleRepository = (*ScheduleRepository)(nil)
 
 // NewScheduleRepository binds the repository to db and tx (nil outside a
-// transaction). parser reads the cron of each schedule the repository loads.
-func NewScheduleRepository(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser) *ScheduleRepository {
-	return &ScheduleRepository{db: db, tx: tx, parser: parser}
+// transaction). parser reads the cron of each schedule the repository loads;
+// logger records the schedules it leaves out (slog.Default when nil).
+func NewScheduleRepository(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser, logger *slog.Logger) *ScheduleRepository {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &ScheduleRepository{db: db, tx: tx, parser: parser, logger: logger}
 }
 
 func (r *ScheduleRepository) conn() sqlx.ExtContext {
@@ -55,17 +63,17 @@ type scheduleRow struct {
 	UpdatedAt   time.Time    `db:"updated_at"`
 }
 
-// hydrate rebuilds the schedule a row stores. A cron that no longer parses
-// (or a repository with no parser) is an error naming the schedule, not a
-// reason to leave the row out.
+// hydrate rebuilds the schedule a row stores. A cron or timezone that no longer
+// parses is an error wrapping schedule.ErrStoredCronInvalid that names the
+// schedule; a repository with no parser is a plain error, which no row causes.
 func (r *ScheduleRepository) hydrate(row scheduleRow) (*schedule.Schedule, error) {
 	if r.parser == nil {
 		return nil, fmt.Errorf("read schedule %q of tenant %q: the repository has no cron parser", row.Name, row.TenantID)
 	}
 	expr, err := r.parser.Parse(row.Cron, row.Timezone)
 	if err != nil {
-		return nil, fmt.Errorf("read schedule %q of tenant %q: its stored cron %q in %q no longer parses: %w",
-			row.Name, row.TenantID, row.Cron, row.Timezone, err)
+		return nil, fmt.Errorf("read schedule %q of tenant %q: its stored cron %q in %q: %w: %w",
+			row.Name, row.TenantID, row.Cron, row.Timezone, schedule.ErrStoredCronInvalid, err)
 	}
 	var nextFireAt *time.Time
 	if row.NextFireAt.Valid {
@@ -76,10 +84,18 @@ func (r *ScheduleRepository) hydrate(row scheduleRow) (*schedule.Schedule, error
 		row.Paused, nextFireAt, row.Version, row.UpdatedBy, row.UpdatedAt.UTC(), expr), nil
 }
 
+// hydrateAll rebuilds the schedules the rows store. It logs and leaves out each
+// row whose stored cron or timezone no longer parses, so one bad row does not
+// hide the others; any other error ends it.
 func (r *ScheduleRepository) hydrateAll(rows []scheduleRow) ([]*schedule.Schedule, error) {
 	out := make([]*schedule.Schedule, 0, len(rows))
 	for _, row := range rows {
 		s, err := r.hydrate(row)
+		if errors.Is(err, schedule.ErrStoredCronInvalid) {
+			r.logger.Error("Left out a schedule whose stored cron or timezone no longer parses",
+				"tenant_id", row.TenantID, "schedule_name", row.Name, "cron", row.Cron, "timezone", row.Timezone, "error", err)
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +104,8 @@ func (r *ScheduleRepository) hydrateAll(rows []scheduleRow) ([]*schedule.Schedul
 	return out, nil
 }
 
-// Get reads the tenant's schedule of that name.
+// Get reads the tenant's schedule of that name. A stored cron or timezone that
+// no longer parses is an error wrapping schedule.ErrStoredCronInvalid.
 func (r *ScheduleRepository) Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	var row scheduleRow
 	err := sqlx.GetContext(ctx, r.conn(), &row,
@@ -106,7 +123,8 @@ func (r *ScheduleRepository) Get(ctx context.Context, tenantID, name string) (*s
 	return s, true, nil
 }
 
-// List reads the tenant's schedules, ordered by name.
+// List reads the tenant's schedules, ordered by name, leaving out and logging
+// each whose stored cron or timezone no longer parses.
 func (r *ScheduleRepository) List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error) {
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows,
@@ -178,7 +196,8 @@ func (r *ScheduleRepository) Delete(ctx context.Context, tenantID, name string) 
 // LockDue selects the due schedules of every tenant with FOR UPDATE SKIP
 // LOCKED, so the rows stay locked to the open transaction and a row another
 // transaction holds is passed over. Outside a transaction the lock ends with
-// the statement.
+// the statement. A due row whose stored cron or timezone no longer parses is
+// locked like the others, then logged and left out of the result.
 func (r *ScheduleRepository) LockDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `

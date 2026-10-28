@@ -189,7 +189,7 @@ func (u *PostgresUnitOfWork) CommandRequests() repository.CommandRequestReposito
 
 // Schedules returns the schedule repository, bound to the current transaction.
 func (u *PostgresUnitOfWork) Schedules() repository.ScheduleRepository {
-	return NewScheduleRepository(u.db, u.tx, u.cronParser)
+	return NewScheduleRepository(u.db, u.tx, u.cronParser, u.logger)
 }
 
 // Compile-time interface assertion.

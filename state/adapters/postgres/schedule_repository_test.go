@@ -3,7 +3,10 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -20,10 +23,24 @@ import (
 
 var _ repository.ScheduleRepository = (*postgres.ScheduleRepository)(nil)
 
-// Tests that read schedules of every tenant (LockDue, EarliestFire) give their
-// rows next fires in the 1970s and 1980s, earlier than any instant another
-// test or the services give a schedule, so the rows they expect come first
-// whatever else the database holds.
+// The database these tests use is shared with every other test of the module,
+// which run at the same time in other packages, and LockDue and EarliestFire
+// read the schedules of every tenant. So that no other session meets a row of
+// these tests:
+//   - A test that scans (LockDue, EarliestFire, an unparseable row) inserts its
+//     rows in a transaction that is rolled back, which no other session sees.
+//   - The one test that needs two sessions commits rows whose next fires are in
+//     the year 2999 and reads them with a `now` just after, which a pass at the
+//     real time never reaches; it holds an advisory lock for its duration, so
+//     two runs of it do not take each other's rows.
+//   - Every other test commits only schedules created in 2099, so none has a
+//     next fire at or before the real time.
+
+// farFuture is the creation time of the schedules these tests commit.
+var farFuture = time.Date(2099, time.January, 1, 8, 30, 0, 0, time.UTC)
+
+// scheduleScanLockKey is the advisory lock the test that commits due rows holds.
+const scheduleScanLockKey = 0x5c4ed01e
 
 // scheduleParser returns the cron parser the services run with.
 func scheduleParser(t *testing.T) ports.CronParser {
@@ -42,9 +59,43 @@ func scheduleRepoTenant(t *testing.T, db *sqlx.DB) string {
 	return tenant
 }
 
+// scratchTx opens a transaction that is rolled back when the test ends. The
+// rows it inserts are never visible to another session.
+func scratchTx(t *testing.T, db *sqlx.DB) *sqlx.Tx {
+	t.Helper()
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return tx
+}
+
+// newScheduleRepo binds a repository to tx (nil for the pool) that logs nothing.
+func newScheduleRepo(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser) *postgres.ScheduleRepository {
+	return postgres.NewScheduleRepository(db, tx, parser, discardLogger())
+}
+
+// newLoggingScheduleRepo is newScheduleRepo with the log it writes returned.
+func newLoggingScheduleRepo(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser) (*postgres.ScheduleRepository, *bytes.Buffer) {
+	logs := &bytes.Buffer{}
+	return postgres.NewScheduleRepository(db, tx, parser, slog.New(slog.NewTextHandler(logs, nil))), logs
+}
+
 // scheduleUnitOfWork returns a unit of work that parses crons with parser.
 func scheduleUnitOfWork(db *sqlx.DB, parser ports.CronParser) *postgres.PostgresUnitOfWork {
 	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), postgres.WithCronParser(parser))
+}
+
+// holdScheduleScanLock takes the advisory lock of the test that commits due
+// rows until the test ends, waiting up to a minute for another run to end.
+func holdScheduleScanLock(t *testing.T, db *sqlx.DB) {
+	t.Helper()
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	_, err = tx.Exec(`SET LOCAL lock_timeout = '60s'`)
+	require.NoError(t, err)
+	_, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, scheduleScanLockKey)
+	require.NoError(t, err)
 }
 
 // hourlySchedule returns the schedule an operator creates at `created`: every
@@ -70,13 +121,18 @@ func dueSchedule(t *testing.T, parser ports.CronParser, tenant, name string, nex
 	return schedule.Rehydrate(tenant, name, "0 * * * *", "UTC", "", false, &nextFire, 1, "alice@example.com", nextFire, expr)
 }
 
-// rawSchedule inserts a schedule row whose cron is cron, UTC, and whose next
-// fire is nextFire (none when nil), bypassing the repository.
-func rawSchedule(t *testing.T, db *sqlx.DB, tenant, name, cron string, nextFire *time.Time) {
+// execer runs a statement; a *sqlx.DB and a *sqlx.Tx are both one.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// rawSchedule inserts a schedule row, bypassing the repository, whose cron is
+// cron in timezone and whose next fire is nextFire (none when nil).
+func rawSchedule(t *testing.T, ex execer, tenant, name, cron, timezone string, nextFire *time.Time) {
 	t.Helper()
-	_, err := db.Exec(`
+	_, err := ex.Exec(`
 		INSERT INTO schedules (tenant_id, name, cron, timezone, next_fire_at, updated_by)
-		VALUES ($1, $2, $3, 'UTC', $4, 'repository-test')`, tenant, name, cron, nextFire)
+		VALUES ($1, $2, $3, $4, $5, 'repository-test')`, tenant, name, cron, timezone, nextFire)
 	require.NoError(t, err)
 }
 
@@ -107,9 +163,9 @@ func TestSchedules_SaveBumpsTheVersion(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "nightly", created), 0))
 
 	got := mustGet(t, repo, tenant, "nightly")
@@ -122,10 +178,10 @@ func TestSchedules_SaveBumpsTheVersion(t *testing.T) {
 	assert.True(t, created.Equal(got.UpdatedAt()), "updated at: got %s", got.UpdatedAt())
 	next, ok := got.NextFireAt()
 	require.True(t, ok)
-	assert.True(t, time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC).Equal(next), "next fire: got %s", next)
+	assert.True(t, created.Add(30*time.Minute).Equal(next), "next fire: got %s", next)
 
 	// An edit read at version 1.
-	edited := time.Date(2026, 10, 28, 9, 5, 0, 0, time.UTC)
+	edited := created.Add(35 * time.Minute)
 	expr, err := parser.Parse("30 2 * * *", "Europe/Paris")
 	require.NoError(t, err)
 	got.Replace("30 2 * * *", "Europe/Paris", "nightly at 02:30", false, expr, "bob@example.com", edited)
@@ -167,9 +223,9 @@ func TestSchedules_ASaveWithAStaleVersionIsRefused(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "nightly", created), 0))
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
@@ -206,9 +262,9 @@ func TestSchedules_ASaveWithNoExpectedVersionWritesWithoutACheck(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "nightly", created), 0))
 
 	expr, err := parser.Parse("0 * * * *", "UTC")
@@ -229,19 +285,20 @@ func TestSchedules_AFireSaveLeavesTheVersionAndTheAuthorship(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
 	s := hourlySchedule(t, parser, tenant, "nightly", created)
 	edited := created.Add(35 * time.Minute)
 	s.Replace("0 * * * *", "UTC", "every hour", false, expr, "bob@example.com", edited)
 	require.NoError(t, repo.Save(ctx, s, 0))
+	slotTime := time.Date(2099, time.January, 1, 12, 0, 0, 0, time.UTC)
 
 	for _, expected := range []int64{0, 2} {
 		got := mustGet(t, repo, tenant, "nightly")
-		slot, _, due := got.Due(time.Date(2026, 10, 28, 12, 10, 0, 0, time.UTC))
+		slot, _, due := got.Due(slotTime.Add(10 * time.Minute))
 		require.True(t, due)
 		got.Fired(slot)
 		require.NoError(t, repo.Save(ctx, got, expected), "expected version %d", expected)
@@ -252,11 +309,11 @@ func TestSchedules_AFireSaveLeavesTheVersionAndTheAuthorship(t *testing.T) {
 		assert.True(t, edited.Equal(after.UpdatedAt()), "updated at: got %s", after.UpdatedAt())
 		next, ok := after.NextFireAt()
 		require.True(t, ok)
-		assert.True(t, time.Date(2026, 10, 28, 13, 0, 0, 0, time.UTC).Equal(next), "next fire: got %s", next)
+		assert.True(t, slotTime.Add(time.Hour).Equal(next), "next fire: got %s", next)
 
 		// Put the next fire back for the second round.
 		_, err := db.Exec(`UPDATE schedules SET next_fire_at = $3 WHERE tenant_id = $1 AND name = $2`,
-			tenant, "nightly", time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC))
+			tenant, "nightly", slotTime)
 		require.NoError(t, err)
 	}
 }
@@ -268,7 +325,7 @@ func TestSchedules_TwoCreatorsOfOneNameLeaveOneRow(t *testing.T) {
 	db := newTestDB(t)
 	parser := scheduleParser(t)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	firstUoW, secondUoW := scheduleUnitOfWork(db, parser), scheduleUnitOfWork(db, parser)
 	require.NoError(t, firstUoW.Begin(ctx))
 	defer func() { _ = firstUoW.Rollback() }()
@@ -297,7 +354,7 @@ func TestSchedules_TwoCreatorsOfOneNameLeaveOneRow(t *testing.T) {
 	var rows int
 	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM schedules WHERE tenant_id = $1 AND name = 'nightly'`, tenant))
 	assert.Equal(t, 1, rows)
-	stored := mustGet(t, postgres.NewScheduleRepository(db, nil, parser), tenant, "nightly")
+	stored := mustGet(t, newScheduleRepo(db, nil, parser), tenant, "nightly")
 	assert.Equal(t, "the second creator", stored.Description(), "the later save wins")
 }
 
@@ -308,21 +365,20 @@ func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
 	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
 	at := func(year, month, day int) *time.Time {
 		instant := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 		return &instant
 	}
-	rawSchedule(t, db, tenant, "b-second", "0 * * * *", at(1975, 1, 2))
-	rawSchedule(t, db, other, "a-first", "0 * * * *", at(1975, 1, 1))
-	rawSchedule(t, db, tenant, "c-third", "0 * * * *", at(1975, 1, 3))
-	rawSchedule(t, db, tenant, "d-not-yet", "0 * * * *", at(1975, 6, 1))
-	rawSchedule(t, db, tenant, "e-no-fire", "0 * * * *", nil)
-	u := scheduleUnitOfWork(db, parser)
-	require.NoError(t, u.Begin(ctx))
-	defer func() { _ = u.Rollback() }()
+	rawSchedule(t, tx, tenant, "b-second", "0 * * * *", "UTC", at(1975, 1, 2))
+	rawSchedule(t, tx, other, "a-first", "0 * * * *", "UTC", at(1975, 1, 1))
+	rawSchedule(t, tx, tenant, "c-third", "0 * * * *", "UTC", at(1975, 1, 3))
+	rawSchedule(t, tx, tenant, "d-not-yet", "0 * * * *", "UTC", at(1975, 6, 1))
+	rawSchedule(t, tx, tenant, "e-no-fire", "0 * * * *", "UTC", nil)
 
-	all, err := u.Schedules().LockDue(ctx, *at(1975, 2, 1), 10)
+	all, err := repo.LockDue(ctx, *at(1975, 2, 1), 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b-second", "c-third"}, namesOf(tenant, all))
 	assert.Equal(t, []string{"a-first"}, namesOf(other, all), "every tenant's due schedules are taken")
@@ -330,9 +386,7 @@ func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 	assert.Equal(t, other, all[0].TenantID(), "the earliest next fire comes first")
 	assert.Equal(t, "a-first", all[0].Name())
 
-	require.NoError(t, u.Rollback())
-	require.NoError(t, u.Begin(ctx))
-	limited, err := u.Schedules().LockDue(ctx, *at(1975, 2, 1), 2)
+	limited, err := repo.LockDue(ctx, *at(1975, 2, 1), 2)
 	require.NoError(t, err)
 	require.Len(t, limited, 2)
 	assert.Equal(t, "a-first", limited[0].Name())
@@ -341,21 +395,23 @@ func TestSchedules_LockDueTakesTheDueRowsOldestFirstUpToTheLimit(t *testing.T) {
 
 // A pass that finds a schedule locked by another pass leaves it out instead of
 // waiting for that pass, so two passes never take the same schedule, and takes
-// it once the other pass has ended.
+// it once the other pass has ended. The rows are committed, for the passes are
+// two sessions; their next fires are in the year 2999.
 func TestSchedules_LockDueSkipsARowAnotherPassHolds(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
+	holdScheduleScanLock(t, db)
 	tenant := scheduleRepoTenant(t, db)
-	first := time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
-	second := time.Date(1980, 1, 2, 0, 0, 0, 0, time.UTC)
-	rawSchedule(t, db, tenant, "first", "0 * * * *", &first)
-	rawSchedule(t, db, tenant, "second", "0 * * * *", &second)
+	first := time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+	second := time.Date(2999, 1, 2, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, db, tenant, "first", "0 * * * *", "UTC", &first)
+	rawSchedule(t, db, tenant, "second", "0 * * * *", "UTC", &second)
 
 	holder := scheduleUnitOfWork(db, parser)
 	require.NoError(t, holder.Begin(ctx))
 	defer func() { _ = holder.Rollback() }()
-	held, err := holder.Schedules().LockDue(ctx, first.Add(time.Hour), 10)
+	held, err := holder.Schedules().LockDue(ctx, first.Add(time.Hour), 1000)
 	require.NoError(t, err)
 	require.Equal(t, []string{"first"}, namesOf(tenant, held))
 
@@ -365,7 +421,7 @@ func TestSchedules_LockDueSkipsARowAnotherPassHolds(t *testing.T) {
 	skipper := scheduleUnitOfWork(db, parser)
 	require.NoError(t, skipper.Begin(bounded))
 	defer func() { _ = skipper.Rollback() }()
-	got, err := skipper.Schedules().LockDue(bounded, second.Add(time.Hour), 10)
+	got, err := skipper.Schedules().LockDue(bounded, second.Add(time.Hour), 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"second"}, namesOf(tenant, got), "the row the holder has is left out")
 
@@ -375,7 +431,7 @@ func TestSchedules_LockDueSkipsARowAnotherPassHolds(t *testing.T) {
 	later := scheduleUnitOfWork(db, parser)
 	require.NoError(t, later.Begin(ctx))
 	defer func() { _ = later.Rollback() }()
-	again, err := later.Schedules().LockDue(ctx, second.Add(time.Hour), 10)
+	again, err := later.Schedules().LockDue(ctx, second.Add(time.Hour), 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"first", "second"}, namesOf(tenant, again), "both are free once the other passes have ended")
 }
@@ -386,68 +442,173 @@ func TestSchedules_EarliestFireSpansTenants(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
 	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
 	later := time.Date(1972, 1, 1, 0, 0, 0, 0, time.UTC)
 	earliest := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
-	rawSchedule(t, db, tenant, "later", "0 * * * *", &later)
+	rawSchedule(t, tx, tenant, "later", "0 * * * *", "UTC", &later)
 	got, ok, err := repo.EarliestFire(ctx)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.True(t, later.Equal(got), "one tenant's next fire: got %s", got)
 
-	rawSchedule(t, db, other, "earliest", "0 * * * *", &earliest)
-	rawSchedule(t, db, other, "paused", "0 * * * *", nil)
+	rawSchedule(t, tx, other, "earliest", "0 * * * *", "UTC", &earliest)
+	rawSchedule(t, tx, other, "paused", "0 * * * *", "UTC", nil)
 	got, ok, err = repo.EarliestFire(ctx)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.True(t, earliest.Equal(got), "the earlier of two tenants' next fires: got %s", got)
 }
 
-// A stored cron the parser refuses is an error that names the tenant and the
-// schedule, wherever the row is read; the row is not skipped.
-func TestSchedules_AStoredCronThatNoLongerParsesNamesTheSchedule(t *testing.T) {
+// A stored cron or timezone the parser refuses does not stop a pass: LockDue
+// returns the schedules that parse, leaves the others out, and logs each one it
+// left out with its tenant, name, cron and zone.
+func TestSchedules_LockDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	tx := scratchTx(t, db)
+	repo, logs := newLoggingScheduleRepo(db, tx, parser)
 	tenant := scheduleRepoTenant(t, db)
-	due := time.Date(1981, 1, 1, 0, 0, 0, 0, time.UTC)
-	rawSchedule(t, db, tenant, "broken", "not a cron", &due)
+	good := time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
+	brokenCron := time.Date(1989, 1, 1, 0, 0, 0, 0, time.UTC)
+	brokenZone := time.Date(1989, 6, 1, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, tx, tenant, "good", "0 * * * *", "UTC", &good)
+	rawSchedule(t, tx, tenant, "broken-cron", "not a cron", "UTC", &brokenCron)
+	rawSchedule(t, tx, tenant, "broken-zone", "0 * * * *", "Mars/Olympus", &brokenZone)
 
-	_, _, err := repo.Get(ctx, tenant, "broken")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), tenant)
-	assert.Contains(t, err.Error(), "broken")
+	got, err := repo.LockDue(ctx, time.Date(1991, 1, 1, 0, 0, 0, 0, time.UTC), 10)
 
-	_, err = repo.List(ctx, tenant)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), tenant)
-	assert.Contains(t, err.Error(), "broken")
-
-	u := scheduleUnitOfWork(db, parser)
-	require.NoError(t, u.Begin(ctx))
-	defer func() { _ = u.Rollback() }()
-	_, err = u.Schedules().LockDue(ctx, due.Add(time.Hour), 1000)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), tenant)
-	assert.Contains(t, err.Error(), "broken")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"good"}, namesOf(tenant, got))
+	logged := logs.String()
+	for _, want := range []string{"level=ERROR", tenant, "broken-cron", "not a cron", "broken-zone", "Mars/Olympus"} {
+		assert.Contains(t, logged, want)
+	}
+	assert.NotContains(t, logged, "schedule_name=good")
 }
 
-// A repository with no parser cannot rebuild a schedule's expression; it says
-// so instead of failing on a missing parser.
+// List, like LockDue, returns the schedules that parse and logs the ones that
+// do not.
+func TestSchedules_ListSkipsAStoredCronThatNoLongerParses(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo, logs := newLoggingScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "b-good", "0 * * * *", "UTC", nil)
+	rawSchedule(t, tx, tenant, "a-broken-cron", "not a cron", "UTC", nil)
+	rawSchedule(t, tx, tenant, "c-broken-zone", "0 * * * *", "Mars/Olympus", nil)
+	rawSchedule(t, tx, tenant, "d-good", "30 2 * * *", "Europe/Paris", nil)
+
+	got, err := repo.List(ctx, tenant)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b-good", "d-good"}, namesOf(tenant, got))
+	logged := logs.String()
+	for _, want := range []string{"level=ERROR", tenant, "a-broken-cron", "not a cron", "c-broken-zone", "Mars/Olympus"} {
+		assert.Contains(t, logged, want)
+	}
+}
+
+// A lookup of one schedule is not skipped: Get fails with an error that wraps
+// schedule.ErrStoredCronInvalid and names the tenant, schedule, cron and zone.
+func TestSchedules_GetOfAStoredCronThatNoLongerParsesFails(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "broken-cron", "not a cron", "UTC", nil)
+	rawSchedule(t, tx, tenant, "broken-zone", "0 * * * *", "Mars/Olympus", nil)
+	rawSchedule(t, tx, tenant, "good", "0 * * * *", "UTC", nil)
+
+	for name, parts := range map[string][]string{
+		"broken-cron": {tenant, "broken-cron", "not a cron", "UTC"},
+		"broken-zone": {tenant, "broken-zone", "0 * * * *", "Mars/Olympus"},
+	} {
+		got, ok, err := repo.Get(ctx, tenant, name)
+
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, schedule.ErrStoredCronInvalid, name)
+		assert.False(t, ok, name)
+		assert.Nil(t, got, name)
+		for _, part := range parts {
+			assert.Contains(t, err.Error(), part, name)
+		}
+	}
+	mustGet(t, repo, tenant, "good")
+}
+
+// Saving a schedule over a row whose stored cron no longer parses repairs it,
+// with no expected version or with the version the row has, and Delete removes
+// such a row: neither reads the stored cron.
+func TestSchedules_SaveOverAStoredCronThatNoLongerParsesRepairsIt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "repaired-blind", "not a cron", "UTC", nil)
+	rawSchedule(t, tx, tenant, "repaired-by-version", "0 * * * *", "Mars/Olympus", nil)
+	rawSchedule(t, tx, tenant, "deleted", "not a cron", "UTC", nil)
+	_, _, err := repo.Get(ctx, tenant, "repaired-blind")
+	require.ErrorIs(t, err, schedule.ErrStoredCronInvalid)
+
+	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "repaired-blind", farFuture), 0))
+	blind := mustGet(t, repo, tenant, "repaired-blind")
+	assert.Equal(t, "0 * * * *", blind.Cron())
+	assert.Equal(t, "UTC", blind.Timezone())
+	assert.Equal(t, "every hour", blind.Description())
+
+	// The raw row is at version 1, the version an edit of it would name.
+	expr, err := parser.Parse("0 * * * *", "UTC")
+	require.NoError(t, err)
+	edited := hourlySchedule(t, parser, tenant, "repaired-by-version", farFuture)
+	edited.Replace("0 * * * *", "UTC", "repaired", false, expr, "bob@example.com", farFuture.Add(time.Minute))
+	require.NoError(t, repo.Save(ctx, edited, 1))
+	byVersion := mustGet(t, repo, tenant, "repaired-by-version")
+	assert.Equal(t, "UTC", byVersion.Timezone())
+	assert.Equal(t, "repaired", byVersion.Description())
+
+	deleted, err := repo.Delete(ctx, tenant, "deleted")
+	require.NoError(t, err)
+	assert.True(t, deleted)
+	_, ok, err := repo.Get(ctx, tenant, "deleted")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// A repository with no parser cannot rebuild a schedule's expression. That is a
+// defect of whoever built it, not of a row, so it is an error wherever a row is
+// loaded and no row is skipped for it.
 func TestSchedules_WithoutACronParserALoadIsRefused(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, nil)
 	tenant := scheduleRepoTenant(t, db)
-	rawSchedule(t, db, tenant, "nightly", "0 * * * *", nil)
-	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
+	due := time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, tx, tenant, "nightly", "0 * * * *", "UTC", &due)
 
-	_, _, err := u.Schedules().Get(ctx, tenant, "nightly")
-
+	_, _, err := repo.Get(ctx, tenant, "nightly")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron parser")
-	_, ok, err := u.Schedules().Get(ctx, tenant, "absent")
+	assert.NotErrorIs(t, err, schedule.ErrStoredCronInvalid)
+
+	_, err = repo.List(ctx, tenant)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cron parser")
+
+	_, err = repo.LockDue(ctx, due.Add(time.Hour), 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cron parser")
+
+	_, ok, err := repo.Get(ctx, tenant, "absent")
 	require.NoError(t, err, "a schedule that is not stored needs no parser")
 	assert.False(t, ok)
 }
@@ -456,9 +617,9 @@ func TestSchedules_GetAndListAreScopedToATenant(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	for _, s := range []*schedule.Schedule{
 		hourlySchedule(t, parser, tenant, "weekly", created),
 		hourlySchedule(t, parser, tenant, "daily", created),
@@ -488,9 +649,9 @@ func TestSchedules_DeleteReportsWhetherTheRowWasThere(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	repo := postgres.NewScheduleRepository(db, nil, parser)
+	repo := newScheduleRepo(db, nil, parser)
 	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
+	created := farFuture
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "nightly", created), 0))
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, other, "nightly", created), 0))
 
@@ -508,38 +669,41 @@ func TestSchedules_DeleteReportsWhetherTheRowWasThere(t *testing.T) {
 }
 
 // The unit of work binds the repository to its transaction: what a transaction
-// saves is its own until it commits, and a rollback discards it.
+// saves is its own until it commits, and a rollback discards it. The schedule
+// that is due is only ever saved in a transaction that is rolled back.
 func TestSchedules_TheUnitOfWorkBindsTheRepositoryToItsTransaction(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
-	pool := postgres.NewScheduleRepository(db, nil, parser)
+	pool := newScheduleRepo(db, nil, parser)
 	tenant := scheduleRepoTenant(t, db)
-	created := time.Date(2026, 10, 28, 8, 30, 0, 0, time.UTC)
 	u := scheduleUnitOfWork(db, parser)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
-	require.NoError(t, u.Schedules().Save(ctx, hourlySchedule(t, parser, tenant, "kept", created), 0))
 	due := time.Date(1985, 1, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, u.Schedules().Save(ctx, dueSchedule(t, parser, tenant, "due", due), 0))
+	require.NoError(t, u.Schedules().Save(ctx, hourlySchedule(t, parser, tenant, "dropped", farFuture), 0))
 
-	_, ok, err := pool.Get(ctx, tenant, "kept")
+	_, ok, err := pool.Get(ctx, tenant, "dropped")
 	require.NoError(t, err)
 	assert.False(t, ok, "the pool does not see a schedule the open transaction saved")
-	_, ok, err = u.Schedules().Get(ctx, tenant, "kept")
+	_, ok, err = u.Schedules().Get(ctx, tenant, "dropped")
 	require.NoError(t, err)
 	assert.True(t, ok, "the transaction sees its own save")
 	locked, err := u.Schedules().LockDue(ctx, due.Add(time.Hour), 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"due"}, namesOf(tenant, locked), "LockDue runs in the transaction")
 
-	require.NoError(t, u.Commit())
-	mustGet(t, pool, tenant, "kept")
-
-	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, u.Schedules().Save(ctx, hourlySchedule(t, parser, tenant, "dropped", created), 0))
 	require.NoError(t, u.Rollback())
 	_, ok, err = pool.Get(ctx, tenant, "dropped")
 	require.NoError(t, err)
 	assert.False(t, ok, "a rollback discards the save")
+	_, ok, err = pool.Get(ctx, tenant, "due")
+	require.NoError(t, err)
+	assert.False(t, ok, "a rollback discards the save")
+
+	require.NoError(t, u.Begin(ctx))
+	require.NoError(t, u.Schedules().Save(ctx, hourlySchedule(t, parser, tenant, "kept", farFuture), 0))
+	require.NoError(t, u.Commit())
+	mustGet(t, pool, tenant, "kept")
 }

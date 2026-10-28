@@ -9,6 +9,13 @@ var (
 	// or the schedule was deleted since it was read. Nothing is written.
 	ErrStaleVersion = errors.New("schedule was changed by another edit")
 
+	// ErrStoredCronInvalid is returned by ScheduleRepository.Get when the
+	// cron or timezone stored for a schedule no longer parses (a zone the
+	// timezone database has dropped, or a row written by hand). The error
+	// names the tenant, schedule, cron and zone. List and LockDue leave such a
+	// schedule out and log it, and Save and Delete work on its row.
+	ErrStoredCronInvalid = errors.New("stored cron or timezone does not parse")
+
 	// ErrUnknownName is returned when a command would give a schedule name its
 	// first row and no model of the live release carries that name as its
 	// schedule tag.
