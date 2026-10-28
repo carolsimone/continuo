@@ -8,8 +8,8 @@ import "github.com/carolsimone/continuo/state/domain/schedule"
 type CronParser interface {
 	// Parse reads cron in the IANA timezone and returns the expression that
 	// says when it fires. It refuses a cron that carries its own zone (a
-	// `CRON_TZ=` or `TZ=` prefix), a zone it does not know, and a cron that
-	// never fires.
+	// `CRON_TZ=` or `TZ=` prefix), a zone it does not know, a cron that
+	// never fires, and an `@every` interval shorter than one minute.
 	Parse(cron, timezone string) (schedule.Expression, error)
 	// Describe returns the cron in English words, such as "At 01:00".
 	Describe(cron string) (string, error)

@@ -134,6 +134,30 @@ func TestParser_RefusesACronItCannotRead(t *testing.T) {
 	}
 }
 
+func TestParser_RefusesAnEverySubMinute(t *testing.T) {
+	p := newParser(t)
+	for _, spec := range []string{"@every 59s", "@every 1s", "@every 500ms", "@every 0s"} {
+		expr, err := p.Parse(spec, "UTC")
+		require.Error(t, err, "parse %q", spec)
+		assert.Nil(t, expr)
+		assert.Contains(t, err.Error(), "one minute", "the message names the minimum: %v", err)
+
+		words, err := p.Describe(spec)
+		require.Error(t, err, "describe %q", spec)
+		assert.Empty(t, words)
+		assert.Contains(t, err.Error(), "one minute", "describe %q: %v", spec, err)
+	}
+
+	for spec, want := range map[string]time.Duration{"@every 1m": time.Minute, "@every 90s": 90 * time.Second, "@every 2h": 2 * time.Hour} {
+		expr := mustParse(t, spec, "UTC")
+		start := utc(2026, time.October, 28, 3, 0)
+		assert.True(t, start.Add(want).Equal(expr.Next(start)), "%s", spec)
+
+		_, err := p.Describe(spec)
+		require.NoError(t, err, "describe %q", spec)
+	}
+}
+
 func TestParser_RefusesACronThatNeverFires(t *testing.T) {
 	p := newParser(t)
 	for _, spec := range []string{"0 0 30 2 *", "0 0 31 4 *"} {
@@ -167,7 +191,7 @@ func TestParser_DescribesDescriptorsAndIntervals(t *testing.T) {
 		"@yearly":      "At 00:00, on day 1 of the month, only in January",
 		"@annually":    "At 00:00, on day 1 of the month, only in January",
 		"@every 90m":   "Every 1h30m0s",
-		"@every 1s":    "Every 1s",
+		"@every 1m":    "Every 1m0s",
 		"*/15 * * * *": "Every 15 minutes",
 		"0 9 * * 1-5":  "At 09:00, Monday through Friday",
 	}
@@ -215,7 +239,7 @@ func TestParser_DescribeRefusesWhatTheWordsLibraryCannotRead(t *testing.T) {
 
 func TestParser_DescribeRefusesWhatParseRefuses(t *testing.T) {
 	p := newParser(t)
-	for _, spec := range []string{"", "61 * * * *", "0 0 1 1 * 2030", "0 0 0 1 1 *", "@sometimes", "@every soon"} {
+	for _, spec := range []string{"", "61 * * * *", "0 0 1 1 * 2030", "0 0 0 1 1 *", "@sometimes", "@every soon", "@every 59s"} {
 		got, err := p.Describe(spec)
 		require.Error(t, err, "describe %q", spec)
 		assert.Empty(t, got)

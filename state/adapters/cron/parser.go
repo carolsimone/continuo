@@ -19,6 +19,10 @@ import (
 
 var _ ports.CronParser = (*Parser)(nil)
 
+// minInterval is the shortest `@every` interval: a schedule fires at minute
+// granularity, as the five cron fields do.
+const minInterval = time.Minute
+
 // neverFiresProbe is the instant a parsed cron must fire after, to be taken as
 // firing at all. The expressions that fail it name a date no calendar has.
 var neverFiresProbe = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
@@ -108,7 +112,9 @@ var descriptorFields = map[string]string{
 }
 
 // parseSpec reads cron with robfig's standard parser, after refusing a zone
-// prefix it would otherwise honour.
+// prefix it would otherwise honour. It refuses an `@every` interval shorter
+// than minInterval; robfig rounds any interval to whole seconds, so `@every 1s`
+// is the shortest it would otherwise fire.
 func parseSpec(cron string) (robfig.Schedule, error) {
 	text := strings.TrimSpace(cron)
 	if text == "" {
@@ -120,6 +126,9 @@ func parseSpec(cron string) (robfig.Schedule, error) {
 	spec, err := robfig.ParseStandard(text)
 	if err != nil {
 		return nil, fmt.Errorf("cron %q: %w", text, err)
+	}
+	if every, ok := spec.(robfig.ConstantDelaySchedule); ok && every.Delay < minInterval {
+		return nil, fmt.Errorf("cron %q: an @every interval is at least one minute", text)
 	}
 	return spec, nil
 }
