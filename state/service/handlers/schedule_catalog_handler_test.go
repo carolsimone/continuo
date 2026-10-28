@@ -53,10 +53,6 @@ func (f *fakeCatalogPortRepo) ExistsActive(_ context.Context, _, _ string) (bool
 	return false, nil
 }
 
-func (f *fakeCatalogPortRepo) ListActive(_ context.Context, _ string) ([]string, error) {
-	return nil, nil
-}
-
 func (f *fakeCatalogPortRepo) GetServiceMetadata(_ context.Context, _, _ string) (map[string]run.ServiceMetadata, error) {
 	return map[string]run.ServiceMetadata{}, nil
 }

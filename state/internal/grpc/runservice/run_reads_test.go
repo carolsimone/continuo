@@ -15,9 +15,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
-	"github.com/carolsimone/continuo/state/domain/repository"
-	"github.com/carolsimone/continuo/state/domain/schedule"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	"github.com/carolsimone/continuo/state/service/schedules"
 )
 
 var base = time.Date(2026, 10, 27, 8, 0, 0, 0, time.UTC)
@@ -35,7 +34,7 @@ func TestGetRun_MapsEveryField(t *testing.T) {
 		CancelledBy: "grace", CancellationReason: "wrong release",
 	})
 
-	resp, err := newServer(store, nil).GetRun(ctxOf(tenantA), &runv1.GetRunRequest{RunId: id.String()})
+	resp, err := newServer(store).GetRun(ctxOf(tenantA), &runv1.GetRunRequest{RunId: id.String()})
 
 	require.NoError(t, err)
 	got := resp.GetRun()
@@ -62,7 +61,7 @@ func TestGetRun_LeavesUnreachedStepsUnset(t *testing.T) {
 	id := uuid.New()
 	store.putRun(tenantA, projection.RunDetail{RunID: id, Status: run.RunStatusPending, CreatedAt: base})
 
-	resp, err := newServer(store, nil).GetRun(ctxOf(tenantA), &runv1.GetRunRequest{RunId: id.String()})
+	resp, err := newServer(store).GetRun(ctxOf(tenantA), &runv1.GetRunRequest{RunId: id.String()})
 
 	require.NoError(t, err)
 	assert.Nil(t, resp.GetRun().GetStartedAt())
@@ -87,7 +86,7 @@ func TestListTasks_MapsTheWaitFields(t *testing.T) {
 		},
 	)
 
-	resp, err := newServer(store, nil).ListTasks(ctxOf(tenantA), &runv1.ListTasksRequest{RunId: runID.String()})
+	resp, err := newServer(store).ListTasks(ctxOf(tenantA), &runv1.ListTasksRequest{RunId: runID.String()})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetTasks(), 2)
@@ -126,7 +125,7 @@ func TestListTasks_FiltersAndPages(t *testing.T) {
 	}
 	tasks = append(tasks, projection.TaskDetail{TaskID: uuid.New(), RunID: runID, Status: run.TaskStatusFailed})
 	store.putTasks(tenantA, runID, tasks...)
-	srv := newServer(store, nil)
+	srv := newServer(store)
 
 	def, err := srv.ListTasks(ctxOf(tenantA), &runv1.ListTasksRequest{RunId: runID.String()})
 	require.NoError(t, err)
@@ -157,7 +156,7 @@ func TestListRunAttempts_MapsEveryField(t *testing.T) {
 		projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, JobName: "other", Status: "dispatched", DispatchedAt: base},
 	)
 
-	resp, err := newServer(store, nil).ListRunAttempts(ctxOf(tenantA), &runv1.ListRunAttemptsRequest{RunId: runID.String(), TaskId: taskID.String()})
+	resp, err := newServer(store).ListRunAttempts(ctxOf(tenantA), &runv1.ListRunAttemptsRequest{RunId: runID.String(), TaskId: taskID.String()})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetAttempts(), 1)
@@ -192,7 +191,7 @@ func TestListNodeTasks_MapsRunStatus(t *testing.T) {
 		WaitReason: run.WaitReasonNodeLease, WaitingSince: ptr(base.Add(time.Second)), WaitingOnRunID: &holder,
 	}}
 
-	resp, err := newServer(store, nil).ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{
+	resp, err := newServer(store).ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "orders", Limit: 7, Operation: "test",
 	})
 
@@ -224,7 +223,7 @@ func TestListNodeTasks_MapsRunStatus(t *testing.T) {
 
 // A node read refuses an operation the operation vocabulary does not declare.
 func TestNodeReads_RefuseAnUnknownOperation(t *testing.T) {
-	srv := newServer(newStore(), nil)
+	srv := newServer(newStore())
 	ctx := ctxOf(tenantA)
 	for _, op := range []string{"tset", "RUN", "full-refresh"} {
 		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders", Operation: op})
@@ -239,7 +238,7 @@ func TestNodeReads_RefuseAnUnknownOperation(t *testing.T) {
 // model.OperationRun.
 func TestNodeReads_ParseTheOperation(t *testing.T) {
 	store := newStore()
-	srv := newServer(store, nil)
+	srv := newServer(store)
 	ctx := ctxOf(tenantA)
 	for wire, want := range map[string]model.Operation{
 		"":             model.OperationRun,
@@ -268,7 +267,7 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 		{ServiceName: "svc", SchemaName: "sch", TableName: "users", RunCount: 1, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastRunAt: base},
 	}
 
-	resp, err := newServer(store, nil).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Search: "ord", ServiceName: "svc"})
+	resp, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Search: "ord", ServiceName: "svc"})
 
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), resp.GetTotalCount())
@@ -309,7 +308,7 @@ func TestListNodes_ClampsPaging(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			store := newStore()
-			_, err := newServer(store, nil).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Limit: c.limit, Offset: c.offset})
+			_, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Limit: c.limit, Offset: c.offset})
 			require.NoError(t, err)
 			assert.Equal(t, c.wantLimit, store.nodesLimit)
 			assert.Equal(t, c.wantOffset, store.nodesOffset)
@@ -321,7 +320,7 @@ func TestListNodeNames_PassesTheServiceFilter(t *testing.T) {
 	store := newStore()
 	store.nodeNames = []string{"orders", "users"}
 
-	resp, err := newServer(store, nil).ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{ServiceName: "svc"})
+	resp, err := newServer(store).ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{ServiceName: "svc"})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"orders", "users"}, resp.GetTableNames())
@@ -332,7 +331,7 @@ func TestListNodeServices_ListsDistinctServices(t *testing.T) {
 	store := newStore()
 	store.nodeServices = []string{"a", "b"}
 
-	resp, err := newServer(store, nil).ListNodeServices(ctxOf(tenantA), &runv1.ListNodeServicesRequest{})
+	resp, err := newServer(store).ListNodeServices(ctxOf(tenantA), &runv1.ListNodeServicesRequest{})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a", "b"}, resp.GetServiceNames())
@@ -351,7 +350,7 @@ func TestGetRunGraph_MapsNodesAndEdges(t *testing.T) {
 		RunPromotionSeq: 4, LatestPromotionSeq: 7,
 	})
 
-	resp, err := newServer(store, nil).GetRunGraph(ctxOf(tenantA), &runv1.GetRunGraphRequest{RunId: runID.String()})
+	resp, err := newServer(store).GetRunGraph(ctxOf(tenantA), &runv1.GetRunGraphRequest{RunId: runID.String()})
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), resp.GetRunPromotionSeq())
@@ -386,7 +385,7 @@ func TestListRuns_ClampsPaging(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			store := newStore()
-			_, err := newServer(store, nil).ListRuns(ctxOf(tenantA), &runv1.ListRunsRequest{ScheduleName: "daily", PageSize: c.size, PageOffset: c.offset})
+			_, err := newServer(store).ListRuns(ctxOf(tenantA), &runv1.ListRunsRequest{ScheduleName: "daily", PageSize: c.size, PageOffset: c.offset})
 			require.NoError(t, err)
 			assert.Equal(t, c.wantLimit, store.runsLimit)
 			assert.Equal(t, c.wantOffset, store.runsOffset)
@@ -402,7 +401,7 @@ func TestListRuns_MapsEveryField(t *testing.T) {
 		CreatedAt: base, CompletedAt: base.Add(time.Hour),
 	}}
 
-	resp, err := newServer(store, nil).ListRuns(ctxOf(tenantA), &runv1.ListRunsRequest{ScheduleName: "daily"})
+	resp, err := newServer(store).ListRuns(ctxOf(tenantA), &runv1.ListRunsRequest{ScheduleName: "daily"})
 
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), resp.GetTotalCount())
@@ -425,7 +424,7 @@ func TestListActiveRunDrifts_MapsEveryRun(t *testing.T) {
 		{ScheduleName: "hourly", RunID: b, RunPromotionSeq: 0},
 	}
 
-	resp, err := newServer(store, nil).ListActiveRunDrifts(ctxOf(tenantA), &runv1.ListActiveRunDriftsRequest{})
+	resp, err := newServer(store).ListActiveRunDrifts(ctxOf(tenantA), &runv1.ListActiveRunDriftsRequest{})
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), resp.GetLatestPromotionSeq())
@@ -437,60 +436,10 @@ func TestListActiveRunDrifts_MapsEveryRun(t *testing.T) {
 	assert.Equal(t, int64(0), resp.GetActiveRuns()[1].GetRunPromotionSeq())
 }
 
-func TestListSchedules_NamesHasActiveRun(t *testing.T) {
-	store := newStore()
-	lastID := uuid.New()
-	store.schedules = []string{"hourly", "daily", "adhoc"}
-	store.lastRuns["daily"] = repository.LastRunSummary{
-		ScheduleName: "daily", RunID: lastID, Status: run.RunStatusRunning, CreatedAt: base, IsActive: true,
-	}
-	row := func(tenant, name, cron, description string) *schedule.Schedule {
-		return schedule.Rehydrate(tenant, name, cron, "Europe/Rome", description, false, nil, 1, "alice@example.com", base, nil)
-	}
-	rows := fakeScheduleRows{rows: []*schedule.Schedule{
-		row(tenantA, "daily", "0 6 * * *", "the morning load"),
-		row(tenantA, "hourly", "0 * * * *", ""),
-		row(tenantB, "adhoc", "0 3 * * *", "another tenant's row"),
-	}}
-
-	resp, err := newServer(store, rows).ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
-
-	require.NoError(t, err)
-	require.Len(t, resp.GetSchedules(), 3)
-	adhoc, daily, hourly := resp.GetSchedules()[0], resp.GetSchedules()[1], resp.GetSchedules()[2]
-	assert.Equal(t, "adhoc", adhoc.GetScheduleName(), "schedules are ordered by name")
-	assert.Empty(t, adhoc.GetCronExpression())
-	assert.False(t, adhoc.GetHasActiveRun())
-	assert.Nil(t, adhoc.GetLastRunAt())
-	assert.Empty(t, adhoc.GetLastRunId())
-	assert.Equal(t, "daily", daily.GetScheduleName())
-	assert.Equal(t, "0 6 * * *", daily.GetCronExpression())
-	assert.Equal(t, "the morning load", daily.GetDescription())
-	assert.Equal(t, "Europe/Rome", daily.GetTimezone())
-	assert.True(t, daily.GetHasActiveRun())
-	assert.Equal(t, "running", daily.GetLastRunStatus())
-	assert.Equal(t, lastID.String(), daily.GetLastRunId())
-	assert.True(t, base.Equal(daily.GetLastRunAt().AsTime()))
-	assert.Equal(t, "hourly", hourly.GetScheduleName())
-	assert.False(t, hourly.GetHasActiveRun())
-}
-
-func TestListSchedules_AScheduleWithoutARowHasNoCron(t *testing.T) {
-	store := newStore()
-	store.schedules = []string{"daily"}
-
-	resp, err := newServer(store, nil).ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
-
-	require.NoError(t, err)
-	require.Len(t, resp.GetSchedules(), 1)
-	assert.Empty(t, resp.GetSchedules()[0].GetCronExpression())
-	assert.Empty(t, resp.GetSchedules()[0].GetTimezone())
-}
-
 // The errors the proto comments name.
 
 func TestRunReads_RefuseAnEmptyOrMalformedID(t *testing.T) {
-	srv := newServer(newStore(), nil)
+	srv := newServer(newStore())
 	ctx := ctxOf(tenantA)
 	for _, id := range []string{"", "not-a-uuid"} {
 		calls := map[string]func() error{
@@ -515,7 +464,7 @@ func TestRunReads_RefuseAnEmptyOrMalformedID(t *testing.T) {
 }
 
 func TestRunReads_RefuseOtherMalformedRequests(t *testing.T) {
-	srv := newServer(newStore(), nil)
+	srv := newServer(newStore())
 	ctx := ctxOf(tenantA)
 	runID := uuid.NewString()
 
@@ -543,7 +492,7 @@ func TestRunReads_AnotherTenantsRunIsNotFound(t *testing.T) {
 		Nodes: []projection.RunGraphNode{{TableName: "orders", TaskID: uuid.New()}}, RunPromotionSeq: 5,
 	})
 	store.latest[tenantA] = 8
-	srv := newServer(store, nil)
+	srv := newServer(store)
 	ctx := ctxOf(tenantA)
 
 	_, err := srv.GetRun(ctx, &runv1.GetRunRequest{RunId: id.String()})
@@ -570,7 +519,7 @@ func TestRunReads_AnotherTenantsRunIsNotFound(t *testing.T) {
 }
 
 func TestRunReads_ARequestWithoutATenantIsInternal(t *testing.T) {
-	srv := newServer(newStore(), nil)
+	srv := newServer(newStore())
 	ctx := context.Background()
 	id := uuid.NewString()
 	calls := map[string]func() error{
@@ -605,7 +554,7 @@ func TestRunReads_ARequestWithoutATenantIsInternal(t *testing.T) {
 func TestRunReads_AFailingReadIsInternal(t *testing.T) {
 	store := newStore()
 	store.failWith = errBoom
-	srv := newServer(store, nil)
+	srv := newServer(store)
 	ctx := ctxOf(tenantA)
 	id := uuid.NewString()
 	calls := map[string]func() error{
@@ -651,7 +600,7 @@ func TestListRunAttempts_ClampsPaging(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			store := newStore()
-			_, err := newServer(store, nil).ListRunAttempts(ctxOf(tenantA), &runv1.ListRunAttemptsRequest{
+			_, err := newServer(store).ListRunAttempts(ctxOf(tenantA), &runv1.ListRunAttemptsRequest{
 				RunId: uuid.NewString(), PageSize: c.size, PageOffset: c.offset,
 			})
 			require.NoError(t, err)
@@ -669,8 +618,8 @@ func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
 	store.nodes = []*projection.NodeSummary{{ServiceName: "svc", TableName: "orders", LastRunAt: base}}
 	store.nodeNames = []string{"orders"}
 	store.nodeServices = []string{"svc"}
-	store.schedules = []string{"daily"}
-	srv := newServer(store, nil)
+	store.scheduleSummaries[tenantA] = []schedules.Summary{{Name: "daily", ModelCount: 1}}
+	srv := newServer(store)
 	node := &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders"}
 
 	// The default tenant sees the rows, so an empty answer below is the

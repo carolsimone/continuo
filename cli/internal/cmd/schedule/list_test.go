@@ -83,13 +83,13 @@ func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
-					ScheduleName:   "daily_ingest",
-					CronExpression: "0 3 * * *",
-					Timezone:       "UTC",
-					HasActiveRun:   false,
-					LastRunId:      "sched_01HXYZ",
-					LastRunStatus:  "success",
-					LastRunAt:      timestamppb.New(lastRunTime),
+					ScheduleName:  "daily_ingest",
+					Cron:          "0 3 * * *",
+					Timezone:      "UTC",
+					HasActiveRun:  false,
+					LastRunId:     "sched_01HXYZ",
+					LastRunStatus: "success",
+					LastRunAt:     timestamppb.New(lastRunTime),
 				},
 			},
 		},
@@ -212,13 +212,13 @@ func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
-					ScheduleName:   "daily_ingest",
-					CronExpression: "0 3 * * *",
-					Timezone:       "UTC",
-					HasActiveRun:   false,
-					LastRunId:      "",
-					LastRunStatus:  "",
-					LastRunAt:      nil, // zero / never run
+					ScheduleName:  "daily_ingest",
+					Cron:          "0 3 * * *",
+					Timezone:      "UTC",
+					HasActiveRun:  false,
+					LastRunId:     "",
+					LastRunStatus: "",
+					LastRunAt:     nil, // zero / never run
 				},
 			},
 		},
@@ -243,10 +243,10 @@ func TestList_DescriptionOmittedWhenEmpty(t *testing.T) {
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
-					ScheduleName:   "daily_ingest",
-					CronExpression: "0 3 * * *",
-					Timezone:       "UTC",
-					Description:    "", // empty — must be omitted
+					ScheduleName: "daily_ingest",
+					Cron:         "0 3 * * *",
+					Timezone:     "UTC",
+					Description:  "", // empty — must be omitted
 				},
 			},
 		},
@@ -269,10 +269,10 @@ func TestList_DescriptionIncludedWhenNonEmpty(t *testing.T) {
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
-					ScheduleName:   "daily_ingest",
-					CronExpression: "0 3 * * *",
-					Timezone:       "UTC",
-					Description:    "Ingests daily data",
+					ScheduleName: "daily_ingest",
+					Cron:         "0 3 * * *",
+					Timezone:     "UTC",
+					Description:  "Ingests daily data",
 				},
 			},
 		},

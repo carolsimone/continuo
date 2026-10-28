@@ -16,6 +16,7 @@ import (
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
+	"github.com/carolsimone/continuo/state/service/schedules"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -36,9 +37,13 @@ var (
 	// a test calls it directly to act for a tenant the gRPC edge does not
 	// resolve.
 	runCommands *svchandlers.RunCommands
-	stateConn   *grpc.ClientConn
-	stateServer *grpcserver.Server
-	stateDB     *sqlx.DB
+	// scheduleService serves the schedule calls of the server under test; a
+	// test calls it directly to act for a tenant the gRPC edge does not
+	// resolve.
+	scheduleService *schedules.Service
+	stateConn       *grpc.ClientConn
+	stateServer     *grpcserver.Server
+	stateDB         *sqlx.DB
 	// stateDSN is the connection string of stateDB's database, for a test that
 	// listens on one of its channels.
 	stateDSN string
@@ -121,11 +126,6 @@ func TestMain(m *testing.M) {
 	stateDSN = connStr
 
 	// ---- Build repositories ----
-	cronParser, err := cron.NewParser()
-	if err != nil {
-		logger.Error("Failed to build the cron parser", "error", err)
-		os.Exit(1)
-	}
 	schedulerRepo := postgres.NewRunRepository(db, logger)
 	taskRepo := postgres.NewTaskCollection(db, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
@@ -140,14 +140,23 @@ func TestMain(m *testing.M) {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
 	runCommands = svchandlers.NewRunCommands(integrationUoWFactory, noRunMetrics{}, defaultPlanner, logger)
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
+	scheduleService = schedules.New(
+		postgres.NewScheduleRepository(db, nil, cronParser, logger),
+		postgres.NewLiveScheduleModelRepository(db),
+		schedulerRepo, cronParser, clk,
+	)
 	runService := runservice.NewServer(runservice.Reads{
-		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
-		Attempts:  runreads.NewAttempts(attemptRepo),
-		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
-		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, postgres.NewScheduleRepository(db, nil, cronParser, logger)),
-		Graphs:    runreads.New(runReadRepo),
-		Rebases:   runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
-	}, runCommands, logger)
+		Runs:     runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
+		Attempts: runreads.NewAttempts(attemptRepo),
+		Nodes:    runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
+		Graphs:   runreads.New(runReadRepo),
+		Rebases:  runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
+	}, runCommands, scheduleService, logger)
 
 	// ---- Create gRPC server on a random port ----
 	stateServer, err = grpcserver.NewServer(0, runService, logger, false)

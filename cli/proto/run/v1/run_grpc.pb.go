@@ -36,6 +36,9 @@ const (
 	RunService_ListNodes_FullMethodName              = "/run.v1.RunService/ListNodes"
 	RunService_ListNodeNames_FullMethodName          = "/run.v1.RunService/ListNodeNames"
 	RunService_ListNodeServices_FullMethodName       = "/run.v1.RunService/ListNodeServices"
+	RunService_UpsertSchedule_FullMethodName         = "/run.v1.RunService/UpsertSchedule"
+	RunService_DeleteSchedule_FullMethodName         = "/run.v1.RunService/DeleteSchedule"
+	RunService_PreviewSchedule_FullMethodName        = "/run.v1.RunService/PreviewSchedule"
 	RunService_ListSchedules_FullMethodName          = "/run.v1.RunService/ListSchedules"
 	RunService_GetScheduleGraph_FullMethodName       = "/run.v1.RunService/GetScheduleGraph"
 	RunService_ListScheduleTopologies_FullMethodName = "/run.v1.RunService/ListScheduleTopologies"
@@ -72,8 +75,9 @@ const (
 // id is remembered for at least 30 days. A request_id is a UUID and is
 // required: an empty or malformed one is INVALID_ARGUMENT.
 //
-// While maintenance mode is on, every command that starts a run is refused
-// with UNAVAILABLE. Cancels and reads are not.
+// While maintenance mode is on, every command that starts a run or changes a
+// schedule is refused with UNAVAILABLE. Cancels and reads, PreviewSchedule
+// among them, are not.
 type RunServiceClient interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
@@ -285,9 +289,56 @@ type RunServiceClient interface {
 	// list, independent of the paginated catalog).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
-	// ListSchedules returns every active schedule of the tenant's schedule
-	// catalog, with the cron of each and its last run, ordered by
-	// schedule_name.
+	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
+	// fields or a descriptor such as @daily), the IANA timezone it is read in,
+	// its description and whether it is paused. The next fire counts from now,
+	// and a paused schedule has none: fires missed while paused do not run. The
+	// version goes up by one, and updated_by is the caller's identity. A
+	// schedule that has a cron can be edited, paused, resumed or removed
+	// whatever the live release holds; only a schedule's first cron needs a
+	// model of the live release with its tag. With expected_version above 0 the
+	// cron is saved only while the schedule is at that version; 0 saves with no
+	// check, and the last write wins. The response carries the schedule as saved
+	// and its next three fire times (none while paused).
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
+	//	                   a cron or timezone the parser refuses (a CRON_TZ= or
+	//	                   TZ= prefix, an unknown or empty zone, a cron that
+	//	                   never fires, an @every interval under one minute);
+	//	                   the message is the parser's.
+	//	NOT_FOUND        - the schedule has no cron and no model of the live
+	//	                   release has its tag.
+	//	ABORTED          - expected_version is set and the schedule is not at
+	//	                   it: another edit saved first, or its cron was
+	//	                   removed. Read the schedule again before editing it.
+	//	UNAVAILABLE      - maintenance mode is on.
+	UpsertSchedule(ctx context.Context, in *UpsertScheduleRequest, opts ...grpc.CallOption) (*UpsertScheduleResponse, error)
+	// DeleteSchedule removes the cron of a schedule, which then runs only when
+	// triggered. A run of it in progress goes on. Deleting the cron of a
+	// schedule that has none succeeds.
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - empty schedule_name.
+	//	UNAVAILABLE      - maintenance mode is on.
+	DeleteSchedule(ctx context.Context, in *DeleteScheduleRequest, opts ...grpc.CallOption) (*DeleteScheduleResponse, error)
+	// PreviewSchedule reads a cron in a timezone as UpsertSchedule would, with
+	// the same parser that fires it, and returns it in English words with its
+	// next three fire times from now. It writes nothing, and maintenance mode
+	// does not refuse it. cron_words is empty for a cron the parser fires but
+	// the words cannot describe.
+	// Errors: INVALID_ARGUMENT (a cron or timezone the parser refuses; the
+	// message is the parser's).
+	PreviewSchedule(ctx context.Context, in *PreviewScheduleRequest, opts ...grpc.CallOption) (*PreviewScheduleResponse, error)
+	// ListSchedules returns one entry per schedule name that the live release
+	// has or that has a cron, ordered by schedule_name: its cron, how many
+	// models of the live release have its tag, and its last run. A schedule
+	// that has a cron, is not paused and has a model_count of 0 records a
+	// failed run at each fire until a release brings its models back, it is
+	// paused, or its cron is removed. A schedule whose stored cron the parser no
+	// longer reads (a timezone the timezone database has dropped) is listed with
+	// no cron, whether or not the live release has its name; it fires nothing,
+	// UpsertSchedule saves a new cron over it and DeleteSchedule removes it.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.
 	ListSchedules(ctx context.Context, in *ListSchedulesRequest, opts ...grpc.CallOption) (*ListSchedulesResponse, error)
@@ -483,6 +534,36 @@ func (c *runServiceClient) ListNodeServices(ctx context.Context, in *ListNodeSer
 	return out, nil
 }
 
+func (c *runServiceClient) UpsertSchedule(ctx context.Context, in *UpsertScheduleRequest, opts ...grpc.CallOption) (*UpsertScheduleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpsertScheduleResponse)
+	err := c.cc.Invoke(ctx, RunService_UpsertSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *runServiceClient) DeleteSchedule(ctx context.Context, in *DeleteScheduleRequest, opts ...grpc.CallOption) (*DeleteScheduleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteScheduleResponse)
+	err := c.cc.Invoke(ctx, RunService_DeleteSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *runServiceClient) PreviewSchedule(ctx context.Context, in *PreviewScheduleRequest, opts ...grpc.CallOption) (*PreviewScheduleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewScheduleResponse)
+	err := c.cc.Invoke(ctx, RunService_PreviewSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *runServiceClient) ListSchedules(ctx context.Context, in *ListSchedulesRequest, opts ...grpc.CallOption) (*ListSchedulesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSchedulesResponse)
@@ -544,8 +625,9 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 // id is remembered for at least 30 days. A request_id is a UUID and is
 // required: an empty or malformed one is INVALID_ARGUMENT.
 //
-// While maintenance mode is on, every command that starts a run is refused
-// with UNAVAILABLE. Cancels and reads are not.
+// While maintenance mode is on, every command that starts a run or changes a
+// schedule is refused with UNAVAILABLE. Cancels and reads, PreviewSchedule
+// among them, are not.
 type RunServiceServer interface {
 	// StartRun creates a run of a schedule's nodes in the live release and
 	// dispatches its ready tasks in the transaction that creates it. The run's
@@ -757,9 +839,56 @@ type RunServiceServer interface {
 	// list, independent of the paginated catalog).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
-	// ListSchedules returns every active schedule of the tenant's schedule
-	// catalog, with the cron of each and its last run, ordered by
-	// schedule_name.
+	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
+	// fields or a descriptor such as @daily), the IANA timezone it is read in,
+	// its description and whether it is paused. The next fire counts from now,
+	// and a paused schedule has none: fires missed while paused do not run. The
+	// version goes up by one, and updated_by is the caller's identity. A
+	// schedule that has a cron can be edited, paused, resumed or removed
+	// whatever the live release holds; only a schedule's first cron needs a
+	// model of the live release with its tag. With expected_version above 0 the
+	// cron is saved only while the schedule is at that version; 0 saves with no
+	// check, and the last write wins. The response carries the schedule as saved
+	// and its next three fire times (none while paused).
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
+	//	                   a cron or timezone the parser refuses (a CRON_TZ= or
+	//	                   TZ= prefix, an unknown or empty zone, a cron that
+	//	                   never fires, an @every interval under one minute);
+	//	                   the message is the parser's.
+	//	NOT_FOUND        - the schedule has no cron and no model of the live
+	//	                   release has its tag.
+	//	ABORTED          - expected_version is set and the schedule is not at
+	//	                   it: another edit saved first, or its cron was
+	//	                   removed. Read the schedule again before editing it.
+	//	UNAVAILABLE      - maintenance mode is on.
+	UpsertSchedule(context.Context, *UpsertScheduleRequest) (*UpsertScheduleResponse, error)
+	// DeleteSchedule removes the cron of a schedule, which then runs only when
+	// triggered. A run of it in progress goes on. Deleting the cron of a
+	// schedule that has none succeeds.
+	// Errors:
+	//
+	//	INVALID_ARGUMENT - empty schedule_name.
+	//	UNAVAILABLE      - maintenance mode is on.
+	DeleteSchedule(context.Context, *DeleteScheduleRequest) (*DeleteScheduleResponse, error)
+	// PreviewSchedule reads a cron in a timezone as UpsertSchedule would, with
+	// the same parser that fires it, and returns it in English words with its
+	// next three fire times from now. It writes nothing, and maintenance mode
+	// does not refuse it. cron_words is empty for a cron the parser fires but
+	// the words cannot describe.
+	// Errors: INVALID_ARGUMENT (a cron or timezone the parser refuses; the
+	// message is the parser's).
+	PreviewSchedule(context.Context, *PreviewScheduleRequest) (*PreviewScheduleResponse, error)
+	// ListSchedules returns one entry per schedule name that the live release
+	// has or that has a cron, ordered by schedule_name: its cron, how many
+	// models of the live release have its tag, and its last run. A schedule
+	// that has a cron, is not paused and has a model_count of 0 records a
+	// failed run at each fire until a release brings its models back, it is
+	// paused, or its cron is removed. A schedule whose stored cron the parser no
+	// longer reads (a timezone the timezone database has dropped) is listed with
+	// no cron, whether or not the live release has its name; it fires nothing,
+	// UpsertSchedule saves a new cron over it and DeleteSchedule removes it.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.
 	ListSchedules(context.Context, *ListSchedulesRequest) (*ListSchedulesResponse, error)
@@ -835,6 +964,15 @@ func (UnimplementedRunServiceServer) ListNodeNames(context.Context, *ListNodeNam
 }
 func (UnimplementedRunServiceServer) ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeServices not implemented")
+}
+func (UnimplementedRunServiceServer) UpsertSchedule(context.Context, *UpsertScheduleRequest) (*UpsertScheduleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpsertSchedule not implemented")
+}
+func (UnimplementedRunServiceServer) DeleteSchedule(context.Context, *DeleteScheduleRequest) (*DeleteScheduleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSchedule not implemented")
+}
+func (UnimplementedRunServiceServer) PreviewSchedule(context.Context, *PreviewScheduleRequest) (*PreviewScheduleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewSchedule not implemented")
 }
 func (UnimplementedRunServiceServer) ListSchedules(context.Context, *ListSchedulesRequest) (*ListSchedulesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSchedules not implemented")
@@ -1172,6 +1310,60 @@ func _RunService_ListNodeServices_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RunService_UpsertSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpsertScheduleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RunServiceServer).UpsertSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RunService_UpsertSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RunServiceServer).UpsertSchedule(ctx, req.(*UpsertScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RunService_DeleteSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteScheduleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RunServiceServer).DeleteSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RunService_DeleteSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RunServiceServer).DeleteSchedule(ctx, req.(*DeleteScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RunService_PreviewSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewScheduleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RunServiceServer).PreviewSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RunService_PreviewSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RunServiceServer).PreviewSchedule(ctx, req.(*PreviewScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RunService_ListSchedules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSchedulesRequest)
 	if err := dec(in); err != nil {
@@ -1300,6 +1492,18 @@ var RunService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNodeServices",
 			Handler:    _RunService_ListNodeServices_Handler,
+		},
+		{
+			MethodName: "UpsertSchedule",
+			Handler:    _RunService_UpsertSchedule_Handler,
+		},
+		{
+			MethodName: "DeleteSchedule",
+			Handler:    _RunService_DeleteSchedule_Handler,
+		},
+		{
+			MethodName: "PreviewSchedule",
+			Handler:    _RunService_PreviewSchedule_Handler,
 		},
 		{
 			MethodName: "ListSchedules",

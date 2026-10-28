@@ -513,6 +513,41 @@ func TestSchedules_ListSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 	}
 }
 
+// ListStoredCronInvalid names, by name, the tenant's rows whose stored cron or
+// zone no longer parses, the rows List leaves out, and logs nothing for them.
+// Another tenant's rows are not named.
+func TestSchedules_ListStoredCronInvalidNamesTheRowsListLeavesOut(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo, logs := newLoggingScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	other := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "b-good", "0 * * * *", "UTC", nil)
+	rawSchedule(t, tx, tenant, "c-broken-zone", "0 * * * *", "Mars/Olympus", nil)
+	rawSchedule(t, tx, tenant, "a-broken-cron", "not a cron", "UTC", nil)
+	rawSchedule(t, tx, tenant, "d-good", "30 2 * * *", "Europe/Paris", nil)
+	rawSchedule(t, tx, other, "theirs-broken", "not a cron", "UTC", nil)
+
+	got, err := repo.ListStoredCronInvalid(ctx, tenant)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a-broken-cron", "c-broken-zone"}, got)
+	assert.Empty(t, logs.String(), "naming the rows logs nothing per row")
+
+	theirs, err := repo.ListStoredCronInvalid(ctx, other)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"theirs-broken"}, theirs)
+
+	none, err := repo.ListStoredCronInvalid(ctx, "sched-no-rows-"+uuid.NewString())
+	require.NoError(t, err)
+	assert.Empty(t, none)
+
+	_, err = newScheduleRepo(db, tx, nil).ListStoredCronInvalid(ctx, tenant)
+	require.Error(t, err, "a repository with no parser cannot tell which rows parse")
+}
+
 // A lookup of one schedule is not skipped: Get fails with an error that wraps
 // schedule.ErrStoredCronInvalid and names the tenant, schedule, cron and zone.
 func TestSchedules_GetOfAStoredCronThatNoLongerParsesFails(t *testing.T) {
@@ -541,6 +576,27 @@ func TestSchedules_GetOfAStoredCronThatNoLongerParsesFails(t *testing.T) {
 		}
 	}
 	mustGet(t, repo, tenant, "good")
+}
+
+// The error Get returns for a stored cron that no longer parses carries the
+// version the row is at, so an edit that saves over it can raise that version.
+func TestSchedules_GetOfAStoredCronThatNoLongerParsesNamesItsVersion(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, scheduleParser(t))
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "broken", "0 * * * *", "Mars/Olympus", nil)
+	_, err := tx.Exec(`UPDATE schedules SET version = 7 WHERE tenant_id = $1 AND name = 'broken'`, tenant)
+	require.NoError(t, err)
+
+	_, _, err = repo.Get(ctx, tenant, "broken")
+
+	var invalid *schedule.StoredCronInvalidError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, int64(7), invalid.Version)
+	assert.Equal(t, tenant, invalid.TenantID)
+	assert.Equal(t, "broken", invalid.Name)
 }
 
 // Saving a schedule over a row whose stored cron no longer parses repairs it,

@@ -1,22 +1,25 @@
 // Package runservice is the gRPC edge of run.v1.RunService. Each handler
 // parses its request, takes the tenant and identity from the context, calls a
-// read service of state/service/runreads or a command of
-// state/service/handlers and maps the result to the response; it holds no
-// query and reaches no adapter.
+// read service of state/service/runreads, a command of state/service/handlers
+// or the schedules service of state/service/schedules, and maps the result to
+// the response; it holds no query and reaches no adapter.
 package runservice
 
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/state/domain/schedule"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/runreads"
+	"github.com/carolsimone/continuo/state/service/schedules"
 )
 
 // Reads are the read services the RunService reads are served from.
@@ -28,8 +31,6 @@ type Reads struct {
 	// Nodes serves ListNodeTasks, ListNodes, ListNodeNames and
 	// ListNodeServices.
 	Nodes *runreads.Nodes
-	// Schedules serves ListSchedules.
-	Schedules *runreads.Schedules
 	// Graphs serves GetRunGraph, ListRuns and ListActiveRunDrifts.
 	Graphs *runreads.Service
 	// ScheduleGraphs serves GetScheduleGraph and ListScheduleTopologies.
@@ -58,21 +59,33 @@ type Commands interface {
 
 var _ Commands = (*svchandlers.RunCommands)(nil)
 
-// Server serves RunService: its reads from Reads and its commands from
-// Commands.
+// Schedules edits, previews and lists the crons of a tenant's schedules. It
+// serves UpsertSchedule, DeleteSchedule, PreviewSchedule and ListSchedules.
+type Schedules interface {
+	Upsert(ctx context.Context, tenantID string, in schedules.UpsertInput, by string) (*schedule.Schedule, []time.Time, error)
+	Delete(ctx context.Context, tenantID, name string) error
+	Preview(ctx context.Context, cron, timezone string) (words string, next []time.Time, err error)
+	List(ctx context.Context, tenantID string) ([]schedules.Summary, error)
+}
+
+var _ Schedules = (*schedules.Service)(nil)
+
+// Server serves RunService: its reads from Reads, its run commands from
+// Commands and its schedule calls from Schedules.
 type Server struct {
 	runv1.UnimplementedRunServiceServer
-	reads    Reads
-	commands Commands
-	logger   *slog.Logger
+	reads     Reads
+	commands  Commands
+	schedules Schedules
+	logger    *slog.Logger
 }
 
 var _ runv1.RunServiceServer = (*Server)(nil)
 
-// NewServer returns a Server that serves its reads from reads and its
-// commands from commands.
-func NewServer(reads Reads, commands Commands, logger *slog.Logger) *Server {
-	return &Server{reads: reads, commands: commands, logger: logger}
+// NewServer returns a Server that serves its reads from reads, its run
+// commands from commands and its schedule calls from schedules.
+func NewServer(reads Reads, commands Commands, schedules Schedules, logger *slog.Logger) *Server {
+	return &Server{reads: reads, commands: commands, schedules: schedules, logger: logger}
 }
 
 // requestTenant returns the tenant the request acts for, which the identity

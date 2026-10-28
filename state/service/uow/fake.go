@@ -210,3 +210,37 @@ func (f *LiveReleaseOnly) NodeContentHash(context.Context, string, string, topol
 func (f *LiveReleaseOnly) PruneReleases(context.Context, time.Time) (int64, error) {
 	return 0, ErrNotFaked
 }
+
+// FakeLiveScheduleModels is an in-memory repository.LiveScheduleModels. Counts
+// holds, per tenant, how many models of the tenant's live release carry each
+// schedule name; a tenant or name it does not hold has none. With Err set,
+// every read fails with it.
+type FakeLiveScheduleModels struct {
+	Counts map[string]map[string]int
+	Err    error
+}
+
+var _ repository.LiveScheduleModels = (*FakeLiveScheduleModels)(nil)
+
+// CountByScheduleName returns a copy of the tenant's counts, leaving out a name
+// set to 0.
+func (f *FakeLiveScheduleModels) CountByScheduleName(_ context.Context, tenantID string) (map[string]int, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	out := map[string]int{}
+	for name, n := range f.Counts[tenantID] {
+		if n > 0 {
+			out[name] = n
+		}
+	}
+	return out, nil
+}
+
+// CountOf returns the tenant's count of scheduleName.
+func (f *FakeLiveScheduleModels) CountOf(_ context.Context, tenantID, scheduleName string) (int, error) {
+	if f.Err != nil {
+		return 0, f.Err
+	}
+	return f.Counts[tenantID][scheduleName], nil
+}

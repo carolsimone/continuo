@@ -59,11 +59,29 @@ var runServiceStarts = map[string]func(c runv1.RunServiceClient, md *metadata.MD
 	},
 }
 
+// scheduleEdits are the RunService commands that change a schedule, each
+// called once on c.
+var scheduleEdits = map[string]func(c runv1.RunServiceClient, md *metadata.MD) error{
+	"UpsertSchedule": func(c runv1.RunServiceClient, md *metadata.MD) error {
+		_, err := c.UpsertSchedule(context.Background(), &runv1.UpsertScheduleRequest{ScheduleName: "daily", Cron: "0 1 * * *", Timezone: "UTC"}, grpclib.Trailer(md))
+		return err
+	},
+	"DeleteSchedule": func(c runv1.RunServiceClient, md *metadata.MD) error {
+		_, err := c.DeleteSchedule(context.Background(), &runv1.DeleteScheduleRequest{ScheduleName: "daily"}, grpclib.Trailer(md))
+		return err
+	},
+}
+
+// Every gated method is a command that starts a run or changes a schedule.
+func TestMaintenance_GatesExactlyTheStartsAndTheScheduleEdits(t *testing.T) {
+	require.Len(t, MaintenanceGatedMethods, len(runServiceStarts)+len(scheduleEdits),
+		"every gated method has a case in runServiceStarts or scheduleEdits")
+}
+
 // The RunService commands that start a run are refused during maintenance
 // before their handler runs; its cancels and PreviewRebase reach the handler,
 // which here answers Unimplemented.
 func TestMaintenance_RefusesRunServiceCommands(t *testing.T) {
-	require.Len(t, MaintenanceGatedMethods, len(runServiceStarts), "every gated method has a case in runServiceStarts")
 	c := dialRunService(t, true)
 	for name, call := range runServiceStarts {
 		t.Run(name, func(t *testing.T) {
@@ -97,11 +115,46 @@ func TestMaintenance_RefusesRunServiceCommands(t *testing.T) {
 	}
 }
 
+// UpsertSchedule and DeleteSchedule are refused during maintenance before
+// their handler runs; PreviewSchedule and ListSchedules are reads and reach
+// the handler, which here answers Unimplemented.
+func TestMaintenance_RefusesScheduleEdits(t *testing.T) {
+	c := dialRunService(t, true)
+	for name, call := range scheduleEdits {
+		t.Run(name, func(t *testing.T) {
+			var md metadata.MD
+			requireMaintenanceRefusal(t, call(c, &md), md)
+		})
+	}
+
+	ctx := context.Background()
+	reached := map[string]func(md *metadata.MD) error{
+		"PreviewSchedule": func(md *metadata.MD) error {
+			_, err := c.PreviewSchedule(ctx, &runv1.PreviewScheduleRequest{Cron: "0 1 * * *", Timezone: "UTC"}, grpclib.Trailer(md))
+			return err
+		},
+		"ListSchedules": func(md *metadata.MD) error {
+			_, err := c.ListSchedules(ctx, &runv1.ListSchedulesRequest{}, grpclib.Trailer(md))
+			return err
+		},
+	}
+	for name, call := range reached {
+		t.Run(name, func(t *testing.T) {
+			var md metadata.MD
+			err := call(&md)
+			require.Equal(t, codes.Unimplemented, status.Code(err), "%s reaches its handler during maintenance: %v", name, err)
+			require.Empty(t, md.Get(maintenance.TrailerKey))
+		})
+	}
+}
+
 // With maintenance off a RunService command reaches its handler.
 func TestMaintenance_OffReachesTheRunServiceHandler(t *testing.T) {
 	c := dialRunService(t, false)
-	for name, call := range runServiceStarts {
-		var md metadata.MD
-		require.Equal(t, codes.Unimplemented, status.Code(call(c, &md)), name)
+	for _, cases := range []map[string]func(c runv1.RunServiceClient, md *metadata.MD) error{runServiceStarts, scheduleEdits} {
+		for name, call := range cases {
+			var md metadata.MD
+			require.Equal(t, codes.Unimplemented, status.Code(call(c, &md)), name)
+		}
 	}
 }

@@ -12,8 +12,10 @@ import (
 // transaction a call sees, and a write belongs to, that transaction.
 type ScheduleRepository interface {
 	// Get returns the tenant's schedule of that name and whether there is one.
-	// A schedule whose stored cron or timezone no longer parses is an error
-	// wrapping schedule.ErrStoredCronInvalid, so a lookup fails loudly.
+	// A schedule whose stored cron or timezone no longer parses is a
+	// *schedule.StoredCronInvalidError (schedule.ErrStoredCronInvalid to
+	// errors.Is) carrying the row's version, so a lookup fails loudly and an
+	// edit can still save over the row.
 	Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
 	// GetForUpdate is Get inside the open transaction, and locks the
@@ -26,6 +28,11 @@ type ScheduleRepository interface {
 	// stored cron or timezone no longer parses is left out and logged, not
 	// returned.
 	List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error)
+
+	// ListStoredCronInvalid returns, ordered by name, the names of the
+	// tenant's schedules whose stored cron or timezone no longer parses: the
+	// ones List leaves out. It logs nothing per schedule.
+	ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error)
 
 	// Save stores s exactly as it stands, its version, author and edit time
 	// included: the aggregate counts its own versions, and a save of a fire
