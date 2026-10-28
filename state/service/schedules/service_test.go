@@ -55,7 +55,7 @@ func TestSchedulesUpsert_CreatesTheFirstRowOfANameTheLiveReleaseHas(t *testing.T
 }
 
 // The first row of a name no model of the tenant's live release carries is
-// refused, and nothing is written.
+// refused, as the schedule policy rules, and nothing is written.
 func TestSchedulesUpsert_RefusesTheFirstRowOfANameNoModelHas(t *testing.T) {
 	h := newHarness(t)
 	h.liveModels(tenantA, map[string]int{"daily": 3})

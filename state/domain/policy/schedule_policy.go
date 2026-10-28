@@ -1,7 +1,7 @@
 // Package policy hosts cross-aggregate Domain Services. These exist when a
 // rule does not naturally fit on any single aggregate. SchedulePolicy answers
-// pre-condition questions about a run's schedule that span the Run and
-// Schedule aggregates and the live release.
+// pre-condition questions about a schedule name, for a run of it or for its
+// first cron, that span the Run and Schedule aggregates and the live release.
 package policy
 
 import (
@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/schedule"
 )
 
 // SchedulePolicy is stateless. Instantiate per use case or reuse a value;
@@ -64,6 +65,22 @@ func (SchedulePolicy) EnsureScheduleKnown(ctx context.Context, models LiveModels
 	}
 	if !exists {
 		return fmt.Errorf("%w: no model of the live release carries %q and it has no cron", run.ErrScheduleNotFound, name)
+	}
+	return nil
+}
+
+// EnsureNameCarried returns schedule.ErrUnknownName, naming the schedule,
+// unless a model of the tenant's live release carries the name: a schedule
+// name gets its first cron only when the live release has models for it to
+// run. A name that already has a cron is not asked about, so it keeps its cron
+// whatever later releases hold.
+func (SchedulePolicy) EnsureNameCarried(ctx context.Context, models LiveModels, tenantID, name string) error {
+	n, err := models.CountOf(ctx, tenantID, name)
+	if err != nil {
+		return fmt.Errorf("count the live release's models of schedule %q: %w", name, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("schedule %q: %w", name, schedule.ErrUnknownName)
 	}
 	return nil
 }

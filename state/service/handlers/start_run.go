@@ -140,7 +140,7 @@ func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWo
 }
 
 // check enforces a trigger's pre-conditions, read in u's transaction before
-// anything is written: a schedule the tenant knows, and no active run of it. A
+// the run is written: a schedule the tenant knows, and no active run of it. A
 // schedule with an active run is OutcomeSkippedActive.
 //
 // It takes the topology lock first, which the transaction then holds, so the

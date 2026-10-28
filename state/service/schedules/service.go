@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/policy"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/schedule"
 	"github.com/carolsimone/continuo/state/service/ports"
@@ -84,6 +85,7 @@ func (s Summary) HasActiveRun() bool { return s.LastRun != nil && s.LastRun.IsAc
 // Service edits, previews and lists the schedules of the tenant each call
 // names.
 type Service struct {
+	policy    policy.SchedulePolicy
 	schedules repository.ScheduleRepository
 	models    repository.LiveScheduleModels
 	lastRuns  repository.LastRunReader
@@ -91,9 +93,9 @@ type Service struct {
 	clock     ports.Clock
 }
 
-// New returns a Service that stores schedules in schedules, checks a name
-// against models, reads last runs from lastRuns, reads crons with parser and
-// counts fires from clock's now.
+// New returns a Service that stores schedules in schedules, checks a name's
+// first cron against models by the schedule policy, reads last runs from
+// lastRuns, reads crons with parser and counts fires from clock's now.
 func New(
 	schedules repository.ScheduleRepository,
 	models repository.LiveScheduleModels,
@@ -171,12 +173,8 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 			in.Name, storedVersion, in.ExpectedVersion, schedule.ErrStaleVersion)
 	}
 	if !found {
-		models, err := s.models.CountOf(ctx, tenantID, in.Name)
-		if err != nil {
-			return nil, fmt.Errorf("count the live release's models of schedule %q: %w", in.Name, err)
-		}
-		if models == 0 {
-			return nil, fmt.Errorf("schedule %q: %w", in.Name, schedule.ErrUnknownName)
+		if err := s.policy.EnsureNameCarried(ctx, s.models, tenantID, in.Name); err != nil {
+			return nil, err
 		}
 	}
 
@@ -186,11 +184,7 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 	case !found:
 		saved = schedule.New(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	case unreadable != nil:
-		// The stored row cannot be rebuilt, so the edit starts from its
-		// version alone.
-		saved = schedule.Rehydrate(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused,
-			nil, storedVersion, by, now, expr)
-		saved.Replace(cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+		saved = schedule.ReplaceUnreadable(tenantID, in.Name, storedVersion, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	default:
 		saved = stored
 		saved.Replace(cron, in.Timezone, in.Description, in.Paused, expr, by, now)

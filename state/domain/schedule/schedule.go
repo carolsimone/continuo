@@ -20,8 +20,8 @@ type Expression interface {
 
 // Schedule is the aggregate root for one row of the schedules table: the cron
 // of a schedule name in a tenant, and when it fires next. Its identity is
-// (tenant, name). Only an operator's edit (New, Replace) changes its version,
-// author and edit time; a fire moves the next fire alone.
+// (tenant, name). Only an operator's edit (New, Replace, ReplaceUnreadable)
+// changes its version, author and edit time; a fire moves the next fire alone.
 type Schedule struct {
 	tenantID    string
 	name        string
@@ -41,6 +41,26 @@ type Schedule struct {
 // expr is the parsed form of cron in timezone.
 func New(tenantID, name, cron, timezone, description string, paused bool, expr Expression, by string, now time.Time) *Schedule {
 	s := &Schedule{tenantID: tenantID, name: name}
+	s.edit(cron, timezone, description, paused, expr, by, now)
+	return s
+}
+
+// ReplaceUnreadable returns the schedule an operator's edit at `now` by `by`
+// makes of a stored row whose cron or timezone no longer parses, so cannot be
+// rebuilt: the edit's cron, timezone, description and paused flag, with expr
+// the parsed form of cron in timezone, at the version after storedVersion, the
+// row's. Of the stored row only the identity and the version are kept. The
+// next fire counts from now, and there is none while the schedule is paused.
+func ReplaceUnreadable(
+	tenantID, name string,
+	storedVersion int64,
+	cron, timezone, description string,
+	paused bool,
+	expr Expression,
+	by string,
+	now time.Time,
+) *Schedule {
+	s := &Schedule{tenantID: tenantID, name: name, version: storedVersion}
 	s.edit(cron, timezone, description, paused, expr, by, now)
 	return s
 }

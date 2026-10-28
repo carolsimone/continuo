@@ -74,6 +74,35 @@ func TestSchedule_NewStartsAtVersionOneWithTheNextFire(t *testing.T) {
 	assert.True(t, at(1, 0).Equal(next), "next fire: got %s", next)
 }
 
+// An edit over a stored row that can no longer be rebuilt keeps the row's
+// identity and version alone: it is at the version after the stored one, with
+// the edit's fields and author, and its next fire counts from now; none while
+// it is paused.
+func TestSchedule_ReplaceUnreadableRaisesTheStoredVersion(t *testing.T) {
+	now := at(0, 30)
+
+	s := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "every hour", false, everyHour{}, "bob@example.com", now)
+
+	assert.Equal(t, "default", s.TenantID())
+	assert.Equal(t, "daily", s.Name())
+	assert.Equal(t, "0 * * * *", s.Cron())
+	assert.Equal(t, "UTC", s.Timezone())
+	assert.Equal(t, "every hour", s.Description())
+	assert.False(t, s.Paused())
+	assert.Equal(t, int64(6), s.Version())
+	assert.Equal(t, "bob@example.com", s.UpdatedBy())
+	assert.True(t, now.Equal(s.UpdatedAt()))
+	next, ok := s.NextFireAt()
+	require.True(t, ok)
+	assert.True(t, at(1, 0).Equal(next), "next fire: got %s", next)
+
+	paused := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "", true, everyHour{}, "bob@example.com", now)
+	assert.Equal(t, int64(6), paused.Version())
+	assert.True(t, paused.Paused())
+	_, ok = paused.NextFireAt()
+	assert.False(t, ok, "a paused schedule has no next fire")
+}
+
 func TestSchedule_DueIsTheLatestMissedSlot(t *testing.T) {
 	// The loop last ran before 00:55, so the schedule's next fire is 01:00;
 	// the process comes back at 03:10.
