@@ -82,14 +82,6 @@ func seedNode(uid, image, hash string) topologyartifact.Node {
 	}
 }
 
-// outboxRows counts the rows of orchestrator_outbox.
-func outboxRows(t *testing.T, pgDB *sqlx.DB) int {
-	t.Helper()
-	var n int
-	require.NoError(t, pgDB.QueryRowContext(context.Background(), `SELECT count(*) FROM orchestrator_outbox`).Scan(&n))
-	return n
-}
-
 func graphScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string) any {
 	t.Helper()
 	ctx := context.Background()
@@ -114,7 +106,6 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 		modelNode("service-b.public.table_b", "table_b", "service-b", "tag-b", "daily", "service-a.public.table_a"),
 	), 1)
 	msgID := "msg-int-happy-" + uuid.New().String()[:8]
-	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, msgID, nil, in))
 
@@ -127,7 +118,6 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 
 	assert.Equal(t, "daily", graphScalar(t, client,
 		`MATCH (t:Table {unique_id:'service-a.public.table_a'}) RETURN t.schedule_name AS v`))
-	assert.Equal(t, before, outboxRows(t, pgDB), "the swap writes no outbox row")
 
 	var dedupCount int
 	require.NoError(t, pgDB.QueryRowContext(ctx,
@@ -136,28 +126,24 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	assert.Equal(t, 1, dedupCount)
 }
 
-// The same promotion delivered under two message ids swaps once and writes
-// no outbox row either time.
+// The same promotion delivered under two message ids swaps once.
 func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, pgDB := releasePromotedFixture(t)
+	h, reader, client, _ := releasePromotedFixture(t)
 	releaseID := "rA-idem-" + uuid.New().String()[:8]
 	in := promotionOf(reader, artifactOf(releaseID, modelNode("svc.public.t", "t", "svc", "tag-1", "hourly")), 1)
-	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-idem-1-"+uuid.New().String()[:8], nil, in))
 	require.NoError(t, h.Handle(ctx, "msg-idem-2-"+uuid.New().String()[:8], nil, in))
 
 	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (t:Table) RETURN count(t) AS v`))
-	assert.Equal(t, before, outboxRows(t, pgDB))
 }
 
 func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, pgDB := releasePromotedFixture(t)
+	h, reader, client, _ := releasePromotedFixture(t)
 	relA := "rA-twor-" + uuid.New().String()[:8]
 	relB := "rB-twor-" + uuid.New().String()[:8]
-	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-twor-A-"+uuid.New().String()[:8], nil,
 		promotionOf(reader, artifactOf(relA, modelNode("svc.public.node_a", "node_a", "svc", "tag-a", "daily")), 1)))
@@ -166,17 +152,15 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 
 	assert.Equal(t, "svc.public.node_c", graphScalar(t, client, `MATCH (t:Table) RETURN t.unique_id AS v`))
 	assert.Equal(t, relB, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
-	assert.Equal(t, before, outboxRows(t, pgDB))
 }
 
 // A promotion older than the live one arrives after it: the topology stays on
-// the newer release, and neither promotion writes an outbox row.
+// the newer release.
 func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, pgDB := releasePromotedFixture(t)
+	h, reader, client, _ := releasePromotedFixture(t)
 	relNew := "rNew-" + uuid.New().String()[:8]
 	relOld := "rOld-" + uuid.New().String()[:8]
-	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-late-new-"+uuid.New().String()[:8], nil,
 		promotionOf(reader, artifactOf(relNew,
@@ -193,6 +177,4 @@ func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 
 	assert.Equal(t, relNew, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
 	assert.Equal(t, int64(2), graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.promotion_seq AS v`))
-
-	assert.Equal(t, before, outboxRows(t, pgDB), "the late release writes nothing, not a seed request either")
 }

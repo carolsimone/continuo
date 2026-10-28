@@ -12,7 +12,6 @@ import (
 	httpinfra "github.com/carolsimone/continuo/orchestrator/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
-	orchpublisher "github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/orchestrator/adapters/s3"
 	"github.com/carolsimone/continuo/orchestrator/config"
@@ -37,16 +36,9 @@ import (
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
 
-// outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
-// is comfortably above it: a wedged (not exited) processor trips within a
-// minute, while an idle-but-live one never does.
-const outboxHeartbeatStale = 60 * time.Second
-
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
-// a read outside it), plus the outbox relay, background loops and request
-// handlers.
+// a read outside it), plus background loops and request handlers.
 var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 35, MaxIdleConns: 5}
 
 func main() {
@@ -226,62 +218,17 @@ func main() {
 	runHistoryRepo := neo4jinfra.NewRunHistoryRepository(neo4jClient, logger)
 
 	// ========================================================================
-	// INITIALIZE OUTBOX PROCESSOR
-	// ========================================================================
-
-	// The relay wakes on the notification a committed insert sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
-	if errors.Is(err, context.Canceled) {
-		logger.Info("Shutdown requested while waiting for the outbox listener")
-		os.Exit(0)
-	}
-	if err != nil {
-		logger.Error("Failed to listen for outbox notifications", "error", err)
-		os.Exit(1)
-	}
-	// Closing the listener can wait on a connection attempt in progress, so
-	// the handler stops waiting at the shutdown deadline.
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
-	outboxPub := orchpublisher.NewOutboxPublisher(redisClient, logger)
-	outboxProc := pkgoutbox.NewProcessor(
-		pgDB,
-		postgres.OutboxTable,
-		outboxPub,
-		nil, // no terminal-failure hook for orchestrator
-		logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()},
-	)
-	metricsReg.WatchOutbox(outboxProc)
-	liveReg.RegisterWorker("outbox_processor")
-	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
-		return outboxProc.Healthy(outboxHeartbeatStale)
-	})
-	lifecycleManager.Go(func() {
-		err := outboxProc.Run(ctx)
-		if errors.Is(err, context.Canceled) {
-			err = nil // clean stop on shutdown
-		}
-		liveReg.WorkerExited("outbox_processor", err)
-		if err != nil {
-			logger.Error("Outbox processor exited", "error", err)
-		}
-	})
-
-	// ========================================================================
 	// START RETENTION SWEEPER
 	// ========================================================================
 	//
-	// Keeps the two unbounded-growth tables in check: processed
-	// orchestrator_outbox rows and message_processing dedup rows (the latter
-	// retains a full payload per consumed message). Processed outbox rows are
-	// kept RETENTION_DAYS; dedup rows, whatever their state, are kept at least
-	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer. Both
-	// are pruned on the same timer using DB-clock cutoffs.
+	// Keeps the message_processing dedup table, which retains a full payload per
+	// consumed message, from growing without bound. Dedup rows, whatever their
+	// state, are kept at least 30 days (the replay horizon), longer when
+	// RETENTION_DAYS is longer. The sweep uses DB-clock cutoffs.
 
-	mpPruner := pkgmessageprocessing.NewPruner(pgDB, postgres.OutboxTable, logger)
+	mpPruner := pkgmessageprocessing.NewPrunerWithoutOutbox(pgDB, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(pgDB, postgres.OutboxTable, logger),
 			{
 				Name:         "message_processing",
 				Prune:        mpPruner.DeleteOlderThan,

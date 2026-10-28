@@ -12,38 +12,11 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
-
-// fakeOutboxRepository captures created outbox entries in memory.
-// Set createErr to inject an error from Create for failure-path tests.
-type fakeOutboxRepository struct {
-	CreatedEntries []*pkgoutbox.Entry
-	createErr      error
-}
-
-func (f *fakeOutboxRepository) Create(ctx context.Context, entry *pkgoutbox.Entry) error {
-	if f.createErr != nil {
-		return f.createErr
-	}
-	f.CreatedEntries = append(f.CreatedEntries, entry)
-	return nil
-}
-func (f *fakeOutboxRepository) GetPendingBatch(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error) {
-	return nil, nil
-}
-func (f *fakeOutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error { return nil }
-func (f *fakeOutboxRepository) MarkProcessedBatch(ctx context.Context, ids []uuid.UUID) error {
-	return nil
-}
-func (f *fakeOutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error {
-	return nil
-}
-func (f *fakeOutboxRepository) IncrementRetry(ctx context.Context, id uuid.UUID) error { return nil }
 
 // fakeMessageProcessingRepository is an in-memory message_processing store
 // keyed by messageID.
@@ -106,10 +79,9 @@ func (f *fakeMessageProcessingRepository) DeleteOlderThan(_ context.Context, _ t
 	return 0, nil
 }
 
-// fakeUnitOfWork is a no-op UnitOfWork backed by the in-memory outbox and
-// message-processing repos.
+// fakeUnitOfWork is a no-op UnitOfWork backed by the in-memory
+// message-processing repo.
 type fakeUnitOfWork struct {
-	outboxRepo   *fakeOutboxRepository
 	msgProcRepo  *fakeMessageProcessingRepository
 	BegunTx      bool
 	CommittedTx  bool
@@ -118,12 +90,10 @@ type fakeUnitOfWork struct {
 
 func newFakeUnitOfWork() *fakeUnitOfWork {
 	return &fakeUnitOfWork{
-		outboxRepo:  &fakeOutboxRepository{},
 		msgProcRepo: newFakeMessageProcessingRepository(),
 	}
 }
 
-func (f *fakeUnitOfWork) OutboxRepo() pkgoutbox.Repository { return f.outboxRepo }
 func (f *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return f.msgProcRepo
 }
