@@ -12,6 +12,15 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+
+- `continuo_schedules` gains `state="unparsable"`: the schedules whose stored cron or timezone no longer parses, paused or not (a zone the timezone database dropped, or a row written by hand). Such a schedule never fires until an operator saves a new cron over it or removes it, and the loop only logged it; a value above 0 is worth an alert. A row is in one state, `unparsable` first, so a row that does not parse no longer counts as `scheduled`. No values change. MINOR.
+
+### Changed
+
+- State's cron loop leaves a schedule whose fire failed alone for a minute, doubles the wait with each further failure up to fifteen minutes, and ends it when an operator edits the schedule or a fire succeeds. A schedule whose fire fails every time (a hand-written name longer than 50 characters, for one) was tried at every pass, took one of the pass's 100 places and logged an error each time; it now takes none of the places while it waits, and `continuo_cron_fires_total{outcome="failed"}` rises by a few a hour for it. The backoffs are held in memory, one set per `state` replica. No values change. PATCH.
+- State migration V57 moves a schedule stored at version 0 or below, such as a row written by hand, to version 1 and adds `CHECK (version >= 1)` to `schedules`: a row at version 0 or below matched no edit, could only be deleted and could not save its fire. The migration applies before the new pods roll; the previous pods never write such a version. No values change. PATCH.
+
 ### Removed
 
 - The orchestrator's outbox. Orchestrator migration V17 drops `orchestrator_outbox` and `continuo_outbox_notify()`, and the orchestrator no longer runs an outbox relay: it holds one `LISTEN` connection fewer per pod (nine outside the pools with the defaults, 161 connections in all) and no longer exposes `continuo_outbox_*` series with `table="orchestrator_outbox"`. Since 0.17.0 the orchestrator writes no row, so the table holds only rows an earlier version wrote, and they go with it, including one never published. Upgrade through 0.17.0 and let its rollout finish first: the migration applies before the new pods roll, and until the previous pods are replaced their relay keeps polling the missing table and logging the error. No values change. PATCH.
