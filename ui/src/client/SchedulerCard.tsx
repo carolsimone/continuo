@@ -243,7 +243,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
               {schedule.timezone ? ` · ${schedule.timezone}` : ''}
             </span>
           ) : (
-            <span className="timestamps">no cron</span>
+            <span className="timestamps">no cron: runs only when triggered</span>
           )}
           {when && <span className="timestamps">{when}</span>}
           {!neverRun && (

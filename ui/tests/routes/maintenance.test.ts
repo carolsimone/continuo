@@ -58,10 +58,12 @@ describe('maintenanceGate', () => {
   });
 });
 
-function grpcErr(code: number, message: string, trailer?: Record<string, string>) {
+// grpcErr builds a failed call as @grpc/grpc-js reports one: details is the
+// server's own text, and message prefixes it with the status code and name.
+function grpcErr(code: grpc.status, message: string, trailer?: Record<string, string>) {
   const metadata = new grpc.Metadata();
   for (const [k, v] of Object.entries(trailer ?? {})) metadata.set(k, v);
-  return Object.assign(new Error(`${code} ${message}`), { code, details: message, metadata });
+  return Object.assign(new Error(`${code} ${grpc.status[code]}: ${message}`), { code, details: message, metadata });
 }
 
 describe('backend refusals', () => {

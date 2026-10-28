@@ -296,7 +296,7 @@ describe('SchedulerCard — schedule pill and cron', () => {
     expect(pill).toHaveTextContent('manual');
     expect(pill.className).toMatch(/\bschedule-pill--manual\b/);
     expect(container.querySelector('.schedule-cron')).toBeNull();
-    expect(screen.getByText('no cron')).toBeInTheDocument();
+    expect(screen.getByText('no cron: runs only when triggered')).toBeInTheDocument();
     const add = screen.getByRole('button', { name: 'Add cron' });
     expect(add.className).toMatch(/\bbtn--secondary\b/);
     expect(screen.queryByRole('button', { name: 'Edit cron' })).toBeNull();

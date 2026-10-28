@@ -369,4 +369,206 @@ describe('CronDialog', () => {
     expect(saveButton()).toBeEnabled();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it('CronDialog lets Escape and a click on the overlay close it, and neither while a request is in flight', async () => {
+    let answer: (r: Reply) => void = () => {};
+    installFetch({ put: () => new Promise<Reply>(resolve => { answer = resolve; }) });
+    const onClose = vi.fn();
+    render(<CronDialog schedule={daily()} mode="edit" onClose={onClose} />);
+    await advance();
+
+    fireEvent.keyDown(document, { key: 'Enter' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    onClose.mockClear();
+    const overlay = document.querySelector('.dialog-overlay')!;
+    fireEvent.click(screen.getByRole('dialog'));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(overlay);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    onClose.mockClear();
+    fireEvent.click(saveButton());
+    await advance();
+    expect(saveButton()).toHaveTextContent('Saving…');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(overlay);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A refused save ends the request, and the dialog closes again.
+    answer({ status: 500, body: { error: 'state down' } });
+    await advance();
+    expect(screen.getByText('state down')).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(overlay);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('CronDialog previews again when the timezone changes, and lists the next runs in it', async () => {
+    const calls = installFetch();
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+    expect(previews(calls)).toHaveLength(1);
+    expect(Array.from(document.querySelectorAll('.preview-list > li'), li => li.textContent)[0])
+      .toBe('Wed 28 Oct 202601:00');
+
+    fireEvent.change(screen.getByLabelText('Timezone'), { target: { value: 'UTC' } });
+    // What Save would send has not been read in the new zone yet.
+    expect(saveButton()).toBeDisabled();
+    await advance(299);
+    expect(previews(calls)).toHaveLength(1);
+    await advance(1);
+
+    expect(previews(calls)).toHaveLength(2);
+    const q = new URL(previews(calls)[1].url, 'http://ui').searchParams;
+    expect(q.get('cron')).toBe('0 1 * * *');
+    expect(q.get('timezone')).toBe('UTC');
+    expect(Array.from(document.querySelectorAll('.preview-list > li'), li => li.textContent)[0])
+      .toBe('Wed 28 Oct 202600:00');
+    expect(saveButton()).toBeEnabled();
+  });
+
+  it('CronDialog a double click on Save sends one request', async () => {
+    const calls = installFetch({ put: () => new Promise<Reply>(() => {}) });
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+
+    const save = saveButton();
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await advance();
+
+    expect(calls.filter(c => c.method === 'PUT')).toHaveLength(1);
+    expect(save).toBeDisabled();
+  });
+
+  it('CronDialog announces the words line and the next runs as polite live regions', async () => {
+    installFetch();
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+
+    // The words line is in the page before the preview fills it, so the
+    // answer is announced rather than inserted silently.
+    const words = document.querySelector('.dialog-field__words')!;
+    expect(words).toHaveAttribute('aria-live', 'polite');
+    expect(words).toBeEmptyDOMElement();
+
+    await advance();
+
+    expect(document.querySelector('.dialog-field__words')).toBe(words);
+    expect(words).toHaveTextContent('every day at 01:00');
+    expect(screen.getByText('Next runs').closest('section')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it("CronDialog announces the parser's refusal as an alert that the cron input is described by", async () => {
+    const parserMessage = 'cron "0 25 * * *": end of range (25) above maximum (23): 25';
+    installFetch({
+      preview: cron => cron === '0 25 * * *' ? { status: 400, body: { error: parserMessage } } : DAILY_PREVIEW,
+    });
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+    const input = screen.getByLabelText('Cron');
+    const describedBy = () => (input.getAttribute('aria-describedby') ?? '').split(' ')
+      .map(id => document.getElementById(id));
+    const hint = screen.getByText('minute · hour · day of month · month · day of week');
+    const words = document.querySelector('.dialog-field__words');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(describedBy()).toEqual([hint, words]);
+
+    typeCron('0 25 * * *');
+    await advance(300);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(parserMessage);
+    expect(alert.className).toMatch(/\binfo-strip--error\b/);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(describedBy()).toEqual([hint, words, alert]);
+
+    typeCron('0 2 * * *');
+    await advance(300);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect(describedBy()).toEqual([hint, words]);
+  });
+
+  it('CronDialog announces a refused save and a stale version as alerts', async () => {
+    installFetch({
+      put: body => body.cron === '0 2 * * *'
+        ? { status: 409, body: { error: 'changed', code: 'stale_version', updated_by: 'bob@example.com' } }
+        : { status: 404, body: { error: 'no model of the live release belongs to this schedule' } },
+    });
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+
+    fireEvent.click(saveButton());
+    await advance();
+    expect(screen.getByRole('alert')).toHaveTextContent('no model of the live release belongs to this schedule');
+
+    typeCron('0 2 * * *');
+    await advance(300);
+    fireEvent.click(saveButton());
+    await advance();
+    const alerts = screen.getAllByRole('alert').map(a => a.textContent);
+    expect(alerts).toContainEqual(expect.stringContaining('bob@example.com changed this schedule while you were editing'));
+  });
+
+  it('CronDialog opens with the cron input focused and gives the focus back to it when a request ends', async () => {
+    let answer: (r: Reply) => void = () => {};
+    installFetch({ put: () => new Promise<Reply>(resolve => { answer = resolve; }) });
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+    const input = screen.getByLabelText('Cron');
+    expect(input).toHaveFocus();
+
+    const save = saveButton();
+    save.focus();
+    fireEvent.click(save);
+    await advance();
+    expect(input).toBeDisabled();
+    // A browser takes the focus off a control that becomes disabled; jsdom
+    // keeps it there, so the focus is dropped the way removing its holder does.
+    const holder = document.createElement('button');
+    document.body.appendChild(holder);
+    holder.focus();
+    holder.remove();
+    expect(document.body).toHaveFocus();
+
+    answer({ status: 500, body: { error: 'state down' } });
+    await advance();
+
+    expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
+  });
+
+  it('CronDialog leaves the focus alone when it is elsewhere when a request ends', async () => {
+    let answer: (r: Reply) => void = () => {};
+    installFetch({ put: () => new Promise<Reply>(resolve => { answer = resolve; }) });
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    render(<CronDialog schedule={daily()} mode="edit" onClose={() => {}} />);
+    await advance();
+
+    // Focus on another page control when the request starts is not the
+    // dialog's to take back.
+    outside.focus();
+    fireEvent.click(saveButton());
+    await advance();
+    answer({ status: 500, body: { error: 'state down' } });
+    await advance();
+    expect(outside).toHaveFocus();
+
+    // Focus that leaves the dialog while the request is in flight stays out.
+    answer = () => {};
+    const save = saveButton();
+    save.focus();
+    fireEvent.click(save);
+    await advance();
+    outside.focus();
+    answer({ status: 500, body: { error: 'state down' } });
+    await advance();
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
 });

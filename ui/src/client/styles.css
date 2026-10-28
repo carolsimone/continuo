@@ -798,6 +798,10 @@ a.release-author:hover { text-decoration: underline; }
   font-weight: 400;
   color: #374151;
 }
+/* The words line is a live region that is in the page before the server has
+   read the value, so its first answer is announced. Until then it is drawn
+   as nothing, and the field's gap above it is taken back. */
+.dialog-field__words:empty { margin-top: -5px; }
 
 .dialog-input,
 .dialog-select,

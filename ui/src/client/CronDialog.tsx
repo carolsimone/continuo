@@ -84,6 +84,10 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
   // preview, of what the dialog opened with, does not wait.
   const edited = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cronRef = useRef<HTMLInputElement>(null);
+  // Whether the focus was inside the dialog when the last request started.
+  const focusWasInside = useRef(false);
   const ids = useId();
   const busy = state !== null;
 
@@ -140,6 +144,18 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose, busy]);
 
+  // A request disables every control of the dialog, and a browser takes the
+  // focus off a control that becomes disabled. When the request ends and the
+  // dialog stays open, the focus returns to the cron input if it was inside
+  // the dialog when the request started and is now on no element; focus that
+  // moved to another element is left there.
+  useEffect(() => {
+    if (busy || !focusWasInside.current) return;
+    focusWasInside.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) cronRef.current?.focus();
+  }, [busy]);
+
   const succeed = (action: Action) => {
     setState({ action, phase: 'success' });
     closeTimer.current = setTimeout(onClose, CLOSE_AFTER_SUCCESS_MS);
@@ -148,6 +164,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
   // send runs one request of the dialog and keeps it open on a refusal,
   // saying why; a 409 stale_version says who saved first.
   const send = async (action: Action, init: RequestInit) => {
+    focusWasInside.current = dialogRef.current?.contains(document.activeElement) ?? false;
     setState({ action, phase: 'loading' });
     setSubmitError(null);
     try {
@@ -212,10 +229,14 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
   const titleId = `${ids}-title`;
   const cronId = `${ids}-cron`;
   const hintId = `${ids}-cron-hint`;
+  const wordsId = `${ids}-cron-words`;
+  const refusalId = `${ids}-cron-refusal`;
+  const describedBy = [hintId, wordsId, refusal ? refusalId : null].filter(Boolean).join(' ');
 
   return (
     <div className="dialog-overlay" onClick={() => { if (!busy) onClose(); }}>
       <div
+        ref={dialogRef}
         className="dialog"
         role="dialog"
         aria-modal="true"
@@ -242,6 +263,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
           <label htmlFor={cronId}>Cron</label>
           <input
             id={cronId}
+            ref={cronRef}
             className="dialog-input dialog-input--mono"
             type="text"
             value={cron}
@@ -251,11 +273,11 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
             autoFocus
             disabled={busy}
             aria-invalid={refusal?.kind === 'invalid' ? true : undefined}
-            aria-describedby={hintId}
+            aria-describedby={describedBy}
             onChange={e => onCronChange(e.target.value)}
           />
           <span className="dialog-field__hint" id={hintId}>{CRON_FIELDS_HINT}</span>
-          {shown?.words && <span className="dialog-field__words">{shown.words}</span>}
+          <span className="dialog-field__words" id={wordsId} aria-live="polite">{shown?.words}</span>
         </div>
 
         <div className="dialog-field">
@@ -295,7 +317,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
         )}
 
         {shown && (
-          <section className="preview-section">
+          <section className="preview-section" aria-live="polite">
             <div className="section-header">
               <div className="section-header__main">
                 <span className="section-header__title">Next runs</span>
@@ -317,13 +339,13 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
         )}
 
         {refusal && (
-          <div className="info-strip info-strip--error">
+          <div className="info-strip info-strip--error" id={refusalId} role="alert">
             <span className="info-strip__icon" aria-hidden="true">⚠</span>
             <span>{refusal.message}</span>
           </div>
         )}
         {staleBy && (
-          <div className="info-strip info-strip--warning">
+          <div className="info-strip info-strip--warning" role="alert">
             <span className="info-strip__icon" aria-hidden="true">⚠</span>
             <span>
               {staleBy.who
@@ -333,7 +355,7 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
           </div>
         )}
         {submitError && (
-          <div className="info-strip info-strip--error">
+          <div className="info-strip info-strip--error" role="alert">
             <span className="info-strip__icon" aria-hidden="true">⚠</span>
             <span>{submitError}</span>
           </div>

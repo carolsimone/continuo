@@ -93,18 +93,18 @@ describe('GET /api/schedules', () => {
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/state down/);
+    expect(res.body).toEqual({ error: 'state down' });
   });
 
-  it('maps the gRPC status of a refused read', async () => {
+  it("maps the gRPC status of a refused read and answers with state's own message", async () => {
     mockListSchedules.mockImplementation((_req: any, cb: any) =>
-      cb(Object.assign(new Error('bad request'), { code: grpc.status.INVALID_ARGUMENT }))
+      cb(grpcError(grpc.status.INVALID_ARGUMENT, 'bad request'))
     );
 
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/bad request/);
+    expect(res.body).toEqual({ error: 'bad request' });
   });
 });
 
@@ -134,15 +134,15 @@ describe('GET /api/schedules/:name/runs', () => {
     expect(res.body.total_count).toBe(2);
   });
 
-  it('answers 400 when state refuses the request as INVALID_ARGUMENT', async () => {
+  it("answers 400 with state's own message when state refuses the request as INVALID_ARGUMENT", async () => {
     mockListRuns.mockImplementation((_req: any, cb: any) =>
-      cb(Object.assign(new Error('schedule_name is required'), { code: grpc.status.INVALID_ARGUMENT }))
+      cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required'))
     );
 
     const res = await request(app).get('/api/schedules/daily/runs');
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/schedule_name is required/);
+    expect(res.body).toEqual({ error: 'schedule_name is required' });
   });
 
   it('forwards limit and offset as page_size and page_offset and returns the total', async () => {
@@ -231,37 +231,34 @@ describe('routes/schedules: POST /:name/trigger', () => {
     expect(seenUserId).toBe('system');
   });
 
-  it('returns 404 when schedule not in catalog', async () => {
-    const err = Object.assign(new Error('schedule "nope" not found in catalog'), {
-      code: grpc.status.NOT_FOUND,
-    });
-    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
+  it("returns 404 with state's own message when no model of the live release has the schedule", async () => {
+    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.NOT_FOUND, 'schedule "nope" not found in catalog')));
 
     const res = await request(app).post('/api/schedules/nope/trigger').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toMatch(/not found/);
+    expect(res.body).toEqual({ error: 'schedule "nope" not found in catalog' });
   });
 
-  it('returns 409 when schedule already has an active run', async () => {
-    const err = Object.assign(new Error('schedule "hourly" already has an active run'), {
-      code: grpc.status.FAILED_PRECONDITION,
-    });
-    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
+  it("returns 409 with state's own message when schedule already has an active run", async () => {
+    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule "hourly" already has an active run')));
 
     const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/active run/);
+    expect(res.body).toEqual({ error: 'schedule "hourly" already has an active run' });
   });
 
   it('returns 500 on unexpected gRPC error', async () => {
-    const err = Object.assign(new Error('internal'), { code: grpc.status.INTERNAL });
-    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
+    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.INTERNAL, 'internal')));
 
     const res = await request(app).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal' });
   });
 
   it('forwards operation=test', async () => {
@@ -301,15 +298,22 @@ describe('routes/schedules: POST /:name/trigger', () => {
   });
 
   it('returns 409 when request_id is reused with different parameters', async () => {
-    const err = Object.assign(new Error('request_id reused with different parameters'), {
-      code: grpc.status.ALREADY_EXISTS,
-    });
-    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
+    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.ALREADY_EXISTS, 'request_id reused with different parameters')));
 
     const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID });
 
     expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/request_id reused/);
+    expect(res.body).toEqual({ error: 'request_id reused with different parameters' });
+  });
+
+  it('answers 503 maintenance when state refuses the trigger in maintenance mode', async () => {
+    mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
+
+    const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });
   });
 });
 
@@ -365,12 +369,18 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     expect(res.body.edges).toEqual([{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.sales.orders' }]);
   });
 
-  it('maps a gRPC status to its HTTP status', async () => {
+  it("maps a gRPC status to its HTTP status and answers with state's own message", async () => {
     mockGetScheduleGraph
-      .mockImplementationOnce((_req: any, cb: any) => cb(Object.assign(new Error('schedule_name is required'), { code: grpc.status.INVALID_ARGUMENT })))
+      .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required')))
       .mockImplementationOnce((_req: any, cb: any) => cb(new Error('grpc error')));
-    expect((await request(app).get('/api/schedules/%20/graph')).status).toBe(400);
-    expect((await request(app).get('/api/schedules/bad-name/graph')).status).toBe(500);
+
+    const refused = await request(app).get('/api/schedules/%20/graph');
+    const failed = await request(app).get('/api/schedules/bad-name/graph');
+
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({ error: 'schedule_name is required' });
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ error: 'grpc error' });
   });
 });
 

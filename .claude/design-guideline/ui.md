@@ -473,14 +473,17 @@ Rules:
   is no rolled-up status pill: preview rows carry no status.
 - Empty state: no section at all when an empty list would say nothing the
   counts above have not said; otherwise an `.info-strip--neutral`.
-- While the preview loads, an `.info-strip--neutral` says so and the
-  confirming verb is disabled; a failed preview is an `.info-strip--error`
-  and the confirming verb stays disabled until a preview arrives. A
-  reload (an option changed) keeps the last preview on screen until the
-  next one replaces it, so the option the user just clicked does not
-  move. When the confirmation is refused because what was previewed is
-  no longer true, the modal previews again and says so in an
-  `.info-strip--warning`.
+- While a preview that an explicit action started loads (the modal
+  opening, a click on an option), an `.info-strip--neutral` says so and
+  the confirming verb is disabled; a failed preview is an
+  `.info-strip--error` and the confirming verb stays disabled until a
+  preview arrives. A preview that follows a field the operator types has
+  no loading strip (see "Dialog fields"), and its `.preview-section` is a
+  polite live region (`aria-live="polite"`). A reload (an option changed)
+  keeps the last preview on screen until the next one replaces it, so the
+  option the user just clicked does not move. When the confirmation is
+  refused because what was previewed is no longer true, the modal previews
+  again and says so in an `.info-strip--warning`.
 
 A row that is one fact and its value — a date and a time in the cron
 dialog's "Next runs" — sits on one line: `.preview-row--line` lays the row
@@ -554,11 +557,12 @@ control.
 ```jsx
 <div className="dialog-field">
   <label htmlFor="cron">Cron</label>
-  <input id="cron" className="dialog-input dialog-input--mono"
-         aria-invalid={refused || undefined} aria-describedby="cron-hint" />
+  <input id="cron" className="dialog-input dialog-input--mono" aria-invalid={refused || undefined}
+         aria-describedby={refused ? 'cron-hint cron-words cron-refusal' : 'cron-hint cron-words'} />
   <span className="dialog-field__hint" id="cron-hint">minute · hour · day of month · month · day of week</span>
-  <span className="dialog-field__words">every day at 01:00</span>
+  <span className="dialog-field__words" id="cron-words" aria-live="polite">every day at 01:00</span>
 </div>
+{refused && <div className="info-strip info-strip--error" id="cron-refusal" role="alert">…</div>}
 ```
 
 ```css
@@ -570,6 +574,7 @@ control.
 .dialog-input[aria-invalid="true"] { border-color: #fca5a5; background: #fffafa; }
 .dialog-field__hint          { font-size: 11px; font-weight: 400; color: #94a3b8; }
 .dialog-field__words         { font-size: 12px; font-weight: 400; color: #374151; }
+.dialog-field__words:empty   { margin-top: -5px; }  /* the field's gap, taken back */
 ```
 
 Rules:
@@ -578,16 +583,28 @@ Rules:
   in its placeholder (`Optional`), not in its label.
 - `--mono` is for a value a parser reads (a cron), never for prose.
 - The hint names the format the field expects, on one line; the words line
-  says what the value means, in the server's words, and is absent until the
-  server has read the value.
+  says what the value means, in the server's words, and is empty until the
+  server has read the value. It is a polite live region (`aria-live`) that
+  is in the page from the start, so its first answer is announced; empty, it
+  takes no room (`:empty` takes the field's gap back; never `display: none`,
+  which drops the region from the accessibility tree).
 - A field the server reads is previewed as the operator types, 300 ms after
   the last change. The previous answer stays on screen while the next one
-  loads (no loading strip, which would flash at every keystroke), an answer
-  for an older value never replaces a newer one, and the confirming verb is
-  disabled until the preview of the value as typed has come back.
+  loads (no loading strip, which would flash at every keystroke; the
+  "Preview list" rule of a loading strip is for previews an explicit action
+  started), an answer for an older value never replaces a newer one, and
+  the confirming verb is disabled until the preview of the value as typed
+  has come back.
 - A value the server refused sets `aria-invalid` on its control and shows
-  the server's message in an `.info-strip--error`; the confirming verb is
-  disabled.
+  the server's message in an `.info-strip--error` with `role="alert"`; the
+  confirming verb is disabled. The control's `aria-describedby` names the
+  hint, the words line and, while it is shown, that strip, so a screen
+  reader reads the refusal with the field.
+- A dialog's other failure strips (a refused save, a change made by someone
+  else) are `role="alert"` too. When a request ends and the dialog stays
+  open, focus goes back to the first field if it was inside the dialog when
+  the request started and a disabled control dropped it; focus that moved
+  elsewhere stays there.
 
 ### Remove row
 
@@ -1257,8 +1274,8 @@ Rules:
   paused; its `title` is the cron in words. One muted `.timestamps` fact
   follows it: `next 28 Oct 01:00`, in the schedule's timezone, or
   `paused by bob@example.com · 27 Oct 14:02`, in the viewer's. A cron that
-  fires no more has no fact. A manual schedule shows `no cron` in place of
-  the span.
+  fires no more has no fact. A manual schedule shows `no cron: runs only when
+  triggered` in place of the span.
 - **The header wraps** when its facts and controls do not fit: each fact
   keeps to one line (`white-space: nowrap`), and the controls — Operation,
   Trigger, Cancel, Edit cron — stay together in `.scheduler-card-actions`,

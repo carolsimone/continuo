@@ -62,6 +62,7 @@ describe('proto wire: run.proto', () => {
       'CancelRun', 'GetRun', 'ListRuns', 'ListTasks', 'ListRunAttempts', 'GetRunGraph',
       'ListNodeTasks', 'ListNodes', 'ListNodeNames', 'ListNodeServices',
       'ListSchedules', 'GetScheduleGraph', 'ListScheduleTopologies',
+      'UpsertSchedule', 'DeleteSchedule', 'PreviewSchedule',
     ]) {
       expect(svc[rpc], `missing rpc method: ${rpc}`).toBeTruthy();
     }
@@ -273,6 +274,96 @@ describe('proto wire: run.proto', () => {
     expect(graph.body.nodes[0]).toMatchObject({ node_id: 's.a.b', node_type: 'dbt-model', schedule_name: 'daily' });
     expect(graph.body.edges).toEqual([{ from_node_id: 's.a.c', to_node_id: 's.a.b' }]);
     expect(graph.body.promotion_seq).toBe(4);
+  });
+
+  it('UpsertSchedule request carries expected_version as an int64 at field 6, above 2^31 and at 0', () => {
+    const method = runMethod('UpsertSchedule');
+    const sent = {
+      schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: true,
+    };
+    // The wire form of the field: tag 0x30 (field 6, varint), then 2^31 as the
+    // five-byte varint a 32-bit integer could not hold.
+    expect([...method.requestSerialize({ schedule_name: 's', expected_version: 2 ** 31 })])
+      .toEqual([0x0a, 1, 0x73, 0x30, 0x80, 0x80, 0x80, 0x80, 0x08]);
+    // Zero, the default of a proto3 field, reads back as '0' whether it is on
+    // the wire or left out of it.
+    expect(method.requestDeserialize(Buffer.from([0x0a, 1, 0x73])).expected_version).toBe('0');
+    expect(method.requestDeserialize(method.requestSerialize({ schedule_name: 's', expected_version: 0 })).expected_version)
+      .toBe('0');
+
+    // int64 is loaded as a string: the value comes back whole, not truncated.
+    for (const version of [0, 3, 2 ** 31 - 1, 2 ** 31, 3_000_000_000, Number.MAX_SAFE_INTEGER]) {
+      expect(requestRoundTrip('UpsertSchedule', { ...sent, expected_version: version }))
+        .toEqual({ ...sent, expected_version: String(version) });
+    }
+    expect(requestRoundTrip('UpsertSchedule', sent)).toEqual({ ...sent, expected_version: '0' });
+  });
+
+  it('DeleteSchedule request round-trips schedule_name', () => {
+    expect(requestRoundTrip('DeleteSchedule', { schedule_name: 'daily' })).toEqual({ schedule_name: 'daily' });
+  });
+
+  it('PreviewSchedule request carries cron as field 1 and timezone as field 2', () => {
+    const method = runMethod('PreviewSchedule');
+    expect([...method.requestSerialize({ cron: 'c', timezone: 'z' })]).toEqual([0x0a, 1, 0x63, 0x12, 1, 0x7a]);
+    expect(requestRoundTrip('PreviewSchedule', { cron: '0 1 * * *', timezone: 'Europe/Paris' }))
+      .toEqual({ cron: '0 1 * * *', timezone: 'Europe/Paris' });
+  });
+
+  it('the cron routes send and read the field names the proto declares', async () => {
+    // Each fake RPC passes its request and its response through the real
+    // serializers, so a misspelled field is dropped and an assertion sees the
+    // default, and an int64 reaches the route as the string the wire gives.
+    const sent: Record<string, Record<string, unknown>[]> = {};
+    const through = (rpc: string, req: any, res: Record<string, unknown>) => {
+      const m = runMethod(rpc);
+      (sent[rpc] ??= []).push(m.requestDeserialize(m.requestSerialize(req)));
+      return m.responseDeserialize(m.responseSerialize(res));
+    };
+    const at = (iso: string) => ({ seconds: Date.parse(iso) / 1000, nanos: 0 });
+    const client = {
+      previewSchedule: (req: any, cb: any) => cb(null, through('PreviewSchedule', req, {
+        cron_words: 'every day at 01:00', next_fire_times: [at('2026-10-28T00:00:00Z')],
+      })),
+      upsertSchedule: (req: any, _md: unknown, cb: any) => cb(null, through('UpsertSchedule', req, {
+        schedule: {
+          schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: false,
+          next_fire_at: at('2026-10-28T00:00:00Z'), version: 3_000_000_001, updated_by: 'alice@example.com',
+          updated_at: at('2026-10-27T12:02:00Z'),
+        },
+        next_fire_times: [at('2026-10-28T00:00:00Z')],
+      })),
+      deleteSchedule: (req: any, _md: unknown, cb: any) => cb(null, through('DeleteSchedule', req, {})),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/schedules', createSchedulesRouter(client as any));
+
+    const preview = await request(app).get('/api/schedules/cron-preview').query({ cron: '0 1 * * *', timezone: 'Europe/Paris' });
+    const put = await request(app).put('/api/schedules/daily/cron').send({
+      cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: true, expected_version: 3_000_000_000,
+    });
+    const zero = await request(app).put('/api/schedules/daily/cron').send({ cron: '@daily', timezone: 'UTC' });
+    const del = await request(app).delete('/api/schedules/daily/cron');
+
+    expect(sent.PreviewSchedule).toEqual([{ cron: '0 1 * * *', timezone: 'Europe/Paris' }]);
+    expect(preview.body).toEqual({ cron_words: 'every day at 01:00', next_fire_times: ['2026-10-28T00:00:00.000Z'] });
+    expect(sent.UpsertSchedule).toEqual([
+      {
+        schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: true,
+        expected_version: '3000000000',
+      },
+      { schedule_name: 'daily', cron: '@daily', timezone: 'UTC', description: '', paused: false, expected_version: '0' },
+    ]);
+    expect(put.status).toBe(200);
+    expect(put.body.schedule).toEqual({
+      schedule_name: 'daily', cron: '0 1 * * *', timezone: 'Europe/Paris', description: 'Runs daily', paused: false,
+      next_fire_at: '2026-10-28T00:00:00.000Z', version: 3_000_000_001, updated_by: 'alice@example.com',
+      updated_at: '2026-10-27T12:02:00.000Z',
+    });
+    expect(zero.status).toBe(200);
+    expect(sent.DeleteSchedule).toEqual([{ schedule_name: 'daily' }]);
+    expect(del.status).toBe(204);
   });
 
   it('ListRunAttempts request round-trips run_id, task_id and paging', () => {
