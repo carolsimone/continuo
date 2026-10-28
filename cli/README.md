@@ -11,6 +11,10 @@ Multiple commands implemented:
 continuo schedule trigger <schedule-name>
 continuo schedule list
 continuo schedule graph <schedule-name>
+continuo schedule set-cron <name> <cron> <timezone> [description]
+continuo schedule remove-cron <name>
+continuo schedule pause <name>
+continuo schedule resume <name>
 continuo node list [--search <table>] [--service <name>] [--operation run|test|build] [--limit N] [--offset N]
 ```
 
@@ -77,7 +81,10 @@ and `node trigger|test|build|full-refresh`) sends one request id per invocation:
 answers a repeat of the same id and arguments with the run the first call made
 and writes nothing. The client retries such a command up to three tries on
 UNAVAILABLE (100 ms, then 400 ms apart) with the same id; it never retries a
-read, and it does not retry a refusal for maintenance mode.
+read, and it does not retry a refusal for maintenance mode. A schedule edit
+(`set-cron`, `remove-cron`, `pause`, `resume`) sends no request id and is
+retried on UNAVAILABLE only: its ABORTED is a stale version, which a repeat
+cannot settle.
 
 With `--human`, stdout is empty and a single line is written to stderr:
 
@@ -87,12 +94,56 @@ Triggered run <uuid> for schedule '<name>'
 
 ### `schedule list`
 
-Lists all schedules. Calls RunService.ListSchedules. Success prints a
-JSON object to stdout:
+Lists all schedules: every name the live release has and every name that has
+a cron. Calls RunService.ListSchedules. Success prints a JSON object to
+stdout:
 
 ```json
-{"schedules":[{"schedule_name":"...","cron_expression":"...","has_active_run":false}]}
+{"schedules":[{"schedule_name":"daily","cron_expression":"0 1 * * *","cron_words":"At 01:00 AM","has_cron":true,"paused":false,"next_fire_at":"2026-10-28T00:00:00Z","description":"Runs daily at 1am","timezone":"Europe/Paris","model_count":41,"has_active_run":false,"last_run_id":"…","last_run_status":"succeeded","last_run_at":"2026-10-27T00:00:00Z","updated_by":"alice@example.com","updated_at":"2026-10-21T12:02:00Z"}]}
 ```
+
+A schedule is scheduled (`has_cron` and not `paused`), paused, or manual
+(`has_cron` false: it runs only when triggered). `description`, `cron_words`,
+`next_fire_at`, `last_run_at`, `updated_by` and `updated_at` are omitted when
+empty. `model_count` is how many models of the live release carry the
+schedule's tag.
+
+### `schedule set-cron <name> <cron> <timezone> [description]`
+
+Sets when a schedule runs on its own. A cron of several fields is one
+argument, so quote it. Without `[description]` the current description is
+kept; a blank one is a usage error. The command sends no version (the last
+write wins) and keeps a pause. Calls RunService.UpsertSchedule, then
+PreviewSchedule for the words. Success prints:
+
+```json
+{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00 AM","timezone":"Europe/Paris","description":"Runs daily at 1am","paused":false,"version":4,"next_fire_times":["2026-10-28T00:00:00Z","2026-10-29T00:00:00Z","2026-10-30T00:00:00Z"]}
+```
+
+A name no model of the live release carries, with no cron yet, is
+`not_found` (exit 3); a cron or timezone the parser refuses is `usage`
+(exit 2) with the parser's message.
+
+### `schedule pause <name>` and `schedule resume <name>`
+
+Read the schedule and save it back with `paused` flipped, its cron, timezone
+and description kept, and its version as the expected version. Another edit
+in between exits 4 with `changed by <who> while this ran; run it again`.
+A schedule already in the requested state succeeds with `"changed":false` and
+nothing is saved; a schedule with no cron has nothing to pause or resume
+(`not_found`, exit 3). Success prints:
+
+```json
+{"schedule_name":"hourly","paused":false,"changed":true,"cron":"0 * * * *","timezone":"Europe/Paris","version":6,"next_fire_at":"2026-10-28T09:00:00Z"}
+```
+
+`pause` prints the same without `next_fire_at`.
+
+### `schedule remove-cron <name>`
+
+Removes the cron of a schedule, which then runs only when triggered. Calls
+RunService.DeleteSchedule. Removing the cron of a schedule that has none
+succeeds. Success prints `{"schedule_name":"daily","has_cron":false}`.
 
 ### `schedule graph <schedule-name>`
 

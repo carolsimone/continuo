@@ -35,6 +35,14 @@ type RunClient interface {
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
+
+	// Schedule crons. An edit takes no request id: it is idempotent by nature,
+	// and a stale expected_version is ABORTED, which is never retried. actor is
+	// the identity the server records as the author of the edit.
+	UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error)
+	DeleteSchedule(ctx context.Context, actor, scheduleName string) (*runv1.DeleteScheduleResponse, error)
+	PreviewSchedule(ctx context.Context, cron, timezone string) (*runv1.PreviewScheduleResponse, error)
+
 	Close() error
 }
 
@@ -54,18 +62,33 @@ var commandMethods = map[string]bool{
 	runv1.RunService_CancelActiveRun_FullMethodName:      true,
 }
 
+// scheduleEditMethods are the RPCs that change the cron of a schedule. They
+// carry no request id and are retried on UNAVAILABLE only: their ABORTED is a
+// stale expected_version, which sending the same request again cannot settle,
+// so it is returned at once for the caller to read the schedule again.
+var scheduleEditMethods = map[string]bool{
+	runv1.RunService_UpsertSchedule_FullMethodName: true,
+	runv1.RunService_DeleteSchedule_FullMethodName: true,
+}
+
 // retryCommandInterceptor repeats a command call that failed UNAVAILABLE or
 // ABORTED (concurrent calls of its request id kept rolling back), up to
 // len(retryDelays)+1 tries, sending the same request, and so the same request
-// id, each time. A refusal for maintenance is UNAVAILABLE too but lasts until
-// an operator ends it, so it is returned at once.
+// id, each time. A schedule edit is repeated on UNAVAILABLE only. A refusal
+// for maintenance is UNAVAILABLE too but lasts until an operator ends it, so
+// it is returned at once.
 func retryCommandInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	err := invoker(ctx, method, req, reply, cc, opts...)
-	if !commandMethods[method] {
+	shouldRetry := retryable
+	switch {
+	case commandMethods[method]:
+	case scheduleEditMethods[method]:
+		shouldRetry = retryableOutage
+	default:
 		return err
 	}
 	for _, delay := range retryDelays {
-		if !retryable(err) {
+		if !shouldRetry(err) {
 			return err
 		}
 		timer := time.NewTimer(delay)
@@ -92,6 +115,12 @@ func retryable(err error) bool {
 	default:
 		return false
 	}
+}
+
+// retryableOutage reports whether err is a plain UNAVAILABLE, not a
+// maintenance refusal and not an ABORTED.
+func retryableOutage(err error) bool {
+	return retryable(err) && status.Code(err) == codes.Unavailable
 }
 
 // runDialOptions are the dial options of the production client: plaintext
@@ -244,6 +273,18 @@ func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, service
 
 func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "full_refresh"), actor)
+}
+
+func (c *runGRPCClient) UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {
+	return c.api.UpsertSchedule(withActor(ctx, actor), req)
+}
+
+func (c *runGRPCClient) DeleteSchedule(ctx context.Context, actor, scheduleName string) (*runv1.DeleteScheduleResponse, error) {
+	return c.api.DeleteSchedule(withActor(ctx, actor), &runv1.DeleteScheduleRequest{ScheduleName: scheduleName})
+}
+
+func (c *runGRPCClient) PreviewSchedule(ctx context.Context, cron, timezone string) (*runv1.PreviewScheduleResponse, error) {
+	return c.api.PreviewSchedule(ctx, &runv1.PreviewScheduleRequest{Cron: cron, Timezone: timezone})
 }
 
 func (c *runGRPCClient) Close() error { return c.conn.Close() }

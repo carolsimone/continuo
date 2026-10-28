@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,4 +342,155 @@ func TestList_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
+}
+
+// fullSummary carries every field a ScheduleSummary can: a scheduled "daily"
+// with its last run, its models and who changed it.
+func fullSummary() *runv1.ScheduleSummary {
+	return &runv1.ScheduleSummary{
+		ScheduleName:  "daily",
+		Cron:          "0 1 * * *",
+		Description:   "Runs daily at 1am",
+		Timezone:      "Europe/Paris",
+		HasActiveRun:  true,
+		LastRunAt:     timestamppb.New(time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)),
+		LastRunStatus: "running",
+		LastRunId:     "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
+		Paused:        false,
+		NextFireAt:    timestamppb.New(time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)),
+		Version:       3,
+		UpdatedBy:     "alice@example.com",
+		UpdatedAt:     timestamppb.New(time.Date(2026, 10, 21, 12, 2, 0, 0, time.UTC)),
+		ModelCount:    41,
+		CronWords:     "At 01:00 AM",
+	}
+}
+
+// TestList_OutputMatchesItsSchema holds the output_schema annotation to the
+// JSON the command emits: the same keys at the top level and in every entry,
+// for an entry that carries every optional field.
+func TestList_OutputMatchesItsSchema(t *testing.T) {
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
+	stdout, _, exit := runList(t, fake, []string{}, false)
+	require.Equal(t, 0, exit)
+
+	cmd := NewListCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	var emitted map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+
+	assertSameKeys(t, "", schema, emitted)
+}
+
+// An entry with no cron and no run omits its optional fields and keeps the
+// others, so the schema's keys are the entry's keys plus the optional ones.
+func TestList_AnEntryWithNothingOptionalCarriesOnlyItsRequiredKeys(t *testing.T) {
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
+	stdout, _, exit := runList(t, fake, []string{}, false)
+	require.Equal(t, 0, exit)
+
+	cmd := NewListCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
+	var schema struct {
+		Schedules []map[string]json.RawMessage `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	var emitted struct {
+		Schedules []map[string]json.RawMessage `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+	require.Len(t, emitted.Schedules, 1)
+	for k := range emitted.Schedules[0] {
+		assert.Contains(t, schema.Schedules[0], k, "emitted key %q is missing from the schema", k)
+	}
+	for _, optional := range []string{"description", "cron_words", "next_fire_at", "last_run_at", "updated_by", "updated_at"} {
+		assert.NotContains(t, emitted.Schedules[0], optional, "%s is omitted when it has no value", optional)
+	}
+}
+
+func TestList_CarriesTheFieldsOfAScheduledSchedule(t *testing.T) {
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
+
+	stdout, _, exit := runList(t, fake, []string{}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Schedules []map[string]any `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Schedules, 1)
+	s := payload.Schedules[0]
+	assert.Equal(t, "daily", s["schedule_name"])
+	assert.Equal(t, "0 1 * * *", s["cron_expression"])
+	assert.Equal(t, "At 01:00 AM", s["cron_words"])
+	assert.Equal(t, "Europe/Paris", s["timezone"])
+	assert.Equal(t, true, s["has_cron"])
+	assert.Equal(t, false, s["paused"])
+	assert.Equal(t, "2026-10-28T00:00:00Z", s["next_fire_at"])
+	assert.Equal(t, "Runs daily at 1am", s["description"])
+	assert.EqualValues(t, 41, s["model_count"])
+	assert.Equal(t, true, s["has_active_run"])
+	assert.Equal(t, "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b", s["last_run_id"])
+	assert.Equal(t, "running", s["last_run_status"])
+	assert.Equal(t, "2026-10-27T00:00:00Z", s["last_run_at"])
+	assert.Equal(t, "alice@example.com", s["updated_by"])
+	assert.Equal(t, "2026-10-21T12:02:00Z", s["updated_at"])
+}
+
+func TestList_APausedScheduleHasNoNextFire(t *testing.T) {
+	paused := &runv1.ScheduleSummary{
+		ScheduleName: "hourly", Cron: "0 * * * *", Timezone: "Europe/Paris", Paused: true, ModelCount: 6,
+		UpdatedBy: "bob@example.com", UpdatedAt: timestamppb.New(time.Date(2026, 10, 27, 13, 2, 0, 0, time.UTC)),
+	}
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{paused}}}
+
+	stdout, _, exit := runList(t, fake, []string{}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Schedules []map[string]any `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	s := payload.Schedules[0]
+	assert.Equal(t, true, s["paused"])
+	assert.Equal(t, true, s["has_cron"])
+	assert.NotContains(t, s, "next_fire_at")
+	assert.Equal(t, "bob@example.com", s["updated_by"])
+}
+
+// A schedule the live release has and that has no cron is listed with its
+// models and no cron: it runs only when triggered.
+func TestList_AManualScheduleHasNoCron(t *testing.T) {
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
+
+	stdout, _, exit := runList(t, fake, []string{}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Schedules []map[string]any `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	s := payload.Schedules[0]
+	assert.Equal(t, false, s["has_cron"])
+	assert.Equal(t, "", s["cron_expression"])
+	assert.Equal(t, false, s["paused"])
+	assert.EqualValues(t, 5, s["model_count"])
+}
+
+func TestList_HumanModeShowsTheCronOrThatTheScheduleIsManualOrPaused(t *testing.T) {
+	scheduled := fullSummary()
+	paused := &runv1.ScheduleSummary{ScheduleName: "hourly", Cron: "0 * * * *", Timezone: "UTC", Paused: true}
+	manual := &runv1.ScheduleSummary{ScheduleName: "e2e-schedule"}
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{scheduled, paused, manual}}}
+
+	_, stderr, exit := runList(t, fake, []string{}, true)
+
+	require.Equal(t, 0, exit)
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	require.Len(t, lines, 3)
+	assert.Contains(t, lines[0], "0 1 * * * Europe/Paris")
+	assert.Contains(t, lines[0], "next 2026-10-28T00:00Z")
+	assert.Contains(t, lines[1], "0 * * * * UTC (paused)")
+	assert.NotContains(t, lines[1], "next ")
+	assert.Contains(t, lines[2], "manual")
 }

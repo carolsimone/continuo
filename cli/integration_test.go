@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // cliBinary is set by TestMain once at the start of all integration tests
@@ -64,6 +66,14 @@ type stubRunServer struct {
 	// succeeds; startIDs is the request id of every StartRun received.
 	startFailures int
 	startIDs      []string
+
+	// The schedule edits: the requests received, the status codes the first
+	// calls fail with, and the answer of a successful upsert.
+	upserts    []*runv1.UpsertScheduleRequest
+	deletes    []*runv1.DeleteScheduleRequest
+	upsertErrs []error
+	upsertResp *runv1.UpsertScheduleResponse
+	previewMsg string
 }
 
 func (s *stubRunServer) StartRun(_ context.Context, req *runv1.StartRunRequest) (*runv1.StartRunResponse, error) {
@@ -83,6 +93,27 @@ func (s *stubRunServer) ListSchedules(_ context.Context, _ *runv1.ListSchedulesR
 
 func (s *stubRunServer) GetScheduleGraph(_ context.Context, _ *runv1.GetScheduleGraphRequest) (*runv1.GetScheduleGraphResponse, error) {
 	return s.graphResp, nil
+}
+
+func (s *stubRunServer) UpsertSchedule(_ context.Context, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upserts = append(s.upserts, req)
+	if n := len(s.upserts); len(s.upsertErrs) >= n && s.upsertErrs[n-1] != nil {
+		return nil, s.upsertErrs[n-1]
+	}
+	return s.upsertResp, nil
+}
+
+func (s *stubRunServer) DeleteSchedule(_ context.Context, req *runv1.DeleteScheduleRequest) (*runv1.DeleteScheduleResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deletes = append(s.deletes, req)
+	return &runv1.DeleteScheduleResponse{}, nil
+}
+
+func (s *stubRunServer) PreviewSchedule(_ context.Context, _ *runv1.PreviewScheduleRequest) (*runv1.PreviewScheduleResponse, error) {
+	return &runv1.PreviewScheduleResponse{CronWords: s.previewMsg}, nil
 }
 
 // serveRun serves srv on a loopback port and returns its address.
@@ -220,4 +251,92 @@ func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
 	var edges []json.RawMessage
 	require.NoError(t, json.Unmarshal(payload["edges"], &edges))
 	assert.Len(t, edges, 1, "expected one edge entry")
+}
+
+// exitCodeOf returns the exit code of a finished CLI command.
+func exitCodeOf(t *testing.T, err error) int {
+	t.Helper()
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	return exitErr.ExitCode()
+}
+
+func TestCLI_ScheduleSetCronAgainstInProcessServer(t *testing.T) {
+	srv := &stubRunServer{
+		listResp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "daily", Cron: "0 1 * * *", Timezone: "UTC", Description: "Runs daily", Version: 3, ModelCount: 4},
+		}},
+		upsertResp: &runv1.UpsertScheduleResponse{
+			Schedule:      &runv1.Schedule{ScheduleName: "daily", Cron: "0 2 * * *", Timezone: "Europe/Paris", Description: "Runs daily", Version: 4},
+			NextFireTimes: []*timestamppb.Timestamp{timestamppb.New(time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC))},
+		},
+		previewMsg: "At 02:00 AM",
+	}
+	endpoint := serveRun(t, srv)
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "set-cron", "daily", "0 2 * * *", "Europe/Paris").Output()
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(out, &payload))
+	assert.Equal(t, "daily", payload["schedule_name"])
+	assert.Equal(t, "At 02:00 AM", payload["cron_words"])
+	assert.Equal(t, []any{"2026-10-28T01:00:00Z"}, payload["next_fire_times"])
+	require.Len(t, srv.upserts, 1)
+	assert.Equal(t, "0 2 * * *", srv.upserts[0].GetCron(), "a cron of several fields reaches the server as one value")
+	assert.Equal(t, "Runs daily", srv.upserts[0].GetDescription(), "the description is kept")
+	assert.Zero(t, srv.upserts[0].GetExpectedVersion())
+}
+
+// An ABORTED upsert is a stale version. The CLI sends it once and exits with
+// the conflict code.
+func TestCLI_SchedulePauseExitsFourOnAStaleVersionWithoutRetrying(t *testing.T) {
+	srv := &stubRunServer{
+		listResp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "daily", Cron: "0 1 * * *", Timezone: "UTC", Version: 3, UpdatedBy: "bob@example.com"},
+		}},
+		upsertErrs: []error{status.Error(codes.Aborted, "schedule \"daily\" is at version 4, not 3")},
+	}
+	endpoint := serveRun(t, srv)
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "pause", "daily").Output()
+
+	assert.Equal(t, 4, exitCodeOf(t, err))
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(out, &env))
+	assert.Equal(t, "conflict", env.Error.Code)
+	assert.Equal(t, "changed by bob@example.com while this ran; run it again", env.Error.Message)
+	require.Len(t, srv.upserts, 1, "the stale version is sent once")
+	assert.EqualValues(t, 3, srv.upserts[0].GetExpectedVersion())
+}
+
+func TestCLI_ScheduleRemoveCronAgainstInProcessServer(t *testing.T) {
+	srv := &stubRunServer{}
+	endpoint := serveRun(t, srv)
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "remove-cron", "e2e-schedule").Output()
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(out, &payload))
+	assert.Equal(t, false, payload["has_cron"])
+	require.Len(t, srv.deletes, 1)
+	assert.Equal(t, "e2e-schedule", srv.deletes[0].GetScheduleName())
+}
+
+func TestCLI_ScheduleSetCronWithAnUnquotedCronExitsTwo(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{})
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "set-cron", "daily", "0", "1", "*", "*", "*", "UTC").Output()
+
+	assert.Equal(t, 2, exitCodeOf(t, err))
+	assert.Contains(t, string(out), "quote")
 }

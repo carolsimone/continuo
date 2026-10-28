@@ -108,3 +108,30 @@ func TestCatalog_DLQTools(t *testing.T) {
 		assert.False(t, p.Required, "param %q must be optional", p.Name)
 	}
 }
+
+// The cron commands change a schedule, so the chat asks the operator before
+// running one. set-cron's description is the one optional parameter; the others
+// take only the schedule name.
+func TestCatalog_CronToolsAreMutatingAndSetCronTakesAnOptionalDescription(t *testing.T) {
+	c := loadCatalog(t)
+
+	setCron, ok := c.Lookup("schedule_set-cron")
+	require.True(t, ok)
+	assert.Equal(t, []string{"schedule", "set-cron"}, setCron.CLIPath)
+	assert.True(t, setCron.Mutating)
+	assert.Equal(t, []string{"name", "cron", "timezone", "description"}, setCron.ParamOrder)
+	require.Len(t, setCron.Params, 4)
+	for _, p := range setCron.Params[:3] {
+		assert.True(t, p.Required, "param %q must be required", p.Name)
+	}
+	assert.False(t, setCron.Params[3].Required, "description keeps the current one when omitted")
+
+	for _, name := range []string{"schedule_remove-cron", "schedule_pause", "schedule_resume"} {
+		tool, ok := c.Lookup(name)
+		require.True(t, ok, name)
+		assert.True(t, tool.Mutating, "%s changes a schedule", name)
+		assert.Equal(t, []string{"name"}, tool.ParamOrder, name)
+		require.Len(t, tool.Params, 1, name)
+		assert.True(t, tool.Params[0].Required, name)
+	}
+}
