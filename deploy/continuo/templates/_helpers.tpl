@@ -186,10 +186,6 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-credentials" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "continuo.schedulesConfigMapName" -}}
-{{- printf "%s-schedules" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
-{{- end -}}
-
 {{- define "continuo.dbtCommandsConfigMapName" -}}
 {{- printf "%s-dbt-commands" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

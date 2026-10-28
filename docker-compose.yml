@@ -152,7 +152,6 @@ services:
       - GRPC_PORT=50051
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
-      - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
       - MAINTENANCE_ENABLED=false
       # The chart's runs.taskMaxRetries and runs.taskTimeoutHours defaults.
       - TASK_MAX_RETRIES=2
@@ -170,7 +169,6 @@ services:
       - ./agent-chat:/app/agent-chat
       - ./agent-remediation:/app/agent-remediation
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
-      - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
       - default
     tty: true

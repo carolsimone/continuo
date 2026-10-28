@@ -127,14 +127,50 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
-# state, execution-controller and agent-remediation read their mounted chart
-# ConfigMap (schedules, dbt commands, service repos) only at startup, so each
-# pod template carries a digest of it. For every chart-managed ConfigMap, a
+# execution-controller and agent-remediation read their mounted chart
+# ConfigMap (dbt commands, service repos) only at startup, so each pod template
+# carries a digest of it. For every chart-managed ConfigMap, a
 # change must roll exactly the workloads that read it at startup and no others;
 # with the volume pointed at an operator-owned ConfigMap it must roll nothing;
 # and every chart ConfigMap a workload consumes must have a case in the script.
 echo "--- chart ConfigMap changes roll exactly the pods that read them at startup"
 python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
+
+# A services[].volumes entry with an empty configMap.name resolves to the chart's
+# own ConfigMap only on a service the chart mounts one into (execution-controller,
+# agent-remediation, ui). On any other service it would render a volume the API
+# server refuses at apply time, so the render fails and names the entry instead.
+echo "--- an empty configMap.name on a service with no chart ConfigMap fails the render"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     -f scripts/install-test/values-empty-configmap-volume.yaml > /dev/null 2> "${tmp}/emptyvolume.err"; then
+  echo "FAIL: a state volume with an empty configMap.name rendered; the API server would refuse the Deployment"; exit 1
+fi
+grep -qF 'services[state].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
+
+# NOTES.txt tells an upgrading operator that schedules are no longer read from
+# the chart, and an installing one nothing about it. `helm template` prints no
+# notes, so this runs a client-side dry run of an install, and of an upgrade of
+# a release held by the in-memory storage driver.
+echo "--- NOTES.txt: the schedules note prints on upgrade and not on install"
+schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
+printf '[]\n' > "${tmp}/releases-none.json"
+printf '%s\n' '[{"name":"continuo","namespace":"default","version":1,"info":{"status":"deployed"},"chart":{"metadata":{"name":"continuo","version":"0.0.1","apiVersion":"v2"}},"config":{},"manifest":""}]' \
+  > "${tmp}/releases-deployed.json"
+HELM_DRIVER=memory HELM_MEMORY_DRIVER_DATA="${tmp}/releases-none.json" \
+  helm install continuo "$CHART" --dry-run=client --namespace default > "${tmp}/notes-install.txt" \
+  || { echo "FAIL: helm install --dry-run=client failed"; exit 1; }
+HELM_DRIVER=memory HELM_MEMORY_DRIVER_DATA="${tmp}/releases-deployed.json" \
+  helm upgrade continuo "$CHART" --dry-run=client --namespace default > "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: helm upgrade --dry-run=client failed"; exit 1; }
+for notes in install upgrade; do
+  grep -q '^ACCESS$' "${tmp}/notes-${notes}.txt" || { echo "FAIL: the ${notes} dry run printed no NOTES.txt"; exit 1; }
+done
+grep -qF "$schedules_note" "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the upgrade notes do not say that schedules are no longer read from the chart"; exit 1; }
+if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
+fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
 # start on a level it does not know, so the chart (continuo.logLevel in
