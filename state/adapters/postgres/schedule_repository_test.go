@@ -645,7 +645,10 @@ func TestSchedules_ListDueInATransactionLocksOnlyTheRowsItReturns(t *testing.T) 
 	pass := scheduleUnitOfWork(db, parser)
 	require.NoError(t, pass.Begin(ctx))
 	defer func() { _ = pass.Rollback() }()
-	got, err := pass.Schedules().ListDue(ctx, goodAt.Add(time.Hour), 10)
+	// The database is shared, and the committed due rows of other suites sort
+	// before these: a limit of 1000, as the test of a row another transaction
+	// holds uses, keeps "good" inside it whatever else is due.
+	got, err := pass.Schedules().ListDue(ctx, goodAt.Add(time.Hour), 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"good"}, namesOf(tenant, got))
 

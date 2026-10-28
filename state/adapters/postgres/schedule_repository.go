@@ -20,8 +20,11 @@ import (
 const SchedulesChannel = "schedules"
 
 // ScheduleRepository implements repository.ScheduleRepository over schedules.
-// Each method is one statement, which runs in the unit of work's transaction
-// when one is open, else on the autocommit db. It rebuilds the expression of
+// Each method but ListDue is one statement; ListDue runs two or three. Every
+// statement runs in the unit of work's transaction when one is open, else on
+// the autocommit db, and under READ COMMITTED each sees the rows committed when
+// it starts, so the statements of one ListDue can see different rows, inside a
+// transaction as outside one. It rebuilds the expression of
 // each schedule it loads by parsing the stored cron with parser. A stored cron
 // that no longer parses fails Get and LoadForUpdate; List and ListDue log it to
 // logger and return the other schedules.
