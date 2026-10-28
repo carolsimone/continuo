@@ -19,15 +19,19 @@ const (
 var (
 	_ schedule.Expression = elapsedExpression{}
 	_ schedule.Expression = wallClockExpression{}
+	_ schedule.Interval   = intervalExpression{}
 )
 
 // newExpression returns the expression of spec in loc.
 //
+// An `@every` interval fires every interval of elapsed time, whatever the zone,
+// counted from the instant it is first asked from: it is a schedule.Interval.
+//
 // A cron that fires in every hour of the day (`0 * * * *`, `*/15 * * * *`,
-// `@hourly`) and an `@every` interval recur on elapsed time. They follow the
-// zone's clock as robfig's schedule does: the repeated hour of a clock change
-// fires twice, the skipped hour not at all, and no fire is more than one
-// interval of elapsed time after the last.
+// `@hourly`) recurs on elapsed time too. It follows the zone's clock as
+// robfig's schedule does: the repeated hour of a clock change fires twice, the
+// skipped hour not at all, and no fire is more than one interval of elapsed
+// time after the last.
 //
 // Every other cron names the hours it fires in, so it fires at wall-clock times,
 // and robfig's schedule does not give such a cron one fire per local day across
@@ -37,10 +41,31 @@ var (
 // once on both days: at the first of the two instants a repeated time names,
 // and, for a time that does not exist, at the first instant after the gap.
 func newExpression(spec robfig.Schedule, loc *time.Location) schedule.Expression {
+	if every, ok := spec.(robfig.ConstantDelaySchedule); ok {
+		return intervalExpression{every: every}
+	}
 	if fields, ok := spec.(*robfig.SpecSchedule); ok && fields.Hour&everyHour != everyHour {
 		return wallClockExpression{spec: fields, loc: loc}
 	}
 	return elapsedExpression{spec: spec, loc: loc}
+}
+
+// intervalExpression is an `@every` interval. robfig fires it the interval
+// after the whole second at or before the instant it is asked from, so every
+// fire it returns is a whole second and the next fire after it is one interval
+// on: Period is the interval.
+type intervalExpression struct {
+	every robfig.ConstantDelaySchedule
+}
+
+// Next returns the first fire after `after`, in UTC.
+func (e intervalExpression) Next(after time.Time) time.Time {
+	return e.every.Next(after).UTC()
+}
+
+// Period returns the interval, a whole number of seconds.
+func (e intervalExpression) Period() time.Duration {
+	return e.every.Delay
 }
 
 // elapsedExpression fires as robfig's schedule does, on the clock of its zone.

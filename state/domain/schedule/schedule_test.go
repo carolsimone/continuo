@@ -36,6 +36,25 @@ func (d dailyAt) Next(after time.Time) time.Time {
 	return slot
 }
 
+// interval fires every d of elapsed time, as an `@every` interval does: its
+// fire after an instant is d after the whole second at or before it, so from
+// its second fire on it fires every d, and its first fire after an instant that
+// is not a fire lies off those. period is what it reports as its Period. It
+// counts its calls of Next.
+type interval struct {
+	d, period time.Duration
+	calls     *int
+}
+
+func every(d time.Duration, calls *int) interval { return interval{d: d, period: d, calls: calls} }
+
+func (e interval) Next(after time.Time) time.Time {
+	*e.calls++
+	return after.Add(e.d - time.Duration(after.Nanosecond()))
+}
+
+func (e interval) Period() time.Duration { return e.period }
+
 // never has no fire after any instant.
 type never struct{}
 
@@ -276,6 +295,93 @@ func TestSchedule_DueCountsExactlyUpToItsLimit(t *testing.T) {
 		assert.True(t, latest.Equal(slot), "missed %d: slot got %s want %s", tc.missed, slot, latest)
 		assert.Equal(t, tc.wantSkipped, skipped, "missed %d", tc.missed)
 	}
+}
+
+// An interval more than 1000 slots overdue fires the latest slot on its own
+// interval, counted from the stored next fire, not a slot counted from some
+// instant between two of its fires, and its next fire is one interval later.
+// It costs a few calls of Next, however many slots were missed.
+func TestSchedule_DueOfAnIntervalPastAThousandSlotsStaysOnItsInterval(t *testing.T) {
+	var calls int
+	first := at(0, 0)
+	s := schedule.Rehydrate("default", "busy", "@every 1m", "UTC", "", false, &first, 1, "alice@example.com", first, every(time.Minute, &calls))
+
+	slot, skipped, ok := s.Due(time.Date(2026, 10, 28, 16, 42, 30, 0, time.UTC))
+
+	require.True(t, ok)
+	assert.True(t, at(16, 42).Equal(slot), "slot: got %s want 16:42:00", slot)
+	assert.Equal(t, 1000, skipped, "the count saturates at 1000")
+	assert.Less(t, calls, 10, "the slot is counted, not walked; Next ran %d times", calls)
+	s.Fired(slot)
+	next, ok := s.NextFireAt()
+	require.True(t, ok)
+	assert.True(t, at(16, 43).Equal(next), "next fire: got %s want 16:43:00", next)
+}
+
+// An interval's slots count from the stored next fire: after it, every slot is
+// a whole number of intervals after its second fire. The count of skipped
+// slots is exact up to 1000 and saturates there, as it does for any other
+// expression.
+func TestSchedule_DueOfAnIntervalCountsExactlyUpToItsLimit(t *testing.T) {
+	first := time.Date(2026, 10, 1, 0, 0, 0, 250*int(time.Millisecond), time.UTC)
+	second := time.Date(2026, 10, 1, 0, 1, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		now         time.Time
+		wantSlot    time.Time
+		wantSkipped int
+	}{
+		{"at the stored next fire", first, first, 0},
+		{"before the second fire", second.Add(-time.Nanosecond), first, 0},
+		{"at the second fire", second, second, 1},
+		{"five slots on", second.Add(4*time.Minute + 30*time.Second), second.Add(4 * time.Minute), 5},
+		{"999 slots on", second.Add(998 * time.Minute), second.Add(998 * time.Minute), 999},
+		{"1000 slots on", second.Add(999*time.Minute + time.Second), second.Add(999 * time.Minute), 1000},
+		{"1001 slots on", second.Add(1000 * time.Minute), second.Add(1000 * time.Minute), 1000},
+		{"a million slots on", second.Add(999999*time.Minute + 59*time.Second), second.Add(999999 * time.Minute), 1000},
+	}
+	for _, tc := range cases {
+		var calls int
+		next := first
+		s := schedule.Rehydrate("default", "busy", "@every 1m", "UTC", "", false, &next, 1, "alice@example.com", first, every(time.Minute, &calls))
+
+		slot, skipped, ok := s.Due(tc.now)
+
+		require.True(t, ok, tc.name)
+		assert.True(t, tc.wantSlot.Equal(slot), "%s: slot got %s want %s", tc.name, slot, tc.wantSlot)
+		assert.Equal(t, tc.wantSkipped, skipped, tc.name)
+		assert.Less(t, calls, 10, "%s: Next ran %d times", tc.name, calls)
+	}
+}
+
+// A span longer than a time.Duration holds, about 292 years, still reaches the
+// latest slot of an interval.
+func TestSchedule_DueOfAnIntervalSpansCenturies(t *testing.T) {
+	var calls int
+	first := time.Date(1700, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := schedule.Rehydrate("default", "busy", "@every 1m", "UTC", "", false, &first, 1, "alice@example.com", first, every(time.Minute, &calls))
+
+	slot, skipped, ok := s.Due(time.Date(2026, 10, 28, 16, 42, 30, 0, time.UTC))
+
+	require.True(t, ok)
+	assert.True(t, at(16, 42).Equal(slot), "slot: got %s want 2026-10-28 16:42:00", slot)
+	assert.Equal(t, 1000, skipped)
+}
+
+// An interval that reports no period above zero cannot be counted, so its
+// slots are found as any other expression's are: walked, then searched for.
+func TestSchedule_DueOfAnIntervalWithNoPeriodIsWalked(t *testing.T) {
+	var calls int
+	first := at(0, 0)
+	grid := interval{d: time.Minute, calls: &calls}
+	s := schedule.Rehydrate("default", "busy", "@every 1m", "UTC", "", false, &first, 1, "alice@example.com", first, grid)
+
+	slot, skipped, ok := s.Due(at(0, 5))
+
+	require.True(t, ok)
+	assert.True(t, at(0, 5).Equal(slot), "slot: got %s", slot)
+	assert.Equal(t, 5, skipped)
+	assert.Equal(t, 6, calls, "each slot is walked")
 }
 
 func TestSchedule_RehydrateRestoresTheStoredFields(t *testing.T) {

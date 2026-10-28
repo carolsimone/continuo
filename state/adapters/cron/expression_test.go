@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/state/domain/schedule"
 )
 
 // firesOn returns every instant the expression fires during the local calendar
@@ -194,6 +196,28 @@ func TestExpression_AFixedIntervalIgnoresTheZone(t *testing.T) {
 	got := expr.Next(utc(2026, time.October, 25, 0, 0))
 
 	assert.True(t, utc(2026, time.October, 25, 1, 30).Equal(got), "got %s", got)
+}
+
+// An `@every` interval is a schedule.Interval whose Period is the interval:
+// every fire Next returns is followed by one a Period later, from a first fire
+// asked from an instant between whole seconds on. A five-field cron is none,
+// whatever its fields, for its fires are the same from any instant.
+func TestExpression_AnEveryIntervalIsAnIntervalOfItsPeriod(t *testing.T) {
+	for spec, want := range map[string]time.Duration{"@every 1m": time.Minute, "@every 90s": 90 * time.Second, "@every 2h45m": 2*time.Hour + 45*time.Minute} {
+		every, ok := mustParse(t, spec, "Europe/Paris").(schedule.Interval)
+		require.True(t, ok, "%s is an Interval", spec)
+		assert.Equal(t, want, every.Period(), spec)
+		fire := every.Next(time.Date(2026, time.October, 24, 23, 59, 59, 999999999, time.UTC))
+		for range 2000 {
+			next := every.Next(fire)
+			require.Equal(t, every.Period(), next.Sub(fire), "%s after %s", spec, fire)
+			fire = next
+		}
+	}
+	for _, spec := range []string{"* * * * *", "*/7 * * * *", "0 * * * *", "@hourly", "0 3 * * *", "@daily"} {
+		_, ok := mustParse(t, spec, "Europe/Paris").(schedule.Interval)
+		assert.False(t, ok, "%s is not an Interval", spec)
+	}
 }
 
 func TestExpression_DayOfWeekAndDayOfMonthReadTheLocalDate(t *testing.T) {
