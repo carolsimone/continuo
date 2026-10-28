@@ -22,6 +22,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/http"
 	statemetrics "github.com/carolsimone/continuo/state/adapters/metrics"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -270,13 +271,22 @@ func main() {
 
 	clk := ports.SystemClock{}
 
+	// The parser rebuilds each stored schedule's expression from its cron and
+	// timezone. It is built once, so a failure to build it stops the service
+	// before any consumer starts.
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
+
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same *sqlx.DB, so concurrent
 	// message handlers do not share transaction state.
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
-	// TaskCollection) per accessor call.
+	// TaskCollection, Schedules) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger, postgres.WithCronParser(cronParser))
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update

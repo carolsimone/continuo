@@ -52,6 +52,9 @@ type UnitOfWork interface {
 	// CommandRequests serves the records of the commands that create or
 	// cancel a run, inside the transaction.
 	CommandRequests() repository.CommandRequestRepository
+	// Schedules serves the schedules of every tenant, inside the transaction:
+	// a schedule by its tenant and name, and the due schedules of all tenants.
+	Schedules() repository.ScheduleRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

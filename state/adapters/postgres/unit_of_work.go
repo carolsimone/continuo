@@ -25,9 +25,21 @@ type PostgresUnitOfWork struct {
 	tx     *sqlx.Tx
 	clock  ports.Clock
 	logger *slog.Logger
+	// cronParser reads the stored cron of each schedule Schedules() loads.
+	cronParser ports.CronParser
 	// afterCommit holds the functions AfterCommit registered in the current
 	// transaction.
 	afterCommit []func()
+}
+
+// UnitOfWorkOption configures a PostgresUnitOfWork.
+type UnitOfWorkOption func(*PostgresUnitOfWork)
+
+// WithCronParser sets the parser Schedules() uses to rebuild the expression of
+// each schedule it loads from its stored cron and timezone. A unit of work
+// built without it refuses to load a schedule.
+func WithCronParser(parser ports.CronParser) UnitOfWorkOption {
+	return func(u *PostgresUnitOfWork) { u.cronParser = parser }
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db.
@@ -38,12 +50,17 @@ func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	clock ports.Clock,
 	logger *slog.Logger,
+	opts ...UnitOfWorkOption,
 ) *PostgresUnitOfWork {
-	return &PostgresUnitOfWork{
+	u := &PostgresUnitOfWork{
 		db:     db,
 		clock:  clock,
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(u)
+	}
+	return u
 }
 
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -168,6 +185,11 @@ func (u *PostgresUnitOfWork) Leases() repository.LeaseRepository {
 // transaction.
 func (u *PostgresUnitOfWork) CommandRequests() repository.CommandRequestRepository {
 	return NewCommandRequestRepository(u.db, u.tx)
+}
+
+// Schedules returns the schedule repository, bound to the current transaction.
+func (u *PostgresUnitOfWork) Schedules() repository.ScheduleRepository {
+	return NewScheduleRepository(u.db, u.tx, u.cronParser)
 }
 
 // Compile-time interface assertion.

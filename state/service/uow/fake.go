@@ -59,6 +59,9 @@ type FakeUnitOfWork struct {
 
 	// CommandRequestRepo backs CommandRequests().
 	CommandRequestRepo repository.CommandRequestRepository
+
+	// ScheduleRepo backs Schedules().
+	ScheduleRepo repository.ScheduleRepository
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -144,6 +147,10 @@ func (f *FakeUnitOfWork) Leases() repository.LeaseRepository { return f.LeaseRep
 func (f *FakeUnitOfWork) CommandRequests() repository.CommandRequestRepository {
 	return f.CommandRequestRepo
 }
+
+// Schedules returns the repository.ScheduleRepository set via the ScheduleRepo
+// field.
+func (f *FakeUnitOfWork) Schedules() repository.ScheduleRepository { return f.ScheduleRepo }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.
