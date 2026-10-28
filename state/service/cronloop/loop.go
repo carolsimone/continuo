@@ -176,8 +176,10 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 		}
 		runID, outcome = id, outcomeOf(started)
 	}
+	// The row is locked, and a fire keeps the version, so the save at the
+	// version read always matches.
 	s.Fired(slot)
-	if err := u.Schedules().Save(ctx, s, 0); err != nil {
+	if err := u.Schedules().Save(ctx, s, s.Version()); err != nil {
 		return fmt.Errorf("move the next fire of schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	next, _ := s.NextFireAt()

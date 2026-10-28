@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,9 +21,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/schedule"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/schedules"
 )
 
@@ -480,6 +484,166 @@ func TestSchedules_AnotherTenantsSchedulesAreInvisible(t *testing.T) {
 	assert.Equal(t, "bob@example.com", still.UpdatedBy())
 	_, _, err = scheduleService.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: yearlyCron, Timezone: parisZone, ExpectedVersion: 9}, "bob@example.com")
 	require.ErrorIs(t, err, schedule.ErrStaleVersion)
+}
+
+// pausedAfterRead is the schedule repository state edits with, except that
+// its first Get, once it has read the row, signals read and waits for resume:
+// a test saves other edits between that edit's read and its save.
+type pausedAfterRead struct {
+	repository.ScheduleRepository
+	paused     sync.Once
+	resumed    sync.Once
+	read       chan struct{}
+	resumeSave chan struct{}
+}
+
+// newPausedAfterRead returns the repository paused after its first read; the
+// test's end resumes it, so a failed test leaves no edit waiting.
+func newPausedAfterRead(t *testing.T) *pausedAfterRead {
+	t.Helper()
+	p := &pausedAfterRead{
+		ScheduleRepository: postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil),
+		read:               make(chan struct{}),
+		resumeSave:         make(chan struct{}),
+	}
+	t.Cleanup(p.resume)
+	return p
+}
+
+func (p *pausedAfterRead) Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	s, ok, err := p.ScheduleRepository.Get(ctx, tenantID, name)
+	p.paused.Do(func() {
+		close(p.read)
+		<-p.resumeSave
+	})
+	return s, ok, err
+}
+
+// resume lets the paused edit go on to its save.
+func (p *pausedAfterRead) resume() { p.resumed.Do(func() { close(p.resumeSave) }) }
+
+// scheduleServiceOver is the schedules service state runs, over repo.
+func scheduleServiceOver(t *testing.T, repo repository.ScheduleRepository) *schedules.Service {
+	t.Helper()
+	return schedules.New(repo, postgres.NewLiveScheduleModelRepository(stateDB),
+		postgres.NewRunRepository(stateDB, slog.Default()), testParser(t), ports.SystemClock{})
+}
+
+// upsertResult is what an Upsert run in a goroutine returned.
+type upsertResult struct {
+	saved *schedule.Schedule
+	err   error
+}
+
+// upsertPausedAfterRead starts an Upsert of in for tenant over a repository
+// that pauses after the edit's read, and returns the repository, to wait for
+// the read and resume the edit, and the channel its result arrives on.
+func upsertPausedAfterRead(t *testing.T, tenant string, in schedules.UpsertInput, by string) (*pausedAfterRead, <-chan upsertResult) {
+	t.Helper()
+	repo := newPausedAfterRead(t)
+	svc := scheduleServiceOver(t, repo)
+	done := make(chan upsertResult, 1)
+	go func() {
+		saved, _, err := svc.Upsert(context.Background(), tenant, in, by)
+		done <- upsertResult{saved: saved, err: err}
+	}()
+	select {
+	case <-repo.read:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the paused edit never read the schedule")
+	}
+	return repo, done
+}
+
+// resumeAndWait lets the paused edit save and waits for its result.
+func resumeAndWait(t *testing.T, repo *pausedAfterRead, done <-chan upsertResult) upsertResult {
+	t.Helper()
+	repo.resume()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(10 * time.Second):
+		t.Fatal("the paused edit never finished")
+		return upsertResult{}
+	}
+}
+
+// storedVersionOf reads the stored version, cron and author of tenant's
+// schedule name.
+func storedVersionOf(t *testing.T, tenant, name string) (version int64, cronText, updatedBy string) {
+	t.Helper()
+	var row struct {
+		Version   int64  `db:"version"`
+		Cron      string `db:"cron"`
+		UpdatedBy string `db:"updated_by"`
+	}
+	require.NoError(t, stateDB.Get(&row, `SELECT version, cron, updated_by FROM schedules WHERE tenant_id = $1 AND name = $2`, tenant, name))
+	return row.Version, row.Cron, row.UpdatedBy
+}
+
+// raceTenant returns a tenant of its own whose live release carries name, and
+// whose rows of name are deleted when the test ends.
+func raceTenant(t *testing.T, name string) string {
+	t.Helper()
+	tenant := "sched-race-" + uuid.NewString()[:8]
+	deleteScheduleRowsAtEnd(t, tenant, name)
+	promoteTenantRelease(t, tenant, scheduledNode("mart", strings.ReplaceAll(name, "-", "_"), "dbt-model", name))
+	return tenant
+}
+
+// Two edits with no expected version read the schedule at version 1 at once.
+// The one that saves second finds the row moved on, reads it again and saves
+// over it: both are saved, the last write wins, and the versions they saved at
+// strictly increase.
+func TestSchedules_TwoLastWriteWinsEditsSaveAtIncreasingVersions(t *testing.T) {
+	ctx := context.Background()
+	name := "race-" + uuid.NewString()[:8]
+	tenant := raceTenant(t, name)
+	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil))
+	created, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: yearlyCron, Timezone: parisZone}, "alice@example.com")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), created.Version())
+
+	paused, done := upsertPausedAfterRead(t, tenant, schedules.UpsertInput{Name: name, Cron: "0 4 1 1 *", Timezone: parisZone}, "bob@example.com")
+	overtaking, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: "0 5 1 1 *", Timezone: parisZone}, "carol@example.com")
+	require.NoError(t, err)
+	last := resumeAndWait(t, paused, done)
+
+	require.NoError(t, last.err, "an edit another edit overtook is saved again")
+	assert.Equal(t, int64(2), overtaking.Version())
+	assert.Equal(t, int64(3), last.saved.Version(), "the overtaken edit saves after the edit that overtook it")
+	version, cronText, updatedBy := storedVersionOf(t, tenant, name)
+	assert.Equal(t, int64(3), version)
+	assert.Equal(t, "0 4 1 1 *", cronText, "the last write wins")
+	assert.Equal(t, "bob@example.com", updatedBy)
+}
+
+// A first cron reads no row; before it saves, another caller creates the
+// schedule and edits it. The first cron's save finds the row, reads it again
+// and saves over it at version 3: the version never goes back to 1, and no
+// caller sees the primary key's conflict.
+func TestSchedules_ACreateRacingACreateAndAnEditSavesAtIncreasingVersions(t *testing.T) {
+	ctx := context.Background()
+	name := "race-" + uuid.NewString()[:8]
+	tenant := raceTenant(t, name)
+	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil))
+
+	paused, done := upsertPausedAfterRead(t, tenant, schedules.UpsertInput{Name: name, Cron: "0 4 1 1 *", Timezone: parisZone}, "bob@example.com")
+	created, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: yearlyCron, Timezone: parisZone}, "alice@example.com")
+	require.NoError(t, err)
+	edited, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{
+		Name: name, Cron: yearlyCron, Timezone: parisZone, Paused: true, ExpectedVersion: created.Version(),
+	}, "alice@example.com")
+	require.NoError(t, err)
+	late := resumeAndWait(t, paused, done)
+
+	require.NoError(t, late.err, "a create that another create overtook is saved over the row, with no key conflict")
+	assert.Equal(t, []int64{1, 2, 3}, []int64{created.Version(), edited.Version(), late.saved.Version()})
+	version, cronText, updatedBy := storedVersionOf(t, tenant, name)
+	assert.Equal(t, int64(3), version)
+	assert.Equal(t, "0 4 1 1 *", cronText)
+	assert.Equal(t, "bob@example.com", updatedBy)
+	assert.False(t, late.saved.Paused(), "the last write wins")
 }
 
 // PreviewSchedule refuses what the parser refuses with InvalidArgument and the

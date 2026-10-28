@@ -205,11 +205,16 @@ func (r *scheduleRows) GetForUpdate(_ context.Context, tenantID, name string) (*
 	return s.aggregate(), true, nil
 }
 
-func (r *scheduleRows) Save(_ context.Context, s *schedule.Schedule, _ int64) error {
+// Save writes s while its row is at expectedVersion, as the adapter does; 0
+// names no row, and every row of these tests exists.
+func (r *scheduleRows) Save(_ context.Context, s *schedule.Schedule, expectedVersion int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.saves++
-	row := r.rows[key(s.TenantID(), s.Name())]
+	row, ok := r.rows[key(s.TenantID(), s.Name())]
+	if !ok || row.version != expectedVersion {
+		return schedule.ErrStaleVersion
+	}
 	row.cron, row.timezone, row.description, row.paused = s.Cron(), s.Timezone(), s.Description(), s.Paused()
 	row.version, row.updatedBy, row.updatedAt = s.Version(), s.UpdatedBy(), s.UpdatedAt()
 	row.next = nil

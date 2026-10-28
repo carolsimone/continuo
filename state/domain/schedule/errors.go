@@ -7,9 +7,10 @@ import (
 
 // Errors a schedule's callers translate for their own audience.
 var (
-	// ErrStaleVersion is returned by ScheduleRepository.Save when its caller
-	// names a version the stored row does not have: another edit saved first,
-	// or the schedule was deleted since it was read. Nothing is written.
+	// ErrStaleVersion is returned by ScheduleRepository.Save when the stored
+	// row is not at the version its caller names, 0 naming no row: another
+	// edit saved first, the schedule was created since its caller found none,
+	// or it was deleted since it was read. Nothing is written.
 	ErrStaleVersion = errors.New("schedule was changed by another edit")
 
 	// ErrStoredCronInvalid is returned by ScheduleRepository.Get when the

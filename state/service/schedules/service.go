@@ -22,6 +22,11 @@ import (
 // upcomingFires is how many fire times Upsert and Preview return.
 const upcomingFires = 3
 
+// lastWriteWinsTries is how many times Upsert reads and saves an edit that
+// names no expected version while other edits of the schedule keep saving
+// between its read and its save.
+const lastWriteWinsTries = 3
+
 // ErrInvalid marks an input the service refuses before it reads or writes
 // anything: an empty schedule name, a negative expected version, or a cron or
 // timezone the cron parser refuses. The error's message is the reason alone,
@@ -50,8 +55,8 @@ type UpsertInput struct {
 	Description string
 	Paused      bool
 	// ExpectedVersion is the version the operator read before editing. Above
-	// 0 the edit is saved only while the schedule is still at it; 0 saves with
-	// no check, and the last write wins.
+	// 0 the edit is saved only while the schedule is still at it; with 0 the
+	// last write wins.
 	ExpectedVersion int64
 }
 
@@ -104,12 +109,17 @@ func New(
 // fires: none while it is paused. The next fire counts from now, and the
 // version goes up by one from the stored row's.
 //
+// The edit is saved at the version of the row it read, so the stored version
+// only ever goes up. With in.ExpectedVersion 0, an edit whose save finds that
+// another edit saved first reads the row again and saves over it, up to three
+// times in all: the last write wins.
+//
 // It returns ErrInvalid for an input it refuses, schedule.ErrStaleVersion when
 // in.ExpectedVersion is above 0 and the schedule is not at that version (or
-// has no row), and schedule.ErrUnknownName when the name has no row and no
-// model of the live release carries it. A name that has a row is edited
-// whatever the live release holds, and a row whose stored cron no longer
-// parses is saved over.
+// has no row), or is 0 and other edits saved first three times, and
+// schedule.ErrUnknownName when the name has no row and no model of the live
+// release carries it. A name that has a row is edited whatever the live
+// release holds, and a row whose stored cron no longer parses is saved over.
 func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, by string) (*schedule.Schedule, []time.Time, error) {
 	if in.Name == "" {
 		return nil, nil, invalid(errNameRequired)
@@ -122,14 +132,30 @@ func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, b
 	if err != nil {
 		return nil, nil, invalid(err)
 	}
+	for range lastWriteWinsTries {
+		var saved *schedule.Schedule
+		saved, err = s.edit(ctx, tenantID, in, cron, expr, by)
+		if err == nil {
+			return saved, upcoming(saved, expr), nil
+		}
+		if in.ExpectedVersion > 0 || !errors.Is(err, schedule.ErrStaleVersion) {
+			break
+		}
+	}
+	return nil, nil, err
+}
 
+// edit reads tenantID's schedule in.Name, applies the edit to it and saves it
+// at the version it read: the stored row's, or 0 when there is none. A save
+// that finds the row at another version is schedule.ErrStaleVersion.
+func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cron string, expr schedule.Expression, by string) (*schedule.Schedule, error) {
 	stored, found, err := s.schedules.Get(ctx, tenantID, in.Name)
 	var unreadable *schedule.StoredCronInvalidError
 	switch {
 	case errors.As(err, &unreadable):
 		found = true
 	case err != nil:
-		return nil, nil, fmt.Errorf("read schedule %q: %w", in.Name, err)
+		return nil, fmt.Errorf("read schedule %q: %w", in.Name, err)
 	}
 	var storedVersion int64
 	switch {
@@ -141,16 +167,16 @@ func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, b
 	// The expected version is compared with the row this edit builds on, so
 	// the save below always raises the version the operator read.
 	if in.ExpectedVersion > 0 && in.ExpectedVersion != storedVersion {
-		return nil, nil, fmt.Errorf("schedule %q is at version %d, not %d: %w",
+		return nil, fmt.Errorf("schedule %q is at version %d, not %d: %w",
 			in.Name, storedVersion, in.ExpectedVersion, schedule.ErrStaleVersion)
 	}
 	if !found {
 		models, err := s.models.CountOf(ctx, tenantID, in.Name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("count the live release's models of schedule %q: %w", in.Name, err)
+			return nil, fmt.Errorf("count the live release's models of schedule %q: %w", in.Name, err)
 		}
 		if models == 0 {
-			return nil, nil, fmt.Errorf("schedule %q: %w", in.Name, schedule.ErrUnknownName)
+			return nil, fmt.Errorf("schedule %q: %w", in.Name, schedule.ErrUnknownName)
 		}
 	}
 
@@ -169,10 +195,10 @@ func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, b
 		saved = stored
 		saved.Replace(cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	}
-	if err := s.schedules.Save(ctx, saved, in.ExpectedVersion); err != nil {
-		return nil, nil, fmt.Errorf("save schedule %q: %w", in.Name, err)
+	if err := s.schedules.Save(ctx, saved, storedVersion); err != nil {
+		return nil, fmt.Errorf("save schedule %q: %w", in.Name, err)
 	}
-	return saved, upcoming(saved, expr), nil
+	return saved, nil
 }
 
 // Delete removes the cron of tenantID's schedule name, which then runs only

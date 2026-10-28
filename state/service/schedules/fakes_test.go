@@ -53,8 +53,8 @@ type memorySchedules struct {
 	parser ports.CronParser
 	rows   map[rowKey]storedRow
 
-	// saves counts the calls of Save, failed ones included.
-	saves int
+	// gets and saves count the calls of Get and Save, failed ones included.
+	gets, saves int
 	// failWith, when set, fails every call.
 	failWith error
 	// failInvalidWith, when set, fails ListStoredCronInvalid alone.
@@ -101,6 +101,7 @@ func (m *memorySchedules) Exists(_ context.Context, tenantID, name string) (bool
 }
 
 func (m *memorySchedules) Get(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	m.gets++
 	if m.failWith != nil {
 		return nil, false, m.failWith
 	}
@@ -179,16 +180,17 @@ func (m *memorySchedules) ListStoredCronInvalid(_ context.Context, tenantID stri
 	return names, nil
 }
 
+// Save writes s while the stored row is at expectedVersion, as the adapter
+// does: 0 names no row, so it only inserts, and a row it finds is stale.
 func (m *memorySchedules) Save(_ context.Context, s *schedule.Schedule, expectedVersion int64) error {
 	m.saves++
 	if m.failWith != nil {
 		return m.failWith
 	}
 	k := rowKey{s.TenantID(), s.Name()}
-	if expectedVersion > 0 {
-		if r, ok := m.rows[k]; !ok || r.version != expectedVersion {
-			return schedule.ErrStaleVersion
-		}
+	r, ok := m.rows[k]
+	if ok != (expectedVersion > 0) || (ok && r.version != expectedVersion) {
+		return schedule.ErrStaleVersion
 	}
 	var next *time.Time
 	if at, ok := s.NextFireAt(); ok {

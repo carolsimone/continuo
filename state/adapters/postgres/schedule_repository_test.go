@@ -256,9 +256,10 @@ func TestSchedules_ASaveWithAStaleVersionIsRefused(t *testing.T) {
 	assert.False(t, ok, "a refused save inserts nothing")
 }
 
-// A save with no expected version writes whatever the row holds: it creates the
-// row, and an existing row is overwritten.
-func TestSchedules_ASaveWithNoExpectedVersionWritesWithoutACheck(t *testing.T) {
+// A save with no expected version names no row: it creates the row, and over a
+// row that exists it writes nothing and is stale, so a save never takes the
+// stored version back.
+func TestSchedules_ASaveWithNoExpectedVersionOnlyCreates(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -266,21 +267,27 @@ func TestSchedules_ASaveWithNoExpectedVersionWritesWithoutACheck(t *testing.T) {
 	tenant := scheduleRepoTenant(t, db)
 	created := farFuture
 	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "nightly", created), 0))
+	stored := mustGet(t, repo, tenant, "nightly")
+	assert.Equal(t, int64(1), stored.Version())
 
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
-	over := hourlySchedule(t, parser, tenant, "nightly", created.Add(time.Hour))
-	over.Replace("0 * * * *", "UTC", "overwritten", false, expr, "bob@example.com", created.Add(2*time.Hour))
-	require.NoError(t, repo.Save(ctx, over, 0))
+	stored.Replace("0 * * * *", "UTC", "edited", false, expr, "bob@example.com", created.Add(time.Hour))
+	require.NoError(t, repo.Save(ctx, stored, 1))
 
-	stored := mustGet(t, repo, tenant, "nightly")
-	assert.Equal(t, "overwritten", stored.Description())
-	assert.Equal(t, int64(2), stored.Version(), "the stored version is the aggregate's")
+	again := hourlySchedule(t, parser, tenant, "nightly", created.Add(2*time.Hour))
+	err = repo.Save(ctx, again, 0)
+
+	require.ErrorIs(t, err, schedule.ErrStaleVersion)
+	kept := mustGet(t, repo, tenant, "nightly")
+	assert.Equal(t, int64(2), kept.Version(), "the row keeps its version")
+	assert.Equal(t, "edited", kept.Description())
+	assert.Equal(t, "bob@example.com", kept.UpdatedBy())
 }
 
-// A fire changes the next fire and nothing else: the version, author and edit
-// time the operator left stay as they were, however the save names the
-// version.
+// A fire changes the next fire and nothing else: saved at the version it read,
+// which a fire leaves as it is, it keeps the version, author and edit time the
+// operator left, fire after fire.
 func TestSchedules_AFireSaveLeavesTheVersionAndTheAuthorship(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -296,15 +303,15 @@ func TestSchedules_AFireSaveLeavesTheVersionAndTheAuthorship(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, s, 0))
 	slotTime := time.Date(2099, time.January, 1, 12, 0, 0, 0, time.UTC)
 
-	for _, expected := range []int64{0, 2} {
+	for fire := range 2 {
 		got := mustGet(t, repo, tenant, "nightly")
 		slot, _, due := got.Due(slotTime.Add(10 * time.Minute))
 		require.True(t, due)
 		got.Fired(slot)
-		require.NoError(t, repo.Save(ctx, got, expected), "expected version %d", expected)
+		require.NoError(t, repo.Save(ctx, got, got.Version()), "fire %d", fire)
 
 		after := mustGet(t, repo, tenant, "nightly")
-		assert.Equal(t, int64(2), after.Version(), "expected version %d", expected)
+		assert.Equal(t, int64(2), after.Version(), "fire %d", fire)
 		assert.Equal(t, "bob@example.com", after.UpdatedBy())
 		assert.True(t, edited.Equal(after.UpdatedAt()), "updated at: got %s", after.UpdatedAt())
 		next, ok := after.NextFireAt()
@@ -319,7 +326,8 @@ func TestSchedules_AFireSaveLeavesTheVersionAndTheAuthorship(t *testing.T) {
 }
 
 // Two creators of one new name end as one row: the second waits for the first,
-// then writes over it, and neither sees the primary-key conflict.
+// then finds the row and writes nothing, stale; neither sees the primary-key
+// conflict.
 func TestSchedules_TwoCreatorsOfOneNameLeaveOneRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -345,17 +353,19 @@ func TestSchedules_TwoCreatorsOfOneNameLeaveOneRow(t *testing.T) {
 	require.NoError(t, firstUoW.Commit())
 	select {
 	case err := <-secondDone:
-		require.NoError(t, err, "the second creator sees no conflict")
+		require.ErrorIs(t, err, schedule.ErrStaleVersion, "the second creator finds the first's row")
+		assert.NotContains(t, err.Error(), "duplicate key", "the second creator sees no conflict")
 	case <-time.After(10 * time.Second):
 		t.Fatal("the second creator never finished after the first committed")
 	}
-	require.NoError(t, secondUoW.Commit())
+	require.NoError(t, secondUoW.Commit(), "the stale save leaves the transaction usable")
 
 	var rows int
 	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM schedules WHERE tenant_id = $1 AND name = 'nightly'`, tenant))
 	assert.Equal(t, 1, rows)
 	stored := mustGet(t, newScheduleRepo(db, nil, parser), tenant, "nightly")
-	assert.Equal(t, "the second creator", stored.Description(), "the later save wins")
+	assert.Equal(t, "the first creator", stored.Description(), "the second save writes nothing")
+	assert.Equal(t, int64(1), stored.Version())
 }
 
 // LockDue takes the due schedules of every tenant, the earliest next fire
@@ -629,9 +639,10 @@ func TestSchedules_GetOfAStoredCronThatNoLongerParsesNamesItsVersion(t *testing.
 	assert.Equal(t, "broken", invalid.Name)
 }
 
-// Saving a schedule over a row whose stored cron no longer parses repairs it,
-// with no expected version or with the version the row has, and Delete removes
-// such a row: neither reads the stored cron.
+// Saving a schedule over a row whose stored cron no longer parses, at the
+// version the row has, repairs it; with no expected version the save is a
+// create, which such a row makes stale like any other. Delete removes such a
+// row. None of them reads the stored cron.
 func TestSchedules_SaveOverAStoredCronThatNoLongerParsesRepairsIt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -639,27 +650,25 @@ func TestSchedules_SaveOverAStoredCronThatNoLongerParsesRepairsIt(t *testing.T) 
 	tx := scratchTx(t, db)
 	repo := newScheduleRepo(db, tx, parser)
 	tenant := scheduleRepoTenant(t, db)
-	rawSchedule(t, tx, tenant, "repaired-blind", "not a cron", "UTC", nil)
 	rawSchedule(t, tx, tenant, "repaired-by-version", "0 * * * *", "Mars/Olympus", nil)
 	rawSchedule(t, tx, tenant, "deleted", "not a cron", "UTC", nil)
-	_, _, err := repo.Get(ctx, tenant, "repaired-blind")
-	require.ErrorIs(t, err, schedule.ErrStoredCronInvalid)
+	_, _, err := repo.Get(ctx, tenant, "repaired-by-version")
+	var unreadable *schedule.StoredCronInvalidError
+	require.ErrorAs(t, err, &unreadable)
 
-	require.NoError(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "repaired-blind", farFuture), 0))
-	blind := mustGet(t, repo, tenant, "repaired-blind")
-	assert.Equal(t, "0 * * * *", blind.Cron())
-	assert.Equal(t, "UTC", blind.Timezone())
-	assert.Equal(t, "every hour", blind.Description())
+	require.ErrorIs(t, repo.Save(ctx, hourlySchedule(t, parser, tenant, "repaired-by-version", farFuture), 0), schedule.ErrStaleVersion)
 
-	// The raw row is at version 1, the version an edit of it would name.
+	// The raw row is at version 1, the version the error names.
+	require.Equal(t, int64(1), unreadable.Version)
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
 	edited := hourlySchedule(t, parser, tenant, "repaired-by-version", farFuture)
 	edited.Replace("0 * * * *", "UTC", "repaired", false, expr, "bob@example.com", farFuture.Add(time.Minute))
-	require.NoError(t, repo.Save(ctx, edited, 1))
+	require.NoError(t, repo.Save(ctx, edited, unreadable.Version))
 	byVersion := mustGet(t, repo, tenant, "repaired-by-version")
 	assert.Equal(t, "UTC", byVersion.Timezone())
 	assert.Equal(t, "repaired", byVersion.Description())
+	assert.Equal(t, int64(2), byVersion.Version())
 
 	deleted, err := repo.Delete(ctx, tenant, "deleted")
 	require.NoError(t, err)

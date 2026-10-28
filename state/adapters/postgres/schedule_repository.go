@@ -203,48 +203,54 @@ func (r *ScheduleRepository) ListStoredCronInvalid(ctx context.Context, tenantID
 
 // Save writes s as it stands, in one statement. With expectedVersion above 0 it
 // is an UPDATE of the row at that version, which matches nothing when the row
-// has another version or is gone. With 0 it is an upsert on the primary key: an
-// INSERT that, when the row exists or another transaction is inserting it, waits
-// for that transaction and then overwrites the row, so concurrent creators of
-// one name end as one row and none sees the key conflict.
+// has another version or is gone. With 0 it is an INSERT that does nothing on a
+// conflict of the primary key: when another transaction is inserting the row it
+// waits for that transaction, and a row that exists by then is left as it is.
+// So of concurrent creators of one name one writes, the others are stale, and
+// none sees the key conflict. A save that matches no row is
+// schedule.ErrStaleVersion and leaves the transaction usable.
 func (r *ScheduleRepository) Save(ctx context.Context, s *schedule.Schedule, expectedVersion int64) error {
 	nextFireAt := sql.NullTime{}
 	if next, ok := s.NextFireAt(); ok {
 		nextFireAt = sql.NullTime{Time: next, Valid: true}
 	}
+	var (
+		res sql.Result
+		err error
+	)
 	if expectedVersion > 0 {
-		res, err := r.conn().ExecContext(ctx, `
+		res, err = r.conn().ExecContext(ctx, `
 			UPDATE schedules
 			   SET cron = $3, timezone = $4, description = $5, paused = $6, next_fire_at = $7,
 			       version = $8, updated_by = $9, updated_at = $10
 			 WHERE tenant_id = $1 AND name = $2 AND version = $11`,
 			s.TenantID(), s.Name(), s.Cron(), s.Timezone(), s.Description(), s.Paused(), nextFireAt,
 			s.Version(), s.UpdatedBy(), s.UpdatedAt(), expectedVersion)
-		if err != nil {
-			return fmt.Errorf("save schedule %q of tenant %q: %w", s.Name(), s.TenantID(), err)
-		}
-		changed, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("save schedule %q of tenant %q: %w", s.Name(), s.TenantID(), err)
-		}
-		if changed == 0 {
-			return fmt.Errorf("save schedule %q of tenant %q at version %d: %w",
-				s.Name(), s.TenantID(), expectedVersion, schedule.ErrStaleVersion)
-		}
-		return nil
+	} else {
+		res, err = r.conn().ExecContext(ctx, `
+			INSERT INTO schedules (`+scheduleColumns+`)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (tenant_id, name) DO NOTHING`,
+			s.TenantID(), s.Name(), s.Cron(), s.Timezone(), s.Description(), s.Paused(), nextFireAt,
+			s.Version(), s.UpdatedBy(), s.UpdatedAt())
 	}
-	if _, err := r.conn().ExecContext(ctx, `
-		INSERT INTO schedules (`+scheduleColumns+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (tenant_id, name) DO UPDATE
-		   SET cron = EXCLUDED.cron, timezone = EXCLUDED.timezone, description = EXCLUDED.description,
-		       paused = EXCLUDED.paused, next_fire_at = EXCLUDED.next_fire_at, version = EXCLUDED.version,
-		       updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at`,
-		s.TenantID(), s.Name(), s.Cron(), s.Timezone(), s.Description(), s.Paused(), nextFireAt,
-		s.Version(), s.UpdatedBy(), s.UpdatedAt()); err != nil {
+	if err != nil {
 		return fmt.Errorf("save schedule %q of tenant %q: %w", s.Name(), s.TenantID(), err)
 	}
-	return nil
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save schedule %q of tenant %q: %w", s.Name(), s.TenantID(), err)
+	}
+	switch {
+	case changed > 0:
+		return nil
+	case expectedVersion > 0:
+		return fmt.Errorf("save schedule %q of tenant %q at version %d: %w",
+			s.Name(), s.TenantID(), expectedVersion, schedule.ErrStaleVersion)
+	default:
+		return fmt.Errorf("create schedule %q of tenant %q: it has a row already: %w",
+			s.Name(), s.TenantID(), schedule.ErrStaleVersion)
+	}
 }
 
 // Delete removes the tenant's schedule of that name.

@@ -167,6 +167,104 @@ func TestSchedulesUpsert_AnExpectedVersionOfARowThatIsGoneIsStale(t *testing.T) 
 	assert.False(t, ok)
 }
 
+// An edit with no expected version whose save finds that another edit saved
+// after its read reads the row again and saves over it: the last write wins,
+// at the version after the other edit's, never at the same one.
+func TestSchedulesUpsert_WithNoExpectedVersionSavesAgainOverAnEditThatSavedFirst(t *testing.T) {
+	h := newHarness(t)
+	h.liveModels(tenantA, map[string]int{"daily": 1})
+	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
+	overtaken := false
+	h.rows.afterGet = func() {
+		if !overtaken {
+			overtaken = true
+			h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 2, updatedBy: "dave@example.com", updatedAt: now})
+		}
+	}
+
+	got, next, err := h.svc.Upsert(context.Background(), tenantA, upsert("daily", "0 2 * * *", "UTC"), "bob@example.com")
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), got.Version())
+	assert.Len(t, next, 3)
+	row, _ := h.rows.row(tenantA, "daily")
+	assert.Equal(t, int64(3), row.version)
+	assert.Equal(t, "0 2 * * *", row.cron)
+	assert.Equal(t, "bob@example.com", row.updatedBy)
+	assert.Equal(t, 2, h.rows.gets, "the edit read the row again")
+	assert.Equal(t, 2, h.rows.saves)
+}
+
+// A first cron whose save finds that another edit created the row since its
+// read is saved over that row at version 2, not written again at version 1.
+func TestSchedulesUpsert_ACreateThatAnotherCreateOvertookSavesOverIt(t *testing.T) {
+	h := newHarness(t)
+	h.liveModels(tenantA, map[string]int{"daily": 1})
+	overtaken := false
+	h.rows.afterGet = func() {
+		if !overtaken {
+			overtaken = true
+			h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 1, updatedBy: "dave@example.com", updatedAt: now})
+		}
+	}
+
+	got, _, err := h.svc.Upsert(context.Background(), tenantA, upsert("daily", "0 2 * * *", "UTC"), "bob@example.com")
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), got.Version())
+	row, _ := h.rows.row(tenantA, "daily")
+	assert.Equal(t, int64(2), row.version)
+	assert.Equal(t, "0 2 * * *", row.cron)
+	assert.Equal(t, "bob@example.com", row.updatedBy)
+}
+
+// While other edits keep saving between its read and its save, an edit with no
+// expected version reads and saves three times, then is refused as stale, and
+// the row keeps the other edits' last save.
+func TestSchedulesUpsert_WithNoExpectedVersionGivesUpAfterThreeTries(t *testing.T) {
+	h := newHarness(t)
+	h.liveModels(tenantA, map[string]int{"daily": 1})
+	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
+	h.rows.afterGet = func() {
+		row, _ := h.rows.row(tenantA, "daily")
+		row.version++
+		row.updatedBy = "dave@example.com"
+		h.rows.put(tenantA, "daily", row)
+	}
+
+	_, _, err := h.svc.Upsert(context.Background(), tenantA, upsert("daily", "0 2 * * *", "UTC"), "bob@example.com")
+
+	require.ErrorIs(t, err, schedule.ErrStaleVersion)
+	assert.Equal(t, 3, h.rows.gets)
+	assert.Equal(t, 3, h.rows.saves)
+	row, _ := h.rows.row(tenantA, "daily")
+	assert.Equal(t, int64(4), row.version)
+	assert.Equal(t, "0 1 * * *", row.cron)
+	assert.Equal(t, "dave@example.com", row.updatedBy)
+}
+
+// An edit that names its expected version is not tried again: a save that
+// finds the row moved on since the read is refused as stale at once.
+func TestSchedulesUpsert_WithAnExpectedVersionAStaleSaveIsNotTriedAgain(t *testing.T) {
+	h := newHarness(t)
+	h.liveModels(tenantA, map[string]int{"daily": 1})
+	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
+	h.rows.afterGet = func() {
+		h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 2, updatedBy: "dave@example.com", updatedAt: now})
+	}
+	edit := upsert("daily", "0 2 * * *", "UTC")
+	edit.ExpectedVersion = 1
+
+	_, _, err := h.svc.Upsert(context.Background(), tenantA, edit, "bob@example.com")
+
+	require.ErrorIs(t, err, schedule.ErrStaleVersion)
+	assert.Equal(t, 1, h.rows.gets)
+	assert.Equal(t, 1, h.rows.saves)
+	row, _ := h.rows.row(tenantA, "daily")
+	assert.Equal(t, int64(2), row.version)
+	assert.Equal(t, "dave@example.com", row.updatedBy)
+}
+
 // A row whose stored cron no longer parses is a row: an edit saves over it,
 // with no expected version or with the version it is at, whatever its name's
 // models, and its version still counts up from the stored one.
