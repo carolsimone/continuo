@@ -921,7 +921,9 @@ func TestCronLoop_SleepsUntilTheEarliestFire(t *testing.T) {
 // A due row no pass can fire, here one whose stored cron no longer parses,
 // does not hold up the other schedules: a good row due 50 ms after the loop
 // starts fires at about 50 ms, with no wake signal and an hour-long tick, and
-// the broken row makes the loop pass no more than that.
+// the broken row makes the loop pass no more than that. The good row fires
+// daily twelve hours from the hour of its slot, so its next fire after the
+// slot is hours away and none falls in the time the test runs.
 func TestCronLoop_ABrokenDueRowDoesNotDelayTheOthers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -931,7 +933,8 @@ func TestCronLoop_ABrokenDueRowDoesNotDelayTheOthers(t *testing.T) {
 	w.u.SetClock(wallClock{})
 	w.schedules.add(tenant, "broken", "not a cron", hourly{}, start.Add(-time.Hour))
 	w.schedules.rows[key(tenant, "broken")].broken = true
-	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	farHour := (slot.In(paris).Hour() + 12) % 24
+	w.schedules.add(tenant, "daily", fmt.Sprintf("0 %d * * *", farHour), daily{farHour, 0, paris}, slot)
 	w.runs.created = make(chan *run.Run, 1)
 	done := make(chan struct{})
 	go func() {
@@ -947,7 +950,13 @@ func TestCronLoop_ABrokenDueRowDoesNotDelayTheOthers(t *testing.T) {
 		t.Fatal("the broken row held up the good row's fire")
 	}
 	time.Sleep(300 * time.Millisecond)
-	assert.Equal(t, 2, w.schedules.listDueCalls(), "a pass at the start and one for the good row; the broken row adds none")
+	// The count is an upper bound. A first clock read 50 ms or more after
+	// start, as on a loaded machine, finds the good row due in the first pass
+	// (one call). Otherwise the first pass finds only the broken row and the
+	// pass at the slot fires the good one (two calls). A loop that passed
+	// again and again on the broken row would make hundreds of calls in the
+	// 300 ms; a broken row that delayed the good one fails the wait above.
+	assert.LessOrEqual(t, w.schedules.listDueCalls(), 2, "at most a pass at the start and one for the good row; the broken row adds none")
 	assert.Empty(t, w.runs.of(tenant, "broken"))
 	cancel()
 	<-done

@@ -49,9 +49,11 @@ type ScheduleRepository interface {
 	// version or no longer there is stale; with 0, Save only inserts, and a
 	// row that exists by then is stale. So of two saves that read the same
 	// row, or the same absence of one, one writes and the other is stale, and
-	// the stored version never repeats or goes back. Save reads no stored
-	// cron, so a save at the version of a row whose cron or timezone no
-	// longer parses repairs it.
+	// the version of one stored row never repeats or goes back while that row
+	// lasts. A row that Delete removes and a later create inserts again starts
+	// over at version 1, so an expectedVersion read before the delete can
+	// match the new row. Save reads no stored cron, so a save at the version
+	// of a row whose cron or timezone no longer parses repairs it.
 	Save(ctx context.Context, s *schedule.Schedule, expectedVersion int64) error
 
 	// Delete removes the tenant's schedule of that name and reports whether

@@ -163,8 +163,12 @@ func (l *Loop) fireWithin(ctx context.Context, tenantID, name string, now time.T
 // is active, and moves the next fire on to the slot after it. A schedule that
 // is gone, or no longer due because another pass fired it or an edit moved its
 // next fire, is left as it is. A run another caller started at the moment of
-// the insert rolls the fire back; a later pass finds that run active. The
-// outcome is counted and logged once the transaction has committed.
+// the insert rolls the fire back and leaves the slot due. A manual run start
+// writes no schedules row, so nothing wakes the loop: the next wake signal or
+// tick brings the pass that takes the slot again, which consumes it as
+// skipped_active while that run is active and, once it has ended, starts the
+// slot's run, up to a tick late. The outcome is counted and logged once the
+// transaction has committed.
 func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) error {
 	u := l.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -194,7 +198,7 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 	if !l.maintenance {
 		res, err := l.starter.HandleCronFire(ctx, u, tenantID, name, slot)
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			l.logger.Info("Cron fire rolled back: a run of the schedule started at the moment of the fire; the next pass consumes the slot",
+			l.logger.Info("Cron fire rolled back: a run of the schedule started at the moment of the fire; the slot stays due, and a later pass consumes it as skipped_active or, if that run has ended, starts its run",
 				"tenant_id", tenantID, "schedule_name", name, "slot", slot)
 			return nil
 		}

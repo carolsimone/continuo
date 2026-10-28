@@ -86,9 +86,10 @@ UNAVAILABLE, or ABORTED because concurrent calls of the same id kept rolling
 back. It does not retry a refusal for maintenance mode, and it never retries a
 read. A schedule edit (`set-cron`, `remove-cron`, `pause`, `resume`) sends no
 request id and is retried the same way on UNAVAILABLE only: its ABORTED is a
-stale version, which sending the same request again cannot settle. `set-cron`
-answers that ABORTED itself, by reading the schedule again and saving once
-more; `pause` and `resume` exit 4 (see below).
+stale version, which sending the same request again cannot settle (a first
+cron, sent with no version, is ABORTED only when other edits saved first on
+three tries in a row). `set-cron` answers that ABORTED itself, by reading the
+schedule again and saving once more; `pause` and `resume` exit 4 (see below).
 
 With `--human`, stdout is empty and a single line is written to stderr:
 

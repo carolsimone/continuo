@@ -298,8 +298,10 @@ type RunServiceClient interface {
 	// whatever the live release holds; only a schedule's first cron needs a
 	// model of the live release with its tag. With expected_version above 0 the
 	// cron is saved only while the schedule is at that version; 0 saves with no
-	// check, and the last write wins. The response carries the schedule as saved
-	// and its next three fire times (none while paused).
+	// check, and the last write wins: an edit that finds another edit saved
+	// first reads the schedule again and saves over it, up to three tries in
+	// all. The response carries the schedule as saved and its next three fire
+	// times (none while paused).
 	// Errors:
 	//
 	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
@@ -312,6 +314,9 @@ type RunServiceClient interface {
 	//	ABORTED          - expected_version is set and the schedule is not at
 	//	                   it: another edit saved first, or its cron was
 	//	                   removed. Read the schedule again before editing it.
+	//	                   With expected_version 0, other edits saved first on
+	//	                   each of the three tries; the same call may be sent
+	//	                   again.
 	//	UNAVAILABLE      - maintenance mode is on.
 	UpsertSchedule(ctx context.Context, in *UpsertScheduleRequest, opts ...grpc.CallOption) (*UpsertScheduleResponse, error)
 	// DeleteSchedule removes the cron of a schedule, which then runs only when
@@ -848,8 +853,10 @@ type RunServiceServer interface {
 	// whatever the live release holds; only a schedule's first cron needs a
 	// model of the live release with its tag. With expected_version above 0 the
 	// cron is saved only while the schedule is at that version; 0 saves with no
-	// check, and the last write wins. The response carries the schedule as saved
-	// and its next three fire times (none while paused).
+	// check, and the last write wins: an edit that finds another edit saved
+	// first reads the schedule again and saves over it, up to three tries in
+	// all. The response carries the schedule as saved and its next three fire
+	// times (none while paused).
 	// Errors:
 	//
 	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
@@ -862,6 +869,9 @@ type RunServiceServer interface {
 	//	ABORTED          - expected_version is set and the schedule is not at
 	//	                   it: another edit saved first, or its cron was
 	//	                   removed. Read the schedule again before editing it.
+	//	                   With expected_version 0, other edits saved first on
+	//	                   each of the three tries; the same call may be sent
+	//	                   again.
 	//	UNAVAILABLE      - maintenance mode is on.
 	UpsertSchedule(context.Context, *UpsertScheduleRequest) (*UpsertScheduleResponse, error)
 	// DeleteSchedule removes the cron of a schedule, which then runs only when
