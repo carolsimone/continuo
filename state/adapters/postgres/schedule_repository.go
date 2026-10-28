@@ -26,8 +26,9 @@ const SchedulesChannel = "schedules"
 // it starts, so the statements of one ListDue can see different rows, inside a
 // transaction as outside one. It rebuilds the expression of
 // each schedule it loads by parsing the stored cron with parser. A stored cron
-// that no longer parses fails Get and LoadForUpdate; List and ListDue log it to
-// logger and return the other schedules.
+// that no longer parses fails Get and LoadForUpdate; ListDue logs it to logger
+// and returns the other schedules, and ListWithUnreadable names it apart from
+// them.
 type ScheduleRepository struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
@@ -169,41 +170,31 @@ func (r *ScheduleRepository) LoadForUpdate(ctx context.Context, tenantID, name s
 	return s, true, nil
 }
 
-// List reads the tenant's schedules, ordered by name byte by byte (the "C"
-// collation, Go's string order), leaving out and logging each whose stored
-// cron or timezone no longer parses.
-func (r *ScheduleRepository) List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error) {
+// ListWithUnreadable reads the tenant's schedules in one statement, ordered by
+// name byte by byte (the "C" collation, Go's string order), and parses each
+// row's cron once. The schedules that parse come first; the names of the rows
+// whose stored cron or timezone no longer parses, in the same order, come apart
+// from them.
+func (r *ScheduleRepository) ListWithUnreadable(ctx context.Context, tenantID string) ([]*schedule.Schedule, []string, error) {
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows,
 		`SELECT `+scheduleColumns+` FROM schedules WHERE tenant_id = $1 ORDER BY name COLLATE "C"`, tenantID); err != nil {
-		return nil, fmt.Errorf("list schedules of tenant %q: %w", tenantID, err)
+		return nil, nil, fmt.Errorf("list schedules of tenant %q: %w", tenantID, err)
 	}
-	return r.hydrateAll(rows)
-}
-
-// ListStoredCronInvalid reads the cron and timezone of each of the tenant's
-// schedules, ordered by name as List orders them, and names the ones the
-// parser refuses. A repository with no parser cannot tell, so it is an error.
-func (r *ScheduleRepository) ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error) {
-	if r.parser == nil {
-		return nil, fmt.Errorf("list the unparsable schedules of tenant %q: the repository has no cron parser", tenantID)
-	}
-	var rows []struct {
-		Name     string `db:"name"`
-		Cron     string `db:"cron"`
-		Timezone string `db:"timezone"`
-	}
-	if err := sqlx.SelectContext(ctx, r.conn(), &rows,
-		`SELECT name, cron, timezone FROM schedules WHERE tenant_id = $1 ORDER BY name COLLATE "C"`, tenantID); err != nil {
-		return nil, fmt.Errorf("list the unparsable schedules of tenant %q: %w", tenantID, err)
-	}
-	names := []string{}
+	schedules := make([]*schedule.Schedule, 0, len(rows))
+	unreadable := []string{}
 	for _, row := range rows {
-		if _, err := r.parser.Parse(row.Cron, row.Timezone); err != nil {
-			names = append(names, row.Name)
+		s, err := r.hydrate(row)
+		if errors.Is(err, schedule.ErrStoredCronInvalid) {
+			unreadable = append(unreadable, row.Name)
+			continue
 		}
+		if err != nil {
+			return nil, nil, err
+		}
+		schedules = append(schedules, s)
 	}
-	return names, nil
+	return schedules, unreadable, nil
 }
 
 // Save writes s as it stands, in one statement. With expectedVersion above 0 it

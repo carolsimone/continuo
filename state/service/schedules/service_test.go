@@ -633,7 +633,6 @@ func TestSchedulesList_AFailingReadFailsTheList(t *testing.T) {
 	for name, fail := range map[string]func(h *harness){
 		"live release": func(h *harness) { h.models.Err = errBoom },
 		"rows":         func(h *harness) { h.rows.failWith = errBoom },
-		"bad rows":     func(h *harness) { h.rows.failInvalidWith = errBoom },
 		"last runs":    func(h *harness) { h.lastRuns.failWith = errBoom },
 	} {
 		h := newHarness(t)

@@ -57,8 +57,6 @@ type memorySchedules struct {
 	gets, saves int
 	// failWith, when set, fails every call.
 	failWith error
-	// failInvalidWith, when set, fails ListStoredCronInvalid alone.
-	failInvalidWith error
 	// afterGet, when set, runs after each Get has read its row: a test uses it
 	// to change the row as a concurrent edit would.
 	afterGet func()
@@ -138,46 +136,29 @@ func (m *memorySchedules) LoadForUpdate(_ context.Context, tenantID, name string
 	return s, true, nil
 }
 
-func (m *memorySchedules) List(_ context.Context, tenantID string) ([]*schedule.Schedule, error) {
+func (m *memorySchedules) ListWithUnreadable(_ context.Context, tenantID string) ([]*schedule.Schedule, []string, error) {
 	if m.failWith != nil {
-		return nil, m.failWith
+		return nil, nil, m.failWith
 	}
 	var out []*schedule.Schedule
+	unreadable := []string{}
 	for k, r := range m.rows {
 		if k.tenant != tenantID {
 			continue
 		}
 		s, err := m.hydrate(k, r)
 		if errors.Is(err, schedule.ErrStoredCronInvalid) {
+			unreadable = append(unreadable, k.name)
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
-	return out, nil
-}
-
-func (m *memorySchedules) ListStoredCronInvalid(_ context.Context, tenantID string) ([]string, error) {
-	if m.failWith != nil {
-		return nil, m.failWith
-	}
-	if m.failInvalidWith != nil {
-		return nil, m.failInvalidWith
-	}
-	names := []string{}
-	for k, r := range m.rows {
-		if k.tenant != tenantID {
-			continue
-		}
-		if _, err := m.parser.Parse(r.cron, r.timezone); err != nil {
-			names = append(names, k.name)
-		}
-	}
-	sort.Strings(names)
-	return names, nil
+	sort.Strings(unreadable)
+	return out, unreadable, nil
 }
 
 // Save writes s while the stored row is at expectedVersion, as the adapter

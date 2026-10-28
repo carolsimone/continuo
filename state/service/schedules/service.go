@@ -231,13 +231,9 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Summary, error) 
 	if err != nil {
 		return nil, fmt.Errorf("count the live release's models per schedule: %w", err)
 	}
-	rows, err := s.schedules.List(ctx, tenantID)
+	rows, unreadable, err := s.schedules.ListWithUnreadable(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list schedules: %w", err)
-	}
-	unreadable, err := s.schedules.ListStoredCronInvalid(ctx, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("list the schedules whose stored cron no longer parses: %w", err)
 	}
 	lastRuns, err := s.lastRuns.GetLastRunPerSchedule(ctx, tenantID)
 	if err != nil {
