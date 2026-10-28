@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -549,6 +551,112 @@ func TestSchedules_ListDueSkipsAStoredCronThatNoLongerParses(t *testing.T) {
 		assert.Contains(t, logged, want)
 	}
 	assert.NotContains(t, logged, "schedule_name=good")
+}
+
+// More due rows whose stored cron or timezone no longer parses than the limit,
+// all older than the readable ones, take none of the limit's places: ListDue
+// still returns the readable due rows of the tenant and of another tenant,
+// oldest first, up to the limit, so a pass fires them. The rows are in 1940 and
+// are inserted in a transaction that is rolled back.
+func TestSchedules_ListDueTakesTheReadableRowsPastMoreUnreadableOnesThanTheLimit(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
+	start := time.Date(1940, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 101 {
+		next := start.Add(time.Duration(i) * time.Minute)
+		cron, zone := "not a cron", "UTC"
+		if i%2 == 1 {
+			cron, zone = "0 * * * *", "Mars/Olympus"
+		}
+		rawSchedule(t, tx, tenant, fmt.Sprintf("broken-%03d", i), cron, zone, &next)
+	}
+	otherDue := time.Date(1940, 6, 1, 0, 0, 0, 0, time.UTC)
+	ownDue := time.Date(1940, 6, 2, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, tx, other, "healthy", "0 * * * *", "UTC", &otherDue)
+	rawSchedule(t, tx, tenant, "healthy", "0 * * * *", "UTC", &ownDue)
+	now := time.Date(1941, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	got, err := repo.ListDue(ctx, now, 100)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"healthy"}, namesOf(other, got), "another tenant's readable row is taken")
+	assert.Equal(t, []string{"healthy"}, namesOf(tenant, got), "the tenant's own readable row is taken")
+
+	first, err := repo.ListDue(ctx, now, 1)
+	require.NoError(t, err)
+	require.Len(t, first, 1, "the limit counts readable rows")
+	assert.Equal(t, other, first[0].TenantID(), "the oldest readable row comes first")
+	assert.Equal(t, "healthy", first[0].Name())
+}
+
+// However many due rows do not parse, one ListDue logs the first ten of them,
+// oldest next fire first, each with its tenant, name, cron and zone, and the
+// rest in one line that counts them. The rows are in 1945 and are inserted in
+// a transaction that is rolled back.
+func TestSchedules_ListDueNamesTheFirstUnreadableRowsAndCountsTheRest(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo, logs := newLoggingScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	start := time.Date(1945, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 25 {
+		next := start.Add(time.Duration(i) * time.Minute)
+		rawSchedule(t, tx, tenant, fmt.Sprintf("broken-%03d", i), fmt.Sprintf("not a cron %d", i), "UTC", &next)
+	}
+
+	got, err := repo.ListDue(ctx, time.Date(1946, 1, 1, 0, 0, 0, 0, time.UTC), 100)
+
+	require.NoError(t, err)
+	assert.Empty(t, namesOf(tenant, got))
+	logged := logs.String()
+	assert.Equal(t, 10, strings.Count(logged, "Left out a due schedule"), "the first ten are named: %s", logged)
+	for i := range 10 {
+		assert.Contains(t, logged, fmt.Sprintf("schedule_name=broken-%03d", i))
+	}
+	assert.Contains(t, logged, `cron="not a cron 0"`)
+	assert.Contains(t, logged, "tenant_id="+tenant)
+	assert.NotContains(t, logged, "schedule_name=broken-010", "the eleventh is counted, not named")
+	assert.Contains(t, logged, "more=15")
+	assert.Contains(t, logged, "left_out=25")
+	assert.Equal(t, 11, strings.Count(logged, "level=ERROR"))
+}
+
+// Inside a transaction ListDue locks the rows it returns and none of the rows
+// it leaves out for a stored cron that does not parse, which another session
+// can still lock. The rows are committed, for the lock is seen from a second
+// session; their next fires are in the year 2999.
+func TestSchedules_ListDueInATransactionLocksOnlyTheRowsItReturns(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	holdScheduleScanLock(t, db)
+	tenant := scheduleRepoTenant(t, db)
+	brokenAt := time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+	goodAt := time.Date(2999, 1, 2, 0, 0, 0, 0, time.UTC)
+	rawSchedule(t, db, tenant, "broken", "not a cron", "UTC", &brokenAt)
+	rawSchedule(t, db, tenant, "good", "0 * * * *", "UTC", &goodAt)
+
+	pass := scheduleUnitOfWork(db, parser)
+	require.NoError(t, pass.Begin(ctx))
+	defer func() { _ = pass.Rollback() }()
+	got, err := pass.Schedules().ListDue(ctx, goodAt.Add(time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"good"}, namesOf(tenant, got))
+
+	other := scratchTx(t, db)
+	var name string
+	require.NoError(t, other.Get(&name,
+		`SELECT name FROM schedules WHERE tenant_id = $1 AND name = 'broken' FOR UPDATE NOWAIT`, tenant),
+		"the row left out is not locked")
+	err = other.Get(&name, `SELECT name FROM schedules WHERE tenant_id = $1 AND name = 'good' FOR UPDATE NOWAIT`, tenant)
+	require.Error(t, err, "the row returned is locked")
+	assert.Contains(t, err.Error(), "could not obtain lock")
 }
 
 // List, like ListDue, returns the schedules that parse and logs the ones that

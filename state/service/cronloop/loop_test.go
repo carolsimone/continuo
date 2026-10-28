@@ -83,8 +83,9 @@ func key(tenantID, name string) string { return tenantID + "/" + name }
 
 // storedSchedule is one row of scheduleRows: the fields the schedules table
 // stores. broken marks a row whose stored cron no longer parses, which ListDue
-// leaves out and EarliestFireAfter still counts, as the Postgres adapter does;
-// a paused row is neither due nor a next fire, as there.
+// leaves out, taking none of the limit's places, and EarliestFireAfter still
+// counts, as the Postgres adapter does; a paused row is neither due nor a next
+// fire, as there.
 type storedSchedule struct {
 	tenantID, name, cron, timezone, description string
 	paused                                      bool
@@ -179,7 +180,7 @@ func (r *scheduleRows) ListDue(_ context.Context, now time.Time, limit int) ([]*
 	r.listDue++
 	var due []*storedSchedule
 	for _, s := range r.rows {
-		if s.next != nil && !s.next.After(now) && !s.paused {
+		if s.next != nil && !s.next.After(now) && !s.paused && !s.broken {
 			due = append(due, s)
 		}
 	}
@@ -194,9 +195,7 @@ func (r *scheduleRows) ListDue(_ context.Context, now time.Time, limit int) ([]*
 	}
 	out := []*schedule.Schedule{}
 	for _, s := range due {
-		if !s.broken {
-			out = append(out, s.aggregate())
-		}
+		out = append(out, s.aggregate())
 	}
 	return out, nil
 }
@@ -1139,6 +1138,29 @@ func TestCronLoop_TheSchedulesPastDueLimitFireOnTheWakeOfThePassBefore(t *testin
 	assert.Equal(t, 3, w.schedules.listDueCalls(), "a pass of DueLimit, one for the rest, one that finds nothing, then sleep")
 	cancel()
 	<-done
+}
+
+// More due rows whose stored cron no longer parses than DueLimit, all older
+// than a good row, take none of the pass's places: the pass fires the good row,
+// and the broken rows start nothing.
+func TestCronLoop_UnparseableRowsPastDueLimitDoNotStarveTheOthers(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	for i := range cronloop.DueLimit + 1 {
+		name := fmt.Sprintf("broken-%03d", i)
+		w.schedules.add(tenant, name, "not a cron", hourly{}, slot.Add(-time.Duration(cronloop.DueLimit+1-i)*time.Minute))
+		w.schedules.rows[key(tenant, name)].broken = true
+	}
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+
+	w.pass(t, ctx, w.loop(false))
+
+	runs := w.runs.of(tenant, "daily")
+	require.Len(t, runs, 1, "the good row fires in the first pass")
+	assert.True(t, slot.Equal(*runs[0].ScheduledFor()))
+	assert.Equal(t, 1, w.runs.count(), "the broken rows start nothing")
+	assert.Equal(t, map[string]int{"started": 1}, w.metrics.counted())
 }
 
 // A due row the pass cannot fire, such as one whose stored cron no longer

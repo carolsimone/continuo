@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/schedule"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // SchedulesChannel is the Postgres channel the schedules table's statement
@@ -267,26 +268,136 @@ func (r *ScheduleRepository) Delete(ctx context.Context, tenantID, name string) 
 	return deleted > 0, nil
 }
 
-// ListDue selects the due schedules of every tenant with FOR UPDATE SKIP
-// LOCKED, so a row another transaction holds at that moment is passed over. A
-// paused row is never due, whatever its next_fire_at holds, so a paused row
-// written with one takes none of the limit's places.
-// Outside a transaction, as the cron loop calls it, the lock ends with the
-// statement; inside one, the rows stay locked to that transaction. A due row
-// whose stored cron or timezone no longer parses is selected like the others,
-// then logged and left out of the result.
+// dueRows is the condition of the rows due at $1: not paused, with a next fire
+// at or before it. A paused row is never due, whatever its next_fire_at holds.
+const dueRows = `next_fire_at IS NOT NULL AND next_fire_at <= $1 AND NOT paused`
+
+// maxNamedUnreadableDue is how many of the due rows whose stored cron or
+// timezone no longer parses one ListDue logs one by one, oldest first; it counts
+// the rest in one more line.
+const maxNamedUnreadableDue = 10
+
+// unreadablePair is a stored cron and timezone the parser refuses, with its
+// reason.
+type unreadablePair struct {
+	cron, timezone string
+	reason         error
+}
+
+// pairColumns returns the crons and the timezones of the pairs, pair by pair:
+// the two arrays a statement unnests together to match a row's cron and
+// timezone.
+func pairColumns(pairs []unreadablePair) (crons, zones []string) {
+	crons = make([]string, 0, len(pairs))
+	zones = make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		crons = append(crons, pair.cron)
+		zones = append(zones, pair.timezone)
+	}
+	return crons, zones
+}
+
+// ListDue selects the due schedules of every tenant whose stored cron and
+// timezone parse, with FOR UPDATE SKIP LOCKED, so a row another transaction
+// holds at that moment is passed over. Outside a transaction, as the cron loop
+// calls it, the lock ends with the statement; inside one, the rows it returns
+// stay locked to that transaction.
+//
+// A row's expression is a function of its cron and timezone alone, so ListDue
+// first reads the distinct pairs of the due rows, without a lock, and parses
+// each once. The select of the due rows then leaves out every row of a pair the
+// parser refuses: such a row takes none of the limit's places, however many
+// there are and wherever they sort, and is neither locked nor returned. ListDue
+// logs the first maxNamedUnreadableDue of them by name and the others by count.
+// A row whose cron another transaction changed between the two reads to one
+// that does not parse is logged and left out of the result like any row that
+// does not parse.
 func (r *ScheduleRepository) ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
+	if r.parser == nil {
+		return nil, errors.New("list the due schedules: the repository has no cron parser")
+	}
+	unreadable, err := r.unreadableDuePairs(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	if len(unreadable) > 0 {
+		if err := r.logUnreadableDue(ctx, now, unreadable); err != nil {
+			return nil, err
+		}
+	}
+	crons, zones := pairColumns(unreadable)
 	var rows []scheduleRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		SELECT `+scheduleColumns+`
 		  FROM schedules
-		 WHERE next_fire_at IS NOT NULL AND next_fire_at <= $1 AND NOT paused
+		 WHERE `+dueRows+`
+		   AND NOT EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS unreadable (cron, timezone)
+		                    WHERE unreadable.cron = schedules.cron AND unreadable.timezone = schedules.timezone)
 		 ORDER BY next_fire_at, tenant_id, name
 		 LIMIT $2
-		   FOR UPDATE SKIP LOCKED`, now, limit); err != nil {
+		   FOR UPDATE SKIP LOCKED`, now, limit, pq.Array(crons), pq.Array(zones)); err != nil {
 		return nil, fmt.Errorf("list the due schedules: %w", err)
 	}
 	return r.hydrateAll(rows)
+}
+
+// unreadableDuePairs reads the distinct crons and timezones of the rows due at
+// now and returns the pairs the parser refuses.
+func (r *ScheduleRepository) unreadableDuePairs(ctx context.Context, now time.Time) ([]unreadablePair, error) {
+	var pairs []struct {
+		Cron     string `db:"cron"`
+		Timezone string `db:"timezone"`
+	}
+	if err := sqlx.SelectContext(ctx, r.conn(), &pairs,
+		`SELECT DISTINCT cron, timezone FROM schedules WHERE `+dueRows, now); err != nil {
+		return nil, fmt.Errorf("read the crons of the due schedules: %w", err)
+	}
+	var unreadable []unreadablePair
+	for _, pair := range pairs {
+		if _, err := r.parser.Parse(pair.Cron, pair.Timezone); err != nil {
+			unreadable = append(unreadable, unreadablePair{cron: pair.Cron, timezone: pair.Timezone, reason: err})
+		}
+	}
+	return unreadable, nil
+}
+
+// logUnreadableDue logs the rows due at now whose cron and timezone are one of
+// the unreadable pairs, oldest next fire first: each of the first
+// maxNamedUnreadableDue at ERROR with its tenant, name, cron, timezone and the
+// parser's reason, then, when there are more, one ERROR line with how many.
+func (r *ScheduleRepository) logUnreadableDue(ctx context.Context, now time.Time, unreadable []unreadablePair) error {
+	crons, zones := pairColumns(unreadable)
+	var rows []struct {
+		TenantID string `db:"tenant_id"`
+		Name     string `db:"name"`
+		Cron     string `db:"cron"`
+		Timezone string `db:"timezone"`
+		Total    int    `db:"total"`
+	}
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
+		SELECT tenant_id, name, cron, timezone, count(*) OVER () AS total
+		  FROM schedules
+		 WHERE `+dueRows+`
+		   AND EXISTS (SELECT 1 FROM unnest($2::text[], $3::text[]) AS unreadable (cron, timezone)
+		                WHERE unreadable.cron = schedules.cron AND unreadable.timezone = schedules.timezone)
+		 ORDER BY next_fire_at, tenant_id, name
+		 LIMIT $4`, now, pq.Array(crons), pq.Array(zones), maxNamedUnreadableDue); err != nil {
+		return fmt.Errorf("read the due schedules whose stored cron no longer parses: %w", err)
+	}
+	reasons := make(map[[2]string]error, len(unreadable))
+	for _, pair := range unreadable {
+		reasons[[2]string{pair.cron, pair.timezone}] = pair.reason
+	}
+	for _, row := range rows {
+		r.logger.Error("Left out a due schedule whose stored cron or timezone no longer parses",
+			"tenant_id", row.TenantID, "schedule_name", row.Name, "cron", row.Cron, "timezone", row.Timezone,
+			"error", reasons[[2]string{row.Cron, row.Timezone}])
+	}
+	if len(rows) > 0 && rows[0].Total > len(rows) {
+		r.logger.Error("Left out more due schedules whose stored cron or timezone no longer parses; ListSchedules lists each with no cron",
+			"more", rows[0].Total-len(rows), "left_out", rows[0].Total)
+	}
+	return nil
 }
 
 // EarliestFireAfter reads the earliest next fire after `after` among the

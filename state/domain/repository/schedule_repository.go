@@ -68,8 +68,9 @@ type ScheduleRepository interface {
 	// pass's fire. Outside a transaction ListDue holds no lock once it has
 	// returned; inside one, the rows it returns stay locked until the
 	// transaction ends. A schedule whose stored cron or timezone no longer
-	// parses is left out and logged, not returned, so one bad row does not
-	// stop the others; it still counts toward limit.
+	// parses is left out and logged, not returned, and takes none of limit's
+	// places: however many such schedules are due, and however early their
+	// next fires, the due schedules that parse are returned, up to limit.
 	ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
 
 	// EarliestFireAfter returns the earliest next fire of any tenant's
