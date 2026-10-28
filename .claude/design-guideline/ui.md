@@ -1274,8 +1274,8 @@ Rules:
   paused; its `title` is the cron in words. One muted `.timestamps` fact
   follows it: `next 28 Oct 01:00`, in the schedule's timezone, or
   `paused by bob@example.com · 27 Oct 14:02`, in the viewer's. A cron that
-  fires no more has no fact. A manual schedule shows `no cron` in place of
-  the span.
+  fires no more has no fact. A manual schedule shows `no cron: runs only when
+  triggered` in place of the span.
 - **The header wraps** when its facts and controls do not fit: each fact
   keeps to one line (`white-space: nowrap`), and the controls — Operation,
   Trigger, Cancel, Edit cron — stay together in `.scheduler-card-actions`,

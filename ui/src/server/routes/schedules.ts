@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { GrpcClient, userMetadata } from '../clients/grpc-client';
 import { executionOrderEdges } from './graph-edges';
-import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
+import { sendGrpcError } from './grpc-status';
 import { parseOperation } from './operation';
 import { parseLimit, parseOffset } from './paging';
 import { requireRequestId } from './request-id';
@@ -52,8 +52,8 @@ function toISOList(times: any): string[] {
   return (times || []).map(toISO).filter((t: string | null): t is string => t !== null);
 }
 
-// grpcDetails is the text of a failed RunService call that the cron routes
-// answer with: state's own message (the parser's, for a refused cron), which
+// grpcDetails is the text of a failed RunService call that every route here
+// answers with: state's own message (the parser's, for a refused cron), which
 // grpc-js keeps in details while its message prefixes it with the status
 // code and name. An error raised before the call reached state has no
 // details and keeps its own message.
@@ -118,7 +118,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   // GET /api/schedules — every schedule with its cron, its models and its last run
   router.get('/', (_req, res) => {
     client.listSchedules({}, (err: any, response: any) => {
-      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      if (err) return sendGrpcError(res, err, grpcDetails(err));
       res.json({ schedules: (response.schedules || []).map(toScheduleSummary) });
     });
   });
@@ -137,7 +137,7 @@ export function createSchedulesRouter(client: GrpcClient) {
   // their one-hop upstreams in other schedules and the edges among them
   router.get('/:name/graph', (req, res) => {
     client.getScheduleGraph({ schedule_name: req.params.name }, (err: any, graphResp: any) => {
-      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      if (err) return sendGrpcError(res, err, grpcDetails(err));
       const nodes = (graphResp.nodes || []).map((n: any) => ({
         node_id: `${n.service_name}.${n.schema_name}.${n.table_name}`,
         node_type: n.node_type,
@@ -160,7 +160,7 @@ export function createSchedulesRouter(client: GrpcClient) {
       page_offset: parseOffset(req.query.offset),
     };
     client.listRuns(request, (err: any, resp: any) => {
-      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      if (err) return sendGrpcError(res, err, grpcDetails(err));
       const runs = (resp.runs || []).map((r: any) => ({
         run_id: r.run_id,
         schedule_name: r.schedule_name,
@@ -186,7 +186,7 @@ export function createSchedulesRouter(client: GrpcClient) {
       { request_id: requestId, schedule_name: req.params.name, operation },
       userMetadata(req),
       (err: any, response: any) => {
-        if (err) return sendGrpcError(res, err);
+        if (err) return sendGrpcError(res, err, grpcDetails(err));
         res.json({ run_id: response.run_id });
       }
     );
