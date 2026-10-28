@@ -71,7 +71,7 @@ func TestSchedulesUpsert_RefusesTheFirstRowOfANameNoModelHas(t *testing.T) {
 		_, ok := h.rows.row(tenantA, name)
 		assert.False(t, ok, "%s: nothing is written", name)
 	}
-	assert.Zero(t, h.rows.saves)
+	assert.Zero(t, h.rows.SaveCalls())
 }
 
 // A name that has a row can always be edited, paused, resumed and saved again,
@@ -116,7 +116,7 @@ func TestSchedulesUpsert_AStaleExpectedVersionIsRefused(t *testing.T) {
 	edit.ExpectedVersion = 1
 	_, _, err = h.svc.Upsert(ctx, tenantA, edit, "bob@example.com")
 	require.NoError(t, err)
-	saves := h.rows.saves
+	saves := h.rows.SaveCalls()
 
 	for _, stale := range []int64{1, 3} {
 		edit := upsert("daily", "0 5 * * *", "UTC")
@@ -125,7 +125,7 @@ func TestSchedulesUpsert_AStaleExpectedVersionIsRefused(t *testing.T) {
 		require.ErrorIs(t, err, schedule.ErrStaleVersion, "expected version %d", stale)
 	}
 
-	assert.Equal(t, saves, h.rows.saves, "nothing is written")
+	assert.Equal(t, saves, h.rows.SaveCalls(), "nothing is written")
 	row, _ := h.rows.row(tenantA, "daily")
 	assert.Equal(t, "0 2 * * *", row.cron)
 	assert.Equal(t, int64(2), row.version)
@@ -140,7 +140,7 @@ func TestSchedulesUpsert_ComparesTheExpectedVersionWithTheRowItRead(t *testing.T
 	h := newHarness(t)
 	h.liveModels(tenantA, map[string]int{"daily": 1})
 	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
-	h.rows.afterGet = func() {
+	h.rows.AfterGet = func() {
 		h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 4, updatedBy: "dave@example.com", updatedAt: now})
 	}
 	edit := upsert("daily", "0 2 * * *", "UTC")
@@ -149,7 +149,7 @@ func TestSchedulesUpsert_ComparesTheExpectedVersionWithTheRowItRead(t *testing.T
 	_, _, err := h.svc.Upsert(context.Background(), tenantA, edit, "bob@example.com")
 
 	require.ErrorIs(t, err, schedule.ErrStaleVersion)
-	assert.Zero(t, h.rows.saves)
+	assert.Zero(t, h.rows.SaveCalls())
 	row, _ := h.rows.row(tenantA, "daily")
 	assert.Equal(t, int64(4), row.version)
 }
@@ -177,7 +177,7 @@ func TestSchedulesUpsert_WithNoExpectedVersionSavesAgainOverAnEditThatSavedFirst
 	h.liveModels(tenantA, map[string]int{"daily": 1})
 	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
 	overtaken := false
-	h.rows.afterGet = func() {
+	h.rows.AfterGet = func() {
 		if !overtaken {
 			overtaken = true
 			h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 2, updatedBy: "dave@example.com", updatedAt: now})
@@ -193,8 +193,8 @@ func TestSchedulesUpsert_WithNoExpectedVersionSavesAgainOverAnEditThatSavedFirst
 	assert.Equal(t, int64(3), row.version)
 	assert.Equal(t, "0 2 * * *", row.cron)
 	assert.Equal(t, "bob@example.com", row.updatedBy)
-	assert.Equal(t, 2, h.rows.gets, "the edit read the row again")
-	assert.Equal(t, 2, h.rows.saves)
+	assert.Equal(t, 2, h.rows.GetCalls(), "the edit read the row again")
+	assert.Equal(t, 2, h.rows.SaveCalls())
 }
 
 // A first cron whose save finds that another edit created the row since its
@@ -203,7 +203,7 @@ func TestSchedulesUpsert_ACreateThatAnotherCreateOvertookSavesOverIt(t *testing.
 	h := newHarness(t)
 	h.liveModels(tenantA, map[string]int{"daily": 1})
 	overtaken := false
-	h.rows.afterGet = func() {
+	h.rows.AfterGet = func() {
 		if !overtaken {
 			overtaken = true
 			h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 1, updatedBy: "dave@example.com", updatedAt: now})
@@ -227,7 +227,7 @@ func TestSchedulesUpsert_WithNoExpectedVersionGivesUpAfterThreeTries(t *testing.
 	h := newHarness(t)
 	h.liveModels(tenantA, map[string]int{"daily": 1})
 	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
-	h.rows.afterGet = func() {
+	h.rows.AfterGet = func() {
 		row, _ := h.rows.row(tenantA, "daily")
 		row.version++
 		row.updatedBy = "dave@example.com"
@@ -237,8 +237,8 @@ func TestSchedulesUpsert_WithNoExpectedVersionGivesUpAfterThreeTries(t *testing.
 	_, _, err := h.svc.Upsert(context.Background(), tenantA, upsert("daily", "0 2 * * *", "UTC"), "bob@example.com")
 
 	require.ErrorIs(t, err, schedule.ErrStaleVersion)
-	assert.Equal(t, 3, h.rows.gets)
-	assert.Equal(t, 3, h.rows.saves)
+	assert.Equal(t, 3, h.rows.GetCalls())
+	assert.Equal(t, 3, h.rows.SaveCalls())
 	row, _ := h.rows.row(tenantA, "daily")
 	assert.Equal(t, int64(4), row.version)
 	assert.Equal(t, "0 1 * * *", row.cron)
@@ -251,7 +251,7 @@ func TestSchedulesUpsert_WithAnExpectedVersionAStaleSaveIsNotTriedAgain(t *testi
 	h := newHarness(t)
 	h.liveModels(tenantA, map[string]int{"daily": 1})
 	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "UTC", version: 1, updatedBy: "alice@example.com", updatedAt: now})
-	h.rows.afterGet = func() {
+	h.rows.AfterGet = func() {
 		h.rows.put(tenantA, "daily", storedRow{cron: "0 9 * * *", timezone: "UTC", version: 2, updatedBy: "dave@example.com", updatedAt: now})
 	}
 	edit := upsert("daily", "0 2 * * *", "UTC")
@@ -260,8 +260,8 @@ func TestSchedulesUpsert_WithAnExpectedVersionAStaleSaveIsNotTriedAgain(t *testi
 	_, _, err := h.svc.Upsert(context.Background(), tenantA, edit, "bob@example.com")
 
 	require.ErrorIs(t, err, schedule.ErrStaleVersion)
-	assert.Equal(t, 1, h.rows.gets)
-	assert.Equal(t, 1, h.rows.saves)
+	assert.Equal(t, 1, h.rows.GetCalls())
+	assert.Equal(t, 1, h.rows.SaveCalls())
 	row, _ := h.rows.row(tenantA, "daily")
 	assert.Equal(t, int64(2), row.version)
 	assert.Equal(t, "dave@example.com", row.updatedBy)
@@ -300,7 +300,7 @@ func TestSchedulesUpsert_RepairsARowWhoseStoredCronNoLongerParses(t *testing.T) 
 	edit.ExpectedVersion = 4
 	_, _, err := h.svc.Upsert(ctx, tenantA, edit, "bob@example.com")
 	require.ErrorIs(t, err, schedule.ErrStaleVersion, "a stale version over such a row is still stale")
-	assert.Zero(t, h.rows.saves)
+	assert.Zero(t, h.rows.SaveCalls())
 }
 
 // An input the service cannot honour is ErrInvalid, its message the reason fit
@@ -337,8 +337,9 @@ func TestSchedulesUpsert_RefusesAnInvalidInput(t *testing.T) {
 	require.ErrorIs(t, err, schedules.ErrInvalid)
 	assert.Equal(t, "expected_version must not be negative", err.Error())
 
-	assert.Zero(t, h.rows.saves)
-	assert.Empty(t, h.rows.rows)
+	assert.Zero(t, h.rows.SaveCalls())
+	_, stored := h.rows.row(tenantA, "daily")
+	assert.False(t, stored, "a refused edit stores nothing")
 }
 
 // A schedule name may be up to 50 characters long, the longest a run of it can
@@ -364,8 +365,8 @@ func TestSchedulesUpsert_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
 		require.ErrorIs(t, err, schedules.ErrInvalid, "a name of 51 characters (%d bytes) is refused", len(name))
 		require.ErrorIs(t, err, run.ErrScheduleNameTooLong, "the refusal is the run's own limit")
 		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
-		assert.Zero(t, h.rows.gets, "nothing is read")
-		assert.Zero(t, h.rows.saves, "nothing is written")
+		assert.Zero(t, h.rows.GetCalls(), "nothing is read")
+		assert.Zero(t, h.rows.SaveCalls(), "nothing is written")
 	}
 }
 
@@ -379,7 +380,7 @@ func TestSchedulesUpsert_AFailingReadFailsTheEdit(t *testing.T) {
 	assert.NotErrorIs(t, err, schedule.ErrUnknownName)
 
 	h = newHarness(t)
-	h.rows.failWith = errBoom
+	h.rows.FailWith = errBoom
 	_, _, err = h.svc.Upsert(context.Background(), tenantA, upsert("daily", "0 1 * * *", "UTC"), "alice@example.com")
 	require.ErrorIs(t, err, errBoom)
 	assert.NotErrorIs(t, err, schedule.ErrStaleVersion)
@@ -436,7 +437,7 @@ func TestSchedulesDelete_RefusesAnEmptyNameAndFailsWithItsRead(t *testing.T) {
 	require.ErrorIs(t, err, schedules.ErrInvalid)
 	assert.Equal(t, "schedule_name is required", err.Error())
 
-	h.rows.failWith = errBoom
+	h.rows.FailWith = errBoom
 	require.ErrorIs(t, h.svc.Delete(context.Background(), tenantA, "daily"), errBoom)
 }
 
@@ -457,7 +458,7 @@ func TestSchedulesPreview_ReturnsTheWordsAndTheNextThreeFires(t *testing.T) {
 		time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC),
 	}, next)
-	assert.Zero(t, h.rows.saves)
+	assert.Zero(t, h.rows.SaveCalls())
 }
 
 // A cron the parser fires but the words library cannot read previews with no
@@ -632,7 +633,7 @@ func TestSchedulesList_IsOfTheTenant(t *testing.T) {
 func TestSchedulesList_AFailingReadFailsTheList(t *testing.T) {
 	for name, fail := range map[string]func(h *harness){
 		"live release": func(h *harness) { h.models.Err = errBoom },
-		"rows":         func(h *harness) { h.rows.failWith = errBoom },
+		"rows":         func(h *harness) { h.rows.FailWith = errBoom },
 		"last runs":    func(h *harness) { h.lastRuns.failWith = errBoom },
 	} {
 		h := newHarness(t)

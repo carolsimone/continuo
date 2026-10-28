@@ -95,6 +95,10 @@ func (f *FakeUnitOfWork) Commit() error {
 	return nil
 }
 
+// InTransaction reports whether a transaction is open: Begin was called and
+// neither Commit nor Rollback since.
+func (f *FakeUnitOfWork) InTransaction() bool { return f.inTx }
+
 // AfterCommit registers fn to run at the next Commit; Begin and Rollback
 // discard it.
 func (f *FakeUnitOfWork) AfterCommit(fn func()) { f.afterCommit = append(f.afterCommit, fn) }
