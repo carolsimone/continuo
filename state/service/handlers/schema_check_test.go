@@ -59,3 +59,19 @@ func TestCheckSchema_RequiresTheTenantColumns(t *testing.T) {
 		}
 	}
 }
+
+// state refuses to start until the schedules table has every column and the
+// runs table has the slot a scheduled run records.
+func TestCheckSchema_RequiresTheSchedulesColumns(t *testing.T) {
+	required := map[string]bool{}
+	for _, c := range RequiredColumns {
+		required[c] = true
+	}
+	for _, c := range []string{"schedules.tenant_id", "schedules.name", "schedules.cron", "schedules.timezone",
+		"schedules.description", "schedules.paused", "schedules.next_fire_at", "schedules.version",
+		"schedules.updated_by", "schedules.updated_at", "runs.scheduled_for"} {
+		if !required[c] {
+			t.Errorf("RequiredColumns lacks %s", c)
+		}
+	}
+}

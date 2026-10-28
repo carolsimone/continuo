@@ -14,20 +14,25 @@ import (
 // on tasks, the timeout a release stores for each node, why a run
 // failed when no task of it failed, when a stop was requested of an attempt,
 // the node leases and the wait for one, and the tenant of each run, task,
-// attempt and schedule catalog row, and the command requests that make a
-// command run once per request id. A migration applies whole, so a column
+// attempt and schedule catalog row, the command requests that make a
+// command run once per request id, and the schedules table with the slot a
+// scheduled run records. A migration applies whole, so a column
 // also stands for what else its migration adds:
 // task_attempts.stop_requested_at for the cancelling, stopping and stopped
 // statuses, the node lease columns for node_leases' release trigger and the
 // values tasks.wait_reason accepts, the tenant columns for the keys that
-// lead with tenant_id, and command_requests.request_id for the command requests
-// table.
+// lead with tenant_id, command_requests.request_id for the command requests
+// table, and runs.scheduled_for for the index that allows one run per
+// schedule slot.
 var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topology_nodes.timeout_seconds",
 	"runs.failure_reason", "task_attempts.stop_requested_at",
 	"node_leases.node_key", "tasks.wait_reason", "tasks.lease_wait_since",
 	"runs.tenant_id", "tasks.tenant_id", "task_attempts.tenant_id",
 	"schedule_catalog.tenant_id", "schedule_catalog_state.tenant_id",
-	"command_requests.request_id"}
+	"command_requests.request_id",
+	"schedules.tenant_id", "schedules.name", "schedules.cron", "schedules.timezone", "schedules.description",
+	"schedules.paused", "schedules.next_fire_at", "schedules.version", "schedules.updated_by", "schedules.updated_at",
+	"runs.scheduled_for"}
 
 // ErrSchemaNotReady reports a state database that lacks a column the running
 // code reads.
