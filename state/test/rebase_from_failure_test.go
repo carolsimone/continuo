@@ -51,7 +51,6 @@ func TestRebaseFromFailure(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rebase-from-failure"
 	h := newBuiltHarness(stateDB)
-	seedActiveSchedule(t, schedule)
 	nodes := func(yHash, qHash string) []topology.NodeSpec {
 		y := scheduledNode("mart", "rff_y", "dbt-model", schedule, "mart.rff_x")
 		y.ContentHash = yHash

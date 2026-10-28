@@ -122,8 +122,10 @@ func NewRunCommands(newUoW func() uow.UnitOfWork, metrics ports.RunMetrics, plan
 
 // StartRun starts a run of the schedule, of kind trigger, once per request id.
 // The fingerprint is the schedule and the operation, an empty operation read
-// as run. A schedule with an active run is run.ErrScheduleHasActiveRun, and
-// a refused selection is the planner's refusal; neither stores a record.
+// as run. A schedule that neither a model of the live release nor a cron
+// carries is run.ErrScheduleNotFound, a schedule with an active run is
+// run.ErrScheduleHasActiveRun, and a refused selection is the planner's
+// refusal; none of them stores a record.
 func (c *RunCommands) StartRun(ctx context.Context, cmd StartRunCommand) (CommandResult, error) {
 	runID := uuid.New()
 	rec := c.record(cmd.TenantID, cmd.RequestID, commandStartRun, runID, cmd.ScheduleName, operationPart(cmd.Operation))

@@ -21,7 +21,7 @@ func TestReleaseStamp_ZeroNamesNoRelease(t *testing.T) {
 
 func TestNewPendingRun_CarriesItsStamp(t *testing.T) {
 	stamp := run.ReleaseStamp{ReleaseID: "rel-5", PromotionSeq: 12}
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, "system", nil, model.OperationRun, stamp, stampNow)
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, "system", model.OperationRun, stamp, stampNow)
 	require.NoError(t, err)
 	assert.Equal(t, stamp, r.Release())
 	assert.Equal(t, "rel-5", r.ReleaseID())
@@ -54,7 +54,7 @@ func TestNewPromotedSeedsRun_NeedsARelease(t *testing.T) {
 }
 
 func TestHydrateRelease_RestoresTheStamp(t *testing.T) {
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, "system", nil, model.OperationRun, run.ReleaseStamp{}, stampNow)
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, "system", model.OperationRun, run.ReleaseStamp{}, stampNow)
 	require.NoError(t, err)
 	r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 20})
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 20}, r.Release())

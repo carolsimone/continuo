@@ -13,11 +13,9 @@ import (
 // forbiddenEventTypeLiterals is the set of outbox event_type routing-key values
 // that must never appear as a bare string literal in a publisher switch or a
 // producer's outbox INSERT. Each value has a named per-service constant
-// (orchestrator/domain, execution-controller/domain/event); the literal must
-// be referenced through that constant so the emit site and the publisher
-// share one source of truth.
+// (execution-controller/domain/event); the literal must be referenced through
+// that constant so the emit site and the publisher share one source of truth.
 var forbiddenEventTypeLiterals = map[string]bool{
-	"release_promoted":   true,
 	"task_status_report": true,
 }
 

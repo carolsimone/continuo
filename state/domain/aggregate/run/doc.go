@@ -1,6 +1,6 @@
 // Package run hosts the Run aggregate root, its child Task entity, the value
 // objects that describe scheduler/task lifecycle (statuses, kinds, caller
-// identities, service metadata), the outbound domain events the aggregate
+// identities, release stamps), the outbound domain events the aggregate
 // records during mutation, and the TaskCollection port the aggregate calls
 // to look up or mutate child task state without loading the full collection.
 //

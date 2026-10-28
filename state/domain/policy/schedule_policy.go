@@ -1,11 +1,12 @@
 // Package policy hosts cross-aggregate Domain Services. These exist when a
 // rule does not naturally fit on any single aggregate. SchedulePolicy answers
 // pre-condition questions about a run's schedule that span the Run and
-// ScheduleCatalog aggregates.
+// Schedule aggregates and the live release.
 package policy
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 )
@@ -20,10 +21,16 @@ type RunRepo interface {
 	HasActiveRun(ctx context.Context, tenantID, name string) (bool, error)
 }
 
-// CatalogRepo is the narrow contract SchedulePolicy needs from the catalog
-// repository. Satisfied by repository.ScheduleCatalogRepository in production.
-type CatalogRepo interface {
-	ExistsActive(ctx context.Context, tenantID, name string) (bool, error)
+// LiveModels is the narrow contract SchedulePolicy needs from the live
+// release's models. Satisfied by repository.LiveScheduleModels in production.
+type LiveModels interface {
+	CountOf(ctx context.Context, tenantID, scheduleName string) (int, error)
+}
+
+// ScheduleRows is the narrow contract SchedulePolicy needs from the schedule
+// repository. Satisfied by repository.ScheduleRepository in production.
+type ScheduleRows interface {
+	Exists(ctx context.Context, tenantID, name string) (bool, error)
 }
 
 // EnsureNoActiveRun returns run.ErrScheduleHasActiveRun when the tenant
@@ -39,15 +46,24 @@ func (SchedulePolicy) EnsureNoActiveRun(ctx context.Context, repo RunRepo, tenan
 	return nil
 }
 
-// ScheduleExistsInCatalog returns run.ErrScheduleNotInCatalog when the named
-// schedule has no active row in the tenant's schedule catalog.
-func (SchedulePolicy) ScheduleExistsInCatalog(ctx context.Context, cat CatalogRepo, tenantID, name string) error {
-	exists, err := cat.ExistsActive(ctx, tenantID, name)
+// EnsureScheduleKnown returns run.ErrScheduleNotFound, naming the schedule,
+// unless the tenant knows the schedule: a model of the tenant's live release
+// carries its name, or the tenant has a schedule of that name. A schedule only
+// its row knows has no models to run, which the run's selection then refuses.
+func (SchedulePolicy) EnsureScheduleKnown(ctx context.Context, models LiveModels, rows ScheduleRows, tenantID, name string) error {
+	n, err := models.CountOf(ctx, tenantID, name)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	exists, err := rows.Exists(ctx, tenantID, name)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return run.ErrScheduleNotInCatalog
+		return fmt.Errorf("%w: no model of the live release carries %q and it has no cron", run.ErrScheduleNotFound, name)
 	}
 	return nil
 }

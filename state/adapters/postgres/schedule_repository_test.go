@@ -578,6 +578,36 @@ func TestSchedules_GetOfAStoredCronThatNoLongerParsesFails(t *testing.T) {
 	mustGet(t, repo, tenant, "good")
 }
 
+// Exists says whether the tenant has a row of the name without reading its
+// cron: a row whose stored cron or zone no longer parses exists, as does one
+// read by a repository with no parser, and another tenant's row is not this
+// tenant's. Inside a transaction it sees that transaction's rows.
+func TestSchedules_ExistsWhateverTheStoredCron(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tx := scratchTx(t, db)
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "good", "0 * * * *", "UTC", nil)
+	rawSchedule(t, tx, tenant, "broken-cron", "not a cron", "UTC", nil)
+	rawSchedule(t, tx, tenant, "broken-zone", "0 * * * *", "Mars/Olympus", nil)
+	other := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, other, "elsewhere", "0 * * * *", "UTC", nil)
+
+	for _, repo := range []*postgres.ScheduleRepository{
+		newScheduleRepo(db, tx, scheduleParser(t)),
+		newScheduleRepo(db, tx, nil),
+	} {
+		for name, want := range map[string]bool{"good": true, "broken-cron": true, "broken-zone": true, "elsewhere": false, "none": false} {
+			got, err := repo.Exists(ctx, tenant, name)
+			require.NoError(t, err, name)
+			assert.Equal(t, want, got, name)
+		}
+	}
+	got, err := newScheduleRepo(db, nil, nil).Exists(ctx, tenant, "good")
+	require.NoError(t, err)
+	assert.False(t, got, "the pool does not see a row the open transaction stored")
+}
+
 // The error Get returns for a stored cron that no longer parses carries the
 // version the row is at, so an edit that saves over it can raise that version.
 func TestSchedules_GetOfAStoredCronThatNoLongerParsesNamesItsVersion(t *testing.T) {

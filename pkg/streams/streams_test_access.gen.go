@@ -7,7 +7,6 @@ package streams
 // YAML ↔ generated-Go parity.
 func PkgConstantsForTest() map[string]string {
 	return map[string]string{
-		"SchedulesLoadedV1": SchedulesLoadedV1,
 		"TaskDispatchV1": TaskDispatchV1,
 		"TaskStatusUpdatedV2": TaskStatusUpdatedV2,
 		"OutboxDeadLetterV1": OutboxDeadLetterV1,
@@ -29,7 +28,6 @@ func PkgConstantsForTest() map[string]string {
 		"RemediationProposedV1": RemediationProposedV1,
 		"RemediationPrOpenedV1": RemediationPrOpenedV1,
 		"RemediationPrClosedV1": RemediationPrClosedV1,
-		"StateScheduleCatalog": StateScheduleCatalog,
 		"ExecutorTaskDispatch": ExecutorTaskDispatch,
 		"StateTaskStatusUpdated": StateTaskStatusUpdated,
 		"DeadLetterControllerOutboxDeadLetters": DeadLetterControllerOutboxDeadLetters,

@@ -69,7 +69,7 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.RunID()) })
 	u := newReleaseRunUoW(db)

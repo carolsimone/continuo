@@ -196,10 +196,8 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 	t.Run("CancelActiveRun/success", func(t *testing.T) {
 		ctx := context.Background()
 
-		// Seed the catalog and the live release, then start the schedule:
-		// StartRun creates a run of kind trigger, which CancelActiveRun then
-		// cancels.
-		seedActiveSchedule(t, "daily-cancel-success")
+		// Promote a release carrying the schedule, then start it: StartRun
+		// creates a run of kind trigger, which CancelActiveRun then cancels.
 		promoteSchedules(t, stateDB, "daily-cancel-success")
 		runID := startRun(t, "daily-cancel-success")
 
@@ -232,7 +230,6 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 	t.Run("CancelActiveRun/a_second_cancel_returns_the_cancelling_run", func(t *testing.T) {
 		ctx := context.Background()
 
-		seedActiveSchedule(t, "daily-cancel-twice")
 		promoteSchedules(t, stateDB, "daily-cancel-twice")
 		runID := startRun(t, "daily-cancel-twice")
 		_, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
@@ -282,18 +279,6 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.FailedPrecondition, st.Code())
 	})
-}
-
-// seedActiveSchedule inserts an active schedule_catalog row so that a start of
-// the schedule passes its catalog-existence pre-condition.
-func seedActiveSchedule(t *testing.T, scheduleName string) {
-	t.Helper()
-	_, err := stateDB.ExecContext(context.Background(), `
-		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-		VALUES ('default', $1, now(), now(), NULL, '{}'::jsonb)
-		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL, last_seen_at = now()
-	`, scheduleName)
-	require.NoError(t, err)
 }
 
 // schedulerKind reads the persisted kind discriminator for a run directly from

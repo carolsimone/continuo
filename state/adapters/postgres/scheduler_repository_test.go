@@ -52,12 +52,11 @@ func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 
 	scheduleID := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:           pkgevents.DefaultTenantID,
-		ScheduleID:         scheduleID,
-		ScheduleName:       "test-schedule-" + uuid.New().String(),
-		Status:             run.RunStatusPending,
-		CreatedAt:          time.Now(),
-		ServiceMetadataRaw: []byte(`{"svc-a":{"image_tag":""}}`),
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule-" + uuid.New().String(),
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
@@ -72,9 +71,6 @@ func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 	got, err := repo.GetByID(context.Background(), pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusPending, got.Status)
-	gotMeta, metaErr := got.GetServiceMetadata()
-	require.NoError(t, metaErr)
-	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ImageTag: ""}}, gotMeta)
 }
 
 // TestSchedulerRepository_CreateTx_ExistingIDIsANoOp inserts the same run id

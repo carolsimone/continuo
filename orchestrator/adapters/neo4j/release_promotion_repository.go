@@ -2,7 +2,6 @@ package neo4jinfra
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -50,25 +49,16 @@ func NewReleasePromotionRepository(client Neo4jClient, logger *slog.Logger) *Rel
 //  6. Delete :Table nodes that are inactive AND have no incoming
 //     :Run-[:EXECUTES] reference.
 //  7. Record release_id, promotion_seq and updated_at on :Meta and release the
-//     lock property; record service_metadata and promotion_seq on
-//     :TopologyRoot, where new runs read them.
+//     lock property; record promotion_seq on :TopologyRoot.
 func (r *ReleasePromotionRepository) PromoteRelease(
 	ctx context.Context,
 	releaseID string,
 	promotionSeq int64,
 	nodes []topology.ReleasePromotedTopologyNode,
-	serviceMetadata map[string]map[string]string,
 	now time.Time,
 ) (topology.PromotionOutcome, error) {
 	if releaseID == "" {
 		return "", fmt.Errorf("release id is empty")
-	}
-	if serviceMetadata == nil {
-		serviceMetadata = map[string]map[string]string{}
-	}
-	metadataJSON, err := json.Marshal(serviceMetadata)
-	if err != nil {
-		return "", fmt.Errorf("marshal service_metadata: %w", err)
 	}
 
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
@@ -290,17 +280,14 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 		return "", fmt.Errorf("consume :Meta update result: %w", err)
 	}
 
-	// Step F — Record the live promotion on :TopologyRoot, where the snapshot
-	// writer reads the seq and service metadata a new run is stamped with.
+	// Step F — Record the live promotion's seq on :TopologyRoot.
 	rootRes, err := tx.Run(ctx, `
 		MERGE (root:TopologyRoot {id: 'singleton'})
-		SET root.service_metadata = $service_metadata,
-		    root.promotion_seq    = $promotion_seq,
-		    root.updated_at       = datetime()
+		SET root.promotion_seq = $promotion_seq,
+		    root.updated_at    = datetime()
 		REMOVE root.topology_generation
 	`, map[string]interface{}{
-		"service_metadata": string(metadataJSON),
-		"promotion_seq":    promotionSeq,
+		"promotion_seq": promotionSeq,
 	})
 	if err != nil {
 		return "", fmt.Errorf("record promotion on :TopologyRoot: %w", err)

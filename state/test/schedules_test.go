@@ -304,7 +304,6 @@ func TestSchedules_DeleteOfAMissingCronSucceeds(t *testing.T) {
 func TestSchedules_DeletingACronLeavesItsActiveRunRunning(t *testing.T) {
 	ctx := context.Background()
 	name := newScheduleName(t, "sched-active")
-	seedActiveSchedule(t, name)
 	promoteSchedules(t, stateDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, false)
 	runID := startRun(t, name)

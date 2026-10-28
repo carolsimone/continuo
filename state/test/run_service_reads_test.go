@@ -18,7 +18,6 @@ import (
 func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	runID := startRun(t, schedule)
 

@@ -18,6 +18,10 @@ type ScheduleRepository interface {
 	// edit can still save over the row.
 	Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
+	// Exists reports whether the tenant has a schedule of that name, whether
+	// or not its stored cron still parses.
+	Exists(ctx context.Context, tenantID, name string) (bool, error)
+
 	// GetForUpdate is Get inside the open transaction, and locks the
 	// schedule's row until the transaction ends: it waits for a transaction
 	// that holds the row, then reads the row as that transaction left it. A

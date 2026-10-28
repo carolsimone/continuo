@@ -88,8 +88,8 @@ type RunServiceClient interface {
 	//
 	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
 	//	                      full_refresh, which targets a single node only.
-	//	NOT_FOUND           - the tenant's schedule catalog holds no schedule of
-	//	                      that name.
+	//	NOT_FOUND           - no model of the tenant's live release carries the
+	//	                      schedule_name, and it has no cron.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its
 	//	                      selection cannot make a valid run: no release is
 	//	                      live, the live release holds no node of the
@@ -638,8 +638,8 @@ type RunServiceServer interface {
 	//
 	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
 	//	                      full_refresh, which targets a single node only.
-	//	NOT_FOUND           - the tenant's schedule catalog holds no schedule of
-	//	                      that name.
+	//	NOT_FOUND           - no model of the tenant's live release carries the
+	//	                      schedule_name, and it has no cron.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its
 	//	                      selection cannot make a valid run: no release is
 	//	                      live, the live release holds no node of the

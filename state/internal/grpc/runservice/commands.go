@@ -282,7 +282,7 @@ func (s *Server) commandError(rpc string, err error, attrs ...any) error {
 		return status.Error(codes.NotFound, "source run not found")
 	case errors.Is(err, run.ErrTaskNotFound):
 		return status.Error(codes.NotFound, "source run does not have a task matching the identity")
-	case errors.Is(err, run.ErrScheduleNotInCatalog),
+	case errors.Is(err, run.ErrScheduleNotFound),
 		errors.Is(err, runplan.ErrTargetNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, runplan.ErrFullRefreshUnsupported):

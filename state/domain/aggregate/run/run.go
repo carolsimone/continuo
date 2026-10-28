@@ -60,8 +60,6 @@ type Run struct {
 	totalTaskCount    *int32
 	terminalTaskCount int32
 
-	serviceMetadata map[string]ServiceMetadata
-
 	changes changeSet
 }
 
@@ -97,7 +95,6 @@ func HydrateRun(
 	cancelledBy, cancellationReason *string,
 	total *int32,
 	terminal int32,
-	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
 	return &Run{
 		tenantID:           tenantID,
@@ -117,7 +114,6 @@ func HydrateRun(
 		cancellationReason: cancellationReason,
 		totalTaskCount:     total,
 		terminalTaskCount:  terminal,
-		serviceMetadata:    serviceMetadata,
 	}
 }
 
@@ -153,11 +149,11 @@ func (r *Run) SetScheduledFor(slot time.Time) error {
 // NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
 // triggered. The caller chooses id, so a command can record the run it
 // creates before the run exists; a nil id is ErrRunIDRequired. A trigger's
-// caller flow: SchedulePolicy.ScheduleExistsInCatalog →
+// caller flow: SchedulePolicy.EnsureScheduleKnown →
 // SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start →
-// SaveRun. A cron fire skips the catalog, which its schedule's row stands in
-// for, and stamps the run with its slot (SetScheduledFor) before the first
-// SaveRun.
+// SaveRun. A cron fire skips EnsureScheduleKnown, since its schedule's row
+// knows the name, and stamps the run with its slot (SetScheduledFor) before
+// the first SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual StartRun (cron, etc.) pass
@@ -171,7 +167,6 @@ func NewPendingRun(
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
-	metadata map[string]ServiceMetadata,
 	operation model.Operation,
 	stamp ReleaseStamp,
 	now time.Time,
@@ -188,21 +183,17 @@ func NewPendingRun(
 	if !kind.IsValid() {
 		return nil, ErrInvalidKind
 	}
-	if metadata == nil {
-		metadata = map[string]ServiceMetadata{}
-	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusPending,
-		kind:            kind,
-		sourceRunID:     sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		serviceMetadata: metadata,
+		tenantID:     tenantID,
+		runID:        id,
+		scheduleName: scheduleName,
+		status:       RunStatusPending,
+		kind:         kind,
+		sourceRunID:  sourceRunID,
+		initiatedBy:  initiatedBy,
+		operation:    operation,
+		release:      stamp,
+		createdAt:    now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -240,18 +231,17 @@ func NewDerivedRun(
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusPending,
-		kind:            kind,
-		sourceRunID:     &sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusPending,
+		kind:           kind,
+		sourceRunID:    &sourceRunID,
+		initiatedBy:    initiatedBy,
+		operation:      operation,
+		release:        stamp,
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -282,18 +272,17 @@ func NewSingleNodeRun(
 		return nil, ErrRunIDRequired
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusRunning,
-		kind:            KindSingleNodeRun,
-		sourceRunID:     sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusRunning,
+		kind:           KindSingleNodeRun,
+		sourceRunID:    sourceRunID,
+		initiatedBy:    initiatedBy,
+		operation:      operation,
+		release:        stamp,
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -330,16 +319,15 @@ func NewPromotedSeedsRun(
 		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusRunning,
-		kind:            KindPromoteSeed,
-		release:         stamp,
-		initiatedBy:     "system",
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusRunning,
+		kind:           KindPromoteSeed,
+		release:        stamp,
+		initiatedBy:    "system",
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -371,13 +359,6 @@ func (r *Run) FailureReason() *RunFailureReason { return r.failureReason }
 func (r *Run) ScheduledFor() *time.Time         { return r.scheduledFor }
 func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
-func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
-	out := make(map[string]ServiceMetadata, len(r.serviceMetadata))
-	for k, v := range r.serviceMetadata {
-		out[k] = v
-	}
-	return out
-}
 
 func (r *Run) IsTerminal() bool { return r.status.IsTerminal() }
 func (r *Run) IsActive() bool   { return r.status.IsActive() }

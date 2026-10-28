@@ -43,9 +43,9 @@ func WithCronParser(parser ports.CronParser) UnitOfWorkOption {
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db.
-// Run(), Catalog(), Outbox() and TaskCollection(tenantID) each return a
-// repository bound to the current transaction; TaskCollection's reads and
-// writes the tasks, attempts and node leases of tenantID.
+// Run(), Outbox() and TaskCollection(tenantID) each return a repository bound
+// to the current transaction; TaskCollection's reads and writes the tasks,
+// attempts and node leases of tenantID.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	clock ports.Clock,
@@ -134,11 +134,6 @@ func (u *PostgresUnitOfWork) Run() repository.RunRepository {
 	return NewRunRepository(u.db, u.logger).WithTx(u.tx)
 }
 
-// Catalog returns a ScheduleCatalogRepository bound to the current transaction.
-func (u *PostgresUnitOfWork) Catalog() repository.ScheduleCatalogRepository {
-	return NewCatalogRepository(u.db, u.logger).WithTx(u.tx)
-}
-
 // Outbox returns an OutboxPublisher bound to the current transaction.
 func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
 	return NewOutboxPublisher(u.tx, u.logger)
@@ -190,6 +185,12 @@ func (u *PostgresUnitOfWork) CommandRequests() repository.CommandRequestReposito
 // Schedules returns the schedule repository, bound to the current transaction.
 func (u *PostgresUnitOfWork) Schedules() repository.ScheduleRepository {
 	return NewScheduleRepository(u.db, u.tx, u.cronParser, u.logger)
+}
+
+// LiveScheduleModels returns the live release's model counts, read in the
+// current transaction.
+func (u *PostgresUnitOfWork) LiveScheduleModels() repository.LiveScheduleModels {
+	return NewLiveScheduleModelRepository(u.db).WithTx(u.tx)
 }
 
 // Compile-time interface assertion.

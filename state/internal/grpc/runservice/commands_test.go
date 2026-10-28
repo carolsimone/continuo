@@ -365,7 +365,7 @@ func TestCommands_MapTheRefusals(t *testing.T) {
 		err  error
 		code codes.Code
 	}{
-		{run.ErrScheduleNotInCatalog, codes.NotFound},
+		{run.ErrScheduleNotFound, codes.NotFound},
 		{runplan.ErrTargetNotFound, codes.NotFound},
 		{run.ErrTaskNotFound, codes.NotFound},
 		{runplan.ErrFullRefreshUnsupported, codes.InvalidArgument},

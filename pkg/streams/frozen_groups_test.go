@@ -32,3 +32,24 @@ func TestFrozenConsumerGroupsStillDeclared(t *testing.T) {
 		}
 	}
 }
+
+// droppedGroups are consumer-group strings that went with the stream they read
+// when the stream was retired. Their stream's key is deleted from Redis, so the
+// group holds no state to keep; declaring the string again, on any stream,
+// would make a new group look like the one that was dropped.
+var droppedGroups = []string{
+	"state-schedule-catalog",
+}
+
+func TestDroppedConsumerGroupsAreNotDeclared(t *testing.T) {
+	raw, err := os.ReadFile("contract.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := string(raw)
+	for _, g := range droppedGroups {
+		if strings.Contains(contract, "group: "+g+"\n") {
+			t.Errorf("consumer group %q is declared in contract.yaml, but it was dropped with its retired stream; name a new group instead", g)
+		}
+	}
+}

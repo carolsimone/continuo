@@ -40,9 +40,10 @@ const (
 // It creates the run, chooses its tasks from the schedule's graph on the live
 // release and dispatches the ready ones, in the caller's transaction.
 //
-// The kinds differ in three ways. A trigger needs the schedule in the
-// catalog, while a cron fire needs nothing beyond the schedule row that fired
-// it. On an active run a cron fire is OutcomeSkippedActive and a trigger is
+// The kinds differ in three ways. A trigger needs a schedule the tenant knows,
+// one a model of its live release carries or that has a cron, while a cron
+// fire needs nothing beyond the schedule row that fired it. On an active run a
+// cron fire is OutcomeSkippedActive and a trigger is
 // run.ErrScheduleHasActiveRun. When the selection is refused, a cron run is
 // still recorded, finished failed with the refusal as its reason, while a
 // trigger creates no run and returns the refusal; a test run whose schedule
@@ -77,8 +78,9 @@ type StartRunInput struct {
 // transaction, which the caller commits or rolls back. It creates the cron run
 // of the slot, stamped with it (scheduled_for), initiated by the system, of
 // operation run, on the tenant's live release. The schedule's row is what
-// authorises the fire, so no catalog is read and the run pins no service
-// metadata.
+// authorises the fire, so the fire does not ask whether a model carries the
+// name: a schedule no model carries records a run refused as an empty
+// selection.
 //
 // It returns (id, OutcomeRunStarted) for a run created and dispatched, (id,
 // OutcomeRunRefused) for a run recorded failed because the live release gives
@@ -99,7 +101,7 @@ func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, 
 		}
 		return uuid.Nil, 0, fmt.Errorf("check the active run of %s: %w", name, err)
 	}
-	outcome, err := h.create(ctx, u, in, nil)
+	outcome, err := h.create(ctx, u, in)
 	switch {
 	case err != nil:
 		return uuid.Nil, 0, err
@@ -112,18 +114,22 @@ func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, 
 }
 
 // StartInTransaction starts the run in.RunID inside u's open transaction,
-// which the caller commits or rolls back. The schedule must be in the
-// tenant's catalog, and a schedule that already has an active run is
-// run.ErrScheduleHasActiveRun. A refusal leaves the caller to roll back.
+// which the caller commits or rolls back. The tenant must know the schedule: a
+// model of its live release carries the name, or the name has a cron
+// (run.ErrScheduleNotFound otherwise). A schedule that already has an active
+// run is run.ErrScheduleHasActiveRun, and a schedule with a cron that no model
+// of the live release carries is the selection's refusal,
+// runplan.ErrEmptySelection. A refusal writes nothing and leaves the caller to
+// roll back.
 func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWork, in StartRunInput) error {
-	metadata, outcome, err := h.check(ctx, u, in)
+	outcome, err := h.check(ctx, u, in)
 	if err != nil {
 		return err
 	}
 	if outcome == OutcomeSkippedActive {
 		return run.ErrScheduleHasActiveRun
 	}
-	outcome, err = h.create(ctx, u, in, metadata)
+	outcome, err = h.create(ctx, u, in)
 	if err != nil {
 		return err
 	}
@@ -133,24 +139,28 @@ func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWo
 	return nil
 }
 
-// check enforces a trigger's pre-conditions, the schedule in the catalog and
-// no active run, and returns the catalog's service metadata of the schedule. A
+// check enforces a trigger's pre-conditions, read in u's transaction before
+// anything is written: a schedule the tenant knows, and no active run of it. A
 // schedule with an active run is OutcomeSkippedActive.
-func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (map[string]run.ServiceMetadata, ActivationOutcome, error) {
-	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), in.TenantID, in.ScheduleName); err != nil {
-		return nil, 0, err
+//
+// It takes the topology lock first, which the transaction then holds, so the
+// live release whose models it counts is the one the run is created on: a
+// promotion that has not committed is waited for, and one that commits after
+// the lock is taken waits for the run.
+func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (ActivationOutcome, error) {
+	if err := u.Topology().LockTopology(ctx); err != nil {
+		return 0, fmt.Errorf("lock the topology for the schedule check: %w", err)
+	}
+	if err := h.policy.EnsureScheduleKnown(ctx, u.LiveScheduleModels(), u.Schedules(), in.TenantID, in.ScheduleName); err != nil {
+		return 0, err
 	}
 	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), in.TenantID, in.ScheduleName); err != nil {
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			return nil, OutcomeSkippedActive, nil
+			return OutcomeSkippedActive, nil
 		}
-		return nil, 0, err
+		return 0, err
 	}
-	metadata, err := u.Catalog().GetServiceMetadata(ctx, in.TenantID, in.ScheduleName)
-	if err != nil {
-		return nil, 0, fmt.Errorf("get metadata: %w", err)
-	}
-	return metadata, OutcomeRunStarted, nil
+	return OutcomeRunStarted, nil
 }
 
 // create chooses the run's tasks from the schedule's graph on the live
@@ -162,7 +172,7 @@ func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartR
 // active run is OutcomeSkippedActive, after which the transaction cannot go
 // on; a cron run whose slot already has its run is OutcomeSlotTaken, and
 // writes nothing.
-func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in StartRunInput, metadata map[string]run.ServiceMetadata) (ActivationOutcome, error) {
+func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (ActivationOutcome, error) {
 	name := in.ScheduleName
 	sel, err := h.planner.Schedule(ctx, u, in.TenantID, name, in.Operation)
 	refusal := scheduleRefusal(err)
@@ -175,7 +185,7 @@ func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in Start
 	}
 
 	now := u.Clock().Now()
-	newRun, err := run.NewPendingRun(in.TenantID, in.RunID, name, in.Kind, in.SourceRunID, in.Initiator.UserID, metadata, in.Operation, sel.Stamp, now)
+	newRun, err := run.NewPendingRun(in.TenantID, in.RunID, name, in.Kind, in.SourceRunID, in.Initiator.UserID, in.Operation, sel.Stamp, now)
 	if err != nil {
 		return 0, err
 	}

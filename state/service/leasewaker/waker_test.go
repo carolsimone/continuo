@@ -245,5 +245,5 @@ func runOf(tenantID string, status run.RunStatus) *run.Run {
 	started := now.Add(-time.Hour)
 	total := int32(1)
 	return run.HydrateRun(tenantID, uuid.New(), "single-node-run-91c2ab07", status, run.KindSingleNodeRun, nil, "system",
-		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0, nil)
+		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0)
 }

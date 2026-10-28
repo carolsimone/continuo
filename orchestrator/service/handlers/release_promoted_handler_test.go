@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -15,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	"github.com/carolsimone/continuo/pkg/events"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
@@ -35,10 +33,9 @@ type fakeReleasePromotionRepository struct {
 }
 
 type promoteReleaseCall struct {
-	ReleaseID       string
-	PromotionSeq    int64
-	Nodes           []topology.ReleasePromotedTopologyNode
-	ServiceMetadata map[string]map[string]string
+	ReleaseID    string
+	PromotionSeq int64
+	Nodes        []topology.ReleasePromotedTopologyNode
 }
 
 func (f *fakeReleasePromotionRepository) PromoteRelease(
@@ -46,11 +43,10 @@ func (f *fakeReleasePromotionRepository) PromoteRelease(
 	releaseID string,
 	promotionSeq int64,
 	nodes []topology.ReleasePromotedTopologyNode,
-	serviceMetadata map[string]map[string]string,
 	_ time.Time,
 ) (topology.PromotionOutcome, error) {
 	f.promoteReleaseCalls = append(f.promoteReleaseCalls, promoteReleaseCall{
-		ReleaseID: releaseID, PromotionSeq: promotionSeq, Nodes: nodes, ServiceMetadata: serviceMetadata,
+		ReleaseID: releaseID, PromotionSeq: promotionSeq, Nodes: nodes,
 	})
 	if f.err != nil {
 		return "", f.err
@@ -105,40 +101,9 @@ func newReleasePromotedHandler(uow *fakeUnitOfWork, reader *fakeArtifactReader, 
 	return handlers.NewReleasePromotedHandler(uow, reader, promRepo, newTestLogger())
 }
 
-// expectedEventID returns the deterministic schedules.loaded:v1 event_id for one
-// promotion, using the same namespace constant as the handler.
-func expectedEventID(releaseID string, promotionSeq int64) string {
-	ns := uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
-	return uuid.NewSHA1(ns, []byte(fmt.Sprintf("%s|%d", releaseID, promotionSeq))).String()
-}
+// ── the swap ──────────────────────────────────────────────────────────────────
 
-// expectedAggregateID returns the deterministic UUID v5 stamped on every
-// outbox row for the given release_id.
-func expectedAggregateID(releaseID string) uuid.UUID {
-	ns := uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
-	return uuid.NewSHA1(ns, []byte("aggregate:"+releaseID))
-}
-
-type schedulesLoadedPayload struct {
-	EventID         string                       `json:"event_id"`
-	ScheduleNames   []string                     `json:"schedule_names"`
-	ServiceMetadata map[string]map[string]string `json:"service_metadata"`
-	PromotionSeq    int64                        `json:"promotion_seq"`
-}
-
-func entriesOn(uow *fakeUnitOfWork, stream string) []*pkgoutbox.Entry {
-	var out []*pkgoutbox.Entry
-	for _, e := range uow.outboxRepo.CreatedEntries {
-		if e.StreamName == stream {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// ── the swap and schedules.loaded ─────────────────────────────────────────────
-
-func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t *testing.T) {
+func TestReleasePromoted_HappyPath_PromotesTheArtifact(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
 	reader := &fakeArtifactReader{}
@@ -157,19 +122,8 @@ func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t 
 	assert.Equal(t, "sha256:a", call.Nodes[0].ContentHash)
 	assert.Equal(t, "continuo-api-b", call.Nodes[1].SecretRef)
 	assert.Equal(t, []string{"svc-a.public.table_a"}, call.Nodes[1].UpstreamUniqueIDs)
-	assert.Equal(t, map[string]map[string]string{
-		"service-a": {"image_tag": "tag-a"},
-		"service-b": {"image_tag": "tag-b"},
-	}, call.ServiceMetadata)
-
-	entries := entriesOn(uow, streams.SchedulesLoadedV1)
-	require.Len(t, entries, 1)
-	assert.Equal(t, expectedAggregateID("rA"), entries[0].AggregateID)
-	var payload schedulesLoadedPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Equal(t, expectedEventID("rA", 5), payload.EventID)
-	assert.Equal(t, []string{"daily", "hourly"}, payload.ScheduleNames)
-	assert.Equal(t, int64(5), payload.PromotionSeq)
+	assert.Equal(t, "daily", call.Nodes[0].Schedule, "each node keeps its schedule name in the live graph")
+	assert.Equal(t, "hourly", call.Nodes[1].Schedule)
 
 	assert.True(t, uow.CommittedTx)
 	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
@@ -178,23 +132,7 @@ func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t 
 	assert.Equal(t, "completed", mp.State)
 }
 
-func TestReleasePromoted_RedeliveryReemitsSchedulesLoadedWithTheSameEventID(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	in := promotionOf(reader, releaseRA(), 5)
-
-	require.NoError(t, newReleasePromotedHandler(uow, reader,
-		&fakeReleasePromotionRepository{outcome: topology.PromotionRedelivered}).
-		Handle(context.Background(), "msg-rp-idem", nil, in))
-
-	entries := entriesOn(uow, streams.SchedulesLoadedV1)
-	require.Len(t, entries, 1)
-	var payload schedulesLoadedPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Equal(t, expectedEventID("rA", 5), payload.EventID)
-}
-
-func TestReleasePromoted_EmptyTopology_StillEmitsSchedulesLoadedWithEmptyArrays(t *testing.T) {
+func TestReleasePromoted_EmptyTopology_PromotesNoNodes(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	reader := &fakeArtifactReader{}
 	doc := topologyartifact.Document{SchemaVersion: topologyartifact.SchemaVersion, TenantID: "default", ReleaseID: "rEmpty"}
@@ -205,42 +143,28 @@ func TestReleasePromoted_EmptyTopology_StillEmitsSchedulesLoadedWithEmptyArrays(
 
 	require.Len(t, promRepo.promoteReleaseCalls, 1)
 	assert.Empty(t, promRepo.promoteReleaseCalls[0].Nodes)
-	entries := entriesOn(uow, streams.SchedulesLoadedV1)
-	require.Len(t, entries, 1)
-	var payload schedulesLoadedPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Empty(t, payload.ScheduleNames)
-	assert.Empty(t, payload.ServiceMetadata)
+	assert.Empty(t, uow.outboxRepo.CreatedEntries)
+	assert.True(t, uow.CommittedTx)
 }
 
-// ── seeds ─────────────────────────────────────────────────────────────────────
+// ── no event ──────────────────────────────────────────────────────────────────
 
-// A promotion writes schedules.loaded:v1 when it applied or was redelivered and
-// nothing when it was stale. It never asks for a seed load, whatever seeds it
-// changed: state plans seed loads from its own copy of the topology.
-func TestReleasePromoted_WritesOnlySchedulesLoaded(t *testing.T) {
-	cases := []struct {
-		outcome topology.PromotionOutcome
-		want    []string
-	}{
-		{topology.PromotionApplied, []string{streams.SchedulesLoadedV1}},
-		{topology.PromotionRedelivered, []string{streams.SchedulesLoadedV1}},
-		{topology.PromotionStale, nil},
-	}
-	for _, tc := range cases {
-		t.Run(string(tc.outcome), func(t *testing.T) {
+// A promotion writes no outbox row, whether it applied, was redelivered or was
+// stale: state reads the schedule names from its own copy of the release, and
+// plans seed loads from it, whatever seeds the promotion changed.
+func TestReleasePromoted_WritesNoSchedulesLoadedRow(t *testing.T) {
+	for _, outcome := range []topology.PromotionOutcome{
+		topology.PromotionApplied, topology.PromotionRedelivered, topology.PromotionStale,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
 			uow := newFakeUnitOfWork()
 			reader := &fakeArtifactReader{}
 			in := promotionOf(reader, releaseRA(), 5, "svc-a.public.table_a", "svc-b.public.table_b")
 
-			require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{outcome: tc.outcome}).
-				Handle(context.Background(), "msg-only-"+string(tc.outcome), nil, in))
+			require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{outcome: outcome}).
+				Handle(context.Background(), "msg-none-"+string(outcome), nil, in))
 
-			var streamsWritten []string
-			for _, e := range uow.outboxRepo.CreatedEntries {
-				streamsWritten = append(streamsWritten, e.StreamName)
-			}
-			assert.Equal(t, tc.want, streamsWritten)
+			assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox row is written")
 			assert.True(t, uow.CommittedTx)
 		})
 	}
@@ -362,17 +286,6 @@ func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 	assert.False(t, uow.CommittedTx)
 	assert.True(t, uow.RolledBackTx)
 	assert.Empty(t, uow.outboxRepo.CreatedEntries)
-}
-
-func TestReleasePromoted_OutboxWriteError_PropagatesAsRetryable(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	uow.outboxRepo.createErr = errors.New("outbox write failed")
-	reader := &fakeArtifactReader{}
-	err := newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-rp-outbox-err", nil, promotionOf(reader, releaseRA(), 5))
-	require.Error(t, err)
-	assert.False(t, errors.Is(err, events.ErrPermanent))
-	assert.False(t, uow.CommittedTx)
 }
 
 func TestReleasePromoted_OutboxEntryIDPassedThrough(t *testing.T) {

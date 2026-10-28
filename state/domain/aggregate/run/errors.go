@@ -91,9 +91,10 @@ var (
 	// service when the named schedule already has a PENDING or RUNNING run.
 	ErrScheduleHasActiveRun = errors.New("schedule already has an active run")
 
-	// ErrScheduleNotInCatalog is returned by the SchedulePolicy when the
-	// named schedule has no active row in schedule_catalog.
-	ErrScheduleNotInCatalog = errors.New("schedule not found in catalog")
+	// ErrScheduleNotFound is returned by the SchedulePolicy when no model of
+	// the tenant's live release carries the schedule's name and the tenant has
+	// no schedule of that name.
+	ErrScheduleNotFound = errors.New("schedule not found")
 
 	// ErrNotACronRun is returned by Run.SetScheduledFor on a run of any kind
 	// but cron: only a cron fire is made for a slot of its schedule.

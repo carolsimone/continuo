@@ -64,8 +64,6 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 	h.storeRelease(t, "rel-new", promotedNode("raw", "stamp_orders", "dbt-model"), scheduledNode("mart", "stamp_lock", "dbt-model", "stamp-lock"))
 	_, err := db.Exec(`UPDATE topology_releases SET loaded_at = now() - interval '30 days' WHERE release_id = 'rel-old'`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', 'stamp-lock', now(), now())`)
-	require.NoError(t, err)
 
 	promote := func(releaseID string, seq int64) func(context.Context, uow.UnitOfWork) error {
 		return func(ctx context.Context, u uow.UnitOfWork) error {
@@ -77,6 +75,8 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		}
 	}
 
+	// Only rel-new has a model of stamp-lock, so the trigger's check that a
+	// model carries the name must read the live release under the lock too.
 	t.Run("a creation behind an uncommitted promotion names the promoted release", func(t *testing.T) {
 		promotion := h.factory()
 		require.NoError(t, promotion.Begin(ctx))
@@ -120,7 +120,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "rel-old", p.ReleaseID)
 		stamp := run.ReleaseStamp{ReleaseID: p.ReleaseID, PromotionSeq: p.PromotionSeq}
-		rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-lock", run.KindTrigger, nil, alice.UserID, nil, model.OperationRun, stamp, time.Now())
+		rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "stamp-lock", run.KindTrigger, nil, alice.UserID, model.OperationRun, stamp, time.Now())
 		require.NoError(t, err)
 		require.NoError(t, creation.Run().SaveRun(ctx, rn))
 

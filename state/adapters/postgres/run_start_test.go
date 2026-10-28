@@ -57,7 +57,7 @@ func failureGraph() topology.Graph {
 // ends.
 func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "start-"+uuid.NewString()[:8], run.KindCron, nil, identity.SystemUserID, nil,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "start-"+uuid.NewString()[:8], run.KindCron, nil, identity.SystemUserID,
 		model.OperationRun, run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, now)
 	require.NoError(t, err)
 	t.Cleanup(func() {

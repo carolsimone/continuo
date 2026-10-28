@@ -52,12 +52,16 @@ func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 	return out
 }
 
-func (h *builtHarness) catalog(t *testing.T, schedules ...string) {
+// cronOnly stores a paused cron of the default tenant for each schedule, as a
+// schedule keeps its cron when no model of the live release carries its name.
+// Paused, it never fires.
+func (h *builtHarness) cronOnly(t *testing.T, schedules ...string) {
 	t.Helper()
 	for _, s := range schedules {
 		_, err := h.db.Exec(`
-			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', $1, now(), now())
-			ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, s)
+			INSERT INTO schedules (tenant_id, name, cron, timezone, paused, updated_by)
+			VALUES ('default', $1, '0 3 1 1 *', 'Europe/Paris', true, 'test')
+			ON CONFLICT (tenant_id, name) DO NOTHING`, s)
 		require.NoError(t, err)
 	}
 }
@@ -76,7 +80,7 @@ func TestRunCreation(t *testing.T) {
 	ctx := context.Background()
 	alice := identity.FromUserID("okta|alice")
 
-	h.catalog(t, "creation-daily", "creation-empty")
+	h.cronOnly(t, "creation-empty")
 	promoteRelease(t, db,
 		scheduledNode("raw", "creation_a", "dbt-model", "creation-daily"),
 		scheduledNode("mart", "creation_b", "dbt-model", "creation-daily", "raw.creation_a"),
@@ -110,7 +114,7 @@ func TestRunCreation(t *testing.T) {
 			h.created(t, id), "the run failed with no failed task, so it records why")
 	})
 
-	t.Run("a trigger of a schedule with no node in the live release creates no run, whatever its operation", func(t *testing.T) {
+	t.Run("a trigger of a schedule with a cron and no node in the live release creates no run, whatever its operation", func(t *testing.T) {
 		var before int
 		require.NoError(t, db.Get(&before, `SELECT count(*) FROM runs WHERE schedule_name = 'creation-empty'`))
 
@@ -125,7 +129,6 @@ func TestRunCreation(t *testing.T) {
 	})
 
 	t.Run("a rerun replays its source on the source's release; a rebase restarts it on the live one", func(t *testing.T) {
-		h.catalog(t, "creation-derived")
 		source := promoteRelease(t, db,
 			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"))
@@ -189,7 +192,6 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	h := newBuiltHarness(db)
 	alice := identity.FromUserID("okta|alice")
 
-	h.catalog(t, "pool-derived")
 	promoteRelease(t, db,
 		scheduledNode("raw", "pool_a", "dbt-model", "pool-derived"),
 		scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
@@ -248,10 +250,10 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 }
 
 // Every command plans and claims inside one transaction of RunCommands, so
-// every read it makes there (the catalog, the schedule's active run, the
-// source run) must reuse the transaction's connection: with a pool of one, a
-// read through a second connection would wait on the connection the command
-// itself holds.
+// every read it makes there (the live release's models of the schedule, the
+// schedule's cron, its active run, the source run) must reuse the
+// transaction's connection: with a pool of one, a read through a second
+// connection would wait on the connection the command itself holds.
 func TestRunCommands_NeedOneConnection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -261,7 +263,7 @@ func TestRunCommands_NeedOneConnection(t *testing.T) {
 	h := newBuiltHarness(db)
 	alice := identity.FromUserID("okta|alice")
 
-	h.catalog(t, "pool-commands")
+	h.cronOnly(t, "pool-cron-only")
 	promoteRelease(t, db,
 		scheduledNode("raw", "pool_cmd_a", "dbt-model", "pool-commands"),
 		scheduledNode("mart", "pool_cmd_b", "dbt-model", "pool-commands", "raw.pool_cmd_a"))
@@ -279,6 +281,12 @@ func TestRunCommands_NeedOneConnection(t *testing.T) {
 		})
 		require.NoError(t, err)
 		started = res.RunID
+	})
+	t.Run("StartRun of a schedule only its cron knows", func(t *testing.T) {
+		_, err := cmds.StartRun(ctx, svchandlers.StartRunCommand{
+			TenantID: pkgevents.DefaultTenantID, RequestID: uuid.New(), ScheduleName: "pool-cron-only", Initiator: alice,
+		})
+		require.ErrorIs(t, err, runplan.ErrEmptySelection)
 	})
 	t.Run("CancelActiveRun", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, started, "the StartRun subtest started the run")

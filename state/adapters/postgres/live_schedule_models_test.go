@@ -5,12 +5,15 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/carolsimone/continuo/state/service/ports"
 )
 
 var _ repository.LiveScheduleModels = (*postgres.LiveScheduleModelRepository)(nil)
@@ -68,4 +71,26 @@ func TestLiveScheduleModels_AreOfTheTenantsLiveRelease(t *testing.T) {
 	zero, err := repo.CountOf(ctx, stored, "daily")
 	require.NoError(t, err)
 	assert.Zero(t, zero)
+}
+
+// The unit of work counts the models in its transaction: a release the
+// transaction made live, not yet committed, is the one it counts, while the
+// pool still sees none.
+func TestLiveScheduleModels_TheUnitOfWorkCountsInItsTransaction(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
+	require.NoError(t, u.Begin(ctx))
+	defer func() { _ = u.Rollback() }()
+	_, err := u.Topology().SaveRelease(ctx, topoRelease(t, tenant, "rel-1", 1, "sha-1", graphSpec("orders", "dbt-model", "daily")))
+	require.NoError(t, err)
+	require.NoError(t, u.Topology().SetLivePointer(ctx, tenant, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now()))
+
+	inTx, err := u.LiveScheduleModels().CountOf(ctx, tenant, "daily")
+	require.NoError(t, err)
+	assert.Equal(t, 1, inTx, "the transaction counts the release it made live")
+	onPool, err := postgres.NewLiveScheduleModelRepository(db).CountOf(ctx, tenant, "daily")
+	require.NoError(t, err)
+	assert.Zero(t, onPool, "the pool does not see an uncommitted release")
 }

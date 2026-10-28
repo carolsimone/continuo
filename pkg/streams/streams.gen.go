@@ -4,8 +4,6 @@ package streams
 
 // Stream names.
 const (
-	// SchedulesLoadedV1 — Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
-	SchedulesLoadedV1 = "schedules.loaded:v1"
 	// TaskDispatchV1 — One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
 	TaskDispatchV1 = "task.dispatch:v1"
 	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
@@ -52,8 +50,6 @@ const (
 
 // Consumer groups.
 const (
-	// StateScheduleCatalog — state consumer group on schedules.loaded:v1.
-	StateScheduleCatalog = "state-schedule-catalog"
 	// ExecutorTaskDispatch — execution-controller consumer group on task.dispatch:v1.
 	ExecutorTaskDispatch = "executor-task-dispatch"
 	// StateTaskStatusUpdated — state consumer group on task.status.updated:v2.
@@ -111,7 +107,6 @@ const (
 // All is every stream name from contract.yaml, in contract order — for callers
 // that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
-	SchedulesLoadedV1,
 	TaskDispatchV1,
 	TaskStatusUpdatedV2,
 	OutboxDeadLetterV1,
@@ -139,7 +134,6 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
-	SchedulesLoadedV1:           {StateScheduleCatalog},
 	TaskDispatchV1:              {ExecutorTaskDispatch},
 	TaskStatusUpdatedV2:         {StateTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
@@ -185,6 +179,7 @@ var Retired = []string{
 	"run.initialized:v1",
 	"schedule.cancelled:v1",
 	"scheduler.started:v1",
+	"schedules.loaded:v1",
 	"seed.build.node.completed:v1",
 	"task.execution.recorded:v1",
 	"task.failed:v1",

@@ -130,6 +130,17 @@ func (r *ScheduleRepository) Get(ctx context.Context, tenantID, name string) (*s
 	return s, true, nil
 }
 
+// Exists reads whether the tenant has a schedule of that name, without
+// parsing its stored cron.
+func (r *ScheduleRepository) Exists(ctx context.Context, tenantID, name string) (bool, error) {
+	var exists bool
+	if err := sqlx.GetContext(ctx, r.conn(), &exists,
+		`SELECT EXISTS (SELECT 1 FROM schedules WHERE tenant_id = $1 AND name = $2)`, tenantID, name); err != nil {
+		return false, fmt.Errorf("read whether tenant %q has schedule %q: %w", tenantID, name, err)
+	}
+	return exists, nil
+}
+
 // GetForUpdate reads the tenant's schedule of that name with FOR UPDATE in the
 // bound transaction, so the row stays locked until it ends. A stored cron or
 // timezone that no longer parses is a *schedule.StoredCronInvalidError, and the

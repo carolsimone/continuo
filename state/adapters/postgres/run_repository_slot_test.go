@@ -31,7 +31,7 @@ func slotTenant(t *testing.T, db *sqlx.DB) string {
 // with slot.
 func cronRunOf(t *testing.T, tenant string, slot time.Time) *run.Run {
 	t.Helper()
-	rn, err := run.NewPendingRun(tenant, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil,
+	rn, err := run.NewPendingRun(tenant, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID,
 		model.OperationRun, run.ReleaseStamp{}, slot)
 	require.NoError(t, err)
 	require.NoError(t, rn.SetScheduledFor(slot))
@@ -47,7 +47,7 @@ func TestRunRepository_ACronRunStoresItsSlot(t *testing.T) {
 	slot := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
 	cronRun := cronRunOf(t, tenant, slot)
-	trigger, err := run.NewPendingRun(tenant, uuid.New(), "adhoc", run.KindTrigger, nil, "okta|alice", nil,
+	trigger, err := run.NewPendingRun(tenant, uuid.New(), "adhoc", run.KindTrigger, nil, "okta|alice",
 		model.OperationRun, run.ReleaseStamp{}, slot)
 	require.NoError(t, err)
 	saveRuns(t, u, cronRun, trigger)

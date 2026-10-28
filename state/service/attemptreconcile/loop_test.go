@@ -452,7 +452,7 @@ func idleRunOf(tenantID string, idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
 	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system",
-		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
+		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1)
 }
 
 // errorLines returns the lines of logs logged at error level.

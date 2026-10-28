@@ -85,6 +85,32 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	}
 }
 
+// state reads the schedule names from the live release it stores, so
+// orchestrator announces none: schedules.loaded:v1 is retired, and no stream
+// keeps the group state read it with.
+func TestSchedulesLoadedV1_IsRetired(t *testing.T) {
+	const name, group = "schedules.loaded:v1", "state-schedule-catalog"
+	if _, live := Groups[name]; live {
+		t.Fatalf("%s is still a live stream", name)
+	}
+	retired := false
+	for _, r := range Retired {
+		if r == name {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatalf("%s must be listed in retired_streams", name)
+	}
+	for stream, groups := range Groups {
+		for _, g := range groups {
+			if g == group {
+				t.Errorf("group %s still reads %s", group, stream)
+			}
+		}
+	}
+}
+
 func TestReleaseSeedsPendingV1_IsRetired(t *testing.T) {
 	const name = "release.seeds.pending:v1"
 	if _, live := Groups[name]; live {

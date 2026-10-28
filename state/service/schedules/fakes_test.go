@@ -92,6 +92,14 @@ func (m *memorySchedules) hydrate(k rowKey, r storedRow) (*schedule.Schedule, er
 		r.version, r.updatedBy, r.updatedAt, expr), nil
 }
 
+func (m *memorySchedules) Exists(_ context.Context, tenantID, name string) (bool, error) {
+	if m.failWith != nil {
+		return false, m.failWith
+	}
+	_, ok := m.rows[rowKey{tenantID, name}]
+	return ok, nil
+}
+
 func (m *memorySchedules) Get(_ context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	if m.failWith != nil {
 		return nil, false, m.failWith

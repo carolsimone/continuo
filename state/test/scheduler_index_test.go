@@ -62,7 +62,6 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	defer cleanup()
 
 	h := newBuiltHarness(rawDB)
-	h.catalog(t, "race-schedule")
 	promoteSchedules(t, rawDB, "race-schedule")
 
 	const n = 2

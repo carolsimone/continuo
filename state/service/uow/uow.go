@@ -20,8 +20,8 @@ import (
 // MessageProcessingRepo returns a fresh repo bound to the current tx (or
 // the autocommit DB if no tx is active), mirroring orchestrator's pattern.
 //
-// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
-// are used by handlers that operate on domain aggregates.
+// The aggregate-level accessors (Run, Outbox, TaskCollection, Clock) are used
+// by handlers that operate on domain aggregates.
 // Topology serves the promoted-topology tables and the live-release pointer;
 // Materializations serves the record of what each node last loaded; TaskGraph
 // serves a run's ready candidates and pending descendants.
@@ -30,7 +30,6 @@ type UnitOfWork interface {
 
 	// Aggregate-level accessors used by handler bodies.
 	Run() repository.RunRepository
-	Catalog() repository.ScheduleCatalogRepository
 	Outbox() ports.OutboxPublisher
 	// TaskCollection serves the tasks of the runs of tenantID inside the
 	// transaction; the node write leases it takes are tenantID's.
@@ -55,6 +54,9 @@ type UnitOfWork interface {
 	// Schedules serves the schedules of every tenant, inside the transaction:
 	// a schedule by its tenant and name, and the due schedules of all tenants.
 	Schedules() repository.ScheduleRepository
+	// LiveScheduleModels counts, inside the transaction, the models of a
+	// tenant's live release by the schedule name each carries.
+	LiveScheduleModels() repository.LiveScheduleModels
 
 	Begin(ctx context.Context) error
 	Commit() error

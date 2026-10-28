@@ -60,7 +60,6 @@ const runColumns = `
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason,
 			scheduled_for`
@@ -109,38 +108,27 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 	if row.TenantID == "" {
 		return fmt.Errorf("create run %s: %w", row.ScheduleID, ErrNoTenant)
 	}
-	meta, err := row.GetServiceMetadata()
-	if err != nil {
-		return err
-	}
-	metaJSON, err := marshalServiceMetadata(meta)
-	if err != nil {
-		return fmt.Errorf("marshal service_metadata: %w", err)
-	}
 
 	query := `
 		INSERT INTO runs (
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$20, $1, $2, $3, $4,
+			$19, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11,
-			$12, $13,
-			$14, $15, $16, $17, $18, $19
+			$11, $12,
+			$13, $14, $15, $16, $17, $18
 		)
 	`
 
-	_, err = r.db.ExecContext(ctx, query,
+	_, err := r.db.ExecContext(ctx, query,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -191,14 +179,6 @@ func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) 
 	if row.TenantID == "" {
 		return fmt.Errorf("create run %s: %w", row.ScheduleID, ErrNoTenant)
 	}
-	meta, err := row.GetServiceMetadata()
-	if err != nil {
-		return err
-	}
-	metaJSON, err := marshalServiceMetadata(meta)
-	if err != nil {
-		return fmt.Errorf("marshal service_metadata: %w", err)
-	}
 
 	conflict, conflictErr := `ON CONFLICT (tenant_id, run_id) DO NOTHING`, ErrRunExists
 	if row.ScheduledFor != nil {
@@ -210,24 +190,21 @@ func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) 
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq,
 			scheduled_for
 		) VALUES (
-			$20, $1, $2, $3, $4,
+			$19, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11,
-			$12, $13,
-			$14, $15, $16, $17, $18, $19,
-			$21
+			$11, $12,
+			$13, $14, $15, $16, $17, $18,
+			$20
 		)
 		`+conflict,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -275,12 +252,6 @@ func (r *RunRepository) GetByID(ctx context.Context, tenantID string, runID uuid
 		)
 		return nil, fmt.Errorf("failed to get run: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
-
 	r.logger.Debug("Retrieved run",
 		"run_id", runID,
 		"schedule_name", row.ScheduleName,
@@ -409,12 +380,6 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 		)
 		return nil, fmt.Errorf("failed to get active scheduler: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
-
 	r.logger.Debug("Found active scheduler",
 		"schedule_name", scheduleName,
 		"run_id", row.ScheduleID,
@@ -486,11 +451,6 @@ func (r *RunRepository) LoadByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, te
 		}
 		return nil, fmt.Errorf("get run for update: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
 	return &row, nil
 }
 

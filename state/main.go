@@ -285,8 +285,8 @@ func main() {
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same *sqlx.DB, so concurrent
 	// message handlers do not share transaction state.
-	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
-	// TaskCollection, Schedules) per accessor call.
+	// The UoW builds tx-bound aggregate adapters (Run, Outbox, TaskCollection,
+	// Schedules, LiveScheduleModels) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, clk, logger, postgres.WithCronParser(cronParser))
 	}
@@ -375,12 +375,6 @@ func main() {
 		binding pkgredis.MessageHandler
 		timeout time.Duration
 	}{
-		{
-			name:    "schedule_catalog",
-			stream:  streams.SchedulesLoadedV1,
-			group:   streams.StateScheduleCatalog,
-			binding: redis.NewScheduleCatalogBinding(uowFactory, svchandlers.NewScheduleCatalogHandler(logger), logger),
-		},
 		{
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,

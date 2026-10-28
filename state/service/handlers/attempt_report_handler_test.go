@@ -303,7 +303,6 @@ func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, tot
 		nil, nil,
 		&total,
 		terminal,
-		map[string]run.ServiceMetadata{},
 	)
 }
 
@@ -327,7 +326,6 @@ func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, st
 		nil, nil,
 		nil,
 		0,
-		map[string]run.ServiceMetadata{},
 	)
 }
 
@@ -383,7 +381,7 @@ func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.Fa
 	total, by := int32(1), "alice"
 	cancelling := run.HydrateRun(pkgevents.DefaultTenantID, scheduleID, "daily", run.RunStatusCancelling, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
-		&total, 0, map[string]run.ServiceMetadata{})
+		&total, 0)
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
 	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusStopping, prevExists: true, updateAffected: 1}).
 		held(taskID, 0, run.AttemptRunning)
@@ -688,7 +686,6 @@ func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32)
 		nil, nil,
 		&total,
 		0,
-		map[string]run.ServiceMetadata{},
 	)
 	r.HydrateRelease(run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 1})
 	planned := time.Now()

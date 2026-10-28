@@ -379,21 +379,16 @@ func (o *recordedEvents) dispatched() []string {
 	return keys
 }
 
-// untouchedCatalog counts the schedule catalog reads a fire makes: a schedule
-// row is what authorises a fire, so there are none.
-type untouchedCatalog struct {
-	repository.ScheduleCatalogRepository
+// unaskedModels counts the questions a fire asks of the live release's model
+// counts: a schedule row is what authorises a fire, so there are none.
+type unaskedModels struct {
+	repository.LiveScheduleModels
 	reads int
 }
 
-func (c *untouchedCatalog) ExistsActive(context.Context, string, string) (bool, error) {
-	c.reads++
-	return true, nil
-}
-
-func (c *untouchedCatalog) GetServiceMetadata(context.Context, string, string) (map[string]run.ServiceMetadata, error) {
-	c.reads++
-	return nil, nil
+func (m *unaskedModels) CountOf(context.Context, string, string) (int, error) {
+	m.reads++
+	return 1, nil
 }
 
 // firesCounted records the cron fires counted by outcome and the last
@@ -461,7 +456,7 @@ type world struct {
 	runs      *cronRuns
 	tasks     *dispatchedTasks
 	outbox    *recordedEvents
-	catalog   *untouchedCatalog
+	models    *unaskedModels
 	metrics   *firesCounted
 	logs      *lockedBuffer
 	u         *uow.FakeUnitOfWork
@@ -476,7 +471,7 @@ func newWorld(now time.Time) *world {
 		runs:      &cronRuns{active: map[string]bool{}, taken: map[string]bool{}, raceOnce: map[string]bool{}},
 		tasks:     &dispatchedTasks{},
 		outbox:    &recordedEvents{},
-		catalog:   &untouchedCatalog{},
+		models:    &unaskedModels{},
 		metrics:   &firesCounted{fires: map[string]int{}},
 		logs:      &lockedBuffer{},
 		u:         &uow.FakeUnitOfWork{},
@@ -489,7 +484,7 @@ func newWorld(now time.Time) *world {
 	w.u.SetRunRepo(w.runs)
 	w.u.SetTaskCollection(w.tasks)
 	w.u.SetOutboxPublisher(w.outbox)
-	w.u.SetCatalogRepo(w.catalog)
+	w.u.LiveModels = w.models
 	w.u.SetClock(w.clock)
 	return w
 }
@@ -513,7 +508,8 @@ func (w *world) nextFire(name string) time.Time {
 // the slot, initiated by the system, of the row's tenant, on the live release,
 // with its ready tasks dispatched; the next fire moves to the next slot, and
 // the version and authorship the operator left stay. The schedules row
-// authorises the fire, so no catalog is read.
+// authorises the fire, so the fire does not ask whether a model carries the
+// name.
 func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	ctx := context.Background()
 	slot := nov(2, 1, 0)
@@ -532,7 +528,7 @@ func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Equal(t, "rel-1", r.ReleaseID())
 	assert.Equal(t, []string{"raw.orders"}, w.outbox.dispatched(), "the ready task is dispatched in the fire")
-	assert.Zero(t, w.catalog.reads, "a fire reads no catalog")
+	assert.Zero(t, w.models.reads, "a fire does not ask whether a model carries the name")
 
 	row := w.schedules.row(tenant, "daily")
 	assert.True(t, nov(3, 1, 0).Equal(*row.next), "next fire: got %s", row.next)

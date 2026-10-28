@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -17,7 +18,7 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	args, err := p.xaddArgs(&outbox.Entry{
 		ID:         uuid.New(),
 		Payload:    []byte(`{"schedule_id":"s1"}`),
-		StreamName: "schedules.loaded:v1",
+		StreamName: streams.TaskDispatchV1,
 	})
 	if err != nil {
 		t.Fatal(err)

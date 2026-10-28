@@ -47,15 +47,11 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	// sibling helper in scheduler_repository_test.go.
 	repo := NewRunRepository(db, discardLogger())
 
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "op-roundtrip", run.KindTrigger, nil, "user-1", nil, model.OperationTest, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "op-roundtrip", run.KindTrigger, nil, "user-1", model.OperationTest, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
-	tr, err := dehydrateRun(r)
-	if err != nil {
-		t.Fatalf("dehydrateRun: %v", err)
-	}
-	if err := repo.Create(context.Background(), tr); err != nil {
+	if err := repo.Create(context.Background(), dehydrateRun(r)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.RunID()) })
@@ -64,11 +60,7 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	reloaded, err := hydrateRun(got)
-	if err != nil {
-		t.Fatalf("hydrateRun: %v", err)
-	}
-	if reloaded.Operation() != model.OperationTest {
+	if reloaded := hydrateRun(got); reloaded.Operation() != model.OperationTest {
 		t.Fatalf("reloaded Operation() = %q, want test", reloaded.Operation())
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/publisher"
-	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -40,17 +40,19 @@ func payloadToValuesFor(t *testing.T, entry *outbox.Entry) map[string]interface{
 	return vals
 }
 
-func TestOutboxPublisher_ReleasePromotedIsAPayloadField(t *testing.T) {
-	raw := []byte(`{"key":"value"}`)
-	entry := makeEntry(domain.EventTypeReleasePromoted, raw)
+// A dead-letter row publishes its fields and its outbox_entry_id.
+func TestOutboxPublisher_DeadLetterIsItsFieldsAndTheOutboxEntryID(t *testing.T) {
+	body := []byte(`{"failure_kind":"` + string(model.DeadLetterKindPermanent) + `","original_event_type":"node_updated"}`)
+	entry := makeEntry(outbox.DeadLetterEventType, body)
 	vals := payloadToValuesFor(t, entry)
 
 	assert.Equal(t, entry.ID.String(), vals["outbox_entry_id"])
-	assert.Equal(t, string(raw), vals["payload"])
+	assert.Equal(t, string(model.DeadLetterKindPermanent), vals["failure_kind"])
 }
 
 // TestOutboxPublisher_RunEventTypesAreUnknown pins that orchestrator publishes
-// no run event: a row of one of these types left in orchestrator_outbox is
+// no run event, and no release_promoted row, since the topology swap writes no
+// outbox row: a row of one of these types left in orchestrator_outbox is
 // retried as an unknown event_type and dead-lettered when its budget is spent.
 func TestOutboxPublisher_RunEventTypesAreUnknown(t *testing.T) {
 	for _, evtType := range []string{
@@ -58,6 +60,7 @@ func TestOutboxPublisher_RunEventTypesAreUnknown(t *testing.T) {
 		"cascade_task_skipped",
 		"run_entries_dispatched",
 		"run_entries_dispatch_failed",
+		"release_promoted",
 	} {
 		t.Run(evtType, func(t *testing.T) {
 			p := publisher.NewOutboxPublisher(nil, nil)

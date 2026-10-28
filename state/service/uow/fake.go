@@ -14,8 +14,8 @@ import (
 
 // FakeUnitOfWork is an in-memory UnitOfWork for handler unit tests.
 //
-// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
-// default to nil and can be set via the corresponding setter methods.
+// The aggregate-level accessors (Run, Outbox, TaskCollection, Clock) default
+// to nil and can be set via the corresponding setter methods.
 // Clock() falls back to ports.SystemClock{} when no override is provided.
 type FakeUnitOfWork struct {
 	MessageProcessing messageprocessing.Repository
@@ -29,11 +29,10 @@ type FakeUnitOfWork struct {
 	// transaction.
 	afterCommit []func()
 
-	runRepo     repository.RunRepository
-	catalogRepo repository.ScheduleCatalogRepository
-	outboxPub   ports.OutboxPublisher
-	taskColl    run.TaskCollection
-	clock       ports.Clock
+	runRepo   repository.RunRepository
+	outboxPub ports.OutboxPublisher
+	taskColl  run.TaskCollection
+	clock     ports.Clock
 
 	// TopologyRepo backs Topology(); set it to observe topology writes in
 	// handler tests.
@@ -62,6 +61,9 @@ type FakeUnitOfWork struct {
 
 	// ScheduleRepo backs Schedules().
 	ScheduleRepo repository.ScheduleRepository
+
+	// LiveModels backs LiveScheduleModels().
+	LiveModels repository.LiveScheduleModels
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -116,9 +118,6 @@ func (f *FakeUnitOfWork) TaskCollection(tenantID string) run.TaskCollection {
 	return f.taskColl
 }
 
-// Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
-func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }
-
 // Topology returns the repository.TopologyRepository set via the TopologyRepo field.
 func (f *FakeUnitOfWork) Topology() repository.TopologyRepository { return f.TopologyRepo }
 
@@ -152,6 +151,10 @@ func (f *FakeUnitOfWork) CommandRequests() repository.CommandRequestRepository {
 // field.
 func (f *FakeUnitOfWork) Schedules() repository.ScheduleRepository { return f.ScheduleRepo }
 
+// LiveScheduleModels returns the repository.LiveScheduleModels set via the
+// LiveModels field.
+func (f *FakeUnitOfWork) LiveScheduleModels() repository.LiveScheduleModels { return f.LiveModels }
+
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.
 func (f *FakeUnitOfWork) Clock() ports.Clock {
@@ -162,11 +165,10 @@ func (f *FakeUnitOfWork) Clock() ports.Clock {
 }
 
 // Setters allow individual tests to inject only the aggregate-level fakes they need.
-func (f *FakeUnitOfWork) SetRunRepo(r repository.RunRepository)                 { f.runRepo = r }
-func (f *FakeUnitOfWork) SetCatalogRepo(r repository.ScheduleCatalogRepository) { f.catalogRepo = r }
-func (f *FakeUnitOfWork) SetOutboxPublisher(p ports.OutboxPublisher)            { f.outboxPub = p }
-func (f *FakeUnitOfWork) SetTaskCollection(tc run.TaskCollection)               { f.taskColl = tc }
-func (f *FakeUnitOfWork) SetClock(c ports.Clock)                                { f.clock = c }
+func (f *FakeUnitOfWork) SetRunRepo(r repository.RunRepository)      { f.runRepo = r }
+func (f *FakeUnitOfWork) SetOutboxPublisher(p ports.OutboxPublisher) { f.outboxPub = p }
+func (f *FakeUnitOfWork) SetTaskCollection(tc run.TaskCollection)    { f.taskColl = tc }
+func (f *FakeUnitOfWork) SetClock(c ports.Clock)                     { f.clock = c }
 
 // Compile-time interface assertion.
 var _ UnitOfWork = (*FakeUnitOfWork)(nil)

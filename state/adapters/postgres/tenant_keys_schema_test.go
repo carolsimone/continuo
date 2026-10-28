@@ -76,7 +76,7 @@ func stateKeys(t *testing.T, db *sqlx.DB) []stateKey {
 // Every primary key, unique index and foreign key of the state tables, except
 // the dedup's and the outbox's, starts with tenant_id, and a foreign key
 // references a key that starts with tenant_id too. The keys the run tables and
-// the schedule catalog hold are exactly the tenant-led ones listed.
+// the schedules hold are exactly the tenant-led ones listed.
 func TestTenantKeysSchema_EveryKeyStartsWithTenantID(t *testing.T) {
 	db := newTestDB(t)
 	keys := stateKeys(t, db)
@@ -107,8 +107,8 @@ func TestTenantKeysSchema_EveryKeyStartsWithTenantID(t *testing.T) {
 		"node_leases_task_id_key": {Table: "node_leases", Columns: []string{"tenant_id", "task_id"}},
 		"node_leases_task_id_fkey": {Table: "node_leases", Columns: []string{"tenant_id", "task_id"},
 			RefColumns: []string{"tenant_id", "task_id"}},
-		"schedule_catalog_pkey":       {Table: "schedule_catalog", Columns: []string{"tenant_id", "schedule_name"}},
-		"schedule_catalog_state_pkey": {Table: "schedule_catalog_state", Columns: []string{"tenant_id"}},
+		"uq_runs_scheduled_for": {Table: "runs", Columns: []string{"tenant_id", "schedule_name", "scheduled_for"}},
+		"schedules_pkey":        {Table: "schedules", Columns: []string{"tenant_id", "name"}},
 	} {
 		got, ok := byName[name]
 		if !assert.True(t, ok, "%s exists", name) {
@@ -153,7 +153,7 @@ func TestTenantKeysSchema_ATaskOfAnotherTenantsRunIsRefused(t *testing.T) {
 // an insert that leaves it out fails.
 func TestTenantKeysSchema_TenantIDHasNoDefault(t *testing.T) {
 	db := newTestDB(t)
-	for _, table := range []string{"runs", "tasks", "task_attempts", "node_leases", "schedule_catalog", "schedule_catalog_state"} {
+	for _, table := range []string{"runs", "tasks", "task_attempts", "node_leases", "schedules"} {
 		var col struct {
 			Nullable string  `db:"is_nullable"`
 			Default  *string `db:"column_default"`

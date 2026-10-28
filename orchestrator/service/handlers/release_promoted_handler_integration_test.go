@@ -2,8 +2,6 @@ package handlers_test
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
@@ -17,15 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// releaseSchedulesNamespaceForTest mirrors the handler's namespace constant.
-var releaseSchedulesNamespaceForTest = uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
-
-// deterministicEventID returns the schedules.loaded:v1 event_id for one
-// promotion using the same algorithm as the handler.
-func deterministicEventID(releaseID string, promotionSeq int64) string {
-	return uuid.NewSHA1(releaseSchedulesNamespaceForTest, []byte(fmt.Sprintf("%s|%d", releaseID, promotionSeq))).String()
-}
 
 // wipeReleasePromotedFixtures removes the :Table nodes and the :Meta and
 // :TopologyRoot singletons so each test starts clean.
@@ -53,8 +42,6 @@ func releasePromotedFixture(t *testing.T) (*handlers.ReleasePromotedHandler, *fa
 	pgDB := newCommandTestDB(t)
 	cleanup := func() {
 		wipeReleasePromotedFixtures(t, client)
-		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM orchestrator_outbox WHERE event_type = 'release_promoted'`)
 		_, _ = pgDB.ExecContext(context.Background(),
 			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
 	}
@@ -95,22 +82,12 @@ func seedNode(uid, image, hash string) topologyartifact.Node {
 	}
 }
 
-func outboxPayloads(t *testing.T, pgDB *sqlx.DB, stream string) []map[string]any {
+// outboxRows counts the rows of orchestrator_outbox.
+func outboxRows(t *testing.T, pgDB *sqlx.DB) int {
 	t.Helper()
-	rows, err := pgDB.QueryContext(context.Background(),
-		`SELECT payload FROM orchestrator_outbox WHERE stream_name = $1 ORDER BY created_at`, stream)
-	require.NoError(t, err)
-	defer rows.Close()
-	var out []map[string]any
-	for rows.Next() {
-		var raw []byte
-		require.NoError(t, rows.Scan(&raw))
-		var p map[string]any
-		require.NoError(t, json.Unmarshal(raw, &p))
-		out = append(out, p)
-	}
-	require.NoError(t, rows.Err())
-	return out
+	var n int
+	require.NoError(t, pgDB.QueryRowContext(context.Background(), `SELECT count(*) FROM orchestrator_outbox`).Scan(&n))
+	return n
 }
 
 func graphScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string) any {
@@ -137,6 +114,7 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 		modelNode("service-b.public.table_b", "table_b", "service-b", "tag-b", "daily", "service-a.public.table_a"),
 	), 1)
 	msgID := "msg-int-happy-" + uuid.New().String()[:8]
+	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, msgID, nil, in))
 
@@ -147,13 +125,9 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.promotion_seq AS v`))
 	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (r:TopologyRoot {id:'singleton'}) RETURN r.promotion_seq AS v`))
 
-	loaded := outboxPayloads(t, pgDB, streams.SchedulesLoadedV1)
-	require.Len(t, loaded, 1)
-	assert.Equal(t, deterministicEventID(releaseID, 1), loaded[0]["event_id"])
-	assert.Equal(t, []any{"daily"}, loaded[0]["schedule_names"])
-	assert.Equal(t, float64(1), loaded[0]["promotion_seq"])
-	_, legacy := loaded[0]["topology_generation"]
-	assert.False(t, legacy)
+	assert.Equal(t, "daily", graphScalar(t, client,
+		`MATCH (t:Table {unique_id:'service-a.public.table_a'}) RETURN t.schedule_name AS v`))
+	assert.Equal(t, before, outboxRows(t, pgDB), "the swap writes no outbox row")
 
 	var dedupCount int
 	require.NoError(t, pgDB.QueryRowContext(ctx,
@@ -162,22 +136,20 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	assert.Equal(t, 1, dedupCount)
 }
 
-// The same promotion delivered under two message ids swaps once and re-emits
-// schedules.loaded:v1 with the same event_id.
+// The same promotion delivered under two message ids swaps once and writes
+// no outbox row either time.
 func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	ctx := context.Background()
 	h, reader, client, pgDB := releasePromotedFixture(t)
 	releaseID := "rA-idem-" + uuid.New().String()[:8]
 	in := promotionOf(reader, artifactOf(releaseID, modelNode("svc.public.t", "t", "svc", "tag-1", "hourly")), 1)
+	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-idem-1-"+uuid.New().String()[:8], nil, in))
 	require.NoError(t, h.Handle(ctx, "msg-idem-2-"+uuid.New().String()[:8], nil, in))
 
 	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (t:Table) RETURN count(t) AS v`))
-	loaded := outboxPayloads(t, pgDB, streams.SchedulesLoadedV1)
-	require.Len(t, loaded, 2)
-	assert.Equal(t, deterministicEventID(releaseID, 1), loaded[0]["event_id"])
-	assert.Equal(t, loaded[0]["event_id"], loaded[1]["event_id"])
+	assert.Equal(t, before, outboxRows(t, pgDB))
 }
 
 func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
@@ -185,6 +157,7 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	h, reader, client, pgDB := releasePromotedFixture(t)
 	relA := "rA-twor-" + uuid.New().String()[:8]
 	relB := "rB-twor-" + uuid.New().String()[:8]
+	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-twor-A-"+uuid.New().String()[:8], nil,
 		promotionOf(reader, artifactOf(relA, modelNode("svc.public.node_a", "node_a", "svc", "tag-a", "daily")), 1)))
@@ -193,20 +166,17 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 
 	assert.Equal(t, "svc.public.node_c", graphScalar(t, client, `MATCH (t:Table) RETURN t.unique_id AS v`))
 	assert.Equal(t, relB, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
-	loaded := outboxPayloads(t, pgDB, streams.SchedulesLoadedV1)
-	require.Len(t, loaded, 2)
-	assert.Equal(t, deterministicEventID(relA, 1), loaded[0]["event_id"])
-	assert.Equal(t, deterministicEventID(relB, 2), loaded[1]["event_id"])
+	assert.Equal(t, before, outboxRows(t, pgDB))
 }
 
 // A promotion older than the live one arrives after it: the topology stays on
-// the newer release, no schedules.loaded is written for the older one, and no
-// outbox row names the late release.
+// the newer release, and neither promotion writes an outbox row.
 func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	ctx := context.Background()
 	h, reader, client, pgDB := releasePromotedFixture(t)
 	relNew := "rNew-" + uuid.New().String()[:8]
 	relOld := "rOld-" + uuid.New().String()[:8]
+	before := outboxRows(t, pgDB)
 
 	require.NoError(t, h.Handle(ctx, "msg-late-new-"+uuid.New().String()[:8], nil,
 		promotionOf(reader, artifactOf(relNew,
@@ -224,13 +194,5 @@ func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	assert.Equal(t, relNew, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
 	assert.Equal(t, int64(2), graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.promotion_seq AS v`))
 
-	loaded := outboxPayloads(t, pgDB, streams.SchedulesLoadedV1)
-	require.Len(t, loaded, 1, "only the newer release moved the catalog")
-	assert.Equal(t, deterministicEventID(relNew, 2), loaded[0]["event_id"])
-
-	var lateRows int
-	require.NoError(t, pgDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM orchestrator_outbox WHERE aggregate_id = $1`,
-		expectedAggregateID(relOld)).Scan(&lateRows))
-	assert.Zero(t, lateRows, "the late release writes nothing: not a catalog, not a seed request")
+	assert.Equal(t, before, outboxRows(t, pgDB), "the late release writes nothing, not a seed request either")
 }

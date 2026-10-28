@@ -52,7 +52,7 @@ func (h *builtHarness) stampOf(t *testing.T, id uuid.UUID) run.ReleaseStamp {
 // or rebase source.
 func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStamp) uuid.UUID {
 	t.Helper()
-	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, time.Now())
+	rn, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindCron, nil, identity.SystemUserID, model.OperationRun, stamp, time.Now())
 	require.NoError(t, err)
 	id := h.saveRun(t, rn)
 	_, err = h.db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, id)
@@ -82,8 +82,6 @@ func TestReleaseStamp(t *testing.T) {
 	h.goLive(t, "rel-live", 7)
 	live := run.ReleaseStamp{ReleaseID: "rel-live", PromotionSeq: 7}
 	old := run.ReleaseStamp{ReleaseID: "rel-old", PromotionSeq: 4}
-	_, err := db.Exec(`INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', 'stamp-trigger', now(), now())`)
-	require.NoError(t, err)
 
 	t.Run("a triggered run names the live release", func(t *testing.T) {
 		id, err := h.start(ctx, pkgevents.DefaultTenantID, "stamp-trigger", alice, model.OperationRun)

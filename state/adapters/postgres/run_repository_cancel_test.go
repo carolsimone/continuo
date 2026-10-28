@@ -46,7 +46,6 @@ func TestRunRepository_SaveRun_CancelPersistsAggregateInstant(t *testing.T) {
 		nil, nil,
 		nil,
 		0,
-		map[string]run.ServiceMetadata{},
 	)
 	noopTasks := &noopCancelTaskCollection{}
 	if _, err := r.Cancel(context.Background(), noopTasks, "ops", "drift", now); err != nil {
