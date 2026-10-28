@@ -217,3 +217,27 @@ func assertNoScheduleNotificationFrom(t *testing.T, listener *pq.Listener, pid i
 		}
 	}
 }
+
+// A schedule's version counts the operator's edits from 1, so a row at version
+// 0 or below is refused: it would only ever be deleted and could not be edited.
+func TestSchedulesSchema_VersionStartsAtOne(t *testing.T) {
+	db := newTestDB(t)
+	tenant := schemaTenantWithSchedules(t, db)
+	insertAt := func(name string, version int64) error {
+		_, err := db.Exec(`
+			INSERT INTO schedules (tenant_id, name, cron, timezone, next_fire_at, version, updated_by)
+			VALUES ($1, $2, '* * * * *', 'UTC', now(), $3, 'schema-test')`, tenant, name, version)
+		return err
+	}
+
+	assert.NoError(t, insertAt("first", 1))
+	for _, version := range []int64{0, -1} {
+		err := insertAt("refused", version)
+		require.Error(t, err, "version %d", version)
+		assert.Equal(t, "23514", pqCode(t, err), "check_violation for version %d", version)
+	}
+
+	_, err := db.Exec(`UPDATE schedules SET version = 0 WHERE tenant_id = $1 AND name = 'first'`, tenant)
+	require.Error(t, err, "an edit cannot take a row below version 1")
+	assert.Equal(t, "23514", pqCode(t, err))
+}
