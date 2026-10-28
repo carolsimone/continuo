@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
@@ -851,7 +851,13 @@ describe('NodeDetailPage full refresh', () => {
 describe('NodeDetailPage — request id', () => {
   // Answers each run POST with the next reply (a rejection for a request that
   // got no answer) and returns the request ids the POSTs carried.
-  function installRun(replies: Array<'timeout' | { status: number; body: unknown }>, history: unknown[] = []) {
+  // readHistory, when given, answers the node's history reads in place of
+  // history.
+  function installRun(
+    replies: Array<'timeout' | { status: number; body: unknown }>,
+    history: unknown[] = [],
+    readHistory?: () => Promise<Response>,
+  ) {
     const ids: string[] = [];
     let n = 0;
     mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -862,6 +868,7 @@ describe('NodeDetailPage — request id', () => {
         if (reply === 'timeout') return Promise.reject(new Error('timeout'));
         return jsonResp(reply.body, reply.status);
       }
+      if (readHistory && url.includes('/runs?operation=')) return readHistory();
       return jsonResp({ tasks: history });
     });
     return ids;
@@ -927,24 +934,35 @@ describe('NodeDetailPage — request id', () => {
     }
   });
 
+  // Lets the reads in flight land.
+  const settle = () => act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
   // The history is read again when the operation changes; a round trip
-  // through another operation shows the runs made since.
-  async function rereadHistory(newestFirst: unknown[], run: unknown) {
-    newestFirst.unshift(run);
+  // through another operation reads it as it now is.
+  async function roundTripOperation() {
     const reads = () => mockFetch.mock.calls.filter(([u]) => String(u).includes('/runs?operation=run')).length;
     const before = reads();
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'test' } });
     fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'run' } });
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    await settle();
     await screen.findByRole('button', { name: /run this node/i });
+  }
+
+  // The history read again shows run as the newest.
+  async function rereadHistory(newestFirst: unknown[], run: unknown) {
+    newestFirst.unshift(run);
+    await roundTripOperation();
   }
 
   it('requestId: a press after the history shows a node run newer than the unanswered press saw is a new action', async () => {
     const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
     const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
     renderPage();
+    await screen.findByRole('button', { name: /run this node/i });
+    await settle();
 
-    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
     await screen.findByText('Request failed — please try again');
     await rereadHistory(history, mkRun({ run_id: 'r2', kind: 'single_node_run' }));
     fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
@@ -958,10 +976,76 @@ describe('NodeDetailPage — request id', () => {
     const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
     const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
     renderPage();
+    await screen.findByRole('button', { name: /run this node/i });
+    await settle();
 
-    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
     await screen.findByText('Request failed — please try again');
     await rereadHistory(history, mkRun({ run_id: 'cron-2', kind: 'cron' }));
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a history read that fails after an unanswered press is not a newer run, so its retry keeps the id', async () => {
+    let history: Promise<Response> = jsonResp({ tasks: [mkRun({ run_id: 'r1', kind: 'single_node_run' })] });
+    const ids = installRun(
+      ['timeout', 'timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }],
+      [],
+      () => history,
+    );
+    renderPage();
+    await screen.findByRole('button', { name: /run this node/i });
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    history = Promise.reject(new Error('network down'));
+    history.catch(() => {});
+    await roundTripOperation();
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+
+    // The history is readable again and shows a node run newer than r1.
+    await screen.findByText('Request failed — please try again');
+    history = jsonResp({ tasks: [mkRun({ run_id: 'r2', kind: 'single_node_run' }), mkRun({ run_id: 'r1', kind: 'single_node_run' })] });
+    await roundTripOperation();
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+    await waitFor(() => expect(ids).toHaveLength(3));
+    expect(ids[2]).toMatch(UUID);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
+  it('requestId: a history read answered with an error is not a newer run, so its retry keeps the id', async () => {
+    let history: Promise<Response> = jsonResp({ tasks: [mkRun({ run_id: 'r1', kind: 'single_node_run' })] });
+    const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], [], () => history);
+    renderPage();
+    await screen.findByRole('button', { name: /run this node/i });
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    history = jsonResp({ error: 'state unavailable' }, 503);
+    await roundTripOperation();
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('requestId: a node run pushed out of the history window by scheduled runs is not a newer run', async () => {
+    const history: unknown[] = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
+    const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
+    renderPage();
+    await screen.findByRole('button', { name: /run this node/i });
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    history.splice(0, history.length, mkRun({ run_id: 'cron-2', kind: 'cron' }), mkRun({ run_id: 'cron-1', kind: 'cron' }));
+    await roundTripOperation();
     fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
 
     await waitFor(() => expect(ids).toHaveLength(2));

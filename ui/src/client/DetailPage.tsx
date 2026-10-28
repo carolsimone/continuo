@@ -86,6 +86,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const location = useLocation();
 
   const [lastRunId, setLastRunId] = useState<string | null | undefined>(() => initialLastRunId(location.state));
+  // Set when the schedule list could not be read on arrival: lastRunId is then
+  // null without the page knowing the schedule never ran.
+  const [lastRunReadFailed, setLastRunReadFailed] = useState(false);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
@@ -112,7 +115,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // returned rather than made twice. The page reads the schedule's last run
   // when it arrives at the schedule; a newer one read then makes the next
   // press a new action, and the id is renewed once the server has given its
-  // final answer.
+  // final answer. While that read is loading or after it failed, the page
+  // does not know the last run (lastRunObservation is undefined).
   const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -129,6 +133,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   useEffect(() => {
     const hintedLastRunId = initialLastRunId(location.state);
     setLastRunId(hintedLastRunId);
+    setLastRunReadFailed(false);
     setScheduler(null);
     setTasks([]);
     setGraph(null);
@@ -154,7 +159,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         setLastRunId(match?.last_run_id ?? null);
       })
       .catch(() => {
-        if (!cancelled) setLastRunId(null);
+        if (cancelled) return;
+        setLastRunId(null);
+        setLastRunReadFailed(true);
       });
     return () => { cancelled = true; };
   }, [name]);
@@ -362,6 +369,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setTimeout(() => setRerunFailedState('idle'), 3000);
   }, []);
 
+  const lastRunObservation = lastRunReadFailed ? undefined : lastRunId;
+
   const handleTriggerRun = useCallback(async () => {
     if (!name) return;
     setTriggerState('loading');
@@ -370,7 +379,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request_id: takeRequestId(name, lastRunId) }),
+        body: JSON.stringify({ request_id: takeRequestId(name, lastRunObservation) }),
       });
       if (settlesRequest(res)) renewTriggerId();
       if (res.ok) {
@@ -385,7 +394,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       setTriggerError('Request failed — please try again');
       setTriggerState('error');
     }
-  }, [name, lastRunId, takeRequestId, renewTriggerId]);
+  }, [name, lastRunObservation, takeRequestId, renewTriggerId]);
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 

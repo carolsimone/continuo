@@ -476,6 +476,81 @@ describe('DetailPage — Trigger run topbar button', () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
+  it('DetailPage trigger: a press made while the schedule list is still loading adopts the run the list then names', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    let answerList: (body: unknown) => void = () => {};
+    const list = new Promise<unknown>((resolve) => { answerList = resolve; });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/schedules') {
+        const body = await list;
+        return { ok: true, status: 200, json: async () => body } as Response;
+      }
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter(null));
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    // The list names the schedule's newest run, which may be the one the
+    // unanswered press made.
+    answerList({ schedules: [{ schedule_name: SCHED, last_run_id: RUN_ID }] });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === `/api/runs/${RUN_ID}`)).toBe(true));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('DetailPage trigger: a failed read of the schedule list is not a schedule that never ran', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/schedules') throw new Error('network down');
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => navigate('/schedule/other', { state: { last_run_id: null } })}>to other</button>
+          <button onClick={() => navigate(`/schedule/${SCHED}`, { state: { last_run_id: RUN_ID } })}>back</button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[`/schedule/${SCHED}`]}>
+        <Nav />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: 'to other' }));
+    // Arriving again names the schedule's newest run: the page did not know
+    // what the schedule showed when the unanswered press was made.
+    fireEvent.click(screen.getByRole('button', { name: 'back' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
   it('disables the topbar Trigger run button while a run is live', async () => {
     // Use freshRoutes() but override the scheduler endpoint to return a
     // non-terminal status so liveRunExists becomes true.

@@ -104,6 +104,9 @@ export default function NodeDetailPage() {
     backPath = from.mode === 'latest' ? `/schedule/${from.name}/latest` : `/schedule/${from.name}`;
   }
   const [runs, setRuns] = useState<NodeRun[]>([]);
+  // Whether runs holds the answer of the latest history read: false while a
+  // read is in flight and after one failed.
+  const [runsKnown, setRunsKnown] = useState(false);
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -139,15 +142,18 @@ export default function NodeDetailPage() {
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
     const myGen = ++genRef.current;
+    setRunsKnown(false);
     fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
         if (myGen !== genRef.current) return;
         setRuns(data.tasks || []);
+        setRunsKnown(Array.isArray(data.tasks));
       })
       .catch(() => {
         if (myGen !== genRef.current) return;
         setRuns([]);
+        setRunsKnown(false);
       });
   }, [service, schema, table, historyOperation]);
 
@@ -216,8 +222,10 @@ export default function NodeDetailPage() {
 
   // The newest run in the history that a press of this page could have made:
   // a single-node run. A scheduled run of the node is not the outcome of a
-  // press, so it does not end the wait for one.
-  const newestNodeRunId = runs.find(r => r.kind === 'single_node_run')?.run_id ?? null;
+  // press, so it does not end the wait for one. While the history is not
+  // known (a read in flight or failed) the page observes nothing; a history
+  // with no single-node run in its window observes none.
+  const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
 
   // opOverride pins the operation for a caller that must send exactly what it
   // confirmed, independent of the select's current value.

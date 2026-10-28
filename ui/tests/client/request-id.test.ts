@@ -88,6 +88,29 @@ describe('requestId', () => {
       expect(result.current.take('daily', 'run-1')).not.toBe(first);
     });
 
+    it('requestId: losing sight of the observed run (a failed read, a run gone from the window) is not a newer run', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('daily', 'r1');
+
+      expect(result.current.take('daily', '')).toBe(first);
+      expect(result.current.take('daily', null)).toBe(first);
+      expect(result.current.take('daily', undefined)).toBe(first);
+      expect(result.current.take('daily', 'r1')).toBe(first);
+
+      const later = result.current.take('daily', 'r2');
+      expect(later).not.toBe(first);
+    });
+
+    it('requestId: a press made before the page knows what it shows adopts the first run it then reads', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('daily', undefined);
+
+      // The read lands: what it shows may be the run the press made, so it
+      // is not a newer run than the press saw.
+      expect(result.current.take('daily', 'run-1')).toBe(first);
+      expect(result.current.take('daily', 'run-2')).not.toBe(first);
+    });
+
     it('requestId: a press that asks for something else gets a new id', () => {
       const { result } = renderHook(() => useActionRequestId());
       const first = result.current.take('run');

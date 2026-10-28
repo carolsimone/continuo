@@ -20,6 +20,12 @@ export function settlesRequest(res: { ok: boolean; status: number }): boolean {
   return res.ok || res.status < 500;
 }
 
+// An observation is the newest run a page shows that an action could have
+// made: a run id, null when the page knows it shows none (a schedule that
+// never ran), or undefined when it does not know (its read is still loading
+// or failed).
+export type Observation = string | null | undefined;
+
 export interface ActionRequestId {
   // The id a dialog sends for its whole lifetime: run-creating commands run
   // once per request id, so a send repeated with the same id returns the run
@@ -28,23 +34,33 @@ export interface ActionRequestId {
   // renew mints the id of the next action. It is stable across renders.
   renew: () => void;
   // take returns the id for a press made now. fingerprint names what the
-  // press asks for; observed names the newest run the page shows that the
-  // action could have made (a schedule's last run id, the newest run of a
-  // node), or nothing when the page shows none. The press repeats the one
-  // already sent, and gets the current id, while both are what that press
-  // sent: its outcome is still unknown, however long ago it was sent, so the
-  // retry must not make a second run. A press with other parameters, or one
-  // made once the page shows a newer run (the earlier press's effect is
-  // visible), is another action and gets a new id. It is stable across
-  // renders.
-  take: (fingerprint?: string, observed?: string | null) => string;
+  // press asks for and observed what the page shows (see Observation). A
+  // press repeats the one already sent, and gets the current id, while it
+  // asks for the same thing and the page shows no run newer than that press
+  // saw: the earlier press's outcome is still unknown, however long ago it
+  // was sent, so the retry must not make a second run. A press with other
+  // parameters, or one made once the page shows another run than the one the
+  // earlier press saw, or a run where it saw none (the earlier press's effect
+  // is visible), is another action and gets a new id. Losing sight of a run
+  // (an unknown observation, or none where the earlier press saw one) is not
+  // a newer run; the first run a page reads after a press made while it knew
+  // nothing is taken as what that press saw. It is stable across renders.
+  take: (fingerprint?: string, observed?: Observation) => string;
 }
 
 interface Sent {
   id: string;
   sent: boolean;
   fingerprint: string;
-  observed: string;
+  // What the page showed when the id was first sent, or since, when it then
+  // knew nothing.
+  observed: Observation;
+}
+
+// showsNewerRun reports whether a page that observes now shows a run the
+// press that observed before did not see.
+function showsNewerRun(before: Observation, now: Observation): boolean {
+  return typeof now === 'string' && before !== undefined && now !== before;
 }
 
 // useActionRequestId holds the request id of one user action. The id is
@@ -55,25 +71,27 @@ interface Sent {
 export function useActionRequestId(): ActionRequestId {
   const [id, setId] = useState(newRequestId);
   const sent = useRef<Sent | null>(null);
-  if (sent.current === null) sent.current = { id, sent: false, fingerprint: '', observed: '' };
+  if (sent.current === null) sent.current = { id, sent: false, fingerprint: '', observed: undefined };
 
   const renew = useCallback(() => {
     const next = newRequestId();
-    sent.current = { id: next, sent: false, fingerprint: '', observed: '' };
+    sent.current = { id: next, sent: false, fingerprint: '', observed: undefined };
     setId(next);
   }, []);
 
-  const take = useCallback((fingerprint = '', observed: string | null = '') => {
-    const seen = observed ?? '';
+  const take = useCallback((fingerprint = '', observed?: Observation) => {
+    const now = observed === '' ? null : observed;
     const cur = sent.current as Sent;
-    if (cur.sent && (cur.fingerprint !== fingerprint || cur.observed !== seen)) {
+    if (cur.sent && (cur.fingerprint !== fingerprint || showsNewerRun(cur.observed, now))) {
       renew();
     }
     const next = sent.current as Sent;
     if (!next.sent) {
       next.sent = true;
       next.fingerprint = fingerprint;
-      next.observed = seen;
+      next.observed = now;
+    } else if (next.observed === undefined) {
+      next.observed = now;
     }
     return next.id;
   }, [renew]);
