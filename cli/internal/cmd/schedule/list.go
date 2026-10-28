@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
+	"github.com/carolsimone/continuo/cli/internal/runview"
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -138,16 +139,16 @@ func toListPayload(summaries []*runv1.ScheduleSummary) listPayload {
 			HasCron:       s.GetCron() != "",
 			Paused:        s.GetPaused(),
 			Version:       s.GetVersion(),
-			NextFireAt:    timestampString(s.GetNextFireAt()),
+			NextFireAt:    runview.Timestamp(s.GetNextFireAt()),
 			Description:   s.GetDescription(),
 			Timezone:      s.GetTimezone(),
 			ModelCount:    s.GetModelCount(),
 			HasActiveRun:  s.GetHasActiveRun(),
 			LastRunId:     s.GetLastRunId(),
 			LastRunStatus: s.GetLastRunStatus(),
-			LastRunAt:     timestampString(s.GetLastRunAt()),
+			LastRunAt:     runview.Timestamp(s.GetLastRunAt()),
 			UpdatedBy:     s.GetUpdatedBy(),
-			UpdatedAt:     timestampString(s.GetUpdatedAt()),
+			UpdatedAt:     runview.Timestamp(s.GetUpdatedAt()),
 		})
 	}
 	return listPayload{Schedules: entries}

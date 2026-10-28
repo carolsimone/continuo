@@ -98,6 +98,13 @@ func FromGRPC(err error) CLIError {
 	}
 }
 
+// IsFailedPrecondition reports whether err is a gRPC FAILED_PRECONDITION, the
+// status of a request the server refuses because of the state of what it
+// names. FromGRPC maps it to a conflict, as it does ABORTED.
+func IsFailedPrecondition(err error) bool {
+	return status.Code(err) == codes.FailedPrecondition
+}
+
 // serverMessage returns the message of the gRPC status wrapped inside err.
 // status.FromError reports the whole wrapped error text for a wrapped status,
 // so the status is located with errors.As to recover the server's own message.

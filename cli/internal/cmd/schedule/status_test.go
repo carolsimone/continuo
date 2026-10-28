@@ -21,35 +21,67 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const statusRunID = "11111111-1111-4111-8111-111111111111"
+
 // fakeStateStatus implements client.RunClient for status tests.
 type fakeStateStatus struct {
 	client.RunClient
-	schedules     *runv1.ListSchedulesResponse
-	schedulesErr  error
-	pages         []*runv1.ListTasksResponse // returned in order, one per ListTasks call
-	listErr       error
+	schedules    *runv1.ListSchedulesResponse
+	schedulesErr error
+	run          *runv1.Run
+	runErr       error
+	taskPages    []*runv1.ListTasksResponse
+	taskErr      error
+	attempts     []*runv1.TaskAttempt
+	// attemptsTotal is the total_count the one page of attempts reports.
+	attemptsTotal int32
+
+	getRunIDs     []string
 	listTasksCall int
 
 	// Per-call deadline capture: each RPC records whether its context carried a
 	// deadline, so tests can assert the documented per-call --timeout contract.
-	listAllHadDeadline bool
-	listTasksDeadlines []bool
+	deadlines map[string][]bool
+}
+
+func (f *fakeStateStatus) noteDeadline(rpc string, ctx context.Context) {
+	if f.deadlines == nil {
+		f.deadlines = map[string][]bool{}
+	}
+	_, has := ctx.Deadline()
+	f.deadlines[rpc] = append(f.deadlines[rpc], has)
 }
 
 func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error) {
-	_, f.listAllHadDeadline = ctx.Deadline()
+	f.noteDeadline("ListSchedules", ctx)
 	return f.schedules, f.schedulesErr
 }
 
-func (f *fakeStateStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32) (*runv1.ListTasksResponse, error) {
-	_, hasDeadline := ctx.Deadline()
-	f.listTasksDeadlines = append(f.listTasksDeadlines, hasDeadline)
-	if f.listErr != nil {
-		return nil, f.listErr
+func (f *fakeStateStatus) GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error) {
+	f.noteDeadline("GetRun", ctx)
+	f.getRunIDs = append(f.getRunIDs, runID)
+	if f.runErr != nil {
+		return nil, f.runErr
 	}
-	resp := f.pages[f.listTasksCall]
+	return &runv1.RunResponse{Run: f.run}, nil
+}
+
+func (f *fakeStateStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32) (*runv1.ListTasksResponse, error) {
+	f.noteDeadline("ListTasks", ctx)
+	if f.taskErr != nil {
+		return nil, f.taskErr
+	}
+	resp := f.taskPages[f.listTasksCall]
 	f.listTasksCall++
 	return resp, nil
+}
+
+func (f *fakeStateStatus) ListRunAttempts(ctx context.Context, _, _ string, _, offset int32) (*runv1.ListRunAttemptsResponse, error) {
+	f.noteDeadline("ListRunAttempts", ctx)
+	if offset > 0 {
+		return &runv1.ListRunAttemptsResponse{TotalCount: f.attemptsTotal}, nil
+	}
+	return &runv1.ListRunAttemptsResponse{TotalCount: f.attemptsTotal, Attempts: f.attempts}, nil
 }
 
 func (f *fakeStateStatus) Close() error { return nil }
@@ -78,80 +110,99 @@ func runStatus(t *testing.T, fake client.RunClient, args []string, human bool) (
 	return outBuf.String(), errBuf.String(), exit
 }
 
-type statusNodeJSON struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	Status      string `json:"status"`
-}
-type statusPayloadJSON struct {
-	ScheduleName  string           `json:"schedule_name"`
-	RunId         string           `json:"run_id"`
-	HasActiveRun  bool             `json:"has_active_run"`
-	LastRunStatus string           `json:"last_run_status"`
-	Nodes         []statusNodeJSON `json:"nodes"`
+type statusTaskJSON struct {
+	Node           string `json:"node"`
+	Status         string `json:"status"`
+	Attempt        int32  `json:"attempt"`
+	FailureClass   string `json:"failure_class"`
+	FailureReason  string `json:"failure_reason"`
+	WaitReason     string `json:"wait_reason"`
+	WaitingOnRunID string `json:"waiting_on_run_id"`
 }
 
-func TestStatus_SuccessEmitsNodesJSON(t *testing.T) {
-	fake := &fakeStateStatus{
+type statusPayloadJSON struct {
+	Run   map[string]any   `json:"run"`
+	Tasks []statusTaskJSON `json:"tasks"`
+}
+
+func ranSchedule() *fakeStateStatus {
+	return &fakeStateStatus{
 		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "daily", LastRunId: "run-1", HasActiveRun: true, LastRunStatus: ""},
+			{ScheduleName: "other", LastRunId: "run-9"},
+			{ScheduleName: "daily", LastRunId: statusRunID, HasActiveRun: false, LastRunStatus: "failed"},
 		}},
-		pages: []*runv1.ListTasksResponse{{
-			TotalCount: 2,
-			Tasks: []*runv1.Task{
-				{ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded"},
-				{ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "running"},
-			},
-		}},
+		run: &runv1.Run{
+			RunId: statusRunID, ScheduleName: "daily", Kind: "cron", Operation: "run", Status: "failed",
+			CreatedAt: timestamppb.New(time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)), PromotionSeq: 3, ReleaseId: "rel-1",
+			InitiatedBy: "alice", StartedAt: timestamppb.New(time.Date(2026, 10, 27, 9, 1, 0, 0, time.UTC)),
+			CompletedAt:    timestamppb.New(time.Date(2026, 10, 27, 9, 5, 0, 0, time.UTC)),
+			LastProgressAt: timestamppb.New(time.Date(2026, 10, 27, 9, 4, 0, 0, time.UTC)),
+			CancelledAt:    timestamppb.New(time.Date(2026, 10, 27, 9, 3, 0, 0, time.UTC)),
+			CancelledBy:    "bob", CancellationReason: "stop", FailureReason: "stalled",
+		},
+		taskPages: []*runv1.ListTasksResponse{{TotalCount: 2, Tasks: []*runv1.Task{
+			{TaskId: "t-a", ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded"},
+			{TaskId: "t-b", ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "failed", Attempt: 1,
+				WaitReason: "node_lease", WaitingOnRunId: "run-1"},
+		}}},
+		attempts: []*runv1.TaskAttempt{
+			{TaskId: "t-b", Attempt: 0, Status: "failed", FailureClass: "infra", FailureReason: "create_failed"},
+			{TaskId: "t-b", Attempt: 1, Status: "failed", FailureClass: "task", FailureReason: "dbt_error"},
+		},
+		attemptsTotal: 2,
 	}
+}
+
+// schedule status prints exactly what run show prints for the schedule's
+// latest run.
+func TestScheduleStatus_PrintsTheRunShowShape(t *testing.T) {
+	fake := ranSchedule()
 
 	stdout, stderr, exit := runStatus(t, fake, []string{"daily"}, false)
 
-	assert.Equal(t, 0, exit)
+	require.Equal(t, 0, exit, stdout)
 	assert.Empty(t, stderr)
 	var p statusPayloadJSON
 	require.NoError(t, json.Unmarshal([]byte(stdout), &p))
-	assert.Equal(t, "daily", p.ScheduleName)
-	assert.Equal(t, "run-1", p.RunId)
-	assert.True(t, p.HasActiveRun)
-	require.Len(t, p.Nodes, 2)
-	assert.Equal(t, "succeeded", p.Nodes[0].Status)
-	assert.Equal(t, "running", p.Nodes[1].Status)
-	assert.Equal(t, "orders", p.Nodes[0].TableName)
+	assert.Equal(t, statusRunID, p.Run["run_id"])
+	assert.Equal(t, "failed", p.Run["status"])
+	assert.Equal(t, "daily", p.Run["schedule_name"])
+	require.Len(t, p.Tasks, 2)
+	assert.Equal(t, statusTaskJSON{Node: "svc.analytics.orders", Status: "succeeded"}, p.Tasks[0])
+	assert.Equal(t, statusTaskJSON{Node: "svc.analytics.revenue", Status: "failed", Attempt: 1, FailureClass: "task",
+		FailureReason: "dbt_error", WaitReason: "node_lease", WaitingOnRunID: "run-1"}, p.Tasks[1])
+	assert.Equal(t, []string{statusRunID}, fake.getRunIDs)
+	for _, gone := range []string{"schedule_name", "run_id", "has_active_run", "last_run_status", "nodes"} {
+		var top map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(stdout), &top))
+		assert.NotContains(t, top, gone, "the old top-level key %s is gone", gone)
+	}
 }
 
-func TestStatus_PagesThroughAllNodes(t *testing.T) {
-	page1 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"},
-		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: "failed"},
-	}}
-	page2 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: "skipped"},
-	}}
-	fake := &fakeStateStatus{
-		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "daily", LastRunId: "run-1"},
-		}},
-		pages: []*runv1.ListTasksResponse{page1, page2},
+func TestScheduleStatus_PagesThroughAllTasks(t *testing.T) {
+	var first, second []*runv1.Task
+	for i := 0; i < 200; i++ {
+		first = append(first, &runv1.Task{TaskId: "t", ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"})
 	}
+	second = append(second, &runv1.Task{TaskId: "u", ServiceName: "s", SchemaName: "x", TableName: "c", Status: "skipped"})
+	fake := ranSchedule()
+	fake.taskPages = []*runv1.ListTasksResponse{{TotalCount: 201, Tasks: first}, {TotalCount: 201, Tasks: second}}
+	fake.attempts, fake.attemptsTotal = nil, 0
 
 	stdout, _, exit := runStatus(t, fake, []string{"daily"}, false)
 
-	assert.Equal(t, 0, exit)
+	require.Equal(t, 0, exit)
 	var p statusPayloadJSON
 	require.NoError(t, json.Unmarshal([]byte(stdout), &p))
-	require.Len(t, p.Nodes, 3)
-	assert.Equal(t, "skipped", p.Nodes[2].Status)
+	require.Len(t, p.Tasks, 201)
+	assert.Equal(t, "skipped", p.Tasks[200].Status)
 	assert.Equal(t, 2, fake.listTasksCall)
 }
 
-func TestStatus_UnknownNameExits3(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-		{ScheduleName: "other", LastRunId: "run-9"},
-	}}}
+func TestScheduleStatus_UnknownNameExits3(t *testing.T) {
+	fake := ranSchedule()
 
-	stdout, _, exit := runStatus(t, fake, []string{"daily"}, false)
+	stdout, _, exit := runStatus(t, fake, []string{"nope"}, false)
 
 	assert.Equal(t, 3, exit)
 	var env map[string]output.CLIError
@@ -159,38 +210,30 @@ func TestStatus_UnknownNameExits3(t *testing.T) {
 	assert.Equal(t, output.CodeNotFound, env["error"].Code)
 }
 
-func TestStatus_NeverRunReturnsEmptyNodesNoListCall(t *testing.T) {
+func TestScheduleStatus_ANeverRunScheduleReturnsANullRunAndNoTasks(t *testing.T) {
 	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-		{ScheduleName: "daily", LastRunId: "", HasActiveRun: false, LastRunStatus: ""},
+		{ScheduleName: "daily"},
 	}}}
 
 	stdout, _, exit := runStatus(t, fake, []string{"daily"}, false)
 
 	assert.Equal(t, 0, exit)
-	var p statusPayloadJSON
-	require.NoError(t, json.Unmarshal([]byte(stdout), &p))
-	assert.Equal(t, "", p.RunId)
-	assert.Empty(t, p.Nodes)
-	assert.NotNil(t, p.Nodes) // JSON [] not null
-	assert.Equal(t, 0, fake.listTasksCall)
+	assert.JSONEq(t, `{"run":null,"tasks":[]}`, stdout)
+	assert.Empty(t, fake.getRunIDs)
+	assert.Zero(t, fake.listTasksCall)
 }
 
-func TestStatus_ListTasksRPCErrorExits5(t *testing.T) {
-	fake := &fakeStateStatus{
-		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "daily", LastRunId: "run-1"},
-		}},
-		listErr: status.Error(codes.Unavailable, "down"),
-	}
+func TestScheduleStatus_AListTasksFailureExits5(t *testing.T) {
+	fake := ranSchedule()
+	fake.taskErr = status.Error(codes.Unavailable, "down")
 
 	_, _, exit := runStatus(t, fake, []string{"daily"}, false)
 
 	assert.Equal(t, 5, exit)
 }
 
-func TestStatus_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeStateStatus{}
-	stdout, _, exit := runStatus(t, fake, []string{}, false)
+func TestScheduleStatus_WrongArgCountExits2(t *testing.T) {
+	stdout, _, exit := runStatus(t, &fakeStateStatus{}, []string{}, false)
 	assert.Equal(t, 2, exit)
 
 	// A usage error must still emit the machine-readable envelope on stdout,
@@ -200,165 +243,58 @@ func TestStatus_WrongArgCountExits2(t *testing.T) {
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
-func TestStatus_AppliesPerCallDeadline(t *testing.T) {
-	page1 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"},
-		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: "failed"},
-	}}
-	page2 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: "succeeded"},
-	}}
-	fake := &fakeStateStatus{
-		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "daily", LastRunId: "run-1"},
-		}},
-		pages: []*runv1.ListTasksResponse{page1, page2},
-	}
+func TestScheduleStatus_EveryRPCCarriesItsOwnDeadline(t *testing.T) {
+	fake := ranSchedule()
 
 	_, _, exit := runStatus(t, fake, []string{"daily"}, false)
 
 	require.Equal(t, 0, exit)
-	// The schedule lookup and every ListTasks page each carry their own deadline.
-	assert.True(t, fake.listAllHadDeadline, "ListAllSchedules ctx should carry a deadline")
-	require.Len(t, fake.listTasksDeadlines, 2)
-	for i, hasDeadline := range fake.listTasksDeadlines {
-		assert.True(t, hasDeadline, "ListTasks page %d ctx should carry its own deadline", i)
+	for _, rpc := range []string{"ListSchedules", "GetRun", "ListTasks", "ListRunAttempts"} {
+		require.NotEmpty(t, fake.deadlines[rpc], "%s was not called", rpc)
+		for i, has := range fake.deadlines[rpc] {
+			assert.True(t, has, "%s call %d carries no deadline", rpc, i)
+		}
 	}
 }
 
-// TestStatus_OutputSchemaMatchesEmittedKeys is the drift control: the declared
-// output_schema annotation must list exactly the top-level keys the command emits.
-func TestStatus_OutputSchemaMatchesEmittedKeys(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-		{ScheduleName: "daily", LastRunId: ""},
-	}}}
-	stdout, _, _ := runStatus(t, fake, []string{"daily"}, false)
+// The declared output_schema lists exactly the keys the command emits, at every
+// depth, for a run that has every optional field set.
+func TestScheduleStatus_OutputMatchesItsSchema(t *testing.T) {
+	stdout, _, exit := runStatus(t, ranSchedule(), []string{"daily"}, false)
+	require.Equal(t, 0, exit)
 
-	var emitted map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
-
-	cmd := NewStatusCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
-	var schema map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
-
-	assert.ElementsMatch(t, keys(emitted), keys(schema))
-}
-
-func keys(m map[string]json.RawMessage) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	cmd := NewStatusCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	requireShapeMatches(t, json.RawMessage(cmd.Annotations["output_schema"]), json.RawMessage(stdout))
 }
 
 // The help's list of the statuses a task can carry ("status is one of: ...")
 // is exactly the task_status values RunService documents on Task.status.
-func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
+func TestScheduleStatus_LongNamesEveryTaskStatus(t *testing.T) {
 	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
 	const prefix = "status is one of: "
 	var listed []string
 	for _, line := range strings.Split(long, "\n") {
-		if i := strings.Index(line, prefix); i >= 0 {
+		if i := strings.Index(line, prefix); i >= 0 && strings.Contains(line, "pending") {
 			listed = strings.Split(strings.TrimSuffix(strings.TrimSpace(line[i+len(prefix):]), "."), "|")
 		}
 	}
-	require.NotEmpty(t, listed, "the help has no %q line", prefix)
+	require.NotEmpty(t, listed, "the help has no task status line")
 	served := []string{"pending", "dispatched", "queued", "running", "stopping", "succeeded", "failed", "cancelled", "skipped"}
 	assert.ElementsMatch(t, served, listed)
 }
 
-// A cancelled run passes through cancelling, and a cancelling run still counts
-// as running; the help says both so a caller does not read it as finished.
-func TestStatus_LongNamesTheCancellingRunStatus(t *testing.T) {
+func TestScheduleStatus_LongExplainsALeaseWaitAndTheCancellingRunStatus(t *testing.T) {
 	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
 
-	assert.Contains(t, long, "last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.")
-	assert.Contains(t, long, "has_active_run is true while a pending, running or cancelling run holds the schedule")
-}
-
-// A node whose task waits for its node's lease says why, on which run and since
-// when; a node that waits for nothing omits all three.
-func TestStatus_ReportsALeaseWaitAndItsHolder(t *testing.T) {
-	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
-	fake := &fakeStateStatus{
-		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "single", LastRunId: "run-2", HasActiveRun: true, LastRunStatus: "running"},
-		}},
-		pages: []*runv1.ListTasksResponse{{
-			TotalCount: 2,
-			Tasks: []*runv1.Task{
-				{ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: "pending",
-					WaitReason: "node_lease", WaitingOnRunId: "run-1", WaitingSince: timestamppb.New(since)},
-				{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: "pending"},
-			},
-		}},
-	}
-
-	stdout, _, exit := runStatus(t, fake, []string{"single"}, false)
-
-	require.Equal(t, 0, exit)
-	var payload struct {
-		Nodes []map[string]any `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-	require.Len(t, payload.Nodes, 2)
-	assert.Equal(t, "node_lease", payload.Nodes[0]["wait_reason"])
-	assert.Equal(t, "run-1", payload.Nodes[0]["waiting_on_run_id"])
-	assert.Equal(t, "2026-10-24T10:05:00Z", payload.Nodes[0]["waiting_since"])
-	for _, k := range []string{"wait_reason", "waiting_on_run_id", "waiting_since"} {
-		assert.NotContains(t, payload.Nodes[1], k, "a node that waits for nothing omits %s", k)
-	}
-}
-
-// The output_schema annotation declares every field a node can carry: a node
-// with every field set emits exactly the keys its nodes item declares.
-func TestStatus_OutputSchemaDeclaresEveryNodeField(t *testing.T) {
-	fake := &fakeStateStatus{
-		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
-			{ScheduleName: "single", LastRunId: "run-2", HasActiveRun: true},
-		}},
-		pages: []*runv1.ListTasksResponse{{
-			TotalCount: 1,
-			Tasks: []*runv1.Task{{ServiceName: "svc", SchemaName: "raw", TableName: "a",
-				Status: "pending", WaitReason: "node_lease", WaitingOnRunId: "run-1",
-				WaitingSince: timestamppb.New(time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC))}},
-		}},
-	}
-	stdout, _, exit := runStatus(t, fake, []string{"single"}, false)
-	require.Equal(t, 0, exit)
-
-	var emitted struct {
-		Nodes []map[string]json.RawMessage `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
-	require.Len(t, emitted.Nodes, 1)
-
-	var schema struct {
-		Nodes []map[string]string `json:"nodes"`
-	}
-	cmd := NewStatusCommand(nil, &config.Config{}, io.Discard, io.Discard)
-	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
-	require.Len(t, schema.Nodes, 1, "output_schema declares the fields of one nodes item")
-
-	assert.ElementsMatch(t, keys(emitted.Nodes[0]), keysOf(schema.Nodes[0]))
-	assert.Equal(t, "string", schema.Nodes[0]["wait_reason"])
-	assert.Equal(t, "string", schema.Nodes[0]["waiting_on_run_id"])
-	assert.Equal(t, "string", schema.Nodes[0]["waiting_since"])
-}
-
-// The help says when the wait fields are set and what they name.
-func TestStatus_LongExplainsALeaseWait(t *testing.T) {
-	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
-
-	assert.Contains(t, long, `"wait_reason":string,"waiting_on_run_id":string,"waiting_since":string`)
 	assert.Contains(t, long, "wait_reason is node_lease while the task waits for another run to release its node")
+	assert.Contains(t, long, "cancelling")
 }
 
-func keysOf(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+func TestScheduleStatus_HumanModeWritesASummaryToStderr(t *testing.T) {
+	stdout, stderr, exit := runStatus(t, ranSchedule(), []string{"daily"}, true)
+
+	require.Equal(t, 0, exit)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, statusRunID)
+	assert.Contains(t, stderr, "svc.analytics.revenue")
 }

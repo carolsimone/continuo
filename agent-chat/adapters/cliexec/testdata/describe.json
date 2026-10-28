@@ -1096,6 +1096,536 @@
       ]
     },
     {
+      "path": "run attempts",
+      "short": "List the attempts of a run's tasks, or of one task",
+      "long": "List the attempts of a run's tasks, or of one task.\n\nUse when the user asks why a task failed, how often it was retried, how long an\nattempt took, or where its logs and results are. \"run show\" gives each task's\nlatest failure; this lists every attempt with its timings and error.\n\nArguments:\n  <run-id>   The UUID of the run.\n  [task-id]  Optional. The UUID of one task of the run (the task_id of \"run graph\");\n             only that task's attempts are listed. A blank value is refused.\n\nOutput (stdout, JSON):\n  {\"attempts\":[{\"task_id\":string,\"attempt\":number,\"job_name\":string,\"status\":string,\n                \"failure_class\":string,\"failure_reason\":string,\"exit_code\":number,\n                \"dispatched_at\":string,\"queued_at\":string,\"started_at\":string,\n                \"finished_at\":string,\"execution_seconds\":number,\"error_message\":string,\n                \"log_s3_key\":string,\"run_results_uri\":string}],\n   \"total_count\":number}\n  Attempts are ordered by task id, then attempt number (0-based). status is one of\n  dispatched|queued|running|succeeded|failed|stopped. failure_class and failure_reason\n  are set only for a failed attempt; a timestamp, error_message, log_s3_key and\n  run_results_uri are omitted until recorded. Timestamps are RFC3339 in UTC.\n  exit_code 0 is a clean exit only for a succeeded attempt; it is also what an\n  unknown exit code reads as.\n  The output is ONE page of at most 200 attempts, in that order. total_count counts every\n  attempt the filter matches: when it exceeds the length of \"attempts\", the list is\n  truncated, so name a task-id to read one task's attempts.\n  An unknown run, or a task the run does not have, lists nothing and exits 0.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a blank task id, or an id that is not a UUID\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>",
+        "[task-id]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run attempts 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a",
+        "continuo run attempts 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a 7c9e6679-7425-40de-944b-e07fc1f90ae7"
+      ],
+      "output_schema": {
+        "attempts": [
+          {
+            "task_id": "string",
+            "attempt": "number",
+            "job_name": "string",
+            "status": "string",
+            "failure_class": "string",
+            "failure_reason": "string",
+            "exit_code": "number",
+            "dispatched_at": "string",
+            "queued_at": "string",
+            "started_at": "string",
+            "finished_at": "string",
+            "execution_seconds": "number",
+            "error_message": "string",
+            "log_s3_key": "string",
+            "run_results_uri": "string"
+          }
+        ],
+        "total_count": "number"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "run cancel",
+      "short": "Cancel one run by id; it ends cancelled once its Jobs have stopped",
+      "long": "Cancel one run by id.\n\nUse when the user asks to stop, cancel or kill a particular run, for example a\nrun found with \"run show\" or \"schedule runs\". To cancel whatever run a schedule\nhas active now, use \"schedule cancel\".\n\nA successful cancel means the run is now cancelling, not that it has stopped:\nthe state service stops handing out work, and the run ends cancelled once\nexecution-controller has stopped every Job of it. Until then the run's status is\ncancelling and its tasks that were running show as stopping; read \"run show\n<run-id>\" to see when the run has ended. A run with nothing in flight ends\ncancelled at once.\nA second cancel of a cancelling run succeeds and changes nothing: it returns the same\nrun and keeps the first cancel's time, author and reason. The same holds for a\nrun that is already cancelled.\n\nArguments:\n  <run-id>  The UUID of the run to cancel.\n  <reason>  Why the run is being cancelled; recorded for audit. Required and\n            must be non-empty.\n\nThe cancelling identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity. This command sends no request id.\n\nOutput (stdout, JSON):\n  {\"run\":{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\"operation\":string,\n          \"status\":string,\"failure_reason\":string,\"release_id\":string,\n          \"promotion_seq\":number,\"initiated_by\":string,\"created_at\":string,\n          \"started_at\":string,\"completed_at\":string,\"last_progress_at\":string,\n          \"cancelled_at\":string,\"cancelled_by\":string,\"cancellation_reason\":string}}\n  The run is as the cancel left it: status cancelling while an attempt is still\n  being stopped, cancelled when nothing was in flight. Timestamps are RFC3339 in\n  UTC; failure_reason, release_id, initiated_by, the timestamps other than\n  created_at and the cancel fields are omitted when empty.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a blank run id or reason, or the run id is not a UUID\n  not_found  (exit 3)  no run with that id\n  conflict   (exit 4)  the run already ended succeeded, failed or skipped, so there is nothing to cancel\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>",
+        "<reason>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run cancel 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a \"bad upstream data\""
+      ],
+      "output_schema": {
+        "run": {
+          "run_id": "string",
+          "schedule_name": "string",
+          "kind": "string",
+          "operation": "string",
+          "status": "string",
+          "failure_reason": "string",
+          "release_id": "string",
+          "promotion_seq": "number",
+          "initiated_by": "string",
+          "created_at": "string",
+          "started_at": "string",
+          "completed_at": "string",
+          "last_progress_at": "string",
+          "cancelled_at": "string",
+          "cancelled_by": "string",
+          "cancellation_reason": "string"
+        }
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
+      "path": "run graph",
+      "short": "Show the nodes of a run and the dependencies among them",
+      "long": "Show the nodes of a run and the dependencies among them.\n\nUse when the user asks what a run depends on, which nodes sit upstream or\ndownstream of a failed node, or whether a run still matches the live release.\n\nArguments:\n  <run-id>  The UUID of the run.\n\nOutput (stdout, JSON):\n  {\"nodes\":[{\"service_name\":string,\"schema_name\":string,\"table_name\":string,\n             \"schedule_name\":string,\"node_type\":string,\"status\":string,\"task_id\":string,\n             \"wait_reason\":string,\"waiting_on_run_id\":string,\"waiting_since\":string}],\n   \"edges\":[{\"from_node_id\":string,\"to_node_id\":string}],\n   \"run_promotion_seq\":number,\"latest_promotion_seq\":number}\n  An edge points from the dependent node to its dependency; node ids are\n  \"<service>.<schema>.<table>\". schedule_name and node_type are omitted when\n  unknown (node_type is empty for a run that names no release).\n  status is the task status: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.\n  wait_reason is node_lease while the task waits for another run to release its node,\n  waiting_on_run_id is the run writing it and waiting_since is when the wait began\n  (RFC3339); the three are omitted when the task waits for nothing besides its upstreams.\n  run_promotion_seq is the promotion sequence of the release the run executes on and\n  latest_promotion_seq is the live one; they differ when a newer release was promoted\n  after the run started. 0 means unknown (an unknown run, or a run that names no release).\n  An unknown run returns \"nodes\":[] and \"edges\":[] and exit 0.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, or the run id is not a UUID\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run graph 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a"
+      ],
+      "output_schema": {
+        "nodes": [
+          {
+            "service_name": "string",
+            "schema_name": "string",
+            "table_name": "string",
+            "schedule_name": "string",
+            "node_type": "string",
+            "status": "string",
+            "task_id": "string",
+            "wait_reason": "string",
+            "waiting_on_run_id": "string",
+            "waiting_since": "string"
+          }
+        ],
+        "edges": [
+          {
+            "from_node_id": "string",
+            "to_node_id": "string"
+          }
+        ],
+        "run_promotion_seq": "number",
+        "latest_promotion_seq": "number"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "run rebase",
+      "short": "Restart a failed or cancelled run from its failure on the live release",
+      "long": "Restart a failed or cancelled run from its failure on the live release.\n\nUse when the user asks to restart a failed or cancelled run from its failure on\nthe newest code. Always run \"run rebase-preview\" first, show the user its counts\n(how many nodes run, how many are new, changed upstream or inherited), ask for\napproval, and only then run this command with the release_id the preview printed.\nThe release id makes the approval binding: if the live release moved since the\npreview, the rebase is refused and nothing is started.\n\nThe new run keeps the source's schedule name and runs on the live release. It\nre-executes the source's tasks that did not succeed, the live schedule's nodes\nthe source never ran, everything below them and, with with-changed-upstream,\nevery changed node upstream of those. Every other success is inherited.\n\nArguments:\n  <run-id>                The UUID of the failed or cancelled run to rebase from.\n  <release-id>            The release_id \"run rebase-preview\" printed, which must still\n                          be the live release. Required and must be non-empty.\n  [with-changed-upstream] Optional: \"true\" or \"false\" (default false); pass the value\n                          that was previewed. Any other value is refused.\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n  run_id is the id of the new run; schedule_name is the source run's schedule.\n\nEach invocation sends one request id (the CONTINUO_REQUEST_ID environment\nvariable when set, otherwise a fresh UUID). CONTINUO_REQUEST_ID must be a UUID:\nany other value is refused (usage, exit 2). The state service answers a repeat\nof the same id and the same arguments with the run the first call started or\ncancelled and writes nothing, so a lost response is safe to retry. The same id\nwith other arguments is refused (conflict, exit 4, not retryable): no retry of\nit can succeed, so send other arguments under a new id. A call refused because\nthe state service is unavailable, or because concurrent calls of the same id\nkept rolling back, is sent again with the same id up to twice before it is\nreported (unavailable or conflict, retryable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a blank run id or release id, [with-changed-upstream] not true or false, or the run id is not a UUID\n  not_found  (exit 3)  no run with that id\n  conflict   (exit 4)  the live release is not <release-id> (not retryable: the message says to run \"continuo run rebase-preview\" again and use its new release_id), the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>",
+        "<release-id>",
+        "[with-changed-upstream]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run rebase 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a rel-2026-10-27-3 true"
+      ],
+      "output_schema": {
+        "run_id": "string",
+        "schedule_name": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "mutating": true
+    },
+    {
+      "path": "run rebase-preview",
+      "short": "Preview what rebasing a failed or cancelled run on the live release would re-execute",
+      "long": "Preview what rebasing a failed or cancelled run on the live release would re-execute.\n\nUse when the user asks to restart a failed or cancelled run from its failure on\nthe newest code, or asks what such a restart would cost. It creates no run and is\nthe first step of a rebase: show the user the counts, ask for approval, then run\n\"run rebase\" with the release_id this command printed.\n\nA rebase re-executes the source run's tasks that did not succeed, the live\nschedule's nodes the source never ran and everything below them, and with\nwith-changed-upstream also every changed node upstream of those. Every other\nsuccess of the source is inherited.\n\nArguments:\n  <run-id>                The UUID of the failed or cancelled run to rebase from.\n  [with-changed-upstream] Optional: \"true\" or \"false\" (default false). With true the\n                          preview counts the changed upstream nodes as re-executed.\n                          Any other value is refused.\n\nOutput (stdout, JSON):\n  {\"release_id\":string,\"promotion_seq\":number,\"total_nodes\":number,\"will_run\":number,\n   \"failed_or_skipped\":number,\"new_nodes\":number,\"changed_upstream\":number,\n   \"downstream\":number,\"inherited\":number,\n   \"changed_nodes\":[{\"service_name\":string,\"schema_name\":string,\"table_name\":string,\n                     \"downstream\":number,\"last_success_seconds\":number}]}\n  release_id is the live release the preview compared; pass it to \"run rebase\".\n  total_nodes is re-executed plus inherited; will_run is the sum of\n  failed_or_skipped, new_nodes, changed_upstream and downstream. changed_upstream\n  is 0 without with-changed-upstream. changed_nodes lists every changed upstream\n  node the option would add, whether or not it is set, ordered by service, schema\n  and table; downstream counts the nodes below it, and last_success_seconds is the\n  execution time of its latest successful task (0 when it has none).\n  Maintenance mode does not refuse a preview.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a blank run id, [with-changed-upstream] not true or false, or the run id is not a UUID\n  not_found  (exit 3)  no run with that id\n  conflict   (exit 4)  the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, or leaves nothing to re-execute\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>",
+        "[with-changed-upstream]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run rebase-preview 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a true"
+      ],
+      "output_schema": {
+        "release_id": "string",
+        "promotion_seq": "number",
+        "total_nodes": "number",
+        "will_run": "number",
+        "failed_or_skipped": "number",
+        "new_nodes": "number",
+        "changed_upstream": "number",
+        "downstream": "number",
+        "inherited": "number",
+        "changed_nodes": [
+          {
+            "service_name": "string",
+            "schema_name": "string",
+            "table_name": "string",
+            "downstream": "number",
+            "last_success_seconds": "number"
+          }
+        ]
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "run rerun",
+      "short": "Re-execute what did not succeed in a failed or cancelled run, on the release it ran on",
+      "long": "Re-execute what did not succeed in a failed or cancelled run.\n\nUse when the user asks to retry, rerun or resume a failed or cancelled run as\nit was, on the release it ran on. To run it again on the live release instead\n(new nodes, changed code), use \"run rebase-preview\" and \"run rebase\".\n\nThe new run re-executes the source run's tasks that did not succeed and their\ndescendants, on the source run's release, and keeps the source's schedule name.\nReady tasks are dispatched when the run is created.\n\nArguments:\n  <run-id>  The UUID of the failed or cancelled run to rerun.\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n  run_id is the id of the new run; schedule_name is the source run's schedule.\n\nEach invocation sends one request id (the CONTINUO_REQUEST_ID environment\nvariable when set, otherwise a fresh UUID). CONTINUO_REQUEST_ID must be a UUID:\nany other value is refused (usage, exit 2). The state service answers a repeat\nof the same id and the same arguments with the run the first call started or\ncancelled and writes nothing, so a lost response is safe to retry. The same id\nwith other arguments is refused (conflict, exit 4, not retryable): no retry of\nit can succeed, so send other arguments under a new id. A call refused because\nthe state service is unavailable, or because concurrent calls of the same id\nkept rolling back, is sent again with the same id up to twice before it is\nreported (unavailable or conflict, retryable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a blank run id, or the run id is not a UUID\n  not_found  (exit 3)  no run with that id\n  conflict   (exit 4)  the run is not failed or cancelled, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run rerun 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a"
+      ],
+      "output_schema": {
+        "run_id": "string",
+        "schedule_name": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "mutating": true
+    },
+    {
+      "path": "run show",
+      "short": "Show one run and the status and failure of each of its tasks",
+      "long": "Show one run and the status and failure of each of its tasks.\n\nUse when the user asks how a run is going, why it failed, or which of its nodes\nran, failed, waited or were skipped. To find a run id, use \"schedule status\"\n(the latest run of a schedule) or \"schedule runs\" (its completed runs).\n\nArguments:\n  <run-id>  The UUID of the run.\n\nOutput (stdout, JSON):\n  {\"run\":{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\"operation\":string,\n          \"status\":string,\"failure_reason\":string,\"release_id\":string,\n          \"promotion_seq\":number,\"initiated_by\":string,\"created_at\":string,\n          \"started_at\":string,\"completed_at\":string,\"last_progress_at\":string,\n          \"cancelled_at\":string,\"cancelled_by\":string,\"cancellation_reason\":string},\n   \"tasks\":[{\"node\":string,\"status\":string,\"attempt\":number,\n             \"failure_class\":string,\"failure_reason\":string,\n             \"wait_reason\":string,\"waiting_on_run_id\":string}]}\n  Timestamps are RFC3339 in UTC. failure_reason, release_id, initiated_by, the\n  timestamps other than created_at and the cancel fields are omitted when empty.\n  kind is one of cron|trigger|rerun|rebase|single_node_run|promote_seed;\n  operation is one of run|test|build|full_refresh.\n  The run status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.\n  cancelling: a cancel was accepted and the run waits for its Jobs to stop.\n  The run's failure_reason (stalled|empty_selection|invalid_node_type) is set only\n  when the run failed without a failed task.\n  node is \"<service>.<schema>.<table>\". attempt is the 0-based number of the task's current attempt.\n  status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.\n  dispatched: an attempt was sent and not yet accepted; queued: the attempt\n  was accepted and waits for a slot to run in; stopping: a stop was requested\n  and the task waits for its attempt to stop.\n  failure_class and failure_reason are those of the task's latest attempt and are\n  empty strings when that attempt did not fail or the task has no attempt yet.\n  wait_reason is node_lease while the task waits for another run to release its node,\n  and waiting_on_run_id is the run writing that node (empty for a moment when the\n  node has just been freed); both are empty strings when the task waits for nothing\n  besides its upstreams.\n\nErrors:\n  not_found  (exit 3)  no run with that id\n  usage      (exit 2)  wrong number of arguments, or the run id is not a UUID\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<run-id>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo run show 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a"
+      ],
+      "output_schema": {
+        "run": {
+          "run_id": "string",
+          "schedule_name": "string",
+          "kind": "string",
+          "operation": "string",
+          "status": "string",
+          "failure_reason": "string",
+          "release_id": "string",
+          "promotion_seq": "number",
+          "initiated_by": "string",
+          "created_at": "string",
+          "started_at": "string",
+          "completed_at": "string",
+          "last_progress_at": "string",
+          "cancelled_at": "string",
+          "cancelled_by": "string",
+          "cancellation_reason": "string"
+        },
+        "tasks": [
+          {
+            "node": "string",
+            "status": "string",
+            "attempt": "number",
+            "failure_class": "string",
+            "failure_reason": "string",
+            "wait_reason": "string",
+            "waiting_on_run_id": "string"
+          }
+        ]
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
       "path": "schedule build",
       "short": "Run dbt build for every model in the named schedule",
       "long": "Run dbt build for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to build an entire schedule (its whole DAG of models)\nnow, as opposed to only testing it. dbt build both materializes (runs) and\ntests each node in one invocation. Unlike schedule test's flat fan-out, the\nwhole-DAG build is dependency-ordered: nodes run in topological order, and\nif a node fails, its downstream descendants are cascade-skipped rather than\nattempted. A node with no tests defined is still built; there is no\n\"no_tests\" skip for build.\n\nArguments:\n  <schedule-name>  The schedule to build.\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nEach invocation sends one request id (the CONTINUO_REQUEST_ID environment\nvariable when set, otherwise a fresh UUID). CONTINUO_REQUEST_ID must be a UUID:\nany other value is refused (usage, exit 2). The state service answers a repeat\nof the same id and the same arguments with the run the first call started or\ncancelled and writes nothing, so a lost response is safe to retry. The same id\nwith other arguments is refused (conflict, exit 4, not retryable): no retry of\nit can succeed, so send other arguments under a new id. A call refused because\nthe state service is unavailable, or because concurrent calls of the same id\nkept rolling back, is sent again with the same id up to twice before it is\nreported (unavailable or conflict, retryable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  no model of the live release has the schedule's tag and the schedule has no cron (see \"schedule list\")\n  conflict   (exit 4)  a run is already active for this schedule, or the request id was used before with other arguments\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
@@ -1566,6 +2096,74 @@
       "mutating": true
     },
     {
+      "path": "schedule runs",
+      "short": "List the completed runs of a schedule, newest first",
+      "long": "List the completed runs of a schedule, newest first.\n\nUse when the user asks how a schedule did over time, when it last failed, or for\nthe id of an earlier run to inspect with \"run show\". A run that has not ended\n(pending, running or cancelling) is not listed: \"schedule status\" shows it.\n\nArguments:\n  <schedule-name>  The schedule whose runs to list (exact match).\n\nOutput (stdout, JSON):\n  {\"runs\":[{\"run_id\":string,\"schedule_name\":string,\"status\":string,\n            \"created_at\":string,\"completed_at\":string,\"failure_reason\":string}],\n   \"total_count\":number}\n  status is one of succeeded|failed|cancelled|skipped. created_at and completed_at are\n  RFC3339 in UTC. failure_reason (stalled|empty_selection|invalid_node_type) is set only\n  when the run failed without a failed task and is omitted otherwise.\n  The output is ONE page: the newest runs, at most the server's default page size.\n  total_count counts every completed run of the schedule: when it exceeds the length\n  of \"runs\", older runs exist that this command does not list.\n  A schedule with no completed run, or one that does not exist, returns \"runs\":[]\n  and \"total_count\":0 with exit 0.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<schedule-name>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo schedule runs daily-revenue"
+      ],
+      "output_schema": {
+        "runs": [
+          {
+            "run_id": "string",
+            "schedule_name": "string",
+            "status": "string",
+            "created_at": "string",
+            "completed_at": "string",
+            "failure_reason": "string"
+          }
+        ],
+        "total_count": "number"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
       "path": "schedule set-cron",
       "short": "Set when a schedule runs on its own: a cron in a timezone",
       "long": "Set when a schedule runs on its own: a cron in a timezone.\n\nUse when the user asks to schedule a schedule, to change the time it runs\nautomatically, to add a cron to a schedule that has none (one that runs only\nwhen triggered), or to change a cron's timezone or description. The cron decides\nonly WHEN the schedule runs; which models it runs comes from their dbt tag, so\nthe name must be a schedule that \"schedule list\" shows.\n\nArguments:\n  <name>         The schedule name, exactly as \"schedule list\" shows it. Names\n                 are case-sensitive: \"Daily\" is not \"daily\".\n  <cron>         Five fields (minute hour day-of-month month day-of-week) or a\n                 descriptor such as @daily. Pass the five fields as ONE argument\n                 (in a shell, quote it): \"0 1 * * *\". A CRON_TZ= or TZ= prefix\n                 is refused: the timezone is the next argument.\n  <timezone>     The IANA zone the cron is read in, such as Europe/Paris or UTC.\n  [description]  Optional. What the schedule is for. Omit it to keep the current\n                 description; an empty value is a usage error.\n\nset-cron sets the cron and the timezone and re-sends the rest of the schedule as\nlisted: its current paused flag and its description (a [description] given\nreplaces it). A paused schedule stays paused; \"schedule resume\" starts it. The\nnext fire counts from now.\nOnly a schedule's first cron needs a model of the live release with its tag; a\nschedule that has a cron can be changed whatever the live release holds.\n\nset-cron sends the version it read, so a pause or a description saved by another\nedit since is never overwritten: it reads the schedule again, saves once more\nwith what that edit left, and exits 4 if the schedule changed again. The cron\nitself is last-write-wins: a cron another editor saved a moment ago is replaced.\n\nOutput (stdout, JSON):\n  {\"schedule_name\":string,\"cron\":string,\"cron_words\":string,\"timezone\":string,\n   \"description\":string,\"paused\":bool,\"version\":number,\"next_fire_times\":[string]}\n  next_fire_times are the next three fires (RFC3339, UTC), empty while the\n  schedule is paused. cron_words is the cron in English and description is the\n  saved description; each is omitted when empty.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments (a cron whose fields were not passed as one argument arrives as several), a blank argument, or a cron or timezone the parser refuses; the message is the parser's\n  not_found  (exit 3)  the schedule has no cron yet and no model of the live release has its tag; a listed name that differs only by case is offered as \"did you mean\"\n  conflict   (exit 4)  another edit saved the schedule twice while this ran (\"changed by <who> while this ran; run it again\"); nothing was changed by this command, so run it again\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; edits are refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
@@ -1643,8 +2241,8 @@
     },
     {
       "path": "schedule status",
-      "short": "Show the per-node status of a schedule's latest run",
-      "long": "Show the per-node status of a schedule's latest run.\n\nUse when the user asks where a schedule is, how far it has got, or which of its\nnodes are running, failed, or succeeded right now.\n\nArguments:\n  <schedule-name>  The schedule to inspect (exact match).\n\nOutput (stdout, JSON):\n  {\"schedule_name\":string,\"run_id\":string,\"has_active_run\":bool,\n   \"last_run_status\":string,\n   \"nodes\":[{\"service_name\":string,\"schema_name\":string,\n             \"table_name\":string,\"status\":string,\n             \"wait_reason\":string,\"waiting_on_run_id\":string,\"waiting_since\":string}]}\n  status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.\n  dispatched: an attempt was sent and not yet accepted; queued: the attempt\n  was accepted and waits for a slot to run in; stopping: a stop was requested\n  and the task waits for its attempt to stop.\n  wait_reason is node_lease while the task waits for another run to release its node:\n  another run's task is writing the same node, and this pending task starts\n  once that write ends. waiting_on_run_id is the run writing the node (empty\n  for a moment when the node has just been freed and the task is about to be\n  granted it); waiting_since is when the wait began (RFC3339). The three are\n  omitted when the task waits for nothing besides its upstreams.\n  last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.\n  cancelling: a cancel was accepted and the run waits for its Jobs to stop.\n  has_active_run is true while a pending, running or cancelling run holds the schedule.\n  A schedule that has never run returns run_id:\"\" and nodes:[].\n\nErrors:\n  not_found  (exit 3)  no schedule with that name\n  usage      (exit 2)  wrong number of arguments\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "short": "Show a schedule's latest run and the status of each of its tasks",
+      "long": "Show a schedule's latest run and the status of each of its tasks.\n\nUse when the user asks where a schedule is, how far its latest run has got, which\nof its nodes are running, failed, or succeeded right now, or why the run failed.\nIt prints what \"run show\" prints for the schedule's latest run, so use \"run show\"\nwith an earlier run id (from \"schedule runs\") to inspect an older run.\n\nArguments:\n  <schedule-name>  The schedule to inspect (exact match).\n\nOutput (stdout, JSON):\n  {\"run\":{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\"operation\":string,\n          \"status\":string,\"failure_reason\":string,\"release_id\":string,\n          \"promotion_seq\":number,\"initiated_by\":string,\"created_at\":string,\n          \"started_at\":string,\"completed_at\":string,\"last_progress_at\":string,\n          \"cancelled_at\":string,\"cancelled_by\":string,\"cancellation_reason\":string},\n   \"tasks\":[{\"node\":string,\"status\":string,\"attempt\":number,\n             \"failure_class\":string,\"failure_reason\":string,\n             \"wait_reason\":string,\"waiting_on_run_id\":string}]}\n  Timestamps are RFC3339 in UTC. failure_reason, release_id, initiated_by, the\n  timestamps other than created_at and the cancel fields are omitted when empty.\n  kind is one of cron|trigger|rerun|rebase|single_node_run|promote_seed;\n  operation is one of run|test|build|full_refresh.\n  The run status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.\n  pending, running and cancelling mean the run still holds the schedule;\n  cancelling: a cancel was accepted and the run waits for its Jobs to stop.\n  The run's failure_reason (stalled|empty_selection|invalid_node_type) is set only\n  when the run failed without a failed task.\n  node is \"<service>.<schema>.<table>\". attempt is the 0-based number of the task's current attempt.\n  status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.\n  dispatched: an attempt was sent and not yet accepted; queued: the attempt\n  was accepted and waits for a slot to run in; stopping: a stop was requested\n  and the task waits for its attempt to stop.\n  failure_class and failure_reason are those of the task's latest attempt and are\n  empty strings when that attempt did not fail or the task has no attempt yet.\n  wait_reason is node_lease while the task waits for another run to release its node:\n  another run's task is writing the same node, and this pending task starts once\n  that write ends. waiting_on_run_id is the run writing the node (empty for a\n  moment when the node has just been freed and the task is about to be granted it);\n  both are empty strings when the task waits for nothing besides its upstreams.\n  A schedule that has never run returns {\"run\":null,\"tasks\":[]}.\n\nErrors:\n  not_found  (exit 3)  no schedule with that name\n  usage      (exit 2)  wrong number of arguments\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>"
       ],
@@ -1690,19 +2288,33 @@
         "continuo schedule status daily-revenue"
       ],
       "output_schema": {
-        "schedule_name": "string",
-        "run_id": "string",
-        "has_active_run": "bool",
-        "last_run_status": "string",
-        "nodes": [
+        "run": {
+          "run_id": "string",
+          "schedule_name": "string",
+          "kind": "string",
+          "operation": "string",
+          "status": "string",
+          "failure_reason": "string",
+          "release_id": "string",
+          "promotion_seq": "number",
+          "initiated_by": "string",
+          "created_at": "string",
+          "started_at": "string",
+          "completed_at": "string",
+          "last_progress_at": "string",
+          "cancelled_at": "string",
+          "cancelled_by": "string",
+          "cancellation_reason": "string"
+        },
+        "tasks": [
           {
-            "service_name": "string",
-            "schema_name": "string",
-            "table_name": "string",
+            "node": "string",
             "status": "string",
+            "attempt": "number",
+            "failure_class": "string",
+            "failure_reason": "string",
             "wait_reason": "string",
-            "waiting_on_run_id": "string",
-            "waiting_since": "string"
+            "waiting_on_run_id": "string"
           }
         ]
       },

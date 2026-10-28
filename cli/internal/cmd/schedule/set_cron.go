@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
+	"github.com/carolsimone/continuo/cli/internal/runview"
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
@@ -139,7 +140,7 @@ Errors:
 				NextFireTimes: make([]string, 0, len(resp.GetNextFireTimes())),
 			}
 			for _, ts := range resp.GetNextFireTimes() {
-				payload.NextFireTimes = append(payload.NextFireTimes, timestampString(ts))
+				payload.NextFireTimes = append(payload.NextFireTimes, runview.Timestamp(ts))
 			}
 
 			if cfg.Human {

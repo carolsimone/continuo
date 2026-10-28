@@ -200,9 +200,9 @@ func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
 
 const fixedRequestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 
-// A command that starts or cancels a run hands the client the request id of the
-// invocation, which CONTINUO_REQUEST_ID fixes, so the client can send it on
-// every try and the server can recognise a repeat.
+// A command that starts a run, or cancels a schedule's active run, hands the
+// client the request id of the invocation, which CONTINUO_REQUEST_ID fixes, so
+// the client can send it on every try and the server can recognise a repeat.
 func TestScheduleCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", fixedRequestID)
 	ok := &runv1.StartRunResponse{RunId: "r1"}

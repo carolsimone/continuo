@@ -172,8 +172,8 @@ bench_wait_run() {
   local schedule="$1" run_id="$2" limit_s="$3" deadline rid running status
   deadline=$(( $(date +%s) + limit_s ))
   while true; do
-    if read -r rid running status < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
-         | python3 "$(bench_here)/cli_json.py" run-state) \
+    if read -r rid running status < <(bench_cli_run schedule list 2>/dev/null \
+         | python3 "$(bench_here)/cli_json.py" run-state "${schedule}") \
        && [ "${rid}" = "${run_id}" ] && [ "${running}" = "false" ]; then
       echo "${status}"
       return 0
@@ -205,10 +205,10 @@ bench_finish_run() {
 # non-zero, printing its error envelope on stdout), the cancel fails, or the run
 # is still live after the wait.
 bench_cancel_live_run() {
-  local schedule="$1" wait_s="${BENCH_CANCEL_WAIT_S:-300}" status_json run_id running ended
-  if ! status_json="$(bench_cli_run schedule status "${schedule}" 2>/dev/null)" \
-     || ! read -r run_id running _ < <(printf '%s' "${status_json}" \
-          | python3 "$(bench_here)/cli_json.py" run-state 2>/dev/null); then
+  local schedule="$1" wait_s="${BENCH_CANCEL_WAIT_S:-300}" list_json run_id running ended
+  if ! list_json="$(bench_cli_run schedule list 2>/dev/null)" \
+     || ! read -r run_id running _ < <(printf '%s' "${list_json}" \
+          | python3 "$(bench_here)/cli_json.py" run-state "${schedule}" 2>/dev/null); then
     echo "bench: could not read ${schedule}'s run state; cancel its live run by hand" >&2
     return 1
   fi

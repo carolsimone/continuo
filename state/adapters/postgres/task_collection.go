@@ -249,7 +249,9 @@ func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, serv
 
 // ListByRunID retrieves one page of the tasks of the tenant's run, newest
 // first, with an optional status filter, and the number of tasks the filter
-// matches. Each task carries the run holding the node lease it waits for.
+// matches. Tasks created together (a run's tasks all are) come by task id, so
+// successive pages never repeat or skip a task. Each task carries the run
+// holding the node lease it waits for.
 func (r *TaskCollection) ListByRunID(ctx context.Context, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskRow, int, error) {
 	var statusFilter sql.NullString
 	if status != nil {
@@ -267,7 +269,7 @@ func (r *TaskCollection) ListByRunID(ctx context.Context, runID uuid.UUID, statu
 	var tasks []*TaskRow
 	if err := r.db.SelectContext(ctx, &tasks, taskReadQuery+`
 		  AND t.run_id = $2 AND ($3::text IS NULL OR t.status = $3)
-		ORDER BY t.created_at DESC
+		ORDER BY t.created_at DESC, t.task_id
 		LIMIT $4 OFFSET $5`,
 		r.tenantID, runID, statusFilter, limit, offset); err != nil {
 		r.logger.Error("Failed to list tasks by schedule",

@@ -135,3 +135,37 @@ func TestCatalog_CronToolsAreMutatingAndSetCronTakesAnOptionalDescription(t *tes
 		assert.True(t, tool.Params[0].Required, name)
 	}
 }
+
+// run rebase takes arguments that are partly required and partly optional: the
+// run id and the release id the preview printed are required, and the
+// changed-upstream choice is a bracketed positional the model may omit.
+func TestCatalog_RunRebaseHasTwoRequiredAndOneOptionalPositional(t *testing.T) {
+	c := loadCatalog(t)
+
+	rebase, ok := c.Lookup("run_rebase")
+	require.True(t, ok)
+	assert.Equal(t, []string{"run", "rebase"}, rebase.CLIPath)
+	require.Len(t, rebase.Params, 3)
+	assert.Equal(t, []string{"run-id", "release-id", "with-changed-upstream"}, rebase.ParamOrder)
+	assert.True(t, rebase.Params[0].Required)
+	assert.True(t, rebase.Params[1].Required)
+	assert.False(t, rebase.Params[2].Required)
+}
+
+// Every command that cancels a run or starts another one is mutating, so the
+// chat asks the user to approve it before it runs; the reads of a run never
+// are.
+func TestCatalog_RunMutatingCommandsNeedApproval(t *testing.T) {
+	c := loadCatalog(t)
+
+	for _, name := range []string{"run_cancel", "run_rerun", "run_rebase"} {
+		tool, ok := c.Lookup(name)
+		require.True(t, ok, "tool %q must be in the catalog", name)
+		assert.True(t, tool.Mutating, "tool %q must need approval", name)
+	}
+	for _, name := range []string{"run_show", "run_graph", "run_attempts", "run_rebase-preview", "schedule_runs"} {
+		tool, ok := c.Lookup(name)
+		require.True(t, ok, "tool %q must be in the catalog", name)
+		assert.False(t, tool.Mutating, "tool %q is a read", name)
+	}
+}

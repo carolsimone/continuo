@@ -75,8 +75,9 @@ single JSON object to stdout:
 `triggered_at` is the CLI's clock at the moment the request returned;
 the state service does not echo a server timestamp today.
 
-Every command that starts or cancels a run (`schedule trigger|test|build|cancel`
-and `node trigger|test|build|full-refresh`) sends one request id per invocation:
+Every command that starts a run or cancels a schedule's active run
+(`schedule trigger|test|build|cancel`, `node trigger|test|build|full-refresh`,
+`run rerun` and `run rebase`) sends one request id per invocation:
 `CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
 answers a repeat of the same id and arguments with the run the first call made
 and writes nothing. The client retries such a command, with the same id, up to
@@ -256,9 +257,10 @@ Triggered run cd4423ae-9161-4773-aa43-3ec087f24a0a for schedule 'daily_ingest'
   exists, no concurrent run, …) are enforced by the state service. The
   CLI only translates gRPC status codes into exit codes and JSON shapes.
 - **Bounded retries, the caller owns the rest.** The client repeats only
-  what is safe to repeat: a command that starts or cancels a run (same
-  request id; up to three tries, 100 ms then 400 ms apart, on UNAVAILABLE or
-  ABORTED) and a schedule edit (on UNAVAILABLE only). `set-cron` also reads
+  what is safe to repeat: a command that starts a run or cancels a
+  schedule's active run (same request id; up to three tries, 100 ms then
+  400 ms apart, on UNAVAILABLE or ABORTED) and a schedule edit (on
+  UNAVAILABLE only). `set-cron` also reads
   the schedule again and saves once more after a stale version. Any other
   error, and any error left once those tries are spent, exits at once. The
   `retryable` bit is advice for the caller (agent, shell loop, CI step), who

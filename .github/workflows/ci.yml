@@ -89,6 +89,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Disk usage (start)
+        run: bash scripts/ci-disk-usage.sh "start of job"
+
       - name: Isolate Docker client state
         # Keeps this job's builder selection and registry credentials out of the
         # ~/.docker that the two runner agents would otherwise share. Requires the
@@ -200,6 +203,9 @@ jobs:
           kill -KILL -"$watchdog_pid" 2>/dev/null
           exit "$rc"
 
+      - name: Disk usage (after infrastructure)
+        run: bash scripts/ci-disk-usage.sh "after set up infrastructure"
+
       - name: Wait for service containers
         # Block until all long-running service containers report Running=true.
         # wait_for_container_running is defined in scripts/lib/common.sh.
@@ -285,6 +291,9 @@ jobs:
         # All build/run/wait logic lives in tests/e2e/start-services.sh.
         run: bash tests/e2e/start-services.sh
 
+      - name: Disk usage (before e2e)
+        run: bash scripts/ci-disk-usage.sh "before e2e"
+
       - name: Start ui + deploy + e2e
         # Start the ui container, wait for it to become healthy, deploy k8s
         # controllers, then run the full e2e suite inside the orchestrator
@@ -318,6 +327,10 @@ jobs:
         if: always()
         run: bash tests/e2e/cleanup-k8s-controllers.sh
       # ────────────────────────────────────────────────────────────────────────
+
+      - name: Disk usage (end of job)
+        if: always()
+        run: bash scripts/ci-disk-usage.sh "end of job, before tear down"
 
       - name: Tear down
         if: always()

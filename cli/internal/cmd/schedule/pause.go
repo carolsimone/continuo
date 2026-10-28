@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
+	"github.com/carolsimone/continuo/cli/internal/runview"
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
@@ -138,7 +139,7 @@ func newPauseResumeCommand(spec pauseSpec, factory RunClientFactory, cfg *config
 				Cron:         current.GetCron(),
 				Timezone:     current.GetTimezone(),
 				Version:      current.GetVersion(),
-				NextFireAt:   timestampString(current.GetNextFireAt()),
+				NextFireAt:   runview.Timestamp(current.GetNextFireAt()),
 			}
 			if current.GetPaused() != spec.paused {
 				ctx, cancel := callContext(cmd, cfg)
@@ -160,7 +161,7 @@ func newPauseResumeCommand(spec pauseSpec, factory RunClientFactory, cfg *config
 				result.Cron = saved.GetCron()
 				result.Timezone = saved.GetTimezone()
 				result.Version = saved.GetVersion()
-				result.NextFireAt = timestampString(saved.GetNextFireAt())
+				result.NextFireAt = runview.Timestamp(saved.GetNextFireAt())
 			}
 
 			if cfg.Human {
