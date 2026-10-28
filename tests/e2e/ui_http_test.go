@@ -16,7 +16,7 @@ import (
 )
 
 // verifyUIService asserts the ui HTTP API returns correct data for the
-// scheduler run created by the e2e test.  Status fields are polled because the
+// run created by the e2e test.  Status fields are polled because the
 // state service propagates job-completion events asynchronously after the k8s
 // jobs finish (execution-controller → gRPC → state service → DB), so the scheduler
 // and task records may still show "pending"/"running" immediately after
@@ -24,7 +24,7 @@ import (
 //
 // The function is a no-op when UI_HTTP_BASE is unset so developer runs without
 // the UI container are not broken.
-func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
+func verifyUIService(t *testing.T, ctx context.Context, runID string) {
 	t.Helper()
 
 	base := os.Getenv("UI_HTTP_BASE")
@@ -33,21 +33,22 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 		return
 	}
 
-	t.Logf("Verifying ui at %s (schedule_id=%s)...", base, scheduleID)
+	t.Logf("Verifying ui at %s (run_id=%s)...", base, runID)
 
-	// ── GET /api/schedulers/:id — verify specific run is present and succeeded ─
+	// ── GET /api/runs/:id — verify specific run is present and succeeded ─
 	// verifySchedulerSucceeded already confirmed the state DB shows "succeeded"
 	// before this function is called; the UI check confirms the HTTP API also
 	// surfaces the correct status.
-	schedulerBody := mustGetJSON(t, fmt.Sprintf("%s/api/schedulers/%s", base, scheduleID))
+	runBody := mustGetJSON(t, fmt.Sprintf("%s/api/runs/%s", base, runID))
 
-	completedAt, _ := schedulerBody["completed_at"].(string)
+	completedAt, _ := runBody["completed_at"].(string)
 	assert.True(t, isISOTimestamp(completedAt),
-		"scheduler completed_at %q should be an ISO-8601 timestamp", completedAt)
-	assert.Equal(t, "succeeded", schedulerBody["status"],
-		"scheduler status should be 'succeeded'")
+		"run completed_at %q should be an ISO-8601 timestamp", completedAt)
+	assert.Equal(t, "succeeded", runBody["status"],
+		"run status should be 'succeeded'")
+	assert.Equal(t, runID, runBody["run_id"], "the run is the one asked for")
 
-	t.Logf("✅ ui /api/schedulers/%s: present (status=%v)", scheduleID, schedulerBody["status"])
+	t.Logf("✅ ui /api/runs/%s: present (status=%v)", runID, runBody["status"])
 
 	// ── GET /api/schedules — verify schedule catalog entry has correct last_run_id ─
 	schedulesBody := mustGetJSON(t, base+"/api/schedules")
@@ -57,22 +58,22 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 	var foundSummary map[string]interface{}
 	for _, item := range schedulesList {
 		s, _ := item.(map[string]interface{})
-		if s["last_run_id"] == scheduleID {
+		if s["last_run_id"] == runID {
 			foundSummary = s
 			break
 		}
 	}
-	require.NotNil(t, foundSummary, "GET /api/schedules: schedule with last_run_id=%q not found", scheduleID)
+	require.NotNil(t, foundSummary, "GET /api/schedules: schedule with last_run_id=%q not found", runID)
 	assert.Equal(t, "succeeded", foundSummary["last_run_status"],
 		"schedule last_run_status should be 'succeeded'")
 
 	t.Logf("✅ ui /api/schedules: schedule %q present (last_run_status=%v)", foundSummary["schedule_name"], foundSummary["last_run_status"])
 
-	// ── Poll GET /api/schedulers/:id/tasks until all tasks show "succeeded" ──
+	// ── Poll GET /api/runs/:id/tasks until all tasks show "succeeded" ──
 	var tasksList []interface{}
 
 	pollUntil(t, ctx, 60*time.Second, 2*time.Second, func() (bool, error) {
-		body, err := getJSON(fmt.Sprintf("%s/api/schedulers/%s/tasks", base, scheduleID))
+		body, err := getJSON(fmt.Sprintf("%s/api/runs/%s/tasks", base, runID))
 		if err != nil {
 			return false, err
 		}
@@ -88,7 +89,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 		}
 		tasksList = list
 		return true, nil
-	}, fmt.Sprintf("Timeout waiting for all tasks of scheduler %s to reach status=succeeded via ui", scheduleID))
+	}, fmt.Sprintf("Timeout waiting for all tasks of run %s to reach status=succeeded via ui", runID))
 
 	require.NotEmpty(t, tasksList)
 
@@ -99,7 +100,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 			"task created_at %q should be an ISO-8601 timestamp", taskCreatedAt)
 	}
 
-	t.Logf("✅ ui /api/schedulers/%s/tasks: %d tasks present, all succeeded", scheduleID, len(tasksList))
+	t.Logf("✅ ui /api/runs/%s/tasks: %d tasks present, all succeeded", runID, len(tasksList))
 
 	// ── GET /api/releases — verify the commit-author enrichment resolves ──
 	// ui resolves each release's author from its (repo, commit_sha) via GitHub;

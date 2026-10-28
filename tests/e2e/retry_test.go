@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +25,7 @@ const (
 // retries a task's own failure and that execution-controller runs each attempt
 // as a Job of its own that knows its attempt number:
 //
-//	TriggerSchedule(e2e-retry) → state dispatches attempt 0 of ftable_retry
+//	StartRun(e2e-retry) → state dispatches attempt 0 of ftable_retry
 //	→ its Job runs with TASK_ATTEMPT=0, the model's cast fails ("invalid input
 //	  syntax for type integer"), dbt exits 1
 //	→ execution-controller reports attempt 0 failed (task, exit_code)
@@ -52,10 +52,10 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 
 	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: retryScheduleName})
-	require.NoError(t, err, "TriggerSchedule(%s)", retryScheduleName)
-	runID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "TriggerSchedule must return the run's id")
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: retryScheduleName})
+	require.NoError(t, err, "StartRun(%s)", retryScheduleName)
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "StartRun must return the run's id")
 	t.Logf("run %s of %s triggered", runID, retryScheduleName)
 	taskID := taskOfRun(t, ctx, clients, runID, retryTable)
 

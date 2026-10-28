@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,7 +45,7 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	t.Logf("TriggerSingleNodeRun operation=build: %s.%s.%s", targetService, targetSchema, targetTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
@@ -107,16 +107,16 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSchedule operation=build on %q", failureTestScheduleName)
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	t.Logf("StartRun operation=build on %q", failureTestScheduleName)
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: failureTestScheduleName,
 		Operation:    "build",
 	})
-	require.NoError(t, err, "TriggerSchedule(operation=build) failed")
-	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+	require.NoError(t, err, "StartRun(operation=build) failed")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
-	runID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "schedule_id must be a valid UUID")
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
 
 	t.Log("Waiting for ftable_e and ftable_g to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, runID, "ftable_e")
@@ -173,16 +173,16 @@ func TestBuildOperationRerun(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// ── Drive a whole-DAG build run to FAILED ───────────────────────────────
-	t.Logf("TriggerSchedule operation=build on %q", failureTestScheduleName)
-	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	t.Logf("StartRun operation=build on %q", failureTestScheduleName)
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: failureTestScheduleName,
 		Operation:    "build",
 	})
-	require.NoError(t, err, "TriggerSchedule(operation=build) failed")
-	require.NotEmpty(t, resp.ScheduleId, "must return a non-empty schedule_id")
+	require.NoError(t, err, "StartRun(operation=build) failed")
+	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
 
-	srcID, err := uuid.Parse(resp.ScheduleId)
-	require.NoError(t, err, "schedule_id must be a valid UUID")
+	srcID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
 
 	t.Log("Waiting for ftable_e to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, srcID, "ftable_e")
@@ -195,7 +195,7 @@ func TestBuildOperationRerun(t *testing.T) {
 
 	// ── Rerun the failed build run ──────────────────────────────────────────
 	t.Log("Triggering rerun via gRPC TriggerRerun with only source_run_id...")
-	rerunResp, err := clients.stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{
+	rerunResp, err := clients.runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(),
 		SourceRunId: srcID.String(),
 	})
 	require.NoError(t, err, "TriggerRerun must succeed against a FAILED build run")

@@ -23,8 +23,8 @@ func insertSeedRun(t *testing.T, db *sqlx.DB, tenant string, status run.RunStatu
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
-		VALUES ($4, $1, $2, $3, now(), 'completed', 'promote_seed')`, id, "promote-seed-"+id.String()[:8], string(status), tenant)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind)
+		VALUES ($4, $1, $2, $3, now(), 'promote_seed')`, id, "promote-seed-"+id.String()[:8], string(status), tenant)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 	return id

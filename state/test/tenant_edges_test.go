@@ -23,7 +23,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 )
 
@@ -153,61 +153,54 @@ func TestTenantEdges(t *testing.T) {
 	service, schema, table := e.node()
 
 	t.Run("reads", func(t *testing.T) {
-		_, err := stateClient.GetScheduler(ctx, &statev1.GetSchedulerRequest{ScheduleId: runID})
-		requireCode(t, err, codes.NotFound, "GetScheduler")
-		_, err = stateClient.GetSchedulerInitStatus(ctx, &statev1.GetSchedulerInitStatusRequest{ScheduleId: runID})
-		requireCode(t, err, codes.NotFound, "GetSchedulerInitStatus")
-		_, err = stateClient.GetTask(ctx, &statev1.GetTaskRequest{TaskId: e.taskID.String()})
-		requireCode(t, err, codes.NotFound, "GetTask")
-		_, err = stateClient.GetTaskByScheduleAndNode(ctx, &statev1.GetTaskByScheduleAndNodeRequest{
-			ScheduleId: runID, ServiceName: service, SchemaName: schema, TableName: table,
-		})
-		requireCode(t, err, codes.NotFound, "GetTaskByScheduleAndNode")
+		_, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
+		requireCode(t, err, codes.NotFound, "GetRun")
 
-		tasks, err := stateClient.ListTasks(ctx, &statev1.ListTasksRequest{ScheduleId: runID})
+		tasks, err := runClient.ListTasks(ctx, &runv1.ListTasksRequest{RunId: runID})
 		require.NoError(t, err)
-		assert.Empty(t, tasks.Tasks)
-		assert.Zero(t, tasks.TotalCount)
-		attempts, err := stateClient.ListTaskAttempts(ctx, &statev1.ListTaskAttemptsRequest{RunId: runID})
+		assert.Empty(t, tasks.GetTasks())
+		assert.Zero(t, tasks.GetTotalCount())
+		attempts, err := runClient.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{RunId: runID})
 		require.NoError(t, err)
-		assert.Empty(t, attempts.Attempts)
-		graph, err := stateClient.GetRunGraph(ctx, &statev1.GetRunGraphRequest{RunId: runID})
+		assert.Empty(t, attempts.GetAttempts())
+		graph, err := runClient.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: runID})
 		require.NoError(t, err)
-		assert.Empty(t, graph.Nodes, "another tenant's run has no graph")
-		assert.Zero(t, graph.RunPromotionSeq, "another tenant's run names no release")
+		assert.Empty(t, graph.GetNodes(), "another tenant's run has no graph")
+		assert.Zero(t, graph.GetRunPromotionSeq(), "another tenant's run names no release")
 
-		drifts, err := stateClient.ListActiveRunDrifts(ctx, &statev1.ListActiveRunDriftsRequest{})
+		drifts, err := runClient.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{})
 		require.NoError(t, err)
-		for _, d := range drifts.ActiveRuns {
-			assert.NotEqual(t, runID, d.RunId, "another tenant's active run drifts for no request")
+		for _, d := range drifts.GetActiveRuns() {
+			assert.NotEqual(t, runID, d.GetRunId(), "another tenant's active run drifts for no request")
 		}
-		nodeRuns, err := stateClient.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{ServiceName: service, SchemaName: schema, TableName: table})
+		nodeTasks, err := runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: service, SchemaName: schema, TableName: table})
 		require.NoError(t, err)
-		assert.Empty(t, nodeRuns.Runs)
-		nodes, err := stateClient.ListNodes(ctx, &statev1.ListNodesRequest{Search: table})
+		assert.Empty(t, nodeTasks.GetTasks())
+		nodes, err := runClient.ListNodes(ctx, &runv1.ListNodesRequest{Search: table})
 		require.NoError(t, err)
-		assert.Empty(t, nodes.Nodes)
+		assert.Empty(t, nodes.GetNodes())
 	})
 
 	t.Run("commands", func(t *testing.T) {
-		_, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: e.schedule})
-		requireCode(t, err, codes.NotFound, "TriggerSchedule of another tenant's schedule")
-		_, err = stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{ScheduleName: e.schedule})
-		requireCode(t, err, codes.FailedPrecondition, "CancelSchedule finds no active run of the request's tenant")
-		_, err = stateClient.CancelScheduler(ctx, &statev1.CancelSchedulerRequest{ScheduleId: runID, CancelledBy: "alice"})
-		requireCode(t, err, codes.NotFound, "CancelScheduler")
-		_, err = stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{SourceRunId: runID})
+		_, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: e.schedule})
+		requireCode(t, err, codes.NotFound, "StartRun of another tenant's schedule")
+		_, err = runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{RequestId: uuid.NewString(), ScheduleName: e.schedule})
+		requireCode(t, err, codes.FailedPrecondition, "CancelActiveRun finds no active run of the request's tenant")
+		_, err = runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: runID, CancelledBy: "alice"})
+		requireCode(t, err, codes.NotFound, "CancelRun")
+		_, err = runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(), SourceRunId: runID})
 		requireCode(t, err, codes.NotFound, "TriggerRerun")
-		_, err = stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: runID})
+		_, err = runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: runID})
 		requireCode(t, err, codes.NotFound, "PreviewRebase")
-		_, err = stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{SourceRunId: runID})
+		_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: runID})
 		requireCode(t, err, codes.NotFound, "TriggerRebase")
-		_, err = stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-			ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "snapshot_of_run", SourceRunId: runID,
+		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+			RequestId: uuid.NewString(), ServiceName: service, SchemaName: schema, TableName: table,
+			MetadataSource: "snapshot_of_run", SourceRunId: runID,
 		})
 		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of another tenant's run")
-		_, err = stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-			ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "latest",
+		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+			RequestId: uuid.NewString(), ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "latest",
 		})
 		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of a node only another tenant's release holds")
 

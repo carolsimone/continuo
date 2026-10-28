@@ -88,8 +88,7 @@ func TestAttemptReport_AReportNamingAnotherTenantIsDeadLettered(t *testing.T) {
 	msg := reportEntry(t, "succeeded")
 	runID := uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
 	now := time.Now()
-	ended := run.HydrateRun(pkgevents.DefaultTenantID, runID, "daily", run.RunStatusSucceeded, run.InitStatusCompleted,
-		run.KindCron, nil, identity.SystemUserID, model.OperationRun, now, nil, &now, nil, nil, nil, nil, nil, 0, nil)
+	ended := run.HydrateRun(pkgevents.DefaultTenantID, runID, "daily", run.RunStatusSucceeded, run.KindCron, nil, identity.SystemUserID, model.OperationRun, now, nil, &now, nil, nil, nil, nil, nil, 0, nil)
 	handler := handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: time.Hour}, nil, bindTestLogger())
 	bind := func(runs *tenantRuns) (func(context.Context, map[string]any) error, *recordingDedupRepo) {
 		u, dedup := newRecordingUnitOfWork(false)

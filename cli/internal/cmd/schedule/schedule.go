@@ -12,14 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// StateClientFactory dials and returns a StateClient. In production this is
-// client.NewStateClient; tests pass a closure returning a fake.
-type StateClientFactory func(ctx context.Context, endpoint string) (client.StateClient, error)
-
-// OrchestratorClientFactory dials and returns an OrchestratorClient. In
-// production this is client.NewOrchestratorClient; tests pass a closure
-// returning a fake.
-type OrchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
+// RunClientFactory dials and returns a RunClient. In production this is
+// client.NewRunClient; tests pass a closure returning a fake.
+type RunClientFactory func(ctx context.Context, endpoint string) (client.RunClient, error)
 
 // NewCommand builds `continuo schedule` and attaches subcommands.
 // cfg is a pointer that root.go fills in via PersistentPreRunE before any
@@ -43,15 +38,11 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewListCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewStatusCommand(defaultFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewGraphCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewGraphCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewCancelCommand(defaultFactory, cfg, stdout, stderr))
 	return cmd
 }
 
-func defaultFactory(ctx context.Context, endpoint string) (client.StateClient, error) {
-	return client.NewStateClient(ctx, endpoint)
-}
-
-func defaultOrchestratorFactory(ctx context.Context, endpoint string) (client.OrchestratorClient, error) {
-	return client.NewOrchestratorClient(ctx, endpoint)
+func defaultFactory(ctx context.Context, endpoint string) (client.RunClient, error) {
+	return client.NewRunClient(ctx, endpoint)
 }

@@ -20,7 +20,7 @@ afterEach(() => {
 
 describe('CancelDialog — buttons use .btn foundation', () => {
   it('Close button uses .btn.btn--secondary, no legacy class', async () => {
-    render(<CancelDialog scheduleName="daily" onCancelled={vi.fn()} onClose={vi.fn()} />);
+    render(<CancelDialog runId="run-7" onCancelled={vi.fn()} onClose={vi.fn()} />);
     // Wait for config to load so both action buttons appear
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
     const close = screen.getByRole('button', { name: /close/i });
@@ -30,7 +30,7 @@ describe('CancelDialog — buttons use .btn foundation', () => {
   });
 
   it('Cancel run button uses .btn.btn--danger, no legacy class', async () => {
-    render(<CancelDialog scheduleName="daily" onCancelled={vi.fn()} onClose={vi.fn()} />);
+    render(<CancelDialog runId="run-7" onCancelled={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
     const cancelRun = screen.getByRole('button', { name: /cancel run/i });
     expect(cancelRun.className).toMatch(/\bbtn\b/);
@@ -40,7 +40,7 @@ describe('CancelDialog — buttons use .btn foundation', () => {
 
   it('config error renders info-strip--error, not dialog-config-error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
-    render(<CancelDialog scheduleName="daily" onCancelled={vi.fn()} onClose={vi.fn()} />);
+    render(<CancelDialog runId="run-7" onCancelled={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.queryByText(/could not load/i)).toBeInTheDocument());
     const errEl = screen.getByText(/could not load/i);
     expect(errEl.className).toMatch(/\binfo-strip\b/);
@@ -61,17 +61,31 @@ describe('CancelDialog — submitting', () => {
   }
 
   async function submit(onCancelled: () => void, onClose: () => void) {
-    render(<CancelDialog scheduleName="daily" onCancelled={onCancelled} onClose={onClose} />);
+    render(<CancelDialog runId="run-7" onCancelled={onCancelled} onClose={onClose} />);
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Broken data' } });
     fireEvent.click(screen.getByRole('button', { name: /cancel run/i }));
   }
 
   it('reports an accepted cancel through onCancelled, then closes', async () => {
-    stubCancel({ ok: true, body: { schedule_id: 'run-1' } });
+    stubCancel({ ok: true, body: { run_id: 'run-7', status: 'cancelling' } });
     const calls: string[] = [];
     await submit(() => calls.push('cancelled'), () => calls.push('close'));
     await waitFor(() => expect(calls).toEqual(['cancelled', 'close']));
+  });
+
+  it('CancelDialog cancels by run id, with the reason and no request id', async () => {
+    stubCancel({ ok: true, body: { run_id: 'run-7', status: 'cancelling' } });
+    const onClose = vi.fn();
+    await submit(vi.fn(), onClose);
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+    const cancelCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cancel'));
+    expect(cancelCall).toBeDefined();
+    const [url, init] = cancelCall as [string, RequestInit];
+    expect(url).toBe('/api/runs/run-7/cancel');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ cancellation_reason: 'Broken data' });
   });
 
   it('does not report a refused cancel, and stays open with its error', async () => {

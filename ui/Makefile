@@ -28,9 +28,9 @@ fmt:
 clean:
 	rm -rf dist/ dist-server/ node_modules/
 
-# Sync ui/proto/state.proto with the canonical state proto.
+# Sync ui/proto/run.proto with the canonical run proto.
 # @grpc/proto-loader reads this file at startup; drift here silently drops
 # fields on the wire (see tests/server/proto-wire.test.ts for the guard).
 sync-proto:
-	cp ../state/proto/state/v1/state.proto proto/state.proto
-	diff ../state/proto/state/v1/state.proto proto/state.proto
+	cp ../state/proto/run/v1/run.proto proto/run.proto
+	diff ../state/proto/run/v1/run.proto proto/run.proto

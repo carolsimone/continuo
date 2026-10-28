@@ -13,7 +13,7 @@ import (
 )
 
 // UnaryServerInterceptor refuses every call to one of methods (full method
-// names, e.g. "/state.v1.StateService/TriggerSchedule") when enabled is true:
+// names, e.g. "/run.v1.RunService/StartRun") when enabled is true:
 // the call answers UNAVAILABLE with maintenance.Message and the trailer
 // maintenance.TrailerKey=true, and its handler never runs. Every other method,
 // and every method when enabled is false, passes through untouched.

@@ -83,7 +83,7 @@ for rep in $(seq 1 "${reps}"); do
   fi
   python3 "${here}/redis_streams.py" snapshot > "${out}/streams-before-rep${rep}.json"
   trig="$(bench_cli_run schedule "${sub}" "${schedule}")"
-  run_id="$(printf '%s' "${trig}" | field schedule_id)"
+  run_id="$(printf '%s' "${trig}" | field run_id)"
   trigger_ts="$(printf '%s' "${trig}" | field triggered_at)"
   extra=(--extra "final_status=pending")
   cancel_args=()
@@ -91,7 +91,7 @@ for rep in $(seq 1 "${reps}"); do
     sleep "${cancel_after}"
     cancel_ts="$(bench_cli_run schedule cancel "${schedule}" "benchmark cancel" | field cancelled_at)"
     first_status="$(finish_run "${run_id}")"
-    next_id="$(bench_cli_run schedule "${sub}" "${schedule}" | field schedule_id)"
+    next_id="$(bench_cli_run schedule "${sub}" "${schedule}" | field run_id)"
     sleep "${second_run_s}"
     bench_cli_run schedule cancel "${schedule}" "benchmark cancel (second run)" >/dev/null || true
     second_status="$(finish_run "${next_id}")"

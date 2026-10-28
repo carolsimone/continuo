@@ -55,16 +55,19 @@ const runColumns = `
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason`
 
 // RunRepository implements repository.RunRepository over the runs table. Every
 // method that names a run or a schedule takes the tenant it belongs to, and
 // reads and writes only that tenant's rows; a row carries its own tenant on
-// insert. Reads use the autocommit db; LoadRunForUpdate, SaveRun, RunExists,
-// ListUnplannedActive and CountReleaseRuns run inside the transaction bound by
-// WithTx, and return an error when none is bound. SaveRun consults
+// insert. GetRun, GetActiveRun and HasActiveRun read in the transaction bound
+// by WithTx when there is one, so a command never waits for a second
+// connection while it holds its own, and on the autocommit db otherwise; the
+// other reads use the autocommit db. LoadRunForUpdate, SaveRun, RunExists,
+// ListUnplannedActive and CountReleaseRuns run inside the bound transaction
+// only, and return an error when none is bound. SaveRun consults
 // run.Run.Changes() to dispatch column by column.
 type RunRepository struct {
 	db     *sqlx.DB
@@ -81,9 +84,18 @@ func NewRunRepository(db *sqlx.DB, logger *slog.Logger) *RunRepository {
 }
 
 // WithTx returns a RunRepository over the same db that runs its transactional
-// methods in tx.
+// methods, and the reads conn serves, in tx.
 func (r *RunRepository) WithTx(tx *sqlx.Tx) *RunRepository {
 	return &RunRepository{db: r.db, tx: tx, logger: r.logger}
+}
+
+// conn is what GetRun, GetActiveRun and HasActiveRun read on: the bound
+// transaction, else the autocommit db.
+func (r *RunRepository) conn() sqlx.ExtContext {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
 }
 
 // Create inserts a new run record into the database, under the row's tenant.
@@ -105,16 +117,16 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$21, $1, $2, $3, $4,
+			$20, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16, $17, $18, $19, $20
+			$11,
+			$12, $13,
+			$14, $15, $16, $17, $18, $19
 		)
 	`
 
@@ -122,7 +134,7 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		row.InitializationStatus, metaJSON,
+		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -183,23 +195,23 @@ func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) 
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$21, $1, $2, $3, $4,
+			$20, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16, $17, $18, $19, $20
+			$11,
+			$12, $13,
+			$14, $15, $16, $17, $18, $19
 		)
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 	`,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		row.InitializationStatus, metaJSON,
+		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -232,7 +244,7 @@ func (r *RunRepository) GetByID(ctx context.Context, tenantID string, runID uuid
 	`
 
 	var row RunRow
-	err := r.db.GetContext(ctx, &row, query, tenantID, runID)
+	err := sqlx.GetContext(ctx, r.conn(), &row, query, tenantID, runID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Run not found",
@@ -339,7 +351,7 @@ func (r *RunRepository) HasActiveRun(ctx context.Context, tenantID, scheduleName
 	`
 
 	var exists bool
-	err := r.db.GetContext(ctx, &exists, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
+	err := sqlx.GetContext(ctx, r.conn(), &exists, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
 	if err != nil {
 		r.logger.Error("Failed to check active schedule",
 			"schedule_name", scheduleName,
@@ -368,7 +380,7 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 	`
 
 	var row RunRow
-	err := r.db.GetContext(ctx, &row, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
+	err := sqlx.GetContext(ctx, r.conn(), &row, query, scheduleName, pq.Array(activeRunStatuses()), tenantID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("No active scheduler found", "schedule_name", scheduleName)
@@ -393,22 +405,6 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 	)
 
 	return &row, nil
-}
-
-// UpdateInitializationStatusTx updates initialization_status within an existing transaction.
-func (r *RunRepository) UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID, status string) error {
-	result, err := tx.ExecContext(ctx,
-		`UPDATE runs SET initialization_status = $1 WHERE tenant_id = $3 AND run_id = $2`,
-		status, runID, tenantID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update initialization_status: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // SetTotalTaskCountTx sets total_task_count for the given run.
@@ -525,11 +521,10 @@ func (r *RunRepository) FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, tenantID
 // build a single UPDATE over a fixed column allowlist while keeping the dirty
 // decision in the calling adapter.
 type RunRowUpdate struct {
-	Status               *string
-	InitializationStatus *string
-	TotalTaskCount       *int32
-	TerminalTaskCount    *int32
-	StartedAt            *time.Time
+	Status            *string
+	TotalTaskCount    *int32
+	TerminalTaskCount *int32
+	StartedAt         *time.Time
 	// LastProgressAt is the run's progress clock: the last dispatch or applied
 	// task status change.
 	LastProgressAt *time.Time
@@ -556,9 +551,6 @@ func (r *RunRepository) UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, tenantI
 
 	if fields.Status != nil {
 		add("status", *fields.Status)
-	}
-	if fields.InitializationStatus != nil {
-		add("initialization_status", *fields.InitializationStatus)
 	}
 	if fields.TotalTaskCount != nil {
 		add("total_task_count", *fields.TotalTaskCount)
@@ -616,8 +608,9 @@ func kindWithDefault(kind string) string {
 }
 
 // operationWithDefault returns 'run' for the empty model.OperationRun value,
-// else the operation as-is — the runs.operation column is a
-// non-empty 4-value domain.
+// else the operation as-is: the value runs.operation and tasks.operation
+// store, a non-empty 4-value domain. Every write of an operation and every
+// read that filters on one maps it here.
 func operationWithDefault(op string) string {
 	if op == "" {
 		return "run"

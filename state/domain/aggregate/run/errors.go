@@ -54,16 +54,17 @@ var (
 	// is empty.
 	ErrScheduleNameRequired = errors.New("schedule_name is required")
 
-	// ErrRunIDRequired is returned by NewPromotedSeedsRun when the caller-supplied
-	// run id is the nil UUID. That constructor takes its id rather than generating
-	// one, so an unset id would otherwise collide across every promotion.
+	// ErrRunIDRequired is returned by a run constructor whose caller-supplied
+	// run id is the nil UUID: every run takes its id from its caller, so an
+	// unset id would otherwise collide across every run created without one.
 	ErrRunIDRequired = errors.New("run id is required")
 
 	// ErrRunAlreadyExists is returned by RunRepository.SaveRun when a newly
-	// constructed Run's id is already persisted; nothing is written. Only a
-	// constructor that takes its id (NewPromotedSeedsRun) can produce it: the id
-	// is derived from the triggering event, so a second delivery of that event
-	// finds the run the first one created.
+	// constructed Run's id is already persisted; nothing is written. Every run
+	// constructor takes its id from its caller, and only an id the caller
+	// derives deterministically can collide: a promote-seed run's id is
+	// derived from its tenant, its release and a count, so a plan that meets
+	// it moves on to the next count. A command's run id is a new random UUID.
 	ErrRunAlreadyExists = errors.New("run already exists")
 
 	// ErrReleaseIDRequired is returned by NewPromotedSeedsRun when the release

@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ import (
 // command argument: it comes from cfg.Actor (the CONTINUO_ACTOR env var) so that
 // a caller such as the chat agent stamps a fixed identity without a flag. When
 // cfg.Actor is empty the state service records its own system identity.
-func NewCancelCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewCancelCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <schedule-name> <reason>",
 		Short: "Cancel the active run of the named schedule; it ends cancelled once its Jobs have stopped",
@@ -43,18 +44,20 @@ environment variable when set, otherwise the state service records its own
 system identity.
 
 Output (stdout, JSON):
-  {"schedule_id":string,"schedule_name":string,"cancelled_at":string}
-  schedule_id is the id of the run that is cancelling. cancelled_at is the
+  {"run_id":string,"schedule_name":string,"cancelled_at":string}
+  run_id is the id of the run that is cancelling. cancelled_at is the
   time this command received the answer, not the time of the first cancel.
+
+` + client.RequestIDHelp + `
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or a blank reason
-  conflict   (exit 4)  the schedule has no pending, running or cancelling run, or the run ended before the cancel reached it
+  conflict   (exit 4)  the schedule has no pending, running or cancelling run, the run ended before the cancel reached it, or the request id was used before with other arguments
   unavailable(exit 5)  the state service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule cancel daily-revenue \"bad upstream data\"",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_id":"string","schedule_name":"string","cancelled_at":"string"}`,
+			"output_schema": `{"run_id":"string","schedule_name":"string","cancelled_at":"string"}`,
 			"exit_codes":    `[0,2,4,5,6]`,
 			"mutating":      "true",
 		},
@@ -80,16 +83,16 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.CancelSchedule(ctx, scheduleName, reason, cfg.Actor)
+			resp, err := c.CancelSchedule(ctx, client.RequestID(), scheduleName, reason, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Cancelling run "+resp.ScheduleId+" for schedule '"+scheduleName+"'; it ends cancelled once its Jobs have stopped")
+				return output.HumanSuccess(stderr, "Cancelling run "+resp.GetRunId()+" for schedule '"+scheduleName+"'; it ends cancelled once its Jobs have stopped")
 			}
 			payload := map[string]string{
-				"schedule_id":   resp.ScheduleId,
+				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
 				"cancelled_at":  time.Now().UTC().Format(time.RFC3339),
 			}

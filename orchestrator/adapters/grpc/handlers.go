@@ -13,15 +13,12 @@ import (
 	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ScheduleListReader returns the schedule's topology graph, the schedule
-// topology list and node metadata. Reads go straight to Neo4j and return raw
-// domain types. Satisfied by adapters/neo4j.OrchestratorQueryRepository.
-type ScheduleListReader interface {
-	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
-	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
+// NodeReader returns node metadata and node source locations. Reads
+// go straight to Neo4j and return raw domain types. Satisfied by
+// adapters/neo4j.OrchestratorQueryRepository.
+type NodeReader interface {
 	GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
@@ -50,62 +47,14 @@ type PrecedentHistoryReader interface {
 // QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
 	orchestratorv1.UnimplementedOrchestratorQueryServer
-	scheduleReader ScheduleListReader
-	codeVersions   CodeVersionHistoryReader
-	precedents     PrecedentHistoryReader
-	logger         *slog.Logger
+	nodes        NodeReader
+	codeVersions CodeVersionHistoryReader
+	precedents   PrecedentHistoryReader
+	logger       *slog.Logger
 }
 
-func NewQueryHandler(scheduleReader ScheduleListReader, codeVersions CodeVersionHistoryReader, precedents PrecedentHistoryReader, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{scheduleReader: scheduleReader, codeVersions: codeVersions, precedents: precedents, logger: logger}
-}
-
-func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	if req.ScheduleName == "" {
-		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
-	}
-	graph, err := h.scheduleReader.GetScheduleGraph(ctx, req.ScheduleName)
-	if err != nil {
-		h.logger.Error("GetScheduleGraph failed", "schedule", req.ScheduleName, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetScheduleGraph: %v", err)
-	}
-	resp := &orchestratorv1.GetScheduleGraphResponse{
-		Nodes: make([]*orchestratorv1.TableNode, 0, len(graph.Nodes)),
-		Edges: make([]*orchestratorv1.GraphEdge, 0, len(graph.Edges)),
-	}
-	resp.PromotionSeq = graph.PromotionSeq
-	for _, n := range graph.Nodes {
-		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
-	}
-	for _, e := range graph.Edges {
-		resp.Edges = append(resp.Edges, &orchestratorv1.GraphEdge{
-			FromNodeId: e.FromNodeID,
-			ToNodeId:   e.ToNodeID,
-		})
-	}
-	return resp, nil
-}
-
-func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestratorv1.ListScheduleTopologiesRequest) (*orchestratorv1.ListScheduleTopologiesResponse, error) {
-	summaries, err := h.scheduleReader.ListScheduleTopologies(ctx)
-	if err != nil {
-		h.logger.Error("ListScheduleTopologies failed", "error", err)
-		return nil, status.Errorf(codes.Internal, "ListScheduleTopologies: %v", err)
-	}
-	resp := &orchestratorv1.ListScheduleTopologiesResponse{
-		Schedules: make([]*orchestratorv1.ScheduleTopologySummary, 0, len(summaries)),
-	}
-	for _, s := range summaries {
-		item := &orchestratorv1.ScheduleTopologySummary{
-			ScheduleName: s.ScheduleName,
-			NodeCount:    num.ClampInt32(s.NodeCount),
-		}
-		if !s.LastUpdatedAt.IsZero() {
-			item.LastUpdatedAt = timestamppb.New(s.LastUpdatedAt)
-		}
-		resp.Schedules = append(resp.Schedules, item)
-	}
-	return resp, nil
+func NewQueryHandler(nodes NodeReader, codeVersions CodeVersionHistoryReader, precedents PrecedentHistoryReader, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{nodes: nodes, codeVersions: codeVersions, precedents: precedents, logger: logger}
 }
 
 func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeRequest) (*orchestratorv1.GetNodeResponse, error) {
@@ -116,7 +65,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 	if req.GetIncludeInactive() {
 		scope = domain.IncludeInactiveNodes
 	}
-	meta, err := h.scheduleReader.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
+	meta, err := h.nodes.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)
@@ -135,7 +84,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 // GetNodeLocation returns where a node's source lives. An unknown unique_id
 // maps to NOT_FOUND per the entity-lookup convention.
 func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *orchestratorv1.GetNodeLocationRequest) (*orchestratorv1.GetNodeLocationResponse, error) {
-	loc, err := h.scheduleReader.GetNodeLocation(ctx, req.UniqueId)
+	loc, err := h.nodes.GetNodeLocation(ctx, req.UniqueId)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -374,33 +323,5 @@ func codeUnitVersionViewToProto(v codeversion.UnitVersionView) *orchestratorv1.U
 		ReleaseId:  v.ReleaseID,
 		PromotedAt: formatOptionalRFC3339(v.PromotedAt),
 		IsCurrent:  v.IsCurrent,
-	}
-}
-
-func domainToProtoNode(n *domain.TableNode) *orchestratorv1.TableNode {
-	return &orchestratorv1.TableNode{
-		TableName:     n.TableName,
-		SchemaName:    n.SchemaName,
-		ServiceName:   n.ServiceName,
-		Owner:         n.Owner,
-		ScheduleName:  n.ScheduleName,
-		Criticality:   domainToProtoCriticality(n.Criticality),
-		LastUpdatedAt: timestamppb.New(n.LastUpdatedAt),
-		CreatedAt:     timestamppb.New(n.CreatedAt),
-		NodeType:      n.NodeType,
-		Status:        n.Status,
-	}
-}
-
-func domainToProtoCriticality(c domain.Criticality) orchestratorv1.Criticality {
-	switch c {
-	case domain.CriticalityRegulatory:
-		return orchestratorv1.Criticality_CRITICALITY_REGULATORY
-	case domain.CriticalityCore:
-		return orchestratorv1.Criticality_CRITICALITY_CORE
-	case domain.CriticalitySecondary:
-		return orchestratorv1.Criticality_CRITICALITY_SECONDARY
-	default:
-		return orchestratorv1.Criticality_CRITICALITY_UNSPECIFIED
 	}
 }

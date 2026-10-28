@@ -73,7 +73,7 @@ func (o *recordingOutbox) Append(_ context.Context, events []run.DomainEvent, _ 
 // unplannedRun is a running run of tenantID whose tasks state did not plan.
 func unplannedRun(tenantID string) *run.Run {
 	started := now.Add(-time.Hour)
-	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system",
 		model.OperationRun, started, &started, nil, nil, nil, nil, nil, nil, 0, nil)
 }
 

@@ -13,7 +13,7 @@ import (
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -26,7 +26,7 @@ import (
 // testClients holds all client connections
 type testClients struct {
 	orchestratorClient     orchestratorv1.OrchestratorQueryClient
-	stateClient            statev1.StateServiceClient
+	runClient              runv1.RunServiceClient
 	agentRemediationClient remediationv1.RemediationProposalsClient
 	deadLetterClient       deadletterv1.DeadLetterServiceClient
 	redisClient            *goredis.Client
@@ -68,7 +68,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to orchestrator service")
 
-	// Setup State gRPC client
+	// Setup state gRPC client (RunService, port 50051)
 	stateConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50051", stateHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -116,7 +116,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	return &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
-		stateClient:            statev1.NewStateServiceClient(stateConn),
+		runClient:              runv1.NewRunServiceClient(stateConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),
 		redisClient:            redisClient,

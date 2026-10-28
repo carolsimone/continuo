@@ -22,6 +22,17 @@ export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-mod
 export const NODE_TYPES_WITH_SECRET_REF: readonly NodeType[] = ['python-api'];
 export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'python-api': 'python', 'dbt-test': 'dbt' };
 
+export type RunStatus = 'pending' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'skipped';
+export const RUN_STATUSES: readonly RunStatus[] = ['pending', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'skipped'];
+
+export type TaskStatus = 'pending' | 'dispatched' | 'queued' | 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled' | 'skipped';
+export const TASK_STATUSES: readonly TaskStatus[] = ['pending', 'dispatched', 'queued', 'running', 'stopping', 'succeeded', 'failed', 'cancelled', 'skipped'];
+
+export type Operation = 'run' | 'test' | 'build' | 'full_refresh';
+export const OPERATIONS: readonly Operation[] = ['run', 'test', 'build', 'full_refresh'];
+export type SingleNodeOnlyOperation = 'full_refresh';
+export const SINGLE_NODE_ONLY_OPERATIONS: readonly SingleNodeOnlyOperation[] = ['full_refresh'];
+
 export type AttemptStatus = 'dispatched' | 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped';
 export const ATTEMPT_STATUSES: readonly AttemptStatus[] = ['dispatched', 'queued', 'running', 'succeeded', 'failed', 'stopped'];
 

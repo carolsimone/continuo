@@ -15,9 +15,9 @@ func TestRebaseReleaseMovedMessageMatchesBetweenStateAndUI(t *testing.T) {
 		regexp.MustCompile(`ErrLiveReleaseMoved\s*=\s*errors\.New\(\s*"([^"\\]*)"\s*\)`),
 		"state/service/runstart/rebase.go", "ErrLiveReleaseMoved = errors.New(\"...\")")
 	uiMsg := extractLiteral(t,
-		readRepoFile(t, "ui", "src", "server", "routes", "schedulers.ts"),
+		readRepoFile(t, "ui", "src", "server", "routes", "runs.ts"),
 		regexp.MustCompile(`export const RELEASE_MOVED_MESSAGE\s*=\s*'([^'\\]*)'`),
-		"ui/src/server/routes/schedulers.ts", "export const RELEASE_MOVED_MESSAGE = '...'")
+		"ui/src/server/routes/runs.ts", "export const RELEASE_MOVED_MESSAGE = '...'")
 	if stateMsg != uiMsg {
 		t.Errorf("ui's RELEASE_MOVED_MESSAGE %q differs from state's ErrLiveReleaseMoved %q", uiMsg, stateMsg)
 	}

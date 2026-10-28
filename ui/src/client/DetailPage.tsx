@@ -14,6 +14,8 @@ import {
 import { resolveActiveGraph, headerDriftLabel, groupAttemptsByTask, runFailureLabel } from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
+import type { RunStatus } from '../server/generated/vocabulary.gen';
+import { settlesRequest, useActionRequestId } from './request-id';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodeTypeIcon from './NodeTypeIcon';
@@ -41,22 +43,13 @@ function initialLastRunId(locationState: unknown): string | null | undefined {
   return ((locationState as { last_run_id?: string | null } | null)?.last_run_id ?? null);
 }
 
-function normalizeStatus(status: string | null | undefined): string {
-  if (!status) return '';
-  return status
-    .toLowerCase()
-    .replace(/^scheduler_status_/, '')
-    .replace(/^task_status_/, '');
-}
-
 function formatStatusLabel(status: string | null | undefined): string {
-  const normalized = normalizeStatus(status);
-  if (!normalized) return 'pending';
-  return normalized.replace(/_/g, ' ');
+  if (!status) return 'pending';
+  return status.replace(/_/g, ' ');
 }
 
 export function pillClass(status: string | null | undefined): string {
-  const normalized = normalizeStatus(status);
+  const normalized = status ?? '';
   if (normalized.includes('succeed')) return 'pill--succeeded';
   if (normalized.includes('fail')) return 'pill--failed';
   if (normalized.includes('cancelling')) return 'pill--cancelling';
@@ -74,22 +67,13 @@ function formatDate(value: string | null | undefined): string {
 
 // A cancelling run has not ended: its Jobs are still being stopped, so the
 // page keeps polling it until it reads cancelled.
-export function isTerminalStatus(status: string | null | undefined): boolean {
-  const normalized = normalizeStatus(status);
-  if (normalized.includes('cancelling')) return false;
-  return normalized.includes('succeed') || normalized.includes('fail')
-    || normalized.includes('cancel') || normalized.includes('skip');
+export function isTerminalStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped';
 }
 
-function extractScheduler(data: { scheduler?: Scheduler } | Scheduler): Scheduler | null {
-  return 'status' in data ? data : data.scheduler ?? null;
-}
-
-export function isRerunnableStatus(status: string | null | undefined): boolean {
-  if (!status) return false;
-  const s = status.toLowerCase();
-  if (s.includes('cancelling')) return false;
-  return s.includes('fail') || s.includes('cancel');
+// A failed or cancelled run can be rerun; a cancelling one has not ended.
+export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'failed' || status === 'cancelled';
 }
 
 interface DetailPageProps {
@@ -102,6 +86,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const location = useLocation();
 
   const [lastRunId, setLastRunId] = useState<string | null | undefined>(() => initialLastRunId(location.state));
+  // Set when the schedule list could not be read on arrival: lastRunId is then
+  // null without the page knowing the schedule never ran.
+  const [lastRunReadFailed, setLastRunReadFailed] = useState(false);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
@@ -122,6 +109,15 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
+  // The trigger button's request id: a press that gets no answer and is
+  // repeated for the same schedule, while the page still shows the last run
+  // the first press saw, sends the same id, so the run the first press made is
+  // returned rather than made twice. The page reads the schedule's last run
+  // when it arrives at the schedule; a newer one read then makes the next
+  // press a new action, and the id is renewed once the server has given its
+  // final answer. While that read is loading or after it failed, the page
+  // does not know the last run (lastRunObservation is undefined).
+  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
@@ -137,6 +133,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   useEffect(() => {
     const hintedLastRunId = initialLastRunId(location.state);
     setLastRunId(hintedLastRunId);
+    setLastRunReadFailed(false);
     setScheduler(null);
     setTasks([]);
     setGraph(null);
@@ -162,7 +159,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         setLastRunId(match?.last_run_id ?? null);
       })
       .catch(() => {
-        if (!cancelled) setLastRunId(null);
+        if (cancelled) return;
+        setLastRunId(null);
+        setLastRunReadFailed(true);
       });
     return () => { cancelled = true; };
   }, [name]);
@@ -219,10 +218,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     if (!lastRunId) return;
     let cancelled = false;
 
-    fetch(`/api/schedulers/${lastRunId}`)
+    fetch(`/api/runs/${lastRunId}`)
       .then((response) => response.json())
-      .then((data: { scheduler?: Scheduler } | Scheduler) => {
-        if (!cancelled) setScheduler(extractScheduler(data));
+      .then((data: Scheduler) => {
+        if (!cancelled) setScheduler(data);
       })
       .catch(() => {
         if (!cancelled) setScheduler(null);
@@ -267,7 +266,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
     // Resolves once both reads have landed (or failed) and been applied.
     const fetchRunRows = (): Promise<void> => {
-      const taskRead = fetchAllPages<Task>(`/api/schedulers/${shownRunId}/tasks`, 'tasks', {
+      const taskRead = fetchAllPages<Task>(`/api/runs/${shownRunId}/tasks`, 'tasks', {
         signal: controller.signal,
       })
         .then((all) => {
@@ -277,7 +276,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           if (!cancelled) setTasks([]);
         });
 
-      const attemptRead = fetchAllPages<TaskAttempt>(`/api/schedulers/${shownRunId}/attempts`, 'attempts', {
+      const attemptRead = fetchAllPages<TaskAttempt>(`/api/runs/${shownRunId}/attempts`, 'attempts', {
         signal: controller.signal,
       })
         .then((all) => {
@@ -299,12 +298,11 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     }
 
     const fetchDynamic = () => {
-      const schedulerRequest = fetch(`/api/schedulers/${shownRunId}`)
+      const schedulerRequest = fetch(`/api/runs/${shownRunId}`)
         .then((response) => response.json())
-        .then((data: { scheduler?: Scheduler } | Scheduler) => {
-          const nextScheduler = extractScheduler(data);
-          if (!cancelled) setScheduler(nextScheduler);
-          return nextScheduler;
+        .then((data: Scheduler) => {
+          if (!cancelled) setScheduler(data);
+          return data;
         })
         .catch(() => {
           return null;
@@ -371,12 +369,19 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setTimeout(() => setRerunFailedState('idle'), 3000);
   }, []);
 
+  const lastRunObservation = lastRunReadFailed ? undefined : lastRunId;
+
   const handleTriggerRun = useCallback(async () => {
     if (!name) return;
     setTriggerState('loading');
     setTriggerError(null);
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, { method: 'POST' });
+      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: takeRequestId(name, lastRunObservation) }),
+      });
+      if (settlesRequest(res)) renewTriggerId();
       if (res.ok) {
         setTriggerState('success');
         setTimeout(() => setTriggerState('idle'), 3000);
@@ -389,7 +394,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       setTriggerError('Request failed — please try again');
       setTriggerState('error');
     }
-  }, [name]);
+  }, [name, lastRunObservation, takeRequestId, renewTriggerId]);
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
@@ -448,14 +453,14 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     }
   }, [expandedServices]);
   const liveSchedulerStatus =
-    normalizeStatus(scheduler?.status) ||
+    scheduler?.status ||
     (lastRunId === undefined ? 'loading' : lastRunId === null ? 'never run' : 'loading');
   const schedulerStatus = selectedRun
-    ? normalizeStatus(selectedRun.terminal_status) || 'pending'
+    ? selectedRun.status || 'pending'
     : liveSchedulerStatus;
   const liveRunExists = !!lastRunId && !!scheduler && !isTerminalStatus(scheduler.status);
   const snapshotRun = selectedRunId
-    ? selectedRun ?? { completed_at: null, created_at: null, terminal_status: null }
+    ? selectedRun ?? { completed_at: null, created_at: null, status: null }
     : null;
   const graphEmptyMessage = selectedRunId
     ? 'No DAG snapshot is available for this run.'
@@ -486,7 +491,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           : 'idle';
   const graphBadgeClass =
     graphBadgeLabel === 'snapshot'
-      ? `pill-sm ${pillClass(snapshotRun?.terminal_status).replace('pill', 'pill-sm')}`
+      ? `pill-sm ${pillClass(snapshotRun?.status).replace('pill', 'pill-sm')}`
       : graphBadgeLabel === 'live'
         ? 'pill-sm pill-sm--current'
         : 'pill-sm pill-sm--pending';
@@ -566,8 +571,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           ← Back
         </button>
         <div className="detail-scheduler-name">{name ?? 'Loading…'}</div>
-        <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
-          {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
+        <span className={`pill ${pillClass(selectedRun ? selectedRun.status : schedulerStatus)}`}>
+          {selectedRun ? formatStatusLabel(selectedRun.status) : formatStatusLabel(schedulerStatus)}
         </span>
         {runFailureLabel(selectedRun ? selectedRun.failure_reason : scheduler?.failure_reason) && (
           <span className="info-strip info-strip--error info-strip--inline" aria-label="run failure reason">
@@ -636,7 +641,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           <span>
             Viewing snapshot from {formatDate(snapshotRun.completed_at ?? snapshotRun.created_at)}.
           </span>
-          <span>Status: {formatStatusLabel(snapshotRun.terminal_status)}</span>
+          <span>Status: {formatStatusLabel(snapshotRun.status)}</span>
           <button
             type="button"
             className="btn btn--secondary info-strip__action"

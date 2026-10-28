@@ -241,8 +241,8 @@ func TestSeedReconcile(t *testing.T) {
 		releaseID := "rel-" + uuid.NewString()[:8]
 		existing := h.firstPromoteSeedRunID(releaseID)
 		_, err := db.Exec(`
-			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
-			VALUES ($3, $1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind)
+			VALUES ($3, $1, $2, 'succeeded', now(), 'promote_seed')`,
 			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8], h.tenant)
 		require.NoError(t, err)
 

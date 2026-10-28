@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +51,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 
 	// Trigger the single-node run via the state gRPC.
 	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetService, targetSchema, targetTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
@@ -98,17 +98,17 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	assert.Empty(t, queryRunSourceRunID(t, clients, runID),
 		"source_run_id must be empty for a latest-mode single-node run")
 
-	// Assert the new state.ListNodeRuns RPC returns this run as the most recent
-	// row for the target node, with the right kind, image_tag,
+	// Assert state's ListNodeTasks RPC returns this run's task as the most
+	// recent row for the target node, with the right kind, image_tag,
 	// and non-nil timings.
 	//
 	// The attempt's final report carries its times, but the run can be read
-	// before state has applied it: poll ListNodeRuns until the run appears with
+	// before state has applied it: poll ListNodeTasks until the run appears with
 	// its started_at and completed_at before asserting.
-	t.Log("Polling state.ListNodeRuns until the new run appears with execution timestamps...")
-	var top *statev1.NodeRun
+	t.Log("Polling state.ListNodeTasks until the new run appears with execution timestamps...")
+	var top *runv1.NodeTask
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		listResp, err := clients.stateClient.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{
+		listResp, err := clients.runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{
 			ServiceName: targetService,
 			SchemaName:  targetSchema,
 			TableName:   targetTable,
@@ -117,10 +117,10 @@ func TestSingleNodeRunLatest(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		if len(listResp.Runs) == 0 {
+		if len(listResp.GetTasks()) == 0 {
 			return false, nil
 		}
-		row := listResp.Runs[0]
+		row := listResp.GetTasks()[0]
 		if row.RunId != runID.String() {
 			return false, nil
 		}
@@ -129,13 +129,13 @@ func TestSingleNodeRunLatest(t *testing.T) {
 		}
 		top = row
 		return true, nil
-	}, "ListNodeRuns never returned the new run with populated started_at/completed_at — the task.status.updated:v2 consumer may have lagged")
+	}, "ListNodeTasks never returned the new run with populated started_at/completed_at — the task.status.updated:v2 consumer may have lagged")
 
-	require.NotNil(t, top, "ListNodeRuns must return the new run before the timeout")
-	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")
-	assert.Equal(t, "single_node_run", top.Kind, "ListNodeRuns[0].kind must be 'single_node_run'")
-	assert.NotEmpty(t, top.ImageTag, "ListNodeRuns[0].image_tag must be populated")
-	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeRuns[0].task_status must be 'succeeded'")
+	require.NotNil(t, top, "ListNodeTasks must return the new run before the timeout")
+	assert.Equal(t, runID.String(), top.RunId, "ListNodeTasks[0].run_id must match the run we just triggered")
+	assert.Equal(t, "single_node_run", top.Kind, "ListNodeTasks[0].kind must be 'single_node_run'")
+	assert.NotEmpty(t, top.ImageTag, "ListNodeTasks[0].image_tag must be populated")
+	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeTasks[0].task_status must be 'succeeded'")
 
 	t.Log("TestSingleNodeRunLatest passed")
 }
@@ -143,16 +143,16 @@ func TestSingleNodeRunLatest(t *testing.T) {
 // TestSingleNodeRunStale verifies the single-node-run flow in "snapshot_of_run"
 // (stale) metadata mode:
 //
-//  1. Triggers a normal cron-style run on the "seed" schedule so that a real
+//  1. Starts a run of the "seed" schedule with StartRun so that a real
 //     source run exists with stamped image_tag.
 //  2. Waits for that source run to reach SUCCEEDED.
 //  3. Reads the source run's tasks row for the target node to capture
 //     the "old" image_tag.
 //  4. Calls TriggerSingleNodeRun with metadata_source="snapshot_of_run" and
-//     source_run_id = the source schedule_id.
+//     source_run_id = the source run_id.
 //  5. Waits for the new single-node run to reach SUCCEEDED.
 //  6. Asserts that the new run inherits the source's image_tag,
-//     and that its source_run_id equals the source schedule_id.
+//     and that its source_run_id equals the source run_id.
 func TestSingleNodeRunStale(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -180,17 +180,17 @@ func TestSingleNodeRunStale(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, srcSchedule)
 	seedTopology(t, ctx, clients)
 
-	// ── Step 1: Trigger the source cron run ───────────────────────────────────
+	// ── Step 1: Start the source run ──────────────────────────────────────────
 	t.Log("=== Step 1: Triggering source seed run ===")
-	srcResp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+	srcResp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: srcSchedule,
 	})
-	require.NoError(t, err, "TriggerSchedule(%q) failed", srcSchedule)
-	require.NotEmpty(t, srcResp.ScheduleId, "TriggerSchedule must return a non-empty schedule_id")
+	require.NoError(t, err, "StartRun(%q) failed", srcSchedule)
+	require.NotEmpty(t, srcResp.RunId, "StartRun must return a non-empty run_id")
 
-	srcID, err := uuid.Parse(srcResp.ScheduleId)
-	require.NoError(t, err, "source schedule_id must be a valid UUID")
-	t.Logf("Source run created: schedule_id=%s", srcID)
+	srcID, err := uuid.Parse(srcResp.RunId)
+	require.NoError(t, err, "source run_id must be a valid UUID")
+	t.Logf("Source run created: run_id=%s", srcID)
 
 	// ── Step 2: Wait for source run to succeed ────────────────────────────────
 	t.Log("=== Step 2: Waiting for source run to reach 'succeeded' ===")
@@ -205,12 +205,12 @@ func TestSingleNodeRunStale(t *testing.T) {
 
 	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
 	t.Log("=== Step 4: Triggering single-node run in stale (snapshot_of_run) mode ===")
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "snapshot_of_run",
-		SourceRunId:    srcResp.ScheduleId,
+		SourceRunId:    srcResp.RunId,
 	})
 	require.NoError(t, err, "TriggerSingleNodeRun (stale) gRPC call failed")
 	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
@@ -237,10 +237,10 @@ func TestSingleNodeRunStale(t *testing.T) {
 		"stale mode must inherit source's image_tag: got %q, want %q", newImage, srcImage)
 	t.Logf("New run metadata matches source: image_tag=%s", newImage)
 
-	// Assert the run's source_run_id equals the source schedule_id string.
+	// Assert the run's source_run_id equals the source run_id string.
 	sourceRunID := queryRunSourceRunID(t, clients, runID)
-	require.Equal(t, srcResp.ScheduleId, sourceRunID,
-		"source_run_id must equal source run_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
+	require.Equal(t, srcResp.RunId, sourceRunID,
+		"source_run_id must equal source run_id: got %q, want %q", sourceRunID, srcResp.RunId)
 	t.Logf("source_run_id correctly set to %s", sourceRunID)
 
 	t.Log("TestSingleNodeRunStale passed")
@@ -277,7 +277,7 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	before := countRunsOfKind(t, clients, "single_node_run")
 	t.Logf("Calling TriggerSingleNodeRun against missing target: %s.%s.%s",
 		ghostService, ghostSchema, ghostTable)
-	_, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    ghostService,
 		SchemaName:     ghostSchema,
 		TableName:      ghostTable,
@@ -315,7 +315,7 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // readTaskImageTag returns the image_tag from the tasks row that matches
-// the given schedule_id and target identity (service_name, schema_name,
+// the given run_id and target identity (service_name, schema_name,
 // table_name). Fails the test if no row is found.
 func readTaskImageTag(
 	t *testing.T,

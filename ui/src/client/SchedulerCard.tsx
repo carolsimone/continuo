@@ -10,6 +10,7 @@ import { ScheduleSummary, Task } from './types';
 import type { RunOperation } from '../server/shared/operation';
 import CancelDialog from './CancelDialog';
 import { fetchAllPages } from './fetch-all-pages';
+import { settlesRequest, useActionRequestId } from './request-id';
 
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
@@ -41,6 +42,13 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  // The trigger button's request id: a press that gets no answer and is
+  // repeated for the same operation, while the card still shows the last run
+  // the first press saw, sends the same id, so the run the first press made is
+  // returned rather than made twice. A newer last run on the card (the
+  // schedule list's poll) makes the next press a new action, and the id is
+  // renewed once the server has given its final answer.
+  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
 
   // Reads the run's tasks now and every 5 s after. A change of run or a bump
   // of tasksReload starts the reads over; the reads already in flight are
@@ -51,7 +59,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     let cancelled = false;
     const controller = new AbortController();
     const fetch_ = () =>
-      fetchAllPages<Task>(`/api/schedulers/${schedule.last_run_id}/tasks`, 'tasks', {
+      fetchAllPages<Task>(`/api/runs/${schedule.last_run_id}/tasks`, 'tasks', {
         signal: controller.signal,
       })
         .then(all => { if (!cancelled) setTasks(all); })
@@ -84,15 +92,15 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   }, [schedule.last_run_id]);
 
   useEffect(() => {
-    if (!schedule.is_running) setCancelDialogOpen(false);
-  }, [schedule.is_running]);
+    if (!schedule.has_active_run) setCancelDialogOpen(false);
+  }, [schedule.has_active_run]);
 
-  // A cancelling run is active (is_running) but not running: it reads
+  // A cancelling run is active (has_active_run) but not running: it reads
   // cancelling, and its Cancel button stays available.
   const displayStatus = neverRun
     ? 'never run'
-    : schedule.is_running
-    ? (schedule.last_run_status.toLowerCase() === 'cancelling' ? 'cancelling' : 'running')
+    : schedule.has_active_run
+    ? (schedule.last_run_status === 'cancelling' ? 'cancelling' : 'running')
     : schedule.last_run_status;
 
   // A schedule is "active" when its name matches an entry in schedules.yaml:
@@ -133,9 +141,10 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operation: operation === 'run' ? '' : operation }),
+      body: JSON.stringify({ request_id: takeRequestId(operation, schedule.last_run_id), operation: operation === 'run' ? '' : operation }),
     })
       .then(async r => {
+        if (settlesRequest(r)) renewTriggerId();
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
           throw new Error(body.error || `HTTP ${r.status}`);
@@ -167,9 +176,9 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
 
   return (
     <>
-      {cancelDialogOpen && createPortal(
+      {cancelDialogOpen && schedule.last_run_id && createPortal(
         <CancelDialog
-          scheduleName={schedule.schedule_name}
+          runId={schedule.last_run_id}
           onCancelled={handleCancelled}
           onClose={() => setCancelDialogOpen(false)}
         />,
@@ -214,7 +223,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
             <select
               id={`op-${schedule.schedule_name}`}
               value={operation}
-              disabled={schedule.is_running || triggerLoading}
+              disabled={schedule.has_active_run || triggerLoading}
               onChange={e => setOperation(e.target.value as RunOperation)}
             >
               <option value="run">Run</option>
@@ -230,13 +239,13 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
               triggerLoading ? 'is-loading' : '',
               triggerStatus === 'success' ? 'is-success' : '',
             ].filter(Boolean).join(' ')}
-            disabled={schedule.is_running || triggerLoading || triggerStatus === 'success'}
+            disabled={schedule.has_active_run || triggerLoading || triggerStatus === 'success'}
             onClick={handleTrigger}
-            title={schedule.is_running ? 'A run is already active' : 'Trigger a full DAG run'}
+            title={schedule.has_active_run ? 'A run is already active' : 'Trigger a full DAG run'}
           >
             {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
           </button>
-          {schedule.is_running && (
+          {schedule.has_active_run && (
             <button
               type="button"
               className="btn btn--danger"

@@ -256,11 +256,12 @@ export default function NodeTableBody({
   );
 }
 
-// The log route reads the object by key; the path segment names the task.
+// The log route reads the object by key; the path segment names the task the
+// attempt belongs to.
 function LogLink({ attempt, label }: { attempt: TaskAttempt; label: string }) {
   return (
     <a
-      href={`/api/task-execution/${attempt.task_id}/logs?key=${encodeURIComponent(attempt.log_s3_key ?? '')}`}
+      href={`/api/attempts/${attempt.task_id}/logs?key=${encodeURIComponent(attempt.log_s3_key ?? '')}`}
       target="_blank"
       rel="noopener noreferrer"
       className="nodes-log-link"

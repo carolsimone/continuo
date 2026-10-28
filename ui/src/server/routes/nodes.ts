@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../clients/grpc-client';
 import { GrpcGraphClient } from '../clients/grpc-graph-client';
 import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
+import { requireRequestId } from './request-id';
 import { parseLimit, parseOffset } from './paging';
 import { operationFromWire } from '../shared/operation';
 import { parseNodeOperation, parseNodeRunOperation } from './operation';
@@ -48,7 +49,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           service_name:     r.service_name,
           schema_name:      r.schema_name,
           table_name:       r.table_name,
-          run_count:        Number(r.run_count ?? 0),
+          task_count:       Number(r.task_count ?? 0),
           success_rate_pct: nullIfNeg(r.success_rate_pct),
           avg_duration_sec: nullIfNeg(r.avg_duration_sec),
           p95_duration_sec: nullIfNeg(r.p95_duration_sec),
@@ -85,7 +86,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   router.get('/:service/:schema/:table/runs', (req, res) => {
     const operation = parseNodeOperation(req.query.operation);
     if (operation === null) return res.status(400).json({ error: 'invalid operation' });
-    stateClient.listNodeRuns(
+    stateClient.listNodeTasks(
       {
         service_name: req.params.service,
         schema_name:  req.params.schema,
@@ -95,13 +96,13 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
-        const runs = (response.runs || []).map((r: any) => ({
+        const tasks = (response.tasks || []).map((r: any) => ({
           run_id:           r.run_id,
           schedule_name:    r.schedule_name,
           kind:             r.kind,
-          terminal_status:  (r.terminal_status || '').toLowerCase(),
+          run_status:       r.run_status,
           task_id:          r.task_id,
-          task_status:      (r.task_status || '').toLowerCase(),
+          task_status:      r.task_status,
           attempt:          Number(r.attempt ?? 0),
           failure_class:    r.failure_class  || null,
           failure_reason:   r.failure_reason || null,
@@ -114,14 +115,18 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           run_results_uri:  r.run_results_uri || null,
           operation:        operationFromWire(r.operation),
         }));
-        res.json({ runs });
+        res.json({ tasks });
       },
     );
   });
 
   // POST /api/nodes/:service/:schema/:table/run
-  // Body: {} → latest mode; { source_run_id } → snapshot_of_run mode.
+  // Body: { request_id } → latest mode; { request_id, source_run_id } →
+  // snapshot_of_run mode. request_id is the browser-minted UUID state uses to
+  // start one run for a repeated action.
   router.post('/:service/:schema/:table/run', (req, res) => {
+    const requestId = requireRequestId(req, res);
+    if (requestId === null) return;
     const operation = parseNodeRunOperation(req.body?.operation);
     if (operation === null) {
       return res.status(400).json({ error: 'operation must be one of "", run, test, build, full_refresh' });
@@ -130,6 +135,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
     stateClient.triggerSingleNodeRun(
       {
+        request_id:      requestId,
         service_name:    req.params.service,
         schema_name:     req.params.schema,
         table_name:      req.params.table,

@@ -48,7 +48,7 @@ func fkey(table string) topology.NodeKey { return topology.KeyOf("e2e_schema", t
 
 func newCronRun(t *testing.T, op model.Operation) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, nil, op,
 		run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, startNow)
 	require.NoError(t, err)
 	return r
@@ -115,7 +115,6 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_a"): a.TaskID, fkey("ftable_b"): b.TaskID}, tc.leases)
 
 	assert.Equal(t, run.RunStatusRunning, r.Status())
-	assert.Equal(t, run.InitStatusCompleted, r.InitializationStatus())
 	require.NotNil(t, r.TotalTaskCount())
 	assert.Equal(t, int32(8), *r.TotalTaskCount())
 	assert.Equal(t, int32(0), r.TerminalTaskCount())
@@ -126,7 +125,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	require.NotNil(t, r.LastProgressAt())
 	assert.Nil(t, r.CompletedAt())
 	ch := r.Changes()
-	assert.True(t, ch.IsPlannedDirty() && ch.IsStatusDirty() && ch.IsStartedDirty() && ch.IsInitStatusDirty() &&
+	assert.True(t, ch.IsPlannedDirty() && ch.IsStatusDirty() && ch.IsStartedDirty() &&
 		ch.IsTotalTaskCountDirty() && ch.IsTerminalTaskCountDirty() && ch.IsHeartbeatDirty())
 }
 
@@ -202,7 +201,7 @@ func TestStart_InheritedTasksAreSucceededAndNeverDispatched(t *testing.T) {
 	}}
 	plan, err := runplan.Rerun{Source: src}.Select(g)
 	require.NoError(t, err)
-	r, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "e2e-schedule-failure", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12},
+	r, err := run.NewDerivedRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12},
 		identity.SystemUserID, model.OperationRun, startNow)
 	require.NoError(t, err)
 	tc := newFakeTaskCollection()

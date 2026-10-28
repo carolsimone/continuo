@@ -18,45 +18,33 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// fakeScheduleLists satisfies grpcadapter.ScheduleListReader for the
-// GetScheduleGraph, GetNodeLocation and node-metadata RPCs. It returns a graph
-// (or an empty graph) for GetScheduleGraph and a fixed location for
-// GetNodeLocation.
-type fakeScheduleLists struct {
+// fakeNodeReader satisfies grpcadapter.NodeReader for the GetNodeLocation and
+// node-metadata RPCs. It returns a fixed location for GetNodeLocation.
+type fakeNodeReader struct {
 	location    *domain.NodeLocation
 	locationErr error
-	graph       *domain.ScheduleGraph
 }
 
-func (f *fakeScheduleLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
-	if f.graph != nil {
-		return f.graph, nil
-	}
-	return &domain.ScheduleGraph{}, nil
-}
-func (fakeScheduleLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
+func (fakeNodeReader) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
 	return nil, nil
 }
-func (fakeScheduleLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
-	return nil, nil
-}
-func (f *fakeScheduleLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+func (f *fakeNodeReader) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
 	if f.locationErr != nil {
 		return nil, f.locationErr
 	}
 	return f.location, nil
 }
 
-func newHandlerWithLists(lists *fakeScheduleLists) *grpcadapter.QueryHandler {
+func newHandlerWithNodes(lists *fakeNodeReader) *grpcadapter.QueryHandler {
 	return grpcadapter.NewQueryHandler(lists, &fakeCodeVersionHistoryReader{}, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithCodeVersions(cv *fakeCodeVersionHistoryReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeScheduleLists{}, cv, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, cv, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithPrecedents(pr *fakePrecedentHistoryReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeScheduleLists{}, &fakeCodeVersionHistoryReader{}, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, &fakeCodeVersionHistoryReader{}, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 // fakeCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
@@ -435,21 +423,13 @@ func TestQueryHandler_GetCodeUnitVersions_ByUniqueID(t *testing.T) {
 	assert.Equal(t, "", cv.gotUnitID)
 }
 
-// The schedule graph carries the live promotion seq the repository read with it.
-func TestQueryHandler_GetScheduleGraph_CarriesTheLivePromotionSeq(t *testing.T) {
-	h := newHandlerWithLists(&fakeScheduleLists{graph: &domain.ScheduleGraph{PromotionSeq: 42}})
-	resp, err := h.GetScheduleGraph(context.Background(), &orchestratorv1.GetScheduleGraphRequest{ScheduleName: "daily"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(42), resp.GetPromotionSeq())
-}
-
 // ---- GetNodeLocation ----
 
 func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
-	lists := &fakeScheduleLists{
+	lists := &fakeNodeReader{
 		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ServiceName: "service-1"},
 	}
-	h := newHandlerWithLists(lists)
+	h := newHandlerWithNodes(lists)
 	resp, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
 	require.NoError(t, err)
 	assert.Equal(t, "models/loc_target.sql", resp.FilePath)
@@ -457,8 +437,8 @@ func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
 }
 
 func TestQueryHandler_GetNodeLocation_UnknownNode_NotFound(t *testing.T) {
-	lists := &fakeScheduleLists{locationErr: domain.ErrNodeNotFound}
-	h := newHandlerWithLists(lists)
+	lists := &fakeNodeReader{locationErr: domain.ErrNodeNotFound}
+	h := newHandlerWithNodes(lists)
 	_, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.absent"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }

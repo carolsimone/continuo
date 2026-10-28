@@ -165,7 +165,7 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 }
 
 // TestGetLastRunPerSchedule_UsesIndex asserts the DISTINCT ON last-run scan,
-// hit by ListAllSchedules, walks the schedule_name index.
+// hit by ListSchedules, walks the schedule_name index.
 func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")

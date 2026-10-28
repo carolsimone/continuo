@@ -28,11 +28,13 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
+	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
-	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
+	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
+	"github.com/carolsimone/continuo/state/service/commands"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
@@ -295,9 +297,12 @@ func main() {
 	// are kept at least 30 days (the replay horizon), longer when
 	// RETENTION_DAYS is longer; a promoted release is kept RETENTION_DAYS after
 	// it was loaded, and for as long as it is live or a pending or running run
-	// names it. All are pruned on the same timer.
+	// names it; a command request, like a dedup row, is kept at least the
+	// replay horizon, the longest a caller can still retry, longer when
+	// RETENTION_DAYS is longer. All are pruned on the same timer.
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
+	commandRequestPruner := commands.NewPruner(uowFactory)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
@@ -309,6 +314,11 @@ func main() {
 			{
 				Name:  "topology_releases",
 				Prune: topologyPruner.Prune,
+			},
+			{
+				Name:         "command_requests",
+				Prune:        commandRequestPruner.Prune,
+				MinRetention: model.ReplayHorizon,
 			},
 		},
 		pkgoutbox.RetentionConfig{
@@ -455,28 +465,25 @@ func main() {
 	}
 	logger.Info("Cron scheduler started")
 
-	// Initialize gRPC handlers. Each request acts for the tenant the identity
-	// interceptor placed on its context; the task and node-run reads are bound
-	// to that tenant per request.
-	schedulerHandler := handlers.NewSchedulerHandler(runRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
-	taskHandler := handlers.NewTaskHandler(func(tenantID string) handlers.TaskReads { return taskCollection.ForTenant(tenantID) }, logger)
-	taskAttemptHandler := handlers.NewTaskAttemptHandler(taskAttemptReadRepo, logger)
-	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)
-	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
-	rebaseUC := svchandlers.NewTriggerRebaseHandler(planner, logger)
-	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, uowFactory, logger)
+	// The RunService edge acts for the tenant the identity interceptor placed
+	// on each request's context; its reads are bound to that tenant per
+	// request.
 	runReadRepo := postgres.NewRunReadRepository(db)
-	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
-	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
-	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunsOf, taskDefaults.Timeout, logger)
-	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
+	runService := runservice.NewServer(runservice.Reads{
+		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
+		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
+		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
+		Schedules:      runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
+		Graphs:         runreads.New(runReadRepo),
+		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
+		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),
+	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskAttemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, runService, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

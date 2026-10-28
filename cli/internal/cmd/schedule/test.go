@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
@@ -15,7 +16,7 @@ import (
 // flags have been parsed — the subcommand reads the up-to-date value at RunE.
 // stdout and stderr are injected so tests can capture them; in production
 // the root command wires os.Stdout / os.Stderr.
-func NewTestCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewTestCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test <schedule-name>",
 		Short: "Run dbt tests for every model in the named schedule",
@@ -31,18 +32,20 @@ Arguments:
   <schedule-name>  The schedule to test.
 
 Output (stdout, JSON):
-  {"schedule_id":string,"schedule_name":string,"triggered_at":string}
+  {"run_id":string,"schedule_name":string,"triggered_at":string}
+
+` + client.RequestIDHelp + `
 
 Errors:
   usage      (exit 2)  wrong number of arguments
   not_found  (exit 3)  schedule not in the catalog
-  conflict   (exit 4)  a run is already active for this schedule
+  conflict   (exit 4)  a run is already active for this schedule, or the request id was used before with other arguments
   unavailable(exit 5)  the state service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule test daily",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_id":"string","schedule_name":"string","triggered_at":"string"}`,
+			"output_schema": `{"run_id":"string","schedule_name":"string","triggered_at":"string"}`,
 			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
@@ -63,16 +66,16 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerScheduleTest(ctx, scheduleName, cfg.Actor)
+			resp, err := c.TriggerScheduleTest(ctx, client.RequestID(), scheduleName, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered test run "+resp.ScheduleId+" for schedule '"+scheduleName+"'")
+				return output.HumanSuccess(stderr, "Triggered test run "+resp.GetRunId()+" for schedule '"+scheduleName+"'")
 			}
 			payload := map[string]string{
-				"schedule_id":   resp.ScheduleId,
+				"run_id":        resp.GetRunId(),
 				"schedule_name": scheduleName,
 				"triggered_at":  time.Now().UTC().Format(time.RFC3339),
 			}

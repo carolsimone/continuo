@@ -47,10 +47,6 @@ type fakeNodeOrchestrator struct {
 	closeErr error
 }
 
-func (f *fakeNodeOrchestrator) GetScheduleGraph(context.Context, string) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	panic("GetScheduleGraph should not be called in node tests")
-}
-
 func (f *fakeNodeOrchestrator) GetNodeVersions(_ context.Context, uniqueID string, limit int32, includeCode bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
 	f.gotVersionsUniqueID, f.gotVersionsLimit, f.gotVersionsIncludeCode = uniqueID, limit, includeCode
 	return f.versionsResp, f.versionsErr

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
 import { TaskAttempt } from '../../src/client/types';
 
@@ -22,6 +22,7 @@ function mockFetchSequence(routes: Record<string, (url: string) => Promise<unkno
 }
 
 const RUN_ID = 'run-1';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SCHED = 'hourly-events';
 const SAMPLE_NODE_ID = 'svc1.public.orders'; // used in freshRoutes mock data
 
@@ -69,7 +70,7 @@ function freshRoutes() {
       ],
       edges: [],
     }),
-    [`/api/schedulers/${RUN_ID}/tasks`]: async () => ({
+    [`/api/runs/${RUN_ID}/tasks`]: async () => ({
       tasks: [
         {
           task_id: 't1',
@@ -84,20 +85,18 @@ function freshRoutes() {
         },
       ],
     }),
-    [`/api/schedulers/${RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    [`/api/runs/${RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
     [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
-    [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
-    [`/api/schedulers/${RUN_ID}`]: async () => ({
-      scheduler: {
-        schedule_id: RUN_ID,
-        schedule_name: SCHED,
-        status: 'failed',
-        created_at: null,
-        started_at: null,
-        completed_at: null,
-        cancelled_at: null,
-        cancelled_by: '',
-      },
+    [`/api/runs/${RUN_ID}/rerun`]: async () => ({ ok: true }),
+    [`/api/runs/${RUN_ID}`]: async () => ({
+      run_id: RUN_ID,
+      schedule_name: SCHED,
+      status: 'failed',
+      created_at: null,
+      started_at: null,
+      completed_at: null,
+      cancelled_at: null,
+      cancelled_by: '',
     }),
   };
 }
@@ -105,17 +104,15 @@ function freshRoutes() {
 function failedRoutes() {
   return {
     ...freshRoutes(),
-    [`/api/schedulers/${RUN_ID}`]: async () => ({
-      scheduler: {
-        schedule_id: RUN_ID,
-        schedule_name: SCHED,
-        status: 'SCHEDULER_STATUS_FAILED',
-        created_at: null,
-        started_at: null,
-        completed_at: null,
-        cancelled_at: null,
-        cancelled_by: '',
-      },
+    [`/api/runs/${RUN_ID}`]: async () => ({
+      run_id: RUN_ID,
+      schedule_name: SCHED,
+      status: 'failed',
+      created_at: null,
+      started_at: null,
+      completed_at: null,
+      cancelled_at: null,
+      cancelled_by: '',
     }),
   };
 }
@@ -129,7 +126,7 @@ const REBASE_PREVIEW = {
 
 // rebaseFetch answers the rebase preview and the rebase POST by exact path —
 // mockFetchSequence matches by substring in insertion order, so its
-// `/api/schedulers/${RUN_ID}` route would otherwise answer both — and every
+// `/api/runs/${RUN_ID}` route would otherwise answer both — and every
 // other request from routes the way mockFetchSequence does.
 function rebaseFetch(
   routes: Record<string, (url: string) => Promise<unknown>>,
@@ -138,10 +135,10 @@ function rebaseFetch(
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     const path = url.split('?')[0];
-    if (path === `/api/schedulers/${RUN_ID}/rebase-preview`) {
+    if (path === `/api/runs/${RUN_ID}/rebase-preview`) {
       return { ok: true, status: 200, json: async () => REBASE_PREVIEW } as Response;
     }
-    if (path === `/api/schedulers/${RUN_ID}/rebase` && init?.method === 'POST') {
+    if (path === `/api/runs/${RUN_ID}/rebase` && init?.method === 'POST') {
       const { status, body } = rebaseReply;
       return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
     }
@@ -177,10 +174,10 @@ describe('DetailPage — run-level Rerun button', () => {
 
   it('says why a run that failed without a failed task failed', async () => {
     const routes = failedRoutes();
-    const base = routes[`/api/schedulers/${RUN_ID}`];
-    routes[`/api/schedulers/${RUN_ID}`] = async (url: string) => {
-      const body = (await base(url)) as { scheduler: Record<string, unknown> };
-      return { scheduler: { ...body.scheduler, failure_reason: 'stalled' } };
+    const base = routes[`/api/runs/${RUN_ID}`];
+    routes[`/api/runs/${RUN_ID}`] = async (url: string) => {
+      const body = (await base(url)) as Record<string, unknown>;
+      return { ...body, failure_reason: 'stalled' };
     };
     vi.stubGlobal('fetch', mockFetchSequence(routes));
 
@@ -192,17 +189,15 @@ describe('DetailPage — run-level Rerun button', () => {
   it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
     const routes = {
       ...freshRoutes(),
-      [`/api/schedulers/${RUN_ID}`]: async () => ({
-        scheduler: {
-          schedule_id: RUN_ID,
-          schedule_name: SCHED,
-          status: 'SCHEDULER_STATUS_SUCCEEDED',
-          created_at: null,
-          started_at: null,
-          completed_at: null,
-          cancelled_at: null,
-          cancelled_by: '',
-        },
+      [`/api/runs/${RUN_ID}`]: async () => ({
+        run_id: RUN_ID,
+        schedule_name: SCHED,
+        status: 'succeeded',
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        cancelled_by: '',
       }),
     };
     const fetchMock = mockFetchSequence(routes);
@@ -213,7 +208,7 @@ describe('DetailPage — run-level Rerun button', () => {
     // Wait for the scheduler fetch to resolve before asserting absence.
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
     expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
   });
@@ -230,7 +225,7 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  it('posts empty body to /api/schedulers/:id/rerun when modal submits with "this snapshot"', async () => {
+  it('posts the request id to /api/runs/:id/rerun when modal submits with "this snapshot"', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
@@ -245,16 +240,17 @@ describe('DetailPage — run-level Rerun button', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const rerunCall = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rerun`));
+      const rerunCall = calls.find(c => String(c[0]).includes(`/api/runs/${RUN_ID}/rerun`));
       expect(rerunCall).toBeDefined();
-      expect(rerunCall![1]).toMatchObject({ method: 'POST', body: '{}' });
+      expect(rerunCall![1]).toMatchObject({ method: 'POST' });
+      expect(JSON.parse(String(rerunCall![1]!.body))).toEqual({ request_id: expect.stringMatching(UUID) });
     });
   });
 
   it('turns the Rerun failed button green and relabels on success', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
+      [`/api/runs/${RUN_ID}/rerun`]: async () => ({ ok: true }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -288,17 +284,15 @@ describe('DetailPage — run-level Rebase button (via modal)', () => {
   it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
     const routes = {
       ...freshRoutes(),
-      [`/api/schedulers/${RUN_ID}`]: async () => ({
-        scheduler: {
-          schedule_id: RUN_ID,
-          schedule_name: SCHED,
-          status: 'SCHEDULER_STATUS_SUCCEEDED',
-          created_at: null,
-          started_at: null,
-          completed_at: null,
-          cancelled_at: null,
-          cancelled_by: '',
-        },
+      [`/api/runs/${RUN_ID}`]: async () => ({
+        run_id: RUN_ID,
+        schedule_name: SCHED,
+        status: 'succeeded',
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        cancelled_by: '',
       }),
     };
     const fetchMock = mockFetchSequence(routes);
@@ -308,12 +302,12 @@ describe('DetailPage — run-level Rebase button (via modal)', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
     expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
   });
 
-  it('POSTs /api/schedulers/:id/rebase on the previewed release when "Latest snapshot" is submitted', async () => {
+  it('POSTs /api/runs/:id/rebase on the previewed release when "Latest snapshot" is submitted', async () => {
     const fetchMock = rebaseFetch(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
@@ -322,13 +316,17 @@ describe('DetailPage — run-level Rebase button (via modal)', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const rebaseCall = calls.find(c => c[0] === `/api/schedulers/${RUN_ID}/rebase`);
+      const rebaseCall = calls.find(c => c[0] === `/api/runs/${RUN_ID}/rebase`);
       expect(rebaseCall).toBeDefined();
       expect(rebaseCall![1]).toMatchObject({ method: 'POST' });
-      expect(JSON.parse(String(rebaseCall![1]!.body))).toEqual({ include_changed_upstream: true, expected_release_id: 'rel-7' });
+      expect(JSON.parse(String(rebaseCall![1]!.body))).toEqual({
+        request_id: expect.stringMatching(UUID),
+        include_changed_upstream: true,
+        expected_release_id: 'rel-7',
+      });
     });
     expect(fetchMock.mock.calls.map(c => String(c[0])))
-      .toContain(`/api/schedulers/${RUN_ID}/rebase-preview?include_changed_upstream=true`);
+      .toContain(`/api/runs/${RUN_ID}/rebase-preview?include_changed_upstream=true`);
   });
 
   it('turns the Rerun failed button green and relabels on rebase success', async () => {
@@ -360,7 +358,7 @@ describe('DetailPage — Trigger run topbar button', () => {
   it('renders Trigger run in the topbar and POSTs /api/schedules/:name/trigger', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedules/${SCHED}/trigger`]: async () => ({ schedule_id: 'new-id' }),
+      [`/api/schedules/${SCHED}/trigger`]: async () => ({ run_id: 'new-id' }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -377,22 +375,196 @@ describe('DetailPage — Trigger run topbar button', () => {
     });
   });
 
+  it('DetailPage trigger: the body carries a request id, and a press after a timeout sends it again', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[0]).toMatch(UUID);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('DetailPage trigger: a press hours after an unanswered one, with no newer run observed, is a retry with the same id', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+      await screen.findByText('Request failed — please try again');
+      vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
+      fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+      await waitFor(() => expect(ids).toHaveLength(2));
+      expect(ids[1]).toBe(ids[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('DetailPage trigger: a press after the page arrives at the schedule again and reads a newer run is a new action', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence({
+      ...failedRoutes(),
+      '/api/runs/run-2/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/runs/run-2/tasks': async () => ({ tasks: [] }),
+      '/api/runs/run-2/attempts': async () => ({ attempts: [], total_count: 0 }),
+      '/api/runs/run-2': async () => ({ run_id: 'run-2', schedule_name: SCHED, status: 'succeeded' }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    // Moves between schedules without leaving the page, the way a link to
+    // another schedule does, so the page keeps its request id.
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => navigate('/schedule/other', { state: { last_run_id: null } })}>to other</button>
+          <button onClick={() => navigate(`/schedule/${SCHED}`, { state: { last_run_id: 'run-2' } })}>back</button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[{ pathname: `/schedule/${SCHED}`, state: { last_run_id: RUN_ID } }]}>
+        <Nav />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: 'to other' }));
+    // Arriving at the schedule again reads its newest run, the one the
+    // unanswered press made.
+    fireEvent.click(screen.getByRole('button', { name: 'back' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('DetailPage trigger: a press made while the schedule list is still loading adopts the run the list then names', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    let answerList: (body: unknown) => void = () => {};
+    const list = new Promise<unknown>((resolve) => { answerList = resolve; });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/schedules') {
+        const body = await list;
+        return { ok: true, status: 200, json: async () => body } as Response;
+      }
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter(null));
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    // The list names the schedule's newest run, which may be the one the
+    // unanswered press made.
+    answerList({ schedules: [{ schedule_name: SCHED, last_run_id: RUN_ID }] });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === `/api/runs/${RUN_ID}`)).toBe(true));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('DetailPage trigger: a failed read of the schedule list is not a schedule that never ran', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/schedules') throw new Error('network down');
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => navigate('/schedule/other', { state: { last_run_id: null } })}>to other</button>
+          <button onClick={() => navigate(`/schedule/${SCHED}`, { state: { last_run_id: RUN_ID } })}>back</button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[`/schedule/${SCHED}`]}>
+        <Nav />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: 'to other' }));
+    // Arriving again names the schedule's newest run: the page did not know
+    // what the schedule showed when the unanswered press was made.
+    fireEvent.click(screen.getByRole('button', { name: 'back' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
+  });
+
   it('disables the topbar Trigger run button while a run is live', async () => {
     // Use freshRoutes() but override the scheduler endpoint to return a
     // non-terminal status so liveRunExists becomes true.
     const fetchMock = mockFetchSequence({
       ...freshRoutes(),
-      [`/api/schedulers/${RUN_ID}`]: async () => ({
-        scheduler: {
-          schedule_id: RUN_ID,
-          schedule_name: SCHED,
-          status: 'SCHEDULER_STATUS_RUNNING',
-          created_at: null,
-          started_at: null,
-          completed_at: null,
-          cancelled_at: null,
-          cancelled_by: '',
-        },
+      [`/api/runs/${RUN_ID}`]: async () => ({
+        run_id: RUN_ID,
+        schedule_name: SCHED,
+        status: 'running',
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        cancelled_by: '',
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -402,7 +574,7 @@ describe('DetailPage — Trigger run topbar button', () => {
     // Wait for scheduler fetch to land so liveRunExists is computed.
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
     const btn = await screen.findByRole('button', { name: /^▶ Trigger run$/ });
     expect(btn).toBeDisabled();
@@ -470,7 +642,7 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
     // Wait for page to settle
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
 
     const rerunBtns = screen.getAllByRole('button', { name: /rerun failed/i });
@@ -485,7 +657,7 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/schedulers/${RUN_ID}`))).toBe(true);
+      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
     });
 
     expect(screen.queryByRole('button', { name: /this snapshot/i })).toBeNull();
@@ -518,9 +690,10 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const hit = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rerun`));
+      const hit = calls.find(c => String(c[0]).includes(`/api/runs/${RUN_ID}/rerun`));
       expect(hit).toBeDefined();
-      expect(hit![1]).toMatchObject({ method: 'POST', body: '{}' });
+      expect(hit![1]).toMatchObject({ method: 'POST' });
+      expect(JSON.parse(String(hit![1]!.body))).toEqual({ request_id: expect.stringMatching(UUID) });
     });
   });
 
@@ -533,7 +706,7 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const hit = calls.find(c => c[0] === `/api/schedulers/${RUN_ID}/rebase`);
+      const hit = calls.find(c => c[0] === `/api/runs/${RUN_ID}/rebase`);
       expect(hit).toBeDefined();
       expect(hit![1]).toMatchObject({ method: 'POST' });
     });
@@ -649,7 +822,7 @@ function latestRoutes() {
         {
           run_id: LATEST_RUN_ID,
           schedule_name: LATEST_SCHED,
-          terminal_status: 'succeeded',
+          status: 'succeeded',
           created_at: '2026-05-26T11:39:00Z',
           completed_at: '2026-05-26T11:40:00Z',
         },
@@ -666,19 +839,17 @@ function latestRoutes() {
       run_promotion_seq: 4,
       latest_promotion_seq: 5,
     }),
-    [`/api/schedulers/${LATEST_RUN_ID}`]: async () => ({
-      scheduler: {
-        schedule_id: LATEST_RUN_ID,
-        schedule_name: LATEST_SCHED,
-        status: 'scheduler_status_succeeded',
-        created_at: null,
-        started_at: null,
-        completed_at: null,
-        cancelled_at: null,
-        cancelled_by: '',
-      },
+    [`/api/runs/${LATEST_RUN_ID}`]: async () => ({
+      run_id: LATEST_RUN_ID,
+      schedule_name: LATEST_SCHED,
+      status: 'succeeded',
+      created_at: null,
+      started_at: null,
+      completed_at: null,
+      cancelled_at: null,
+      cancelled_by: '',
     }),
-    [`/api/schedulers/${LATEST_RUN_ID}/tasks`]: async () => ({
+    [`/api/runs/${LATEST_RUN_ID}/tasks`]: async () => ({
       tasks: [
         {
           task_id: 't1',
@@ -693,7 +864,7 @@ function latestRoutes() {
         },
       ],
     }),
-    [`/api/schedulers/${LATEST_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    [`/api/runs/${LATEST_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
   };
 }
 
@@ -775,7 +946,7 @@ describe('DetailPage in latest mode — Past Runs paging', () => {
           runs: ids.map(i => ({
             run_id: `hist-run-${i}`,
             schedule_name: LATEST_SCHED,
-            terminal_status: i === 0 ? 'failed' : 'succeeded',
+            status: i === 0 ? 'failed' : 'succeeded',
             created_at: '2026-05-26T11:39:00Z',
             completed_at: '2026-05-26T11:40:00Z',
             failure_reason: i === 0 ? 'stalled' : null,
@@ -862,10 +1033,8 @@ describe('DetailPage — Run tab polling', () => {
   });
 
   const schedulerAt = (id: string, status: string) => ({
-    scheduler: {
-      schedule_id: id, schedule_name: SCHED, status,
-      created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
-    },
+    run_id: id, schedule_name: SCHED, status,
+    created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
   });
   const taskAt = (status: string) => ({
     tasks: [{
@@ -895,33 +1064,33 @@ describe('DetailPage — Run tab polling', () => {
     let staleAttempts = true;
     const fetchMock = mockFetchSequence({
       ...freshRoutes(),
-      [`/api/schedulers/${RUN_ID}/tasks`]: async () => {
+      [`/api/runs/${RUN_ID}/tasks`]: async () => {
         if (ended && !staleTasks) return taskAt('succeeded');
         if (ended) staleTasks = false;
         return taskAt('running');
       },
-      [`/api/schedulers/${RUN_ID}/attempts`]: async () => {
+      [`/api/runs/${RUN_ID}/attempts`]: async () => {
         if (ended && !staleAttempts) return attemptAt('succeeded');
         if (ended) staleAttempts = false;
         return attemptAt('running');
       },
-      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, ended ? 'succeeded' : 'running'),
+      [`/api/runs/${RUN_ID}`]: async () => schedulerAt(RUN_ID, ended ? 'succeeded' : 'running'),
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
       render(withRouter({ last_run_id: RUN_ID }));
       await waitFor(() => expect(rowStatus()).toBe('running'));
-      const before = callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`);
+      const before = callsTo(fetchMock, `/api/runs/${RUN_ID}/tasks`);
 
       ended = true;
       await vi.advanceTimersByTimeAsync(5000);
 
       await waitFor(() => expect(rowStatus()).toBe('succeeded'));
-      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+      expect(callsTo(fetchMock, `/api/runs/${RUN_ID}/tasks`)).toBe(before + 2);
 
       // The run is terminal: the poll has stopped.
       await vi.advanceTimersByTimeAsync(15000);
-      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+      expect(callsTo(fetchMock, `/api/runs/${RUN_ID}/tasks`)).toBe(before + 2);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -931,22 +1100,22 @@ describe('DetailPage — Run tab polling', () => {
     const OLD_RUN_ID = 'run-old';
     const fetchMock = mockFetchSequence({
       ...freshRoutes(),
-      [`/api/schedulers/${RUN_ID}/tasks`]: async () => taskAt('running'),
-      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, 'running'),
+      [`/api/runs/${RUN_ID}/tasks`]: async () => taskAt('running'),
+      [`/api/runs/${RUN_ID}`]: async () => schedulerAt(RUN_ID, 'running'),
       [`/api/schedules/${SCHED}/runs`]: async () => ({
         runs: [
-          { run_id: OLD_RUN_ID, schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
         ],
       }),
       [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
-      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: async () => ({
+      [`/api/runs/${OLD_RUN_ID}/tasks`]: async () => ({
         total_count: 1,
         tasks: [{
           task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
           job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
         }],
       }),
-      [`/api/schedulers/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+      [`/api/runs/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
@@ -961,10 +1130,10 @@ describe('DetailPage — Run tab polling', () => {
       expect(await screen.findByText('old_orders')).toBeInTheDocument();
 
       const rowReads = () => [
-        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/tasks`),
-        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/attempts`),
-        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`),
-        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/attempts`),
+        callsTo(fetchMock, `/api/runs/${OLD_RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/runs/${OLD_RUN_ID}/attempts`),
+        callsTo(fetchMock, `/api/runs/${RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/runs/${RUN_ID}/attempts`),
       ];
       const before = rowReads();
       expect(before.slice(0, 2)).toEqual([1, 1]);
@@ -1053,7 +1222,7 @@ describe('DetailPage — attempts pagination regression', () => {
   it('renders the error message and log link of an attempt beyond page 1 (index 400 of 412)', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/attempts`]: pagedAttemptsHandler,
+      [`/api/runs/${RUN_ID}/attempts`]: pagedAttemptsHandler,
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -1073,7 +1242,7 @@ describe('DetailPage — attempts pagination regression', () => {
     // against a broken single-fetch implementation): assert the component
     // actually requested pages 2 and 3.
     const calls = fetchMock.mock.calls.map(c => String(c[0]));
-    const attemptCalls = calls.filter(u => u.includes(`/api/schedulers/${RUN_ID}/attempts`));
+    const attemptCalls = calls.filter(u => u.includes(`/api/runs/${RUN_ID}/attempts`));
     expect(attemptCalls.some(u => u.includes('offset=200'))).toBe(true);
     expect(attemptCalls.some(u => u.includes('offset=400'))).toBe(true);
   });
@@ -1087,7 +1256,7 @@ describe('DetailPage — historical run attempts', () => {
       ...failedRoutes(),
       [`/api/schedules/${SCHED}/runs`]: async () => ({
         runs: [
-          { run_id: OLD_RUN_ID, schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
         ],
       }),
       [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({
@@ -1098,7 +1267,7 @@ describe('DetailPage — historical run attempts', () => {
         run_promotion_seq: 6,
         latest_promotion_seq: 7,
       }),
-      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: async () => ({
+      [`/api/runs/${OLD_RUN_ID}/tasks`]: async () => ({
         total_count: 1,
         tasks: [
           {
@@ -1107,7 +1276,7 @@ describe('DetailPage — historical run attempts', () => {
           },
         ],
       }),
-      [`/api/schedulers/${OLD_RUN_ID}/attempts`]: async () => ({
+      [`/api/runs/${OLD_RUN_ID}/attempts`]: async () => ({
         total_count: 2,
         attempts: [0, 1].map((n): TaskAttempt => ({
           task_id: 'old-t1', attempt: n, job_name: `old-t1-${n}`, status: 'failed',
@@ -1149,8 +1318,8 @@ describe('DetailPage — historical run attempts', () => {
         .toContain(encodeURIComponent('logs/old-t1-0.log'));
 
       const urls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(urls.some(u => u.startsWith(`/api/schedulers/${OLD_RUN_ID}/tasks`))).toBe(true);
-      expect(urls.some(u => u.startsWith(`/api/schedulers/${OLD_RUN_ID}/attempts`))).toBe(true);
+      expect(urls.some(u => u.startsWith(`/api/runs/${OLD_RUN_ID}/tasks`))).toBe(true);
+      expect(urls.some(u => u.startsWith(`/api/runs/${OLD_RUN_ID}/attempts`))).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -1161,7 +1330,7 @@ describe('DetailPage — historical run attempts', () => {
     // not keep the latest run's rows under the past run's snapshot strip.
     const fetchMock = mockFetchSequence({
       ...historicalRoutes(),
-      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: () => new Promise(() => {}),
+      [`/api/runs/${OLD_RUN_ID}/tasks`]: () => new Promise(() => {}),
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
@@ -1197,7 +1366,7 @@ describe('DetailPage — Run List service grouping', () => {
         run_promotion_seq: 7,
         latest_promotion_seq: 7,
       }),
-      [`/api/schedulers/${RUN_ID}/tasks`]: async () => ({
+      [`/api/runs/${RUN_ID}/tasks`]: async () => ({
         tasks: [
           {
             task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
@@ -1291,8 +1460,8 @@ describe('DetailPage — panel tabs keep loaded page state', () => {
       ...freshRoutes(),
       [`/api/schedules/${SCHED}/runs`]: async () => ({
         runs: [
-          { run_id: 'run-a', schedule_name: SCHED, terminal_status: 'succeeded', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:01:00Z' },
-          { run_id: 'run-b', schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-02T10:00:00Z', completed_at: '2026-09-02T10:01:00Z' },
+          { run_id: 'run-a', schedule_name: SCHED, status: 'succeeded', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:01:00Z' },
+          { run_id: 'run-b', schedule_name: SCHED, status: 'failed', created_at: '2026-09-02T10:00:00Z', completed_at: '2026-09-02T10:01:00Z' },
         ],
       }),
     }));

@@ -81,8 +81,12 @@ func FromGRPC(err error) CLIError {
 	switch st.Code() {
 	case codes.NotFound:
 		return CLIError{Code: CodeNotFound, Message: msg, Retryable: false}
-	case codes.FailedPrecondition, codes.AlreadyExists, codes.Aborted:
+	case codes.FailedPrecondition, codes.Aborted:
 		return CLIError{Code: CodeConflict, Message: msg, Retryable: true}
+	case codes.AlreadyExists:
+		// A request id reused with other parameters is refused on every
+		// retry of the same call.
+		return CLIError{Code: CodeConflict, Message: msg, Retryable: false}
 	case codes.Unavailable, codes.DeadlineExceeded:
 		return CLIError{Code: CodeUnavailable, Message: msg, Retryable: true}
 	case codes.InvalidArgument:

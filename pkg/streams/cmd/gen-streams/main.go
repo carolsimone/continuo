@@ -63,8 +63,11 @@ type Consumer struct {
 // is significant: a consumer that must pick one value from several uses it as
 // precedence.
 type Vocabulary struct {
-	Name        string            `yaml:"name"`
-	Const       string            `yaml:"const"`
+	Name  string `yaml:"name"`
+	Const string `yaml:"const"`
+	// ListFunc names the Go function that lists every value. It defaults to
+	// the plural of Const.
+	ListFunc    string            `yaml:"list_func"`
 	Description string            `yaml:"description"`
 	Values      []VocabularyValue `yaml:"values"`
 }
@@ -75,6 +78,11 @@ type VocabularyValue struct {
 	Healable    bool   `yaml:"healable"`
 	FullRefresh bool   `yaml:"full_refresh"`
 	SecretRef   bool   `yaml:"secret_ref"`
+	// SingleNodeOnly marks a value that may target only one node.
+	SingleNodeOnly bool `yaml:"single_node_only"`
+	// Default marks the value a message that names none stands for. Its Go
+	// constant is the empty string, the wire form of "not named".
+	Default     bool   `yaml:"default"`
 	Runtime     string `yaml:"runtime"`
 	Class       string `yaml:"class"`
 	Description string `yaml:"description"`
@@ -386,6 +394,39 @@ func secretRefListConst(v Vocabulary) string {
 	return toScreamingSnake(v.Const) + "S_WITH_SECRET_REF"
 }
 
+func hasSingleNodeOnly(v Vocabulary) bool {
+	for _, val := range v.Values {
+		if val.SingleNodeOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// hasDefault reports whether a value of v is marked default.
+func hasDefault(v Vocabulary) bool {
+	for _, val := range v.Values {
+		if val.Default {
+			return true
+		}
+	}
+	return false
+}
+
+// singleNodeOnlyListConst names the list of values that may target only one
+// node, e.g. SINGLE_NODE_ONLY_OPERATIONS.
+func singleNodeOnlyListConst(v Vocabulary) string {
+	return "SINGLE_NODE_ONLY_" + toScreamingSnake(plural(v.Const))
+}
+
+// listFunc is the name of the Go function that lists every value of v.
+func listFunc(v Vocabulary) string {
+	if v.ListFunc != "" {
+		return v.ListFunc
+	}
+	return plural(v.Const)
+}
+
 func usesRuntime(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Runtime != "" }
 
 func usesClass(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Class != "" }
@@ -403,16 +444,26 @@ type goVocabRow struct {
 	HasHealable    bool
 	HasFullRefresh bool
 	HasSecretRef   bool
-	RuntimeType    string
-	ClassType      string
-	Values         []goVocabValueRow
+	// HasSingleNodeOnly and HasDefault select the IsSingleNodeOnly predicate
+	// and the Parse function. Label is the vocabulary's name in words, for the
+	// Parse function's error.
+	HasSingleNodeOnly bool
+	HasDefault        bool
+	Label             string
+	RuntimeType       string
+	ClassType         string
+	Values            []goVocabValueRow
 }
 
 type goVocabValueRow struct {
 	Const, Type, Value, Description  string
 	Healable, FullRefresh, SecretRef bool
-	RuntimeConst                     string
-	ClassConst                       string
+	SingleNodeOnly, Default          bool
+	// GoValue is the literal the constant holds: the value, or "" for the
+	// default.
+	GoValue      string
+	RuntimeConst string
+	ClassConst   string
 }
 
 func goVocabRows(c *Contract) []goVocabRow {
@@ -420,7 +471,12 @@ func goVocabRows(c *Contract) []goVocabRow {
 	cv := classVocabulary(c)
 	var rows []goVocabRow
 	for _, v := range c.Vocabularies {
-		row := goVocabRow{Const: v.Const, Plural: plural(v.Const), Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v), HasSecretRef: hasSecretRef(v)}
+		row := goVocabRow{
+			Const: v.Const, Plural: listFunc(v), Name: v.Name, Description: v.Description,
+			HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v), HasSecretRef: hasSecretRef(v),
+			HasSingleNodeOnly: hasSingleNodeOnly(v), HasDefault: hasDefault(v),
+			Label: strings.ReplaceAll(v.Name, "_", " "),
+		}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeType = rv.Const
 		}
@@ -436,6 +492,13 @@ func goVocabRows(c *Contract) []goVocabRow {
 				Healable:    val.Healable,
 				FullRefresh: val.FullRefresh,
 				SecretRef:   val.SecretRef,
+
+				SingleNodeOnly: val.SingleNodeOnly,
+				Default:        val.Default,
+				GoValue:        val.Value,
+			}
+			if val.Default {
+				vr.GoValue = ""
 			}
 			if usesRuntime(v) && rv != nil {
 				vr.RuntimeConst = rv.Const + constForValue(rv, val.Runtime)
@@ -461,6 +524,10 @@ func emitGoVocabulary(c *Contract) (string, error) {
 // domain vocabulary, not transport: stream and consumer-group names live in
 // pkg/streams, which no domain package imports.
 package model
+{{- if .NeedsFmt }}
+
+import "fmt"
+{{- end }}
 {{- range .Vocabularies }}
 
 // {{ .Const }} — {{ .Description }}
@@ -471,7 +538,7 @@ type {{ .Const }} string
 const (
 {{- range .Values }}
 	// {{ .Const }} — {{ .Description }}
-	{{ .Const }} {{ .Type }} = "{{ .Value }}"
+	{{ .Const }} {{ .Type }} = "{{ .GoValue }}"
 {{- end }}
 )
 
@@ -543,6 +610,42 @@ func (v {{ .Const }}) AllowsSecretRef() bool {
 	return false
 }
 {{- end }}
+{{- if .HasSingleNodeOnly }}
+
+// IsSingleNodeOnly reports whether the contract marks v as targeting only one
+// node, so it is never fanned out across a schedule.
+func (v {{ .Const }}) IsSingleNodeOnly() bool {
+	switch v {
+{{- range .Values }}
+{{- if .SingleNodeOnly }}
+	case {{ .Const }}:
+		return true
+{{- end }}
+{{- end }}
+	}
+	return false
+}
+{{- end }}
+{{- if .HasDefault }}
+
+// Parse{{ .Const }} converts a raw string to the {{ .Const }} it names. The
+// default's empty wire form and its declared name both parse to the default;
+// any other string that is not a declared value is an error.
+func Parse{{ .Const }}(s string) ({{ .Const }}, error) {
+	switch {{ .Const }}(s) {
+{{- range .Values }}
+{{- if .Default }}
+	case {{ .Const }}, "{{ .Value }}":
+		return {{ .Const }}, nil
+{{- else }}
+	case {{ .Const }}:
+		return {{ .Const }}, nil
+{{- end }}
+{{- end }}
+	}
+	return "", fmt.Errorf("unknown {{ .Label }} %q", s)
+}
+{{- end }}
 {{- if .RuntimeType }}
 
 // Runtime reports which toolchain builds a node of this type.
@@ -576,7 +679,15 @@ func (v {{ .Const }}) Class() {{ .ClassType }} {
 		return "", err
 	}
 	var buf strings.Builder
-	if err := t.Execute(&buf, struct{ Vocabularies []goVocabRow }{goVocabRows(c)}); err != nil {
+	rows := goVocabRows(c)
+	needsFmt := false
+	for _, r := range rows {
+		needsFmt = needsFmt || r.HasDefault
+	}
+	if err := t.Execute(&buf, struct {
+		Vocabularies []goVocabRow
+		NeedsFmt     bool
+	}{rows, needsFmt}); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
@@ -711,6 +822,7 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			if val.SecretRef {
 				row.SecretRef = append(row.SecretRef, v.Const+"."+member)
 			}
+
 			if usesRuntime(v) && rv != nil {
 				row.RuntimeEntries = append(row.RuntimeEntries, v.Const+"."+member+": "+rv.Const+"."+pyMember(val.Runtime))
 			}
@@ -772,11 +884,13 @@ class {{ .Const }}(StrEnum):
 // value lists for the ui, which imports them from both its server and client.
 func emitTSVocabulary(c *Contract) (string, error) {
 	type tsRow struct {
-		Const, ListConst, Union, List         string
-		FullRefreshConst, FullRefreshList     string
-		SecretRefConst, SecretRefList         string
-		RuntimeConst, RuntimeType, RuntimeMap string
-		ClassConst, ClassType, ClassMap       string
+		Const, ListConst, Union, List           string
+		FullRefreshConst, FullRefreshList       string
+		SecretRefConst, SecretRefList           string
+		SingleNodeOnlyConst, SingleNodeOnlyList string
+		SingleNodeOnlyType, SingleNodeOnlyUnion string
+		RuntimeConst, RuntimeType, RuntimeMap   string
+		ClassConst, ClassType, ClassMap         string
 	}
 	rv := runtimeVocabulary(c)
 	cv := classVocabulary(c)
@@ -812,6 +926,18 @@ func emitTSVocabulary(c *Contract) (string, error) {
 			row.SecretRefConst = secretRefListConst(v)
 			row.SecretRefList = strings.Join(sr, ", ")
 		}
+		if hasSingleNodeOnly(v) {
+			var sn []string
+			for _, val := range v.Values {
+				if val.SingleNodeOnly {
+					sn = append(sn, "'"+val.Value+"'")
+				}
+			}
+			row.SingleNodeOnlyConst = singleNodeOnlyListConst(v)
+			row.SingleNodeOnlyList = strings.Join(sn, ", ")
+			row.SingleNodeOnlyType = "SingleNodeOnly" + v.Const
+			row.SingleNodeOnlyUnion = strings.Join(sn, " | ")
+		}
 		if usesRuntime(v) && rv != nil {
 			pairs := make([]string, 0, len(v.Values))
 			for _, val := range v.Values {
@@ -845,6 +971,10 @@ export const {{ .FullRefreshConst }}: readonly {{ .Const }}[] = [{{ .FullRefresh
 {{- end }}
 {{- if .SecretRefConst }}
 export const {{ .SecretRefConst }}: readonly {{ .Const }}[] = [{{ .SecretRefList }}];
+{{- end }}
+{{- if .SingleNodeOnlyConst }}
+export type {{ .SingleNodeOnlyType }} = {{ .SingleNodeOnlyUnion }};
+export const {{ .SingleNodeOnlyConst }}: readonly {{ .SingleNodeOnlyType }}[] = [{{ .SingleNodeOnlyList }}];
 {{- end }}
 {{- if .RuntimeConst }}
 export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType }}>> = { {{ .RuntimeMap }} };
@@ -1063,8 +1193,12 @@ func validate(c *Contract) error {
 		if len(v.Values) == 0 {
 			return fmt.Errorf("vocabulary %q declares no values", v.Name)
 		}
+		if v.ListFunc != "" && !identRe.MatchString(v.ListFunc) {
+			return fmt.Errorf("vocabulary %q: list_func %q is not a valid identifier", v.Name, v.ListFunc)
+		}
 		values := map[string]struct{}{}
 		consts := map[string]struct{}{}
+		defaults := 0
 		for i, val := range v.Values {
 			if !valueRe.MatchString(val.Value) {
 				return fmt.Errorf("vocabulary %q value[%d]: %q must match %s", v.Name, i, val.Value, valueRe.String())
@@ -1080,6 +1214,15 @@ func validate(c *Contract) error {
 				return fmt.Errorf("vocabulary %q: duplicate const %q", v.Name, val.Const)
 			}
 			consts[val.Const] = struct{}{}
+			if val.Default {
+				defaults++
+				if val.SingleNodeOnly {
+					return fmt.Errorf("vocabulary %q value[%d]: the default cannot be single_node_only", v.Name, i)
+				}
+			}
+		}
+		if defaults > 1 {
+			return fmt.Errorf("vocabulary %q: %d values are marked default, at most one may be", v.Name, defaults)
 		}
 	}
 

@@ -6,7 +6,7 @@ import type { NodeRun } from '../../src/client/types';
 
 const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
-  terminal_status: 'succeeded', task_id: 't1',
+  run_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
   image_tag: 'v1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
@@ -31,8 +31,8 @@ describe('RunSourcePickerDialog', () => {
 
   it('excludes an in-flight source run whose scheduler is not terminal', () => {
     const runs: NodeRun[] = [
-      mkRun({ run_id: 'done', terminal_status: 'succeeded', image_tag: 'img-done' }),
-      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img-inflight' }),
+      mkRun({ run_id: 'done', run_status: 'succeeded', image_tag: 'img-done' }),
+      mkRun({ run_id: 'inflight', run_status: 'running', image_tag: 'img-inflight' }),
     ];
     render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText('img-done')).toBeInTheDocument();

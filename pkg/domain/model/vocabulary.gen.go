@@ -6,6 +6,8 @@
 // pkg/streams, which no domain package imports.
 package model
 
+import "fmt"
+
 // ParseFailureKind — Why topology-controller could not resolve a candidate release. Declaration order is precedence.
 // Values come from the vocabulary "parse_failure_kind" in contract.yaml, in
 // declaration order.
@@ -329,6 +331,196 @@ func (v NodeType) Runtime() NodeRuntime {
 		return NodeRuntimeDbt
 	}
 	return ""
+}
+
+// RunStatus — Where a run stands. A run is active while pending, running or cancelling, and holds its schedule; it is terminal once succeeded, failed, cancelled or skipped.
+// Values come from the vocabulary "run_status" in contract.yaml, in
+// declaration order.
+type RunStatus string
+
+const (
+	// RunStatusPending — state created the run and no task of it has been dispatched yet.
+	RunStatusPending RunStatus = "pending"
+	// RunStatusRunning — at least one task of the run has been dispatched and the run has not ended.
+	RunStatusRunning RunStatus = "running"
+	// RunStatusCancelling — a cancel was requested and the run's open attempts are still being stopped; the run ends cancelled once every attempt has ended.
+	RunStatusCancelling RunStatus = "cancelling"
+	// RunStatusSucceeded — every task of the run succeeded.
+	RunStatusSucceeded RunStatus = "succeeded"
+	// RunStatusFailed — a task of the run failed for good, or state failed the run as stalled or unplannable.
+	RunStatusFailed RunStatus = "failed"
+	// RunStatusCancelled — the run was cancelled and every attempt of it has ended.
+	RunStatusCancelled RunStatus = "cancelled"
+	// RunStatusSkipped — the run had no work to do, such as a test run over nodes with no tests; a benign non-failure.
+	RunStatusSkipped RunStatus = "skipped"
+)
+
+// RunStatusValues returns every value in contract.yaml declaration order.
+func RunStatusValues() []RunStatus {
+	return []RunStatus{
+		RunStatusPending,
+		RunStatusRunning,
+		RunStatusCancelling,
+		RunStatusSucceeded,
+		RunStatusFailed,
+		RunStatusCancelled,
+		RunStatusSkipped,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v RunStatus) IsValid() bool {
+	switch v {
+	case RunStatusPending:
+		return true
+	case RunStatusRunning:
+		return true
+	case RunStatusCancelling:
+		return true
+	case RunStatusSucceeded:
+		return true
+	case RunStatusFailed:
+		return true
+	case RunStatusCancelled:
+		return true
+	case RunStatusSkipped:
+		return true
+	}
+	return false
+}
+
+// TaskStatus — Where one task of a run stands. A task waits pending until it is ready; state then dispatches an attempt of it, and the task follows that attempt through queued and running. A failed attempt with retries left dispatches the next one, so a task is failed only once it will not run again.
+// Values come from the vocabulary "task_status" in contract.yaml, in
+// declaration order.
+type TaskStatus string
+
+const (
+	// TaskStatusPending — the task waits for its upstream tasks, or for the write lease on its node.
+	TaskStatusPending TaskStatus = "pending"
+	// TaskStatusDispatched — state dispatched an attempt of the task and has no report of it yet.
+	TaskStatusDispatched TaskStatus = "dispatched"
+	// TaskStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
+	TaskStatusQueued TaskStatus = "queued"
+	// TaskStatusRunning — the main container of the attempt's pod started.
+	TaskStatusRunning TaskStatus = "running"
+	// TaskStatusStopping — the run is being cancelled while the task's attempt is still open.
+	TaskStatusStopping TaskStatus = "stopping"
+	// TaskStatusSucceeded — the task succeeded.
+	TaskStatusSucceeded TaskStatus = "succeeded"
+	// TaskStatusFailed — the task failed and will not run again.
+	TaskStatusFailed TaskStatus = "failed"
+	// TaskStatusCancelled — the run was cancelled before the task ran, or its attempt was stopped.
+	TaskStatusCancelled TaskStatus = "cancelled"
+	// TaskStatusSkipped — an upstream task failed, so the task will not run.
+	TaskStatusSkipped TaskStatus = "skipped"
+)
+
+// TaskStatusValues returns every value in contract.yaml declaration order.
+func TaskStatusValues() []TaskStatus {
+	return []TaskStatus{
+		TaskStatusPending,
+		TaskStatusDispatched,
+		TaskStatusQueued,
+		TaskStatusRunning,
+		TaskStatusStopping,
+		TaskStatusSucceeded,
+		TaskStatusFailed,
+		TaskStatusCancelled,
+		TaskStatusSkipped,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v TaskStatus) IsValid() bool {
+	switch v {
+	case TaskStatusPending:
+		return true
+	case TaskStatusDispatched:
+		return true
+	case TaskStatusQueued:
+		return true
+	case TaskStatusRunning:
+		return true
+	case TaskStatusStopping:
+		return true
+	case TaskStatusSucceeded:
+		return true
+	case TaskStatusFailed:
+		return true
+	case TaskStatusCancelled:
+		return true
+	case TaskStatusSkipped:
+		return true
+	}
+	return false
+}
+
+// Operation — The verb a run applies to its nodes. It is orthogonal to the node type: the type is what a node is, the operation is which verb runs against it. The default (run) is the empty string on the wire, so a message that names no operation reads as a plain run; state stores it as run.
+// Values come from the vocabulary "operation" in contract.yaml, in
+// declaration order.
+type Operation string
+
+const (
+	// OperationRun — dbt run, seed or snapshot, chosen by the node's type.
+	OperationRun Operation = ""
+	// OperationTest — dbt test over the node.
+	OperationTest Operation = "test"
+	// OperationBuild — dbt build over the node, which materializes and tests it in one invocation.
+	OperationBuild Operation = "build"
+	// OperationFullRefresh — rebuilds one model or seed from scratch; it drops and rebuilds a table, so it is never fanned out across a schedule.
+	OperationFullRefresh Operation = "full_refresh"
+)
+
+// Operations returns every value in contract.yaml declaration order.
+func Operations() []Operation {
+	return []Operation{
+		OperationRun,
+		OperationTest,
+		OperationBuild,
+		OperationFullRefresh,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v Operation) IsValid() bool {
+	switch v {
+	case OperationRun:
+		return true
+	case OperationTest:
+		return true
+	case OperationBuild:
+		return true
+	case OperationFullRefresh:
+		return true
+	}
+	return false
+}
+
+// IsSingleNodeOnly reports whether the contract marks v as targeting only one
+// node, so it is never fanned out across a schedule.
+func (v Operation) IsSingleNodeOnly() bool {
+	switch v {
+	case OperationFullRefresh:
+		return true
+	}
+	return false
+}
+
+// ParseOperation converts a raw string to the Operation it names. The
+// default's empty wire form and its declared name both parse to the default;
+// any other string that is not a declared value is an error.
+func ParseOperation(s string) (Operation, error) {
+	switch Operation(s) {
+	case OperationRun, "run":
+		return OperationRun, nil
+	case OperationTest:
+		return OperationTest, nil
+	case OperationBuild:
+		return OperationBuild, nil
+	case OperationFullRefresh:
+		return OperationFullRefresh, nil
+	}
+	return "", fmt.Errorf("unknown operation %q", s)
 }
 
 // AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2.

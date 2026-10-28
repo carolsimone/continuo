@@ -49,36 +49,3 @@ func (t NodeType) Command(tableName string) []string {
 		return []string{"dbt", "run", "--select", tableName}
 	}
 }
-
-// Operation is the dbt verb a run applies to its nodes. It is orthogonal to
-// NodeType: NodeType is what a node IS; Operation is which verb runs against it.
-type Operation string
-
-const (
-	OperationRun         Operation = ""             // default: dbt run/seed/snapshot by NodeType
-	OperationTest        Operation = "test"         // dbt test --select <node>
-	OperationBuild       Operation = "build"        // dbt build --select <node>: materializes and tests the node in one invocation
-	OperationFullRefresh Operation = "full_refresh" // rebuilds one model or seed from scratch (dbt --full-refresh)
-)
-
-// ParseOperation normalizes a raw operation string. Empty ⇒ run.
-func ParseOperation(s string) (Operation, error) {
-	switch Operation(s) {
-	case OperationRun, "run":
-		return OperationRun, nil
-	case OperationTest:
-		return OperationTest, nil
-	case OperationBuild:
-		return OperationBuild, nil
-	case OperationFullRefresh:
-		return OperationFullRefresh, nil
-	default:
-		return "", fmt.Errorf("unknown operation %q", s)
-	}
-}
-
-// IsSingleNodeOnly reports whether o may only target one node. A full refresh
-// drops and rebuilds a table, so it is never fanned out across a schedule.
-func (o Operation) IsSingleNodeOnly() bool {
-	return o == OperationFullRefresh
-}

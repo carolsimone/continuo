@@ -322,8 +322,8 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # @grpc/proto-loader reads its copies at boot, so drift silently drops fields
 # on the wire instead of failing any build; cli generates its orchestrator
 # stubs from its own copy, so drift there ships a client built from another
-# contract. cli generates its state stubs from its own copy, so drift there ships
-# a client built from another contract.
+# contract. cli generates its run stubs from its own copy of run.proto, so
+# drift there ships a client built from another contract.
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
@@ -351,13 +351,13 @@ guards: bench-test
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
-	diff state/proto/state/v1/state.proto ui/proto/state.proto
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
-	diff state/proto/state/v1/state.proto cli/proto/state/v1/state.proto
-	cmp state/proto/state/v1/state.pb.go cli/proto/state/v1/state.pb.go
-	cmp state/proto/state/v1/state_grpc.pb.go cli/proto/state/v1/state_grpc.pb.go
+	diff state/proto/run/v1/run.proto ui/proto/run.proto
+	diff state/proto/run/v1/run.proto cli/proto/run/v1/run.proto
+	cmp state/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
+	cmp state/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
 
 .PHONY: stack-up
 stack-up:
@@ -367,7 +367,7 @@ stack-up:
 e2e:
 	bash tests/e2e/start-services.sh
 	$(DOCKER_COMPOSE) up -d ui
-	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedulers'
+	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-k8s-controllers.sh
 	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	bash tests/e2e/cleanup-k8s-controllers.sh

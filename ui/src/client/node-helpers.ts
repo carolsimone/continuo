@@ -82,7 +82,7 @@ export interface SnapshotGroup {
 // per-task status on this node. A FAILED run where this node stayed PENDING is a
 // valid source; an in-flight run where this node already succeeded is NOT.
 export function isSnapshotSourceEligible(r: NodeRun): boolean {
-  const s = r.terminal_status;
+  const s = r.run_status;
   return s === 'succeeded' || s === 'failed' || s === 'cancelled';
 }
 

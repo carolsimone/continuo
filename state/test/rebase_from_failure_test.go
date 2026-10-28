@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/carolsimone/continuo/state/domain/topology"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 )
 
 // rebaseTask is one task of a rebase as its creating transaction stored it.
@@ -65,9 +65,9 @@ func TestRebaseFromFailure(t *testing.T) {
 	}
 	source := promoteRelease(t, stateDB, nodes("sha256:rff_y", "sha256:rff_q")...)
 
-	trig, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: schedule})
+	trig, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: schedule})
 	require.NoError(t, err)
-	srcID := trig.ScheduleId
+	srcID := trig.RunId
 	_, err = stateDB.Exec(`
 		UPDATE tasks SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, attempt = 2
 		WHERE run_id = $1`, srcID)
@@ -81,10 +81,10 @@ func TestRebaseFromFailure(t *testing.T) {
 
 	live := promoteRelease(t, stateDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)
 	require.NotEqual(t, source, live)
-	changedY := &statev1.ChangedUpstreamNode{ServiceName: "service-1", SchemaName: "mart", TableName: "rff_y", Downstream: 1, LastSuccessSeconds: 42.5}
+	changedY := &runv1.ChangedUpstreamNode{ServiceName: "service-1", SchemaName: "mart", TableName: "rff_y", Downstream: 1, LastSuccessSeconds: 42.5}
 
 	t.Run("the preview counts what each choice runs and names the changed upstream node", func(t *testing.T) {
-		on, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: srcID, IncludeChangedUpstream: true})
+		on, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: srcID, IncludeChangedUpstream: true})
 		require.NoError(t, err)
 		assert.Equal(t, live.ReleaseID, on.ReleaseId)
 		assert.Equal(t, live.PromotionSeq, on.PromotionSeq)
@@ -93,7 +93,7 @@ func TestRebaseFromFailure(t *testing.T) {
 		require.Len(t, on.ChangedNodes, 1)
 		assert.Equal(t, changedY.String(), on.ChangedNodes[0].String())
 
-		off, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: srcID})
+		off, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: srcID})
 		require.NoError(t, err)
 		assert.Equal(t, []int32{5, 1, 1, 0, 0, 0, 4},
 			[]int32{off.TotalNodes, off.WillRun, off.FailedOrSkipped, off.NewNodes, off.ChangedUpstream, off.Downstream, off.Inherited})
@@ -102,8 +102,8 @@ func TestRebaseFromFailure(t *testing.T) {
 	})
 
 	t.Run("a rebase with the option rebuilds the changed upstream node first", func(t *testing.T) {
-		resp, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
-			SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
+		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+			RequestId: uuid.NewString(), SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, uuid.MustParse(resp.RunId)))
@@ -121,8 +121,8 @@ func TestRebaseFromFailure(t *testing.T) {
 	t.Run("a rebase previewed on another live release is refused and creates no run", func(t *testing.T) {
 		before := countOf(t, stateDB, `SELECT count(*) FROM runs`)
 
-		_, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
-			SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: source.ReleaseID,
+		_, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+			RequestId: uuid.NewString(), SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: source.ReleaseID,
 		})
 
 		require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
@@ -132,7 +132,7 @@ func TestRebaseFromFailure(t *testing.T) {
 
 	var activeID string
 	t.Run("a rebase without the option restarts from the failed node alone", func(t *testing.T) {
-		resp, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
+		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
 		require.NoError(t, err)
 		activeID = resp.RunId
 		assert.Equal(t, []rebaseTask{
@@ -148,11 +148,11 @@ func TestRebaseFromFailure(t *testing.T) {
 	t.Run("an active run refuses a rebase but not a preview", func(t *testing.T) {
 		require.NotEmpty(t, activeID, "the previous subtest left its rebase running")
 
-		_, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
+		_, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: srcID, ExpectedReleaseId: live.ReleaseID})
 		require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 		assert.Contains(t, status.Convert(err).Message(), "active run")
 
-		pv, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: srcID, IncludeChangedUpstream: true})
+		pv, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: srcID, IncludeChangedUpstream: true})
 		require.NoError(t, err)
 		assert.Equal(t, int32(2), pv.WillRun)
 		finishRun(t, activeID)
@@ -167,7 +167,7 @@ func TestRebaseFromFailure(t *testing.T) {
 		_, err := stateDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1 AND node_key = 'mart.rff_z'`, activeID)
 		require.NoError(t, err)
 
-		pv, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})
+		pv, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})
 		require.NoError(t, err)
 		assert.Equal(t, live.ReleaseID, pv.ReleaseId)
 		assert.Equal(t, []int32{5, 2, 1, 0, 1, 0, 3},
@@ -175,8 +175,8 @@ func TestRebaseFromFailure(t *testing.T) {
 		require.Len(t, pv.ChangedNodes, 1)
 		assert.Equal(t, changedY.String(), pv.ChangedNodes[0].String())
 
-		resp, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
-			SourceRunId: activeID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
+		resp, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
+			RequestId: uuid.NewString(), SourceRunId: activeID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, []rebaseTask{

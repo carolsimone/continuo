@@ -24,9 +24,18 @@ func TestFromGRPC_FailedPreconditionIsConflict(t *testing.T) {
 	assert.Equal(t, 4, e.ExitCode())
 }
 
-func TestFromGRPC_AlreadyExistsIsConflict(t *testing.T) {
-	e := FromGRPC(status.Error(codes.AlreadyExists, "dup"))
+func TestFromGRPC_AlreadyExistsIsAConflictThatARetryCannotSettle(t *testing.T) {
+	e := FromGRPC(status.Error(codes.AlreadyExists, "request_id reused with different parameters"))
 	assert.Equal(t, CodeConflict, e.Code)
+	assert.False(t, e.Retryable, "a request id reused with other parameters is refused on every retry")
+	assert.Equal(t, 4, e.ExitCode())
+}
+
+func TestFromGRPC_AbortedIsARetryableConflict(t *testing.T) {
+	e := FromGRPC(status.Error(codes.Aborted, "the request id is claimed by calls that keep rolling back"))
+	assert.Equal(t, CodeConflict, e.Code)
+	assert.True(t, e.Retryable, "the same request id may be sent again")
+	assert.Equal(t, 4, e.ExitCode())
 }
 
 func TestFromGRPC_UnavailableIsRetryable(t *testing.T) {

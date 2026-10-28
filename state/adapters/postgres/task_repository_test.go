@@ -92,12 +92,11 @@ func TestTaskCollection_BeginStop(t *testing.T) {
 
 	schedID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           schedID,
-		ScheduleName:         "begin-stop-" + schedID.String(),
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   schedID,
+		ScheduleName: "begin-stop-" + schedID.String(),
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", schedID)
 
@@ -206,13 +205,12 @@ func TestTaskCollection_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 
 	ctx := context.Background()
 	parent := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "tt-" + uuid.New().String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "tt-" + uuid.New().String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}
 	require.NoError(t, schedulerRepo.Create(ctx, parent))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", parent.ScheduleID)
@@ -258,13 +256,12 @@ func TestTaskCollection_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 
 	ctx := context.Background()
 	parent := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "tt-inh-" + uuid.New().String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		Kind:                 "rebase",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "tt-inh-" + uuid.New().String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
+		Kind:         "rebase",
 	}
 	require.NoError(t, schedulerRepo.Create(ctx, parent))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", parent.ScheduleID)

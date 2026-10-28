@@ -97,12 +97,11 @@ func TestRunRepository_Create(t *testing.T) {
 	// Create test data
 	scheduleID := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "test-schedule",
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
 	}
 
 	// Execute
@@ -129,12 +128,11 @@ func TestRunRepository_Create_DuplicateKey(t *testing.T) {
 	// Create test data
 	scheduleID := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "test-schedule",
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
 	}
 
 	// Create first record
@@ -160,13 +158,12 @@ func TestRunRepository_GetByID(t *testing.T) {
 	scheduleID := uuid.New()
 	startedAt := time.Now().Add(-1 * time.Hour)
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "test-schedule-get",
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now().Add(-2 * time.Hour),
-		StartedAt:            &startedAt,
-		InitializationStatus: "pending",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule-get",
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now().Add(-2 * time.Hour),
+		StartedAt:    &startedAt,
 	}
 
 	// Create record
@@ -217,15 +214,14 @@ func TestRunRepository_Create_WithNullableFields(t *testing.T) {
 	cancelledAt := time.Now()
 
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "test-schedule-cancelled",
-		Status:               run.RunStatusCancelled,
-		CreatedAt:            time.Now(),
-		CancelledAt:          &cancelledAt,
-		CancelledBy:          &cancelledBy,
-		CancellationReason:   &cancellationReason,
-		InitializationStatus: "pending",
+		TenantID:           pkgevents.DefaultTenantID,
+		ScheduleID:         scheduleID,
+		ScheduleName:       "test-schedule-cancelled",
+		Status:             run.RunStatusCancelled,
+		CreatedAt:          time.Now(),
+		CancelledAt:        &cancelledAt,
+		CancelledBy:        &cancelledBy,
+		CancellationReason: &cancellationReason,
 	}
 
 	// Execute
@@ -317,28 +313,25 @@ func TestSchedulerRepository_GetLastRunPerSchedule(t *testing.T) {
 
 	// Insert two runs for "daily", one for "hourly"
 	dailyOld := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "daily",
-		Status:               run.RunStatusSucceeded,
-		CreatedAt:            time.Now().Add(-2 * time.Hour),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "daily",
+		Status:       run.RunStatusSucceeded,
+		CreatedAt:    time.Now().Add(-2 * time.Hour),
 	}
 	dailyNew := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "daily",
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "daily",
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}
 	hourly := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "hourly",
-		Status:               run.RunStatusFailed,
-		CreatedAt:            time.Now().Add(-30 * time.Minute),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "hourly",
+		Status:       run.RunStatusFailed,
+		CreatedAt:    time.Now().Add(-30 * time.Minute),
 	}
 	require.NoError(t, repo.Create(ctx, dailyOld))
 	require.NoError(t, repo.Create(ctx, dailyNew))
@@ -373,12 +366,11 @@ func TestRunRepository_GetActiveRun(t *testing.T) {
 	t.Run("returns the run when a pending run exists", func(t *testing.T) {
 		schedID := uuid.New()
 		runRow := &postgres.RunRow{
-			TenantID:             pkgevents.DefaultTenantID,
-			ScheduleID:           schedID,
-			ScheduleName:         "active-pending",
-			Status:               run.RunStatusPending,
-			CreatedAt:            time.Now(),
-			InitializationStatus: "pending",
+			TenantID:     pkgevents.DefaultTenantID,
+			ScheduleID:   schedID,
+			ScheduleName: "active-pending",
+			Status:       run.RunStatusPending,
+			CreatedAt:    time.Now(),
 		}
 		require.NoError(t, repo.Create(ctx, runRow))
 
@@ -392,12 +384,11 @@ func TestRunRepository_GetActiveRun(t *testing.T) {
 	t.Run("returns the run when a running run exists", func(t *testing.T) {
 		schedID := uuid.New()
 		runRow := &postgres.RunRow{
-			TenantID:             pkgevents.DefaultTenantID,
-			ScheduleID:           schedID,
-			ScheduleName:         "active-running",
-			Status:               run.RunStatusRunning,
-			CreatedAt:            time.Now(),
-			InitializationStatus: "in_progress",
+			TenantID:     pkgevents.DefaultTenantID,
+			ScheduleID:   schedID,
+			ScheduleName: "active-running",
+			Status:       run.RunStatusRunning,
+			CreatedAt:    time.Now(),
 		}
 		require.NoError(t, repo.Create(ctx, runRow))
 
@@ -410,12 +401,11 @@ func TestRunRepository_GetActiveRun(t *testing.T) {
 	t.Run("returns nil after run is cancelled", func(t *testing.T) {
 		schedID := uuid.New()
 		runRow := &postgres.RunRow{
-			TenantID:             pkgevents.DefaultTenantID,
-			ScheduleID:           schedID,
-			ScheduleName:         "post-cancel",
-			Status:               run.RunStatusRunning,
-			CreatedAt:            time.Now(),
-			InitializationStatus: "pending",
+			TenantID:     pkgevents.DefaultTenantID,
+			ScheduleID:   schedID,
+			ScheduleName: "post-cancel",
+			Status:       run.RunStatusRunning,
+			CreatedAt:    time.Now(),
 		}
 		require.NoError(t, repo.Create(ctx, runRow))
 		tx, err := db.BeginTxx(ctx, nil)

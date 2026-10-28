@@ -81,7 +81,7 @@ func TestRunNamesSchema_ObjectsTakeTheNewNames(t *testing.T) {
 		  JOIN pg_namespace n ON n.oid = c.connamespace
 		 WHERE n.nspname = 'public' AND conrelid IN ('public.runs'::regclass, 'public.tasks'::regclass)`))
 	assert.Subset(t, constraints, []string{
-		"runs_pkey", "runs_failure_reason_check", "runs_initialization_status_check", "runs_kind_check",
+		"runs_pkey", "runs_failure_reason_check", "runs_kind_check",
 		"runs_operation_check", "runs_status_check",
 		"tasks_pkey", "tasks_run_id_fkey", "tasks_operation_check", "tasks_status_check", "tasks_wait_reason_check",
 	})
@@ -91,7 +91,7 @@ func TestRunNamesSchema_ObjectsTakeTheNewNames(t *testing.T) {
 		SELECT indexname FROM pg_indexes
 		 WHERE schemaname = 'public' AND tablename IN ('runs', 'tasks')`))
 	assert.Subset(t, indexes, []string{
-		"runs_pkey", "idx_runs_finalization", "idx_runs_init_status", "idx_runs_kind", "idx_runs_release_id",
+		"runs_pkey", "idx_runs_kind", "idx_runs_release_id",
 		"idx_runs_schedule_name_created", "idx_runs_source_run_id", "uq_runs_active_per_schedule",
 		"tasks_pkey", "idx_tasks_inherited_from", "idx_tasks_job_name", "idx_tasks_lease_waiters",
 		"idx_tasks_node_identity", "idx_tasks_run_id", "uq_tasks_run_node",

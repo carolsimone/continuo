@@ -9,13 +9,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // cliBinary is set by TestMain once at the start of all integration tests
@@ -51,27 +53,48 @@ func TestMain(m *testing.M) {
 // Stub servers
 // ---------------------------------------------------------------------------
 
-type stubStateServer struct {
-	statev1.UnimplementedStateServiceServer
-	triggerResp *statev1.TriggerScheduleResponse
-	listResp    *statev1.ListAllSchedulesResponse
+type stubRunServer struct {
+	runv1.UnimplementedRunServiceServer
+	startResp *runv1.StartRunResponse
+	listResp  *runv1.ListSchedulesResponse
+	graphResp *runv1.GetScheduleGraphResponse
+
+	mu sync.Mutex
+	// startFailures is how many StartRun calls fail UNAVAILABLE before one
+	// succeeds; startIDs is the request id of every StartRun received.
+	startFailures int
+	startIDs      []string
 }
 
-func (s *stubStateServer) TriggerSchedule(_ context.Context, _ *statev1.TriggerScheduleRequest) (*statev1.TriggerScheduleResponse, error) {
-	return s.triggerResp, nil
+func (s *stubRunServer) StartRun(_ context.Context, req *runv1.StartRunRequest) (*runv1.StartRunResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startIDs = append(s.startIDs, req.GetRequestId())
+	if s.startFailures > 0 {
+		s.startFailures--
+		return nil, status.Error(codes.Unavailable, "connection reset")
+	}
+	return s.startResp, nil
 }
 
-func (s *stubStateServer) ListAllSchedules(_ context.Context, _ *statev1.ListAllSchedulesRequest) (*statev1.ListAllSchedulesResponse, error) {
+func (s *stubRunServer) ListSchedules(_ context.Context, _ *runv1.ListSchedulesRequest) (*runv1.ListSchedulesResponse, error) {
 	return s.listResp, nil
 }
 
-type stubOrchestratorServer struct {
-	orchestratorv1.UnimplementedOrchestratorQueryServer
-	resp *orchestratorv1.GetScheduleGraphResponse
+func (s *stubRunServer) GetScheduleGraph(_ context.Context, _ *runv1.GetScheduleGraphRequest) (*runv1.GetScheduleGraphResponse, error) {
+	return s.graphResp, nil
 }
 
-func (s *stubOrchestratorServer) GetScheduleGraph(_ context.Context, _ *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
-	return s.resp, nil
+// serveRun serves srv on a loopback port and returns its address.
+func serveRun(t *testing.T, srv runv1.RunServiceServer) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcSrv := grpc.NewServer()
+	runv1.RegisterRunServiceServer(grpcSrv, srv)
+	go func() { _ = grpcSrv.Serve(lis) }()
+	t.Cleanup(grpcSrv.GracefulStop)
+	return lis.Addr().String()
 }
 
 // ---------------------------------------------------------------------------
@@ -79,51 +102,64 @@ func (s *stubOrchestratorServer) GetScheduleGraph(_ context.Context, _ *orchestr
 // ---------------------------------------------------------------------------
 
 func TestCLI_TriggerScheduleAgainstInProcessServer(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	endpoint := lis.Addr().String()
-
-	grpcSrv := grpc.NewServer()
-	statev1.RegisterStateServiceServer(grpcSrv, &stubStateServer{
-		triggerResp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_integ_1"},
-		listResp:    nil,
-	})
-	go func() { _ = grpcSrv.Serve(lis) }()
-	defer grpcSrv.GracefulStop()
+	endpoint := serveRun(t, &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_1"}})
 
 	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest").Output()
 	require.NoError(t, err)
 
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal(out, &payload))
-	assert.Equal(t, "sched_integ_1", payload["schedule_id"])
+	assert.Equal(t, "run_integ_1", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
 	assert.NotEmpty(t, payload["triggered_at"])
 }
 
-func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	endpoint := lis.Addr().String()
+// A trigger refused UNAVAILABLE is tried again, and every try carries the one
+// request id of the invocation, so the server can recognise the repeat.
+func TestCLI_TriggerRetriesOnUnavailableWithOneRequestID(t *testing.T) {
+	srv := &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_2"}, startFailures: 2}
+	endpoint := serveRun(t, srv)
 
-	grpcSrv := grpc.NewServer()
-	statev1.RegisterStateServiceServer(grpcSrv, &stubStateServer{
-		triggerResp: nil,
-		listResp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest")
+	cmd.Env = append(os.Environ(), "CONTINUO_REQUEST_ID=")
+	out, err := cmd.Output()
+	require.NoError(t, err)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(out, &payload))
+	assert.Equal(t, "run_integ_2", payload["run_id"])
+	require.Len(t, srv.startIDs, 3)
+	assert.NotEmpty(t, srv.startIDs[0], "a request id is sent without any configuration")
+	assert.Equal(t, srv.startIDs[0], srv.startIDs[1])
+	assert.Equal(t, srv.startIDs[0], srv.startIDs[2])
+}
+
+func TestCLI_RequestIDComesFromTheEnvironmentWhenSet(t *testing.T) {
+	srv := &stubRunServer{startResp: &runv1.StartRunResponse{RunId: "run_integ_3"}}
+	endpoint := serveRun(t, srv)
+
+	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "trigger", "daily_ingest")
+	cmd.Env = append(os.Environ(), "CONTINUO_REQUEST_ID=5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b")
+	_, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"}, srv.startIDs)
+}
+
+func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{
+		listResp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
 					CronExpression: "0 2 * * *",
 					Timezone:       "UTC",
-					IsRunning:      false,
-					LastRunStatus:  "success",
+					HasActiveRun:   false,
+					LastRunStatus:  "succeeded",
 					LastRunId:      "run_001",
 				},
 			},
 		},
 	})
-	go func() { _ = grpcSrv.Serve(lis) }()
-	defer grpcSrv.GracefulStop()
 
 	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "list").Output()
 	require.NoError(t, err)
@@ -137,37 +173,32 @@ func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload["schedules"], &schedules))
 	assert.Len(t, schedules, 1, "expected one schedule entry")
 	assert.Equal(t, "daily_ingest", schedules[0]["schedule_name"])
+	assert.Equal(t, false, schedules[0]["has_active_run"])
 }
 
 func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	endpoint := lis.Addr().String()
-
-	grpcSrv := grpc.NewServer()
-	orchestratorv1.RegisterOrchestratorQueryServer(grpcSrv, &stubOrchestratorServer{
-		resp: &orchestratorv1.GetScheduleGraphResponse{
-			Nodes: []*orchestratorv1.TableNode{
+	endpoint := serveRun(t, &stubRunServer{
+		graphResp: &runv1.GetScheduleGraphResponse{
+			Nodes: []*runv1.ScheduleGraphNode{
 				{
-					TableName:   "orders",
-					SchemaName:  "public",
-					ServiceName: "analytics",
-					NodeType:    "model",
-					Status:      "healthy",
+					TableName:    "orders",
+					SchemaName:   "public",
+					ServiceName:  "analytics",
+					NodeType:     "model",
+					ScheduleName: "test_schedule",
 				},
 			},
-			Edges: []*orchestratorv1.GraphEdge{
+			Edges: []*runv1.ScheduleGraphEdge{
 				{
 					FromNodeId: "node_a",
 					ToNodeId:   "node_b",
 				},
 			},
+			PromotionSeq: 3,
 		},
 	})
-	go func() { _ = grpcSrv.Serve(lis) }()
-	defer grpcSrv.GracefulStop()
 
-	out, err := exec.Command(cliBinary, "--orchestrator-endpoint", endpoint, "schedule", "graph", "test_schedule").Output()
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "graph", "test_schedule").Output()
 	require.NoError(t, err)
 
 	var payload map[string]json.RawMessage

@@ -12,18 +12,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runList(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runList(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewListCommand(func(context.Context, string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewListCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -41,16 +41,16 @@ func runList(t *testing.T, fake client.StateClient, args []string, human bool) (
 }
 
 func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
 		TotalCount: 7,
-		Nodes: []*statev1.NodeSummary{{
+		Nodes: []*runv1.NodeSummary{{
 			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
-			RunCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
+			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
 			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
 		}, {
 			ServiceName: "finance", SchemaName: "analytics", TableName: "customers",
-			RunCount: 3, SuccessRatePct: 100, AvgDurationSec: 5, P95DurationSec: 6,
+			TaskCount: 3, SuccessRatePct: 100, AvgDurationSec: 5, P95DurationSec: 6,
 			LastStatus: "succeeded", LastRunAt: "2026-09-18T09:00:00Z", Operation: "run",
 			TimeoutSeconds: 86400,
 		}},
@@ -67,7 +67,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 			ServiceName     string `json:"service_name"`
 			SchemaName      string `json:"schema_name"`
 			TableName       string `json:"table_name"`
-			RunCount        int    `json:"run_count"`
+			TaskCount       int    `json:"task_count"`
 			SuccessRatePct  int    `json:"success_rate_pct"`
 			AvgDurationSec  int    `json:"avg_duration_sec"`
 			P95DurationSec  int    `json:"p95_duration_sec"`
@@ -86,7 +86,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	assert.Equal(t, "finance", n.ServiceName)
 	assert.Equal(t, "analytics", n.SchemaName)
 	assert.Equal(t, "orders", n.TableName)
-	assert.Equal(t, 12, n.RunCount)
+	assert.Equal(t, 12, n.TaskCount)
 	assert.Equal(t, 92, n.SuccessRatePct)
 	assert.Equal(t, 34, n.AvgDurationSec)
 	assert.Equal(t, 80, n.P95DurationSec)
@@ -111,7 +111,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 }
 
 func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{}}
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, nil, false)
 
@@ -126,11 +126,11 @@ func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 }
 
 func TestList_NegativeSentinelsAreOmitted(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
 		TotalCount: 1,
-		Nodes: []*statev1.NodeSummary{{
+		Nodes: []*runv1.NodeSummary{{
 			ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran",
-			RunCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1,
+			TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1,
 			LastStatus: "pending", Operation: "run",
 		}},
 	}}
@@ -151,12 +151,12 @@ func TestList_NegativeSentinelsAreOmitted(t *testing.T) {
 	assert.False(t, hasAvg, "avg_duration_sec must be omitted when the server sends -1")
 	assert.False(t, hasP95, "p95_duration_sec must be omitted when the server sends -1")
 	// A real zero is still a value, not a sentinel.
-	assert.Equal(t, float64(0), n["run_count"])
+	assert.Equal(t, float64(0), n["task_count"])
 	assert.Equal(t, float64(0), n["flaky_rate_pct"])
 }
 
 func TestList_PositionalArgIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{}}
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"orders"}, false)
 
@@ -167,7 +167,7 @@ func TestList_PositionalArgIsUsageError(t *testing.T) {
 }
 
 func TestList_InvalidOperationIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{}}
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"--operation", "deploy"}, false)
 
@@ -179,7 +179,7 @@ func TestList_InvalidOperationIsUsageError(t *testing.T) {
 func TestList_LimitOutOfRangeIsUsageError(t *testing.T) {
 	for _, limit := range []string{"0", "-5", "201"} {
 		t.Run("limit="+limit, func(t *testing.T) {
-			fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{}}
+			fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
 			stdout, _, exit := runList(t, fake, []string{"--limit", limit}, false)
 			assert.Equal(t, 2, exit)
 			assert.Contains(t, stdout, `"code":"usage"`)
@@ -189,7 +189,7 @@ func TestList_LimitOutOfRangeIsUsageError(t *testing.T) {
 }
 
 func TestList_NegativeOffsetIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{}}
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"--offset", "-1"}, false)
 
@@ -210,11 +210,11 @@ func TestList_UnavailableMapsToExit5(t *testing.T) {
 }
 
 func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
 		TotalCount: 42,
-		Nodes: []*statev1.NodeSummary{
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", RunCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run"},
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran", RunCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastStatus: "pending", Operation: "run"},
+		Nodes: []*runv1.NodeSummary{
+			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run"},
+			{ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran", TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastStatus: "pending", Operation: "run"},
 		},
 	}}
 
@@ -224,14 +224,14 @@ func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
 	assert.Empty(t, stdout, "human mode writes nothing to stdout")
 	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
 	require.Len(t, lines, 4, "header + 2 rows + page summary, got: %q", stderr)
-	assert.Equal(t, "NODE  OPERATION  RUNS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT", lines[0])
+	assert.Equal(t, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT", lines[0])
 	assert.Equal(t, "finance.analytics.orders  run  12  92  34  80  succeeded  2026-09-18T10:00:00Z", lines[1])
 	assert.Equal(t, "finance.analytics.never_ran  run  0  -  -  -  pending  -", lines[2])
 	assert.Equal(t, "showing 11-12 of 42", lines[3])
 }
 
 func TestList_HumanModeEmptyPageSummary(t *testing.T) {
-	fake := &fakeNodeState{listResp: &statev1.ListNodesResponse{TotalCount: 0}}
+	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{TotalCount: 0}}
 
 	_, stderr, exit := runList(t, fake, nil, true)
 
@@ -239,8 +239,8 @@ func TestList_HumanModeEmptyPageSummary(t *testing.T) {
 	assert.True(t, strings.HasSuffix(stderr, "showing 0 of 0\n"), "got: %q", stderr)
 }
 
-// The help's list of the statuses last_status can carry is exactly the task
-// statuses state serves.
+// The help's list of the statuses last_status can carry is exactly the
+// task_status values RunService documents on Task.status.
 func TestList_LongNamesEveryTaskStatus(t *testing.T) {
 	long := strings.Join(strings.Fields(NewListCommand(nil, nil, nil, nil).Long), " ")
 	const prefix = "last_status is one of "
@@ -248,12 +248,6 @@ func TestList_LongNamesEveryTaskStatus(t *testing.T) {
 	require.GreaterOrEqual(t, i, 0, "the help has no %q sentence", prefix)
 	sentence, _, _ := strings.Cut(long[i+len(prefix):], ".")
 	listed := strings.Split(sentence, ", ")
-	var served []string
-	for v, name := range statev1.TaskStatus_name {
-		if statev1.TaskStatus(v) == statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
-			continue
-		}
-		served = append(served, strings.ToLower(strings.TrimPrefix(name, "TASK_STATUS_")))
-	}
+	served := []string{"pending", "dispatched", "queued", "running", "stopping", "succeeded", "failed", "cancelled", "skipped"}
 	assert.ElementsMatch(t, served, listed)
 }

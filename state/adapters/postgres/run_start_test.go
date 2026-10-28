@@ -57,7 +57,7 @@ func failureGraph() topology.Graph {
 // ends.
 func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, "start-"+uuid.NewString()[:8], run.KindCron, nil, identity.SystemUserID, nil,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "start-"+uuid.NewString()[:8], run.KindCron, nil, identity.SystemUserID, nil,
 		model.OperationRun, run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, now)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -91,17 +91,15 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 
 	var row struct {
 		Status    string     `db:"status"`
-		Init      string     `db:"initialization_status"`
 		Total     int32      `db:"total_task_count"`
 		Terminal  int32      `db:"terminal_task_count"`
 		PlannedAt *time.Time `db:"planned_at"`
 		StartedAt *time.Time `db:"started_at"`
 	}
 	require.NoError(t, db.Get(&row, `
-		SELECT status, initialization_status, total_task_count, terminal_task_count, planned_at, started_at
+		SELECT status, total_task_count, terminal_task_count, planned_at, started_at
 		FROM runs WHERE run_id = $1`, r.RunID()))
 	assert.Equal(t, "running", row.Status)
-	assert.Equal(t, "completed", row.Init)
 	assert.Equal(t, int32(8), row.Total)
 	assert.Equal(t, int32(0), row.Terminal)
 	require.NotNil(t, row.PlannedAt)

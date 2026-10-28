@@ -18,7 +18,7 @@ function withMeta(meta: unknown, metaStatus = 200) {
   mockFetch.mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.includes('/meta')) return jsonResp(meta, metaStatus);
-    return jsonResp({ runs: [] });
+    return jsonResp({ tasks: [] });
   });
 }
 

@@ -19,23 +19,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrchestratorQuery_GetScheduleGraph_FullMethodName       = "/orchestrator.v1.OrchestratorQuery/GetScheduleGraph"
-	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
-	OrchestratorQuery_GetNode_FullMethodName                = "/orchestrator.v1.OrchestratorQuery/GetNode"
-	OrchestratorQuery_GetNodeLocation_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeLocation"
-	OrchestratorQuery_GetNodeVersions_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeVersions"
-	OrchestratorQuery_GetNodeVersionDiff_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeVersionDiff"
-	OrchestratorQuery_GetUpstreamChanges_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
-	OrchestratorQuery_GetCodeUnitVersions_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/GetCodeUnitVersions"
-	OrchestratorQuery_GetPrecedents_FullMethodName          = "/orchestrator.v1.OrchestratorQuery/GetPrecedents"
+	OrchestratorQuery_GetNode_FullMethodName             = "/orchestrator.v1.OrchestratorQuery/GetNode"
+	OrchestratorQuery_GetNodeLocation_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeLocation"
+	OrchestratorQuery_GetNodeVersions_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeVersions"
+	OrchestratorQuery_GetNodeVersionDiff_FullMethodName  = "/orchestrator.v1.OrchestratorQuery/GetNodeVersionDiff"
+	OrchestratorQuery_GetUpstreamChanges_FullMethodName  = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
+	OrchestratorQuery_GetCodeUnitVersions_FullMethodName = "/orchestrator.v1.OrchestratorQuery/GetCodeUnitVersions"
+	OrchestratorQuery_GetPrecedents_FullMethodName       = "/orchestrator.v1.OrchestratorQuery/GetPrecedents"
 )
 
 // OrchestratorQueryClient is the client API for OrchestratorQuery service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OrchestratorQueryClient interface {
-	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
-	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
 	// file path and owning service. An unknown unique_id is NOT_FOUND; a node
@@ -94,26 +90,6 @@ type orchestratorQueryClient struct {
 
 func NewOrchestratorQueryClient(cc grpc.ClientConnInterface) OrchestratorQueryClient {
 	return &orchestratorQueryClient{cc}
-}
-
-func (c *orchestratorQueryClient) GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetScheduleGraphResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_GetScheduleGraph_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *orchestratorQueryClient) ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListScheduleTopologiesResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_ListScheduleTopologies_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *orchestratorQueryClient) GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error) {
@@ -190,8 +166,6 @@ func (c *orchestratorQueryClient) GetPrecedents(ctx context.Context, in *GetPrec
 // All implementations must embed UnimplementedOrchestratorQueryServer
 // for forward compatibility.
 type OrchestratorQueryServer interface {
-	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
-	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
 	// file path and owning service. An unknown unique_id is NOT_FOUND; a node
@@ -252,12 +226,6 @@ type OrchestratorQueryServer interface {
 // pointer dereference when methods are called.
 type UnimplementedOrchestratorQueryServer struct{}
 
-func (UnimplementedOrchestratorQueryServer) GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetScheduleGraph not implemented")
-}
-func (UnimplementedOrchestratorQueryServer) ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListScheduleTopologies not implemented")
-}
 func (UnimplementedOrchestratorQueryServer) GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNode not implemented")
 }
@@ -298,42 +266,6 @@ func RegisterOrchestratorQueryServer(s grpc.ServiceRegistrar, srv OrchestratorQu
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&OrchestratorQuery_ServiceDesc, srv)
-}
-
-func _OrchestratorQuery_GetScheduleGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetScheduleGraphRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).GetScheduleGraph(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_GetScheduleGraph_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).GetScheduleGraph(ctx, req.(*GetScheduleGraphRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _OrchestratorQuery_ListScheduleTopologies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListScheduleTopologiesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).ListScheduleTopologies(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_ListScheduleTopologies_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).ListScheduleTopologies(ctx, req.(*ListScheduleTopologiesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _OrchestratorQuery_GetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -469,14 +401,6 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "orchestrator.v1.OrchestratorQuery",
 	HandlerType: (*OrchestratorQueryServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "GetScheduleGraph",
-			Handler:    _OrchestratorQuery_GetScheduleGraph_Handler,
-		},
-		{
-			MethodName: "ListScheduleTopologies",
-			Handler:    _OrchestratorQuery_ListScheduleTopologies_Handler,
-		},
 		{
 			MethodName: "GetNode",
 			Handler:    _OrchestratorQuery_GetNode_Handler,

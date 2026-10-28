@@ -259,3 +259,61 @@ func TestExecutor_AppendsPresentOptionalPositional(t *testing.T) {
 	assert.False(t, res.IsError)
 	assert.Contains(t, res.Output, `"argv":"node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"`)
 }
+
+// requestIDCLI echoes the CONTINUO_REQUEST_ID it received, as JSON.
+func requestIDCLI(t *testing.T) string {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "continuo")
+	script := "#!/bin/sh\n" +
+		`printf '{"request_id":"%s","marker":"%s"}' "$CONTINUO_REQUEST_ID" "$CONTINUO_TEST_MARKER"` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // G306: must be executable to run as the fake CLI under test.
+	return path
+}
+
+func requestIDOf(t *testing.T, res ports.ToolResult) string {
+	t.Helper()
+	require.False(t, res.IsError, res.Output)
+	var got struct {
+		RequestID string `json:"request_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Output), &got))
+	return got.RequestID
+}
+
+func TestExecute_AMutatingCallCarriesAStableRequestID(t *testing.T) {
+	// A nil base env inherits the parent environment; the request id must not
+	// strip that inheritance.
+	t.Setenv("CONTINUO_TEST_MARKER", "present")
+	e := NewExecutor(testCatalog(t), requestIDCLI(t), nil, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	thread := uuid.New()
+	args := map[string]string{"schedule-name": "daily"}
+	trigger := func(thread uuid.UUID, callID string) ports.ToolResult {
+		return e.Execute(context.Background(), "alice", thread,
+			ports.ToolCall{ID: callID, Name: "schedule_trigger", Args: args})
+	}
+
+	first := requestIDOf(t, trigger(thread, "call-1"))
+	again := requestIDOf(t, trigger(thread, "call-1"))
+	otherCall := requestIDOf(t, trigger(thread, "call-2"))
+	otherThread := requestIDOf(t, trigger(uuid.New(), "call-1"))
+
+	parsed, err := uuid.Parse(first)
+	require.NoError(t, err, "the request id is a UUID")
+	assert.Equal(t, uuid.Version(5), parsed.Version())
+	assert.Equal(t, first, again, "a retried call keeps its request id")
+	assert.NotEqual(t, first, otherCall, "another tool call gets another request id")
+	assert.NotEqual(t, first, otherThread, "another thread gets another request id")
+	assert.Equal(t, uuid.NewSHA1(agentChatRequestNamespace, []byte(thread.String()+"\x00call-1")).String(), first)
+
+	res := trigger(thread, "call-1")
+	assert.Contains(t, res.Output, `"marker":"present"`, "nil base env must still inherit the parent environment")
+}
+
+func TestExecute_AReadCarriesNoRequestID(t *testing.T) {
+	e := NewExecutor(testCatalog(t), requestIDCLI(t), []string{"PATH=/usr/bin:/bin"}, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	res := e.Execute(context.Background(), "alice", uuid.New(),
+		ports.ToolCall{ID: "call-1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}})
+	assert.Empty(t, requestIDOf(t, res))
+}

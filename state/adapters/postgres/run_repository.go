@@ -13,26 +13,39 @@ import (
 	"github.com/lib/pq"
 )
 
-// GetRun loads the tenant's Run snapshot for read-only use (no row lock).
+// GetRun loads the tenant's Run snapshot for read-only use (no row lock). A
+// run the tenant does not have is an error that is both ErrNotFound and
+// repository.ErrRunNotFound.
 func (r *RunRepository) GetRun(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	tr, err := r.GetByID(ctx, tenantID, id)
 	if err != nil {
-		return nil, err
+		return nil, runNotFound(id, err)
 	}
 	return hydrateRun(tr)
 }
 
 // LoadRunForUpdate loads the tenant's Run inside the bound transaction with
-// SELECT … FOR UPDATE.
+// SELECT … FOR UPDATE. A run the tenant does not have is an error that is both
+// ErrNotFound and repository.ErrRunNotFound.
 func (r *RunRepository) LoadRunForUpdate(ctx context.Context, tenantID string, id uuid.UUID) (*run.Run, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("LoadRunForUpdate requires an active transaction")
 	}
 	tr, err := r.LoadByIDForUpdateTx(ctx, r.tx, tenantID, id)
 	if err != nil {
-		return nil, err
+		return nil, runNotFound(id, err)
 	}
 	return hydrateRun(tr)
+}
+
+// runNotFound returns err, a failed read of run id, as an error that also
+// matches repository.ErrRunNotFound when err is ErrNotFound, so the
+// application layer recognises a missing run without naming this adapter.
+func runNotFound(id uuid.UUID, err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("run %s: %w (%w)", id, err, repository.ErrRunNotFound)
+	}
+	return err
 }
 
 // SaveRun persists every dirty field of rn under rn's tenant. It consults
@@ -98,10 +111,6 @@ func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 	// Every other dirty column is collected into a single UPDATE so SaveRun
 	// issues one round trip for the run row it already holds FOR UPDATE.
 	var fields RunRowUpdate
-	if ch.IsInitStatusDirty() {
-		v := string(rn.InitializationStatus())
-		fields.InitializationStatus = &v
-	}
 	if ch.IsTotalTaskCountDirty() {
 		if total := rn.TotalTaskCount(); total != nil {
 			v := *total
@@ -218,7 +227,6 @@ func hydrateRun(tr *RunRow) (*run.Run, error) {
 		tr.ScheduleID,
 		tr.ScheduleName,
 		tr.Status,
-		run.InitStatus(tr.InitializationStatus),
 		run.Kind(tr.Kind),
 		tr.SourceRunID,
 		tr.InitiatedBy,
@@ -308,28 +316,27 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 		return nil, fmt.Errorf("marshal service_metadata: %w", err)
 	}
 	return &RunRow{
-		TenantID:             r.TenantID(),
-		ScheduleID:           r.RunID(),
-		ScheduleName:         r.ScheduleName(),
-		Status:               r.Status(),
-		CreatedAt:            r.CreatedAt(),
-		StartedAt:            r.StartedAt(),
-		CompletedAt:          r.CompletedAt(),
-		LastProgressAt:       r.LastProgressAt(),
-		CancelledAt:          r.CancelledAt(),
-		CancelledBy:          r.CancelledBy(),
-		CancellationReason:   r.CancellationReason(),
-		InitializationStatus: string(r.InitializationStatus()),
-		ServiceMetadataRaw:   metaJSON,
-		ServiceMetadata:      r.ServiceMetadata(),
-		TotalTaskCount:       ptrToNullInt32(r.TotalTaskCount()),
-		TerminalTaskCount:    r.TerminalTaskCount(),
-		Kind:                 string(r.Kind()),
-		SourceRunID:          r.SourceRunID(),
-		InitiatedBy:          r.InitiatedBy(),
-		Operation:            operationWithDefault(string(r.Operation())),
-		ReleaseID:            optionalString(r.Release().ReleaseID),
-		PromotionSeq:         optionalInt64(r.Release().PromotionSeq),
+		TenantID:           r.TenantID(),
+		ScheduleID:         r.RunID(),
+		ScheduleName:       r.ScheduleName(),
+		Status:             r.Status(),
+		CreatedAt:          r.CreatedAt(),
+		StartedAt:          r.StartedAt(),
+		CompletedAt:        r.CompletedAt(),
+		LastProgressAt:     r.LastProgressAt(),
+		CancelledAt:        r.CancelledAt(),
+		CancelledBy:        r.CancelledBy(),
+		CancellationReason: r.CancellationReason(),
+		ServiceMetadataRaw: metaJSON,
+		ServiceMetadata:    r.ServiceMetadata(),
+		TotalTaskCount:     ptrToNullInt32(r.TotalTaskCount()),
+		TerminalTaskCount:  r.TerminalTaskCount(),
+		Kind:               string(r.Kind()),
+		SourceRunID:        r.SourceRunID(),
+		InitiatedBy:        r.InitiatedBy(),
+		Operation:          operationWithDefault(string(r.Operation())),
+		ReleaseID:          optionalString(r.Release().ReleaseID),
+		PromotionSeq:       optionalInt64(r.Release().PromotionSeq),
 	}, nil
 }
 

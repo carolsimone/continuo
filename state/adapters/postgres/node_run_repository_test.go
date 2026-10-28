@@ -37,13 +37,12 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// --- scheduler 1: cron, succeeded ---
 	sched1ID := uuid.New()
 	sched1 := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           sched1ID,
-		ScheduleName:         sch,
-		Status:               run.RunStatusSucceeded,
-		Kind:                 "cron",
-		CreatedAt:            time.Now().Add(-2 * time.Minute),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   sched1ID,
+		ScheduleName: sch,
+		Status:       run.RunStatusSucceeded,
+		Kind:         "cron",
+		CreatedAt:    time.Now().Add(-2 * time.Minute),
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched1))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sched1ID)
@@ -97,14 +96,13 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// --- scheduler 2: rerun (source = sched1), failed — created more recently ---
 	sched2ID := uuid.New()
 	sched2 := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           sched2ID,
-		ScheduleName:         sch,
-		Status:               run.RunStatusFailed,
-		Kind:                 "rerun",
-		SourceRunID:          &sched1ID,
-		CreatedAt:            time.Now().Add(-1 * time.Minute),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   sched2ID,
+		ScheduleName: sch,
+		Status:       run.RunStatusFailed,
+		Kind:         "rerun",
+		SourceRunID:  &sched1ID,
+		CreatedAt:    time.Now().Add(-1 * time.Minute),
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched2))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sched2ID)
@@ -175,13 +173,12 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	schedID := uuid.New()
 	sched := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           schedID,
-		ScheduleName:         sch,
-		Status:               run.RunStatusRunning,
-		Kind:                 "cron",
-		CreatedAt:            time.Now(),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   schedID,
+		ScheduleName: sch,
+		Status:       run.RunStatusRunning,
+		Kind:         "cron",
+		CreatedAt:    time.Now(),
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", schedID)
@@ -269,7 +266,7 @@ func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.Tas
 	require.NoError(t, postgres.NewRunRepository(db, discardLogger()).Create(ctx, &postgres.RunRow{
 		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: sch, Status: run.RunStatusSucceeded, Kind: "cron",
-		CreatedAt: at, InitializationStatus: "completed",
+		CreatedAt: at,
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	require.NoError(t, postgres.NewTaskCollection(db, discardLogger()).Create(ctx, &postgres.TaskRow{
@@ -415,8 +412,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: sch, Status: schedStatus, Kind: "cron",
-			CreatedAt:            time.Now().Add(-time.Duration(ageMin) * time.Minute),
-			InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		tid := uuid.New()
@@ -483,7 +479,7 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusFailed, Kind: "cron",
-		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		CreatedAt: time.Now().Add(-time.Minute),
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -515,7 +511,7 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -558,7 +554,7 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		CreatedAt: time.Now().Add(-time.Minute),
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	// 5 distinct nodes all under the SAME scheduler => identical last_run_at
@@ -599,7 +595,7 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -633,7 +629,7 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -677,7 +673,7 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -723,7 +719,7 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -774,7 +770,7 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
@@ -812,7 +808,7 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 			TenantID:   pkgevents.DefaultTenantID,
 			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
+			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{

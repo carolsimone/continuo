@@ -30,7 +30,7 @@ import (
 // return codes.Unimplemented from the embedded UnimplementedOrchestratorQueryServer.
 func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := grpcadapter.NewQueryHandler(stubScheduleLists{}, stubCodeVersionHistoryReader{}, stubPrecedentHistoryReader{}, logger)
+	handler := grpcadapter.NewQueryHandler(stubNodeReader{}, stubCodeVersionHistoryReader{}, stubPrecedentHistoryReader{}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -53,14 +53,6 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"GetScheduleGraph", func() error {
-			_, err := client.GetScheduleGraph(ctx, &orchestratorv1.GetScheduleGraphRequest{ScheduleName: "x"})
-			return err
-		}},
-		{"ListScheduleTopologies", func() error {
-			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
-			return err
-		}},
 		{"GetNodeLocation", func() error {
 			_, err := client.GetNodeLocation(ctx, &orchestratorv1.GetNodeLocationRequest{UniqueId: "x"})
 			return err
@@ -101,19 +93,13 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	}
 }
 
-// stubScheduleLists satisfies grpcadapter.ScheduleListReader.
-type stubScheduleLists struct{}
+// stubNodeReader satisfies grpcadapter.NodeReader.
+type stubNodeReader struct{}
 
-func (stubScheduleLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
-	return &domain.ScheduleGraph{}, nil
-}
-func (stubScheduleLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
+func (stubNodeReader) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
 	return nil, nil
 }
-func (stubScheduleLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
-	return nil, nil
-}
-func (stubScheduleLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+func (stubNodeReader) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
 	return &domain.NodeLocation{}, nil
 }
 

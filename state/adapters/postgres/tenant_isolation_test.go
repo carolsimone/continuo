@@ -192,7 +192,7 @@ func TestTenantIsolation_ActiveRunIsPerTenant(t *testing.T) {
 	db := newTestDB(t)
 	daily := "daily-" + uuid.NewString()[:8]
 	newRun := func(tenant string) *run.Run {
-		r, err := run.NewPendingRun(tenant, daily, run.KindCron, nil, "system", nil, model.OperationRun,
+		r, err := run.NewPendingRun(tenant, uuid.New(), daily, run.KindCron, nil, "system", nil, model.OperationRun,
 			run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
 		require.NoError(t, err)
 		t.Cleanup(func() {

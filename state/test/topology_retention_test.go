@@ -51,8 +51,8 @@ func TestTopologyRetention_PrunesOnlyOldUnreferencedReleases(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, 'rel-live', 1, now())`, tenant)
 	require.NoError(t, err)
 	_, err = db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind, release_id)
-		VALUES ($2, $1, 'promote-seed-retained', 'running', now(), 'completed', 'promote_seed', 'rel-referenced')`, uuid.New(), tenant)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind, release_id)
+		VALUES ($2, $1, 'promote-seed-retained', 'running', now(), 'promote_seed', 'rel-referenced')`, uuid.New(), tenant)
 	require.NoError(t, err)
 
 	pruned, err := topologyretention.NewPruner(factory, logger).Prune(ctx, 7*24*time.Hour, 1000)

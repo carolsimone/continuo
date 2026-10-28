@@ -25,7 +25,6 @@ type Run struct {
 
 	// runs columns
 	status      RunStatus
-	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
 	// release is the release this run runs on; the zero stamp when the run
@@ -69,7 +68,6 @@ type Run struct {
 type changeSet struct {
 	created                bool
 	statusDirty            bool
-	initStatusDirty        bool
 	totalTaskCountDirty    bool
 	terminalTaskCountDirty bool
 	cancelDirty            bool
@@ -87,7 +85,6 @@ func HydrateRun(
 	runID uuid.UUID,
 	scheduleName string,
 	status RunStatus,
-	initStatus InitStatus,
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
@@ -104,7 +101,6 @@ func HydrateRun(
 		runID:              runID,
 		scheduleName:       scheduleName,
 		status:             status,
-		initStatus:         initStatus,
 		kind:               kind,
 		sourceRunID:        sourceRunID,
 		initiatedBy:        initiatedBy,
@@ -134,17 +130,20 @@ func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
-// NewPendingRun creates a fresh PENDING Run of a schedule, fired by cron or
-// triggered. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
-// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start → SaveRun.
+// NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
+// triggered. The caller chooses id, so a command can record the run it
+// creates before the run exists; a nil id is ErrRunIDRequired. Caller flow:
+// SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.EnsureNoActiveRun →
+// NewPendingRun → SaveRun → Start → SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
-// executes. Callers other than a manual TriggerSchedule (cron, etc.) pass
+// executes. Callers other than a manual StartRun (cron, etc.) pass
 // model.OperationRun.
 //
 // stamp is the release the run runs on: the live release when the run is created.
 func NewPendingRun(
 	tenantID string,
+	id uuid.UUID,
 	scheduleName string,
 	kind Kind,
 	sourceRunID *uuid.UUID,
@@ -160,6 +159,9 @@ func NewPendingRun(
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
+	if id == uuid.Nil {
+		return nil, ErrRunIDRequired
+	}
 	if !kind.IsValid() {
 		return nil, ErrInvalidKind
 	}
@@ -168,10 +170,9 @@ func NewPendingRun(
 	}
 	r := &Run{
 		tenantID:        tenantID,
-		runID:           uuid.New(),
+		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
-		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -184,16 +185,17 @@ func NewPendingRun(
 	return r, nil
 }
 
-// NewDerivedRun creates a PENDING Run for rerun/rebase. The derived run
-// inherits the source run's operation: rerun/rebase re-issue the source
-// run's dbt verb (run/build) against the derived task set; the planner refuses
-// a test source. Stamps last_progress_at so dashboards show the new run
-// immediately.
+// NewDerivedRun creates the PENDING Run id for rerun/rebase; a nil id is
+// ErrRunIDRequired. The derived run inherits the source run's operation:
+// rerun/rebase re-issue the source run's dbt verb (run/build) against the
+// derived task set; the planner refuses a test source. Stamps last_progress_at
+// so dashboards show the new run immediately.
 //
 // stamp is the release the run runs on: the source run's for a rerun, the
 // live release for a rebase.
 func NewDerivedRun(
 	tenantID string,
+	id uuid.UUID,
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
@@ -208,15 +210,17 @@ func NewDerivedRun(
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
+	if id == uuid.Nil {
+		return nil, ErrRunIDRequired
+	}
 	if kind != KindRerun && kind != KindRebase {
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
 		tenantID:        tenantID,
-		runID:           uuid.New(),
+		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
-		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -230,12 +234,14 @@ func NewDerivedRun(
 	return r, nil
 }
 
-// NewSingleNodeRun creates a RUNNING single-task Run. operation is the dbt
-// verb (run/test/build/full_refresh) the run applies to its node.
+// NewSingleNodeRun creates the RUNNING single-task Run id; a nil id is
+// ErrRunIDRequired. operation is the dbt verb (run/test/build/full_refresh)
+// the run applies to its node.
 //
 // stamp is the release the run runs on; the zero stamp names none.
 func NewSingleNodeRun(
 	tenantID string,
+	id uuid.UUID,
 	scheduleName string,
 	operation model.Operation,
 	sourceRunID *uuid.UUID,
@@ -249,12 +255,14 @@ func NewSingleNodeRun(
 	if scheduleName == "" {
 		return nil, ErrScheduleNameRequired
 	}
+	if id == uuid.Nil {
+		return nil, ErrRunIDRequired
+	}
 	r := &Run{
 		tenantID:        tenantID,
-		runID:           uuid.New(),
+		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
-		initStatus:      InitStatusInProgress,
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -271,8 +279,7 @@ func NewSingleNodeRun(
 // NewPromotedSeedsRun creates a RUNNING Run that loads seeds of a release into
 // the production schema, one task per seed.
 //
-// Unlike every other constructor here the run id is supplied rather than
-// generated: the caller derives it deterministically from the release, so
+// The caller derives the run id deterministically from the release, so
 // planning the same release again resolves to a run that already exists
 // instead of minting a second one that would load the same seeds.
 //
@@ -304,7 +311,6 @@ func NewPromotedSeedsRun(
 		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
-		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
 		release:         stamp,
 		initiatedBy:     "system",
@@ -330,7 +336,6 @@ func (r *Run) Release() ReleaseStamp            { return r.release }
 func (r *Run) ReleaseID() string                { return r.release.ReleaseID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) Operation() model.Operation       { return r.operation }
-func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }
 func (r *Run) CompletedAt() *time.Time          { return r.completedAt }
@@ -367,7 +372,6 @@ func (r *Run) ResetChanges()      { r.changes = changeSet{} }
 // were mutated without coupling to the unexported struct fields.
 func (c changeSet) IsCreated() bool                { return c.created }
 func (c changeSet) IsStatusDirty() bool            { return c.statusDirty }
-func (c changeSet) IsInitStatusDirty() bool        { return c.initStatusDirty }
 func (c changeSet) IsTotalTaskCountDirty() bool    { return c.totalTaskCountDirty }
 func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountDirty }
 func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
@@ -412,7 +416,7 @@ func (r *Run) Start(
 	if r.IsTerminal() {
 		return nil, ErrAlreadyTerminal
 	}
-	if r.plannedAt != nil || r.initStatus == InitStatusCompleted {
+	if r.plannedAt != nil {
 		return nil, ErrAlreadyPlanned
 	}
 	if len(plan.Tasks) == 0 {
@@ -482,7 +486,6 @@ func (r *Run) Start(
 	total := num.ClampInt32(len(built))
 	r.totalTaskCount = &total
 	r.terminalTaskCount = inherited
-	r.initStatus = InitStatusCompleted
 	planned := now
 	r.plannedAt = &planned
 	r.status = RunStatusRunning
@@ -490,7 +493,6 @@ func (r *Run) Start(
 	r.startedAt = &started
 	r.changes.totalTaskCountDirty = true
 	r.changes.terminalTaskCountDirty = true
-	r.changes.initStatusDirty = true
 	r.changes.plannedDirty = true
 	r.changes.statusDirty = true
 	r.changes.startedDirty = true

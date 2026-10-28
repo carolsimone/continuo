@@ -13,6 +13,6 @@ printf 'steps:\n  - run: make stack-up\n' > "$tmp/d3.yml"
 bash "$G" "$tmp/d3.yml"; assert "missing make guards step fails" "[ $? -ne 0 ]"
 printf 'steps:\n  - run: make guards\n  - run: bash scripts/check-release-tag-trigger.sh\n' > "$tmp/d4.yml"
 bash "$G" "$tmp/d4.yml"; assert "inline guard script fails" "[ $? -ne 0 ]"
-printf 'steps:\n  - run: make guards\n  - run: diff a/state.proto b/state.proto\n' > "$tmp/d5.yml"
+printf 'steps:\n  - run: make guards\n  - run: diff a/run.proto b/run.proto\n' > "$tmp/d5.yml"
 bash "$G" "$tmp/d5.yml"; assert "inline proto diff fails" "[ $? -ne 0 ]"
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES"; exit 1; fi

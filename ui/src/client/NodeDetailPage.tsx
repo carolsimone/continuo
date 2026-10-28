@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
+import { settlesRequest, useActionRequestId } from './request-id';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import { taskPillClass, taskStatusTitle } from './detail-page-helpers';
@@ -79,7 +80,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>
         {r.log_s3_key
           ? <a
-               href={`/api/task-execution/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
+               href={`/api/attempts/${r.task_id}/logs?key=${encodeURIComponent(r.log_s3_key)}`}
                target="_blank" rel="noopener noreferrer">logs</a>
           : <span className="nodes-dash">—</span>}
       </td>
@@ -103,6 +104,9 @@ export default function NodeDetailPage() {
     backPath = from.mode === 'latest' ? `/schedule/${from.name}/latest` : `/schedule/${from.name}`;
   }
   const [runs, setRuns] = useState<NodeRun[]>([]);
+  // Whether runs holds the answer of the latest history read: false while a
+  // read is in flight and after one failed.
+  const [runsKnown, setRunsKnown] = useState(false);
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -118,6 +122,13 @@ export default function NodeDetailPage() {
   // the node has no catalog row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
+  // The request id of the node run being asked for: a press that gets no
+  // answer and is repeated with the same node, operation and source, while
+  // the history still shows the newest node run the first press saw, sends
+  // the same id, so the run the first press made is returned rather than made
+  // twice. A newer node run in the history makes the next press a new action,
+  // and the id is renewed once the server has given its final answer.
+  const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -131,15 +142,18 @@ export default function NodeDetailPage() {
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
     const myGen = ++genRef.current;
+    setRunsKnown(false);
     fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
         if (myGen !== genRef.current) return;
-        setRuns(data.runs || []);
+        setRuns(data.tasks || []);
+        setRunsKnown(Array.isArray(data.tasks));
       })
       .catch(() => {
         if (myGen !== genRef.current) return;
         setRuns([]);
+        setRunsKnown(false);
       });
   }, [service, schema, table, historyOperation]);
 
@@ -206,6 +220,13 @@ export default function NodeDetailPage() {
   // matching the orchestrator's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
+  // The newest run in the history that a press of this page could have made:
+  // a single-node run. A scheduled run of the node is not the outcome of a
+  // press, so it does not end the wait for one. While the history is not
+  // known (a read in flight or failed) the page observes nothing; a history
+  // with no single-node run in its window observes none.
+  const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
+
   // opOverride pins the operation for a caller that must send exactly what it
   // confirmed, independent of the select's current value.
   const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
@@ -213,11 +234,13 @@ export default function NodeDetailPage() {
     setRunError(null);
     try {
       const op = opOverride ?? operation;
-      const withOp = { ...body, operation: op === 'run' ? '' : op };
+      const asked = { ...body, operation: op === 'run' ? '' : op };
+      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, newestNodeRunId) };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
       );
+      if (settlesRequest(res)) renewRunRequestId();
       if (res.ok) {
         setRunState('success');
         fetchRuns();
@@ -231,7 +254,7 @@ export default function NodeDetailPage() {
       setRunError('Request failed — please try again');
       setRunState('error');
     }
-  }, [service, schema, table, fetchRuns, operation]);
+  }, [service, schema, table, fetchRuns, operation, newestNodeRunId, takeRequestId, renewRunRequestId]);
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +63,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	waitForStateLiveRelease(t, ctx, clients, base)
 
 	// ── The source run fails on the base release ────────────────────────────
-	srcIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	srcIDStr := startFailureScheduleRun(t, ctx, clients)
 	srcID, err := uuid.Parse(srcIDStr)
 	require.NoError(t, err)
 
@@ -99,10 +99,10 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	// can land after the run is read, so the preview is read until it carries
 	// one.
 	t.Log("Previewing the rebase with the changed upstream nodes...")
-	var withUpstream *statev1.PreviewRebaseResponse
+	var withUpstream *runv1.PreviewRebaseResponse
 	var lastSeen string
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
-		resp, pErr := clients.stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{
+		resp, pErr := clients.runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{
 			SourceRunId:            srcIDStr,
 			IncludeChangedUpstream: true,
 		})
@@ -131,7 +131,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 		"ftable_c is the one changed upstream node; ftable_a's image tag alone is not a change")
 
 	// ── Preview of the failed part only ─────────────────────────────────────
-	failedPart, err := clients.stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: srcIDStr})
+	failedPart, err := clients.runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: srcIDStr})
 	require.NoError(t, err)
 	assert.Equal(t, rebasePreviewCounts{
 		ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq,
@@ -144,7 +144,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	// The refusal is checked while no run is active on the schedule: an active
 	// run refuses a rebase before the live release is compared.
 	runsBefore := countScheduleRuns(t, ctx, clients, failureTestScheduleName)
-	_, err = clients.stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+	_, err = clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId:            srcIDStr,
 		IncludeChangedUpstream: true,
 		ExpectedReleaseId:      base.ReleaseID,
@@ -166,7 +166,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	cancelActiveRebase(t, ctx, clients, failedOnly)
 
 	// ── A rebase of the cancelled rebase compares ftable_c with the base ────
-	ofRebase, err := clients.stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{
+	ofRebase, err := clients.runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{
 		SourceRunId:            failedOnly.String(),
 		IncludeChangedUpstream: true,
 	})
@@ -218,7 +218,7 @@ type rebasePreviewCounts struct {
 	Inherited       int32
 }
 
-func previewCountsOf(p *statev1.PreviewRebaseResponse) rebasePreviewCounts {
+func previewCountsOf(p *runv1.PreviewRebaseResponse) rebasePreviewCounts {
 	return rebasePreviewCounts{
 		ReleaseID:       p.GetReleaseId(),
 		PromotionSeq:    p.GetPromotionSeq(),
@@ -241,7 +241,7 @@ type rebaseChangedNode struct {
 	Downstream int32
 }
 
-func changedNodesOf(p *statev1.PreviewRebaseResponse) []rebaseChangedNode {
+func changedNodesOf(p *runv1.PreviewRebaseResponse) []rebaseChangedNode {
 	out := make([]rebaseChangedNode, 0, len(p.GetChangedNodes()))
 	for _, n := range p.GetChangedNodes() {
 		out = append(out, rebaseChangedNode{
@@ -283,7 +283,7 @@ func countScheduleRuns(t *testing.T, ctx context.Context, clients *testClients, 
 // schedule, stamped with live.
 func triggerRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, source uuid.UUID, includeChangedUpstream bool, live announceResult) uuid.UUID {
 	t.Helper()
-	resp, err := clients.stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+	resp, err := clients.runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(),
 		SourceRunId:            source.String(),
 		IncludeChangedUpstream: includeChangedUpstream,
 		ExpectedReleaseId:      live.ReleaseID,
@@ -363,12 +363,12 @@ func countExecuted(tasks map[string]rebaseTask) int {
 // and waits until it is cancelled, which leaves the schedule free.
 func cancelActiveRebase(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
-	resp, err := clients.stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
+	resp, err := clients.runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{RequestId: uuid.NewString(),
 		ScheduleName:       failureTestScheduleName,
 		CancelledBy:        "e2e",
 		CancellationReason: "rebase checked",
 	})
 	require.NoError(t, err, "cancel the rebase run on %s", failureTestScheduleName)
-	require.Equal(t, runID.String(), resp.GetScheduleId(), "the active run of the schedule is the rebase")
+	require.Equal(t, runID.String(), resp.GetRunId(), "the active run of the schedule is the rebase")
 	verifySchedulerCancelled(t, ctx, clients, runID)
 }

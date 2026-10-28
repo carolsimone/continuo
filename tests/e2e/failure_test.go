@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,10 +48,10 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
 	seedTopology(t, ctx, clients)
 
-	t.Log("Activating schedule...")
-	schedulerIDStr := createAndActivateFailureScheduler(t, ctx, clients)
+	t.Log("Starting a run of the schedule...")
+	schedulerIDStr := startFailureScheduleRun(t, ctx, clients)
 	schedulerID, err := uuid.Parse(schedulerIDStr)
-	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
+	require.NoError(t, err, "Invalid run_id returned from StartRun")
 
 	t.Log("Waiting for both ftable_e and ftable_g to exhaust retries...")
 	verifyNodeExhaustedRetries(t, ctx, clients, schedulerID, "ftable_e")
@@ -65,7 +65,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	verifySchedulerFailed(t, ctx, clients, schedulerID)
 
 	t.Log("Triggering rerun via gRPC TriggerRerun with only source_run_id...")
-	rerunResp, err := clients.stateClient.TriggerRerun(ctx, &statev1.TriggerRerunRequest{
+	rerunResp, err := clients.runClient.TriggerRerun(ctx, &runv1.TriggerRerunRequest{RequestId: uuid.NewString(),
 		SourceRunId: schedulerIDStr,
 	})
 	require.NoError(t, err, "TriggerRerun must succeed against a FAILED run")
@@ -76,7 +76,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	require.NoError(t, err)
 
 	sourceKind := queryRunKind(t, clients.stateDB, schedulerID)
-	assert.Equal(t, "cron", sourceKind, "source row must NOT be mutated")
+	assert.Equal(t, "trigger", sourceKind, "source row must NOT be mutated")
 
 	newKind := queryRunKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
@@ -130,16 +130,18 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	t.Log("Rerun alignment verified: single trigger rebased both subtrees")
 }
 
-// createAndActivateFailureScheduler activates the failure schedule via state gRPC.
-func createAndActivateFailureScheduler(
+// startFailureScheduleRun starts a run of the failure schedule through
+// RunService.StartRun.
+func startFailureScheduleRun(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
 ) string {
-	resp, err := clients.stateClient.ActivateSchedule(ctx, &statev1.ActivateScheduleRequest{
+	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{
+		RequestId:    uuid.NewString(),
 		ScheduleName: failureTestScheduleName,
 	})
-	require.NoError(t, err, "Failed to activate failure schedule via state service")
-	t.Logf("Activated failure schedule: schedule_id=%s", resp.ScheduleId)
-	return resp.ScheduleId
+	require.NoError(t, err, "Failed to start a run of the failure schedule via state service")
+	t.Logf("Started a run of the failure schedule: run_id=%s", resp.GetRunId())
+	return resp.GetRunId()
 }

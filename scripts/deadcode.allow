@@ -7,6 +7,7 @@
 ^agent-remediation/service/proposals/reconciler\.go: Reconciler\.Degraded$
 ^execution-controller/adapters/k8s/client\.go: K8sClient\.setClientsetForTest$
 ^orchestrator/adapters/grpc/server\.go: Server\.Addr$
+^state/internal/grpc/server\.go: Server\.Addr$
 ^pkg/liveness/registry\.go: Registry\.(Ready|Live)$
 ^pkg/outbox/testaccess\.go: 
 # Deliberate test seams (exercised by tests, no production caller).

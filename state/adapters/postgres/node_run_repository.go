@@ -21,6 +21,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
@@ -29,8 +30,8 @@ import (
 
 // NodeRunRepository reads per-node run history.
 type NodeRunRepository interface {
-	List(ctx context.Context, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error)
-	ListNodes(ctx context.Context, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error)
+	List(ctx context.Context, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
+	ListNodes(ctx context.Context, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error)
 	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
 	ListNodeServices(ctx context.Context) ([]string, error)
 }
@@ -65,20 +66,19 @@ func NewNodeRunRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) Nod
 //
 // Tasks with no attempt row yield rows with nil timings.
 // limit is clamped to (0, 50]; non-positive or oversized values default to 50.
-// operation defaults to "run" when empty; the run dimension includes
-// full_refresh tasks, since a full refresh materializes the node just as a
-// run does.
+// operation is matched as stored (operationWithDefault); the run dimension
+// includes full_refresh tasks, since a full refresh materializes the node just
+// as a run does.
 func (r *nodeRunRepository) List(
 	ctx context.Context,
-	serviceName, schemaName, tableName, operation string,
+	serviceName, schemaName, tableName string,
+	op model.Operation,
 	limit int,
 ) ([]*projection.NodeRun, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
-	if operation == "" {
-		operation = "run"
-	}
+	operation := operationWithDefault(string(op))
 
 	const query = `
 		WITH target_tasks AS (
@@ -230,14 +230,15 @@ type nodeSummaryRow struct {
 // stats aggregated over each node's most recent 50 runs. Filters by exact
 // service (when non-empty), a case-insensitive exact match on the table name
 // (when non-empty), and the run/test/build operation dimension (run includes
-// full_refresh) (operation defaults to "run" when empty), ordered by
+// full_refresh; matched as stored, see operationWithDefault), ordered by
 // last_run_at DESC with (service, schema, table) identity tiebreakers for
 // deterministic paging, and paged by limit/offset. The second return value is
 // the total match count before paging, computed independently of the page so
 // an empty page still reports the true total.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
-	search, serviceName, operation string,
+	search, serviceName string,
+	op model.Operation,
 	limit, offset int,
 ) ([]*projection.NodeSummary, int, error) {
 	if limit <= 0 {
@@ -249,16 +250,14 @@ func (r *nodeRunRepository) ListNodes(
 	if offset < 0 {
 		offset = 0
 	}
-	if operation == "" {
-		operation = "run"
-	}
+	operation := operationWithDefault(string(op))
 
 	// rankedWindowedCTE filters and caps each node to its most recent 50 runs.
 	// $1 is a case-insensitive EXACT match on the table name (not a substring):
 	// searching "table_2" returns only "table_2", never "ftable_2" or
 	// "table_2_v2". Service is filtered via $2, the run/test/build dimension
-	// via $3 (an exact match — always non-empty, since the caller defaults it
-	// to "run"), and the tenant via $4. The run dimension includes
+	// via $3 (an exact match on the stored value, always non-empty), and the
+	// tenant via $4. The run dimension includes
 	// full_refresh tasks and reports them as operation 'run', so a node keeps
 	// one catalog row per dimension. The window-function scan over tasks ⋈
 	// runs runs ONCE: the page query layers the per-node aggregation and a

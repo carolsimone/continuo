@@ -24,6 +24,11 @@ const defaultMaxBytes = 65536
 // fallback payload (Fix 2).
 const stderrCap = 500
 
+// agentChatRequestNamespace is the UUIDv5 namespace of the request ids agent-chat
+// gives to mutating tool calls. It is fixed so that the id derived from a thread
+// and a tool call is the same in every process and after every restart.
+var agentChatRequestNamespace = uuid.MustParse("e8241864-5a00-4b98-8b93-8cb46f940484")
+
 // errorEnvelope is the canonical JSON error shape emitted to the model.
 type errorEnvelope struct {
 	Error errorBody `json:"error"`
@@ -131,23 +136,34 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 	// continuo CLI is our own trusted binary and needs PATH plus the
 	// CONTINUO_* address vars that main injects.
 	//
-	// Stamp the initiating identity for this call. When userID is set (every
-	// mutating chat tool is human-approved before Execute runs, so this is the
-	// approving operator), append CONTINUO_ACTOR so the CLI forwards it as
-	// x-continuo-user-id gRPC metadata. When empty, leave e.env untouched so the
-	// nil-inherits-parent behavior is preserved exactly.
+	// Stamp the initiating identity and the request identity for this call.
+	// When userID is set (every mutating chat tool is human-approved before
+	// Execute runs, so this is the approving operator), CONTINUO_ACTOR carries
+	// it so the CLI forwards it as x-continuo-user-id gRPC metadata. A mutating
+	// tool also gets CONTINUO_REQUEST_ID, derived from the thread and the tool
+	// call id: the CLI sends it as the request id of the run it starts, so a
+	// retry of the same approved call cannot start a second run. When neither
+	// applies, e.env is left untouched so the nil-inherits-parent behavior is
+	// preserved exactly.
 	//
 	// Because exec.Cmd only inherits the parent environment when cmd.Env is nil,
-	// appending to a nil e.env would replace inheritance with a 1-element env and
+	// appending to a nil e.env would replace inheritance with a short env and
 	// strip PATH and the inherited CONTINUO_* vars. So when e.env is nil we seed
-	// the copy from os.Environ() to keep inheritance while adding the actor.
+	// the copy from os.Environ() to keep inheritance while adding the variables.
 	env := e.env
+	var extra []string
 	if userID != "" {
+		extra = append(extra, "CONTINUO_ACTOR="+userID)
+	}
+	if def.Mutating {
+		extra = append(extra, "CONTINUO_REQUEST_ID="+requestID(threadID, call.ID))
+	}
+	if len(extra) > 0 {
 		base := e.env
 		if base == nil {
 			base = os.Environ()
 		}
-		env = append(append([]string(nil), base...), "CONTINUO_ACTOR="+userID)
+		env = append(append([]string(nil), base...), extra...)
 	}
 	cmd.Env = env
 	start := time.Now()
@@ -193,4 +209,10 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 		"duration_ms", elapsed.Milliseconds(),
 	)
 	return ports.ToolResult{Output: string(out), IsError: isError}
+}
+
+// requestID is the stable request id of one tool call: a UUIDv5 of the thread
+// id and the tool call id, so the same call always maps to the same id.
+func requestID(threadID uuid.UUID, toolCallID string) string {
+	return uuid.NewSHA1(agentChatRequestNamespace, []byte(threadID.String()+"\x00"+toolCallID)).String()
 }

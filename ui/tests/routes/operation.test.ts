@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseOperation, parseNodeOperation, parseNodeRunOperation } from '../../src/server/routes/operation';
 import { NODE_RUN_OPERATIONS, RUN_OPERATIONS, isNodeOperation } from '../../src/server/shared/operation';
+import { OPERATIONS, SINGLE_NODE_ONLY_OPERATIONS } from '../../src/server/generated/vocabulary.gen';
 
 describe('parseOperation', () => {
   it('maps missing / run to empty', () => {
@@ -62,5 +63,22 @@ describe('shared operation lists', () => {
   it('isNodeOperation accepts exactly the single-node operations', () => {
     for (const op of NODE_RUN_OPERATIONS) expect(isNodeOperation(op)).toBe(true);
     for (const bad of ['', 'FULL_REFRESH', 'drop', undefined, null, 7]) expect(isNodeOperation(bad)).toBe(false);
+  });
+});
+
+describe('operation lists follow the contract vocabulary', () => {
+  it('builds the run and single-node lists from the generated lists', () => {
+    expect([...NODE_RUN_OPERATIONS]).toEqual([...OPERATIONS]);
+    expect([...RUN_OPERATIONS]).toEqual(OPERATIONS.filter((op) => !(SINGLE_NODE_ONLY_OPERATIONS as readonly string[]).includes(op)));
+  });
+  it('the schedule trigger accepts every run operation and refuses each single-node-only one', () => {
+    for (const op of OPERATIONS) {
+      const parsed = parseOperation(op);
+      if ((SINGLE_NODE_ONLY_OPERATIONS as readonly string[]).includes(op)) expect(parsed, op).toBeNull();
+      else expect(parsed, op).toBe(op === 'run' ? '' : op);
+    }
+  });
+  it('the node-run route accepts every operation', () => {
+    for (const op of OPERATIONS) expect(parseNodeRunOperation(op), op).toBe(op === 'run' ? '' : op);
   });
 });

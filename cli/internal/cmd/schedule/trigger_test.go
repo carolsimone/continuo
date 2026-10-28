@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -19,46 +19,54 @@ import (
 )
 
 type fakeState struct {
-	resp            *statev1.TriggerScheduleResponse
+	client.RunClient
+
+	resp            *runv1.StartRunResponse
 	err             error
 	gotScheduleName string
 	gotTriggerActor string
+	// gotRequestIDs is the request id of every command the fake received.
+	gotRequestIDs []string
 
-	testResp            *statev1.TriggerScheduleResponse
+	testResp            *runv1.StartRunResponse
 	testErr             error
 	gotTestScheduleName string
 	gotTestActor        string
 
-	cancelResp      *statev1.CancelScheduleResponse
+	cancelResp      *runv1.CancelActiveRunResponse
 	cancelErr       error
 	gotCancelReason string
 	gotCancelBy     string
 
-	buildResp            *statev1.TriggerScheduleResponse
+	buildResp            *runv1.StartRunResponse
 	buildErr             error
 	gotBuildScheduleName string
 	gotBuildActor        string
 }
 
-func (f *fakeState) TriggerSchedule(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerSchedule(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
 	f.gotTriggerActor = actor
 	return f.resp, f.err
 }
 
-func (f *fakeState) TriggerScheduleTest(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestScheduleName = name
 	f.gotTestActor = actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeState) TriggerScheduleBuild(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildScheduleName = name
 	f.gotBuildActor = actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeState) CancelSchedule(_ context.Context, name, reason, by string) (*statev1.CancelScheduleResponse, error) {
+func (f *fakeState) CancelSchedule(_ context.Context, requestID, name, reason, by string) (*runv1.CancelActiveRunResponse, error) {
+	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
 	f.gotCancelReason = reason
 	f.gotCancelBy = by
@@ -67,44 +75,13 @@ func (f *fakeState) CancelSchedule(_ context.Context, name, reason, by string) (
 
 func (f *fakeState) Close() error { return nil }
 
-func (f *fakeState) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedulesResponse, error) {
-	return nil, nil
-}
-
-func (f *fakeState) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
-	panic("ListTasks should not be called in trigger tests")
-}
-
-func (f *fakeState) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
-	panic("ListNodeRuns should not be called in schedule tests")
-}
-func (f *fakeState) ListNodes(_ context.Context, _, _, _ string, _, _ int32) (*statev1.ListNodesResponse, error) {
-	panic("ListNodes should not be called in schedule tests")
-}
-
-func (f *fakeState) TriggerNodeRun(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeRun should not be called in schedule tests")
-}
-
-func (f *fakeState) TriggerNodeTest(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeTest should not be called in schedule tests")
-}
-
-func (f *fakeState) TriggerNodeBuild(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeBuild should not be called in schedule tests")
-}
-
-func (f *fakeState) TriggerNodeFullRefresh(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeFullRefresh should not be called in schedule tests")
-}
-
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
-func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func run(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -123,11 +100,11 @@ func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdo
 
 // runTriggerWithActor invokes the trigger command with the resolved actor
 // (config.Config.Actor, sourced from CONTINUO_ACTOR) and returns the exit code.
-func runTriggerWithActor(t *testing.T, fake client.StateClient, args []string, actor string) int {
+func runTriggerWithActor(t *testing.T, fake client.RunClient, args []string, actor string) int {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: actor}
-	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -142,14 +119,14 @@ func runTriggerWithActor(t *testing.T, fake client.StateClient, args []string, a
 }
 
 func TestTrigger_ForwardsActor(t *testing.T) {
-	fake := &fakeState{resp: &statev1.TriggerScheduleResponse{ScheduleId: "s1"}}
+	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "s1"}}
 	exit := runTriggerWithActor(t, fake, []string{"daily"}, "okta.example.com|alice")
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "okta.example.com|alice", fake.gotTriggerActor)
 }
 
 func TestTrigger_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{resp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, false)
 
@@ -157,7 +134,7 @@ func TestTrigger_SuccessEmitsJSON(t *testing.T) {
 	assert.Empty(t, stderr)
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-	assert.Equal(t, "sched_123", payload["schedule_id"])
+	assert.Equal(t, "sched_123", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
 	_, err := time.Parse(time.RFC3339, payload["triggered_at"])
 	assert.NoError(t, err, "triggered_at must be RFC3339")
@@ -212,11 +189,50 @@ func TestTrigger_MissingArgumentExits2(t *testing.T) {
 }
 
 func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{resp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, true)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "Triggered run sched_123 for schedule 'daily_ingest'")
+}
+
+const fixedRequestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+
+// A command that starts or cancels a run hands the client the request id of the
+// invocation, which CONTINUO_REQUEST_ID fixes, so the client can send it on
+// every try and the server can recognise a repeat.
+func TestScheduleCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
+	t.Setenv("CONTINUO_REQUEST_ID", fixedRequestID)
+	ok := &runv1.StartRunResponse{RunId: "r1"}
+	cases := map[string]func(fake *fakeState) (int, []string){
+		"trigger": func(fake *fakeState) (int, []string) {
+			fake.resp = ok
+			_, _, exit := run(t, fake, []string{"daily"}, false)
+			return exit, fake.gotRequestIDs
+		},
+		"test": func(fake *fakeState) (int, []string) {
+			fake.testResp = ok
+			_, _, exit := runTest(t, fake, []string{"daily"}, false)
+			return exit, fake.gotRequestIDs
+		},
+		"build": func(fake *fakeState) (int, []string) {
+			fake.buildResp = ok
+			_, _, exit := runBuild(t, fake, []string{"daily"}, false)
+			return exit, fake.gotRequestIDs
+		},
+		"cancel": func(fake *fakeState) (int, []string) {
+			fake.cancelResp = &runv1.CancelActiveRunResponse{RunId: "r1"}
+			_, _, exit := runCancel(t, fake, []string{"daily", "why"}, false, "")
+			return exit, fake.gotRequestIDs
+		},
+	}
+	for name, invoke := range cases {
+		t.Run(name, func(t *testing.T) {
+			exit, ids := invoke(&fakeState{})
+			assert.Equal(t, 0, exit)
+			assert.Equal(t, []string{fixedRequestID}, ids)
+		})
+	}
 }

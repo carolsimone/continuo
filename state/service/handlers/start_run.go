@@ -28,8 +28,8 @@ const (
 	OutcomeSkippedActive ActivationOutcome = iota
 )
 
-// StartRunHandler is the use case behind the cron fire, gRPC
-// ActivateSchedule (both kind cron) and gRPC TriggerSchedule (kind trigger).
+// StartRunHandler is the use case behind the cron fire (kind cron) and gRPC
+// StartRun (kind trigger).
 // It creates the run, chooses its tasks from the schedule's graph on the live
 // release and dispatches the ready ones, in one transaction.
 //
@@ -49,9 +49,22 @@ func NewStartRunHandler(planner runstart.Planner, logger *slog.Logger) *StartRun
 	return &StartRunHandler{planner: planner, logger: logger}
 }
 
-// Handle starts a run of tenantID's named schedule, for that tenant. The
-// catalog existence and active-run pre-conditions are enforced via
-// SchedulePolicy.
+// StartRunInput is a request to start the run RunID of TenantID's schedule
+// ScheduleName, of Kind, applying Operation to its nodes, for Initiator.
+// SourceRunID names the run it derives from, if any.
+type StartRunInput struct {
+	RunID        uuid.UUID
+	TenantID     string
+	ScheduleName string
+	Kind         run.Kind
+	SourceRunID  *uuid.UUID
+	Initiator    identity.Identity
+	Operation    model.Operation
+}
+
+// Handle starts a run of tenantID's named schedule, for that tenant, in a
+// transaction of its own. The catalog existence and active-run pre-conditions
+// are enforced via SchedulePolicy.
 //
 // Returns (id, OutcomeRunStarted) when a run was created, (uuid.Nil,
 // OutcomeSkippedActive) when the schedule already has an active run, or an
@@ -59,8 +72,8 @@ func NewStartRunHandler(planner runstart.Planner, logger *slog.Logger) *StartRun
 // failure, after which nothing is written.
 //
 // operation selects the dbt verb (run/test/build) the run applies to its
-// nodes. Only the manual TriggerSchedule caller passes a non-default value;
-// every other caller (cron, etc.) passes model.OperationRun.
+// nodes. Only a manual trigger passes a non-default value; every other caller
+// (cron, etc.) passes model.OperationRun.
 func (h *StartRunHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -71,18 +84,13 @@ func (h *StartRunHandler) Handle(
 	initiator identity.Identity,
 	operation model.Operation,
 ) (uuid.UUID, ActivationOutcome, error) {
-	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), tenantID, name); err != nil {
-		return uuid.Nil, 0, err
+	in := StartRunInput{
+		RunID: uuid.New(), TenantID: tenantID, ScheduleName: name, Kind: kind,
+		SourceRunID: sourceRunID, Initiator: initiator, Operation: operation,
 	}
-	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), tenantID, name); err != nil {
-		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			return uuid.Nil, OutcomeSkippedActive, nil
-		}
-		return uuid.Nil, 0, err
-	}
-	metadata, err := u.Catalog().GetServiceMetadata(ctx, tenantID, name)
-	if err != nil {
-		return uuid.Nil, 0, fmt.Errorf("get metadata: %w", err)
+	metadata, outcome, err := h.check(ctx, u, in)
+	if err != nil || outcome == OutcomeSkippedActive {
+		return uuid.Nil, outcome, err
 	}
 
 	if err := u.Begin(ctx); err != nil {
@@ -94,21 +102,80 @@ func (h *StartRunHandler) Handle(
 			_ = u.Rollback()
 		}
 	}()
+	outcome, err = h.create(ctx, u, in, metadata)
+	if err != nil || outcome == OutcomeSkippedActive {
+		return uuid.Nil, outcome, err
+	}
+	if err := u.Commit(); err != nil {
+		return uuid.Nil, 0, fmt.Errorf("commit: %w", err)
+	}
+	committed = true
+	return in.RunID, OutcomeRunStarted, nil
+}
 
-	sel, err := h.planner.Schedule(ctx, u, tenantID, name, operation)
+// StartInTransaction starts the run in.RunID inside u's open transaction,
+// which the caller commits or rolls back. It enforces the pre-conditions
+// Handle does; a schedule that already has an active run is
+// run.ErrScheduleHasActiveRun. A refusal leaves the caller to roll back.
+func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWork, in StartRunInput) error {
+	metadata, outcome, err := h.check(ctx, u, in)
+	if err != nil {
+		return err
+	}
+	if outcome == OutcomeSkippedActive {
+		return run.ErrScheduleHasActiveRun
+	}
+	outcome, err = h.create(ctx, u, in, metadata)
+	if err != nil {
+		return err
+	}
+	if outcome == OutcomeSkippedActive {
+		return run.ErrScheduleHasActiveRun
+	}
+	return nil
+}
+
+// check enforces the schedule's pre-conditions, the schedule in the catalog
+// and no active run, and returns the catalog's service metadata of the
+// schedule. A schedule with an active run is OutcomeSkippedActive.
+func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (map[string]run.ServiceMetadata, ActivationOutcome, error) {
+	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), in.TenantID, in.ScheduleName); err != nil {
+		return nil, 0, err
+	}
+	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), in.TenantID, in.ScheduleName); err != nil {
+		if errors.Is(err, run.ErrScheduleHasActiveRun) {
+			return nil, OutcomeSkippedActive, nil
+		}
+		return nil, 0, err
+	}
+	metadata, err := u.Catalog().GetServiceMetadata(ctx, in.TenantID, in.ScheduleName)
+	if err != nil {
+		return nil, 0, fmt.Errorf("get metadata: %w", err)
+	}
+	return metadata, OutcomeRunStarted, nil
+}
+
+// create chooses the run's tasks from the schedule's graph on the live
+// release, creates the run in.RunID and dispatches its ready tasks, inside u's
+// open transaction. A refused selection of a trigger is returned and creates
+// nothing; a refused cron selection records the run finished. A run that
+// loses the race for the schedule's one active run is OutcomeSkippedActive.
+func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in StartRunInput, metadata map[string]run.ServiceMetadata) (ActivationOutcome, error) {
+	name := in.ScheduleName
+	sel, err := h.planner.Schedule(ctx, u, in.TenantID, name, in.Operation)
 	refusal := scheduleRefusal(err)
 	if err != nil && refusal == nil {
-		return uuid.Nil, 0, fmt.Errorf("select the run of %s: %w", name, err)
+		return 0, fmt.Errorf("select the run of %s: %w", name, err)
 	}
 	benign := errors.Is(refusal, runplan.ErrNoTests)
-	if refusal != nil && kind != run.KindCron && !benign {
-		return uuid.Nil, 0, refusal
+	if refusal != nil && in.Kind != run.KindCron && !benign {
+		return 0, refusal
 	}
 
 	now := u.Clock().Now()
-	newRun, err := run.NewPendingRun(tenantID, name, kind, sourceRunID, initiator.UserID, metadata, operation, sel.Stamp, now)
+	newRun, err := run.NewPendingRun(in.TenantID, in.RunID, name, in.Kind, in.SourceRunID, in.Initiator.UserID, metadata, in.Operation, sel.Stamp, now)
 	if err != nil {
-		return uuid.Nil, 0, err
+		return 0, err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		// A concurrent activation that passed the EnsureNoActiveRun pre-check
@@ -116,25 +183,23 @@ func (h *StartRunHandler) Handle(
 		// the check-first active-run outcome so the gRPC caller maps it to the
 		// same response (cron skip / manual FailedPrecondition).
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			return uuid.Nil, OutcomeSkippedActive, nil
+			return OutcomeSkippedActive, nil
 		}
-		return uuid.Nil, 0, fmt.Errorf("save: %w", err)
+		return 0, fmt.Errorf("save: %w", err)
 	}
 	if refusal != nil {
 		if err := h.finishRefused(ctx, u, newRun, benign, refusal, now); err != nil {
-			return uuid.Nil, 0, err
+			return 0, err
 		}
 	} else if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
-		return uuid.Nil, 0, err
+		return 0, err
 	}
-	if err := u.Commit(); err != nil {
-		return uuid.Nil, 0, fmt.Errorf("commit: %w", err)
-	}
-	committed = true
 
-	h.logger.Info("Schedule activated", "tenant_id", tenantID, "run_id", newRun.RunID(), "schedule_name", name, "kind", string(kind),
-		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
-	return newRun.RunID(), OutcomeRunStarted, nil
+	u.AfterCommit(func() {
+		h.logger.Info("Schedule activated", "tenant_id", in.TenantID, "run_id", newRun.RunID(), "schedule_name", name, "kind", string(in.Kind),
+			"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
+	})
+	return OutcomeRunStarted, nil
 }
 
 // finishRefused finishes r, whose selection was refused, without tasks:

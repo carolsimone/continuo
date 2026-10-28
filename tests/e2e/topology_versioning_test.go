@@ -53,9 +53,9 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
 	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
 	scheduleID1Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
-	t.Logf("Run 1 created: schedule_id=%s", scheduleID1Str)
+	t.Logf("Run 1 created: run_id=%s", scheduleID1Str)
 	s1, err := uuid.Parse(scheduleID1Str)
-	require.NoError(t, err, "schedule_id for Run 1 is not a valid UUID")
+	require.NoError(t, err, "run_id for Run 1 is not a valid UUID")
 
 	// Step 7: S1 carries G1.
 	t.Log("=== Step 7: verifying S1 promotion_seq in state == G1 ===")
@@ -93,9 +93,9 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 13: Trigger Run 2, which must pick up G2.
 	t.Log("=== Step 13: triggerScheduleHTTP — starting Run 2 (S2) ===")
 	scheduleID2Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
-	t.Logf("Run 2 created: schedule_id=%s", scheduleID2Str)
+	t.Logf("Run 2 created: run_id=%s", scheduleID2Str)
 	s2, err := uuid.Parse(scheduleID2Str)
-	require.NoError(t, err, "schedule_id for Run 2 is not a valid UUID")
+	require.NoError(t, err, "run_id for Run 2 is not a valid UUID")
 
 	// Step 15: S2 carries G2.
 	t.Log("=== Step 15: verifying S2 promotion_seq in state == G2 ===")

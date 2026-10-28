@@ -20,7 +20,7 @@ function tasksFor(phase: Phase) {
   if (phase === 'cancelling') { add('succeeded', 20); add('stopping', 6); add('cancelled', 15); }
   if (phase === 'cancelled') { add('succeeded', 20); add('cancelled', 21); }
   return statuses.map((status, i) => ({
-    task_id: `t${i}`, schedule_id: RUN_ID, service_name: 's', schema_name: 'a', table_name: `t${i}`,
+    task_id: `t${i}`, run_id: RUN_ID, service_name: 's', schema_name: 'a', table_name: `t${i}`,
     job_name: '', status, attempt: 0, max_retries: 0, created_at: null,
   }));
 }
@@ -37,7 +37,7 @@ function scheduleNow() {
     cron_expression: '0 0 * * *',
     description: '',
     timezone: 'UTC',
-    is_running: phase !== 'cancelled',
+    has_active_run: phase !== 'cancelled',
     last_run_at: null,
     last_run_status: phase,
     last_run_id: RUN_ID,
@@ -65,14 +65,14 @@ beforeEach(() => {
       }
       return ok(body);
     }
-    if (url.startsWith(`/api/schedulers/${RUN_ID}/tasks`)) {
+    if (url.startsWith(`/api/runs/${RUN_ID}/tasks`)) {
       const tasks = tasksFor(phase);
       return ok({ total_count: tasks.length, tasks });
     }
     if (url === '/api/config') return ok({ cancellation_reasons: ['Incorrect trigger', 'Other'] });
-    if (url === '/api/schedules/daily/cancel' && init?.method === 'POST') {
+    if (url === `/api/runs/${RUN_ID}/cancel` && init?.method === 'POST') {
       phase = 'cancelling';
-      return ok({ schedule_id: RUN_ID });
+      return ok({ run_id: RUN_ID, status: 'cancelling' });
     }
     return ok({});
   }));
@@ -156,13 +156,13 @@ describe('DashboardPage — the Runs card after a trigger', () => {
       const url = String(input);
       if (url === '/api/schedules/daily/trigger' && init?.method === 'POST') {
         triggered = true;
-        return ok({ schedule_id: 'run-2' });
+        return ok({ run_id: 'run-2' });
       }
       if (url === '/api/schedules' && triggered) {
-        return ok({ schedules: [{ ...scheduleNow(), is_running: true, last_run_status: 'running', last_run_id: 'run-2' }] });
+        return ok({ schedules: [{ ...scheduleNow(), has_active_run: true, last_run_status: 'running', last_run_id: 'run-2' }] });
       }
-      if (url.startsWith('/api/schedulers/run-2/tasks')) {
-        const tasks = tasksFor('running').map((t) => ({ ...t, schedule_id: 'run-2', status: 'pending' }));
+      if (url.startsWith('/api/runs/run-2/tasks')) {
+        const tasks = tasksFor('running').map((t) => ({ ...t, run_id: 'run-2', status: 'pending' }));
         return ok({ total_count: tasks.length, tasks });
       }
       return base(input, init);

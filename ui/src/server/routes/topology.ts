@@ -1,23 +1,13 @@
 import { Router } from 'express';
-import { GrpcGraphClient } from '../clients/grpc-graph-client';
+import { GrpcClient } from '../clients/grpc-client';
+import { toISO } from './timestamp';
 
-function toISO(ts: any): string | null {
-  if (!ts) return null;
-  if (typeof ts === 'string') return ts;
-  if (ts.seconds !== undefined) {
-    const seconds = Number(ts.seconds);
-    const nanos = Number(ts.nanos ?? 0);
-    return new Date(seconds * 1000 + Math.floor(nanos / 1e6)).toISOString();
-  }
-  return null;
-}
-
-export function createTopologyRouter(graphClient: GrpcGraphClient) {
+export function createTopologyRouter(client: Pick<GrpcClient, 'listScheduleTopologies'>) {
   const router = Router();
 
-  // GET /api/topology/schedules — one tile per schedule with topology
+  // GET /api/topology/schedules — one tile per schedule of the live release
   router.get('/schedules', (_req, res) => {
-    graphClient.listScheduleTopologies({}, (err: any, resp: any) => {
+    client.listScheduleTopologies({}, (err: any, resp: any) => {
       if (err) return res.status(500).json({ error: err.message });
       const schedules = (resp.schedules || []).map((s: any) => ({
         schedule_name: s.schedule_name,

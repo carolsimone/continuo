@@ -24,9 +24,11 @@ import (
 // a row to insert through Create or BulkCreateTx carries its own tenant. The
 // transactional methods (the attempt, lease, stop and run-planning writes) run
 // in the transaction bound by WithTx, so a task, its attempts and its node
-// lease change in one commit; the reads of a task's identity use the
-// autocommit db. NewTaskCollection builds one bound to neither a tenant nor a
-// transaction, and ForTenant and WithTx bind them.
+// lease change in one commit. The reads of a task's identity and
+// HasNonSucceeded read in the bound transaction when there is one, so a
+// command never waits for a second connection while it holds its own, and on
+// the autocommit db otherwise. NewTaskCollection builds one bound to neither a
+// tenant nor a transaction, and ForTenant and WithTx bind them.
 type TaskCollection struct {
 	db       *sqlx.DB
 	tx       *sqlx.Tx
@@ -50,9 +52,18 @@ func (r *TaskCollection) ForTenant(tenantID string) *TaskCollection {
 }
 
 // WithTx returns a TaskCollection over the same db and tenant that runs its
-// transactional methods in tx.
+// transactional methods, and the reads conn serves, in tx.
 func (r *TaskCollection) WithTx(tx *sqlx.Tx) *TaskCollection {
 	return &TaskCollection{db: r.db, tx: tx, tenantID: r.tenantID, logger: r.logger}
+}
+
+// conn is what GetRow, GetRowByNode and HasNonSucceeded read on: the bound
+// transaction, else the autocommit db.
+func (r *TaskCollection) conn() sqlx.ExtContext {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
 }
 
 // Create inserts a new task record into the database, under the row's tenant.
@@ -124,7 +135,7 @@ const taskReadQuery = `
 // node lease it waits for.
 func (r *TaskCollection) GetRow(ctx context.Context, taskID uuid.UUID) (*TaskRow, error) {
 	var task TaskRow
-	err := r.db.GetContext(ctx, &task, taskReadQuery+` AND t.task_id = $2`, r.tenantID, taskID)
+	err := sqlx.GetContext(ctx, r.conn(), &task, taskReadQuery+` AND t.task_id = $2`, r.tenantID, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task not found",
@@ -203,7 +214,7 @@ func (r *TaskCollection) RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID)
 // information, with the run holding the node lease it waits for.
 func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, serviceName, schemaName, tableName string) (*TaskRow, error) {
 	var task TaskRow
-	err := r.db.GetContext(ctx, &task, taskReadQuery+`
+	err := sqlx.GetContext(ctx, r.conn(), &task, taskReadQuery+`
 		  AND t.run_id = $2
 		  AND t.service_name = $3
 		  AND t.schema_name = $4
@@ -511,10 +522,10 @@ func (r *TaskCollection) HasFailed(ctx context.Context, runID uuid.UUID) (bool, 
 // HasNonSucceeded returns true iff at least one task row for the given
 // run_id has a status other than 'succeeded'. Used by rebase eligibility: a
 // source run is visible as a rebase candidate iff it is terminal AND has ≥1
-// non-succeeded task. It reads through the autocommit db.
+// non-succeeded task.
 func (r *TaskCollection) HasNonSucceeded(ctx context.Context, runID uuid.UUID) (bool, error) {
 	var exists bool
-	err := r.db.GetContext(ctx, &exists, `
+	err := sqlx.GetContext(ctx, r.conn(), &exists, `
 		SELECT EXISTS(SELECT 1 FROM tasks
 		              WHERE tenant_id = $2 AND run_id = $1 AND status != 'succeeded')`,
 		runID, r.tenantID,
@@ -602,8 +613,8 @@ func (r *TaskCollection) RequestStops(ctx context.Context, runID uuid.UUID) ([]r
 	return requestStops(ctx, r.tx, r.tenantID, runID)
 }
 
-// GetByNode reads the task of run runID that runs node, through the autocommit
-// db.
+// GetByNode reads the task of run runID that runs node, in the bound
+// transaction when there is one, else on the pool.
 func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
 	t, err := r.GetRowByNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
 	if err != nil {
@@ -615,8 +626,8 @@ func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node ru
 	return taskFromRow(t), nil
 }
 
-// GetByID reads one task by id. A task's node and image never change once its
-// row is written, so the read uses the autocommit db.
+// GetByID reads one task by id, in the bound transaction when there is one,
+// else on the pool.
 func (r *TaskCollection) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
 	t, err := r.GetRow(ctx, taskID)
 	if err != nil {
