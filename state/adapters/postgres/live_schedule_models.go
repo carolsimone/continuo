@@ -42,6 +42,19 @@ func (r *LiveScheduleModelRepository) conn() sqlx.QueryerContext {
 	return r.db
 }
 
+// liveScheduleModelCounts counts the nodes of the live release of the tenant in
+// $1 per schedule name: one row for each name some node carries, with how many.
+// A node whose schedule name is empty belongs to no schedule and is not counted.
+// ListSchedules reads it as model counts and the topology tiles read it as node
+// counts, so the two are one count.
+const liveScheduleModelCounts = `
+		SELECT n.schedule_name, count(*)::int AS models
+		FROM live_release live
+		JOIN topology_nodes n
+		  ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id
+		WHERE live.tenant_id = $1 AND n.schedule_name <> ''
+		GROUP BY n.schedule_name`
+
 // CountByScheduleName counts the live release's nodes per schedule name,
 // leaving out the nodes whose schedule name is empty.
 func (r *LiveScheduleModelRepository) CountByScheduleName(ctx context.Context, tenantID string) (map[string]int, error) {
@@ -49,13 +62,7 @@ func (r *LiveScheduleModelRepository) CountByScheduleName(ctx context.Context, t
 		ScheduleName string `db:"schedule_name"`
 		Models       int    `db:"models"`
 	}
-	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
-		SELECT n.schedule_name, count(*)::int AS models
-		FROM live_release live
-		JOIN topology_nodes n
-		  ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id
-		WHERE live.tenant_id = $1 AND n.schedule_name <> ''
-		GROUP BY n.schedule_name`, tenantID); err != nil {
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, liveScheduleModelCounts, tenantID); err != nil {
 		return nil, fmt.Errorf("count the live release's models per schedule name of tenant %s: %w", tenantID, err)
 	}
 	out := make(map[string]int, len(rows))

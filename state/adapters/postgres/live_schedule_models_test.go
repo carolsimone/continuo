@@ -94,3 +94,35 @@ func TestLiveScheduleModels_TheUnitOfWorkCountsInItsTransaction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, onPool, "the pool does not see an uncommitted release")
 }
+
+// ListSchedules counts a schedule's models and the topology tiles count its
+// nodes, both of the live release: the two counts are one, for every schedule
+// name, and neither counts the model of no schedule nor a release that is not
+// live. A tenant with no live release has neither.
+func TestLiveScheduleModels_AgreeWithTheScheduleGraphSummaries(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	models := postgres.NewLiveScheduleModelRepository(db)
+	graphs := postgres.NewScheduleGraphRepository(db)
+
+	agree := func(tenant string) map[string]int {
+		counts, err := models.CountByScheduleName(ctx, tenant)
+		require.NoError(t, err)
+		summaries, err := graphs.Summaries(ctx, tenant)
+		require.NoError(t, err)
+		nodes := make(map[string]int, len(summaries))
+		for _, s := range summaries {
+			nodes[s.ScheduleName] = s.NodeCount
+		}
+		assert.Equal(t, counts, nodes, "the models counted for a schedule are its nodes counted for its tile")
+		return counts
+	}
+
+	tenant, _ := liveScheduleRelease(t, db)
+	assert.Equal(t, map[string]int{"daily": 4, "seeds": 2, "other": 1}, agree(tenant))
+
+	stored := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, stored, "rel-1", 1, "sha-y", graphSpec("a", "dbt-model", "daily")))
+	require.NoError(t, err)
+	assert.Empty(t, agree(stored), "a release that was stored but never made live has no models")
+}

@@ -100,8 +100,10 @@ func (r *ScheduleGraphRepository) Graph(ctx context.Context, tenantID, scheduleN
 	return graph, nil
 }
 
-// Summaries counts the live release's nodes per schedule. A node whose
-// schedule name is empty belongs to no schedule and is not counted.
+// Summaries counts the live release's nodes per schedule with liveScheduleModelCounts,
+// the count LiveScheduleModelRepository reads, and stamps each with when the
+// release was loaded. A node whose schedule name is empty belongs to no
+// schedule and is not counted.
 func (r *ScheduleGraphRepository) Summaries(ctx context.Context, tenantID string) ([]topology.ScheduleSummary, error) {
 	var rows []struct {
 		ScheduleName string    `db:"schedule_name"`
@@ -109,15 +111,13 @@ func (r *ScheduleGraphRepository) Summaries(ctx context.Context, tenantID string
 		LoadedAt     time.Time `db:"loaded_at"`
 	}
 	if err := sqlx.SelectContext(ctx, r.db, &rows, `
-		SELECT n.schedule_name, count(*)::int AS node_count, rel.loaded_at
-		FROM live_release live
+		WITH counts AS (`+liveScheduleModelCounts+`)
+		SELECT c.schedule_name, c.models AS node_count, rel.loaded_at
+		FROM counts c
+		JOIN live_release live ON live.tenant_id = $1
 		JOIN topology_releases rel
 		  ON rel.tenant_id = live.tenant_id AND rel.release_id = live.release_id
-		JOIN topology_nodes n
-		  ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id
-		WHERE live.tenant_id = $1 AND n.schedule_name <> ''
-		GROUP BY n.schedule_name, rel.loaded_at
-		ORDER BY n.schedule_name COLLATE "C"`, tenantID); err != nil {
+		ORDER BY c.schedule_name COLLATE "C"`, tenantID); err != nil {
 		return nil, fmt.Errorf("count the nodes per schedule of tenant %s: %w", tenantID, err)
 	}
 	out := make([]topology.ScheduleSummary, 0, len(rows))
