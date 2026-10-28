@@ -141,11 +141,11 @@ func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 			errs = append(errs, err)
 		}
 	}
-	scheduled, paused, err := schedules.Count(ctx)
+	scheduled, paused, unparsable, err := schedules.Count(ctx)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}
-	l.metrics.Schedules(scheduled, paused)
+	l.metrics.Schedules(scheduled, paused, unparsable)
 	return errors.Join(errs...)
 }
 

@@ -412,18 +412,44 @@ func (r *ScheduleRepository) EarliestFireAfter(ctx context.Context, after time.T
 	return earliest.Time.UTC(), true, nil
 }
 
-// Count counts the schedules of every tenant that are not paused and those
-// that are, in one scan.
-func (r *ScheduleRepository) Count(ctx context.Context) (scheduled, paused int, err error) {
-	var counts struct {
-		Scheduled int `db:"scheduled"`
-		Paused    int `db:"paused"`
+// Count counts the schedules of every tenant by state in one scan: the rows are
+// grouped by paused flag, cron and timezone, and each distinct cron and timezone
+// is parsed once. A row whose cron or timezone the parser refuses is
+// unparsable, whatever its paused flag; of the others, a paused row is paused
+// and a row not paused is scheduled.
+func (r *ScheduleRepository) Count(ctx context.Context) (scheduled, paused, unparsable int, err error) {
+	if r.parser == nil {
+		return 0, 0, 0, errors.New("count the schedules: the repository has no cron parser")
 	}
-	if err := sqlx.GetContext(ctx, r.conn(), &counts, `
-		SELECT count(*) FILTER (WHERE NOT paused) AS scheduled,
-		       count(*) FILTER (WHERE paused)     AS paused
-		  FROM schedules`); err != nil {
-		return 0, 0, fmt.Errorf("count the schedules: %w", err)
+	var groups []struct {
+		Paused   bool   `db:"paused"`
+		Cron     string `db:"cron"`
+		Timezone string `db:"timezone"`
+		Rows     int    `db:"rows"`
 	}
-	return counts.Scheduled, counts.Paused, nil
+	if err := sqlx.SelectContext(ctx, r.conn(), &groups, `
+		SELECT paused, cron, timezone, count(*)::int AS rows
+		  FROM schedules
+		 GROUP BY paused, cron, timezone`); err != nil {
+		return 0, 0, 0, fmt.Errorf("count the schedules: %w", err)
+	}
+	readable := map[[2]string]bool{}
+	for _, g := range groups {
+		pair := [2]string{g.Cron, g.Timezone}
+		ok, seen := readable[pair]
+		if !seen {
+			_, parseErr := r.parser.Parse(g.Cron, g.Timezone)
+			ok = parseErr == nil
+			readable[pair] = ok
+		}
+		switch {
+		case !ok:
+			unparsable += g.Rows
+		case g.Paused:
+			paused += g.Rows
+		default:
+			scheduled += g.Rows
+		}
+	}
+	return scheduled, paused, unparsable, nil
 }

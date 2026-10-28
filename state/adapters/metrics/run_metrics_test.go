@@ -103,8 +103,8 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 	m.CronFire("invalid_node_type")
 	m.CronFire("failed")
 	m.CronFire("failed")
-	m.Schedules(4, 2)
-	m.Schedules(3, 1)
+	m.Schedules(4, 2, 1)
+	m.Schedules(3, 1, 2)
 
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -118,6 +118,7 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 		"or failed (a fire that returned an error or did not end within 30 seconds",
 		`continuo_schedules{service="state",state="scheduled"} 3`,
 		`continuo_schedules{service="state",state="paused"} 1`,
+		`continuo_schedules{service="state",state="unparsable"} 2`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)

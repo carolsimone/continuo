@@ -51,6 +51,7 @@ type RunMetrics interface {
 	CronFires(outcome string, n int)
 
 	// Schedules sets the gauges of the schedules of every tenant: how many
-	// are scheduled and how many are paused.
-	Schedules(scheduled, paused int)
+	// are scheduled, how many are paused and how many are unparsable, whose
+	// stored cron or timezone no longer parses. Each schedule is in one.
+	Schedules(scheduled, paused, unparsable int)
 }

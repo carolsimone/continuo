@@ -77,7 +77,10 @@ type ScheduleRepository interface {
 	// next fire at or before `after` does not.
 	EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error)
 
-	// Count returns how many schedules of every tenant are scheduled, which
-	// is every schedule not paused, and how many are paused.
-	Count(ctx context.Context) (scheduled, paused int, err error)
+	// Count returns how many schedules of every tenant are unparsable, a
+	// schedule whose stored cron or timezone no longer parses, paused or not;
+	// of the others, how many are scheduled, which is every one not paused, and
+	// how many are paused. Each schedule is counted once. A repository with no
+	// cron parser cannot tell, so it is an error.
+	Count(ctx context.Context) (scheduled, paused, unparsable int, err error)
 }

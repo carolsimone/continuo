@@ -1046,10 +1046,12 @@ func TestSchedules_LoadForUpdateNeedsATransaction(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// Count counts the schedules of every tenant by state: those not paused are
-// scheduled. The rows are inserted in a transaction that is rolled back, and
-// both counts are read in its snapshot, so what other tests commit meanwhile
-// does not change the difference.
+// Count counts the schedules of every tenant by state: a schedule whose stored
+// cron or timezone no longer parses is unparsable, whether or not it is paused;
+// of the others, those not paused are scheduled and the rest paused. The rows
+// are inserted in a transaction that is rolled back, and the counts are read in
+// its snapshot, so what other tests commit meanwhile does not change the
+// difference.
 func TestSchedules_CountSpansTenantsByState(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -1059,19 +1061,25 @@ func TestSchedules_CountSpansTenantsByState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	repo := newScheduleRepo(db, tx, parser)
-	scheduledBefore, pausedBefore, err := repo.Count(ctx)
+	scheduledBefore, pausedBefore, unparsableBefore, err := repo.Count(ctx)
 	require.NoError(t, err)
 
 	next := farFuture
 	rawSchedule(t, tx, tenant, "daily", "0 * * * *", "UTC", &next)
 	rawSchedule(t, tx, other, "daily", "0 * * * *", "UTC", &next)
 	rawSchedule(t, tx, other, "broken", "not a cron", "UTC", &next)
+	rawSchedule(t, tx, other, "broken-zone", "0 * * * *", "Mars/Olympus", &next)
 	_, err = tx.Exec(`INSERT INTO schedules (tenant_id, name, cron, timezone, paused, updated_by)
-		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, 'repository-test')`, tenant)
+		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, 'repository-test'),
+		       ($1, 'paused-broken', 'not a cron', 'UTC', true, 'repository-test')`, tenant)
 	require.NoError(t, err)
 
-	scheduled, paused, err := repo.Count(ctx)
+	scheduled, paused, unparsable, err := repo.Count(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 3, scheduled-scheduledBefore, "every schedule not paused, whether or not its cron still parses")
-	assert.Equal(t, 1, paused-pausedBefore)
+	assert.Equal(t, 2, scheduled-scheduledBefore, "every schedule not paused whose cron and timezone parse")
+	assert.Equal(t, 1, paused-pausedBefore, "a paused schedule whose cron and timezone parse")
+	assert.Equal(t, 3, unparsable-unparsableBefore, "every schedule whose cron or timezone no longer parses, paused or not")
+
+	_, _, _, err = newScheduleRepo(db, tx, nil).Count(ctx)
+	require.Error(t, err, "a repository with no parser cannot tell which rows parse")
 }

@@ -265,17 +265,20 @@ func (r *scheduleRows) Save(_ context.Context, s *schedule.Schedule, expectedVer
 	return nil
 }
 
-func (r *scheduleRows) Count(context.Context) (scheduled, paused int, err error) {
+func (r *scheduleRows) Count(context.Context) (scheduled, paused, unparsable int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, s := range r.rows {
-		if s.paused {
+		switch {
+		case s.broken:
+			unparsable++
+		case s.paused:
 			paused++
-		} else {
+		default:
 			scheduled++
 		}
 	}
-	return scheduled, paused, nil
+	return scheduled, paused, unparsable, nil
 }
 
 // cronRuns stores the runs the loop creates. active names the schedules whose
@@ -451,10 +454,10 @@ func (m *unaskedModels) CountOf(context.Context, string, string) (int, error) {
 // firesCounted records the cron fires counted by outcome, the calls that
 // counted them, and the last schedules gauge.
 type firesCounted struct {
-	mu                sync.Mutex
-	fires             map[string]int
-	calls             map[string]int
-	scheduled, paused int
+	mu                            sync.Mutex
+	fires                         map[string]int
+	calls                         map[string]int
+	scheduled, paused, unparsable int
 }
 
 func (m *firesCounted) CronFire(outcome string) { m.CronFires(outcome, 1) }
@@ -473,10 +476,10 @@ func (m *firesCounted) callsOf(outcome string) int {
 	return m.calls[outcome]
 }
 
-func (m *firesCounted) Schedules(scheduled, paused int) {
+func (m *firesCounted) Schedules(scheduled, paused, unparsable int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.scheduled, m.paused = scheduled, paused
+	m.scheduled, m.paused, m.unparsable = scheduled, paused, unparsable
 }
 
 func (m *firesCounted) counted() map[string]int {
@@ -875,9 +878,10 @@ func TestCronLoop_AFireEndedByShutdownIsNotCounted(t *testing.T) {
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the fire keeps its slot")
 }
 
-// Each pass sets the schedules gauge: the schedules that are scheduled and the
-// ones that are paused, across tenants.
-func TestCronLoop_GaugesTheScheduledAndPausedSchedules(t *testing.T) {
+// Each pass sets the schedules gauge: the schedules that are scheduled, the ones
+// that are paused and the ones whose stored cron no longer parses, across
+// tenants.
+func TestCronLoop_GaugesTheScheduledPausedAndUnparsableSchedules(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(nov(2, 0, 0))
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, nov(2, 1, 0))
@@ -885,11 +889,14 @@ func TestCronLoop_GaugesTheScheduledAndPausedSchedules(t *testing.T) {
 	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, nov(2, 1, 0))
 	w.schedules.rows[key(tenant, "hourly")].paused = true
 	w.schedules.rows[key(tenant, "hourly")].next = nil
+	w.schedules.add(tenant, "garbled", "not a cron", hourly{}, nov(2, 1, 0))
+	w.schedules.rows[key(tenant, "garbled")].broken = true
 
 	w.pass(t, ctx, w.loop(false))
 
 	assert.Equal(t, 2, w.metrics.scheduled)
 	assert.Equal(t, 1, w.metrics.paused)
+	assert.Equal(t, 1, w.metrics.unparsable)
 }
 
 // Run sleeps until the earliest next fire or the tick; a wake signal, which

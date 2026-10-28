@@ -100,7 +100,7 @@ func (m *cronMetrics) CronFires(outcome string, n int) {
 	m.fires[outcome] += n
 }
 
-func (m *cronMetrics) Schedules(int, int) {
+func (m *cronMetrics) Schedules(int, int, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.passes++

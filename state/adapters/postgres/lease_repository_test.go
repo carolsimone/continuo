@@ -259,7 +259,7 @@ func (m *leaseMetrics) LeaseRepaired()                  { m.repaired++ }
 func (m *leaseMetrics) CommandRequest(string, string)   {}
 func (m *leaseMetrics) CronFire(string)                 {}
 func (m *leaseMetrics) CronFires(string, int)           {}
-func (m *leaseMetrics) Schedules(int, int)              {}
+func (m *leaseMetrics) Schedules(int, int, int)         {}
 
 // leaseFlow is a tenant whose live release rel-1 holds one schedule, in which
 // seed_table_1 feeds table_a, under table names no other test uses.

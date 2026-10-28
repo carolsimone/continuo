@@ -204,18 +204,22 @@ func (m *memorySchedules) EarliestFireAfter(context.Context, time.Time) (time.Ti
 
 // Count counts the rows of every tenant that are not paused and those that
 // are.
-func (m *memorySchedules) Count(context.Context) (scheduled, paused int, err error) {
+func (m *memorySchedules) Count(context.Context) (scheduled, paused, unparsable int, err error) {
 	if m.failWith != nil {
-		return 0, 0, m.failWith
+		return 0, 0, 0, m.failWith
 	}
 	for _, r := range m.rows {
-		if r.paused {
+		_, parseErr := m.parser.Parse(r.cron, r.timezone)
+		switch {
+		case parseErr != nil:
+			unparsable++
+		case r.paused:
 			paused++
-		} else {
+		default:
 			scheduled++
 		}
 	}
-	return scheduled, paused, nil
+	return scheduled, paused, unparsable, nil
 }
 
 // lastRuns is an in-memory repository.LastRunReader: the last run of each

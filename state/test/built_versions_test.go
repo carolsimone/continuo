@@ -337,4 +337,4 @@ func (noRunMetrics) LeaseRepaired()                {}
 func (noRunMetrics) CommandRequest(string, string) {}
 func (noRunMetrics) CronFire(string)               {}
 func (noRunMetrics) CronFires(string, int)         {}
-func (noRunMetrics) Schedules(int, int)            {}
+func (noRunMetrics) Schedules(int, int, int)       {}
