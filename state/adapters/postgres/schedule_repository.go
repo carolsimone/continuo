@@ -268,7 +268,9 @@ func (r *ScheduleRepository) Delete(ctx context.Context, tenantID, name string) 
 }
 
 // ListDue selects the due schedules of every tenant with FOR UPDATE SKIP
-// LOCKED, so a row another transaction holds at that moment is passed over.
+// LOCKED, so a row another transaction holds at that moment is passed over. A
+// paused row is never due, whatever its next_fire_at holds, so a paused row
+// written with one takes none of the limit's places.
 // Outside a transaction, as the cron loop calls it, the lock ends with the
 // statement; inside one, the rows stay locked to that transaction. A due row
 // whose stored cron or timezone no longer parses is selected like the others,
@@ -278,7 +280,7 @@ func (r *ScheduleRepository) ListDue(ctx context.Context, now time.Time, limit i
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		SELECT `+scheduleColumns+`
 		  FROM schedules
-		 WHERE next_fire_at IS NOT NULL AND next_fire_at <= $1
+		 WHERE next_fire_at IS NOT NULL AND next_fire_at <= $1 AND NOT paused
 		 ORDER BY next_fire_at, tenant_id, name
 		 LIMIT $2
 		   FOR UPDATE SKIP LOCKED`, now, limit); err != nil {
@@ -288,15 +290,15 @@ func (r *ScheduleRepository) ListDue(ctx context.Context, now time.Time, limit i
 }
 
 // EarliestFireAfter reads the earliest next fire after `after` among the
-// schedules of every tenant. next_fire_at holds microseconds, and Postgres
-// rounds a finer parameter to the nearest one, which would leave out a fire
-// less than half a microsecond after `after`. So `after` is truncated to the
-// microsecond first: no stored microsecond lies between the two, and the
-// comparison stays exactly "strictly after".
+// schedules of every tenant that are not paused. next_fire_at holds
+// microseconds, and Postgres rounds a finer parameter to the nearest one, which
+// would leave out a fire less than half a microsecond after `after`. So `after`
+// is truncated to the microsecond first: no stored microsecond lies between the
+// two, and the comparison stays exactly "strictly after".
 func (r *ScheduleRepository) EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error) {
 	var earliest sql.NullTime
 	if err := sqlx.GetContext(ctx, r.conn(), &earliest,
-		`SELECT min(next_fire_at) FROM schedules WHERE next_fire_at > $1`, after.Truncate(time.Microsecond)); err != nil {
+		`SELECT min(next_fire_at) FROM schedules WHERE next_fire_at > $1 AND NOT paused`, after.Truncate(time.Microsecond)); err != nil {
 		return time.Time{}, false, fmt.Errorf("read the earliest schedule fire: %w", err)
 	}
 	if !earliest.Valid {

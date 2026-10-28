@@ -61,7 +61,8 @@ type ScheduleRepository interface {
 	Delete(ctx context.Context, tenantID, name string) (bool, error)
 
 	// ListDue returns, oldest next fire first, up to limit schedules of any
-	// tenant whose next fire is at or before now. A schedule whose row another
+	// tenant whose next fire is at or before now. A paused schedule is never
+	// due, whatever next fire its row holds. A schedule whose row another
 	// transaction holds at that moment, such as one a fire has locked, is left
 	// out rather than waited for, so a pass does not queue behind another
 	// pass's fire. Outside a transaction ListDue holds no lock once it has
@@ -72,9 +73,10 @@ type ScheduleRepository interface {
 	ListDue(ctx context.Context, now time.Time, limit int) ([]*schedule.Schedule, error)
 
 	// EarliestFireAfter returns the earliest next fire of any tenant's
-	// schedules that is strictly after `after`, and false when none has one:
-	// a paused schedule has none. Every row counts, whether or not its stored
-	// cron still parses; a next fire at or before `after` does not.
+	// schedules that is strictly after `after`, and false when none has one.
+	// A paused schedule counts for none, whatever next fire its row holds.
+	// Every other row counts, whether or not its stored cron still parses; a
+	// next fire at or before `after` does not.
 	EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error)
 
 	// Count returns how many schedules of every tenant are scheduled, which

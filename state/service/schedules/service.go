@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/state/domain/policy"
 	"github.com/carolsimone/continuo/state/domain/repository"
@@ -28,9 +29,13 @@ const upcomingFires = 3
 // between its read and its save.
 const lastWriteWinsTries = 3
 
+// maxNameChars is the longest schedule name, in characters, a run of the
+// schedule can store: every fire of a longer name would fail to store its run.
+const maxNameChars = 50
+
 // ErrInvalid marks an input the service refuses before it reads or writes
-// anything: an empty schedule name, a negative expected version, or a cron or
-// timezone the cron parser refuses. The error's message is the reason alone,
+// anything: an empty schedule name or one longer than maxNameChars characters,
+// a negative expected version, or a cron or timezone the cron parser refuses. The error's message is the reason alone,
 // fit to show the operator; for a refusal of the parser it is the parser's
 // own message.
 var ErrInvalid = errors.New("invalid schedule input")
@@ -125,6 +130,9 @@ func New(
 func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, by string) (*schedule.Schedule, []time.Time, error) {
 	if in.Name == "" {
 		return nil, nil, invalid(errNameRequired)
+	}
+	if n := utf8.RuneCountInString(in.Name); n > maxNameChars {
+		return nil, nil, invalid(fmt.Errorf("schedule_name must be at most %d characters long, not %d", maxNameChars, n))
 	}
 	if in.ExpectedVersion < 0 {
 		return nil, nil, invalid(errors.New("expected_version must not be negative"))

@@ -180,6 +180,8 @@ func TestParser_DescribesInWords(t *testing.T) {
 	assert.Equal(t, "At 01:00", got)
 }
 
+// An @every interval is written the way people write one: hours, minutes and
+// seconds, leaving out each that is zero.
 func TestParser_DescribesDescriptorsAndIntervals(t *testing.T) {
 	p := newParser(t)
 	cases := map[string]string{
@@ -190,8 +192,13 @@ func TestParser_DescribesDescriptorsAndIntervals(t *testing.T) {
 		"@monthly":     "At 00:00, on day 1 of the month",
 		"@yearly":      "At 00:00, on day 1 of the month, only in January",
 		"@annually":    "At 00:00, on day 1 of the month, only in January",
-		"@every 90m":   "Every 1h30m0s",
-		"@every 1m":    "Every 1m0s",
+		"@every 90m":   "Every 1h30m",
+		"@every 1m":    "Every 1m",
+		"@every 1h":    "Every 1h",
+		"@every 24h":   "Every 24h",
+		"@every 90s":   "Every 1m30s",
+		"@every 3630s": "Every 1h30s",
+		"@every 2h45m": "Every 2h45m",
 		"*/15 * * * *": "Every 15 minutes",
 		"0 9 * * 1-5":  "At 09:00, Monday through Friday",
 	}

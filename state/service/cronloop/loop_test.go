@@ -83,7 +83,8 @@ func key(tenantID, name string) string { return tenantID + "/" + name }
 
 // storedSchedule is one row of scheduleRows: the fields the schedules table
 // stores. broken marks a row whose stored cron no longer parses, which ListDue
-// leaves out and EarliestFireAfter still counts, as the Postgres adapter does.
+// leaves out and EarliestFireAfter still counts, as the Postgres adapter does;
+// a paused row is neither due nor a next fire, as there.
 type storedSchedule struct {
 	tenantID, name, cron, timezone, description string
 	paused                                      bool
@@ -178,7 +179,7 @@ func (r *scheduleRows) ListDue(_ context.Context, now time.Time, limit int) ([]*
 	r.listDue++
 	var due []*storedSchedule
 	for _, s := range r.rows {
-		if s.next != nil && !s.next.After(now) {
+		if s.next != nil && !s.next.After(now) && !s.paused {
 			due = append(due, s)
 		}
 	}
@@ -205,7 +206,7 @@ func (r *scheduleRows) EarliestFireAfter(_ context.Context, after time.Time) (ti
 	defer r.mu.Unlock()
 	var earliest *time.Time
 	for _, s := range r.rows {
-		if s.next != nil && s.next.After(after) && (earliest == nil || s.next.Before(*earliest)) {
+		if s.next != nil && !s.paused && s.next.After(after) && (earliest == nil || s.next.Before(*earliest)) {
 			earliest = s.next
 		}
 	}
@@ -824,6 +825,55 @@ func TestCronLoop_ARowThatFailsDoesNotStopTheOthers(t *testing.T) {
 	assert.Equal(t, 1, w.schedules.gets[key(tenant, "daily")], "the failed row is tried once")
 	assert.Len(t, w.runs.of(tenant, "hourly"), 1, "the other due row fires")
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the failed row keeps its slot for the next pass")
+	assert.Equal(t, map[string]int{"failed": 1, "started": 1}, w.metrics.counted())
+}
+
+// A fire that fails is counted as failed once in each pass that tries it: the
+// row keeps its slot, so every pass tries it again and counts it again.
+func TestCronLoop_AFailedFireIsCountedOncePerPass(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+
+	require.Error(t, loop.Pass(ctx, w.clock.Now()))
+	assert.Equal(t, map[string]int{"failed": 1}, w.metrics.counted(), "the first pass counts its failed fire once")
+
+	require.Error(t, loop.Pass(ctx, w.clock.Now()))
+	assert.Equal(t, map[string]int{"failed": 2}, w.metrics.counted(), "the second pass tries the row again and counts it again")
+	assert.Equal(t, 2, w.metrics.callsOf("failed"))
+	assert.True(t, slot.Equal(w.nextFire("daily")), "the failed row keeps its slot")
+}
+
+// A fire that ends because the loop's context ended, as at shutdown, is not a
+// failed fire: the pass returns its error and counts nothing.
+func TestCronLoop_AFireEndedByShutdownIsNotCounted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.setStuck(tenant, "daily", true)
+	loop := w.loop(false)
+	go func() {
+		// The fire waits on its row's lock once its deadline is recorded.
+		for {
+			if _, ok := w.schedules.deadlineOf(tenant, "daily"); ok {
+				cancel()
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	err := loop.Pass(ctx, w.clock.Now())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, w.metrics.counted(), "a fire the shutdown ended is not counted")
+	assert.True(t, slot.Equal(w.nextFire("daily")), "the fire keeps its slot")
 }
 
 // Each pass sets the schedules gauge: the schedules that are scheduled and the
@@ -1053,6 +1103,7 @@ func TestCronLoop_AFireThatRunsOutOfTimeRollsBackAndLeavesTheOthers(t *testing.T
 	assert.Empty(t, w.runs.of(tenant, "daily"))
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the stuck fire keeps its slot")
 	assert.Equal(t, 1, w.u.RollbackCalled, "the stuck fire rolled back")
+	assert.Equal(t, map[string]int{"failed": 1, "started": 1}, w.metrics.counted(), "a fire that runs out of time is a failed fire")
 
 	w.schedules.setStuck(tenant, "daily", false)
 	w.pass(t, ctx, loop)

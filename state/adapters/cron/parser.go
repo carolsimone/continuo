@@ -74,7 +74,7 @@ func (p *Parser) Describe(cron string) (string, error) {
 		return "", err
 	}
 	if every, ok := spec.(robfig.ConstantDelaySchedule); ok {
-		return "Every " + every.Delay.String(), nil
+		return "Every " + interval(every.Delay), nil
 	}
 	text := strings.TrimSpace(cron)
 	fields, ok := descriptorFields[text]
@@ -87,6 +87,24 @@ func (p *Parser) Describe(cron string) (string, error) {
 		return "", fmt.Errorf("cron %q cannot be put in words: %w", text, err)
 	}
 	return words, nil
+}
+
+// interval writes an @every interval the way people write one: its hours,
+// minutes and seconds, each that is zero left out, so an hour is "1h" and
+// ninety minutes "1h30m". robfig keeps whole seconds of an interval only, and
+// parseSpec refuses one under a minute, so no other unit is needed.
+func interval(d time.Duration) string {
+	var b strings.Builder
+	for _, unit := range []struct {
+		size   time.Duration
+		suffix string
+	}{{time.Hour, "h"}, {time.Minute, "m"}, {time.Second, "s"}} {
+		if n := d / unit.size; n > 0 {
+			fmt.Fprintf(&b, "%d%s", n, unit.suffix)
+			d -= n * unit.size
+		}
+	}
+	return b.String()
 }
 
 // speak puts fields in words. The words library runs on text an operator typed,

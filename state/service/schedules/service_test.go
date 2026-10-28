@@ -2,6 +2,7 @@ package schedules_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,6 +338,33 @@ func TestSchedulesUpsert_RefusesAnInvalidInput(t *testing.T) {
 
 	assert.Zero(t, h.rows.saves)
 	assert.Empty(t, h.rows.rows)
+}
+
+// A schedule name may be up to 50 characters long, the longest a run of it can
+// store, counted in characters rather than bytes: a longer name is ErrInvalid,
+// with a message that names the limit, and nothing is read or written.
+func TestSchedulesUpsert_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
+	fifty, fiftyOne := strings.Repeat("a", 50), strings.Repeat("a", 51)
+	accented, accentedTooLong := strings.Repeat("é", 50), strings.Repeat("é", 51)
+	require.Len(t, accented, 100, "each é is two bytes")
+
+	for _, name := range []string{fifty, accented} {
+		h := newHarness(t)
+		h.liveModels(tenantA, map[string]int{name: 1})
+		got, _, err := h.svc.Upsert(context.Background(), tenantA, upsert(name, "0 1 * * *", "UTC"), "alice@example.com")
+		require.NoError(t, err, "a name of 50 characters (%d bytes) is saved", len(name))
+		assert.Equal(t, name, got.Name())
+	}
+
+	for _, name := range []string{fiftyOne, accentedTooLong} {
+		h := newHarness(t)
+		h.liveModels(tenantA, map[string]int{name: 1})
+		_, _, err := h.svc.Upsert(context.Background(), tenantA, upsert(name, "0 1 * * *", "UTC"), "alice@example.com")
+		require.ErrorIs(t, err, schedules.ErrInvalid, "a name of 51 characters (%d bytes) is refused", len(name))
+		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
+		assert.Zero(t, h.rows.gets, "nothing is read")
+		assert.Zero(t, h.rows.saves, "nothing is written")
+	}
 }
 
 // A failing read of the row or of the live release fails the edit, as neither

@@ -493,6 +493,36 @@ func TestSchedules_EarliestFireAfterSpansTenantsAndIsStrict(t *testing.T) {
 	assert.False(t, ok, "no schedule fires after the year 9000")
 }
 
+// A paused schedule fires nothing, whatever its row holds: a paused row written
+// by hand with a due next_fire_at is neither listed as due, where it would hold
+// one of the pass's slots on every pass, nor counted as the earliest next fire.
+// The rows are in 1960 and 1961, earlier than any row another test commits, and
+// are inserted in a transaction that is rolled back.
+func TestSchedules_APausedRowWithANextFireIsNeitherDueNorTheEarliestFire(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	tenant := scheduleRepoTenant(t, db)
+	pausedAt := time.Date(1960, 1, 1, 0, 0, 0, 0, time.UTC)
+	scheduledAt := time.Date(1961, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err := tx.Exec(`
+		INSERT INTO schedules (tenant_id, name, cron, timezone, paused, next_fire_at, updated_by)
+		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, $2, 'repository-test')`, tenant, pausedAt)
+	require.NoError(t, err)
+	rawSchedule(t, tx, tenant, "scheduled", "0 * * * *", "UTC", &scheduledAt)
+
+	due, err := repo.ListDue(ctx, time.Date(1962, 1, 1, 0, 0, 0, 0, time.UTC), 1)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"scheduled"}, namesOf(tenant, due), "the paused row takes no slot of the pass")
+
+	earliest, ok, err := repo.EarliestFireAfter(ctx, time.Date(1959, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.True(t, scheduledAt.Equal(earliest), "the paused row's next_fire_at is not a fire: got %s", earliest)
+}
+
 // A stored cron or timezone the parser refuses does not stop a pass: ListDue
 // returns the schedules that parse, leaves the others out, and logs each one it
 // left out with its tenant, name, cron and zone.

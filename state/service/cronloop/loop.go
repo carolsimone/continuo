@@ -6,7 +6,8 @@
 // Only a schedule's latest due slot fires: older slots it missed, while state
 // was down, are counted and logged. In maintenance mode, or while the
 // schedule's previous run is active, the slot is consumed with no run. Each
-// fire is bounded by FireTimeout. The loop sleeps until the earliest next
+// fire is bounded by FireTimeout; a fire that fails or runs out of time keeps
+// its slot and is counted as failed. The loop sleeps until the earliest next
 // fire after its last pass, a wake signal (a change to the schedules) or its
 // tick.
 package cronloop
@@ -43,6 +44,7 @@ const (
 	outcomeEmptySelection     = "empty_selection"
 	outcomeInvalidNodeType    = "invalid_node_type"
 	outcomeMissed             = "missed"
+	outcomeFailed             = "failed"
 )
 
 // Loop fires the due schedules of every tenant.
@@ -121,8 +123,9 @@ func (l *Loop) untilNextFire(ctx context.Context, passedAt time.Time, tick time.
 // schedules gauge. The due schedules are read without a lock, leaving out
 // those another pass holds; each fire locks its schedule's row and reads it
 // again, so two passes fire a slot once. A schedule whose fire fails or runs
-// out of time keeps its slot for a later pass and does not stop the others;
-// Pass returns every failure.
+// out of time keeps its slot for a later pass, does not stop the others and is
+// counted as a failed fire, unless ctx has ended (a shutdown is not a failed
+// fire); Pass returns every failure.
 func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 	schedules := l.newUoW().Schedules()
 	due, err := schedules.ListDue(ctx, now, DueLimit)
@@ -132,6 +135,9 @@ func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 	var errs []error
 	for _, s := range due {
 		if err := l.fireWithin(ctx, s.TenantID(), s.Name(), now); err != nil {
+			if ctx.Err() == nil {
+				l.metrics.CronFire(outcomeFailed)
+			}
 			errs = append(errs, err)
 		}
 	}

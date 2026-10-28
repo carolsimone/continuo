@@ -304,11 +304,12 @@ type RunServiceClient interface {
 	// times (none while paused).
 	// Errors:
 	//
-	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
-	//	                   a cron or timezone the parser refuses (a CRON_TZ= or
-	//	                   TZ= prefix, an unknown or empty zone, a cron that
-	//	                   never fires, an @every interval under one minute);
-	//	                   the message is the parser's.
+	//	INVALID_ARGUMENT - empty schedule_name or one longer than 50
+	//	                   characters, a negative expected_version, or a cron
+	//	                   or timezone the parser refuses (a CRON_TZ= or TZ=
+	//	                   prefix, an unknown or empty zone, a cron that never
+	//	                   fires, an @every interval under one minute); for a
+	//	                   refusal of the parser the message is the parser's.
 	//	NOT_FOUND        - the schedule has no cron and no model of the live
 	//	                   release has its tag.
 	//	ABORTED          - expected_version is set and the schedule is not at
@@ -859,11 +860,12 @@ type RunServiceServer interface {
 	// times (none while paused).
 	// Errors:
 	//
-	//	INVALID_ARGUMENT - empty schedule_name, a negative expected_version, or
-	//	                   a cron or timezone the parser refuses (a CRON_TZ= or
-	//	                   TZ= prefix, an unknown or empty zone, a cron that
-	//	                   never fires, an @every interval under one minute);
-	//	                   the message is the parser's.
+	//	INVALID_ARGUMENT - empty schedule_name or one longer than 50
+	//	                   characters, a negative expected_version, or a cron
+	//	                   or timezone the parser refuses (a CRON_TZ= or TZ=
+	//	                   prefix, an unknown or empty zone, a cron that never
+	//	                   fires, an @every interval under one minute); for a
+	//	                   refusal of the parser the message is the parser's.
 	//	NOT_FOUND        - the schedule has no cron and no model of the live
 	//	                   release has its tag.
 	//	ABORTED          - expected_version is set and the schedule is not at

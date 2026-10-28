@@ -73,7 +73,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}, []string{"command", "outcome"}),
 		cronFires: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_cron_fires_total",
-			Help: "Fires of the schedules' crons, by outcome: started (a run started), skipped_active (the schedule's previous run is still active), skipped_maintenance (maintenance mode is on), empty_selection (a failed run recorded, the live release giving the schedule nothing to run), invalid_node_type (a failed run recorded, the schedule's selection holding a node of a type the node_type vocabulary does not declare), or missed (the older slots the fire of the latest one left unfired, one per slot and at most 1000 per fire).",
+			Help: "Fires of the schedules' crons, by outcome: started (a run started), skipped_active (the schedule's previous run is still active), skipped_maintenance (maintenance mode is on), empty_selection (a failed run recorded, the live release giving the schedule nothing to run), invalid_node_type (a failed run recorded, the schedule's selection holding a node of a type the node_type vocabulary does not declare), missed (the older slots the fire of the latest one left unfired, one per slot and at most 1000 per fire), or failed (a fire that returned an error or did not end within 30 seconds, rolled back and left its slot due for a later pass, counted once per pass that tries it).",
 		}, []string{"outcome"}),
 		schedules: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "continuo_schedules",

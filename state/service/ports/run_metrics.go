@@ -40,8 +40,9 @@ type RunMetrics interface {
 	// recorded a failed run, the live release giving the schedule nothing to
 	// run), invalid_node_type (it recorded a failed run, the schedule's
 	// selection holding a node of a type the node_type vocabulary does not
-	// declare), or missed (an older slot the fire of the latest one left
-	// unfired).
+	// declare), missed (an older slot the fire of the latest one left
+	// unfired), or failed (the fire returned an error or ran out of time,
+	// rolled back and left its slot due for a later pass).
 	CronFire(outcome string)
 
 	// CronFires counts n fires of outcome at once, as CronFire counts one: a
