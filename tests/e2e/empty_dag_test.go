@@ -77,6 +77,13 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 	assert.Zero(t, runsOfSchedule(t, ctx, clients, scheduleName), "a refused start creates no run")
 }
 
+// cronFireWait is how long TestEmptyDAG_ACronFireRecordsAFailedRun waits for
+// the fire. The loop wakes on the notification the INSERT sends and sleeps
+// until the slot five seconds later; when that notification is lost, the
+// pass at the loop's 60 s tick fires the slot, up to one loop tick (60 s)
+// after the insert. The wait leaves headroom over that.
+const cronFireWait = 90 * time.Second
+
 // TestEmptyDAG_ACronFireRecordsAFailedRun drives one real fire of state's cron
 // loop for a schedule the live release has no node of. The test inserts the
 // schedule's row by SQL, as UpsertSchedule refuses the first cron of a name
@@ -87,13 +94,6 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 // with failure_reason empty_selection. The same transaction moves the schedule's
 // next fire on to its cron's next slot and leaves the version the row was
 // written with.
-// cronFireWait is how long TestEmptyDAG_ACronFireRecordsAFailedRun waits for
-// the fire. The loop wakes on the notification the INSERT sends and sleeps
-// until the slot five seconds later; when that notification is lost, the
-// pass at the loop's 60 s tick fires the slot, up to about 65 s after the
-// insert. The wait leaves headroom over that.
-const cronFireWait = 90 * time.Second
-
 func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
