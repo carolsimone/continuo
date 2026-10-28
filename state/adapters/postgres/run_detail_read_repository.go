@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	_ repository.RunDetailReader      = (*RunRepository)(nil)
-	_ repository.LastRunReader        = (*RunRepository)(nil)
-	_ repository.TaskDetailReader     = (*TaskReadRepository)(nil)
-	_ repository.ActiveScheduleReader = (*CatalogRepository)(nil)
+	_ repository.RunDetailReader  = (*RunRepository)(nil)
+	_ repository.LastRunReader    = (*RunRepository)(nil)
+	_ repository.TaskDetailReader = (*TaskReadRepository)(nil)
 )
 
 // GetRunDetail returns the tenant's run runID for display, or

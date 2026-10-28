@@ -19,9 +19,6 @@ type ScheduleCatalogRepository interface {
 	// active row. Cross-aggregate query used by SchedulePolicy.
 	ExistsActive(ctx context.Context, tenantID, name string) (bool, error)
 
-	// ListActive returns the tenant's active schedule names.
-	ListActive(ctx context.Context, tenantID string) ([]string, error)
-
 	// GetServiceMetadata returns the service_metadata snapshot for a single
 	// active schedule of the tenant. Used at activation time to pin the run's
 	// metadata.

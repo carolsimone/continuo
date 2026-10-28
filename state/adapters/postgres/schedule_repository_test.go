@@ -543,6 +543,27 @@ func TestSchedules_GetOfAStoredCronThatNoLongerParsesFails(t *testing.T) {
 	mustGet(t, repo, tenant, "good")
 }
 
+// The error Get returns for a stored cron that no longer parses carries the
+// version the row is at, so an edit that saves over it can raise that version.
+func TestSchedules_GetOfAStoredCronThatNoLongerParsesNamesItsVersion(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, scheduleParser(t))
+	tenant := scheduleRepoTenant(t, db)
+	rawSchedule(t, tx, tenant, "broken", "0 * * * *", "Mars/Olympus", nil)
+	_, err := tx.Exec(`UPDATE schedules SET version = 7 WHERE tenant_id = $1 AND name = 'broken'`, tenant)
+	require.NoError(t, err)
+
+	_, _, err = repo.Get(ctx, tenant, "broken")
+
+	var invalid *schedule.StoredCronInvalidError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, int64(7), invalid.Version)
+	assert.Equal(t, tenant, invalid.TenantID)
+	assert.Equal(t, "broken", invalid.Name)
+}
+
 // Saving a schedule over a row whose stored cron no longer parses repairs it,
 // with no expected version or with the version the row has, and Delete removes
 // such a row: neither reads the stored cron.

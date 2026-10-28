@@ -29,7 +29,6 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
-	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
@@ -41,6 +40,7 @@ import (
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/runstart"
+	"github.com/carolsimone/continuo/state/service/schedules"
 	"github.com/carolsimone/continuo/state/service/seedreconcile"
 	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -186,8 +186,6 @@ func main() {
 
 	// Initialize repositories
 	runRepo := postgres.NewRunRepository(db, logger)
-	catalogRepo := postgres.NewCatalogRepository(db, logger)
-	logger.Info("Schedule catalog repository initialized")
 	taskCollection := postgres.NewTaskCollection(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
@@ -482,15 +480,22 @@ func main() {
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
+	// The schedules service edits each tenant's crons one statement at a time
+	// on the autocommit db: a save while the cron loop holds the schedule's
+	// row for a fire waits for that fire to commit.
+	scheduleService := schedules.New(
+		postgres.NewScheduleRepository(db, nil, cronParser, logger),
+		postgres.NewLiveScheduleModelRepository(db),
+		runRepo, cronParser, clk,
+	)
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
 		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
 		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
-		Schedules:      runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
 		Graphs:         runreads.New(runReadRepo),
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),
-	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), logger)
+	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), scheduleService, logger)
 
 	// Create gRPC server
 	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, runService, logger, cfg.Maintenance)

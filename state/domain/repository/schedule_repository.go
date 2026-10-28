@@ -12,8 +12,10 @@ import (
 // transaction a call sees, and a write belongs to, that transaction.
 type ScheduleRepository interface {
 	// Get returns the tenant's schedule of that name and whether there is one.
-	// A schedule whose stored cron or timezone no longer parses is an error
-	// wrapping schedule.ErrStoredCronInvalid, so a lookup fails loudly.
+	// A schedule whose stored cron or timezone no longer parses is a
+	// *schedule.StoredCronInvalidError (schedule.ErrStoredCronInvalid to
+	// errors.Is) carrying the row's version, so a lookup fails loudly and an
+	// edit can still save over the row.
 	Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
 	// List returns the tenant's schedules, ordered by name. A schedule whose

@@ -150,12 +150,12 @@ func TestCLI_ScheduleListAgainstInProcessServer(t *testing.T) {
 		listResp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
-					ScheduleName:   "daily_ingest",
-					CronExpression: "0 2 * * *",
-					Timezone:       "UTC",
-					HasActiveRun:   false,
-					LastRunStatus:  "succeeded",
-					LastRunId:      "run_001",
+					ScheduleName:  "daily_ingest",
+					Cron:          "0 2 * * *",
+					Timezone:      "UTC",
+					HasActiveRun:  false,
+					LastRunStatus: "succeeded",
+					LastRunId:     "run_001",
 				},
 			},
 		},

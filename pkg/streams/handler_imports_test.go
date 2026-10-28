@@ -28,6 +28,7 @@ var handlerDirs = []string{
 	"state/service/runreads",
 	"state/service/runsettle",
 	"state/service/runstart",
+	"state/service/schedules",
 	"state/service/seedreconcile",
 	"state/service/topologyretention",
 	"execution-controller/service/handlers",

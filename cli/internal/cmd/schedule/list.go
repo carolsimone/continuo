@@ -100,7 +100,7 @@ func toListPayload(summaries []*runv1.ScheduleSummary) listPayload {
 	for _, s := range summaries {
 		e := scheduleEntry{
 			ScheduleName:   s.GetScheduleName(),
-			CronExpression: s.GetCronExpression(),
+			CronExpression: s.GetCron(),
 			Description:    s.GetDescription(),
 			Timezone:       s.GetTimezone(),
 			HasActiveRun:   s.GetHasActiveRun(),

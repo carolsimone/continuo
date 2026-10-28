@@ -58,20 +58,6 @@ func (r *CatalogRepository) conn() sqlx.ExtContext {
 	return r.db
 }
 
-// ListActive returns all of the tenant's schedule names that are currently
-// active (removed_at IS NULL).
-func (r *CatalogRepository) ListActive(ctx context.Context, tenantID string) ([]string, error) {
-	var names []string
-	err := r.db.SelectContext(ctx, &names,
-		`SELECT schedule_name FROM schedule_catalog WHERE tenant_id = $1 AND removed_at IS NULL ORDER BY schedule_name`,
-		tenantID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list active schedules: %w", err)
-	}
-	return names, nil
-}
-
 // ExistsActive returns true when the tenant's named schedule has an active row.
 func (r *CatalogRepository) ExistsActive(ctx context.Context, tenantID, scheduleName string) (bool, error) {
 	var exists bool

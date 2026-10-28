@@ -64,16 +64,19 @@ type scheduleRow struct {
 }
 
 // hydrate rebuilds the schedule a row stores. A cron or timezone that no longer
-// parses is an error wrapping schedule.ErrStoredCronInvalid that names the
-// schedule; a repository with no parser is a plain error, which no row causes.
+// parses is a *schedule.StoredCronInvalidError that names the schedule and the
+// row's version; a repository with no parser is a plain error, which no row
+// causes.
 func (r *ScheduleRepository) hydrate(row scheduleRow) (*schedule.Schedule, error) {
 	if r.parser == nil {
 		return nil, fmt.Errorf("read schedule %q of tenant %q: the repository has no cron parser", row.Name, row.TenantID)
 	}
 	expr, err := r.parser.Parse(row.Cron, row.Timezone)
 	if err != nil {
-		return nil, fmt.Errorf("read schedule %q of tenant %q: its stored cron %q in %q: %w: %w",
-			row.Name, row.TenantID, row.Cron, row.Timezone, schedule.ErrStoredCronInvalid, err)
+		return nil, &schedule.StoredCronInvalidError{
+			TenantID: row.TenantID, Name: row.Name, Cron: row.Cron, Timezone: row.Timezone,
+			Version: row.Version, Reason: err,
+		}
 	}
 	var nextFireAt *time.Time
 	if row.NextFireAt.Valid {
@@ -105,7 +108,7 @@ func (r *ScheduleRepository) hydrateAll(rows []scheduleRow) ([]*schedule.Schedul
 }
 
 // Get reads the tenant's schedule of that name. A stored cron or timezone that
-// no longer parses is an error wrapping schedule.ErrStoredCronInvalid.
+// no longer parses is a *schedule.StoredCronInvalidError.
 func (r *ScheduleRepository) Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
 	var row scheduleRow
 	err := sqlx.GetContext(ctx, r.conn(), &row,
