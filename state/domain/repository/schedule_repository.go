@@ -23,6 +23,11 @@ type ScheduleRepository interface {
 	// returned.
 	List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error)
 
+	// ListStoredCronInvalid returns, ordered by name, the names of the
+	// tenant's schedules whose stored cron or timezone no longer parses: the
+	// ones List leaves out. It logs nothing per schedule.
+	ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error)
+
 	// Save stores s exactly as it stands, its version, author and edit time
 	// included: the aggregate counts its own versions, and a save of a fire
 	// leaves them as they were.

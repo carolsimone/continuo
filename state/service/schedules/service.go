@@ -202,7 +202,9 @@ func (s *Service) Preview(_ context.Context, cron, timezone string) (words strin
 }
 
 // List returns one Summary per schedule name that tenantID's live release has
-// or that has a cron, ordered by name.
+// or that has a cron, ordered by name. A schedule whose stored cron no longer
+// parses is listed with no cron, whether or not the live release has its name,
+// so the operator sees it and can save a new cron over it or remove it.
 func (s *Service) List(ctx context.Context, tenantID string) ([]Summary, error) {
 	models, err := s.models.CountByScheduleName(ctx, tenantID)
 	if err != nil {
@@ -211,6 +213,10 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Summary, error) 
 	rows, err := s.schedules.List(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list schedules: %w", err)
+	}
+	unreadable, err := s.schedules.ListStoredCronInvalid(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list the schedules whose stored cron no longer parses: %w", err)
 	}
 	lastRuns, err := s.lastRuns.GetLastRunPerSchedule(ctx, tenantID)
 	if err != nil {
@@ -229,6 +235,11 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Summary, error) 
 		}
 		sum.Schedule = row
 		sum.Words = s.words(row.Cron())
+	}
+	for _, name := range unreadable {
+		if _, ok := byName[name]; !ok {
+			byName[name] = &Summary{Name: name}
+		}
 	}
 	out := make([]Summary, 0, len(byName))
 	for name, sum := range byName {

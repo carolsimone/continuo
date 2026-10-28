@@ -57,6 +57,8 @@ type memorySchedules struct {
 	saves int
 	// failWith, when set, fails every call.
 	failWith error
+	// failInvalidWith, when set, fails ListStoredCronInvalid alone.
+	failInvalidWith error
 	// afterGet, when set, runs after each Get has read its row: a test uses it
 	// to change the row as a concurrent edit would.
 	afterGet func()
@@ -129,6 +131,26 @@ func (m *memorySchedules) List(_ context.Context, tenantID string) ([]*schedule.
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out, nil
+}
+
+func (m *memorySchedules) ListStoredCronInvalid(_ context.Context, tenantID string) ([]string, error) {
+	if m.failWith != nil {
+		return nil, m.failWith
+	}
+	if m.failInvalidWith != nil {
+		return nil, m.failInvalidWith
+	}
+	names := []string{}
+	for k, r := range m.rows {
+		if k.tenant != tenantID {
+			continue
+		}
+		if _, err := m.parser.Parse(r.cron, r.timezone); err != nil {
+			names = append(names, k.name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (m *memorySchedules) Save(_ context.Context, s *schedule.Schedule, expectedVersion int64) error {

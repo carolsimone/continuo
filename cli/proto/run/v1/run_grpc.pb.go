@@ -333,12 +333,12 @@ type RunServiceClient interface {
 	// ListSchedules returns one entry per schedule name that the live release
 	// has or that has a cron, ordered by schedule_name: its cron, how many
 	// models of the live release have its tag, and its last run. A schedule
-	// with a cron and a model_count of 0 records a failed run at each fire
-	// until a release brings its models back or its cron is removed. A cron
-	// stored in a form the parser no longer reads (a timezone the timezone
-	// database has dropped) is shown as no cron when the live release has the
-	// name, and the name is not listed when it does not; UpsertSchedule and
-	// DeleteSchedule still act on it.
+	// that has a cron, is not paused and has a model_count of 0 records a
+	// failed run at each fire until a release brings its models back, it is
+	// paused, or its cron is removed. A schedule whose stored cron the parser no
+	// longer reads (a timezone the timezone database has dropped) is listed with
+	// no cron, whether or not the live release has its name; it fires nothing,
+	// UpsertSchedule saves a new cron over it and DeleteSchedule removes it.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.
 	ListSchedules(ctx context.Context, in *ListSchedulesRequest, opts ...grpc.CallOption) (*ListSchedulesResponse, error)
@@ -883,12 +883,12 @@ type RunServiceServer interface {
 	// ListSchedules returns one entry per schedule name that the live release
 	// has or that has a cron, ordered by schedule_name: its cron, how many
 	// models of the live release have its tag, and its last run. A schedule
-	// with a cron and a model_count of 0 records a failed run at each fire
-	// until a release brings its models back or its cron is removed. A cron
-	// stored in a form the parser no longer reads (a timezone the timezone
-	// database has dropped) is shown as no cron when the live release has the
-	// name, and the name is not listed when it does not; UpsertSchedule and
-	// DeleteSchedule still act on it.
+	// that has a cron, is not paused and has a model_count of 0 records a
+	// failed run at each fire until a release brings its models back, it is
+	// paused, or its cron is removed. A schedule whose stored cron the parser no
+	// longer reads (a timezone the timezone database has dropped) is listed with
+	// no cron, whether or not the live release has its name; it fires nothing,
+	// UpsertSchedule saves a new cron over it and DeleteSchedule removes it.
 	// Errors: none beyond the service-wide ones. With no schedule it returns an
 	// empty list.
 	ListSchedules(context.Context, *ListSchedulesRequest) (*ListSchedulesResponse, error)

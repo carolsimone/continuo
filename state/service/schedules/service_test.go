@@ -419,20 +419,51 @@ func TestSchedulesList_IsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 	assert.Zero(t, flagged.ModelCount, "a scheduled name no model of the live release has is listed with no models")
 }
 
-// A row whose stored cron no longer parses is left out of the rows, so a name
-// the live release has shows with no cron; Upsert can still repair it.
-func TestSchedulesList_ARowWhoseStoredCronNoLongerParsesShowsNoCron(t *testing.T) {
+// A row whose stored cron no longer parses, of a name the live release has,
+// is listed once, with no cron and the name's models; Upsert can still repair
+// it.
+func TestSchedulesList_ARowWhoseStoredCronNoLongerParsesOfALiveNameIsListedOnce(t *testing.T) {
 	h := newHarness(t)
-	h.liveModels(tenantA, map[string]int{"daily": 2})
+	h.liveModels(tenantA, map[string]int{"daily": 2, "weekly": 1})
 	h.rows.put(tenantA, "daily", storedRow{cron: "0 1 * * *", timezone: "Mars/Olympus", version: 3})
+	h.rows.put(tenantA, "weekly", storedRow{cron: "0 3 * * 1", timezone: "UTC", version: 1})
 
 	got, err := h.svc.List(context.Background(), tenantA)
 
 	require.NoError(t, err)
-	require.Len(t, got, 1)
+	require.Len(t, got, 2, "the bad row's name is listed once, not once for the live release and once for the row")
 	assert.Equal(t, "daily", got[0].Name)
 	assert.Nil(t, got[0].Schedule)
+	assert.Empty(t, got[0].Words)
 	assert.Equal(t, 2, got[0].ModelCount)
+	assert.Equal(t, "weekly", got[1].Name)
+	require.NotNil(t, got[1].Schedule)
+}
+
+// A row whose stored cron no longer parses, of a name no model of the live
+// release has, is listed with no cron, no models and its last run, so the
+// operator can see it and fix or remove it.
+func TestSchedulesList_ARowWhoseStoredCronNoLongerParsesOfANameWithNoModelsShowsNoCron(t *testing.T) {
+	h := newHarness(t)
+	h.liveModels(tenantA, map[string]int{"daily": 2})
+	h.rows.put(tenantA, "gone", storedRow{cron: "not a cron", timezone: "UTC", version: 2})
+	h.rows.put(tenantB, "theirs", storedRow{cron: "not a cron", timezone: "UTC", version: 1})
+	last := activeRun("gone")
+	h.lastRuns.put(tenantA, last)
+
+	got, err := h.svc.List(context.Background(), tenantA)
+
+	require.NoError(t, err)
+	require.Len(t, got, 2, "another tenant's bad row is not listed")
+	assert.Equal(t, "daily", got[0].Name)
+	gone := got[1]
+	assert.Equal(t, "gone", gone.Name)
+	assert.Nil(t, gone.Schedule)
+	assert.Empty(t, gone.Words)
+	assert.Zero(t, gone.ModelCount)
+	require.NotNil(t, gone.LastRun)
+	assert.Equal(t, last.RunID, gone.LastRun.RunID)
+	assert.True(t, gone.HasActiveRun())
 }
 
 // A cron the words library cannot read is listed with its cron and no words.
@@ -473,6 +504,7 @@ func TestSchedulesList_AFailingReadFailsTheList(t *testing.T) {
 	for name, fail := range map[string]func(h *harness){
 		"live release": func(h *harness) { h.models.Err = errBoom },
 		"rows":         func(h *harness) { h.rows.failWith = errBoom },
+		"bad rows":     func(h *harness) { h.rows.failInvalidWith = errBoom },
 		"last runs":    func(h *harness) { h.lastRuns.failWith = errBoom },
 	} {
 		h := newHarness(t)

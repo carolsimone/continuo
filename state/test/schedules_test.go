@@ -68,14 +68,35 @@ func scheduleRowsOf(t *testing.T, name string) int {
 // summaryOf returns the ListSchedules entry of name, nil when there is none.
 func summaryOf(t *testing.T, name string) *runv1.ScheduleSummary {
 	t.Helper()
+	got := summariesOf(t, name)
+	if len(got) == 0 {
+		return nil
+	}
+	return got[0]
+}
+
+// summariesOf returns every ListSchedules entry of name.
+func summariesOf(t *testing.T, name string) []*runv1.ScheduleSummary {
+	t.Helper()
 	resp, err := runClient.ListSchedules(context.Background(), &runv1.ListSchedulesRequest{})
 	require.NoError(t, err)
+	var out []*runv1.ScheduleSummary
 	for _, s := range resp.GetSchedules() {
 		if s.GetScheduleName() == name {
-			return s
+			out = append(out, s)
 		}
 	}
-	return nil
+	return out
+}
+
+// insertUnparsableRow stores, bypassing the repository, a default-tenant row
+// of name at version whose zone the parser does not know.
+func insertUnparsableRow(t *testing.T, name string, version int64) {
+	t.Helper()
+	_, err := stateDB.Exec(`
+		INSERT INTO schedules (tenant_id, name, cron, timezone, version, updated_by)
+		VALUES ('default', $1, '0 3 1 1 *', 'Mars/Olympus', $2, 'by-hand')`, name, version)
+	require.NoError(t, err)
 }
 
 // upsertYearly saves name's cron as a yearly one, edited by user, with the
@@ -388,15 +409,12 @@ func TestSchedules_ListIsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 func TestSchedules_UpsertRepairsARowWhoseStoredCronNoLongerParses(t *testing.T) {
 	name := newScheduleName(t, "sched-broken")
 	promoteSchedules(t, stateDB, name)
-	_, err := stateDB.Exec(`
-		INSERT INTO schedules (tenant_id, name, cron, timezone, version, updated_by)
-		VALUES ('default', $1, '0 3 1 1 *', 'Mars/Olympus', 4, 'by-hand')`, name)
-	require.NoError(t, err)
+	insertUnparsableRow(t, name, 4)
 
-	listed := summaryOf(t, name)
-	require.NotNil(t, listed)
-	assert.Empty(t, listed.GetCron(), "a cron the parser no longer reads is shown as none")
-	assert.Equal(t, int32(1), listed.GetModelCount())
+	listed := summariesOf(t, name)
+	require.Len(t, listed, 1, "a name the live release has and a row whose cron no longer parses is listed once")
+	assert.Empty(t, listed[0].GetCron(), "a cron the parser no longer reads is shown as none")
+	assert.Equal(t, int32(1), listed[0].GetModelCount())
 
 	repaired := upsertYearly(t, "alice@example.com", name, 0, false)
 
@@ -406,6 +424,28 @@ func TestSchedules_UpsertRepairsARowWhoseStoredCronNoLongerParses(t *testing.T) 
 	require.NotNil(t, got)
 	assert.Equal(t, yearlyCron, got.GetCron())
 	assert.Equal(t, int64(5), got.GetVersion())
+}
+
+// A row whose stored cron no longer parses, of a name no model of the live
+// release has, is listed with no cron and no models, and DeleteSchedule
+// removes it.
+func TestSchedules_ListShowsAnUnparsableRowOfANameWithNoModelsWithNoCron(t *testing.T) {
+	name := newScheduleName(t, "sched-broken-gone")
+	promoteSchedules(t, stateDB, "sched-other-"+uuid.NewString()[:8])
+	insertUnparsableRow(t, name, 3)
+
+	listed := summariesOf(t, name)
+
+	require.Len(t, listed, 1)
+	assert.Empty(t, listed[0].GetCron())
+	assert.Empty(t, listed[0].GetTimezone())
+	assert.Zero(t, listed[0].GetVersion())
+	assert.Zero(t, listed[0].GetModelCount())
+	assert.False(t, listed[0].GetHasActiveRun())
+
+	_, err := runClient.DeleteSchedule(context.Background(), &runv1.DeleteScheduleRequest{ScheduleName: name})
+	require.NoError(t, err)
+	assert.Empty(t, summariesOf(t, name), "with its row gone and no models the name is not listed")
 }
 
 // Another tenant's schedules are invisible: its live release does not let the
