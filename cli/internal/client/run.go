@@ -56,11 +56,11 @@ type RunClient interface {
 // the server refused as UNAVAILABLE or ABORTED.
 var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
-// commandMethods are the RPCs that start or cancel a run by request id (so not
-// CancelRun, which names the run and takes none). The
-// dialled client retries these on UNAVAILABLE and ABORTED, and only these: the
-// server answers a repeated id with the run its first call made, so a retry
-// cannot duplicate work, while a read needs no retry.
+// commandMethods are the RPCs that start or cancel a run by request id; so not
+// CancelRun, which names the run and takes none. The dialled client retries
+// these on UNAVAILABLE and ABORTED, and only these: the server answers a
+// repeated id with the run its first call made, so a retry cannot duplicate
+// work, while a read needs no retry.
 var commandMethods = map[string]bool{
 	runv1.RunService_StartRun_FullMethodName:             true,
 	runv1.RunService_TriggerRerun_FullMethodName:         true,

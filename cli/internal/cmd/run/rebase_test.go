@@ -2,6 +2,7 @@ package run
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/carolsimone/continuo/cli/internal/output"
@@ -74,6 +75,7 @@ func TestRunRebase_AMovedReleaseSaysPreviewAgain(t *testing.T) {
 	assert.Contains(t, env.Error.Message, "the live release changed")
 	assert.Contains(t, env.Error.Message, "continuo run rebase-preview "+testRunID)
 	assert.Contains(t, env.Error.Message, "release_id")
+	assert.False(t, env.Error.Retryable, "resending the stale release id can never succeed")
 }
 
 func TestRunRebase_OtherConflictsKeepTheServersMessage(t *testing.T) {
@@ -87,6 +89,18 @@ func TestRunRebase_OtherConflictsKeepTheServersMessage(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, "the schedule already has an active run", env.Error.Message)
+	assert.True(t, env.Error.Retryable, "an active run may have ended by the next try")
+}
+
+// The hint is keyed on the message the state service documents for a moved
+// release in run.proto; this fails if the two drift apart.
+func TestLiveReleaseMoved_IsTheMessageRunProtoDocuments(t *testing.T) {
+	proto, err := os.ReadFile("../../../proto/run/v1/run.proto")
+	require.NoError(t, err)
+
+	// The comment wraps the message after "preview", so the test pins the part
+	// that precedes the wrap.
+	assert.Contains(t, string(proto), `(message "the `+liveReleaseMoved+`; preview`)
 }
 
 func TestRunRebase_ErrorsKeepTheirExitCodes(t *testing.T) {

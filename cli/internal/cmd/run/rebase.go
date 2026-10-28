@@ -54,7 +54,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a blank run id or release id, [with-changed-upstream] not true or false, or the run id is not a UUID
   not_found  (exit 3)  no run with that id
-  conflict   (exit 4)  the live release is not <release-id> (the message says to run "continuo run rebase-preview" again and use its new release_id), the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments
+  conflict   (exit 4)  the live release is not <release-id> (not retryable: the message says to run "continuo run rebase-preview" again and use its new release_id), the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments
   unavailable(exit 5)  the state service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
@@ -95,6 +95,9 @@ Errors:
 			if err != nil {
 				cliErr := output.FromGRPC(err)
 				if output.IsFailedPrecondition(err) && strings.Contains(cliErr.Message, liveReleaseMoved) {
+					// Resending the same release id is refused again, so the
+					// refusal is not retryable until the caller previews anew.
+					cliErr.Retryable = false
 					cliErr.Message += `: run "continuo run rebase-preview ` + runID + `" again, show the user the new counts for approval, and rebase with the new release_id`
 				}
 				return emit(stdout, stderr, cfg.Human, cliErr)
