@@ -43,8 +43,10 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   // The trigger button's request id: a press that gets no answer and is
-  // repeated soon after, for the same operation, sends the same id, so the run
-  // the first press made is returned rather than made twice. The id is
+  // repeated for the same operation, while the card still shows the last run
+  // the first press saw, sends the same id, so the run the first press made is
+  // returned rather than made twice. A newer last run on the card (the
+  // schedule list's poll) makes the next press a new action, and the id is
   // renewed once the server has given its final answer.
   const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
 
@@ -139,7 +141,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_id: takeRequestId(operation), operation: operation === 'run' ? '' : operation }),
+      body: JSON.stringify({ request_id: takeRequestId(operation, schedule.last_run_id), operation: operation === 'run' ? '' : operation }),
     })
       .then(async r => {
         if (settlesRequest(r)) renewTriggerId();

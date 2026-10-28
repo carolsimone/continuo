@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
-import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary, Task } from '../../src/client/types';
@@ -375,7 +374,7 @@ describe('SchedulerCard — request id', () => {
     }
   });
 
-  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+  it('requestId: a press hours after an unanswered one, with no newer run on the card, is a retry with the same id', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
@@ -383,14 +382,33 @@ describe('SchedulerCard — request id', () => {
 
       fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
       await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
-      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
       fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
 
       await waitFor(() => expect(ids).toHaveLength(2));
-      expect(ids[1]).not.toBe(ids[0]);
+      expect(ids[1]).toBe(ids[0]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('requestId: a press after the card shows a newer run than the unanswered press saw is a new action', async () => {
+    const ids = installTrigger(['timeout', { ok: true, body: { run_id: 'r3' } }]);
+    const view = renderCard(baseSchedule({ has_active_run: false, last_run_id: 'r1' }));
+
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+    await waitFor(() => expect(screen.getByText(/timeout/)).toBeInTheDocument());
+    // The schedule list's next poll names the run the unanswered press made.
+    view.rerender(
+      <MemoryRouter>
+        <SchedulerCard schedule={baseSchedule({ has_active_run: false, last_run_id: 'r2' })} onRunChanged={() => {}} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
   });
 
   it('requestId: changing the operation mints a new id', async () => {

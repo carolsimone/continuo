@@ -20,12 +20,6 @@ export function settlesRequest(res: { ok: boolean; status: number }): boolean {
   return res.ok || res.status < 500;
 }
 
-// A request id stays valid for a retry only while the first send may still be
-// in flight or lost in transit. A send made longer ago than this (more than
-// any request timeout between the browser and state) is settled by now, so a
-// press that finds the id this old starts a new action with a new id.
-export const REQUEST_ID_IN_DOUBT_MS = 2 * 60 * 1000;
-
 export interface ActionRequestId {
   // The id a dialog sends for its whole lifetime: run-creating commands run
   // once per request id, so a send repeated with the same id returns the run
@@ -33,18 +27,24 @@ export interface ActionRequestId {
   id: string;
   // renew mints the id of the next action. It is stable across renders.
   renew: () => void;
-  // take returns the id for a press made now. It is the current id when this
-  // press repeats the one already sent (the same fingerprint, within
-  // REQUEST_ID_IN_DOUBT_MS), and a new id otherwise: a press with other
-  // parameters, or one so late that the earlier send has long since settled,
-  // is another action. It is stable across renders.
-  take: (fingerprint?: string) => string;
+  // take returns the id for a press made now. fingerprint names what the
+  // press asks for; observed names the newest run the page shows that the
+  // action could have made (a schedule's last run id, the newest run of a
+  // node), or nothing when the page shows none. The press repeats the one
+  // already sent, and gets the current id, while both are what that press
+  // sent: its outcome is still unknown, however long ago it was sent, so the
+  // retry must not make a second run. A press with other parameters, or one
+  // made once the page shows a newer run (the earlier press's effect is
+  // visible), is another action and gets a new id. It is stable across
+  // renders.
+  take: (fingerprint?: string, observed?: string | null) => string;
 }
 
 interface Sent {
   id: string;
-  at: number | null;
+  sent: boolean;
   fingerprint: string;
+  observed: string;
 }
 
 // useActionRequestId holds the request id of one user action. The id is
@@ -55,23 +55,25 @@ interface Sent {
 export function useActionRequestId(): ActionRequestId {
   const [id, setId] = useState(newRequestId);
   const sent = useRef<Sent | null>(null);
-  if (sent.current === null) sent.current = { id, at: null, fingerprint: '' };
+  if (sent.current === null) sent.current = { id, sent: false, fingerprint: '', observed: '' };
 
   const renew = useCallback(() => {
     const next = newRequestId();
-    sent.current = { id: next, at: null, fingerprint: '' };
+    sent.current = { id: next, sent: false, fingerprint: '', observed: '' };
     setId(next);
   }, []);
 
-  const take = useCallback((fingerprint = '') => {
+  const take = useCallback((fingerprint = '', observed: string | null = '') => {
+    const seen = observed ?? '';
     const cur = sent.current as Sent;
-    if (cur.at !== null && (cur.fingerprint !== fingerprint || Date.now() - cur.at > REQUEST_ID_IN_DOUBT_MS)) {
+    if (cur.sent && (cur.fingerprint !== fingerprint || cur.observed !== seen)) {
       renew();
     }
     const next = sent.current as Sent;
-    if (next.at === null) {
-      next.at = Date.now();
+    if (!next.sent) {
+      next.sent = true;
       next.fingerprint = fingerprint;
+      next.observed = seen;
     }
     return next.id;
   }, [renew]);

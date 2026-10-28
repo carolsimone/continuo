@@ -2,7 +2,7 @@
 import { StrictMode, createElement, type ReactNode } from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { REQUEST_ID_IN_DOUBT_MS, newRequestId, settlesRequest, useActionRequestId } from '../../src/client/request-id';
+import { newRequestId, settlesRequest, useActionRequestId } from '../../src/client/request-id';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -56,28 +56,36 @@ describe('requestId', () => {
   });
 
   describe('take', () => {
-    it('requestId: a quick press after an unanswered one is a retry and gets the same id', () => {
+    it('requestId: an unanswered press repeated however long after, with nothing new observed, is a retry with the same id', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       const { result } = renderHook(() => useActionRequestId());
-      const first = result.current.take('daily');
+      const first = result.current.take('daily', 'run-1');
 
-      vi.advanceTimersByTime(REQUEST_ID_IN_DOUBT_MS - 1);
+      vi.advanceTimersByTime(120_001);
+      expect(result.current.take('daily', 'run-1')).toBe(first);
 
-      expect(result.current.take('daily')).toBe(first);
+      vi.advanceTimersByTime(6 * 60 * 60 * 1000);
+      expect(result.current.take('daily', 'run-1')).toBe(first);
     });
 
-    it('requestId: a press after the in-doubt window starts a new action with a new id', () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
+    it('requestId: a press after the page observes a newer run starts a new action with a new id', () => {
       const { result } = renderHook(() => useActionRequestId());
-      const first = result.current.take('daily');
+      const first = result.current.take('daily', 'run-1');
 
-      vi.advanceTimersByTime(REQUEST_ID_IN_DOUBT_MS + 1);
-      const later = result.current.take('daily');
+      const later = result.current.take('daily', 'run-2');
 
       expect(later).toMatch(UUID);
       expect(later).not.toBe(first);
       // The new id is itself retryable from then on.
-      expect(result.current.take('daily')).toBe(later);
+      expect(result.current.take('daily', 'run-2')).toBe(later);
+    });
+
+    it('requestId: a page that has observed no run yet observes one by its first run', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const first = result.current.take('daily', null);
+
+      expect(result.current.take('daily', undefined)).toBe(first);
+      expect(result.current.take('daily', 'run-1')).not.toBe(first);
     });
 
     it('requestId: a press that asks for something else gets a new id', () => {
@@ -87,16 +95,18 @@ describe('requestId', () => {
       expect(result.current.take('build')).not.toBe(first);
     });
 
-    it('requestId: an id that was never sent does not expire, and renew restarts the window', () => {
+    it('requestId: the minted id is the one the first press sends, and a press after renew gets a new one', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       const { result } = renderHook(() => useActionRequestId());
       const minted = result.current.id;
 
-      vi.advanceTimersByTime(10 * REQUEST_ID_IN_DOUBT_MS);
-      expect(result.current.take('a')).toBe(minted);
+      vi.advanceTimersByTime(6 * 60 * 60 * 1000);
+      expect(result.current.take('a', 'run-1')).toBe(minted);
 
+      // The server's final answer renews the id: the next press, even one with
+      // the same parameters and the same observed run, is another action.
       act(() => result.current.renew());
-      const renewed = result.current.take('a');
+      const renewed = result.current.take('a', 'run-1');
       expect(renewed).not.toBe(minted);
       expect(result.current.id).toBe(renewed);
     });

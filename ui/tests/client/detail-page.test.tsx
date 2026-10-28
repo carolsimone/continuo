@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
 import { TaskAttempt } from '../../src/client/types';
-import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 
 // The `url` argument lets a route handler inspect query params (e.g. `offset`)
 // to serve a distinct page per request. Existing handlers that ignore the
@@ -400,7 +399,7 @@ describe('DetailPage — Trigger run topbar button', () => {
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it('DetailPage trigger: a press long after an unanswered one is a new action with a new id', async () => {
+  it('DetailPage trigger: a press hours after an unanswered one, with no newer run observed, is a retry with the same id', async () => {
     const ids: string[] = [];
     const routes = mockFetchSequence(failedRoutes());
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -417,14 +416,64 @@ describe('DetailPage — Trigger run topbar button', () => {
 
       fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
       await screen.findByText('Request failed — please try again');
-      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
       fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
 
       await waitFor(() => expect(ids).toHaveLength(2));
-      expect(ids[1]).not.toBe(ids[0]);
+      expect(ids[1]).toBe(ids[0]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('DetailPage trigger: a press after the page arrives at the schedule again and reads a newer run is a new action', async () => {
+    const ids: string[] = [];
+    const routes = mockFetchSequence({
+      ...failedRoutes(),
+      '/api/runs/run-2/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/runs/run-2/tasks': async () => ({ tasks: [] }),
+      '/api/runs/run-2/attempts': async () => ({ attempts: [], total_count: 0 }),
+      '/api/runs/run-2': async () => ({ run_id: 'run-2', schedule_name: SCHED, status: 'succeeded' }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/api/schedules/${SCHED}/trigger`)) {
+        ids.push(JSON.parse(String(init?.body)).request_id);
+        if (ids.length === 1) throw new Error('timeout');
+        return { ok: true, status: 200, json: async () => ({ run_id: 'new-id' }) } as Response;
+      }
+      return routes(input);
+    }));
+    // Moves between schedules without leaving the page, the way a link to
+    // another schedule does, so the page keeps its request id.
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => navigate('/schedule/other', { state: { last_run_id: null } })}>to other</button>
+          <button onClick={() => navigate(`/schedule/${SCHED}`, { state: { last_run_id: 'run-2' } })}>back</button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[{ pathname: `/schedule/${SCHED}`, state: { last_run_id: RUN_ID } }]}>
+        <Nav />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+    await screen.findByText('Request failed — please try again');
+    fireEvent.click(screen.getByRole('button', { name: 'to other' }));
+    // Arriving at the schedule again reads its newest run, the one the
+    // unanswered press made.
+    fireEvent.click(screen.getByRole('button', { name: 'back' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
   });
 
   it('disables the topbar Trigger run button while a run is live', async () => {

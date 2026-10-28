@@ -120,10 +120,11 @@ export default function NodeDetailPage() {
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
   // The request id of the node run being asked for: a press that gets no
-  // answer and is repeated soon after, with the same node, operation and
-  // source, sends the same id, so the run the first press made is returned
-  // rather than made twice. The id is renewed once the server has given its
-  // final answer.
+  // answer and is repeated with the same node, operation and source, while
+  // the history still shows the newest node run the first press saw, sends
+  // the same id, so the run the first press made is returned rather than made
+  // twice. A newer node run in the history makes the next press a new action,
+  // and the id is renewed once the server has given its final answer.
   const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
@@ -213,6 +214,11 @@ export default function NodeDetailPage() {
   // matching the orchestrator's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
+  // The newest run in the history that a press of this page could have made:
+  // a single-node run. A scheduled run of the node is not the outcome of a
+  // press, so it does not end the wait for one.
+  const newestNodeRunId = runs.find(r => r.kind === 'single_node_run')?.run_id ?? null;
+
   // opOverride pins the operation for a caller that must send exactly what it
   // confirmed, independent of the select's current value.
   const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
@@ -221,7 +227,7 @@ export default function NodeDetailPage() {
     try {
       const op = opOverride ?? operation;
       const asked = { ...body, operation: op === 'run' ? '' : op };
-      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`) };
+      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, newestNodeRunId) };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
@@ -240,7 +246,7 @@ export default function NodeDetailPage() {
       setRunError('Request failed — please try again');
       setRunState('error');
     }
-  }, [service, schema, table, fetchRuns, operation, takeRequestId, renewRunRequestId]);
+  }, [service, schema, table, fetchRuns, operation, newestNodeRunId, takeRequestId, renewRunRequestId]);
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {

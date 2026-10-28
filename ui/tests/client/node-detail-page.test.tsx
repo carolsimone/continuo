@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { REQUEST_ID_IN_DOUBT_MS } from '../../src/client/request-id';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
@@ -907,22 +906,66 @@ describe('NodeDetailPage — request id', () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
-  it('requestId: a press long after an unanswered one is a new action, not a replay of the old run', async () => {
+  it('requestId: a press hours after an unanswered one, with no newer node run in the history, is a retry with the same id', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }]);
+      const ids = installRun(
+        ['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }],
+        [mkRun({ run_id: 'r1', kind: 'single_node_run' })],
+      );
       renderPage();
 
       fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
       await screen.findByText('Request failed — please try again');
-      vi.setSystemTime(Date.now() + REQUEST_ID_IN_DOUBT_MS + 1000);
+      vi.setSystemTime(Date.now() + 6 * 60 * 60 * 1000);
       fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
 
       await waitFor(() => expect(ids).toHaveLength(2));
-      expect(ids[1]).not.toBe(ids[0]);
+      expect(ids[1]).toBe(ids[0]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // The history is read again when the operation changes; a round trip
+  // through another operation shows the runs made since.
+  async function rereadHistory(newestFirst: unknown[], run: unknown) {
+    newestFirst.unshift(run);
+    const reads = () => mockFetch.mock.calls.filter(([u]) => String(u).includes('/runs?operation=run')).length;
+    const before = reads();
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'test' } });
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'run' } });
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    await screen.findByRole('button', { name: /run this node/i });
+  }
+
+  it('requestId: a press after the history shows a node run newer than the unanswered press saw is a new action', async () => {
+    const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
+    const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    await rereadHistory(history, mkRun({ run_id: 'r2', kind: 'single_node_run' }));
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('requestId: a newer scheduled run in the history is not the outcome of the press, so its retry keeps the id', async () => {
+    const history = [mkRun({ run_id: 'r1', kind: 'single_node_run' })];
+    const ids = installRun(['timeout', { status: 200, body: { run_id: 'new-r', schedule_name: 's' } }], history);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /run this node/i }));
+    await screen.findByText('Request failed — please try again');
+    await rereadHistory(history, mkRun({ run_id: 'cron-2', kind: 'cron' }));
+    fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+
+    await waitFor(() => expect(ids).toHaveLength(2));
+    expect(ids[1]).toBe(ids[0]);
   });
 
   it('requestId: a press after the server answered mints a new id', async () => {

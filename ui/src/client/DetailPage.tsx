@@ -107,9 +107,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
   // The trigger button's request id: a press that gets no answer and is
-  // repeated soon after, for the same schedule, sends the same id, so the run
-  // the first press made is returned rather than made twice. The id is
-  // renewed once the server has given its final answer.
+  // repeated for the same schedule, while the page still shows the last run
+  // the first press saw, sends the same id, so the run the first press made is
+  // returned rather than made twice. The page reads the schedule's last run
+  // when it arrives at the schedule; a newer one read then makes the next
+  // press a new action, and the id is renewed once the server has given its
+  // final answer.
   const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -367,7 +370,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request_id: takeRequestId(name) }),
+        body: JSON.stringify({ request_id: takeRequestId(name, lastRunId) }),
       });
       if (settlesRequest(res)) renewTriggerId();
       if (res.ok) {
@@ -382,7 +385,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       setTriggerError('Request failed — please try again');
       setTriggerState('error');
     }
-  }, [name, takeRequestId, renewTriggerId]);
+  }, [name, lastRunId, takeRequestId, renewTriggerId]);
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
