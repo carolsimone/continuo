@@ -257,6 +257,8 @@ func (m *leaseMetrics) LeaseWaiters(n int)              { m.waiters = append(m.w
 func (m *leaseMetrics) LeaseGranted(wait time.Duration) { m.granted = append(m.granted, wait) }
 func (m *leaseMetrics) LeaseRepaired()                  { m.repaired++ }
 func (m *leaseMetrics) CommandRequest(string, string)   {}
+func (m *leaseMetrics) CronFire(string)                 {}
+func (m *leaseMetrics) Schedules(int, int)              {}
 
 // leaseFlow is a tenant whose live release rel-1 holds one schedule, in which
 // seed_table_1 feeds table_a, under table names no other test uses.

@@ -368,6 +368,8 @@ func (*fakeRunMetrics) LeaseWaiters(int)               {}
 func (*fakeRunMetrics) LeaseGranted(time.Duration)     {}
 func (*fakeRunMetrics) LeaseRepaired()                 {}
 func (*fakeRunMetrics) CommandRequest(string, string)  {}
+func (*fakeRunMetrics) CronFire(string)                {}
+func (*fakeRunMetrics) Schedules(int, int)             {}
 
 type fixedClock struct{ t time.Time }
 

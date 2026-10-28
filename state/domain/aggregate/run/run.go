@@ -51,6 +51,9 @@ type Run struct {
 	// failureReason says why the run failed when no task of it failed; nil
 	// otherwise.
 	failureReason *RunFailureReason
+	// scheduledFor is the slot of its schedule a cron run was fired for; nil
+	// on every other run.
+	scheduledFor *time.Time
 
 	// totalTaskCount is nil until the run's child set is known (it is stamped by
 	// Start). nil mirrors a NULL total_task_count column.
@@ -130,11 +133,31 @@ func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
+// HydrateScheduledFor restores scheduled_for read from runs.
+// Adapter-only: domain code stamps it through SetScheduledFor.
+func (r *Run) HydrateScheduledFor(slot *time.Time) { r.scheduledFor = slot }
+
+// SetScheduledFor stamps a cron run, before it is first saved, with the slot of
+// its schedule it is fired for: the instant the schedule's cron named, which
+// the run is stored with. A run of any other kind is ErrNotACronRun and keeps
+// no slot.
+func (r *Run) SetScheduledFor(slot time.Time) error {
+	if r.kind != KindCron {
+		return fmt.Errorf("%w: run %s is of kind %s", ErrNotACronRun, r.runID, r.kind)
+	}
+	s := slot
+	r.scheduledFor = &s
+	return nil
+}
+
 // NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
 // triggered. The caller chooses id, so a command can record the run it
-// creates before the run exists; a nil id is ErrRunIDRequired. Caller flow:
-// SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.EnsureNoActiveRun →
-// NewPendingRun → SaveRun → Start → SaveRun.
+// creates before the run exists; a nil id is ErrRunIDRequired. A trigger's
+// caller flow: SchedulePolicy.ScheduleExistsInCatalog →
+// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start →
+// SaveRun. A cron fire skips the catalog, which its schedule's row stands in
+// for, and stamps the run with its slot (SetScheduledFor) before the first
+// SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual StartRun (cron, etc.) pass
@@ -345,6 +368,7 @@ func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
 func (r *Run) PlannedAt() *time.Time            { return r.plannedAt }
 func (r *Run) FailureReason() *RunFailureReason { return r.failureReason }
+func (r *Run) ScheduledFor() *time.Time         { return r.scheduledFor }
 func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
 func (r *Run) ServiceMetadata() map[string]ServiceMetadata {

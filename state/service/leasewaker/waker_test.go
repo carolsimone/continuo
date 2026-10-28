@@ -60,6 +60,8 @@ func (m *recordingMetrics) LeaseWaiters(n int)              { m.waiters = append
 func (m *recordingMetrics) LeaseGranted(wait time.Duration) { m.granted = append(m.granted, wait) }
 func (m *recordingMetrics) LeaseRepaired()                  { m.repaired++ }
 func (m *recordingMetrics) CommandRequest(string, string)   {}
+func (m *recordingMetrics) CronFire(string)                 {}
+func (m *recordingMetrics) Schedules(int, int)              {}
 
 // runs serves the runs it holds for update, each only under its own tenant,
 // fails a run it does not hold, and counts saves.

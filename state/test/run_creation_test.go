@@ -75,7 +75,6 @@ func TestRunCreation(t *testing.T) {
 	h := newBuiltHarness(db)
 	ctx := context.Background()
 	alice := identity.FromUserID("okta|alice")
-	activate := svchandlers.NewStartRunHandler(defaultPlanner, h.logger)
 
 	h.catalog(t, "creation-daily", "creation-empty")
 	promoteRelease(t, db,
@@ -84,9 +83,8 @@ func TestRunCreation(t *testing.T) {
 		scheduledNode("mart", "creation_c", "dbt-model", "creation-daily"))
 
 	t.Run("a triggered run is planned and dispatched in its creating transaction", func(t *testing.T) {
-		id, outcome, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-daily", run.KindTrigger, nil, alice, model.OperationRun)
+		id, err := h.start(ctx, pkgevents.DefaultTenantID, "creation-daily", alice, model.OperationRun)
 		require.NoError(t, err)
-		require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 
 		assert.Equal(t, createdRun{
 			Status: run.RunStatusRunning, Planned: true, Tasks: 3,
@@ -97,15 +95,16 @@ func TestRunCreation(t *testing.T) {
 	})
 
 	t.Run("a test run of a schedule without data tests is recorded skipped", func(t *testing.T) {
-		id, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-daily", run.KindTrigger, nil, alice, model.OperationTest)
+		id, err := h.start(ctx, pkgevents.DefaultTenantID, "creation-daily", alice, model.OperationTest)
 		require.NoError(t, err)
 
 		assert.Equal(t, createdRun{Status: run.RunStatusSkipped, Completed: true}, h.created(t, id))
 	})
 
 	t.Run("a cron fire on a schedule with no node in the live release records a failed run", func(t *testing.T) {
-		id, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindCron, nil, identity.System(), model.OperationRun)
+		id, outcome, err := h.fire(ctx, pkgevents.DefaultTenantID, "creation-empty", time.Now().Truncate(time.Minute))
 		require.NoError(t, err)
+		require.Equal(t, svchandlers.OutcomeRunRefused, outcome)
 
 		assert.Equal(t, createdRun{Status: run.RunStatusFailed, Completed: true, FailureReason: run.RunFailureEmptySelection},
 			h.created(t, id), "the run failed with no failed task, so it records why")
@@ -115,9 +114,9 @@ func TestRunCreation(t *testing.T) {
 		var before int
 		require.NoError(t, db.Get(&before, `SELECT count(*) FROM runs WHERE schedule_name = 'creation-empty'`))
 
-		_, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindTrigger, nil, alice, model.OperationRun)
+		_, err := h.start(ctx, pkgevents.DefaultTenantID, "creation-empty", alice, model.OperationRun)
 		require.ErrorIs(t, err, runplan.ErrEmptySelection)
-		_, _, err = activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-empty", run.KindTrigger, nil, alice, model.OperationTest)
+		_, err = h.start(ctx, pkgevents.DefaultTenantID, "creation-empty", alice, model.OperationTest)
 		require.ErrorIs(t, err, runplan.ErrEmptySelection, "a test run of an empty schedule is refused, not skipped")
 
 		var after int
@@ -130,7 +129,7 @@ func TestRunCreation(t *testing.T) {
 		source := promoteRelease(t, db,
 			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"))
-		srcID, _, err := activate.Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "creation-derived", run.KindTrigger, nil, alice, model.OperationRun)
+		srcID, err := h.start(ctx, pkgevents.DefaultTenantID, "creation-derived", alice, model.OperationRun)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE tasks SET status = CASE node_key WHEN 'raw.derived_a' THEN 'succeeded' ELSE 'failed' END, attempt = 2 WHERE run_id = $1`, srcID)
 		require.NoError(t, err)
@@ -189,13 +188,12 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	defer cleanup()
 	h := newBuiltHarness(db)
 	alice := identity.FromUserID("okta|alice")
-	activate := svchandlers.NewStartRunHandler(defaultPlanner, h.logger)
 
 	h.catalog(t, "pool-derived")
 	promoteRelease(t, db,
 		scheduledNode("raw", "pool_a", "dbt-model", "pool-derived"),
 		scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
-	srcID, _, err := activate.Handle(context.Background(), h.factory(), pkgevents.DefaultTenantID, "pool-derived", run.KindTrigger, nil, alice, model.OperationRun)
+	srcID, err := h.start(context.Background(), pkgevents.DefaultTenantID, "pool-derived", alice, model.OperationRun)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE tasks SET status = CASE node_key WHEN 'raw.pool_a' THEN 'succeeded' ELSE 'failed' END, attempt = 2 WHERE run_id = $1`, srcID)
 	require.NoError(t, err)

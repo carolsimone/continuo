@@ -155,6 +155,26 @@ func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
 	}
 }
 
+// A cron run is stamped with the slot of its schedule it is fired for; a run
+// of any other kind is refused one and keeps none.
+func TestSetScheduledFor_OnlyACronRunHasASlot(t *testing.T) {
+	slot := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	cronRun, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, slot)
+	require.NoError(t, err)
+	assert.Nil(t, cronRun.ScheduledFor(), "a run has no slot until it is stamped")
+
+	require.NoError(t, cronRun.SetScheduledFor(slot))
+	require.NotNil(t, cronRun.ScheduledFor())
+	assert.True(t, slot.Equal(*cronRun.ScheduledFor()))
+
+	for _, kind := range []run.Kind{run.KindTrigger, run.KindSingleNodeRun, run.KindPromoteSeed} {
+		other, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", kind, nil, "okta|alice", nil, model.OperationRun, run.ReleaseStamp{}, slot)
+		require.NoError(t, err)
+		require.ErrorIs(t, other.SetScheduledFor(slot), run.ErrNotACronRun, "kind %s", kind)
+		assert.Nil(t, other.ScheduledFor(), "kind %s keeps no slot", kind)
+	}
+}
+
 // taskDefaults are the task settings the aggregate tests plan with: the
 // chart's defaults.
 var taskDefaults = run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}

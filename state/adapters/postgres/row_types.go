@@ -35,6 +35,7 @@ type RunRow struct {
 	PromotionSeq       *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
 	PlannedAt          *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
 	FailureReason      *string                        `json:"failure_reason,omitempty" db:"failure_reason"`
+	ScheduledFor       *time.Time                     `json:"scheduled_for,omitempty" db:"scheduled_for"`
 	ServiceMetadata    map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw []byte                         `json:"-" db:"service_metadata"`
 }

@@ -16,6 +16,12 @@ type ScheduleRepository interface {
 	// wrapping schedule.ErrStoredCronInvalid, so a lookup fails loudly.
 	Get(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
+	// GetForUpdate is Get inside the open transaction, and locks the
+	// schedule's row until the transaction ends: it waits for a transaction
+	// that holds the row, then reads the row as that transaction left it. A
+	// call outside a transaction is an error.
+	GetForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
+
 	// List returns the tenant's schedules, ordered by name. A schedule whose
 	// stored cron or timezone no longer parses is left out and logged, not
 	// returned.
@@ -51,4 +57,8 @@ type ScheduleRepository interface {
 	// EarliestFire returns the earliest next fire of any tenant's schedules,
 	// and false when none has one: a paused schedule has none.
 	EarliestFire(ctx context.Context) (time.Time, bool, error)
+
+	// Count returns how many schedules of every tenant are scheduled, which
+	// is every schedule not paused, and how many are paused.
+	Count(ctx context.Context) (scheduled, paused int, err error)
 }

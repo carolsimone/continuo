@@ -14,12 +14,16 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// SchedulesChannel is the Postgres channel the schedules table's statement
+// trigger notifies once a transaction that changed schedules commits.
+const SchedulesChannel = "schedules"
+
 // ScheduleRepository implements repository.ScheduleRepository over schedules.
 // Each method is one statement, which runs in the unit of work's transaction
 // when one is open, else on the autocommit db. It rebuilds the expression of
 // each schedule it loads by parsing the stored cron with parser. A stored cron
-// that no longer parses fails Get; List and LockDue log it to logger and
-// return the other schedules.
+// that no longer parses fails Get and GetForUpdate; List and LockDue log it to
+// logger and return the other schedules.
 type ScheduleRepository struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
@@ -115,6 +119,30 @@ func (r *ScheduleRepository) Get(ctx context.Context, tenantID, name string) (*s
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("get schedule %q of tenant %q: %w", name, tenantID, err)
+	}
+	s, err := r.hydrate(row)
+	if err != nil {
+		return nil, false, err
+	}
+	return s, true, nil
+}
+
+// GetForUpdate reads the tenant's schedule of that name with FOR UPDATE in the
+// bound transaction, so the row stays locked until it ends. A stored cron or
+// timezone that no longer parses is an error wrapping
+// schedule.ErrStoredCronInvalid, and the row stays locked.
+func (r *ScheduleRepository) GetForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	if r.tx == nil {
+		return nil, false, fmt.Errorf("lock schedule %q of tenant %q: GetForUpdate requires an active transaction", name, tenantID)
+	}
+	var row scheduleRow
+	err := r.tx.GetContext(ctx, &row,
+		`SELECT `+scheduleColumns+` FROM schedules WHERE tenant_id = $1 AND name = $2 FOR UPDATE`, tenantID, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("lock schedule %q of tenant %q: %w", name, tenantID, err)
 	}
 	s, err := r.hydrate(row)
 	if err != nil {
@@ -222,4 +250,20 @@ func (r *ScheduleRepository) EarliestFire(ctx context.Context) (time.Time, bool,
 		return time.Time{}, false, nil
 	}
 	return earliest.Time.UTC(), true, nil
+}
+
+// Count counts the schedules of every tenant that are not paused and those
+// that are, in one scan.
+func (r *ScheduleRepository) Count(ctx context.Context) (scheduled, paused int, err error) {
+	var counts struct {
+		Scheduled int `db:"scheduled"`
+		Paused    int `db:"paused"`
+	}
+	if err := sqlx.GetContext(ctx, r.conn(), &counts, `
+		SELECT count(*) FILTER (WHERE NOT paused) AS scheduled,
+		       count(*) FILTER (WHERE paused)     AS paused
+		  FROM schedules`); err != nil {
+		return 0, 0, fmt.Errorf("count the schedules: %w", err)
+	}
+	return counts.Scheduled, counts.Paused, nil
 }

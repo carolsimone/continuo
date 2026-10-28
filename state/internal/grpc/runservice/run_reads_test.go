@@ -16,8 +16,8 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/schedule"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
-	"github.com/carolsimone/continuo/state/service/ports"
 )
 
 var base = time.Date(2026, 10, 27, 8, 0, 0, 0, time.UTC)
@@ -444,12 +444,16 @@ func TestListSchedules_NamesHasActiveRun(t *testing.T) {
 	store.lastRuns["daily"] = repository.LastRunSummary{
 		ScheduleName: "daily", RunID: lastID, Status: run.RunStatusRunning, CreatedAt: base, IsActive: true,
 	}
-	crons := fakeCrons{timezone: "Europe/Rome", byName: map[string]ports.ScheduleCron{
-		"daily":  {Expression: "0 6 * * *", Description: "the morning load"},
-		"hourly": {Expression: "0 * * * *"},
+	row := func(tenant, name, cron, description string) *schedule.Schedule {
+		return schedule.Rehydrate(tenant, name, cron, "Europe/Rome", description, false, nil, 1, "alice@example.com", base, nil)
+	}
+	rows := fakeScheduleRows{rows: []*schedule.Schedule{
+		row(tenantA, "daily", "0 6 * * *", "the morning load"),
+		row(tenantA, "hourly", "0 * * * *", ""),
+		row(tenantB, "adhoc", "0 3 * * *", "another tenant's row"),
 	}}
 
-	resp, err := newServer(store, crons).ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
+	resp, err := newServer(store, rows).ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
 
 	require.NoError(t, err)
 	require.Len(t, resp.GetSchedules(), 3)
@@ -471,7 +475,7 @@ func TestListSchedules_NamesHasActiveRun(t *testing.T) {
 	assert.False(t, hourly.GetHasActiveRun())
 }
 
-func TestListSchedules_WithoutACronConfigStillListsTheCatalog(t *testing.T) {
+func TestListSchedules_AScheduleWithoutARowHasNoCron(t *testing.T) {
 	store := newStore()
 	store.schedules = []string{"daily"}
 

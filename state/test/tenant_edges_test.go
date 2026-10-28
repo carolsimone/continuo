@@ -67,10 +67,8 @@ func newEdgeTenant(t *testing.T, db *sqlx.DB) *edgeTenant {
 	require.NoError(t, err)
 
 	h := newBuiltHarness(db)
-	id, outcome, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), e.id, e.schedule,
-		run.KindTrigger, nil, identity.FromUserID("okta|alice"), model.OperationRun)
+	id, err := h.start(ctx, e.id, e.schedule, identity.FromUserID("okta|alice"), model.OperationRun)
 	require.NoError(t, err)
-	require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 	e.runID = id
 	e.taskID = run.TaskIDFor(e.id, id, topology.KeyOf("raw", e.table))
 	return e

@@ -707,3 +707,110 @@ func TestSchedules_TheUnitOfWorkBindsTheRepositoryToItsTransaction(t *testing.T)
 	require.NoError(t, u.Commit())
 	mustGet(t, pool, tenant, "kept")
 }
+
+// GetForUpdate reads the schedule and holds its row until the transaction
+// ends: a second transaction's GetForUpdate waits for the first, then reads
+// the row as the first left it. The schedules are created in 2099.
+func TestSchedules_GetForUpdateLocksTheRowUntilTheTransactionEnds(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tenant := scheduleRepoTenant(t, db)
+	require.NoError(t, newScheduleRepo(db, nil, parser).Save(ctx, hourlySchedule(t, parser, tenant, "nightly", farFuture), 0))
+
+	holder := scheduleUnitOfWork(db, parser)
+	require.NoError(t, holder.Begin(ctx))
+	defer func() { _ = holder.Rollback() }()
+	held, ok, err := holder.Schedules().GetForUpdate(ctx, tenant, "nightly")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "nightly", held.Name())
+	assert.Equal(t, int64(1), held.Version())
+
+	waiter := scheduleUnitOfWork(db, parser)
+	require.NoError(t, waiter.Begin(ctx))
+	defer func() { _ = waiter.Rollback() }()
+	read := make(chan error, 1)
+	var seen string
+	go func() {
+		s, _, err := waiter.Schedules().GetForUpdate(ctx, tenant, "nightly")
+		if err == nil {
+			seen = s.Description()
+		}
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		t.Fatalf("the second GetForUpdate did not wait for the first transaction: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	expr, err := parser.Parse("0 * * * *", "UTC")
+	require.NoError(t, err)
+	held.Replace("0 * * * *", "UTC", "edited by the holder", false, expr, "bob@example.com", farFuture.Add(time.Minute))
+	require.NoError(t, holder.Schedules().Save(ctx, held, 1))
+	require.NoError(t, holder.Commit())
+	select {
+	case err := <-read:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second GetForUpdate never finished after the first committed")
+	}
+	assert.Equal(t, "edited by the holder", seen, "the waiter reads the row the holder committed")
+}
+
+// GetForUpdate locks inside a transaction only: outside one it is an error. A
+// schedule that is not stored is not found, and one whose stored cron no
+// longer parses is the error Get returns for it.
+func TestSchedules_GetForUpdateNeedsATransaction(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tenant := scheduleRepoTenant(t, db)
+
+	_, _, err := newScheduleRepo(db, nil, parser).GetForUpdate(ctx, tenant, "nightly")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transaction")
+
+	tx := scratchTx(t, db)
+	repo := newScheduleRepo(db, tx, parser)
+	got, ok, err := repo.GetForUpdate(ctx, tenant, "absent")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, got)
+
+	rawSchedule(t, tx, tenant, "broken", "not a cron", "UTC", nil)
+	_, ok, err = repo.GetForUpdate(ctx, tenant, "broken")
+	require.ErrorIs(t, err, schedule.ErrStoredCronInvalid)
+	assert.False(t, ok)
+}
+
+// Count counts the schedules of every tenant by state: those not paused are
+// scheduled. The rows are inserted in a transaction that is rolled back, and
+// both counts are read in its snapshot, so what other tests commit meanwhile
+// does not change the difference.
+func TestSchedules_CountSpansTenantsByState(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	parser := scheduleParser(t)
+	tenant, other := scheduleRepoTenant(t, db), scheduleRepoTenant(t, db)
+	tx, err := db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	repo := newScheduleRepo(db, tx, parser)
+	scheduledBefore, pausedBefore, err := repo.Count(ctx)
+	require.NoError(t, err)
+
+	next := farFuture
+	rawSchedule(t, tx, tenant, "daily", "0 * * * *", "UTC", &next)
+	rawSchedule(t, tx, other, "daily", "0 * * * *", "UTC", &next)
+	rawSchedule(t, tx, other, "broken", "not a cron", "UTC", &next)
+	_, err = tx.Exec(`INSERT INTO schedules (tenant_id, name, cron, timezone, paused, updated_by)
+		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, 'repository-test')`, tenant)
+	require.NoError(t, err)
+
+	scheduled, paused, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, scheduled-scheduledBefore, "every schedule not paused, whether or not its cron still parses")
+	assert.Equal(t, 1, paused-pausedBefore)
+}

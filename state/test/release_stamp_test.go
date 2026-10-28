@@ -86,7 +86,7 @@ func TestReleaseStamp(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("a triggered run names the live release", func(t *testing.T) {
-		id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "stamp-trigger", run.KindTrigger, nil, alice, model.OperationRun)
+		id, err := h.start(ctx, pkgevents.DefaultTenantID, "stamp-trigger", alice, model.OperationRun)
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
 	})

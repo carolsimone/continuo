@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -12,10 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
-	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 )
@@ -293,8 +292,7 @@ func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *t
 	endCancelled(t, r1)
 
 	h := newBuiltHarness(stateDB)
-	r2, outcome, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, schedule,
-		run.KindCron, nil, identity.System(), model.OperationRun)
+	r2, outcome, err := h.fire(ctx, pkgevents.DefaultTenantID, schedule, time.Now().Truncate(time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 	t.Cleanup(func() { finishRun(t, r2.String()) })

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
@@ -39,6 +39,9 @@ var (
 	stateConn   *grpc.ClientConn
 	stateServer *grpcserver.Server
 	stateDB     *sqlx.DB
+	// stateDSN is the connection string of stateDB's database, for a test that
+	// listens on one of its channels.
+	stateDSN string
 )
 
 // TestMain sets up a real PostgreSQL testcontainer and a live gRPC state server,
@@ -115,8 +118,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stateDB = db
+	stateDSN = connStr
 
 	// ---- Build repositories ----
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
 	schedulerRepo := postgres.NewRunRepository(db, logger)
 	taskRepo := postgres.NewTaskCollection(db, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
@@ -135,7 +144,7 @@ func TestMain(m *testing.M) {
 		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
 		Attempts:  runreads.NewAttempts(attemptRepo),
 		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
-		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, schedulesconfig.New(nil)),
+		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, postgres.NewScheduleRepository(db, nil, cronParser, logger)),
 		Graphs:    runreads.New(runReadRepo),
 		Rebases:   runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
 	}, runCommands, logger)

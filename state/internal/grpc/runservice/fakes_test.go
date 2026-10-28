@@ -15,9 +15,9 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/schedule"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
-	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
 )
 
@@ -303,18 +303,21 @@ func (f fakeLastRuns) GetLastRunPerSchedule(_ context.Context, tenantID string) 
 	return f.lastRuns, nil
 }
 
-type fakeCrons struct {
-	timezone string
-	byName   map[string]ports.ScheduleCron
+// fakeScheduleRows serves the schedule rows it holds to List, each under its
+// own tenant only.
+type fakeScheduleRows struct {
+	repository.ScheduleRepository
+	rows []*schedule.Schedule
 }
 
-var _ ports.ScheduleCrons = fakeCrons{}
-
-func (f fakeCrons) Timezone() string { return f.timezone }
-
-func (f fakeCrons) CronOf(name string) (ports.ScheduleCron, bool) {
-	c, ok := f.byName[name]
-	return c, ok
+func (f fakeScheduleRows) List(_ context.Context, tenantID string) ([]*schedule.Schedule, error) {
+	var out []*schedule.Schedule
+	for _, s := range f.rows {
+		if s.TenantID() == tenantID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 type fakeScheduleGraphs struct{ *fakeStore }
@@ -335,10 +338,10 @@ func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) ([]top
 	return f.summaries[tenantID], nil
 }
 
-// newServer builds the RunService server over the fakes of store, with no
-// commands.
-func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
-	return runservice.NewServer(readsOf(store, crons), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+// newServer builds the RunService server over the fakes of store and the
+// schedule rows, none when nil, with no commands.
+func newServer(store *fakeStore, rows repository.ScheduleRepository) *runservice.Server {
+	return runservice.NewServer(readsOf(store, rows), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // newCommandServer builds the RunService server over the fakes of store, whose
@@ -349,13 +352,17 @@ func newCommandServer(store *fakeStore, cmds *fakeCommands) *runservice.Server {
 	return runservice.NewServer(reads, cmds, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// readsOf is the read services over the fakes of store.
-func readsOf(store *fakeStore, crons ports.ScheduleCrons) runservice.Reads {
+// readsOf is the read services over the fakes of store and the schedule rows,
+// none when nil.
+func readsOf(store *fakeStore, rows repository.ScheduleRepository) runservice.Reads {
+	if rows == nil {
+		rows = fakeScheduleRows{}
+	}
 	return runservice.Reads{
 		Runs:      runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
 		Attempts:  runreads.NewAttempts(fakeAttempts{store}),
 		Nodes:     runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
-		Schedules: runreads.NewSchedules(fakeActiveSchedules{store}, fakeLastRuns{store}, crons),
+		Schedules: runreads.NewSchedules(fakeActiveSchedules{store}, fakeLastRuns{store}, rows),
 		Graphs:    runreads.New(fakeRunReads{store}),
 
 		ScheduleGraphs: runreads.NewScheduleGraphs(fakeScheduleGraphs{store}),

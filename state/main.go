@@ -29,13 +29,12 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
-	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
-	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	"github.com/carolsimone/continuo/state/service/commands"
+	"github.com/carolsimone/continuo/state/service/cronloop"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
@@ -67,6 +66,10 @@ const attemptReconcileInterval = 60 * time.Second
 // leaseWakerInterval is how often the lease waker passes when no release of a
 // node lease wakes it sooner.
 const leaseWakerInterval = 60 * time.Second
+
+// cronLoopTick is the longest the cron loop sleeps between passes when no
+// schedule's next fire, and no change to the schedules, wakes it sooner.
+const cronLoopTick = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -443,37 +446,27 @@ func main() {
 	// pass.
 	planner := runstart.Planner{Tasks: taskDefaults}
 
-	// Initialize activation handler shared by the cron loop and gRPC methods.
-	activateHandler := svchandlers.NewStartRunHandler(planner, logger)
-	logger.Info("Activation handler initialized")
-
-	// Load schedules config — fail fast if missing or malformed
-	schedulesConfig, err := scheduler.LoadSchedulesConfig(cfg.SchedulesConfigPath)
+	// The cron loop fires the due schedules of every tenant, each under the
+	// tenant of its row: in one transaction per schedule it starts the run of
+	// the latest due slot and moves the schedule's next fire on. It passes at
+	// startup, when the earliest next fire comes, on every notification the
+	// schedules table's trigger sends once a change to it commits, and every
+	// cronLoopTick. Maintenance mode consumes each due slot with no run. Its
+	// goroutine is tracked, so shutdown waits for a fire in progress.
+	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.SchedulesChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the schedules listener")
+		os.Exit(0)
+	}
 	if err != nil {
-		logger.Error("Failed to load schedules config", "error", err)
+		logger.Error("Failed to listen for schedule changes", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
-
-	// Initialize cron scheduler
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig, cfg.Maintenance)
-	if err != nil {
-		logger.Error("Failed to create cron scheduler", "error", err)
-		os.Exit(1)
-	}
-
-	// Register cron scheduler cleanup
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping cron scheduler")
-		return cronScheduler.Stop(ctx)
-	})
-
-	// Start cron scheduler
-	if err := cronScheduler.Start(); err != nil {
-		logger.Error("Failed to start cron scheduler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("Cron scheduler started")
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return schedulesListener.CloseContext(ctx) })
+	cronLoop := cronloop.New(uowFactory, svchandlers.NewStartRunHandler(planner, logger), runMetrics, cfg.Maintenance, logger)
+	lifecycleManager.Go(func() { cronLoop.Run(ctx, schedulesListener.Wake(), cronLoopTick) })
 
 	// The RunService edge acts for the tenant the identity interceptor placed
 	// on each request's context; its reads are bound to that tenant per
@@ -486,7 +479,7 @@ func main() {
 		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
 		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
 		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
-		Schedules:      runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
+		Schedules:      runreads.NewSchedules(catalogRepo, runRepo, postgres.NewScheduleRepository(db, nil, cronParser, logger)),
 		Graphs:         runreads.New(runReadRepo),
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),

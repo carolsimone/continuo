@@ -95,6 +95,15 @@ var (
 	// named schedule has no active row in schedule_catalog.
 	ErrScheduleNotInCatalog = errors.New("schedule not found in catalog")
 
+	// ErrNotACronRun is returned by Run.SetScheduledFor on a run of any kind
+	// but cron: only a cron fire is made for a slot of its schedule.
+	ErrNotACronRun = errors.New("only a cron run is fired for a schedule slot")
+
+	// ErrSlotTaken is returned by RunRepository.SaveRun when the cron run it
+	// creates is for a slot of its schedule that already has its run. Nothing
+	// is written, and the transaction stays usable.
+	ErrSlotTaken = errors.New("the schedule slot already has its run")
+
 	// ErrTaskNotHeld is returned by Run.RecordAttemptReport when the run the
 	// report names holds no task with the report's task id: no run holds it,
 	// or another run does. A run's tasks are stored in the transaction that

@@ -89,3 +89,31 @@ func TestRunMetrics_LeaseSeries(t *testing.T) {
 		}
 	}
 }
+
+// The cron fire counter counts each outcome, missed once per slot, and the
+// schedules gauge reports the last pass's counts by state.
+func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
+	reg := pkgmetrics.New("state")
+	m := NewRunMetrics(reg)
+	m.CronFire("started")
+	m.CronFire("missed")
+	m.CronFire("missed")
+	m.CronFire("skipped_active")
+	m.Schedules(4, 2)
+	m.Schedules(3, 1)
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`continuo_cron_fires_total{outcome="started",service="state"} 1`,
+		`continuo_cron_fires_total{outcome="missed",service="state"} 2`,
+		`continuo_cron_fires_total{outcome="skipped_active",service="state"} 1`,
+		`continuo_schedules{service="state",state="scheduled"} 3`,
+		`continuo_schedules{service="state",state="paused"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}

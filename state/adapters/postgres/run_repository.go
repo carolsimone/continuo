@@ -73,6 +73,11 @@ func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 			if errors.Is(err, ErrRunExists) {
 				return run.ErrRunAlreadyExists
 			}
+			// uq_runs_scheduled_for allows one run per schedule slot: the
+			// insert of a second does nothing, and the transaction goes on.
+			if errors.Is(err, ErrSlotConflict) {
+				return run.ErrSlotTaken
+			}
 			return fmt.Errorf("create run: %w", err)
 		}
 		rn.ResetChanges()
@@ -240,6 +245,7 @@ func hydrateRun(tr *RunRow) (*run.Run, error) {
 	)
 	rn.HydrateRelease(run.ReleaseStamp{ReleaseID: stringOrEmpty(tr.ReleaseID), PromotionSeq: int64OrZero(tr.PromotionSeq)})
 	rn.HydratePlannedAt(tr.PlannedAt)
+	rn.HydrateScheduledFor(tr.ScheduledFor)
 	if tr.FailureReason != nil {
 		reason := run.RunFailureReason(*tr.FailureReason)
 		rn.HydrateFailureReason(&reason)
@@ -337,6 +343,7 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 		Operation:          operationWithDefault(string(r.Operation())),
 		ReleaseID:          optionalString(r.Release().ReleaseID),
 		PromotionSeq:       optionalInt64(r.Release().PromotionSeq),
+		ScheduledFor:       r.ScheduledFor(),
 	}, nil
 }
 

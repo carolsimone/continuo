@@ -14,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
-	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
 )
@@ -87,7 +86,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		created := make(chan uuid.UUID, 1)
 		failed := make(chan error, 1)
 		go func() {
-			id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
+			id, err := h.start(ctx, pkgevents.DefaultTenantID, "stamp-lock", alice, model.OperationRun)
 			if err != nil {
 				failed <- err
 				return

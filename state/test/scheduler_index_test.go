@@ -2,8 +2,8 @@ package test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -15,11 +15,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
-	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
-	svcports "github.com/carolsimone/continuo/state/service/ports"
-	"github.com/carolsimone/continuo/state/service/uow"
 )
 
 // nopWriter discards log output in these tests.
@@ -53,34 +49,11 @@ func explainWithoutSeqScan(t *testing.T, db *sqlx.DB, q string) string {
 	return strings.Join(lines, "\n")
 }
 
-// newActivationStack wires the repositories, UoW factory, and activation handler
-// against the test database. removed_at IS NULL rows in schedule_catalog are the
-// activation precondition; the named schedules are seeded as active.
-func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.StartRunHandler) {
-	t.Helper()
-	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-
-	for _, n := range names {
-		_, err := db.Exec(`
-			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-			VALUES ('default', $1, NOW(), NOW(), NULL, '{}')
-			ON CONFLICT (tenant_id, schedule_name) DO NOTHING
-		`, n)
-		require.NoError(t, err)
-	}
-
-	clk := svcports.SystemClock{}
-	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, clk, logger)
-	}
-	return factory, svchandlers.NewStartRunHandler(defaultPlanner, logger)
-}
-
-// TestConcurrentActivation_OneWinnerOneActiveRunError fires two simultaneous
-// activations for the same schedule. The partial unique index
-// uq_runs_active_per_schedule guarantees exactly one active run is
-// inserted; the loser receives the same active-run outcome as the check-first
-// path. This is the DB-level backstop for the activation TOCTOU race.
+// TestConcurrentActivation_OneWinnerOneActiveRunError starts two runs of the
+// same schedule at once. The partial unique index uq_runs_active_per_schedule
+// guarantees exactly one active run is inserted; the loser receives the same
+// active-run error as the check-first path. This is the DB-level backstop for
+// the activation TOCTOU race.
 func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -88,12 +61,12 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	rawDB, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	factory, handler := newActivationStack(t, rawDB, "race-schedule")
+	h := newBuiltHarness(rawDB)
+	h.catalog(t, "race-schedule")
 	promoteSchedules(t, rawDB, "race-schedule")
 
 	const n = 2
 	var wg sync.WaitGroup
-	outcomes := make([]svchandlers.ActivationOutcome, n)
 	errs := make([]error, n)
 	start := make(chan struct{})
 
@@ -102,9 +75,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			_, outcome, err := handler.Handle(context.Background(), factory(), pkgevents.DefaultTenantID, "race-schedule", run.KindCron, nil, identity.System(), model.OperationRun)
-			outcomes[idx] = outcome
-			errs[idx] = err
+			_, errs[idx] = h.start(context.Background(), pkgevents.DefaultTenantID, "race-schedule", identity.FromUserID("okta|alice"), model.OperationRun)
 		}(i)
 	}
 	close(start)
@@ -112,12 +83,13 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 
 	activated, skipped := 0, 0
 	for i := 0; i < n; i++ {
-		require.NoError(t, errs[i], "neither concurrent activation should hard-error")
-		switch outcomes[i] {
-		case svchandlers.OutcomeRunStarted:
+		switch {
+		case errs[i] == nil:
 			activated++
-		case svchandlers.OutcomeSkippedActive:
+		case errors.Is(errs[i], run.ErrScheduleHasActiveRun):
 			skipped++
+		default:
+			t.Fatalf("neither concurrent activation should hard-error: %v", errs[i])
 		}
 	}
 	assert.Equal(t, 1, activated, "exactly one activation wins")
