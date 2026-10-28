@@ -17,6 +17,17 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.17.0 · 2026-10-28 · `MINOR`
+
+- **Schedules are data.** An operator sets a schedule's cron in the ui (**Edit cron** or **Add cron** on its card) or with `continuo schedule set-cron`; state stores it in its own database and fires it durably: one run per slot, also across restarts, and after a downtime only the latest missed slot fires. The chart carries no schedules file any more, so **every cron stops until it is set again**. `helm upgrade` deletes the `<fullname>-schedules` ConfigMap, so copy the crons out of it first; `NOTES.txt` prints a warning on upgrade.
+- **Run commands run once.** state serves `run.v1.RunService`, and every command that starts a run (and a cancel by schedule) carries a `request_id`: a retry after a lost response returns the same run instead of starting a second. The ui, the CLI and the chat send one on every action.
+- **A `continuo run` command group.** `run show`, `run graph`, `run attempts`, `run cancel`, `run rerun`, `run rebase-preview` and `run rebase` read and act on one run by id; `continuo schedule runs` lists a schedule's completed runs, and `continuo schedule list` now names a schedule's cron `cron` and carries its `version`.
+- **Metrics.** `continuo_cron_fires_total{outcome}` counts the fires of the crons and `continuo_schedules{state}` the schedules that have one.
+- **Upgrade with care.** The state migrations V52 to V56 rename and rekey the run tables and drop the schedule catalog, and the previous release's state replicas fail while the new one rolls out. Deploy with no run in flight and cancel every pending or running run once the new release has deployed; roll back only together with a database restore. Maintenance mode now also refuses schedule edits.
+- The changes are breaking, and while continuo is in beta they ship as a `MINOR`.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0170---2026-10-28) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.17.0)
+
 ## 0.16.0 · 2026-10-26 · `MINOR`
 
 - **Two runs never write one node at once.** A writing task takes the write lease on its node when state dispatches it, keeps it across retries and while it is `stopping`, and releases it when the task ends. A ready task whose node another run is writing stays `pending` and waits; the run page and the run graph show it as "waiting for node", linked to the run it waits for. A freed node goes to its oldest waiter, and a wait behind a run that is still writing is not treated as a stall.
