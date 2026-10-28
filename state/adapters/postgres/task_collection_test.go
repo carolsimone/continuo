@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -87,4 +88,53 @@ func TestTaskCollection_RunReleasesOf(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, map[uuid.UUID]string{stampedTask: release}, got)
+}
+
+// ListByRunID pages a run's tasks in a stable order. Every task of a run is
+// created with the same created_at, so the order among them comes from the
+// task id: reading the run page by page lists each task exactly once, in
+// ascending task id.
+func TestTaskCollection_ListByRunIDPagesTasksOfOneCreatedAtInTaskIDOrder(t *testing.T) {
+	const (
+		taskCount = 450
+		pageSize  = 200
+	)
+	ctx := context.Background()
+	db := newTestDB(t)
+	logger := discardLogger()
+	schedRepo := postgres.NewRunRepository(db, logger)
+	taskRepo := postgres.NewTaskCollection(db, logger)
+	sched := createScheduler(t, schedRepo, "list-by-run-paging-"+uuid.NewString()[:8])
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM tasks WHERE run_id = $1`, sched.ScheduleID)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, sched.ScheduleID)
+	})
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	want := make([]string, 0, taskCount)
+	for range taskCount {
+		id := uuid.New()
+		want = append(want, id.String())
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
+			TenantID: pkgevents.DefaultTenantID,
+			TaskID:   id, ScheduleID: sched.ScheduleID, CreatedAt: createdAt, ServiceName: "service-1",
+			SchemaName: "raw", TableName: "orders", JobName: "job-" + id.String(), Status: run.TaskStatusPending,
+		}))
+	}
+	sort.Strings(want)
+	collection := taskRepo.ForTenant(pkgevents.DefaultTenantID)
+
+	got := make([]string, 0, taskCount)
+	for offset := 0; ; offset += pageSize {
+		page, total, err := collection.ListByRunID(ctx, sched.ScheduleID, nil, pageSize, offset)
+		require.NoError(t, err)
+		require.Equal(t, taskCount, total)
+		for _, task := range page {
+			got = append(got, task.TaskID.String())
+		}
+		if len(page) < pageSize {
+			break
+		}
+	}
+
+	assert.Equal(t, want, got)
 }

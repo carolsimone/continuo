@@ -18,8 +18,8 @@ import (
 
 // RunClient is the narrow interface the CLI depends on for runs, tasks and
 // schedules. Fakes in tests implement it; the real implementation lives in
-// runGRPCClient. A method that starts or cancels a run takes the request id
-// the server makes the command idempotent on.
+// runGRPCClient. A method that starts a run, or cancels a schedule's active
+// run, takes the request id the server makes the command idempotent on.
 type RunClient interface {
 	TriggerSchedule(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	TriggerScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
