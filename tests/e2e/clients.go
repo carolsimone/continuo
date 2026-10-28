@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
@@ -166,12 +167,16 @@ func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
 	return db
 }
 
-// closeClients closes all client connections. Best-effort: this runs at test
+// close closes all client connections. Best-effort: this runs at test
 // teardown, so a close failure on one connection shouldn't stop the others
-// from being released.
+// from being released. The Neo4j driver is closed on a context of its own, kept
+// apart from ctx's cancellation and bounded to ten seconds, because a test
+// registers close with t.Cleanup and its own ctx is cancelled by then.
 func (c *testClients) close(ctx context.Context) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	_ = c.redisClient.Close()
-	_ = c.neo4jDriver.Close(ctx)
+	_ = c.neo4jDriver.Close(closeCtx)
 	_ = c.executionDB.Close()
 	_ = c.orchestratorDB.Close()
 	_ = c.stateDB.Close()

@@ -54,7 +54,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -392,7 +392,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	releaseID := "e2e-opening-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.opening_sweep"
@@ -497,7 +497,7 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	releaseID := "e2e-norepo-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.norepo_sweep"
@@ -964,16 +964,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	require.NoError(t, err, "seed ftable_upstream_diff upstream ancestor in Neo4j")
 
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanupSession := clients.neo4jDriver.NewSession(cleanupCtx, neo4jdriver.SessionConfig{
-			AccessMode: neo4jdriver.AccessModeWrite,
-		})
-		defer cleanupSession.Close(cleanupCtx)
-		_, _ = cleanupSession.Run(cleanupCtx,
-			`MATCH (t:Table) WHERE t.unique_id IN ['e2e_schema.ftable_e', 'e2e_schema.ftable_upstream_diff'] DETACH DELETE t`,
-			nil,
-		)
+		deleteSeededTableNodes(t, clients, "e2e_schema.ftable_e", "e2e_schema.ftable_upstream_diff")
 	})
 	t.Log("seeded ftable_e topology node + ftable_upstream_diff upstream ancestor in Neo4j")
 }

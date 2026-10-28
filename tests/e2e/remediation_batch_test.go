@@ -83,7 +83,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -279,7 +279,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -535,7 +535,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -761,7 +761,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -1227,17 +1227,7 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 		ids = append(ids, m.uniqueID)
 	}
 
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanupSession := clients.neo4jDriver.NewSession(cleanupCtx, neo4jdriver.SessionConfig{
-			AccessMode: neo4jdriver.AccessModeWrite,
-		})
-		defer cleanupSession.Close(cleanupCtx)
-		_, _ = cleanupSession.Run(cleanupCtx,
-			`MATCH (t:Table) WHERE t.unique_id IN $ids DETACH DELETE t`,
-			map[string]interface{}{"ids": ids})
-	})
+	t.Cleanup(func() { deleteSeededTableNodes(t, clients, ids...) })
 	t.Logf("seeded topology nodes in Neo4j: %v", ids)
 }
 
@@ -1267,7 +1257,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
