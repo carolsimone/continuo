@@ -9,21 +9,32 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/output"
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // scheduleEntry is the JSON-serialisable representation of a single schedule.
-// Fields with omitempty are conditionally omitted per the spec:
-//   - description: omit when empty
+// Fields with omitempty are conditionally omitted:
+//   - description:  omit when empty
+//   - cron_words:   omit with no cron, or when the words cannot describe it
+//   - next_fire_at: omit while paused, with no cron, or when the cron fires no more
 //   - last_run_at:  omit when there is no prior run (nil proto Timestamp)
+//   - updated_by, updated_at: omit with no cron (nobody has edited it)
 type scheduleEntry struct {
 	ScheduleName   string `json:"schedule_name"`
 	CronExpression string `json:"cron_expression"`
+	CronWords      string `json:"cron_words,omitempty"`
+	HasCron        bool   `json:"has_cron"`
+	Paused         bool   `json:"paused"`
+	NextFireAt     string `json:"next_fire_at,omitempty"`
 	Description    string `json:"description,omitempty"`
 	Timezone       string `json:"timezone"`
+	ModelCount     int32  `json:"model_count"`
 	HasActiveRun   bool   `json:"has_active_run"`
 	LastRunId      string `json:"last_run_id"`
 	LastRunStatus  string `json:"last_run_status"`
 	LastRunAt      string `json:"last_run_at,omitempty"`
+	UpdatedBy      string `json:"updated_by,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
 }
 
 // listPayload is the top-level JSON object emitted on success.
@@ -37,29 +48,47 @@ type listPayload struct {
 func NewListCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all schedules and their last-run status",
-		Long: `List all schedules and their last-run status.
+		Short: "List all schedules: their cron, pause, models and last run",
+		Long: `List all schedules: their cron, pause, models and last run.
 
-Use when the user wants to see which schedules exist or the outcome of each
-schedule's most recent run.
+Use when the user wants to see which schedules exist, when each runs on its own,
+whether one is paused, who last changed a cron, or the outcome of each
+schedule's most recent run. It is also how to read a schedule before changing it
+with "schedule set-cron", "schedule pause", "schedule resume" or "schedule remove-cron".
+
+A schedule is a schedule name: the models of the live release whose dbt tag
+names it. The list holds every name the live release has and every name that
+has a cron, ordered by name.
 
 Arguments: none.
 
 Output (stdout, JSON):
   {"schedules":[{"schedule_name":string,"cron_expression":string,
-   "description":string,"timezone":string,"has_active_run":bool,
-   "last_run_id":string,"last_run_status":string,"last_run_at":string}]}
-  description and last_run_at are omitted when empty (e.g. never run).
+   "cron_words":string,"has_cron":bool,"paused":bool,"next_fire_at":string,
+   "description":string,"timezone":string,"model_count":number,
+   "has_active_run":bool,"last_run_id":string,"last_run_status":string,
+   "last_run_at":string,"updated_by":string,"updated_at":string}]}
+  A schedule is scheduled (has_cron true, paused false), paused (has_cron true,
+  paused true) or manual (has_cron false: it runs only when triggered, and
+  cron_expression and timezone are empty). cron_words is the cron in English.
+  next_fire_at (RFC3339, UTC) is omitted while paused, with no cron, or when the
+  cron fires no more. model_count is how many models of the live release carry
+  the schedule's tag; a scheduled schedule with model_count 0 records a failed
+  run at each fire until a release brings its models back, it is paused, or its
+  cron is removed. updated_by and updated_at say who last changed the cron and
+  when (RFC3339, UTC). description, cron_words, next_fire_at, last_run_at,
+  updated_by and updated_at are omitted when empty (e.g. never run).
   last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped;
   cancelling means a cancel was accepted and the run waits for its Jobs to
   stop. has_active_run is true while a pending, running or cancelling run holds the schedule.
 
 Errors:
+  usage      (exit 2)  an argument was given
   unavailable(exit 5)  the state service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule list",
 		Annotations: map[string]string{
-			"output_schema": `{"schedules":"array"}`,
+			"output_schema": `{"schedules":[{"schedule_name":"string","cron_expression":"string","cron_words":"string","has_cron":"bool","paused":"bool","next_fire_at":"string","description":"string","timezone":"string","model_count":"number","has_active_run":"bool","last_run_id":"string","last_run_status":"string","last_run_at":"string","updated_by":"string","updated_at":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -98,29 +127,36 @@ Errors:
 func toListPayload(summaries []*runv1.ScheduleSummary) listPayload {
 	entries := make([]scheduleEntry, 0, len(summaries))
 	for _, s := range summaries {
-		e := scheduleEntry{
+		entries = append(entries, scheduleEntry{
 			ScheduleName:   s.GetScheduleName(),
 			CronExpression: s.GetCron(),
+			CronWords:      s.GetCronWords(),
+			HasCron:        s.GetCron() != "",
+			Paused:         s.GetPaused(),
+			NextFireAt:     timestampString(s.GetNextFireAt()),
 			Description:    s.GetDescription(),
 			Timezone:       s.GetTimezone(),
+			ModelCount:     s.GetModelCount(),
 			HasActiveRun:   s.GetHasActiveRun(),
 			LastRunId:      s.GetLastRunId(),
 			LastRunStatus:  s.GetLastRunStatus(),
-		}
-		// Omit last_run_at when the proto Timestamp is nil (never run).
-		if ts := s.GetLastRunAt(); ts != nil && ts.IsValid() {
-			e.LastRunAt = ts.AsTime().UTC().Format("2006-01-02T15:04:05Z")
-		}
-		entries = append(entries, e)
+			LastRunAt:      timestampString(s.GetLastRunAt()),
+			UpdatedBy:      s.GetUpdatedBy(),
+			UpdatedAt:      timestampString(s.GetUpdatedAt()),
+		})
 	}
 	return listPayload{Schedules: entries}
 }
 
 // humanList writes one line per schedule to stderr in the format:
 //
-//	<name>  running  last: <status> <time>
-//	<name>  idle     last: <status> <time>
-//	<name>  idle
+//	<name>  running  <cron>  last: <status> <time>
+//	<name>  idle     <cron>  last: <status> <time>
+//	<name>  idle     manual
+//
+// where <cron> is "<cron> <timezone> next <time>" for a scheduled schedule,
+// "<cron> <timezone> (paused)" for a paused one and "manual" for one with no
+// cron.
 func humanList(stderr io.Writer, summaries []*runv1.ScheduleSummary) error {
 	for _, s := range summaries {
 		state := "idle"
@@ -128,17 +164,32 @@ func humanList(stderr io.Writer, summaries []*runv1.ScheduleSummary) error {
 			state = "running"
 		}
 
+		cronPart := "manual"
+		if s.GetCron() != "" {
+			cronPart = s.GetCron() + " " + s.GetTimezone()
+			if s.GetPaused() {
+				cronPart += " (paused)"
+			} else if next := s.GetNextFireAt(); next != nil && next.IsValid() {
+				cronPart += " next " + shortTime(next)
+			}
+		}
+
 		lastPart := ""
 		if s.GetLastRunStatus() != "" {
 			lastPart = "  last: " + s.GetLastRunStatus()
 			if ts := s.GetLastRunAt(); ts != nil && ts.IsValid() {
-				lastPart += " " + ts.AsTime().UTC().Format("2006-01-02T15:04Z")
+				lastPart += " " + shortTime(ts)
 			}
 		}
 
-		if _, err := fmt.Fprintf(stderr, "%s  %s%s\n", s.GetScheduleName(), state, lastPart); err != nil {
+		if _, err := fmt.Fprintf(stderr, "%s  %s  %s%s\n", s.GetScheduleName(), state, cronPart, lastPart); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// shortTime renders ts in UTC to the minute, as "2006-01-02T15:04Z".
+func shortTime(ts *timestamppb.Timestamp) string {
+	return ts.AsTime().UTC().Format("2006-01-02T15:04Z")
 }
