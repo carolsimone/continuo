@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -12,10 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
-	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 )
@@ -70,7 +69,6 @@ func requireReused(t *testing.T, err error) {
 func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-retry"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	requestID := uuid.NewString()
 
@@ -102,7 +100,6 @@ func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-concurrent"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	req := &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: schedule}
 
@@ -138,7 +135,6 @@ func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
 func TestStartRun_ARefusedCallStoresNothing(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-refused"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	active := startRun(t, schedule)
 	requestID := uuid.NewString()
@@ -164,7 +160,6 @@ func TestStartRun_TheSameRequestIDInTwoTenantsIsTwoRuns(t *testing.T) {
 	require.NoError(t, err)
 	releaseLeasesOf(t, stateDB, other.runID)
 	const schedule = "rs-two-tenants"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	requestID := uuid.New()
 	alice := identity.FromUserID("okta|alice")
@@ -203,7 +198,6 @@ func failedSource(t *testing.T, schedule string) string {
 func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rerun-retry"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
@@ -225,7 +219,6 @@ func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
 func TestTriggerRebase_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rebase-retry"
-	seedActiveSchedule(t, schedule)
 	live := promoteSchedules(t, stateDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
@@ -280,7 +273,6 @@ func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-active"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	r1 := startRun(t, schedule)
 	requestID := uuid.NewString()
@@ -293,8 +285,7 @@ func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *t
 	endCancelled(t, r1)
 
 	h := newBuiltHarness(stateDB)
-	r2, outcome, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), pkgevents.DefaultTenantID, schedule,
-		run.KindCron, nil, identity.System(), model.OperationRun)
+	r2, outcome, err := h.fire(ctx, pkgevents.DefaultTenantID, schedule, time.Now().Truncate(time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 	t.Cleanup(func() { finishRun(t, r2.String()) })
@@ -314,7 +305,6 @@ func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *t
 func TestCancelActiveRun_NoActiveRunStoresNothing(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-none"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	requestID := uuid.NewString()
 	cancel := &runv1.CancelActiveRunRequest{RequestId: requestID, ScheduleName: schedule}
@@ -336,7 +326,6 @@ func TestCancelActiveRun_NoActiveRunStoresNothing(t *testing.T) {
 func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-run"
-	seedActiveSchedule(t, schedule)
 	promoteSchedules(t, stateDB, schedule)
 	r := startRun(t, schedule)
 	outbox := func() int {
@@ -378,7 +367,6 @@ func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 func TestPreviewRebase_IsServedOnRunService(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-preview"
-	seedActiveSchedule(t, schedule)
 	live := promoteSchedules(t, stateDB, schedule)
 	src := failedSource(t, schedule)
 

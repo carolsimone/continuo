@@ -34,7 +34,14 @@ let releaseHeldPoll: (() => void) | null;
 function scheduleNow() {
   return {
     schedule_name: 'daily',
-    cron_expression: '0 0 * * *',
+    cron: '0 0 * * *',
+    paused: false,
+    next_fire_at: null,
+    version: 1,
+    updated_by: '',
+    updated_at: null,
+    model_count: 1,
+    cron_words: '',
     description: '',
     timezone: 'UTC',
     has_active_run: phase !== 'cancelled',

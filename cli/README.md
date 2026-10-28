@@ -11,6 +11,10 @@ Multiple commands implemented:
 continuo schedule trigger <schedule-name>
 continuo schedule list
 continuo schedule graph <schedule-name>
+continuo schedule set-cron <name> <cron> <timezone> [description]
+continuo schedule remove-cron <name>
+continuo schedule pause <name>
+continuo schedule resume <name>
 continuo node list [--search <table>] [--service <name>] [--operation run|test|build] [--limit N] [--offset N]
 ```
 
@@ -76,9 +80,16 @@ Every command that starts a run or cancels a schedule's active run
 `run rerun` and `run rebase`) sends one request id per invocation:
 `CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
 answers a repeat of the same id and arguments with the run the first call made
-and writes nothing. The client retries such a command up to three tries on
-UNAVAILABLE (100 ms, then 400 ms apart) with the same id; it never retries a
-read, and it does not retry a refusal for maintenance mode.
+and writes nothing. The client retries such a command, with the same id, up to
+three tries in all (100 ms, then 400 ms apart) when the state service answers
+UNAVAILABLE, or ABORTED because concurrent calls of the same id kept rolling
+back. It does not retry a refusal for maintenance mode, and it never retries a
+read. A schedule edit (`set-cron`, `remove-cron`, `pause`, `resume`) sends no
+request id and is retried the same way on UNAVAILABLE only: its ABORTED is a
+stale version, which sending the same request again cannot settle (a first
+cron, sent with no version, is ABORTED only when other edits saved first on
+three tries in a row). `set-cron` answers that ABORTED itself, by reading the
+schedule again and saving once more; `pause` and `resume` exit 4 (see below).
 
 With `--human`, stdout is empty and a single line is written to stderr:
 
@@ -88,12 +99,64 @@ Triggered run <uuid> for schedule '<name>'
 
 ### `schedule list`
 
-Lists all schedules. Calls RunService.ListSchedules. Success prints a
-JSON object to stdout:
+Lists all schedules: every name the live release has and every name that has
+a cron. Calls RunService.ListSchedules. Success prints a JSON object to
+stdout:
 
 ```json
-{"schedules":[{"schedule_name":"...","cron_expression":"...","has_active_run":false}]}
+{"schedules":[{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00","has_cron":true,"paused":false,"version":3,"next_fire_at":"2026-10-28T00:00:00Z","description":"Runs daily at 1am","timezone":"Europe/Paris","model_count":41,"has_active_run":false,"last_run_id":"…","last_run_status":"succeeded","last_run_at":"2026-10-27T00:00:00Z","updated_by":"alice@example.com","updated_at":"2026-10-21T12:02:00Z"}]}
 ```
+
+A schedule is scheduled (`has_cron` and not `paused`), paused, or manual
+(`has_cron` false: it runs only when triggered). `description`, `cron_words`,
+`next_fire_at`, `last_run_at`, `updated_by` and `updated_at` are omitted when
+empty. `cron` and `version` are the fields `set-cron`, `pause` and `resume`
+print for the schedule they saved; `version` counts the edits of the cron, from
+1, and is 0 while the schedule has no cron. `model_count` is how many models of
+the live release carry the schedule's tag.
+
+### `schedule set-cron <name> <cron> <timezone> [description]`
+
+Sets when a schedule runs on its own. Pass the five fields of the cron as one
+argument (in a shell, quote it). The command re-sends the schedule's current
+paused flag and description along with the cron, so a pause is kept; without
+`[description]` the current description is kept, and a blank one is a usage
+error. It sends the version it read as the expected version, so a pause saved since
+is never overwritten (a `[description]` you pass replaces the stored one): on a
+conflict it reads the schedule again and saves once more, and a second conflict
+exits 4 with `changed by <who> while this ran; run it again`. The cron itself is last-write-wins. A first cron is saved with no
+version. Calls RunService.UpsertSchedule, then PreviewSchedule for the words.
+Success prints:
+
+```json
+{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00","timezone":"Europe/Paris","description":"Runs daily at 1am","paused":false,"version":4,"next_fire_times":["2026-10-28T00:00:00Z","2026-10-29T00:00:00Z","2026-10-30T00:00:00Z"]}
+```
+
+A name no model of the live release carries, with no cron yet, is
+`not_found` (exit 3), with a `did you mean` when a listed name differs only by
+case; a cron or timezone the parser refuses is `usage` (exit 2) with the
+parser's message.
+
+### `schedule pause <name>` and `schedule resume <name>`
+
+Read the schedule and save it back with `paused` flipped, its cron, timezone
+and description kept, and its version as the expected version. Another edit
+in between exits 4 with `changed by <who> while this ran; run it again`.
+A schedule already in the requested state succeeds with `"changed":false` and
+nothing is saved; a schedule with no cron has nothing to pause or resume
+(`not_found`, exit 3). Success prints:
+
+```json
+{"schedule_name":"hourly","paused":false,"changed":true,"cron":"0 * * * *","timezone":"Europe/Paris","version":6,"next_fire_at":"2026-10-28T09:00:00Z"}
+```
+
+`pause` prints the same without `next_fire_at`.
+
+### `schedule remove-cron <name>`
+
+Removes the cron of a schedule, which then runs only when triggered. Calls
+RunService.DeleteSchedule. Removing the cron of a schedule that has none
+succeeds. Success prints `{"schedule_name":"daily","has_cron":false}`.
 
 ### `schedule graph <schedule-name>`
 
@@ -194,6 +257,12 @@ Triggered run cd4423ae-9161-4773-aa43-3ec087f24a0a for schedule 'daily_ingest'
 - **Thin client, server owns the rules.** Pre-conditions (schedule
   exists, no concurrent run, …) are enforced by the state service. The
   CLI only translates gRPC status codes into exit codes and JSON shapes.
-- **No retries, no backoff.** The `retryable` bit is advice for the
-  caller. The CLI exits immediately so the caller (agent, shell loop,
-  CI step) owns the retry policy.
+- **Bounded retries, the caller owns the rest.** The client repeats only
+  what is safe to repeat: a command that starts a run or cancels a
+  schedule's active run (same request id; up to three tries, 100 ms then
+  400 ms apart, on UNAVAILABLE or ABORTED) and a schedule edit (on
+  UNAVAILABLE only). `set-cron` also reads
+  the schedule again and saves once more after a stale version. Any other
+  error, and any error left once those tries are spent, exits at once. The
+  `retryable` bit is advice for the caller (agent, shell loop, CI step), who
+  owns any further retry policy.

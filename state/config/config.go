@@ -45,9 +45,6 @@ type Config struct {
 	// HTTP health
 	HealthPort string
 
-	// Scheduler
-	SchedulesConfigPath string
-
 	// Retention sweeper — purges processed outbox rows older than
 	// RetentionDays, message_processing dedup rows, in any state, older than
 	// the longer of RetentionDays and the 30-day replay horizon, and promoted
@@ -90,9 +87,8 @@ func Load(v *pkgconfig.Validator) Config {
 		Postgres: pkgconfig.LoadPostgres(v),
 		S3:       pkgconfig.LoadS3(v),
 
-		GRPCPort:            envInt("GRPC_PORT", 50051),
-		HealthPort:          env("HEALTH_PORT", "8082"),
-		SchedulesConfigPath: env("SCHEDULES_CONFIG_PATH", "/etc/continuo/schedules.yaml"),
+		GRPCPort:   envInt("GRPC_PORT", 50051),
+		HealthPort: env("HEALTH_PORT", "8082"),
 
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),

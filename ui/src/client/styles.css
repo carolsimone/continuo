@@ -32,10 +32,15 @@ body {
   overflow: hidden;
 }
 
+/* The header wraps onto a second line when its facts and controls do not
+   fit, and each fact keeps to one line, so a narrow card moves the controls
+   down rather than breaking the cron or its next fire across lines. */
 .scheduler-card-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  row-gap: 8px;
   padding: 14px 16px;
   cursor: pointer;
   user-select: none;
@@ -43,6 +48,16 @@ body {
 
 .scheduler-card-header:hover {
   background: #f9fafb;
+}
+
+/* The card's controls (Operation, Trigger, Cancel, Edit cron) stay together,
+   right-aligned, and move to the next line as one group. */
+.scheduler-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
 }
 
 .schedule-name {
@@ -53,6 +68,7 @@ body {
 .timestamps {
   color: #6b7280;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .expand-toggle {
@@ -81,8 +97,10 @@ body {
 .status-skipped    { background: #f3f4f6; color: #6b7280; }
 .status-never-run  { background-color: #888; color: #fff; }
 
-/* Activity badge: whether the schedule matches an entry in schedules.yaml. */
-.activity-badge {
+/* Schedule pill: whether the schedule runs on its own. scheduled has a cron
+   that fires, paused has a cron and starts nothing on its own, manual has no
+   cron and runs only when triggered. */
+.schedule-pill {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 12px;
@@ -93,15 +111,20 @@ body {
   border: 1px solid transparent;
 }
 
-.activity-badge--active   { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
-.activity-badge--inactive { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+.schedule-pill--scheduled { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.schedule-pill--paused    { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.schedule-pill--manual    { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
 
-/* Cron expression + timezone, shown only for active schedules. */
+/* The cron and its timezone, on a schedule that has a cron; struck through
+   while paused. */
 .schedule-cron {
   color: #6b7280;
   font-size: 12px;
   font-family: monospace;
+  white-space: nowrap;
 }
+
+.schedule-cron--paused { text-decoration: line-through; }
 
 /* Task table */
 .task-table {
@@ -753,7 +776,8 @@ a.release-author:hover { text-decoration: underline; }
   color: #0f172a;
 }
 
-.dialog-label {
+.dialog-label,
+.dialog-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -762,6 +786,24 @@ a.release-author:hover { text-decoration: underline; }
   color: #475569;
 }
 
+/* A field's muted lines under its control: a hint in the format it expects,
+   and a line saying what the value means. */
+.dialog-field__hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #94a3b8;
+}
+.dialog-field__words {
+  font-size: 12px;
+  font-weight: 400;
+  color: #374151;
+}
+/* The words line is a live region that is in the page before the server has
+   read the value, so its first answer is announced. Until then it is drawn
+   as nothing, and the field's gap above it is taken back. */
+.dialog-field__words:empty { margin-top: -5px; }
+
+.dialog-input,
 .dialog-select,
 .dialog-textarea {
   padding: 7px 10px;
@@ -775,8 +817,25 @@ a.release-author:hover { text-decoration: underline; }
   transition: border-color 0.15s;
 }
 
+.dialog-input:focus,
 .dialog-select:focus,
 .dialog-textarea:focus { border-color: #a5b4fc; }
+
+.dialog-input--mono { font-family: 'SF Mono', 'Fira Mono', monospace; }
+.dialog-input[aria-invalid="true"] { border-color: #fca5a5; background: #fffafa; }
+
+/* An action that undoes what the dialog edits, in a row of its own above the
+   footer, with what it leaves behind beside it; a long note wraps its own
+   text rather than dropping below the button. */
+.dialog-remove-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+}
+.dialog-remove-row > .btn { flex-shrink: 0; }
+.dialog-remove-row__note { min-width: 0; font-size: 11.5px; color: #6b7280; }
 
 .dialog-textarea { resize: vertical; }
 
@@ -906,6 +965,16 @@ a.release-author:hover { text-decoration: underline; }
 }
 .pick-row__sep,
 .preview-facts__sep { color: #cbd5e1; }
+
+/* A preview row of one short fact and its value, on one line. */
+.preview-row--line {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #111827;
+}
 
 /* A preview section groups a section header with its summary line or list. */
 .preview-section {

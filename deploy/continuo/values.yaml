@@ -422,15 +422,15 @@ runs:
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
-# runs, triggers, releases, remediation retries and dead-letter redrives with
-# HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in maintenance mode";
-# state skips cron fires (they are not caught up afterwards); release-controller
-# activates no queued release; agent-remediation records each fix attempt that
-# comes due as skipped, and **Retry remediation** starts it once maintenance is
-# off. Runs, releases and fix verifications already in progress complete.
-# Enforced by ui, state, release-controller, agent-remediation and
-# dead-letter-controller, which refuse to start on any value other than true or
-# false. Changing it restarts every continuo service (the shared ConfigMap
+# runs, triggers, releases, remediation retries, schedule edits and dead-letter
+# redrives with HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in
+# maintenance mode"; state consumes each cron slot that comes due with no run
+# (it is not caught up afterwards); release-controller activates no queued
+# release; agent-remediation records each fix attempt that comes due as
+# skipped, and **Retry remediation** starts it once maintenance is off. Runs,
+# releases and fix verifications already in progress complete. Enforced by ui,
+# state, release-controller, agent-remediation and dead-letter-controller, which
+# refuse to start on any value other than true or false. Changing it restarts every continuo service (the shared ConfigMap
 # changes); turn it on with
 #   helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true
 # and off again with --set maintenance.enabled=false.
@@ -451,17 +451,19 @@ database:
   # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
   # agent-chat 20/5, dead-letter-controller 12/5). Each limit is a cap per pod,
   # and the sum of the caps is the worst case: with the defaults and one
-  # replica of each service, 152 pooled connections plus nine LISTEN
+  # replica of each service, 152 pooled connections plus ten LISTEN
   # connections: one in each pod of the seven services that run an outbox
-  # relay (every Go service except agent-chat), and a second in state (its
-  # node lease waker) and in execution-controller (its dispatcher); 161 in all.
+  # relay (every Go service except agent-chat), a second in
+  # execution-controller (its dispatcher), and a second and a third in state
+  # (its node lease waker and its cron loop); 162 in all.
   # Consumers handle one message at a time, so steady-state use is far lower.
   # The LISTEN connections sit outside the pool and need a session-mode path
   # to Postgres. Behind a transaction-mode pooler the relays publish on their
   # 5 s poll instead of on commit, execution-controller's dispatcher starts
-  # queued work on its 5 s poll, and state grants a freed node lease on its
+  # queued work on its 5 s poll, state grants a freed node lease on its
   # lease waker's 60 s pass or the attempt reconcile's pass, which grants freed
-  # nodes before it looks for stalled runs.
+  # nodes before it looks for stalled runs, and state's cron loop sees a cron
+  # edit on its next pass, at most 60 s later.
   # maxOpenConns applies to every Go service, orchestrator included, whose 13
   # consumers need about two connections each: do not set it below about 30,
   # or handlers that hold a transaction and need a second connection stall
@@ -640,17 +642,6 @@ services:
       POSTGRES_DB: continuo_state
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
-      SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
-    volumeMounts:
-      - {name: schedules, mountPath: /etc/continuo, readOnly: true}
-    # state reads schedules.yaml only at startup. An empty configMap.name mounts
-    # the chart's schedules ConfigMap (files/schedules.yaml), whose digest is on
-    # the pod template, so `helm upgrade` rolls state when it changes. Helm cannot
-    # hash a ConfigMap of your own named here: after editing it, run
-    # `kubectl rollout restart deployment/state`.
-    volumes:
-      - name: schedules
-        configMap: {name: ""}
 
   - name: orchestrator
     enabled: true

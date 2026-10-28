@@ -4,13 +4,22 @@ import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-libra
 import { MemoryRouter, Routes, Route } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary, Task } from '../../src/client/types';
+import { AuthContext } from '../../src/client/auth/AuthContext';
+import type { AuthUser } from '../../src/client/auth/useAuth';
 
 function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary {
   return {
     schedule_name: 'hourly-events',
-    cron_expression: '0 * * * *',
-    description: '',
+    cron: '0 * * * *',
     timezone: 'UTC',
+    description: '',
+    paused: false,
+    next_fire_at: null,
+    version: 1,
+    updated_by: 'alice@example.com',
+    updated_at: '2026-10-21T12:02:00.000Z',
+    model_count: 6,
+    cron_words: 'every hour',
     has_active_run: true,
     last_run_at: null,
     last_run_status: 'pending',
@@ -19,11 +28,16 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
   };
 }
 
-function renderCard(schedule: ScheduleSummary) {
+const OPERATOR: AuthUser = { userId: 'u1', email: 'op@example.com', name: 'Op', role: 'operator' };
+const VIEWER: AuthUser = { userId: 'u2', email: 'viewer@example.com', name: 'Viewer', role: 'viewer' };
+
+function renderCard(schedule: ScheduleSummary, user: AuthUser | null = null) {
   return render(
-    <MemoryRouter>
-      <SchedulerCard schedule={schedule} onRunChanged={() => {}} />
-    </MemoryRouter>,
+    <AuthContext.Provider value={user}>
+      <MemoryRouter>
+        <SchedulerCard schedule={schedule} onRunChanged={() => {}} />
+      </MemoryRouter>
+    </AuthContext.Provider>,
   );
 }
 
@@ -235,32 +249,148 @@ describe('SchedulerCard — drift strip', () => {
   });
 });
 
-describe('SchedulerCard — activity badge', () => {
-  it('shows Active with cron + timezone when the schedule is in schedules.yaml', () => {
+describe('SchedulerCard — schedule pill and cron', () => {
+  it('SchedulerCard shows a scheduled pill, the cron with its timezone and the next fire in that timezone', () => {
     const { container } = renderCard(baseSchedule({
-      cron_expression: '0 1 * * *',
+      cron: '0 1 * * *',
       timezone: 'Europe/Paris',
+      next_fire_at: '2026-10-28T00:00:00.000Z',
+      cron_words: 'every day at 01:00',
       has_active_run: false,
       last_run_id: 'r1',
     }));
-    expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.queryByText('Inactive')).toBeNull();
-    const cron = container.querySelector('.schedule-cron');
-    expect(cron).not.toBeNull();
-    expect(cron).toHaveTextContent('0 1 * * *');
-    expect(cron).toHaveTextContent('Europe/Paris');
+    const pill = container.querySelector('.schedule-pill')!;
+    expect(pill).toHaveTextContent('scheduled');
+    expect(pill.className).toMatch(/\bschedule-pill--scheduled\b/);
+    const cron = container.querySelector('.schedule-cron')!;
+    expect(cron).toHaveTextContent('0 1 * * * · Europe/Paris');
+    expect(cron.className).not.toMatch(/\bschedule-cron--paused\b/);
+    expect(cron).toHaveAttribute('title', 'every day at 01:00');
+    expect(screen.getByText('next 28 Oct 01:00')).toBeInTheDocument();
   });
 
-  it('shows Inactive and no cron text when the schedule is not in schedules.yaml', () => {
+  it('SchedulerCard shows a paused pill, the cron struck through and who paused it', () => {
     const { container } = renderCard(baseSchedule({
-      cron_expression: '',
-      timezone: '',
+      cron: '0 * * * *',
+      paused: true,
+      next_fire_at: null,
+      updated_by: 'bob@example.com',
+      updated_at: '2026-10-27T13:02:00.000Z',
       has_active_run: false,
       last_run_id: 'r1',
     }));
-    expect(screen.getByText('Inactive')).toBeInTheDocument();
-    expect(screen.queryByText('Active')).toBeNull();
+    const pill = container.querySelector('.schedule-pill')!;
+    expect(pill).toHaveTextContent('paused');
+    expect(pill.className).toMatch(/\bschedule-pill--paused\b/);
+    expect(container.querySelector('.schedule-cron')!.className).toMatch(/\bschedule-cron--paused\b/);
+    expect(screen.getByText(/^paused by bob@example\.com · 27 Oct \d\d:\d\d$/)).toBeInTheDocument();
+    expect(screen.queryByText(/^next /)).toBeNull();
+  });
+
+  it('SchedulerCard shows a manual pill, no cron span and Add cron to an operator', () => {
+    const { container } = renderCard(baseSchedule({
+      cron: '', timezone: '', paused: false, version: 0, updated_by: '', updated_at: null, cron_words: '',
+      has_active_run: false, last_run_id: 'r1',
+    }), OPERATOR);
+    const pill = container.querySelector('.schedule-pill')!;
+    expect(pill).toHaveTextContent('manual');
+    expect(pill.className).toMatch(/\bschedule-pill--manual\b/);
     expect(container.querySelector('.schedule-cron')).toBeNull();
+    expect(screen.getByText('no cron: runs only when triggered')).toBeInTheDocument();
+    const add = screen.getByRole('button', { name: 'Add cron' });
+    expect(add.className).toMatch(/\bbtn--secondary\b/);
+    expect(screen.queryByRole('button', { name: 'Edit cron' })).toBeNull();
+  });
+
+  it('SchedulerCard shows Edit cron to an operator and no button to a viewer', () => {
+    const scheduled = baseSchedule({ has_active_run: false, last_run_id: 'r1' });
+    renderCard(scheduled, OPERATOR);
+    const edit = screen.getByRole('button', { name: 'Edit cron' });
+    expect(edit.className).toMatch(/\bbtn\b/);
+    expect(edit.className).toMatch(/\bbtn--secondary\b/);
+    cleanup();
+
+    renderCard(scheduled, VIEWER);
+    expect(screen.queryByRole('button', { name: 'Edit cron' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add cron' })).toBeNull();
+    cleanup();
+
+    renderCard(baseSchedule({ cron: '', has_active_run: false, last_run_id: 'r1' }), VIEWER);
+    expect(screen.queryByRole('button', { name: 'Add cron' })).toBeNull();
+  });
+
+  it('SchedulerCard shows the warning strip on a scheduled name with no models', () => {
+    const { container } = renderCard(baseSchedule({
+      schedule_name: 'weekly', cron: '0 3 * * 1', model_count: 0, has_active_run: false, last_run_id: 'r1',
+    }));
+    const strip = container.querySelector('.info-strip--warning')!;
+    expect(strip).not.toBeNull();
+    expect(strip).toHaveTextContent(
+      'No model in the live release has the tag weekly. Each fire records a failed run until a release brings them back, or you remove its cron.',
+    );
+    expect(strip.querySelector('b')).toHaveTextContent('weekly');
+  });
+
+  it('SchedulerCard shows no model warning on a paused or a manual name with no models, nor on a scheduled one with models', () => {
+    const cases = [
+      baseSchedule({ cron: '0 3 * * 1', paused: true, model_count: 0 }),
+      baseSchedule({ cron: '', model_count: 0 }),
+      baseSchedule({ cron: '0 3 * * 1', model_count: 4 }),
+    ];
+    for (const schedule of cases) {
+      renderCard({ ...schedule, has_active_run: false, last_run_id: 'r1' });
+      expect(screen.queryByText(/No model in the live release has the tag/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('SchedulerCard Edit cron opens the dialog without navigating the card', async () => {
+    const schedule = baseSchedule({ has_active_run: false, last_run_id: 'r1' });
+    render(
+      <AuthContext.Provider value={OPERATOR}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<SchedulerCard schedule={schedule} onRunChanged={() => {}} />} />
+            <Route path="/schedule/:name" element={<div>SCHEDULE DETAIL</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit cron' }));
+    expect(await screen.findByRole('heading', { name: 'Edit cron · hourly-events' })).toBeInTheDocument();
+    // Clicking inside the dialog does not reach the card either.
+    fireEvent.click(screen.getByLabelText('Description'));
+    await Promise.resolve();
+    expect(screen.queryByText('SCHEDULE DETAIL')).toBeNull();
+  });
+
+  it('SchedulerCard keeps the dialog it opened when a poll adds a cron meanwhile, and reads the list again on close', async () => {
+    const onRunChanged = vi.fn();
+    const manualSchedule = baseSchedule({ cron: '', version: 0, has_active_run: false, last_run_id: 'r1' });
+    const view = render(
+      <AuthContext.Provider value={OPERATOR}>
+        <MemoryRouter>
+          <SchedulerCard schedule={manualSchedule} onRunChanged={onRunChanged} />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add cron' }));
+    expect(await screen.findByRole('heading', { name: 'Add cron · hourly-events' })).toBeInTheDocument();
+
+    view.rerender(
+      <AuthContext.Provider value={OPERATOR}>
+        <MemoryRouter>
+          <SchedulerCard schedule={baseSchedule({ cron: '0 2 * * *', version: 1, has_active_run: false, last_run_id: 'r1' })} onRunChanged={onRunChanged} />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+    expect(screen.getByRole('heading', { name: 'Add cron · hourly-events' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove cron' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onRunChanged).toHaveBeenCalledTimes(1);
   });
 });
 

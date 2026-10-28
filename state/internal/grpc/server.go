@@ -20,14 +20,16 @@ type Server struct {
 	logger     *slog.Logger
 }
 
-// MaintenanceGatedMethods are the RPCs that start a run. While maintenance mode
-// is on they are refused before their handler runs; cancels and reads,
-// PreviewRebase among them, are not.
+// MaintenanceGatedMethods are the RPCs that start a run or change a schedule.
+// While maintenance mode is on they are refused before their handler runs;
+// cancels and reads, PreviewRebase and PreviewSchedule among them, are not.
 var MaintenanceGatedMethods = []string{
 	runv1.RunService_StartRun_FullMethodName,
 	runv1.RunService_TriggerRerun_FullMethodName,
 	runv1.RunService_TriggerRebase_FullMethodName,
 	runv1.RunService_TriggerSingleNodeRun_FullMethodName,
+	runv1.RunService_UpsertSchedule_FullMethodName,
+	runv1.RunService_DeleteSchedule_FullMethodName,
 }
 
 // NewServer creates a gRPC server on port that serves runService. With

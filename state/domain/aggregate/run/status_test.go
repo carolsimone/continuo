@@ -69,7 +69,7 @@ func TestRunStatus_CancellingIsActiveAndNotTerminal(t *testing.T) {
 	}
 	for _, s := range run.RunStatuses() {
 		r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", s, run.KindCron, nil, "", "",
-			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0)
 		wantActive := s == run.RunStatusPending || s == run.RunStatusRunning ||
 			s == run.RunStatusCancelling
 		if r.IsActive() != wantActive {
@@ -101,7 +101,7 @@ func TestActiveRunStatuses_AreTheStatusesOfTheActiveRuns(t *testing.T) {
 	var want []run.RunStatus
 	for _, s := range run.RunStatuses() {
 		r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", s, run.KindCron, nil, "", "",
-			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0)
 		if r.IsActive() {
 			want = append(want, s)
 		}

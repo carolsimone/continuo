@@ -17,8 +17,7 @@ import (
 type ReleasePromotionRepository interface {
 	// PromoteRelease applies the release's topology when promotionSeq is greater
 	// than the live promotion's, recording release_id and promotionSeq on :Meta
-	// and serviceMetadata and promotionSeq on :TopologyRoot in the same
-	// transaction. It returns PromotionApplied when it swapped,
+	// and promotionSeq on :TopologyRoot in the same transaction. It returns PromotionApplied when it swapped,
 	// PromotionRedelivered when the same promotion is already live, and
 	// PromotionStale when a newer promotion is live; in the last two cases the
 	// graph is untouched.
@@ -27,7 +26,6 @@ type ReleasePromotionRepository interface {
 		releaseID string,
 		promotionSeq int64,
 		nodes []topology.ReleasePromotedTopologyNode,
-		serviceMetadata map[string]map[string]string,
 		now time.Time,
 	) (topology.PromotionOutcome, error)
 }

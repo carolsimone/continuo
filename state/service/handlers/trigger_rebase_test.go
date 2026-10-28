@@ -99,7 +99,9 @@ func (r *releaseGraphs) Graph(_ context.Context, _, releaseID string, keys []top
 
 // requestRecords is an in-memory CommandRequestRepository: Claim stores a
 // record under an id it does not hold yet.
-type requestRecords struct{ rows map[uuid.UUID]commandrequest.Record }
+type requestRecords struct {
+	rows map[uuid.UUID]commandrequest.Record
+}
 
 var _ repository.CommandRequestRepository = (*requestRecords)(nil)
 
@@ -159,7 +161,7 @@ func newRebaseFixtureOf(t *testing.T, tenantID string) *rebaseFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
 	source := run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusFailed, run.KindCron, nil,
-		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
+		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &rebaseFixture{
 		u:      &uow.FakeUnitOfWork{},

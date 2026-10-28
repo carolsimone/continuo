@@ -42,21 +42,9 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Seed topology directly into Neo4j + schedule_catalog.
+	// Announce the e2e DAG. seedTopology returns once state's live release has
+	// the seed schedule's models, which is what StartRun needs to know it.
 	seedTopology(t, ctx, clients)
-
-	// Verify "seed" schedule is in the catalog (required by StartRun)
-	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		var count int
-		err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM schedule_catalog WHERE schedule_name = $1 AND removed_at IS NULL`,
-			scheduleName,
-		).Scan(&count)
-		if err != nil {
-			return false, err
-		}
-		return count > 0, nil
-	}, "Timeout waiting for 'seed' to appear in schedule_catalog")
 
 	// === Run 1 ===
 	t.Log("=== Run 1: Triggering seed schedule via ui HTTP ===")

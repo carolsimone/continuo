@@ -41,6 +41,10 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewRunsCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewGraphCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewCancelCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewSetCronCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewRemoveCronCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewPauseCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewResumeCommand(defaultFactory, cfg, stdout, stderr))
 	return cmd
 }
 

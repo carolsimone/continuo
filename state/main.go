@@ -22,24 +22,25 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/http"
 	statemetrics "github.com/carolsimone/continuo/state/adapters/metrics"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
-	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
-	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	"github.com/carolsimone/continuo/state/service/commands"
+	"github.com/carolsimone/continuo/state/service/cronloop"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/runstart"
+	"github.com/carolsimone/continuo/state/service/schedules"
 	"github.com/carolsimone/continuo/state/service/seedreconcile"
 	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -66,6 +67,10 @@ const attemptReconcileInterval = 60 * time.Second
 // leaseWakerInterval is how often the lease waker passes when no release of a
 // node lease wakes it sooner.
 const leaseWakerInterval = 60 * time.Second
+
+// cronLoopTick is the longest the cron loop sleeps between passes when no
+// schedule's next fire, and no change to the schedules, wakes it sooner.
+const cronLoopTick = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -185,8 +190,6 @@ func main() {
 
 	// Initialize repositories
 	runRepo := postgres.NewRunRepository(db, logger)
-	catalogRepo := postgres.NewCatalogRepository(db, logger)
-	logger.Info("Schedule catalog repository initialized")
 	taskCollection := postgres.NewTaskCollection(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
@@ -270,13 +273,22 @@ func main() {
 
 	clk := ports.SystemClock{}
 
+	// The parser rebuilds each stored schedule's expression from its cron and
+	// timezone. It is built once, so a failure to build it stops the service
+	// before any consumer starts.
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
+
 	// UoW factory shared by every stream binding below. Each invocation
 	// returns a fresh PostgresUnitOfWork over the same *sqlx.DB, so concurrent
 	// message handlers do not share transaction state.
-	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
-	// TaskCollection) per accessor call.
+	// The UoW builds tx-bound aggregate adapters (Run, Outbox, TaskCollection,
+	// Schedules, LiveScheduleModels) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger, postgres.WithCronParser(cronParser))
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update
@@ -364,12 +376,6 @@ func main() {
 		timeout time.Duration
 	}{
 		{
-			name:    "schedule_catalog",
-			stream:  streams.SchedulesLoadedV1,
-			group:   streams.StateScheduleCatalog,
-			binding: redis.NewScheduleCatalogBinding(uowFactory, svchandlers.NewScheduleCatalogHandler(logger), logger),
-		},
-		{
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.StateTaskStatusUpdated,
@@ -433,37 +439,29 @@ func main() {
 	// pass.
 	planner := runstart.Planner{Tasks: taskDefaults}
 
-	// Initialize activation handler shared by the cron loop and gRPC methods.
-	activateHandler := svchandlers.NewStartRunHandler(planner, logger)
-	logger.Info("Activation handler initialized")
-
-	// Load schedules config — fail fast if missing or malformed
-	schedulesConfig, err := scheduler.LoadSchedulesConfig(cfg.SchedulesConfigPath)
+	// The cron loop fires the due schedules of every tenant, each under the
+	// tenant of its row: in one transaction per schedule it starts the run of
+	// the latest due slot and moves the schedule's next fire on. It passes at
+	// startup, when the earliest next fire comes, on every notification the
+	// schedules table's trigger sends once a change to it commits, and every
+	// cronLoopTick. Each fire is bounded by cronloop.FireTimeout. Maintenance
+	// mode consumes each due slot with no run. Its goroutine is tracked, and
+	// shutdown cancels its context before draining it: a fire in progress
+	// rolls back, and its slot fires once, late, on a later pass.
+	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.SchedulesChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the schedules listener")
+		os.Exit(0)
+	}
 	if err != nil {
-		logger.Error("Failed to load schedules config", "error", err)
+		logger.Error("Failed to listen for schedule changes", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
-
-	// Initialize cron scheduler
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig, cfg.Maintenance)
-	if err != nil {
-		logger.Error("Failed to create cron scheduler", "error", err)
-		os.Exit(1)
-	}
-
-	// Register cron scheduler cleanup
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Stopping cron scheduler")
-		return cronScheduler.Stop(ctx)
-	})
-
-	// Start cron scheduler
-	if err := cronScheduler.Start(); err != nil {
-		logger.Error("Failed to start cron scheduler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("Cron scheduler started")
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return schedulesListener.CloseContext(ctx) })
+	cronLoop := cronloop.New(uowFactory, svchandlers.NewStartRunHandler(planner, logger), runMetrics, cfg.Maintenance, logger)
+	lifecycleManager.Go(func() { cronLoop.Run(ctx, schedulesListener.Wake(), cronLoopTick) })
 
 	// The RunService edge acts for the tenant the identity interceptor placed
 	// on each request's context; its reads are bound to that tenant per
@@ -472,15 +470,22 @@ func main() {
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
+	// The schedules service edits each tenant's crons one statement at a time
+	// on the autocommit db: a save while the cron loop holds the schedule's
+	// row for a fire waits for that fire to commit.
+	scheduleService := schedules.New(
+		postgres.NewScheduleRepository(db, nil, cronParser, logger),
+		postgres.NewLiveScheduleModelRepository(db),
+		runRepo, cronParser, clk,
+	)
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
 		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
 		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
-		Schedules:      runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
 		Graphs:         runreads.New(runReadRepo),
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),
-	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), logger)
+	}, svchandlers.NewRunCommands(uowFactory, runMetrics, planner, logger), scheduleService, logger)
 
 	// Create gRPC server
 	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, runService, logger, cfg.Maintenance)

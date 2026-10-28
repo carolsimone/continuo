@@ -109,6 +109,9 @@ func (*countingMetrics) LeaseWaiters(int)              {}
 func (*countingMetrics) LeaseGranted(time.Duration)    {}
 func (*countingMetrics) LeaseRepaired()                {}
 func (*countingMetrics) CommandRequest(string, string) {}
+func (*countingMetrics) CronFire(string)               {}
+func (*countingMetrics) CronFires(string, int)         {}
+func (*countingMetrics) Schedules(int, int)            {}
 
 // runs serves the runs it holds for update, each only under its own tenant,
 // and records every load and save.
@@ -450,7 +453,7 @@ func idleRunOf(tenantID string, idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
 	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system",
-		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
+		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1)
 }
 
 // errorLines returns the lines of logs logged at error level.

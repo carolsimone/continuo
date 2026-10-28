@@ -123,12 +123,14 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 
 // seedTopology installs the full e2e topology through release-controller's
 // announce-topology: release-controller writes the artifact, takes the next
-// promotion seq and queues release.promoted:v2, and the orchestrator applies it
-// on the path a promoted release takes — Neo4j :Table/:DEPENDS_ON, :Meta and
-// :TopologyRoot, schedules.loaded -> schedule_catalog. It skips validation, so
-// it can seed any topology, including the intentionally failing ftable_* DAGs
-// whose runs fail at execution time. It returns the announcement, whose
-// promotion seq new runs carry.
+// promotion seq and queues release.promoted:v2, which both readers apply on the
+// path a promoted release takes — the orchestrator's Neo4j :Table/:DEPENDS_ON,
+// :Meta and :TopologyRoot, and state's topology_nodes and live_release, from
+// which state reads each schedule's models. It returns once both have applied
+// it and state's live release has a model of every schedule the DAG declares.
+// It skips validation, so it can seed any topology, including the
+// intentionally failing ftable_* DAGs whose runs fail at execution time. It
+// returns the announcement, whose promotion seq new runs carry.
 //
 // Seed *data* (e2e_schema.seed_table_*) is materialized separately by
 // setup.sh's `dbt seed` step; this only establishes the topology graph.

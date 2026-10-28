@@ -263,9 +263,10 @@ func cancelledBy(ctx context.Context, requested string) string {
 //   - A command that acted on another run than it claimed is Internal: it is
 //     a defect in state, and nothing it wrote was kept.
 //   - A run, schedule, node or task that does not exist is NotFound; a full
-//     refresh of a node type that cannot be rebuilt is InvalidArgument; a
-//     live release other than the one the caller previewed, and every other
-//     refusal of the run's selection or its source, is FailedPrecondition.
+//     refresh of a node type that cannot be rebuilt, and a schedule name
+//     longer than a run carries, are InvalidArgument; a live release other
+//     than the one the caller previewed, and every other refusal of the run's
+//     selection or its source, is FailedPrecondition.
 //
 // Anything else is logged and Internal.
 func (s *Server) commandError(rpc string, err error, attrs ...any) error {
@@ -282,10 +283,11 @@ func (s *Server) commandError(rpc string, err error, attrs ...any) error {
 		return status.Error(codes.NotFound, "source run not found")
 	case errors.Is(err, run.ErrTaskNotFound):
 		return status.Error(codes.NotFound, "source run does not have a task matching the identity")
-	case errors.Is(err, run.ErrScheduleNotInCatalog),
+	case errors.Is(err, run.ErrScheduleNotFound),
 		errors.Is(err, runplan.ErrTargetNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, runplan.ErrFullRefreshUnsupported):
+	case errors.Is(err, runplan.ErrFullRefreshUnsupported),
+		errors.Is(err, run.ErrScheduleNameTooLong):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, run.ErrScheduleHasActiveRun),
 		errors.Is(err, run.ErrAlreadyTerminal),

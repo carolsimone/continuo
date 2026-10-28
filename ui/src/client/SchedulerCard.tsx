@@ -2,13 +2,17 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router';
 import {
+  formatDayTime,
   getScheduleProgressLabel,
   getScheduleProgressPercent,
+  scheduleState,
 } from './scheduler-card-helpers';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import { ScheduleSummary, Task } from './types';
 import type { RunOperation } from '../server/shared/operation';
 import CancelDialog from './CancelDialog';
+import CronDialog from './CronDialog';
+import { useCurrentUser } from './auth/AuthContext';
 import { fetchAllPages } from './fetch-all-pages';
 import { settlesRequest, useActionRequestId } from './request-id';
 
@@ -27,8 +31,19 @@ interface Props {
   schedule: ScheduleSummary;
   // Reads the schedule list again at once. The card calls it after a trigger
   // or a cancel succeeds, so the card shows the new run or the cancelling run
-  // without waiting for the next poll.
+  // without waiting for the next poll, and when its cron dialog closes, so it
+  // shows the cron as saved.
   onRunChanged: () => void;
+}
+
+// whenLine is the muted fact after a schedule's cron: when it fires next, or
+// who paused it and when. A schedule whose cron fires no more has none.
+function whenLine(schedule: ScheduleSummary): string | null {
+  if (schedule.paused) {
+    const who = schedule.updated_by ? `paused by ${schedule.updated_by}` : 'paused';
+    return schedule.updated_at ? `${who} · ${formatDayTime(schedule.updated_at)}` : who;
+  }
+  return schedule.next_fire_at ? `next ${formatDayTime(schedule.next_fire_at, schedule.timezone)}` : null;
 }
 
 export default function SchedulerCard({ schedule, onRunChanged }: Props) {
@@ -42,6 +57,10 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  // The mode of the open cron dialog, fixed when it opens: a poll that adds
+  // or removes the cron meanwhile does not turn an Add into an Edit.
+  const [cronDialogMode, setCronDialogMode] = useState<'edit' | 'add' | null>(null);
+  const isOperator = useCurrentUser()?.role === 'operator';
   // The trigger button's request id: a press that gets no answer and is
   // repeated for the same operation, while the card still shows the last run
   // the first press saw, sends the same id, so the run the first press made is
@@ -103,11 +122,12 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     ? (schedule.last_run_status === 'cancelling' ? 'cancelling' : 'running')
     : schedule.last_run_status;
 
-  // A schedule is "active" when its name matches an entry in schedules.yaml:
-  // state fills cron_expression only for those, so a non-empty cron is the
-  // exact signal. Inactive schedules exist purely as node tags and never fire
-  // on a cron — they run only when triggered manually.
-  const isActive = schedule.cron_expression.trim() !== '';
+  const cronState = scheduleState(schedule);
+  const hasCron = cronState !== 'manual';
+  const when = hasCron ? whenLine(schedule) : null;
+  // A cron that fires while no model of the live release has the tag records
+  // a failed run at each fire.
+  const showNoModelsStrip = cronState === 'scheduled' && schedule.model_count === 0;
 
   const total = tasks.length;
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
@@ -171,6 +191,16 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     onRunChanged();
   };
 
+  const handleCronClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCronDialogMode(hasCron ? 'edit' : 'add');
+  };
+
+  const handleCronDialogClose = () => {
+    setCronDialogMode(null);
+    onRunChanged();
+  };
+
   const triggerIdleLabel =
     operation === 'test' ? 'Trigger test' : operation === 'build' ? 'Trigger build' : 'Trigger run';
 
@@ -182,6 +212,10 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
           onCancelled={handleCancelled}
           onClose={() => setCancelDialogOpen(false)}
         />,
+        document.body,
+      )}
+      {cronDialogMode && createPortal(
+        <CronDialog schedule={schedule} mode={cronDialogMode} onClose={handleCronDialogClose} />,
         document.body,
       )}
       <div
@@ -199,62 +233,68 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
           <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
             {displayStatus}
           </span>
-          <span
-            className={`activity-badge activity-badge--${isActive ? 'active' : 'inactive'}`}
-            title={isActive
-              ? 'Scheduled in schedules.yaml — fires automatically on its cron'
-              : 'Not in schedules.yaml — runs only when triggered manually'}
-          >
-            {isActive ? 'Active' : 'Inactive'}
-          </span>
-          {isActive && (
-            <span className="schedule-cron" title="Cron schedule (from schedules.yaml)">
-              {schedule.cron_expression}
+          <span className={`schedule-pill schedule-pill--${cronState}`}>{cronState}</span>
+          {hasCron ? (
+            <span
+              className={cronState === 'paused' ? 'schedule-cron schedule-cron--paused' : 'schedule-cron'}
+              title={schedule.cron_words || undefined}
+            >
+              {schedule.cron}
               {schedule.timezone ? ` · ${schedule.timezone}` : ''}
             </span>
+          ) : (
+            <span className="timestamps">no cron: runs only when triggered</span>
           )}
+          {when && <span className="timestamps">{when}</span>}
           {!neverRun && (
             <span className="timestamps">
               {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
             </span>
           )}
-          <div className="form-field" onClick={e => e.stopPropagation()}>
-            <label htmlFor={`op-${schedule.schedule_name}`}>Operation</label>
-            <select
-              id={`op-${schedule.schedule_name}`}
-              value={operation}
-              disabled={schedule.has_active_run || triggerLoading}
-              onChange={e => setOperation(e.target.value as RunOperation)}
-            >
-              <option value="run">Run</option>
-              <option value="test">Test</option>
-              <option value="build">Build</option>
-            </select>
-          </div>
-          <button
-            type="button"
-            className={[
-              'btn',
-              'btn--secondary',
-              triggerLoading ? 'is-loading' : '',
-              triggerStatus === 'success' ? 'is-success' : '',
-            ].filter(Boolean).join(' ')}
-            disabled={schedule.has_active_run || triggerLoading || triggerStatus === 'success'}
-            onClick={handleTrigger}
-            title={schedule.has_active_run ? 'A run is already active' : 'Trigger a full DAG run'}
-          >
-            {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
-          </button>
-          {schedule.has_active_run && (
+          <div className="scheduler-card-actions">
+            <div className="form-field" onClick={e => e.stopPropagation()}>
+              <label htmlFor={`op-${schedule.schedule_name}`}>Operation</label>
+              <select
+                id={`op-${schedule.schedule_name}`}
+                value={operation}
+                disabled={schedule.has_active_run || triggerLoading}
+                onChange={e => setOperation(e.target.value as RunOperation)}
+              >
+                <option value="run">Run</option>
+                <option value="test">Test</option>
+                <option value="build">Build</option>
+              </select>
+            </div>
             <button
               type="button"
-              className="btn btn--danger"
-              onClick={handleCancelClick}
-              title="Cancel the active run"
+              className={[
+                'btn',
+                'btn--secondary',
+                triggerLoading ? 'is-loading' : '',
+                triggerStatus === 'success' ? 'is-success' : '',
+              ].filter(Boolean).join(' ')}
+              disabled={schedule.has_active_run || triggerLoading || triggerStatus === 'success'}
+              onClick={handleTrigger}
+              title={schedule.has_active_run ? 'A run is already active' : 'Trigger a full DAG run'}
             >
-              Cancel
+              {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
             </button>
-          )}
+            {schedule.has_active_run && (
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={handleCancelClick}
+                title="Cancel the active run"
+              >
+                Cancel
+              </button>
+            )}
+            {isOperator && (
+              <button type="button" className="btn btn--secondary" onClick={handleCronClick}>
+                {hasCron ? 'Edit cron' : 'Add cron'}
+              </button>
+            )}
+          </div>
         </div>
         {showDriftStrip && driftBadge && (
           <div
@@ -263,6 +303,18 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
           >
             <span aria-hidden="true">⚠</span>
             <span>{driftBadge}</span>
+          </div>
+        )}
+        {showNoModelsStrip && (
+          <div
+            className="info-strip info-strip--warning"
+            onClick={e => e.stopPropagation()}
+          >
+            <span aria-hidden="true">⚠</span>
+            <span>
+              No model in the live release has the tag <b>{schedule.schedule_name}</b>. Each fire records a failed
+              run until a release brings them back, or you remove its cron.
+            </span>
           </div>
         )}
         {triggerError && <div className="info-strip info-strip--error">{triggerError}</div>}

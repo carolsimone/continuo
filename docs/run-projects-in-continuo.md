@@ -105,6 +105,10 @@ in it, deliberately:
 4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
    }}`. continuo reads the **first tag as the schedule the node belongs to**; an
    untagged model is skipped. Seeds are exempt and default to build-on-release.
+   The tag decides which models a schedule runs, not when: a schedule runs on
+   its own once you give it a cron in the UI (**Add cron** on its card) or with
+   `continuo schedule set-cron daily "0 1 * * *" Europe/Paris`, and until then
+   it runs only when triggered.
 
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
@@ -827,7 +831,8 @@ curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq '.current_prod_
 
 Still `rel-marketing-v2`, the release chapter 6 promoted. Production never saw
 `finance:v2`. The `daily` schedule will keep running the last version that
-passed, indefinitely, and a scheduled run tonight will produce correct data.
+passed, indefinitely, and its next run, triggered or fired by its cron, will
+produce correct data.
 
 💡 This is the part that is hard to get any other way. In a conventional setup this
 change merges, deploys, and breaks `core` the next time it runs — and the person

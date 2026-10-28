@@ -10,15 +10,6 @@
 streams:
   # ---------------- run lifecycle streams ----------------
 
-  - name: schedules.loaded:v1
-    const: SchedulesLoadedV1
-    description: Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
-    producers: [orchestrator]
-    consumers:
-      - service: state
-        group: state-schedule-catalog
-        const: StateScheduleCatalog
-
   - name: task.dispatch:v1
     const: TaskDispatchV1
     description: One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
@@ -255,6 +246,7 @@ retired_streams:
   - name: run.initialized:v1
   - name: schedule.cancelled:v1
   - name: scheduler.started:v1
+  - name: schedules.loaded:v1
   - name: seed.build.node.completed:v1
   - name: task.execution.recorded:v1
   - name: task.failed:v1

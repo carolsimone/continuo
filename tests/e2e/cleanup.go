@@ -62,7 +62,6 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	testStreams := []string{
 		streams.TaskDispatchV1,
-		streams.SchedulesLoadedV1,
 		streams.RunCancelledV1,
 	}
 

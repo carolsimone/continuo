@@ -22,11 +22,8 @@ import (
 
 func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	meta := map[string]run.ServiceMetadata{
-		"orders": {ImageTag: "abc"},
-	}
 
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationTest, run.ReleaseStamp{}, now)
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily_orders", run.KindCron, nil, identity.SystemUserID, model.OperationTest, run.ReleaseStamp{}, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,9 +42,6 @@ func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 	if r.Operation() != model.OperationTest {
 		t.Fatalf("operation: got %q want test", r.Operation())
 	}
-	if got := r.ServiceMetadata(); len(got) != 1 || got["orders"].ImageTag != "abc" {
-		t.Fatalf("service metadata not kept: %+v", got)
-	}
 	if !r.Changes().IsCreated() {
 		t.Fatal("a new run must be marked created")
 	}
@@ -56,7 +50,7 @@ func TestNewPendingRun_CreatesAPendingRun(t *testing.T) {
 func TestNewRun_StampsTheInitiator(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 
-	pending, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindTrigger, nil, "okta|alice", nil, model.OperationRun, run.ReleaseStamp{}, now)
+	pending, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindTrigger, nil, "okta|alice", model.OperationRun, run.ReleaseStamp{}, now)
 	if err != nil || pending.InitiatedBy() != "okta|alice" {
 		t.Fatalf("pending run InitiatedBy = %q, err = %v; want okta|alice", pending.InitiatedBy(), err)
 	}
@@ -71,13 +65,13 @@ func TestNewRun_StampsTheInitiator(t *testing.T) {
 }
 
 func TestNewPendingRun_KeepsItsTenant(t *testing.T) {
-	r, err := run.NewPendingRun("acme", uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun("acme", uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "acme", r.TenantID())
 }
 
 func TestNewPendingRun_RefusesAnEmptyTenant(t *testing.T) {
-	_, err := run.NewPendingRun("", uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	_, err := run.NewPendingRun("", uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	assert.ErrorIs(t, err, run.ErrNoTenant)
 }
 
@@ -95,7 +89,7 @@ func TestNewSingleNodeRun_RefusesAnEmptyTenant(t *testing.T) {
 // one.
 func TestNewRuns_TakeTheirCallersRunID(t *testing.T) {
 	id := uuid.New()
-	pending, err := run.NewPendingRun("acme", id, "daily", run.KindTrigger, nil, "alice", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	pending, err := run.NewPendingRun("acme", id, "daily", run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, id, pending.RunID())
 	derived, err := run.NewDerivedRun("acme", id, "daily", run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
@@ -105,7 +99,7 @@ func TestNewRuns_TakeTheirCallersRunID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, id, single.RunID())
 
-	_, err = run.NewPendingRun("acme", uuid.Nil, "daily", run.KindTrigger, nil, "alice", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	_, err = run.NewPendingRun("acme", uuid.Nil, "daily", run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
 	assert.ErrorIs(t, err, run.ErrRunIDRequired)
 	_, err = run.NewDerivedRun("acme", uuid.Nil, "daily", run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	assert.ErrorIs(t, err, run.ErrRunIDRequired)
@@ -122,7 +116,7 @@ func TestNewSingleNodeRun_KeepsItsTenant(t *testing.T) {
 // A rerun or rebase belongs to the tenant of the run it derives from.
 func TestNewDerivedRun_CarriesTheTenantOfItsSource(t *testing.T) {
 	source := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusFailed, run.KindCron, nil, "system", model.OperationRun,
-		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0)
 	for _, kind := range []run.Kind{run.KindRerun, run.KindRebase} {
 		derived, err := run.NewDerivedRun(source.TenantID(), uuid.New(), source.ScheduleName(), kind, source.RunID(), source.Release(), "alice", source.Operation(), time.Now())
 		require.NoError(t, err)
@@ -137,21 +131,87 @@ func TestNewPromotedSeedsRun_RefusesAnEmptyTenant(t *testing.T) {
 
 func TestHydrateRun_KeepsItsTenant(t *testing.T) {
 	r := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system", model.OperationRun,
-		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0)
 	assert.Equal(t, "acme", r.TenantID())
 }
 
 func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
-	_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "", run.KindCron, nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != run.ErrScheduleNameRequired {
 		t.Fatalf("err: got %v want %v", err, run.ErrScheduleNameRequired)
 	}
 }
 
+// A schedule name may be up to 50 characters long, counted in characters
+// rather than bytes. A longer name is ErrScheduleNameTooLong, with a message
+// that names the limit and the name's length.
+func TestNewPendingRun_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
+	fifty, fiftyOne := strings.Repeat("a", 50), strings.Repeat("a", 51)
+	accented, accentedTooLong := strings.Repeat("é", 50), strings.Repeat("é", 51)
+	require.Len(t, accented, 100, "each é is two bytes")
+
+	for _, name := range []string{fifty, accented} {
+		r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		require.NoError(t, err, "a name of 50 characters (%d bytes) is a run's", len(name))
+		assert.Equal(t, name, r.ScheduleName())
+	}
+
+	for _, name := range []string{fiftyOne, accentedTooLong} {
+		_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		require.ErrorIs(t, err, run.ErrScheduleNameTooLong, "a name of 51 characters (%d bytes) is refused", len(name))
+		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
+	}
+}
+
+// Every run constructor holds the schedule name to the same limit.
+func TestRunConstructors_RefuseANameLongerThanARunCarries(t *testing.T) {
+	tooLong := strings.Repeat("a", run.MaxScheduleNameChars+1)
+	stamp := run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}
+	constructors := map[string]func(name string) error{
+		"NewDerivedRun": func(name string) error {
+			_, err := run.NewDerivedRun("acme", uuid.New(), name, run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+			return err
+		},
+		"NewSingleNodeRun": func(name string) error {
+			_, err := run.NewSingleNodeRun("acme", uuid.New(), name, model.OperationRun, nil, "alice", stamp, time.Now())
+			return err
+		},
+		"NewPromotedSeedsRun": func(name string) error {
+			_, err := run.NewPromotedSeedsRun("acme", uuid.New(), name, stamp, time.Now())
+			return err
+		},
+	}
+	for constructor, build := range constructors {
+		require.NoError(t, build(tooLong[:run.MaxScheduleNameChars]), constructor)
+		assert.ErrorIs(t, build(tooLong), run.ErrScheduleNameTooLong, constructor)
+		assert.ErrorIs(t, build(""), run.ErrScheduleNameRequired, constructor)
+	}
+}
+
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
-	_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "x", run.Kind("bogus"), nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "x", run.Kind("bogus"), nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != run.ErrInvalidKind {
 		t.Fatalf("err: got %v want %v", err, run.ErrInvalidKind)
+	}
+}
+
+// A cron run is stamped with the slot of its schedule it is fired for; a run
+// of any other kind is refused one and keeps none.
+func TestSetScheduledFor_OnlyACronRunHasASlot(t *testing.T) {
+	slot := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	cronRun, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, slot)
+	require.NoError(t, err)
+	assert.Nil(t, cronRun.ScheduledFor(), "a run has no slot until it is stamped")
+
+	require.NoError(t, cronRun.SetScheduledFor(slot))
+	require.NotNil(t, cronRun.ScheduledFor())
+	assert.True(t, slot.Equal(*cronRun.ScheduledFor()))
+
+	for _, kind := range []run.Kind{run.KindTrigger, run.KindSingleNodeRun, run.KindPromoteSeed} {
+		other, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", kind, nil, "okta|alice", model.OperationRun, run.ReleaseStamp{}, slot)
+		require.NoError(t, err)
+		require.ErrorIs(t, other.SetScheduledFor(slot), run.ErrNotACronRun, "kind %s", kind)
+		assert.Nil(t, other.ScheduledFor(), "kind %s keeps no slot", kind)
 	}
 }
 
@@ -548,7 +608,7 @@ func (f *fakeTaskCollection) Update(_ context.Context, t run.Task) error {
 // zero counters — the state on entry to Start.
 func freshPendingRun(t *testing.T) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -704,7 +764,7 @@ func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time,
 	total := int32(len(ids)) //nolint:gosec // G115: test fixture; a handful of ids.
 	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, dispatchedAt, &dispatchedAt, nil, &dispatchedAt, nil, nil, nil,
-		&total, 0, map[string]run.ServiceMetadata{})
+		&total, 0)
 	tasks := make([]run.Task, 0, len(ids))
 	for i, id := range ids {
 		tasks = append(tasks, run.Task{
@@ -749,7 +809,7 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 // HydrateReleaseID; a run that names none reports "".
 func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
 	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-abc12345", run.RunStatusRunning, run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
-		nil, nil, nil, nil, nil, nil, nil, 0, map[string]run.ServiceMetadata{})
+		nil, nil, nil, nil, nil, nil, nil, 0)
 	if r.ReleaseID() != "" {
 		t.Fatalf("ReleaseID() = %q before hydration, want empty", r.ReleaseID())
 	}

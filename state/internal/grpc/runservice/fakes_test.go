@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +14,11 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/schedule"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
-	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
+	"github.com/carolsimone/continuo/state/service/schedules"
 )
 
 const (
@@ -50,8 +50,18 @@ type fakeStore struct {
 	nodes        []*projection.NodeSummary
 	nodeNames    []string
 	nodeServices []string
-	schedules    []string
-	lastRuns     map[string]repository.LastRunSummary
+
+	// The schedules service's answers, by tenant, and the arguments of its
+	// last call.
+	scheduleSummaries map[string][]schedules.Summary
+	upserted          *upsertCall
+	upsertOut         *schedule.Schedule
+	upsertNext        []time.Time
+	deleted           []string
+	previewed         [2]string
+	previewWords      string
+	previewNext       []time.Time
+	scheduleErr       error
 
 	// The live release's schedule views, by tenant: the graph of each schedule
 	// and the summaries of all of them.
@@ -86,7 +96,8 @@ func newStore() *fakeStore {
 		drifts:    map[string][]projection.ActiveRunDrift{},
 		latest:    map[string]int64{},
 		completed: map[string][]projection.RunSummary{},
-		lastRuns:  map[string]repository.LastRunSummary{},
+
+		scheduleSummaries: map[string][]schedules.Summary{},
 
 		scheduleGraphs: map[string]map[string]topology.ScheduleGraph{},
 		summaries:      map[string][]topology.ScheduleSummary{},
@@ -273,50 +284,6 @@ func (f fakeNodes) ListNodeServices(_ context.Context, tenantID string) ([]strin
 	return f.nodeServices, nil
 }
 
-type fakeActiveSchedules struct{ *fakeStore }
-
-var _ repository.ActiveScheduleReader = fakeActiveSchedules{}
-
-func (f fakeActiveSchedules) ListActive(_ context.Context, tenantID string) ([]string, error) {
-	if f.failWith != nil {
-		return nil, f.failWith
-	}
-	if tenantID != tenantA {
-		return nil, nil
-	}
-	names := append([]string(nil), f.schedules...)
-	sort.Strings(names)
-	return names, nil
-}
-
-type fakeLastRuns struct{ *fakeStore }
-
-var _ repository.LastRunReader = fakeLastRuns{}
-
-func (f fakeLastRuns) GetLastRunPerSchedule(_ context.Context, tenantID string) (map[string]repository.LastRunSummary, error) {
-	if f.failWith != nil {
-		return nil, f.failWith
-	}
-	if tenantID != tenantA {
-		return nil, nil
-	}
-	return f.lastRuns, nil
-}
-
-type fakeCrons struct {
-	timezone string
-	byName   map[string]ports.ScheduleCron
-}
-
-var _ ports.ScheduleCrons = fakeCrons{}
-
-func (f fakeCrons) Timezone() string { return f.timezone }
-
-func (f fakeCrons) CronOf(name string) (ports.ScheduleCron, bool) {
-	c, ok := f.byName[name]
-	return c, ok
-}
-
 type fakeScheduleGraphs struct{ *fakeStore }
 
 var _ repository.ScheduleGraphRepository = fakeScheduleGraphs{}
@@ -335,28 +302,69 @@ func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) ([]top
 	return f.summaries[tenantID], nil
 }
 
+// upsertCall is the arguments of one call of the schedules service's Upsert.
+type upsertCall struct {
+	tenant string
+	in     schedules.UpsertInput
+	by     string
+}
+
+// fakeSchedules is the schedules service over fakeStore: List answers the
+// tenant's summaries and fails with failWith; the other calls record their
+// arguments and answer what the store holds, or scheduleErr.
+type fakeSchedules struct{ *fakeStore }
+
+var _ runservice.Schedules = fakeSchedules{}
+
+func (f fakeSchedules) Upsert(_ context.Context, tenantID string, in schedules.UpsertInput, by string) (*schedule.Schedule, []time.Time, error) {
+	f.upserted = &upsertCall{tenant: tenantID, in: in, by: by}
+	if f.scheduleErr != nil {
+		return nil, nil, f.scheduleErr
+	}
+	return f.upsertOut, f.upsertNext, nil
+}
+
+func (f fakeSchedules) Delete(_ context.Context, tenantID, name string) error {
+	f.deleted = append(f.deleted, tenantID+"/"+name)
+	return f.scheduleErr
+}
+
+func (f fakeSchedules) Preview(_ context.Context, cron, timezone string) (string, []time.Time, error) {
+	f.previewed = [2]string{cron, timezone}
+	if f.scheduleErr != nil {
+		return "", nil, f.scheduleErr
+	}
+	return f.previewWords, f.previewNext, nil
+}
+
+func (f fakeSchedules) List(_ context.Context, tenantID string) ([]schedules.Summary, error) {
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.scheduleSummaries[tenantID], nil
+}
+
 // newServer builds the RunService server over the fakes of store, with no
 // commands.
-func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
-	return runservice.NewServer(readsOf(store, crons), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func newServer(store *fakeStore) *runservice.Server {
+	return runservice.NewServer(readsOf(store), nil, fakeSchedules{store}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // newCommandServer builds the RunService server over the fakes of store, whose
 // commands and rebase previews cmds answers.
 func newCommandServer(store *fakeStore, cmds *fakeCommands) *runservice.Server {
-	reads := readsOf(store, nil)
+	reads := readsOf(store)
 	reads.Rebases = cmds
-	return runservice.NewServer(reads, cmds, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return runservice.NewServer(reads, cmds, fakeSchedules{store}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // readsOf is the read services over the fakes of store.
-func readsOf(store *fakeStore, crons ports.ScheduleCrons) runservice.Reads {
+func readsOf(store *fakeStore) runservice.Reads {
 	return runservice.Reads{
-		Runs:      runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
-		Attempts:  runreads.NewAttempts(fakeAttempts{store}),
-		Nodes:     runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
-		Schedules: runreads.NewSchedules(fakeActiveSchedules{store}, fakeLastRuns{store}, crons),
-		Graphs:    runreads.New(fakeRunReads{store}),
+		Runs:     runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
+		Attempts: runreads.NewAttempts(fakeAttempts{store}),
+		Nodes:    runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
+		Graphs:   runreads.New(fakeRunReads{store}),
 
 		ScheduleGraphs: runreads.NewScheduleGraphs(fakeScheduleGraphs{store}),
 	}

@@ -211,7 +211,7 @@ func sourceRun(t *testing.T, stamp run.ReleaseStamp) *run.Run {
 // sourceRunOf is a pending daily run of tenantID on stamp.
 func sourceRunOf(t *testing.T, tenantID string, stamp run.ReleaseStamp) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(tenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
+	r, err := run.NewPendingRun(tenantID, uuid.New(), "daily", run.KindCron, nil, identity.SystemUserID, model.OperationRun, stamp, planNow)
 	require.NoError(t, err)
 	return r
 }

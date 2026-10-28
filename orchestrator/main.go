@@ -329,9 +329,8 @@ func main() {
 
 	// release.promoted:v2 swaps the live Neo4j topology when release-controller
 	// promotes a release, reading the topology from the release's artifact in
-	// object storage, then emits schedules.loaded:v1 so state can refresh its
-	// schedule projections. The swap decides by promotion seq, so a late or
-	// redriven older promotion never reverts the live topology.
+	// object storage. The swap decides by promotion seq, so a late or redriven
+	// older promotion never reverts the live topology.
 	topologyArtifactReader := s3infra.NewTopologyArtifactReader(objectStore)
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)

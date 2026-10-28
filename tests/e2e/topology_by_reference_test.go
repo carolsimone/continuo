@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -21,9 +22,10 @@ import (
 // TestTopologyByReference_LatePromotionMovesNothing announces two topologies,
 // A then B, and then replays A's release.promoted:v2 entry under a fresh event
 // id and without its outbox entry id — a late delivery or a redrive that dedup
-// cannot recognise. A declares a schedule B dropped, so applying the replay
-// would both swap the live graph back to A and revive that schedule in state's
-// catalog. Neither may happen: A's promotion seq is below the live one.
+// cannot recognise. A has a model of a schedule B drops, so applying the
+// replay would swap the orchestrator's live graph and state's live release
+// back to A, and give that schedule its model again: state would list it and
+// start it. Neither may happen: A's promotion seq is below the live one.
 func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -34,10 +36,6 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	t.Cleanup(func() { clients.close(ctx) })
 
 	const staleSchedule = "e2e-stale-probe"
-	t.Cleanup(func() {
-		_, _ = clients.stateDB.ExecContext(context.Background(),
-			`DELETE FROM schedule_catalog WHERE schedule_name = $1`, staleSchedule)
-	})
 	tap := startStreamTap(t, ctx, clients.redisClient, streams.ReleasePromotedV2)
 
 	nodes, schedules := e2eTopology(t, ctx, clients)
@@ -57,8 +55,8 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	b := announceTopology(t, ctx, "e2e-late-b-"+uuid.NewString()[:8], nodes)
 	waitForAnnouncedTopology(t, ctx, clients, b, schedules)
 	require.Greater(t, b.PromotionSeq, a.PromotionSeq)
-	require.Eventually(t, func() bool { return !scheduleActive(ctx, clients, staleSchedule) },
-		30*time.Second, time.Second, "B drops the %s schedule", staleSchedule)
+	// With B live in state, the stale schedule has no model and no cron.
+	require.Empty(t, staleScheduleKnown(ctx, clients, staleSchedule, b), "B drops the %s schedule", staleSchedule)
 
 	entry := findPromotionEntry(t, ctx, tap, a.ReleaseID)
 	replay := map[string]any{}
@@ -71,14 +69,53 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: replay}).Result()
 	require.NoError(t, err, "replay A's promotion")
 
-	awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, replayID)
-	assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, replayID, "open"),
-		"a late promotion is a valid entry: acknowledged, never dead-lettered")
+	// Both groups that apply a promotion handle the replay before the live
+	// pointers are read.
+	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.StateReleasePromoted} {
+		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, group, replayID)
+		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, group, replayID, "open"),
+			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
+	}
 	assert.Equal(t, livePointer{releaseID: b.ReleaseID, promotionSeq: b.PromotionSeq}, readLivePointer(ctx, clients),
-		"a late promotion must not move the live pointer")
-	require.Never(t, func() bool {
-		return scheduleActive(ctx, clients, staleSchedule) || catalogPromotionSeq(ctx, clients) != b.PromotionSeq
-	}, negativeWindow, time.Second, "a late promotion must not move state's schedule catalog")
+		"a late promotion must not move the orchestrator's live pointer")
+	window := time.NewTimer(negativeWindow)
+	defer window.Stop()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if known := staleScheduleKnown(ctx, clients, staleSchedule, b); known != "" {
+			t.Fatalf("a late promotion must not move state's live release off %s or give %s a model again: %s",
+				b.ReleaseID, staleSchedule, known)
+		}
+		select {
+		case <-window.C:
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// staleScheduleKnown says how state still knows the schedule name, which the
+// announcement want has no model of, and is empty when it does not: state's
+// live release is another than want (by release id and promotion seq), a node
+// of it carries name, or ListSchedules lists name. A failed read says so too.
+func staleScheduleKnown(ctx context.Context, clients *testClients, name string, want announceResult) string {
+	state, err := readStateLiveRelease(ctx, clients)
+	if err != nil {
+		return err.Error()
+	}
+	if state.releaseID != want.ReleaseID || state.promotionSeq != want.PromotionSeq || state.models[name] > 0 {
+		return fmt.Sprintf("state's live release is %q at seq %d with %d nodes of %s; want %q at seq %d with none",
+			state.releaseID, state.promotionSeq, state.models[name], name, want.ReleaseID, want.PromotionSeq)
+	}
+	listed, err := findListedSchedule(ctx, clients, name)
+	if err != nil {
+		return fmt.Sprintf("ListSchedules failed: %v", err)
+	}
+	if listed != nil {
+		return fmt.Sprintf("ListSchedules lists %s: %v", name, listed)
+	}
+	return ""
 }
 
 // TestTopologyByReference_CorruptArtifactIsDeadLettered publishes a promotion

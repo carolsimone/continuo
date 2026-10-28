@@ -1,5 +1,6 @@
 // Package repository declares state's domain repository ports: the
-// collection-like abstractions over Run and ScheduleCatalog aggregates.
+// collection-like abstractions over the Run and Schedule aggregates and the
+// releases state stores.
 // Implementations live in state/adapters/postgres.
 package repository
 

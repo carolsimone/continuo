@@ -21,7 +21,7 @@ func (r *RunRepository) GetRun(ctx context.Context, tenantID string, id uuid.UUI
 	if err != nil {
 		return nil, runNotFound(id, err)
 	}
-	return hydrateRun(tr)
+	return hydrateRun(tr), nil
 }
 
 // LoadRunForUpdate loads the tenant's Run inside the bound transaction with
@@ -35,7 +35,7 @@ func (r *RunRepository) LoadRunForUpdate(ctx context.Context, tenantID string, i
 	if err != nil {
 		return nil, runNotFound(id, err)
 	}
-	return hydrateRun(tr)
+	return hydrateRun(tr), nil
 }
 
 // runNotFound returns err, a failed read of run id, as an error that also
@@ -58,11 +58,7 @@ func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 	ch := rn.Changes()
 
 	if ch.IsCreated() {
-		tr, err := dehydrateRun(rn)
-		if err != nil {
-			return fmt.Errorf("dehydrate run: %w", err)
-		}
-		if err := r.CreateTx(ctx, r.tx, tr); err != nil {
+		if err := r.CreateTx(ctx, r.tx, dehydrateRun(rn)); err != nil {
 			// The partial unique index uq_runs_active_per_schedule is
 			// the DB-level backstop for the activation TOCTOU: a concurrent
 			// activation that passed the HasActiveRun pre-check loses the
@@ -72,6 +68,11 @@ func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 			}
 			if errors.Is(err, ErrRunExists) {
 				return run.ErrRunAlreadyExists
+			}
+			// uq_runs_scheduled_for allows one run per schedule slot: the
+			// insert of a second does nothing, and the transaction goes on.
+			if errors.Is(err, ErrSlotConflict) {
+				return run.ErrSlotTaken
 			}
 			return fmt.Errorf("create run: %w", err)
 		}
@@ -167,7 +168,7 @@ func (r *RunRepository) GetActiveRun(ctx context.Context, tenantID, name string)
 	if tr == nil {
 		return nil, nil
 	}
-	return hydrateRun(tr)
+	return hydrateRun(tr), nil
 }
 
 // RunExists reports whether the tenant has a run row with id, reading inside
@@ -217,11 +218,7 @@ func (r *RunRepository) CountReleaseRuns(ctx context.Context, tenantID, releaseI
 }
 
 // hydrateRun translates a persisted RunRow into a Run aggregate.
-func hydrateRun(tr *RunRow) (*run.Run, error) {
-	meta, err := tr.GetServiceMetadata()
-	if err != nil {
-		return nil, err
-	}
+func hydrateRun(tr *RunRow) *run.Run {
 	rn := run.HydrateRun(
 		tr.TenantID,
 		tr.ScheduleID,
@@ -236,15 +233,15 @@ func hydrateRun(tr *RunRow) (*run.Run, error) {
 		tr.CancelledBy, tr.CancellationReason,
 		nullInt32ToPtr(tr.TotalTaskCount),
 		tr.TerminalTaskCount,
-		meta,
 	)
 	rn.HydrateRelease(run.ReleaseStamp{ReleaseID: stringOrEmpty(tr.ReleaseID), PromotionSeq: int64OrZero(tr.PromotionSeq)})
 	rn.HydratePlannedAt(tr.PlannedAt)
+	rn.HydrateScheduledFor(tr.ScheduledFor)
 	if tr.FailureReason != nil {
 		reason := run.RunFailureReason(*tr.FailureReason)
 		rn.HydrateFailureReason(&reason)
 	}
-	return rn, nil
+	return rn
 }
 
 // optionalString maps "" to a NULL column value.
@@ -310,11 +307,7 @@ func ptrToNullInt32(p *int32) sql.NullInt32 {
 
 // dehydrateRun materialises a Run back into the RunRow shape that
 // CreateTx accepts. Used by SaveRun on the created branch.
-func dehydrateRun(r *run.Run) (*RunRow, error) {
-	metaJSON, err := marshalServiceMetadata(r.ServiceMetadata())
-	if err != nil {
-		return nil, fmt.Errorf("marshal service_metadata: %w", err)
-	}
+func dehydrateRun(r *run.Run) *RunRow {
 	return &RunRow{
 		TenantID:           r.TenantID(),
 		ScheduleID:         r.RunID(),
@@ -327,8 +320,6 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 		CancelledAt:        r.CancelledAt(),
 		CancelledBy:        r.CancelledBy(),
 		CancellationReason: r.CancellationReason(),
-		ServiceMetadataRaw: metaJSON,
-		ServiceMetadata:    r.ServiceMetadata(),
 		TotalTaskCount:     ptrToNullInt32(r.TotalTaskCount()),
 		TerminalTaskCount:  r.TerminalTaskCount(),
 		Kind:               string(r.Kind()),
@@ -337,7 +328,8 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 		Operation:          operationWithDefault(string(r.Operation())),
 		ReleaseID:          optionalString(r.Release().ReleaseID),
 		PromotionSeq:       optionalInt64(r.Release().PromotionSeq),
-	}, nil
+		ScheduledFor:       r.ScheduledFor(),
+	}
 }
 
 // Compile-time interface assertion.

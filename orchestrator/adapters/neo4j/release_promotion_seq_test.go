@@ -2,7 +2,6 @@ package neo4jinfra_test
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,11 +19,11 @@ import (
 // last — the order release-controller assigns.
 var promoteSeq atomic.Int64
 
-// promote applies a promotion under the next seq with no service metadata and
-// reports whether it swapped the topology.
+// promote applies a promotion under the next seq and reports whether it
+// swapped the topology.
 func promote(ctx context.Context, repo *neo4jinfra.ReleasePromotionRepository, releaseID string,
 	nodes []topology.ReleasePromotedTopologyNode, now time.Time) (bool, error) {
-	outcome, err := repo.PromoteRelease(ctx, releaseID, promoteSeq.Add(1), nodes, nil, now)
+	outcome, err := repo.PromoteRelease(ctx, releaseID, promoteSeq.Add(1), nodes, now)
 	return outcome == topology.PromotionApplied, err
 }
 
@@ -92,8 +91,7 @@ func TestReleasePromotionRepository_NewerSeqRecordsSeqOnMetaAndTopologyRoot(t *t
 	wipeReleaseFixtures(t, client)
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 
-	outcome, err := newReleaseRepo(client).PromoteRelease(ctx, "rel-1", 3, seqNode("a"),
-		map[string]map[string]string{"s": {"image_tag": "img"}}, time.Now().UTC())
+	outcome, err := newReleaseRepo(client).PromoteRelease(ctx, "rel-1", 3, seqNode("a"), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, topology.PromotionApplied, outcome)
 
@@ -105,17 +103,13 @@ func TestReleasePromotionRepository_NewerSeqRecordsSeqOnMetaAndTopologyRoot(t *t
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
 		MATCH (root:TopologyRoot {id:'singleton'})
-		RETURN root.promotion_seq AS seq, root.service_metadata AS meta, root.topology_generation AS legacy`, nil)
+		RETURN root.promotion_seq AS seq, root.topology_generation AS legacy`, nil)
 	require.NoError(t, err)
 	require.True(t, res.Next(ctx), ":TopologyRoot is written in the swap transaction")
 	rootSeq, _ := res.Record().Get("seq")
-	meta, _ := res.Record().Get("meta")
 	legacy, _ := res.Record().Get("legacy")
 	assert.Equal(t, int64(3), rootSeq)
 	assert.Nil(t, legacy, "the legacy counter property is removed")
-	var decoded map[string]map[string]string
-	require.NoError(t, json.Unmarshal([]byte(meta.(string)), &decoded))
-	assert.Equal(t, map[string]map[string]string{"s": {"image_tag": "img"}}, decoded)
 }
 
 // An older promotion arriving after a newer one — a retry, a late delivery or a
@@ -127,11 +121,11 @@ func TestReleasePromotionRepository_OlderSeqIsStaleAndLeavesTheGraph(t *testing.
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 	repo := newReleaseRepo(client)
 
-	outcome, err := repo.PromoteRelease(ctx, "rel-new", 8, seqNode("new"), nil, time.Now().UTC())
+	outcome, err := repo.PromoteRelease(ctx, "rel-new", 8, seqNode("new"), time.Now().UTC())
 	require.NoError(t, err)
 	require.Equal(t, topology.PromotionApplied, outcome)
 
-	outcome, err = repo.PromoteRelease(ctx, "rel-old", 7, seqNode("old"), nil, time.Now().UTC())
+	outcome, err = repo.PromoteRelease(ctx, "rel-old", 7, seqNode("old"), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, topology.PromotionStale, outcome)
 
@@ -148,12 +142,12 @@ func TestReleasePromotionRepository_SameSeqAndReleaseIsARedelivery(t *testing.T)
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 	repo := newReleaseRepo(client)
 
-	_, err := repo.PromoteRelease(ctx, "rel-1", 4, seqNode("a"), nil, time.Now().UTC())
+	_, err := repo.PromoteRelease(ctx, "rel-1", 4, seqNode("a"), time.Now().UTC())
 	require.NoError(t, err)
 
 	// The redelivery carries an empty node list: it must not be applied, or the
 	// live topology would be retired.
-	outcome, err := repo.PromoteRelease(ctx, "rel-1", 4, nil, nil, time.Now().UTC())
+	outcome, err := repo.PromoteRelease(ctx, "rel-1", 4, nil, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, topology.PromotionRedelivered, outcome)
 	assert.Equal(t, []string{"a"}, activeTableIDs(t, client))
@@ -166,9 +160,9 @@ func TestReleasePromotionRepository_SameSeqForAnotherReleaseIsStale(t *testing.T
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 	repo := newReleaseRepo(client)
 
-	_, err := repo.PromoteRelease(ctx, "rel-1", 4, seqNode("a"), nil, time.Now().UTC())
+	_, err := repo.PromoteRelease(ctx, "rel-1", 4, seqNode("a"), time.Now().UTC())
 	require.NoError(t, err)
-	outcome, err := repo.PromoteRelease(ctx, "rel-other", 4, seqNode("b"), nil, time.Now().UTC())
+	outcome, err := repo.PromoteRelease(ctx, "rel-other", 4, seqNode("b"), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, topology.PromotionStale, outcome)
 	rid, _ := liveMeta(t, client)
@@ -187,7 +181,7 @@ func TestReleasePromotionRepository_GraphWithoutSeqAcceptsTheFirstPromotion(t *t
 		MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-live'
 		MERGE (root:TopologyRoot {id:'singleton'}) SET root.topology_generation = 140`, nil)
 
-	outcome, err := newReleaseRepo(client).PromoteRelease(ctx, "rel-live", 1, seqNode("a"), nil, time.Now().UTC())
+	outcome, err := newReleaseRepo(client).PromoteRelease(ctx, "rel-live", 1, seqNode("a"), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, topology.PromotionApplied, outcome)
 	_, seq := liveMeta(t, client)
@@ -215,12 +209,12 @@ func TestReleasePromotionRepository_ConcurrentPromotionsKeepTheNewestLive(t *tes
 		go func() {
 			defer wg.Done()
 			<-start
-			outcomes[0], errs[0] = repo.PromoteRelease(ctx, "rel-old", 1, seqNode("old"), nil, time.Now().UTC())
+			outcomes[0], errs[0] = repo.PromoteRelease(ctx, "rel-old", 1, seqNode("old"), time.Now().UTC())
 		}()
 		go func() {
 			defer wg.Done()
 			<-start
-			outcomes[1], errs[1] = repo.PromoteRelease(ctx, "rel-new", 2, seqNode("new"), nil, time.Now().UTC())
+			outcomes[1], errs[1] = repo.PromoteRelease(ctx, "rel-new", 2, seqNode("new"), time.Now().UTC())
 		}()
 		close(start)
 		wg.Wait()

@@ -89,3 +89,38 @@ func TestRunMetrics_LeaseSeries(t *testing.T) {
 		}
 	}
 }
+
+// The cron fire counter counts each outcome, failed included, and the missed
+// slots of a fire all at once, and its help names failed; the schedules gauge
+// reports the last pass's counts by state.
+func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
+	reg := pkgmetrics.New("state")
+	m := NewRunMetrics(reg)
+	m.CronFire("started")
+	m.CronFires("missed", 2)
+	m.CronFires("missed", 1000)
+	m.CronFire("skipped_active")
+	m.CronFire("invalid_node_type")
+	m.CronFire("failed")
+	m.CronFire("failed")
+	m.Schedules(4, 2)
+	m.Schedules(3, 1)
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`continuo_cron_fires_total{outcome="started",service="state"} 1`,
+		`continuo_cron_fires_total{outcome="missed",service="state"} 1002`,
+		`continuo_cron_fires_total{outcome="skipped_active",service="state"} 1`,
+		`continuo_cron_fires_total{outcome="invalid_node_type",service="state"} 1`,
+		`continuo_cron_fires_total{outcome="failed",service="state"} 2`,
+		"or failed (a fire that returned an error or did not end within 30 seconds",
+		`continuo_schedules{service="state",state="scheduled"} 3`,
+		`continuo_schedules{service="state",state="paused"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}

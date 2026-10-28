@@ -74,7 +74,7 @@ func (o *recordingOutbox) Append(_ context.Context, events []run.DomainEvent, _ 
 func unplannedRun(tenantID string) *run.Run {
 	started := now.Add(-time.Hour)
 	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system",
-		model.OperationRun, started, &started, nil, nil, nil, nil, nil, nil, 0, nil)
+		model.OperationRun, started, &started, nil, nil, nil, nil, nil, nil, 0)
 }
 
 // Settle cancels the unplanned runs of every tenant, each under its own

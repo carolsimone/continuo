@@ -46,7 +46,7 @@ func TestGetScheduleGraph_MapsEveryField(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", dailyGraph())
 
-	resp, err := newServer(store, nil).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
+	resp, err := newServer(store).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(7), resp.GetPromotionSeq())
@@ -77,14 +77,14 @@ func TestGetScheduleGraph_AScheduleTheReleaseDoesNotHoldIsEmpty(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", dailyGraph())
 
-	resp, err := newServer(store, nil).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "weekly"})
+	resp, err := newServer(store).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "weekly"})
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetNodes())
 	assert.Empty(t, resp.GetEdges())
 }
 
 func TestGetScheduleGraph_RefusesAnEmptyScheduleName(t *testing.T) {
-	_, err := newServer(newStore(), nil).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{})
+	_, err := newServer(newStore()).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
@@ -92,7 +92,7 @@ func TestScheduleTopologyReads_AreOfTheRequestsTenant(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", dailyGraph())
 	store.summaries[tenantA] = []topology.ScheduleSummary{{ScheduleName: "daily", NodeCount: 4}}
-	srv := newServer(store, nil)
+	srv := newServer(store)
 	graph := &runv1.GetScheduleGraphRequest{ScheduleName: "daily"}
 
 	// The default tenant sees the rows, so an empty answer below is the
@@ -122,7 +122,7 @@ func TestListScheduleTopologies_MapsEveryField(t *testing.T) {
 		{ScheduleName: "seeds", NodeCount: 1},
 	}
 
-	resp, err := newServer(store, nil).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
+	resp, err := newServer(store).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
 	require.NoError(t, err)
 
 	require.Len(t, resp.GetSchedules(), 2)
@@ -135,7 +135,7 @@ func TestListScheduleTopologies_MapsEveryField(t *testing.T) {
 }
 
 func TestListScheduleTopologies_NoLiveReleaseIsEmpty(t *testing.T) {
-	resp, err := newServer(newStore(), nil).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
+	resp, err := newServer(newStore()).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetSchedules())
 }

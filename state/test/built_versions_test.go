@@ -103,18 +103,46 @@ func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 	return rn.RunID()
 }
 
-// trigger triggers schedule with operation op on the live release, and
-// returns the run.
+// trigger triggers schedule, which a model of the live release carries, with
+// operation op on the live release, and returns the run.
 func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation) uuid.UUID {
 	t.Helper()
-	_, err := h.db.Exec(`
-		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', $1, now(), now())
-		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
-	require.NoError(t, err)
-	id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
-		pkgevents.DefaultTenantID, schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
+	id, err := h.start(context.Background(), pkgevents.DefaultTenantID, schedule, identity.FromUserID("okta|alice"), op)
 	require.NoError(t, err)
 	return id
+}
+
+// start starts a triggered run of tenantID's schedule with operation op for
+// initiator, as StartRun starts one, in a transaction of its own, and returns
+// it.
+func (h *builtHarness) start(ctx context.Context, tenantID, schedule string, initiator identity.Identity, op model.Operation) (uuid.UUID, error) {
+	id := uuid.New()
+	u := h.factory()
+	if err := u.Begin(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	defer u.Rollback() //nolint:errcheck
+	if err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).StartInTransaction(ctx, u, svchandlers.StartRunInput{
+		RunID: id, TenantID: tenantID, ScheduleName: schedule, Kind: run.KindTrigger, Initiator: initiator, Operation: op,
+	}); err != nil {
+		return uuid.Nil, err
+	}
+	return id, u.Commit()
+}
+
+// fire fires the slot of tenantID's schedule as the cron loop does, in a
+// transaction of its own that it commits unless the fire fails.
+func (h *builtHarness) fire(ctx context.Context, tenantID, schedule string, slot time.Time) (uuid.UUID, svchandlers.ActivationOutcome, error) {
+	u := h.factory()
+	if err := u.Begin(ctx); err != nil {
+		return uuid.Nil, 0, err
+	}
+	defer u.Rollback() //nolint:errcheck
+	fired, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).HandleCronFire(ctx, u, tenantID, schedule, slot)
+	if err != nil {
+		return uuid.Nil, 0, err
+	}
+	return fired.RunID, fired.Outcome, u.Commit()
 }
 
 // legacyRun saves a running run on releaseID whose tasks state did not plan:
@@ -307,3 +335,6 @@ func (noRunMetrics) LeaseWaiters(int)              {}
 func (noRunMetrics) LeaseGranted(time.Duration)    {}
 func (noRunMetrics) LeaseRepaired()                {}
 func (noRunMetrics) CommandRequest(string, string) {}
+func (noRunMetrics) CronFire(string)               {}
+func (noRunMetrics) CronFires(string, int)         {}
+func (noRunMetrics) Schedules(int, int)            {}

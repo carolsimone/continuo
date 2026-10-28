@@ -10,7 +10,6 @@
   a restart.
 */ -}}
 {{- $mountedConfigMaps := dict
-      "state" (dict "name" "continuo.schedulesConfigMapName" "checksum" "schedules" "template" "schedules-configmap.yaml")
       "execution-controller" (dict "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml")
       "agent-remediation" (dict "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
       "ui" (dict "name" "continuo.cancelConfigMapName") }}
@@ -406,6 +405,13 @@ spec:
             name: {{ default (include $mounted.name $) $volume.configMap.name }}
         {{- end }}
         {{- else }}
+        {{- /* A volume with no ConfigMap name has no chart ConfigMap to fall back
+               to for this service, and the API server refuses the Deployment. */}}
+        {{- range $volume := $svc.volumes }}
+        {{- if not (dig "configMap" "name" "" $volume) }}
+        {{- fail (printf "services[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
+        {{- end }}
+        {{- end }}
         {{- toYaml $svc.volumes | nindent 8 }}
         {{- end }}
       {{- end }}

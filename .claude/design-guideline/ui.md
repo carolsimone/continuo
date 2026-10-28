@@ -473,14 +473,34 @@ Rules:
   is no rolled-up status pill: preview rows carry no status.
 - Empty state: no section at all when an empty list would say nothing the
   counts above have not said; otherwise an `.info-strip--neutral`.
-- While the preview loads, an `.info-strip--neutral` says so and the
-  confirming verb is disabled; a failed preview is an `.info-strip--error`
-  and the confirming verb stays disabled until a preview arrives. A
-  reload (an option changed) keeps the last preview on screen until the
-  next one replaces it, so the option the user just clicked does not
-  move. When the confirmation is refused because what was previewed is
-  no longer true, the modal previews again and says so in an
-  `.info-strip--warning`.
+- While a preview that an explicit action started loads (the modal
+  opening, a click on an option), an `.info-strip--neutral` says so and
+  the confirming verb is disabled; a failed preview is an
+  `.info-strip--error` and the confirming verb stays disabled until a
+  preview arrives. A preview that follows a field the operator types has
+  no loading strip (see "Dialog fields"), and its `.preview-section` is a
+  polite live region (`aria-live="polite"`). A reload (an option changed)
+  keeps the last preview on screen until the next one replaces it, so the
+  option the user just clicked does not move. When the confirmation is
+  refused because what was previewed is no longer true, the modal previews
+  again and says so in an `.info-strip--warning`.
+
+A row that is one fact and its value — a date and a time in the cron
+dialog's "Next runs" — sits on one line: `.preview-row--line` lays the row
+out as a row, the fact on the left and its value (`.preview-facts`) on the
+right, with no identifier or accent dot.
+
+```jsx
+<li className="preview-row preview-row--line">
+  <span>Wed 28 Oct 2026</span>
+  <span className="preview-facts">01:00</span>
+</li>
+```
+
+```css
+.preview-row--line { flex-direction: row; align-items: center; justify-content: space-between;
+                     padding: 6px 10px; font-size: 12px; color: #111827; }
+```
 
 ### Option rows
 
@@ -524,6 +544,100 @@ Rules:
 - Show a checkbox only when it changes something: the rerun-failed
   dialog hides "Include changed upstream nodes" when nothing upstream
   changed.
+
+### Dialog fields
+
+A labelled text input or select inside a modal is a `.dialog-field`: the
+label, the native control, and optional muted lines under the control. It
+shares its typography with `.dialog-label` (the label that wraps its
+control, as in the cancel dialog) by selector grouping; use `.dialog-field`
+when the label is tied by `htmlFor` or the field carries lines under its
+control.
+
+```jsx
+<div className="dialog-field">
+  <label htmlFor="cron">Cron</label>
+  <input id="cron" className="dialog-input dialog-input--mono" aria-invalid={refused || undefined}
+         aria-describedby={refused ? 'cron-hint cron-words cron-refusal' : 'cron-hint cron-words'} />
+  <span className="dialog-field__hint" id="cron-hint">minute · hour · day of month · month · day of week</span>
+  <span className="dialog-field__words" id="cron-words" aria-live="polite">every day at 01:00</span>
+</div>
+{refused && <div className="info-strip info-strip--error" id="cron-refusal" role="alert">…</div>}
+```
+
+```css
+.dialog-label, .dialog-field { display: flex; flex-direction: column; gap: 5px;
+                               font-size: 12px; font-weight: 600; color: #475569; }
+.dialog-input, .dialog-select, .dialog-textarea { padding: 7px 10px; border: 1px solid #e2e8f0;
+                               border-radius: 6px; font-size: 13px; color: #1e293b; }
+.dialog-input--mono          { font-family: 'SF Mono', 'Fira Mono', monospace; }
+.dialog-input[aria-invalid="true"] { border-color: #fca5a5; background: #fffafa; }
+.dialog-field__hint          { font-size: 11px; font-weight: 400; color: #94a3b8; }
+.dialog-field__words         { font-size: 12px; font-weight: 400; color: #374151; }
+.dialog-field__words:empty   { margin-top: -5px; }  /* the field's gap, taken back */
+```
+
+Rules:
+
+- One label and one native control per field. An optional field says so
+  in its placeholder (`Optional`), not in its label.
+- `--mono` is for a value a parser reads (a cron), never for prose.
+- The hint names the format the field expects, on one line; the words line
+  says what the value means, in the server's words, and is empty until the
+  server has read the value. It is a polite live region (`aria-live`) that
+  is in the page from the start, so its first answer is announced; empty, it
+  takes no room (`:empty` takes the field's gap back; never `display: none`,
+  which drops the region from the accessibility tree).
+- A field the server reads is previewed as the operator types, 300 ms after
+  the last change. The previous answer stays on screen while the next one
+  loads (no loading strip, which would flash at every keystroke; the
+  "Preview list" rule of a loading strip is for previews an explicit action
+  started), an answer for an older value never replaces a newer one, and
+  the confirming verb is disabled until the preview of the value as typed
+  has come back.
+- A value the server refused sets `aria-invalid` on its control and shows
+  the server's message in an `.info-strip--error` with `role="alert"`; the
+  confirming verb is disabled. The control's `aria-describedby` names the
+  hint, the words line and, while it is shown, that strip, so a screen
+  reader reads the refusal with the field.
+- A dialog's other failure strips (a refused save, a change made by someone
+  else) are `role="alert"` too. When a request ends and the dialog stays
+  open, focus goes back to the first field if it was inside the dialog when
+  the request started and a disabled control dropped it; focus that moved
+  elsewhere stays there.
+
+### Remove row
+
+An action that undoes what an edit dialog edits — `Remove cron` — is not a
+way of confirming the edit, so it does not sit in the footer beside the
+confirming verb. It has a row of its own above the footer, set apart by a
+top rule, with one muted line saying what is left once it is done.
+
+```jsx
+<div className="dialog-remove-row">
+  <button type="button" className="btn btn--danger">Remove cron</button>
+  <span className="dialog-remove-row__note">daily then runs only when triggered.</span>
+</div>
+```
+
+```css
+.dialog-remove-row       { display: flex; align-items: center; gap: 10px;
+                           padding-top: 12px; border-top: 1px solid #f1f5f9; }
+.dialog-remove-row > .btn { flex-shrink: 0; }
+.dialog-remove-row__note { min-width: 0; font-size: 11.5px; color: #6b7280; }
+```
+
+Rules:
+
+- `.btn--danger`, with the standard loading and success states
+  (`Removing…`, `Removed`); the dialog closes once it succeeds. The note
+  sits beside the button and wraps its own text when it is long.
+- It asks for no second confirmation: its own row and its note are the
+  safeguard, and what it removes can be added again.
+- Only an edit of something that exists has a remove row; an add dialog has
+  none.
+- Status strips (a refused request, a stale version) sit above the remove
+  row, so the footer stays the dialog's last row.
 
 ## Section headers
 
@@ -1109,6 +1223,73 @@ Rules:
   needs the no-border treatment too, not just an auto-expanded one. Never
   put `border-bottom: none` on the card row itself; the card row's border is
   what separates one proposal's card from the next proposal's row.
+
+## Schedule cards
+
+Each schedule on the home page's Runs tab is a `SchedulerCard`
+(`ui/src/client/SchedulerCard.tsx`). After the name and the status badge of
+its last run, its header says whether and when the schedule runs on its own.
+
+```jsx
+<div className="scheduler-card-header">
+  <span className="schedule-name">daily</span>
+  <span className="status-badge status-succeeded">succeeded</span>
+  <span className="schedule-pill schedule-pill--scheduled">scheduled</span>
+  <span className="schedule-cron" title="every day at 01:00">0 1 * * * · Europe/Paris</span>
+  <span className="timestamps">next 28 Oct 01:00</span>
+  <span className="timestamps">last run 01:00:04</span>
+  <div className="scheduler-card-actions">
+    {/* Operation select, Trigger run, Cancel */}
+    <button type="button" className="btn btn--secondary">Edit cron</button>
+  </div>
+</div>
+```
+
+```css
+.schedule-pill            { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                            font-size: 11px; font-weight: 500; text-transform: uppercase;
+                            letter-spacing: 0.05em; border: 1px solid transparent; }
+.schedule-pill--scheduled { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.schedule-pill--paused    { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.schedule-pill--manual    { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+.schedule-cron            { color: #6b7280; font-size: 12px; font-family: monospace;
+                            white-space: nowrap; }
+.schedule-cron--paused    { text-decoration: line-through; }
+.scheduler-card-header    { display: flex; flex-wrap: wrap; align-items: center;
+                            gap: 12px; row-gap: 8px; }
+.scheduler-card-actions   { display: flex; flex-wrap: wrap; align-items: center;
+                            gap: 12px; margin-left: auto; }
+.timestamps               { color: #6b7280; font-size: 12px; white-space: nowrap; }
+```
+
+Rules:
+
+- **One pill per card**: `scheduled` (a cron that fires), `paused` (a cron
+  that starts nothing on its own) or `manual` (no cron: it runs only when
+  triggered). The pill says whether the schedule runs on its own; the
+  status badge before it says how its last run went. The pill's border sets
+  it apart from the borderless status badge.
+- **The cron span** is the raw cron and its timezone, monospace, on a
+  schedule that has a cron, struck through (`.schedule-cron--paused`) while
+  paused; its `title` is the cron in words. One muted `.timestamps` fact
+  follows it: `next 28 Oct 01:00`, in the schedule's timezone, or
+  `paused by bob@example.com · 27 Oct 14:02`, in the viewer's. A cron that
+  fires no more has no fact. A manual schedule shows `no cron: runs only when
+  triggered` in place of the span.
+- **The header wraps** when its facts and controls do not fit: each fact
+  keeps to one line (`white-space: nowrap`), and the controls — Operation,
+  Trigger, Cancel, Edit cron — stay together in `.scheduler-card-actions`,
+  right-aligned, and move to the next line as one group.
+  `ui/tests/client/styles-schedule-card-header.test.ts` pins this.
+- **`Edit cron`** (scheduled or paused) / **`Add cron`** (manual) is a
+  `.btn--secondary`, last of the card's controls, and opens the cron dialog. Only an
+  operator sees it, by the session's role (`useCurrentUser()`); a viewer
+  sees no button rather than a disabled one.
+- **A scheduled name with no models** (no model of the live release has its
+  tag) carries an `.info-strip--warning` under the header: "No model in the
+  live release has the tag **daily**. Each fire records a failed run until a
+  release brings them back, or you remove its cron." A paused or manual
+  schedule fires nothing and has no such strip.
 
 ## Snapshot tiles
 

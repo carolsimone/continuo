@@ -33,8 +33,9 @@ import "google/protobuf/timestamp.proto";
 // id is remembered for at least 30 days. A request_id is a UUID and is
 // required: an empty or malformed one is INVALID_ARGUMENT.
 //
-// While maintenance mode is on, every command that starts a run is refused
-// with UNAVAILABLE. Cancels and reads are not.
+// While maintenance mode is on, every command that starts a run or changes a
+// schedule is refused with UNAVAILABLE. Cancels and reads, PreviewSchedule
+// among them, are not.
 service RunService {
   // ==========================================================================
   // Commands
@@ -46,10 +47,12 @@ service RunService {
   // is not refused: the run is created, ends skipped with no task, and its id
   // is returned.
   // Errors:
-  //   INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
-  //                         full_refresh, which targets a single node only.
-  //   NOT_FOUND           - the tenant's schedule catalog holds no schedule of
-  //                         that name.
+  //   INVALID_ARGUMENT    - empty schedule_name or one longer than 50
+  //                         characters, the longest a run carries, an unknown
+  //                         operation, or full_refresh, which targets a single
+  //                         node only.
+  //   NOT_FOUND           - no model of the tenant's live release carries the
+  //                         schedule_name, and it has no cron.
   //   FAILED_PRECONDITION - the schedule already has an active run, or its
   //                         selection cannot make a valid run: no release is
   //                         live, the live release holds no node of the
@@ -268,12 +271,79 @@ service RunService {
   rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
 
   // ==========================================================================
+  // Schedule commands
+  // ==========================================================================
+  //
+  // A schedule is a schedule name: the models of the live release whose dbt
+  // tag names it. Its cron says when it runs on its own; a schedule with no
+  // cron runs only when triggered. The commands below change only the cron,
+  // and they take no request_id. Repeating an UpsertSchedule saves the same
+  // cron, timezone, description and paused flag again, but each save raises
+  // version and updated_at: a retry that sends the expected_version the
+  // first call sent is ABORTED once the first call has saved. Repeating a
+  // DeleteSchedule leaves the schedule with no cron, as the first did.
+
+  // UpsertSchedule creates or replaces the cron of a schedule: its cron (five
+  // fields or a descriptor such as @daily), the IANA timezone it is read in,
+  // its description and whether it is paused. The next fire counts from now,
+  // and a paused schedule has none: fires missed while paused do not run. The
+  // version goes up by one, and updated_by is the caller's identity. A
+  // schedule that has a cron can be edited, paused, resumed or removed
+  // whatever the live release holds; only a schedule's first cron needs a
+  // model of the live release with its tag. With expected_version above 0 the
+  // cron is saved only while the schedule is at that version; 0 saves with no
+  // check, and the last write wins: an edit that finds another edit saved
+  // first reads the schedule again and saves over it, up to three tries in
+  // all. The response carries the schedule as saved and its next three fire
+  // times (none while paused).
+  // Errors:
+  //   INVALID_ARGUMENT - empty schedule_name or one longer than 50
+  //                      characters, a negative expected_version, or a cron
+  //                      or timezone the parser refuses (a CRON_TZ= or TZ=
+  //                      prefix, an unknown or empty zone, a cron that never
+  //                      fires, an @every interval under one minute); for a
+  //                      refusal of the parser the message is the parser's.
+  //   NOT_FOUND        - the schedule has no cron and no model of the live
+  //                      release has its tag.
+  //   ABORTED          - expected_version is set and the schedule is not at
+  //                      it: another edit saved first, or its cron was
+  //                      removed. Read the schedule again before editing it.
+  //                      With expected_version 0, other edits saved first on
+  //                      each of the three tries; the same call may be sent
+  //                      again.
+  //   UNAVAILABLE      - maintenance mode is on.
+  rpc UpsertSchedule(UpsertScheduleRequest) returns (UpsertScheduleResponse);
+
+  // DeleteSchedule removes the cron of a schedule, which then runs only when
+  // triggered. A run of it in progress goes on. Deleting the cron of a
+  // schedule that has none succeeds.
+  // Errors:
+  //   INVALID_ARGUMENT - empty schedule_name.
+  //   UNAVAILABLE      - maintenance mode is on.
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+
+  // PreviewSchedule reads a cron in a timezone as UpsertSchedule would, with
+  // the same parser that fires it, and returns it in English words with its
+  // next three fire times from now. It writes nothing, and maintenance mode
+  // does not refuse it. cron_words is empty for a cron the parser fires but
+  // the words cannot describe.
+  // Errors: INVALID_ARGUMENT (a cron or timezone the parser refuses; the
+  // message is the parser's).
+  rpc PreviewSchedule(PreviewScheduleRequest) returns (PreviewScheduleResponse);
+
+  // ==========================================================================
   // Schedule reads
   // ==========================================================================
 
-  // ListSchedules returns every active schedule of the tenant's schedule
-  // catalog, with the cron of each and its last run, ordered by
-  // schedule_name.
+  // ListSchedules returns one entry per schedule name that the live release
+  // has or that has a cron, ordered by schedule_name: its cron, how many
+  // models of the live release have its tag, and its last run. A schedule
+  // that has a cron, is not paused and has a model_count of 0 records a
+  // failed run at each fire until a release brings its models back, it is
+  // paused, or its cron is removed. A schedule whose stored cron the parser no
+  // longer reads (a timezone the timezone database has dropped) is listed with
+  // no cron, whether or not the live release has its name; it fires nothing,
+  // UpsertSchedule saves a new cron over it and DeleteSchedule removes it.
   // Errors: none beyond the service-wide ones. With no schedule it returns an
   // empty list.
   rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
@@ -362,6 +432,19 @@ message TaskAttempt {
   string error_message = 13;                      // empty when none
   string log_s3_key = 14;                         // S3 object key of the pod log; empty when none
   string run_results_uri = 15;                    // S3 object key of the structured result block; empty when none
+}
+
+// Schedule is the cron of one schedule, as stored.
+message Schedule {
+  string schedule_name = 1;
+  string cron = 2;                              // five fields or a descriptor such as @daily
+  string timezone = 3;                          // IANA timezone the cron is read in
+  string description = 4;                       // empty when the schedule has none
+  bool paused = 5;                              // nothing starts on its own while paused
+  google.protobuf.Timestamp next_fire_at = 6;   // unset while paused or when the cron fires no more
+  int64 version = 7;                            // counts the edits of the cron, from 1
+  string updated_by = 8;                        // who made the latest edit
+  google.protobuf.Timestamp updated_at = 9;     // when the latest edit was made
 }
 
 // ============================================================================
@@ -650,20 +733,58 @@ message ListNodeServicesResponse {
 // SCHEDULE REQUESTS/RESPONSES
 // ============================================================================
 
+message UpsertScheduleRequest {
+  string schedule_name = 1;    // Required
+  string cron = 2;             // Required: five fields or a descriptor such as @daily
+  string timezone = 3;         // Required: the IANA zone the cron is read in, such as Europe/Paris or UTC
+  string description = 4;      // what the schedule is for; may be empty
+  bool paused = 5;             // nothing starts on its own while paused
+  int64 expected_version = 6;  // the version read before editing; 0 saves with no check
+}
+
+message UpsertScheduleResponse {
+  Schedule schedule = 1;                                   // the schedule as saved
+  repeated google.protobuf.Timestamp next_fire_times = 2;  // its next three fires; none while paused
+}
+
+message DeleteScheduleRequest {
+  string schedule_name = 1;  // Required
+}
+
+message DeleteScheduleResponse {}
+
+message PreviewScheduleRequest {
+  string cron = 1;      // as UpsertScheduleRequest.cron
+  string timezone = 2;  // as UpsertScheduleRequest.timezone
+}
+
+message PreviewScheduleResponse {
+  string cron_words = 1;                                   // the cron in English words; empty when they cannot describe it
+  repeated google.protobuf.Timestamp next_fire_times = 2;  // its next three fires from now
+}
+
 message ListSchedulesRequest {}
 
-// ScheduleSummary is one active schedule of the tenant's schedule catalog,
-// with its cron configuration and its last run. last_run_status is a
-// run_status value.
+// ScheduleSummary is one schedule name of the tenant: its cron when it has
+// one, how many models of the live release have its tag, and its last run.
+// With no cron, cron is empty, paused false, version 0 and next_fire_at and
+// updated_at unset. last_run_status is a run_status value.
 message ScheduleSummary {
   string schedule_name = 1;
-  string cron_expression = 2;  // empty when the schedule has no cron
+  string cron = 2;             // empty when the schedule has no cron: it runs only when triggered
   string description = 3;      // empty when the schedule has none
   string timezone = 4;         // IANA timezone the cron is read in
   bool has_active_run = 5;     // a pending, running or cancelling run holds the schedule
   google.protobuf.Timestamp last_run_at = 6;  // unset if never run
   string last_run_status = 7;  // a run_status value; empty if never run
   string last_run_id = 8;      // run_id of the most recent run; empty if never run
+  bool paused = 9;             // nothing starts on its own while paused
+  google.protobuf.Timestamp next_fire_at = 10;  // unset while paused, with no cron, or when the cron fires no more
+  int64 version = 11;          // counts the edits of the cron, from 1
+  string updated_by = 12;      // who made the latest edit of the cron
+  google.protobuf.Timestamp updated_at = 13;  // when the latest edit of the cron was made
+  int32 model_count = 14;      // models of the live release with the schedule's tag
+  string cron_words = 15;      // the cron in English words; empty with no cron or when they cannot describe it
 }
 
 message ListSchedulesResponse {

@@ -34,6 +34,11 @@ var (
 	// schedule_name. This is the concurrent-activation loser; SaveRun maps it to
 	// run.ErrScheduleHasActiveRun.
 	ErrActiveRunConflict = errors.New("schedule already has an active run")
+	// ErrSlotConflict is returned by CreateTx when the row is a cron run for a
+	// schedule slot that already has its run (uq_runs_scheduled_for). The
+	// INSERT does nothing, so the transaction stays usable; SaveRun maps it to
+	// run.ErrSlotTaken.
+	ErrSlotConflict = errors.New("the schedule slot already has its run")
 )
 
 // activeScheduleConstraint is the name of the partial unique index that enforces
@@ -55,9 +60,9 @@ const runColumns = `
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason`
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason,
+			scheduled_for`
 
 // RunRepository implements repository.RunRepository over the runs table. Every
 // method that names a run or a schedule takes the tenant it belongs to, and
@@ -103,38 +108,27 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 	if row.TenantID == "" {
 		return fmt.Errorf("create run %s: %w", row.ScheduleID, ErrNoTenant)
 	}
-	meta, err := row.GetServiceMetadata()
-	if err != nil {
-		return err
-	}
-	metaJSON, err := marshalServiceMetadata(meta)
-	if err != nil {
-		return fmt.Errorf("marshal service_metadata: %w", err)
-	}
 
 	query := `
 		INSERT INTO runs (
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$20, $1, $2, $3, $4,
+			$19, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11,
-			$12, $13,
-			$14, $15, $16, $17, $18, $19
+			$11, $12,
+			$13, $14, $15, $16, $17, $18
 		)
 	`
 
-	_, err = r.db.ExecContext(ctx, query,
+	_, err := r.db.ExecContext(ctx, query,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -174,47 +168,47 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 // CreateTx inserts a new run record within an existing transaction, under the
 // row's tenant. The insert names the run's key (tenant_id, run_id) as its
 // conflict target: a row with the same key makes it a no-op reported as
-// ErrRunExists, without aborting the transaction. The one-active-run-per-
-// schedule index is not a conflict target, so a different id with the same
-// active schedule_name in the tenant still fails, as ErrActiveRunConflict.
+// ErrRunExists, without aborting the transaction. A row with a slot
+// (scheduled_for, a cron run's) names the slot's index uq_runs_scheduled_for
+// instead: a run of the tenant's schedule already stored for the slot makes
+// the insert a no-op reported as ErrSlotConflict, and a concurrent insert of
+// the slot is waited for. The one-active-run-per-schedule index is never a
+// conflict target, so a different id with the same active schedule_name in
+// the tenant still fails, as ErrActiveRunConflict.
 func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) error {
 	if row.TenantID == "" {
 		return fmt.Errorf("create run %s: %w", row.ScheduleID, ErrNoTenant)
 	}
-	meta, err := row.GetServiceMetadata()
-	if err != nil {
-		return err
-	}
-	metaJSON, err := marshalServiceMetadata(meta)
-	if err != nil {
-		return fmt.Errorf("marshal service_metadata: %w", err)
-	}
 
+	conflict, conflictErr := `ON CONFLICT (tenant_id, run_id) DO NOTHING`, ErrRunExists
+	if row.ScheduledFor != nil {
+		conflict = `ON CONFLICT (tenant_id, schedule_name, scheduled_for) WHERE scheduled_for IS NOT NULL DO NOTHING`
+		conflictErr = ErrSlotConflict
+	}
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO runs (
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq,
+			scheduled_for
 		) VALUES (
-			$20, $1, $2, $3, $4,
+			$19, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11,
-			$12, $13,
-			$14, $15, $16, $17, $18, $19
+			$11, $12,
+			$13, $14, $15, $16, $17, $18,
+			$20
 		)
-		ON CONFLICT (tenant_id, run_id) DO NOTHING
-	`,
+		`+conflict,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
+		row.ScheduledFor,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -230,7 +224,7 @@ func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) 
 		return fmt.Errorf("failed to create run: %w", err)
 	}
 	if rows == 0 {
-		return ErrRunExists
+		return conflictErr
 	}
 	return nil
 }
@@ -258,12 +252,6 @@ func (r *RunRepository) GetByID(ctx context.Context, tenantID string, runID uuid
 		)
 		return nil, fmt.Errorf("failed to get run: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
-
 	r.logger.Debug("Retrieved run",
 		"run_id", runID,
 		"schedule_name", row.ScheduleName,
@@ -392,12 +380,6 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 		)
 		return nil, fmt.Errorf("failed to get active scheduler: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
-
 	r.logger.Debug("Found active scheduler",
 		"schedule_name", scheduleName,
 		"run_id", row.ScheduleID,
@@ -469,11 +451,6 @@ func (r *RunRepository) LoadByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, te
 		}
 		return nil, fmt.Errorf("get run for update: %w", err)
 	}
-	meta, metaErr := row.GetServiceMetadata()
-	if metaErr != nil {
-		return nil, metaErr
-	}
-	row.ServiceMetadata = meta
 	return &row, nil
 }
 

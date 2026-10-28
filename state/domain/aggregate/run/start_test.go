@@ -48,7 +48,7 @@ func fkey(table string) topology.NodeKey { return topology.KeyOf("e2e_schema", t
 
 func newCronRun(t *testing.T, op model.Operation) *run.Run {
 	t.Helper()
-	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, nil, op,
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "e2e-schedule-failure", run.KindCron, nil, identity.SystemUserID, op,
 		run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, startNow)
 	require.NoError(t, err)
 	return r

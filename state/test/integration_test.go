@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/adapters/schedulesconfig"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
+	"github.com/carolsimone/continuo/state/service/schedules"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -36,9 +37,16 @@ var (
 	// a test calls it directly to act for a tenant the gRPC edge does not
 	// resolve.
 	runCommands *svchandlers.RunCommands
-	stateConn   *grpc.ClientConn
-	stateServer *grpcserver.Server
-	stateDB     *sqlx.DB
+	// scheduleService serves the schedule calls of the server under test; a
+	// test calls it directly to act for a tenant the gRPC edge does not
+	// resolve.
+	scheduleService *schedules.Service
+	stateConn       *grpc.ClientConn
+	stateServer     *grpcserver.Server
+	stateDB         *sqlx.DB
+	// stateDSN is the connection string of stateDB's database, for a test that
+	// listens on one of its channels.
+	stateDSN string
 )
 
 // TestMain sets up a real PostgreSQL testcontainer and a live gRPC state server,
@@ -115,6 +123,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stateDB = db
+	stateDSN = connStr
 
 	// ---- Build repositories ----
 	schedulerRepo := postgres.NewRunRepository(db, logger)
@@ -131,14 +140,23 @@ func TestMain(m *testing.M) {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
 	runCommands = svchandlers.NewRunCommands(integrationUoWFactory, noRunMetrics{}, defaultPlanner, logger)
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
+	scheduleService = schedules.New(
+		postgres.NewScheduleRepository(db, nil, cronParser, logger),
+		postgres.NewLiveScheduleModelRepository(db),
+		schedulerRepo, cronParser, clk,
+	)
 	runService := runservice.NewServer(runservice.Reads{
-		Runs:      runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
-		Attempts:  runreads.NewAttempts(attemptRepo),
-		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
-		Schedules: runreads.NewSchedules(postgres.NewCatalogRepository(db, logger), schedulerRepo, schedulesconfig.New(nil)),
-		Graphs:    runreads.New(runReadRepo),
-		Rebases:   runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
-	}, runCommands, logger)
+		Runs:     runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
+		Attempts: runreads.NewAttempts(attemptRepo),
+		Nodes:    runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
+		Graphs:   runreads.New(runReadRepo),
+		Rebases:  runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
+	}, runCommands, scheduleService, logger)
 
 	// ---- Create gRPC server on a random port ----
 	stateServer, err = grpcserver.NewServer(0, runService, logger, false)
@@ -178,10 +196,8 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 	t.Run("CancelActiveRun/success", func(t *testing.T) {
 		ctx := context.Background()
 
-		// Seed the catalog and the live release, then start the schedule:
-		// StartRun creates a run of kind trigger, which CancelActiveRun then
-		// cancels.
-		seedActiveSchedule(t, "daily-cancel-success")
+		// Promote a release carrying the schedule, then start it: StartRun
+		// creates a run of kind trigger, which CancelActiveRun then cancels.
 		promoteSchedules(t, stateDB, "daily-cancel-success")
 		runID := startRun(t, "daily-cancel-success")
 
@@ -214,7 +230,6 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 	t.Run("CancelActiveRun/a_second_cancel_returns_the_cancelling_run", func(t *testing.T) {
 		ctx := context.Background()
 
-		seedActiveSchedule(t, "daily-cancel-twice")
 		promoteSchedules(t, stateDB, "daily-cancel-twice")
 		runID := startRun(t, "daily-cancel-twice")
 		_, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
@@ -264,18 +279,6 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.FailedPrecondition, st.Code())
 	})
-}
-
-// seedActiveSchedule inserts an active schedule_catalog row so that a start of
-// the schedule passes its catalog-existence pre-condition.
-func seedActiveSchedule(t *testing.T, scheduleName string) {
-	t.Helper()
-	_, err := stateDB.ExecContext(context.Background(), `
-		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-		VALUES ('default', $1, now(), now(), NULL, '{}'::jsonb)
-		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL, last_seen_at = now()
-	`, scheduleName)
-	require.NoError(t, err)
 }
 
 // schedulerKind reads the persisted kind discriminator for a run directly from

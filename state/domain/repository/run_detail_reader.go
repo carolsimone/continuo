@@ -57,9 +57,3 @@ type LastRunReader interface {
 	// name.
 	GetLastRunPerSchedule(ctx context.Context, tenantID string) (map[string]LastRunSummary, error)
 }
-
-// ActiveScheduleReader lists the schedules of a tenant's catalog.
-type ActiveScheduleReader interface {
-	// ListActive returns the tenant's active schedule names.
-	ListActive(ctx context.Context, tenantID string) ([]string, error)
-}

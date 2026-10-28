@@ -49,6 +49,18 @@ type RunClient interface {
 	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
+
+	// Schedule crons. An edit takes no request id, so the server cannot answer
+	// a repeat with the result of the first call: each save raises the
+	// schedule's version, and a repeat that sends the expected_version of a
+	// call that has saved (its reply lost) is ABORTED. The client repeats an
+	// edit on UNAVAILABLE only, never on ABORTED; a caller that gets an
+	// ABORTED reads the schedule again before it saves. actor is the identity
+	// the server records as the author of the edit.
+	UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error)
+	DeleteSchedule(ctx context.Context, actor, scheduleName string) (*runv1.DeleteScheduleResponse, error)
+	PreviewSchedule(ctx context.Context, cron, timezone string) (*runv1.PreviewScheduleResponse, error)
+
 	Close() error
 }
 
@@ -58,9 +70,10 @@ var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond
 
 // commandMethods are the RPCs that start or cancel a run by request id; so not
 // CancelRun, which names the run and takes none. The dialled client retries
-// these on UNAVAILABLE and ABORTED, and only these: the server answers a
-// repeated id with the run its first call made, so a retry cannot duplicate
-// work, while a read needs no retry.
+// these on UNAVAILABLE and ABORTED: the server answers a repeated id with the
+// run its first call made, so a retry cannot duplicate work. They are the only
+// methods retried on ABORTED. The schedule edits are retried on UNAVAILABLE
+// only (scheduleEditMethods), and a read and CancelRun are not retried.
 var commandMethods = map[string]bool{
 	runv1.RunService_StartRun_FullMethodName:             true,
 	runv1.RunService_TriggerRerun_FullMethodName:         true,
@@ -69,18 +82,36 @@ var commandMethods = map[string]bool{
 	runv1.RunService_CancelActiveRun_FullMethodName:      true,
 }
 
+// scheduleEditMethods are the RPCs that change the cron of a schedule. They
+// carry no request id and are retried on UNAVAILABLE only; their ABORTED is
+// returned at once for the caller to read the schedule again. With an
+// expected_version above 0 that ABORTED is a stale version, which sending the
+// same request again cannot settle. With expected_version 0, as a first cron
+// is sent, it means other edits saved first on each of the server's three
+// tries, which sending the request again can settle.
+var scheduleEditMethods = map[string]bool{
+	runv1.RunService_UpsertSchedule_FullMethodName: true,
+	runv1.RunService_DeleteSchedule_FullMethodName: true,
+}
+
 // retryCommandInterceptor repeats a command call that failed UNAVAILABLE or
 // ABORTED (concurrent calls of its request id kept rolling back), up to
 // len(retryDelays)+1 tries, sending the same request, and so the same request
-// id, each time. A refusal for maintenance is UNAVAILABLE too but lasts until
-// an operator ends it, so it is returned at once.
+// id, each time. A schedule edit is repeated on UNAVAILABLE only. A refusal
+// for maintenance is UNAVAILABLE too but lasts until an operator ends it, so
+// it is returned at once.
 func retryCommandInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	err := invoker(ctx, method, req, reply, cc, opts...)
-	if !commandMethods[method] {
+	shouldRetry := retryable
+	switch {
+	case commandMethods[method]:
+	case scheduleEditMethods[method]:
+		shouldRetry = retryableOutage
+	default:
 		return err
 	}
 	for _, delay := range retryDelays {
-		if !retryable(err) {
+		if !shouldRetry(err) {
 			return err
 		}
 		timer := time.NewTimer(delay)
@@ -107,6 +138,12 @@ func retryable(err error) bool {
 	default:
 		return false
 	}
+}
+
+// retryableOutage reports whether err is a plain UNAVAILABLE, not a
+// maintenance refusal and not an ABORTED.
+func retryableOutage(err error) bool {
+	return retryable(err) && status.Code(err) == codes.Unavailable
 }
 
 // runDialOptions are the dial options of the production client: plaintext
@@ -315,6 +352,18 @@ func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, service
 
 func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "full_refresh"), actor)
+}
+
+func (c *runGRPCClient) UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {
+	return c.api.UpsertSchedule(withActor(ctx, actor), req)
+}
+
+func (c *runGRPCClient) DeleteSchedule(ctx context.Context, actor, scheduleName string) (*runv1.DeleteScheduleResponse, error) {
+	return c.api.DeleteSchedule(withActor(ctx, actor), &runv1.DeleteScheduleRequest{ScheduleName: scheduleName})
+}
+
+func (c *runGRPCClient) PreviewSchedule(ctx context.Context, cron, timezone string) (*runv1.PreviewScheduleResponse, error) {
+	return c.api.PreviewSchedule(ctx, &runv1.PreviewScheduleRequest{Cron: cron, Timezone: timezone})
 }
 
 func (c *runGRPCClient) Close() error { return c.conn.Close() }

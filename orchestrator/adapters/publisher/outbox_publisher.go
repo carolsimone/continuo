@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
@@ -103,13 +102,14 @@ func (p *OutboxPublisher) publishValues(entry *outbox.Entry) (map[string]interfa
 var _ outbox.Renderer = (*OutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id, for each known event type. Every call returns a fresh map.
+// outbox_entry_id. The only event type orchestrator publishes is the dead
+// letter the outbox processor writes for a row it gave up on. Every call
+// returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
 	case outbox.DeadLetterEventType:
 		// Dead-letter rows publish generically: their payload is already a flat
-		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
-		// rather than a bespoke case below.
+		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues.
 		values, err := outbox.DeadLetterValues(entry)
 		if err != nil {
 			// Our own payload; a decode failure here is deterministic, never transient.
@@ -117,11 +117,6 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		}
 		delete(values, "outbox_entry_id")
 		return values, nil
-
-	case domain.EventTypeReleasePromoted:
-		// A release_promoted row carries a self-contained JSON payload that
-		// state decodes directly from the "payload" field.
-		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
 		// Unknown event_type is retried, not dead-lettered: during a rolling

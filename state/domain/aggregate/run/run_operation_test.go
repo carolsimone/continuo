@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewPendingRun_StoresOperation(t *testing.T) {
-	r, err := NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
+	r, err := NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "sched", KindTrigger, nil, "user-1", model.OperationTest, ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 
 func TestHydrateRun_RoundTripsOperation(t *testing.T) {
 	r := HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "sched", RunStatusRunning, KindTrigger, nil, "user-1", model.OperationTest, time.Now(),
-		nil, nil, nil, nil, nil, nil, nil, 0, nil)
+		nil, nil, nil, nil, nil, nil, nil, 0)
 	if r.Operation() != model.OperationTest {
 		t.Fatalf("Operation() = %q, want test", r.Operation())
 	}

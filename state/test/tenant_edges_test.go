@@ -40,7 +40,8 @@ type edgeTenant struct {
 	messages []string
 }
 
-// newEdgeTenant stores the tenant's release, catalog row and running run.
+// newEdgeTenant stores the tenant's release, whose one model carries the
+// tenant's schedule, and its running run.
 func newEdgeTenant(t *testing.T, db *sqlx.DB) *edgeTenant {
 	t.Helper()
 	ctx := context.Background()
@@ -62,15 +63,10 @@ func newEdgeTenant(t *testing.T, db *sqlx.DB) *edgeTenant {
 	require.NoError(t, err)
 	require.NoError(t, topo.SetLivePointer(ctx, e.id, topology.Pointer{ReleaseID: releaseID, PromotionSeq: 1}, time.Now()))
 	require.NoError(t, tx.Commit())
-	_, err = db.Exec(`INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ($1, $2, now(), now())`,
-		e.id, e.schedule)
-	require.NoError(t, err)
 
 	h := newBuiltHarness(db)
-	id, outcome, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), e.id, e.schedule,
-		run.KindTrigger, nil, identity.FromUserID("okta|alice"), model.OperationRun)
+	id, err := h.start(ctx, e.id, e.schedule, identity.FromUserID("okta|alice"), model.OperationRun)
 	require.NoError(t, err)
-	require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 	e.runID = id
 	e.taskID = run.TaskIDFor(e.id, id, topology.KeyOf("raw", e.table))
 	return e
@@ -83,7 +79,7 @@ func (e *edgeTenant) cleanup(db *sqlx.DB) {
 	_, _ = db.ExecContext(ctx, `DELETE FROM message_processing WHERE message_id = ANY($1) AND stream_name = $2`,
 		pq.Array(e.messages), streams.TaskStatusUpdatedV2)
 	for _, table := range []string{
-		"runs", "node_leases", "node_materializations", "schedule_catalog", "schedule_catalog_state",
+		"runs", "node_leases", "node_materializations", "schedules",
 		"live_release", "topology_releases",
 	} {
 		_, _ = db.ExecContext(ctx, `DELETE FROM `+table+` WHERE tenant_id = $1`, e.id)

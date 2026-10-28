@@ -3,9 +3,9 @@ Continuo {{ .Chart.AppVersion }} (chart {{ .Chart.Version }}) {{ if .Release.IsU
 {{- if eq (include "continuo.maintenance.enabled" .) "true" }}
 
 MAINTENANCE MODE IS ON
-  continuo accepts no new runs, triggers, releases, remediation retries or
-  dead-letter redrives, and cron fires are skipped. Work already running
-  finishes. Turn it off with:
+  continuo accepts no new runs, triggers, releases, remediation retries,
+  schedule edits or dead-letter redrives, and cron fires are skipped. Work
+  already running finishes. Turn it off with:
     helm upgrade {{ .Release.Name }} <chart> --reuse-values --set maintenance.enabled=false
 {{- end }}
 
@@ -70,6 +70,11 @@ UPGRADE NOTES
   registry (global.imageRegistry/global.imageRepositoryPrefix), mirror this
   ref too — an install can come up healthy and only fail later, at the next
   release promotion, with a validation-pod ErrImagePull.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
+Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

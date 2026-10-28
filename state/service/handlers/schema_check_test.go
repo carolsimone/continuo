@@ -45,15 +45,30 @@ func TestCheckSchema_ReadFailureIsNotAMissingSchema(t *testing.T) {
 	}
 }
 
-// state refuses to start until every table whose keys lead with tenant_id has
-// the column, and the command requests table exists.
+// state refuses to start until every run table whose keys lead with tenant_id
+// has the column, and the command requests table exists.
 func TestCheckSchema_RequiresTheTenantColumns(t *testing.T) {
 	required := map[string]bool{}
 	for _, c := range RequiredColumns {
 		required[c] = true
 	}
-	for _, c := range []string{"runs.tenant_id", "tasks.tenant_id", "task_attempts.tenant_id",
-		"schedule_catalog.tenant_id", "schedule_catalog_state.tenant_id", "command_requests.request_id"} {
+	for _, c := range []string{"runs.tenant_id", "tasks.tenant_id", "task_attempts.tenant_id", "command_requests.request_id"} {
+		if !required[c] {
+			t.Errorf("RequiredColumns lacks %s", c)
+		}
+	}
+}
+
+// state refuses to start until the schedules table has every column and the
+// runs table has the slot a scheduled run records.
+func TestCheckSchema_RequiresTheSchedulesColumns(t *testing.T) {
+	required := map[string]bool{}
+	for _, c := range RequiredColumns {
+		required[c] = true
+	}
+	for _, c := range []string{"schedules.tenant_id", "schedules.name", "schedules.cron", "schedules.timezone",
+		"schedules.description", "schedules.paused", "schedules.next_fire_at", "schedules.version",
+		"schedules.updated_by", "schedules.updated_at", "runs.scheduled_for"} {
 		if !required[c] {
 			t.Errorf("RequiredColumns lacks %s", c)
 		}

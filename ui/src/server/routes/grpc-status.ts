@@ -30,8 +30,9 @@ export function grpcToHttpStatus(code: number | undefined): number {
 
 // sendGrpcError answers a failed backend call: a maintenance refusal becomes
 // 503 maintenance, ABORTED a 503 with a Retry-After, and anything else keeps
-// its mapped status and message.
-export function sendGrpcError(res: Response, err: any): void {
+// its mapped status, with message as its error (the error's own message
+// unless the caller names another).
+export function sendGrpcError(res: Response, err: any, message: string | undefined = err?.message): void {
   if (isMaintenanceRefusal(err)) {
     sendMaintenance(res);
     return;
@@ -39,5 +40,5 @@ export function sendGrpcError(res: Response, err: any): void {
   if (err?.code === grpc.status.ABORTED) {
     res.set('Retry-After', String(ABORTED_RETRY_AFTER_SECONDS));
   }
-  res.status(grpcToHttpStatus(err?.code)).json({ error: err?.message });
+  res.status(grpcToHttpStatus(err?.code)).json({ error: message });
 }

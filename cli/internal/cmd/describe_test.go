@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -155,6 +155,11 @@ func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	redrive := findCmd(t, p, "dlq redrive")
 	assert.True(t, redrive.Mutating, "dlq redrive must be marked mutating")
 
+	for _, path := range []string{"schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume"} {
+		c := findCmd(t, p, path)
+		assert.True(t, c.Mutating, "%s changes a schedule, so the chat must ask for approval", path)
+	}
+
 	for _, path := range []string{"run cancel", "run rerun", "run rebase"} {
 		assert.True(t, findCmd(t, p, path).Mutating, "%s must be marked mutating", path)
 	}
@@ -186,6 +191,35 @@ func TestDescribe_DLQCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.
 		}
 		assert.True(t, flagNames["dead-letter-endpoint"], "%s must expose the global --dead-letter-endpoint flag", c.Path)
 	}
+}
+
+// The cron commands take the schedule name first. set-cron's description is the
+// one optional positional, and the catalog the chat builds offers it as optional
+// because of its brackets.
+func TestDescribe_CronCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.T) {
+	p := runDescribe(t)
+
+	setCron := findCmd(t, p, "schedule set-cron")
+	assert.Equal(t, []string{"<name>", "<cron>", "<timezone>", "[description]"}, setCron.Args)
+	assert.Equal(t, []string{"<name>"}, findCmd(t, p, "schedule remove-cron").Args)
+	assert.Equal(t, []string{"<name>"}, findCmd(t, p, "schedule pause").Args)
+	assert.Equal(t, []string{"<name>"}, findCmd(t, p, "schedule resume").Args)
+
+	for _, path := range []string{"schedule pause", "schedule resume"} {
+		var exitCodes []int
+		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &exitCodes))
+		assert.Contains(t, exitCodes, 4, "%s must document the conflict of a concurrent edit", path)
+		assert.Contains(t, exitCodes, 3, "%s must document a schedule with no cron", path)
+	}
+	for _, path := range []string{"schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume"} {
+		var exitCodes []int
+		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &exitCodes))
+		assert.Contains(t, exitCodes, 7, "%s is refused in maintenance mode", path)
+	}
+
+	var setCronCodes []int
+	require.NoError(t, json.Unmarshal(setCron.ExitCodes, &setCronCodes))
+	assert.Contains(t, setCronCodes, 4, "set-cron must document the conflict of a schedule that changed twice while it ran")
 }
 
 func TestDescribe_RunReadCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {

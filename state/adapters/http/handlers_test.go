@@ -12,7 +12,7 @@ import (
 
 func TestReadinessReturns200WhenWorkersLive(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("schedule_catalog")
+	reg.RegisterWorker("task_status_updated")
 	handler := NewReadinessHandler(reg)
 
 	rec := httptest.NewRecorder()
@@ -27,8 +27,8 @@ func TestReadinessReturns200WhenWorkersLive(t *testing.T) {
 // consumer returning an error must drive /ready to 503.
 func TestReadinessReturns503WhenConsumerExited(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("schedule_catalog")
-	reg.WorkerExited("schedule_catalog", errors.New("redis dropped"))
+	reg.RegisterWorker("task_status_updated")
+	reg.WorkerExited("task_status_updated", errors.New("redis dropped"))
 	handler := NewReadinessHandler(reg)
 
 	rec := httptest.NewRecorder()

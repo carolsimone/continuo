@@ -60,6 +60,9 @@ func (m *recordingMetrics) LeaseWaiters(n int)              { m.waiters = append
 func (m *recordingMetrics) LeaseGranted(wait time.Duration) { m.granted = append(m.granted, wait) }
 func (m *recordingMetrics) LeaseRepaired()                  { m.repaired++ }
 func (m *recordingMetrics) CommandRequest(string, string)   {}
+func (m *recordingMetrics) CronFire(string)                 {}
+func (m *recordingMetrics) CronFires(string, int)           {}
+func (m *recordingMetrics) Schedules(int, int)              {}
 
 // runs serves the runs it holds for update, each only under its own tenant,
 // fails a run it does not hold, and counts saves.
@@ -243,5 +246,5 @@ func runOf(tenantID string, status run.RunStatus) *run.Run {
 	started := now.Add(-time.Hour)
 	total := int32(1)
 	return run.HydrateRun(tenantID, uuid.New(), "single-node-run-91c2ab07", status, run.KindSingleNodeRun, nil, "system",
-		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0, nil)
+		model.OperationRun, started, &started, nil, &started, nil, nil, nil, &total, 0)
 }

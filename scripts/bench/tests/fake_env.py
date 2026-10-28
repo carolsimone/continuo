@@ -61,7 +61,7 @@ elif cmd == ["schedule", "list"]:
         unavailable()
     state = read("state")
     current = read("current")
-    entries = [{"schedule_name": name, "cron_expression": "", "timezone": "UTC", "last_run_id": current,
+    entries = [{"schedule_name": name, "cron": "", "timezone": "UTC", "last_run_id": current,
                 "has_active_run": state in ("pending", "running", "cancelling"), "last_run_status": state}
                for name in os.environ.get("FAKE_SCHEDULES", "bench-s,bench-sq").split(",")]
     print(json.dumps({"schedules": entries}))

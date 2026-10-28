@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -51,13 +52,14 @@ type Run struct {
 	// failureReason says why the run failed when no task of it failed; nil
 	// otherwise.
 	failureReason *RunFailureReason
+	// scheduledFor is the slot of its schedule a cron run was fired for; nil
+	// on every other run.
+	scheduledFor *time.Time
 
 	// totalTaskCount is nil until the run's child set is known (it is stamped by
 	// Start). nil mirrors a NULL total_task_count column.
 	totalTaskCount    *int32
 	terminalTaskCount int32
-
-	serviceMetadata map[string]ServiceMetadata
 
 	changes changeSet
 }
@@ -94,7 +96,6 @@ func HydrateRun(
 	cancelledBy, cancellationReason *string,
 	total *int32,
 	terminal int32,
-	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
 	return &Run{
 		tenantID:           tenantID,
@@ -114,7 +115,6 @@ func HydrateRun(
 		cancellationReason: cancellationReason,
 		totalTaskCount:     total,
 		terminalTaskCount:  terminal,
-		serviceMetadata:    serviceMetadata,
 	}
 }
 
@@ -130,11 +130,63 @@ func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
+// HydrateScheduledFor restores scheduled_for read from runs.
+// Adapter-only: domain code stamps it through SetScheduledFor.
+func (r *Run) HydrateScheduledFor(slot *time.Time) { r.scheduledFor = slot }
+
+// SetScheduledFor stamps a cron run, before it is first saved, with the slot of
+// its schedule it is fired for: the instant the schedule's cron named, which
+// the run is stored with. A run of any other kind is ErrNotACronRun and keeps
+// no slot.
+func (r *Run) SetScheduledFor(slot time.Time) error {
+	if r.kind != KindCron {
+		return fmt.Errorf("%w: run %s is of kind %s", ErrNotACronRun, r.runID, r.kind)
+	}
+	s := slot
+	r.scheduledFor = &s
+	return nil
+}
+
+// MaxScheduleNameChars is the longest schedule name, counted in characters, a
+// run carries; every run constructor refuses a longer one. Every schedule name
+// is held to it: a schedule with a longer name could never record a run.
+const MaxScheduleNameChars = 50
+
+// ValidateScheduleName returns ErrScheduleNameRequired for an empty schedule
+// name and ErrScheduleNameTooLong for one of more than MaxScheduleNameChars
+// characters, counted as characters rather than bytes. It is the check every
+// run constructor makes of its schedule name, so a caller can refuse a name
+// before it reads or writes anything.
+func ValidateScheduleName(name string) error {
+	if name == "" {
+		return ErrScheduleNameRequired
+	}
+	if n := utf8.RuneCountInString(name); n > MaxScheduleNameChars {
+		return scheduleNameTooLongError{chars: n}
+	}
+	return nil
+}
+
+// scheduleNameTooLongError is ErrScheduleNameTooLong for a name of chars
+// characters; its message names the limit and the name's length.
+type scheduleNameTooLongError struct{ chars int }
+
+func (e scheduleNameTooLongError) Error() string {
+	return fmt.Sprintf("schedule_name must be at most %d characters long, not %d", MaxScheduleNameChars, e.chars)
+}
+
+func (e scheduleNameTooLongError) Is(target error) bool { return target == ErrScheduleNameTooLong }
+
 // NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
 // triggered. The caller chooses id, so a command can record the run it
-// creates before the run exists; a nil id is ErrRunIDRequired. Caller flow:
-// SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.EnsureNoActiveRun →
-// NewPendingRun → SaveRun → Start → SaveRun.
+// creates before the run exists; a nil id is ErrRunIDRequired, and a schedule
+// name ValidateScheduleName refuses is its error. A trigger's caller flow:
+// ValidateScheduleName → SchedulePolicy.EnsureScheduleKnown →
+// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start →
+// SaveRun. A cron fire calls neither ValidateScheduleName nor
+// EnsureScheduleKnown, since its schedule's row authorises the name, so
+// NewPendingRun is what refuses a row whose name is too long; a fire stamps
+// the run with its slot (SetScheduledFor) before the first SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual StartRun (cron, etc.) pass
@@ -148,7 +200,6 @@ func NewPendingRun(
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
-	metadata map[string]ServiceMetadata,
 	operation model.Operation,
 	stamp ReleaseStamp,
 	now time.Time,
@@ -156,8 +207,8 @@ func NewPendingRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -165,21 +216,17 @@ func NewPendingRun(
 	if !kind.IsValid() {
 		return nil, ErrInvalidKind
 	}
-	if metadata == nil {
-		metadata = map[string]ServiceMetadata{}
-	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusPending,
-		kind:            kind,
-		sourceRunID:     sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		serviceMetadata: metadata,
+		tenantID:     tenantID,
+		runID:        id,
+		scheduleName: scheduleName,
+		status:       RunStatusPending,
+		kind:         kind,
+		sourceRunID:  sourceRunID,
+		initiatedBy:  initiatedBy,
+		operation:    operation,
+		release:      stamp,
+		createdAt:    now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -207,8 +254,8 @@ func NewDerivedRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -217,18 +264,17 @@ func NewDerivedRun(
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusPending,
-		kind:            kind,
-		sourceRunID:     &sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusPending,
+		kind:           kind,
+		sourceRunID:    &sourceRunID,
+		initiatedBy:    initiatedBy,
+		operation:      operation,
+		release:        stamp,
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -252,25 +298,24 @@ func NewSingleNodeRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusRunning,
-		kind:            KindSingleNodeRun,
-		sourceRunID:     sourceRunID,
-		initiatedBy:     initiatedBy,
-		operation:       operation,
-		release:         stamp,
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusRunning,
+		kind:           KindSingleNodeRun,
+		sourceRunID:    sourceRunID,
+		initiatedBy:    initiatedBy,
+		operation:      operation,
+		release:        stamp,
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -297,8 +342,8 @@ func NewPromotedSeedsRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -307,16 +352,15 @@ func NewPromotedSeedsRun(
 		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
-		tenantID:        tenantID,
-		runID:           id,
-		scheduleName:    scheduleName,
-		status:          RunStatusRunning,
-		kind:            KindPromoteSeed,
-		release:         stamp,
-		initiatedBy:     "system",
-		createdAt:       now,
-		lastProgressAt:  &now,
-		serviceMetadata: map[string]ServiceMetadata{},
+		tenantID:       tenantID,
+		runID:          id,
+		scheduleName:   scheduleName,
+		status:         RunStatusRunning,
+		kind:           KindPromoteSeed,
+		release:        stamp,
+		initiatedBy:    "system",
+		createdAt:      now,
+		lastProgressAt: &now,
 	}
 	r.changes.created = true
 	return r, nil
@@ -345,15 +389,9 @@ func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
 func (r *Run) PlannedAt() *time.Time            { return r.plannedAt }
 func (r *Run) FailureReason() *RunFailureReason { return r.failureReason }
+func (r *Run) ScheduledFor() *time.Time         { return r.scheduledFor }
 func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
-func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
-	out := make(map[string]ServiceMetadata, len(r.serviceMetadata))
-	for k, v := range r.serviceMetadata {
-		out[k] = v
-	}
-	return out
-}
 
 func (r *Run) IsTerminal() bool { return r.status.IsTerminal() }
 func (r *Run) IsActive() bool   { return r.status.IsActive() }

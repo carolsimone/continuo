@@ -6,7 +6,9 @@
 # check on the release-flow scripts (they have no other CI gate). Runs
 # identically in CI (install-test.yml) and locally; needs Helm 3.16 or newer
 # (the egress checks render with --skip-schema-validation), Go, and Python 3
-# with PyYAML (Helm and Python are preinstalled on the CI runner).
+# with PyYAML (Helm and Python are preinstalled on the CI runner). It needs no
+# Kubernetes cluster and no kubeconfig: every check renders offline with
+# `helm template` or lints with `helm lint`, and nothing contacts an API server.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -127,14 +129,65 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
-# state, execution-controller and agent-remediation read their mounted chart
-# ConfigMap (schedules, dbt commands, service repos) only at startup, so each
-# pod template carries a digest of it. For every chart-managed ConfigMap, a
+# execution-controller and agent-remediation read their mounted chart
+# ConfigMap (dbt commands, service repos) only at startup, so each pod template
+# carries a digest of it. For every chart-managed ConfigMap, a
 # change must roll exactly the workloads that read it at startup and no others;
 # with the volume pointed at an operator-owned ConfigMap it must roll nothing;
 # and every chart ConfigMap a workload consumes must have a case in the script.
 echo "--- chart ConfigMap changes roll exactly the pods that read them at startup"
 python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
+
+# A services[].volumes entry with an empty configMap.name resolves to the chart's
+# own ConfigMap only on a service the chart mounts one into (execution-controller,
+# agent-remediation, ui). On any other service it would render a volume the API
+# server refuses at apply time, so the render fails and names the entry instead.
+echo "--- an empty configMap.name on a service with no chart ConfigMap fails the render"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     -f scripts/install-test/values-empty-configmap-volume.yaml > /dev/null 2> "${tmp}/emptyvolume.err"; then
+  echo "FAIL: a state volume with an empty configMap.name rendered; the API server would refuse the Deployment"; exit 1
+fi
+grep -qF 'services[state].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
+
+# NOTES.txt tells an upgrading operator that schedules are no longer read from
+# the chart, and an installing one nothing about it. `helm template` prints no
+# notes and `helm install|upgrade --dry-run=client` asks the API server for its
+# version, so the check renders NOTES.txt as an ordinary template: in a copy of
+# the chart, the file's text becomes a named template (`probe.notes`) that a
+# ConfigMap includes, and `helm template --is-upgrade` or without it sets
+# .Release.IsUpgrade to true or false for it.
+echo "--- NOTES.txt: the schedules note prints on upgrade and not on install"
+schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
+notes_chart="${tmp}/notes-chart"
+cp -R "$CHART" "$notes_chart"
+{
+  printf '{{- define "probe.notes" -}}\n'
+  cat "${notes_chart}/templates/NOTES.txt"
+  printf '\n{{- end -}}\n'
+} > "${notes_chart}/templates/_probe.tpl"
+rm "${notes_chart}/templates/NOTES.txt"
+cat > "${notes_chart}/templates/probe.yaml" <<'PROBE'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notes-probe
+data:
+  notes.txt: |
+{{ include "probe.notes" . | indent 4 }}
+PROBE
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade --show-only templates/probe.yaml \
+  > "${tmp}/notes-upgrade.txt" || { echo "FAIL: rendering NOTES.txt as an upgrade failed"; exit 1; }
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --show-only templates/probe.yaml \
+  > "${tmp}/notes-install.txt" || { echo "FAIL: rendering NOTES.txt as an install failed"; exit 1; }
+for notes in install upgrade; do
+  grep -q '^ *ACCESS$' "${tmp}/notes-${notes}.txt" || { echo "FAIL: the ${notes} render printed no NOTES.txt"; exit 1; }
+done
+[ "$(grep -cF "$schedules_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that schedules are no longer read from the chart"; exit 1; }
+if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
+fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
 # start on a level it does not know, so the chart (continuo.logLevel in

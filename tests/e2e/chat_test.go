@@ -16,7 +16,7 @@ package e2e
 //
 // Schedule fixture: the real seeded schedule name "e2e-schedule" (testScheduleName)
 // is used so the agent-chat can successfully invoke the continuo CLI commands
-// that reference real catalog entries.
+// that name a schedule of the live release.
 
 import (
 	"encoding/json"
