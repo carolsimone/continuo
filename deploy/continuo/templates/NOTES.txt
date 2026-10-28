@@ -3,9 +3,9 @@ Continuo {{ .Chart.AppVersion }} (chart {{ .Chart.Version }}) {{ if .Release.IsU
 {{- if eq (include "continuo.maintenance.enabled" .) "true" }}
 
 MAINTENANCE MODE IS ON
-  continuo accepts no new runs, triggers, releases, remediation retries or
-  dead-letter redrives, and cron fires are skipped. Work already running
-  finishes. Turn it off with:
+  continuo accepts no new runs, triggers, releases, remediation retries,
+  schedule edits or dead-letter redrives, and cron fires are skipped. Work
+  already running finishes. Turn it off with:
     helm upgrade {{ .Release.Name }} <chart> --reuse-values --set maintenance.enabled=false
 {{- end }}
 
