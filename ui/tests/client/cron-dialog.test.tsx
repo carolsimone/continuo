@@ -454,12 +454,18 @@ describe('CronDialog', () => {
     const words = document.querySelector('.dialog-field__words')!;
     expect(words).toHaveAttribute('aria-live', 'polite');
     expect(words).toBeEmptyDOMElement();
+    // So is the region the next runs fill: a live region inserted together
+    // with its content is not reliably announced.
+    const nextRuns = document.querySelector('.dialog-live')!;
+    expect(nextRuns).toHaveAttribute('aria-live', 'polite');
+    expect(nextRuns).toBeEmptyDOMElement();
 
     await advance();
 
     expect(document.querySelector('.dialog-field__words')).toBe(words);
     expect(words).toHaveTextContent('every day at 01:00');
-    expect(screen.getByText('Next runs').closest('section')).toHaveAttribute('aria-live', 'polite');
+    expect(document.querySelector('.dialog-live')).toBe(nextRuns);
+    expect(nextRuns).toHaveTextContent('Next runs');
   });
 
   it("CronDialog announces the parser's refusal as an alert that the cron input is described by", async () => {
