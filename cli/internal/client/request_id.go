@@ -17,8 +17,8 @@ var (
 	processRequestID     string
 )
 
-// RequestID returns the request id a command that starts or cancels a run
-// sends. It is CONTINUO_REQUEST_ID when that is set, otherwise one UUIDv4 for
+// RequestID returns the request id a command that starts a run, or cancels a
+// schedule's active run, sends. It is CONTINUO_REQUEST_ID when that is set, otherwise one UUIDv4 for
 // the whole process, so a command the client retries repeats the id of its
 // first try and one invocation never names two.
 func RequestID() string {

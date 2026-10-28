@@ -22,7 +22,7 @@ type RunClientFactory func(ctx context.Context, endpoint string) (client.RunClie
 func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Inspect, cancel, rerun and rebase Continuo runs",
+		Short: "Inspect, cancel, rerun and rebase continuo runs",
 		// A group command does no work itself: bare, it prints its help; with an
 		// argument that is not one of its subcommands it reports an unknown
 		// command through the usage envelope instead of this help text.
