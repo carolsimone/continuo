@@ -273,7 +273,7 @@ func TestCLI_ScheduleSetCronAgainstInProcessServer(t *testing.T) {
 			Schedule:      &runv1.Schedule{ScheduleName: "daily", Cron: "0 2 * * *", Timezone: "Europe/Paris", Description: "Runs daily", Version: 4},
 			NextFireTimes: []*timestamppb.Timestamp{timestamppb.New(time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC))},
 		},
-		previewMsg: "At 02:00 AM",
+		previewMsg: "At 02:00",
 	}
 	endpoint := serveRun(t, srv)
 
@@ -283,12 +283,63 @@ func TestCLI_ScheduleSetCronAgainstInProcessServer(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(out, &payload))
 	assert.Equal(t, "daily", payload["schedule_name"])
-	assert.Equal(t, "At 02:00 AM", payload["cron_words"])
+	assert.Equal(t, "At 02:00", payload["cron_words"])
 	assert.Equal(t, []any{"2026-10-28T01:00:00Z"}, payload["next_fire_times"])
 	require.Len(t, srv.upserts, 1)
 	assert.Equal(t, "0 2 * * *", srv.upserts[0].GetCron(), "a cron of several fields reaches the server as one value")
 	assert.Equal(t, "Runs daily", srv.upserts[0].GetDescription(), "the description is kept")
-	assert.Zero(t, srv.upserts[0].GetExpectedVersion())
+	assert.EqualValues(t, 3, srv.upserts[0].GetExpectedVersion(), "the version of the schedule as listed")
+}
+
+// An ABORTED upsert is a stale version. set-cron reads the schedule again and
+// saves once more; the connection never repeats an ABORTED on its own, so the
+// server sees exactly two saves.
+func TestCLI_ScheduleSetCronSavesOnceMoreAfterAStaleVersion(t *testing.T) {
+	srv := &stubRunServer{
+		listResp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "daily", Cron: "0 1 * * *", Timezone: "UTC", Description: "Runs daily", Version: 3, ModelCount: 4},
+		}},
+		upsertErrs: []error{status.Error(codes.Aborted, "schedule \"daily\" is at version 4, not 3")},
+		upsertResp: &runv1.UpsertScheduleResponse{
+			Schedule: &runv1.Schedule{ScheduleName: "daily", Cron: "0 2 * * *", Timezone: "UTC", Description: "Runs daily", Version: 5},
+		},
+	}
+	endpoint := serveRun(t, srv)
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "set-cron", "daily", "0 2 * * *", "UTC").Output()
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(out, &payload))
+	assert.EqualValues(t, 5, payload["version"])
+	require.Len(t, srv.upserts, 2, "the first save and its one retry")
+}
+
+func TestCLI_ScheduleSetCronExitsFourOnASecondStaleVersion(t *testing.T) {
+	srv := &stubRunServer{
+		listResp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "daily", Cron: "0 1 * * *", Timezone: "UTC", Version: 3, UpdatedBy: "bob@example.com"},
+		}},
+		upsertErrs: []error{
+			status.Error(codes.Aborted, "schedule \"daily\" is at version 4, not 3"),
+			status.Error(codes.Aborted, "schedule \"daily\" is at version 5, not 3"),
+		},
+	}
+	endpoint := serveRun(t, srv)
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "schedule", "set-cron", "daily", "0 2 * * *", "UTC").Output()
+
+	assert.Equal(t, 4, exitCodeOf(t, err))
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(out, &env))
+	assert.Equal(t, "conflict", env.Error.Code)
+	assert.Equal(t, "changed by bob@example.com while this ran; run it again", env.Error.Message)
+	require.Len(t, srv.upserts, 2, "one save and one retry, no more")
 }
 
 // An ABORTED upsert is a stale version. The CLI sends it once and exits with

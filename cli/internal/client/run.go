@@ -36,9 +36,13 @@ type RunClient interface {
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
 
-	// Schedule crons. An edit takes no request id: it is idempotent by nature,
-	// and a stale expected_version is ABORTED, which is never retried. actor is
-	// the identity the server records as the author of the edit.
+	// Schedule crons. An edit takes no request id, so the server cannot answer
+	// a repeat with the result of the first call: each save raises the
+	// schedule's version, and a repeat that sends the expected_version of a
+	// call that has saved (its reply lost) is ABORTED. The client repeats an
+	// edit on UNAVAILABLE only, never on ABORTED; a caller that gets an
+	// ABORTED reads the schedule again before it saves. actor is the identity
+	// the server records as the author of the edit.
 	UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error)
 	DeleteSchedule(ctx context.Context, actor, scheduleName string) (*runv1.DeleteScheduleResponse, error)
 	PreviewSchedule(ctx context.Context, cron, timezone string) (*runv1.PreviewScheduleResponse, error)
@@ -51,9 +55,10 @@ type RunClient interface {
 var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
 // commandMethods are the RPCs that start or cancel a run by request id. The
-// dialled client retries these on UNAVAILABLE and ABORTED, and only these: the
-// server answers a repeated id with the run its first call made, so a retry
-// cannot duplicate work, while a read needs no retry.
+// dialled client retries these on UNAVAILABLE and ABORTED: the server answers a
+// repeated id with the run its first call made, so a retry cannot duplicate
+// work. They are the only methods retried on ABORTED. The schedule edits are
+// retried on UNAVAILABLE only (scheduleEditMethods) and a read is not retried.
 var commandMethods = map[string]bool{
 	runv1.RunService_StartRun_FullMethodName:             true,
 	runv1.RunService_TriggerRerun_FullMethodName:         true,

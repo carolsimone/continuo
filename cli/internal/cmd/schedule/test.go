@@ -38,7 +38,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments
-  not_found  (exit 3)  schedule not in the catalog
+  not_found  (exit 3)  no model of the live release has the schedule's tag and the schedule has no cron (see "schedule list")
   conflict   (exit 4)  a run is already active for this schedule, or the request id was used before with other arguments
   unavailable(exit 5)  the state service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)

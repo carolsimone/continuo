@@ -20,21 +20,22 @@ import (
 //   - last_run_at:  omit when there is no prior run (nil proto Timestamp)
 //   - updated_by, updated_at: omit with no cron (nobody has edited it)
 type scheduleEntry struct {
-	ScheduleName   string `json:"schedule_name"`
-	CronExpression string `json:"cron_expression"`
-	CronWords      string `json:"cron_words,omitempty"`
-	HasCron        bool   `json:"has_cron"`
-	Paused         bool   `json:"paused"`
-	NextFireAt     string `json:"next_fire_at,omitempty"`
-	Description    string `json:"description,omitempty"`
-	Timezone       string `json:"timezone"`
-	ModelCount     int32  `json:"model_count"`
-	HasActiveRun   bool   `json:"has_active_run"`
-	LastRunId      string `json:"last_run_id"`
-	LastRunStatus  string `json:"last_run_status"`
-	LastRunAt      string `json:"last_run_at,omitempty"`
-	UpdatedBy      string `json:"updated_by,omitempty"`
-	UpdatedAt      string `json:"updated_at,omitempty"`
+	ScheduleName  string `json:"schedule_name"`
+	Cron          string `json:"cron"`
+	CronWords     string `json:"cron_words,omitempty"`
+	HasCron       bool   `json:"has_cron"`
+	Paused        bool   `json:"paused"`
+	Version       int64  `json:"version"`
+	NextFireAt    string `json:"next_fire_at,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Timezone      string `json:"timezone"`
+	ModelCount    int32  `json:"model_count"`
+	HasActiveRun  bool   `json:"has_active_run"`
+	LastRunId     string `json:"last_run_id"`
+	LastRunStatus string `json:"last_run_status"`
+	LastRunAt     string `json:"last_run_at,omitempty"`
+	UpdatedBy     string `json:"updated_by,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 // listPayload is the top-level JSON object emitted on success.
@@ -63,14 +64,17 @@ has a cron, ordered by name.
 Arguments: none.
 
 Output (stdout, JSON):
-  {"schedules":[{"schedule_name":string,"cron_expression":string,
-   "cron_words":string,"has_cron":bool,"paused":bool,"next_fire_at":string,
-   "description":string,"timezone":string,"model_count":number,
+  {"schedules":[{"schedule_name":string,"cron":string,
+   "cron_words":string,"has_cron":bool,"paused":bool,"version":number,
+   "next_fire_at":string,"description":string,"timezone":string,"model_count":number,
    "has_active_run":bool,"last_run_id":string,"last_run_status":string,
    "last_run_at":string,"updated_by":string,"updated_at":string}]}
   A schedule is scheduled (has_cron true, paused false), paused (has_cron true,
   paused true) or manual (has_cron false: it runs only when triggered, and
-  cron_expression and timezone are empty). cron_words is the cron in English.
+  cron and timezone are empty). cron_words is the cron in English. cron and
+  version are the fields "schedule set-cron", "schedule pause" and "schedule
+  resume" print for the schedule they saved; version counts the edits of the
+  cron, from 1, and is 0 while the schedule has no cron.
   next_fire_at (RFC3339, UTC) is omitted while paused, with no cron, or when the
   cron fires no more. model_count is how many models of the live release carry
   the schedule's tag; a scheduled schedule with model_count 0 records a failed
@@ -88,7 +92,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule list",
 		Annotations: map[string]string{
-			"output_schema": `{"schedules":[{"schedule_name":"string","cron_expression":"string","cron_words":"string","has_cron":"bool","paused":"bool","next_fire_at":"string","description":"string","timezone":"string","model_count":"number","has_active_run":"bool","last_run_id":"string","last_run_status":"string","last_run_at":"string","updated_by":"string","updated_at":"string"}]}`,
+			"output_schema": `{"schedules":[{"schedule_name":"string","cron":"string","cron_words":"string","has_cron":"bool","paused":"bool","version":"number","next_fire_at":"string","description":"string","timezone":"string","model_count":"number","has_active_run":"bool","last_run_id":"string","last_run_status":"string","last_run_at":"string","updated_by":"string","updated_at":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -128,21 +132,22 @@ func toListPayload(summaries []*runv1.ScheduleSummary) listPayload {
 	entries := make([]scheduleEntry, 0, len(summaries))
 	for _, s := range summaries {
 		entries = append(entries, scheduleEntry{
-			ScheduleName:   s.GetScheduleName(),
-			CronExpression: s.GetCron(),
-			CronWords:      s.GetCronWords(),
-			HasCron:        s.GetCron() != "",
-			Paused:         s.GetPaused(),
-			NextFireAt:     timestampString(s.GetNextFireAt()),
-			Description:    s.GetDescription(),
-			Timezone:       s.GetTimezone(),
-			ModelCount:     s.GetModelCount(),
-			HasActiveRun:   s.GetHasActiveRun(),
-			LastRunId:      s.GetLastRunId(),
-			LastRunStatus:  s.GetLastRunStatus(),
-			LastRunAt:      timestampString(s.GetLastRunAt()),
-			UpdatedBy:      s.GetUpdatedBy(),
-			UpdatedAt:      timestampString(s.GetUpdatedAt()),
+			ScheduleName:  s.GetScheduleName(),
+			Cron:          s.GetCron(),
+			CronWords:     s.GetCronWords(),
+			HasCron:       s.GetCron() != "",
+			Paused:        s.GetPaused(),
+			Version:       s.GetVersion(),
+			NextFireAt:    timestampString(s.GetNextFireAt()),
+			Description:   s.GetDescription(),
+			Timezone:      s.GetTimezone(),
+			ModelCount:    s.GetModelCount(),
+			HasActiveRun:  s.GetHasActiveRun(),
+			LastRunId:     s.GetLastRunId(),
+			LastRunStatus: s.GetLastRunStatus(),
+			LastRunAt:     timestampString(s.GetLastRunAt()),
+			UpdatedBy:     s.GetUpdatedBy(),
+			UpdatedAt:     timestampString(s.GetUpdatedAt()),
 		})
 	}
 	return listPayload{Schedules: entries}
