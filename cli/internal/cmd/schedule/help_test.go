@@ -66,3 +66,21 @@ func TestSetCronHelpSaysWhatItResends(t *testing.T) {
 	assert.Contains(t, long, "re-sends the rest of the schedule as listed: its current paused flag and its description")
 	assert.Contains(t, long, "sends the version it read")
 }
+
+// The commands that save a schedule by name say that the server refuses a name
+// longer than 50 characters, the longest a run of the schedule can store, as a
+// usage error.
+func TestScheduleEditCommandsNameTheNameLimit(t *testing.T) {
+	for _, name := range []string{"set-cron", "pause", "resume"} {
+		assert.Contains(t, scheduleCommand(t, name).Long, "a name longer than 50 characters", "%s help", name)
+	}
+}
+
+// A first cron is saved with no version, so an edit that saved between the read
+// and the save, such as a pause, is overwritten by it; set-cron does not claim
+// that a concurrent pause is never overwritten without saying so.
+func TestSetCronHelpSaysWhatItsFirstCronOverwrites(t *testing.T) {
+	long := strings.Join(strings.Fields(scheduleCommand(t, "set-cron").Long), " ")
+	assert.NotContains(t, long, "so a concurrent pause is never overwritten;")
+	assert.Contains(t, long, "A first cron is saved with no version: it overwrites an edit")
+}

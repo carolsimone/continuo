@@ -70,7 +70,7 @@ Output (stdout, JSON):
   version is the schedule's version after the command.
 
 Errors:
-  usage      (exit 2)  wrong number of arguments or a blank name
+  usage      (exit 2)  wrong number of arguments, a blank name, or a name longer than 50 characters (the server refuses it)
   not_found  (exit 3)  no schedule has that name, or the schedule has no cron and so nothing to pause
   conflict   (exit 4)  another edit saved the schedule while this ran ("changed by <who> while this ran; run it again"); nothing was changed, so run the command again
   unavailable(exit 5)  the state service is unreachable
