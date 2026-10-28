@@ -79,13 +79,15 @@ Every command that starts or cancels a run (`schedule trigger|test|build|cancel`
 and `node trigger|test|build|full-refresh`) sends one request id per invocation:
 `CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
 answers a repeat of the same id and arguments with the run the first call made
-and writes nothing. The client retries such a command up to three tries on
-UNAVAILABLE (100 ms, then 400 ms apart) with the same id; it never retries a
-read, and it does not retry a refusal for maintenance mode. A schedule edit
-(`set-cron`, `remove-cron`, `pause`, `resume`) sends no request id and is
-retried on UNAVAILABLE only: its ABORTED is a stale version, which a repeat
-cannot settle. `set-cron` answers it by reading the schedule again and saving
-once more; `pause` and `resume` exit 4 (see below).
+and writes nothing. The client retries such a command, with the same id, up to
+three tries in all (100 ms, then 400 ms apart) when the state service answers
+UNAVAILABLE, or ABORTED because concurrent calls of the same id kept rolling
+back. It does not retry a refusal for maintenance mode, and it never retries a
+read. A schedule edit (`set-cron`, `remove-cron`, `pause`, `resume`) sends no
+request id and is retried the same way on UNAVAILABLE only: its ABORTED is a
+stale version, which sending the same request again cannot settle. `set-cron`
+answers that ABORTED itself, by reading the schedule again and saving once
+more; `pause` and `resume` exit 4 (see below).
 
 With `--human`, stdout is empty and a single line is written to stderr:
 
@@ -253,6 +255,11 @@ Triggered run cd4423ae-9161-4773-aa43-3ec087f24a0a for schedule 'daily_ingest'
 - **Thin client, server owns the rules.** Pre-conditions (schedule
   exists, no concurrent run, …) are enforced by the state service. The
   CLI only translates gRPC status codes into exit codes and JSON shapes.
-- **No retries, no backoff.** The `retryable` bit is advice for the
-  caller. The CLI exits immediately so the caller (agent, shell loop,
-  CI step) owns the retry policy.
+- **Bounded retries, the caller owns the rest.** The client repeats only
+  what is safe to repeat: a command that starts or cancels a run (same
+  request id; up to three tries, 100 ms then 400 ms apart, on UNAVAILABLE or
+  ABORTED) and a schedule edit (on UNAVAILABLE only). `set-cron` also reads
+  the schedule again and saves once more after a stale version. Any other
+  error, and any error left once those tries are spent, exits at once. The
+  `retryable` bit is advice for the caller (agent, shell loop, CI step), who
+  owns any further retry policy.
