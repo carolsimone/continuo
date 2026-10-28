@@ -160,20 +160,17 @@ func (l *Loop) untilNextFire(ctx context.Context, passedAt time.Time, tick time.
 // failed fire, unless ctx has ended (a shutdown is not a failed fire); Pass
 // returns every failure.
 //
-// A schedule whose fire failed is not tried again until its backoff has passed
-// (FailureBackoffBase, doubled by each failure up to FailureBackoffMax) or an
-// operator edits it. Such a schedule is read with the due ones but skipped, and
-// the read asks for one more row for each, so it takes none of the DueLimit
-// places.
+// A schedule whose fire failed is not tried again until its backoff has passed,
+// counted from the end of the failed fire (FailureBackoffBase, doubled by each
+// failure up to FailureBackoffMax), or an operator edits it. Such a schedule is
+// read with the due ones but skipped, and the read asks for one more row for
+// each, so it takes none of the DueLimit places. A schedule the read leaves out
+// keeps its history.
 func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 	schedules := l.newUoW().Schedules()
 	due, err := schedules.ListDue(ctx, now, DueLimit+l.waiting(now))
 	if err != nil {
 		return fmt.Errorf("read the due schedules: %w", err)
-	}
-	still := make(map[scheduleKey]bool, len(due))
-	for _, s := range due {
-		still[scheduleKey{s.TenantID(), s.Name()}] = true
 	}
 	var errs []error
 	attempted := 0
@@ -189,14 +186,16 @@ func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 		if err := l.fireWithin(ctx, s.TenantID(), s.Name(), now); err != nil {
 			if ctx.Err() == nil {
 				l.metrics.CronFire(outcomeFailed)
-				l.recordFailure(k, s.Version(), now)
+				// The wait counts from when the fire failed, which a long fire
+				// leaves well after the pass began.
+				l.recordFailure(k, s.Version(), l.failedAt(now))
 			}
 			errs = append(errs, err)
 			continue
 		}
 		l.clearFailure(k)
 	}
-	l.forgetSchedulesNotDue(still)
+	l.forgetStale(now)
 	scheduled, paused, unparsable, err := schedules.Count(ctx)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
@@ -227,16 +226,25 @@ func (l *Loop) inBackoff(k scheduleKey, version int64, now time.Time) bool {
 	return failed && f.version == version && now.Before(f.retryAt)
 }
 
-// recordFailure notes that the fire of k, a row at version, failed in a pass at
-// now, and when a pass may try it again.
-func (l *Loop) recordFailure(k scheduleKey, version int64, now time.Time) {
+// failedAt is the instant a fire that has just failed in a pass at now ended
+// at: the clock's reading, or now when the clock reads earlier.
+func (l *Loop) failedAt(now time.Time) time.Time {
+	if at := l.newUoW().Clock().Now(); at.After(now) {
+		return at
+	}
+	return now
+}
+
+// recordFailure notes that the fire of k, a row at version, failed at failedAt,
+// and when a pass may try it again.
+func (l *Loop) recordFailure(k scheduleKey, version int64, failedAt time.Time) {
 	l.mu.Lock()
 	f := l.failing[k]
 	if f.version != version {
 		f = failure{version: version}
 	}
 	f.count++
-	f.retryAt = now.Add(backoff(f.count))
+	f.retryAt = failedAt.Add(backoff(f.count))
 	l.failing[k] = f
 	l.mu.Unlock()
 	l.logger.Warn("Cron fire failed; the schedule is tried again after a backoff",
@@ -250,14 +258,17 @@ func (l *Loop) clearFailure(k scheduleKey) {
 	delete(l.failing, k)
 }
 
-// forgetSchedulesNotDue drops the backoff of every schedule that is not among
-// those due in this pass: it was fired by another replica, edited, paused or
-// deleted, and is tried afresh if it fails again.
-func (l *Loop) forgetSchedulesNotDue(due map[scheduleKey]bool) {
+// forgetStale drops the backoff of every schedule that has not been tried for
+// FailureBackoffMax after its wait ended: it was deleted, paused or fired by
+// another replica, and is tried afresh if it fails again. A schedule that a
+// pass did not read, one past the pass's places or one another replica's fire
+// held, keeps its history until then, since absence from a read does not say it
+// recovered.
+func (l *Loop) forgetStale(now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for k := range l.failing {
-		if !due[k] {
+	for k, f := range l.failing {
+		if now.After(f.retryAt.Add(FailureBackoffMax)) {
 			delete(l.failing, k)
 		}
 	}

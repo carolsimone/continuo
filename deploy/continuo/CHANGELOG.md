@@ -18,7 +18,7 @@ shipped in those.
 
 ### Changed
 
-- State's cron loop leaves a schedule whose fire failed alone for a minute, doubles the wait with each further failure up to fifteen minutes, and ends it when an operator edits the schedule or a fire succeeds. A schedule whose fire fails every time (a hand-written name longer than 50 characters, for one) was tried at every pass, took one of the pass's 100 places and logged an error each time; it now takes none of the places while it waits, and `continuo_cron_fires_total{outcome="failed"}` rises by a few a hour for it. The backoffs are held in memory, one set per `state` replica. No values change. PATCH.
+- State's cron loop leaves a schedule whose fire failed alone for a minute after the failed fire ends, doubles the wait with each further failure up to fifteen minutes, and ends it when an operator edits the schedule or a fire succeeds. A schedule whose fire fails every time (a hand-written name longer than 50 characters, for one) was tried at every pass, took one of the pass's 100 places and logged an error each time; it now takes none of the places while it waits, and `continuo_cron_fires_total{outcome="failed"}` rises by a few a hour for it. The backoffs are held in memory, one set per `state` replica. No values change. PATCH.
 - State migration V57 moves a schedule stored at version 0 or below, such as a row written by hand, to version 1 and adds `CHECK (version >= 1)` to `schedules`: a row at version 0 or below matched no edit, could only be deleted and could not save its fire. The migration applies before the new pods roll; the previous pods never write such a version. No values change. PATCH.
 
 ### Removed

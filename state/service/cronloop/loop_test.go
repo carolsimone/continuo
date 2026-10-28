@@ -97,6 +97,9 @@ type scheduleRows struct {
 	// last loaded with.
 	deadlines map[string]time.Time
 	stuck     map[string]bool
+	// loadHook, when set, runs at the start of every load for update: a test
+	// uses it to let time pass during a fire.
+	loadHook func(tenantID, name string)
 }
 
 func newScheduleRows(inTx func() bool) *scheduleRows {
@@ -170,6 +173,9 @@ func (r *scheduleRows) edit(tenantID, name string) {
 }
 
 func (r *scheduleRows) LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	if r.loadHook != nil {
+		r.loadHook(tenantID, name)
+	}
 	k := key(tenantID, name)
 	r.mu.Lock()
 	r.gets[k]++
@@ -868,6 +874,61 @@ func TestCronLoop_ASuccessfulFireEndsTheBackoffOfAFailingRow(t *testing.T) {
 	require.Error(t, loop.Pass(ctx, nextSlot))
 	require.Error(t, loop.Pass(ctx, nextSlot.Add(base)), "the wait after a recovery starts from the base again")
 	assert.Equal(t, before+2, w.schedules.getsOf(tenant, "daily"))
+}
+
+// A schedule's backoff is counted from the moment its failed fire ended, not
+// from the start of the pass: a fire that took 30 seconds to fail leaves the
+// whole base wait after that, whatever instant the pass began at.
+func TestCronLoop_TheBackoffStartsWhenTheFailedFireEnds(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	w.schedules.loadHook = func(string, string) { w.clock.set(slot.Add(30 * time.Second)) }
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, "daily"))
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(base+10*time.Second)),
+		"the fire failed at +30 s, so the base wait runs to +90 s, not to +60 s")
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, "daily"), "not tried inside the wait counted from the failure's end")
+
+	w.schedules.loadHook = nil
+	require.Error(t, loop.Pass(ctx, slot.Add(30*time.Second+base)))
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, "daily"), "tried once the wait from the failure's end has passed")
+}
+
+// A schedule the pass did not read keeps its failure history: past DueLimit the
+// read leaves the later schedules out, and absence from a read says nothing of
+// whether a schedule recovered, so the delay it earned is not forgotten.
+func TestCronLoop_AScheduleOutsideTheDuePageKeepsItsFailureHistory(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	rows := cronloop.DueLimit + 1
+	for i := range rows {
+		name := fmt.Sprintf("s%03d", i)
+		w.schedules.add(tenant, name, "0 1 * * *", daily{1, 0, paris}, slot)
+		w.schedules.failGet[key(tenant, name)] = errors.New("connection reset")
+	}
+	last := fmt.Sprintf("s%03d", rows-1)
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+
+	_ = loop.Pass(ctx, slot)                          // the first DueLimit rows fail; the last is not read
+	_ = loop.Pass(ctx, slot.Add(10*time.Second))      // the rows in backoff are skipped; the last is tried and fails once
+	_ = loop.Pass(ctx, slot.Add(base+10*time.Second)) // every backoff has ended: the read holds the first DueLimit rows, not the last
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, last), "the last row was tried once so far")
+
+	_ = loop.Pass(ctx, slot.Add(base+20*time.Second)) // the last row is tried a second time and fails
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, last))
+
+	_ = loop.Pass(ctx, slot.Add(2*base+20*time.Second))
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, last),
+		"a second failure earns two bases: a history forgotten while it sat outside the read would start again at one")
 }
 
 // A fire that ends because the loop's context ended, as at shutdown, is not a
