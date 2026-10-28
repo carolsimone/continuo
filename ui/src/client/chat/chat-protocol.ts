@@ -6,9 +6,3 @@ export type ServerMessage =
   | { type: 'final'; text: string }
   | { type: 'confirm_request'; actionId: string; summary: string }
   | { type: 'error'; code: string; message: string };
-
-export type ClientMessage =
-  | { type: 'user_message'; text: string }
-  | { type: 'new_chat' }
-  | { type: 'confirm_response'; actionId: string; approved: boolean }
-  | { type: 'interrupt' };

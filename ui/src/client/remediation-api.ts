@@ -45,11 +45,6 @@ export function fetchProposals(filter: { status?: string; pr_state?: string; ser
     .then((data: { proposals: ProposalDTO[] }) => data.proposals);
 }
 
-export function fetchProposal(id: string): Promise<ProposalDTO> {
-  return fetch(`/api/remediation/proposals/${encodeURIComponent(id)}`)
-    .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))));
-}
-
 // fetchNodeServices returns the distinct active service names for the
 // Remediation tab's Service filter.
 export function fetchNodeServices(): Promise<string[]> {
