@@ -82,11 +82,18 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 // schedule's row by SQL, as UpsertSchedule refuses the first cron of a name
 // with no model: its next fire is five seconds ahead on the database's clock,
 // and its cron fires once a year, on yesterday's date, so the slot the test
-// wrote is the only one that can fire while it runs. Within 60 s the loop
-// fires that slot: one run of kind cron, stamped with the slot, failed with
-// failure_reason empty_selection. The same transaction moves the schedule's
+// wrote is the only one that can fire while it runs. Within cronFireWait the
+// loop fires that slot: one run of kind cron, stamped with the slot, failed
+// with failure_reason empty_selection. The same transaction moves the schedule's
 // next fire on to its cron's next slot and leaves the version the row was
 // written with.
+// cronFireWait is how long TestEmptyDAG_ACronFireRecordsAFailedRun waits for
+// the fire. The loop wakes on the notification the INSERT sends and sleeps
+// until the slot five seconds later; when that notification is lost, the
+// pass at the loop's 60 s tick fires the slot, up to about 65 s after the
+// insert. The wait leaves headroom over that.
+const cronFireWait = 90 * time.Second
+
 func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -116,7 +123,7 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	t.Logf("schedule %s: cron %q in %s, next fire %s", scheduleName, cron, emptyDAGTimezone, slot.UTC().Format(time.RFC3339Nano))
 
 	var runs []*runv1.RunSummary
-	pollUntilDescribed(t, ctx, 60*time.Second, time.Second, func() (bool, error) {
+	pollUntilDescribed(t, ctx, cronFireWait, time.Second, func() (bool, error) {
 		resp, err := clients.runClient.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: scheduleName})
 		if err != nil {
 			return false, err
@@ -124,8 +131,8 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 		runs = resp.GetRuns()
 		return len(runs) > 0, nil
 	}, func() string {
-		return fmt.Sprintf("ListRuns(%s) listed no run 60 s after its next fire was set 5 s ahead: %s; %s",
-			scheduleName, describeSchedule(ctx, clients, scheduleName), describeRuns(ctx, clients, scheduleName))
+		return fmt.Sprintf("ListRuns(%s) listed no run %s after its next fire was set 5 s ahead: %s; %s",
+			scheduleName, cronFireWait, describeSchedule(ctx, clients, scheduleName), describeRuns(ctx, clients, scheduleName))
 	})
 	require.Len(t, runs, 1, "the slot fires one run: %s", describeRuns(ctx, clients, scheduleName))
 
