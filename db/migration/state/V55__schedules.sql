@@ -1,7 +1,8 @@
 -- schedules holds the cron schedules state fires, one row per tenant and name.
 -- A schedule carries its cron expression and the time zone that expression is
 -- read in, whether it is paused, and when it fires next; version counts the
--- changes made to the row, and updated_by names who made the last one.
+-- operator's edits (1 when created, raised by each edit; a fire leaves it), and
+-- updated_by names who made the last edit.
 -- next_fire_at is NULL while the schedule is paused, and while it is set it is
 -- the instant of the schedule's next slot.
 CREATE TABLE schedules (
@@ -26,9 +27,9 @@ COMMENT ON COLUMN schedules.timezone IS 'IANA time zone name the cron expression
 COMMENT ON COLUMN schedules.description IS 'Free text that says what the schedule is for; empty when none was given';
 COMMENT ON COLUMN schedules.paused IS 'Whether the schedule is paused; a paused schedule fires nothing';
 COMMENT ON COLUMN schedules.next_fire_at IS 'Instant of the next slot the schedule fires; NULL while the schedule is paused';
-COMMENT ON COLUMN schedules.version IS 'Counts the changes to the schedule: 1 when it is created, raised by each change after';
-COMMENT ON COLUMN schedules.updated_by IS 'Who made the last change to the schedule';
-COMMENT ON COLUMN schedules.updated_at IS 'When the last change to the schedule was made';
+COMMENT ON COLUMN schedules.version IS 'Counts the operator''s edits of the schedule: 1 when it is created, raised by each edit; a fire leaves it';
+COMMENT ON COLUMN schedules.updated_by IS 'Who made the last edit of the schedule; a fire leaves it';
+COMMENT ON COLUMN schedules.updated_at IS 'When the last edit of the schedule was made; a fire leaves it';
 
 -- A change to a schedule wakes the loop that fires them, so it re-reads the
 -- next fire without waiting for its next pass. The trigger is statement-level,
