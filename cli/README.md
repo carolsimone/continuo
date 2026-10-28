@@ -71,8 +71,9 @@ single JSON object to stdout:
 `triggered_at` is the CLI's clock at the moment the request returned;
 the state service does not echo a server timestamp today.
 
-Every command that starts or cancels a run (`schedule trigger|test|build|cancel`
-and `node trigger|test|build|full-refresh`) sends one request id per invocation:
+Every command that starts a run or cancels a schedule's active run
+(`schedule trigger|test|build|cancel`, `node trigger|test|build|full-refresh`,
+`run rerun` and `run rebase`) sends one request id per invocation:
 `CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
 answers a repeat of the same id and arguments with the run the first call made
 and writes nothing. The client retries such a command up to three tries on

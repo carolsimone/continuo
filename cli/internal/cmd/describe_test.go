@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -83,7 +83,7 @@ func TestDescribe_CommandContentIsAccurate(t *testing.T) {
 	// output_schema is real nested JSON (not an escaped string) with the documented keys.
 	var schema map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(status.OutputSchema, &schema))
-	for _, k := range []string{"schedule_name", "run_id", "has_active_run", "last_run_status", "nodes"} {
+	for _, k := range []string{"run", "tasks"} {
 		_, ok := schema[k]
 		assert.True(t, ok, "status output_schema missing key %q", k)
 	}
@@ -155,7 +155,11 @@ func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	redrive := findCmd(t, p, "dlq redrive")
 	assert.True(t, redrive.Mutating, "dlq redrive must be marked mutating")
 
-	for _, path := range []string{"schedule status", "schedule list", "schedule graph", "dlq list", "dlq show", "describe"} {
+	for _, path := range []string{"run cancel", "run rerun", "run rebase"} {
+		assert.True(t, findCmd(t, p, path).Mutating, "%s must be marked mutating", path)
+	}
+
+	for _, path := range []string{"schedule status", "schedule runs", "schedule list", "schedule graph", "run show", "run graph", "run attempts", "run rebase-preview", "dlq list", "dlq show", "describe"} {
 		c := findCmd(t, p, path)
 		assert.False(t, c.Mutating, "command %q must not be mutating", path)
 	}
@@ -181,5 +185,38 @@ func TestDescribe_DLQCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.
 			flagNames[f.Name] = true
 		}
 		assert.True(t, flagNames["dead-letter-endpoint"], "%s must expose the global --dead-letter-endpoint flag", c.Path)
+	}
+}
+
+func TestDescribe_RunReadCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {
+	p := runDescribe(t)
+
+	assert.Equal(t, []string{"<run-id>"}, findCmd(t, p, "run show").Args)
+	assert.Equal(t, []string{"<run-id>"}, findCmd(t, p, "run graph").Args)
+	assert.Equal(t, []string{"<run-id>", "[task-id]"}, findCmd(t, p, "run attempts").Args)
+	assert.Equal(t, []string{"<schedule-name>"}, findCmd(t, p, "schedule runs").Args)
+
+	var exitCodes []int
+	require.NoError(t, json.Unmarshal(findCmd(t, p, "run show").ExitCodes, &exitCodes))
+	assert.Contains(t, exitCodes, 3, "run show must document not_found")
+}
+
+func TestDescribe_RunWriteCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {
+	p := runDescribe(t)
+
+	assert.Equal(t, []string{"<run-id>", "<reason>"}, findCmd(t, p, "run cancel").Args)
+	assert.Equal(t, []string{"<run-id>"}, findCmd(t, p, "run rerun").Args)
+	assert.Equal(t, []string{"<run-id>", "[with-changed-upstream]"}, findCmd(t, p, "run rebase-preview").Args)
+	assert.Equal(t, []string{"<run-id>", "<release-id>", "[with-changed-upstream]"}, findCmd(t, p, "run rebase").Args)
+
+	for path, want := range map[string][]int{
+		"run cancel":         {0, 2, 3, 4, 5, 6},
+		"run rerun":          {0, 2, 3, 4, 5, 6, 7},
+		"run rebase-preview": {0, 2, 3, 4, 5, 6},
+		"run rebase":         {0, 2, 3, 4, 5, 6, 7},
+	} {
+		var got []int
+		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &got))
+		assert.Equal(t, want, got, path)
 	}
 }

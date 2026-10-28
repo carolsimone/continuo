@@ -91,3 +91,20 @@ func TestUnknownCommand_HumanModeWritesErrorToStderr(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "Error [usage]")
 	assert.Contains(t, errBuf.String(), "nope")
 }
+
+// A name that is not a subcommand of the run group is reported through the
+// usage envelope, as for every other group.
+func TestRunGroup_AnUnknownSubcommandIsAUsageError(t *testing.T) {
+	var out, errBuf bytes.Buffer
+
+	exit := executeWith([]string{"run", "bogus"}, &out, &errBuf)
+
+	assert.Equal(t, 2, exit)
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env), "stdout: %q", out.String())
+	assert.Equal(t, "usage", env.Error.Code)
+}

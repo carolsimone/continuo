@@ -11,9 +11,29 @@ def test_has_schedule_on_empty_output():
     assert not cli_json.has_schedule({}, "bench-dag-500")
 
 
+def listing(**entry):
+    return {"schedules": [{"schedule_name": "other", "last_run_id": "r-x", "has_active_run": True, "last_run_status": "running"},
+                          {"schedule_name": "s", **entry}]}
+
+
 def test_run_state_reports_the_listed_run_even_when_older():
-    doc = {"schedule_name": "s", "run_id": "r-old", "has_active_run": False, "last_run_status": "succeeded"}
-    assert cli_json.run_state(doc) == ("r-old", False, "succeeded")
+    doc = listing(last_run_id="r-old", has_active_run=False, last_run_status="succeeded")
+    assert cli_json.run_state(doc, "s") == ("r-old", False, "succeeded")
+
+
+def test_run_state_reads_the_named_schedule_only():
+    doc = listing(last_run_id="r-1", has_active_run=True, last_run_status="cancelling")
+    assert cli_json.run_state(doc, "s") == ("r-1", True, "cancelling")
+    assert cli_json.run_state(doc, "other") == ("r-x", True, "running")
+
+
+def test_run_state_of_a_schedule_that_never_ran():
+    assert cli_json.run_state(listing(has_active_run=False), "s") == ("", False, "")
+
+
+def test_run_state_of_a_schedule_the_list_lacks_is_none():
+    assert cli_json.run_state(listing(), "missing") is None
+    assert cli_json.run_state({}, "s") is None
 
 
 def test_schedule_names_are_sorted():

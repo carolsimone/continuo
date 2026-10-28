@@ -79,3 +79,11 @@ func TestNewUsageErrorExitCode(t *testing.T) {
 	assert.Equal(t, CodeUsage, e.Code)
 	assert.Equal(t, 2, e.ExitCode())
 }
+
+func TestIsFailedPrecondition_OnlyForThatStatus(t *testing.T) {
+	assert.True(t, IsFailedPrecondition(status.Error(codes.FailedPrecondition, "x")))
+	assert.False(t, IsFailedPrecondition(status.Error(codes.Aborted, "x")))
+	assert.False(t, IsFailedPrecondition(status.Error(codes.AlreadyExists, "x")))
+	assert.False(t, IsFailedPrecondition(errors.New("plain")))
+	assert.False(t, IsFailedPrecondition(nil))
+}

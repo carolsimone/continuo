@@ -2,76 +2,63 @@ package schedule
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"time"
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
+	"github.com/carolsimone/continuo/cli/internal/runview"
 	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// statusPageSize is the ListTasks page size used while paging through a run.
-const statusPageSize = 200
-
-type statusNode struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	Status      string `json:"status"`
-	// WaitReason, WaitingOnRunID and WaitingSince say why a pending task
-	// waits besides its upstreams, on which run and since when; each is
-	// omitted when the state service leaves it empty.
-	WaitReason     string `json:"wait_reason,omitempty"`
-	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
-	WaitingSince   string `json:"waiting_since,omitempty"`
-}
-
-type statusPayload struct {
-	ScheduleName  string       `json:"schedule_name"`
-	RunId         string       `json:"run_id"`
-	HasActiveRun  bool         `json:"has_active_run"`
-	LastRunStatus string       `json:"last_run_status"`
-	Nodes         []statusNode `json:"nodes"`
-}
-
-// NewStatusCommand builds `continuo schedule status <schedule-name>`. It resolves
-// the schedule name to its latest run via ListSchedules, then pages through
-// ListTasks to collect every node's status for that run.
+// NewStatusCommand builds `continuo schedule status <schedule-name>`. It
+// resolves the schedule name to its latest run via ListSchedules and prints
+// that run exactly as `continuo run show` does.
 func NewStatusCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status <schedule-name>",
-		Short: "Show the per-node status of a schedule's latest run",
-		Long: `Show the per-node status of a schedule's latest run.
+		Short: "Show a schedule's latest run and the status of each of its tasks",
+		Long: `Show a schedule's latest run and the status of each of its tasks.
 
-Use when the user asks where a schedule is, how far it has got, or which of its
-nodes are running, failed, or succeeded right now.
+Use when the user asks where a schedule is, how far its latest run has got, which
+of its nodes are running, failed, or succeeded right now, or why the run failed.
+It prints what "run show" prints for the schedule's latest run, so use "run show"
+with an earlier run id (from "schedule runs") to inspect an older run.
 
 Arguments:
   <schedule-name>  The schedule to inspect (exact match).
 
 Output (stdout, JSON):
-  {"schedule_name":string,"run_id":string,"has_active_run":bool,
-   "last_run_status":string,
-   "nodes":[{"service_name":string,"schema_name":string,
-             "table_name":string,"status":string,
-             "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}]}
+  {"run":{"run_id":string,"schedule_name":string,"kind":string,"operation":string,
+          "status":string,"failure_reason":string,"release_id":string,
+          "promotion_seq":number,"initiated_by":string,"created_at":string,
+          "started_at":string,"completed_at":string,"last_progress_at":string,
+          "cancelled_at":string,"cancelled_by":string,"cancellation_reason":string},
+   "tasks":[{"node":string,"status":string,"attempt":number,
+             "failure_class":string,"failure_reason":string,
+             "wait_reason":string,"waiting_on_run_id":string}]}
+  Timestamps are RFC3339 in UTC. failure_reason, release_id, initiated_by, the
+  timestamps other than created_at and the cancel fields are omitted when empty.
+  kind is one of cron|trigger|rerun|rebase|single_node_run|promote_seed;
+  operation is one of run|test|build|full_refresh.
+  The run status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.
+  pending, running and cancelling mean the run still holds the schedule;
+  cancelling: a cancel was accepted and the run waits for its Jobs to stop.
+  The run's failure_reason (stalled|empty_selection|invalid_node_type) is set only
+  when the run failed without a failed task.
+  node is "<service>.<schema>.<table>". attempt is the 0-based number of the task's current attempt.
   status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   dispatched: an attempt was sent and not yet accepted; queued: the attempt
   was accepted and waits for a slot to run in; stopping: a stop was requested
   and the task waits for its attempt to stop.
+  failure_class and failure_reason are those of the task's latest attempt and are
+  empty strings when that attempt did not fail or the task has no attempt yet.
   wait_reason is node_lease while the task waits for another run to release its node:
-  another run's task is writing the same node, and this pending task starts
-  once that write ends. waiting_on_run_id is the run writing the node (empty
-  for a moment when the node has just been freed and the task is about to be
-  granted it); waiting_since is when the wait began (RFC3339). The three are
-  omitted when the task waits for nothing besides its upstreams.
-  last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.
-  cancelling: a cancel was accepted and the run waits for its Jobs to stop.
-  has_active_run is true while a pending, running or cancelling run holds the schedule.
-  A schedule that has never run returns run_id:"" and nodes:[].
+  another run's task is writing the same node, and this pending task starts once
+  that write ends. waiting_on_run_id is the run writing the node (empty for a
+  moment when the node has just been freed and the task is about to be granted it);
+  both are empty strings when the task waits for nothing besides its upstreams.
+  A schedule that has never run returns {"run":null,"tasks":[]}.
 
 Errors:
   not_found  (exit 3)  no schedule with that name
@@ -80,7 +67,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_name":"string","run_id":"string","has_active_run":"bool","last_run_status":"string","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","status":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
+			"output_schema": `{"run":{"run_id":"string","schedule_name":"string","kind":"string","operation":"string","status":"string","failure_reason":"string","release_id":"string","promotion_seq":"number","initiated_by":"string","created_at":"string","started_at":"string","completed_at":"string","last_progress_at":"string","cancelled_at":"string","cancelled_by":"string","cancellation_reason":"string"},"tasks":[{"node":"string","status":"string","attempt":"number","failure_class":"string","failure_reason":"string","wait_reason":"string","waiting_on_run_id":"string"}]}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -121,78 +108,22 @@ Errors:
 				})
 			}
 
-			payload := statusPayload{
-				ScheduleName:  scheduleName,
-				RunId:         match.GetLastRunId(),
-				HasActiveRun:  match.GetHasActiveRun(),
-				LastRunStatus: match.GetLastRunStatus(),
-				Nodes:         []statusNode{},
-			}
-
-			// Never run: no run to page over.
-			if match.GetLastRunId() == "" {
-				return emitStatus(stdout, stderr, cfg.Human, payload)
-			}
-
-			// Page through every task row of the latest run.
-			for offset := int32(0); ; offset += statusPageSize {
-				pageCtx, cancelPage := context.WithTimeout(cmd.Context(), cfg.Timeout)
-				resp, err := c.ListTasks(pageCtx, match.GetLastRunId(), "", statusPageSize, offset)
-				cancelPage()
+			// Never run: no run to read.
+			view := runview.Empty()
+			if match.GetLastRunId() != "" {
+				view, err = runview.Load(cmd.Context(), c, cfg.Timeout, match.GetLastRunId())
 				if err != nil {
 					return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 				}
-				tasks := resp.GetTasks()
-				for _, t := range tasks {
-					payload.Nodes = append(payload.Nodes, statusNode{
-						ServiceName:    t.GetServiceName(),
-						SchemaName:     t.GetSchemaName(),
-						TableName:      t.GetTableName(),
-						Status:         t.GetStatus(),
-						WaitReason:     t.GetWaitReason(),
-						WaitingOnRunID: t.GetWaitingOnRunId(),
-						WaitingSince:   timestampString(t.GetWaitingSince()),
-					})
-				}
-				// Widen TotalCount (int32) to int rather than narrow len() down,
-				// so this comparison can never overflow.
-				if len(tasks) == 0 || len(payload.Nodes) >= int(resp.GetTotalCount()) {
-					break
-				}
 			}
 
-			return emitStatus(stdout, stderr, cfg.Human, payload)
+			if cfg.Human {
+				return view.WriteHuman(stderr)
+			}
+			return output.EmitSuccess(stdout, view)
 		},
 	}
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	return cmd
-}
-
-// emitStatus writes the payload as JSON on stdout, or a human summary on stderr.
-func emitStatus(stdout, stderr io.Writer, human bool, p statusPayload) error {
-	if human {
-		state := "idle"
-		if p.HasActiveRun {
-			state = "running"
-		}
-		if _, err := fmt.Fprintf(stderr, "%s (%s): %d nodes\n", p.ScheduleName, state, len(p.Nodes)); err != nil {
-			return err
-		}
-		for _, n := range p.Nodes {
-			if _, err := fmt.Fprintf(stderr, "  %s.%s.%s  %s\n", n.ServiceName, n.SchemaName, n.TableName, n.Status); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return output.EmitSuccess(stdout, p)
-}
-
-// timestampString renders ts as RFC3339 in UTC, or "" when it is unset.
-func timestampString(ts *timestamppb.Timestamp) string {
-	if ts == nil {
-		return ""
-	}
-	return ts.AsTime().UTC().Format(time.RFC3339)
 }

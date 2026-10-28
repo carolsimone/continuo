@@ -25,6 +25,16 @@ type RunClient interface {
 	TriggerScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	TriggerScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	CancelSchedule(ctx context.Context, requestID, scheduleName, reason, by string) (*runv1.CancelActiveRunResponse, error)
+	// TriggerRerun re-executes what did not succeed in a failed or cancelled run.
+	TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error)
+	// PreviewRebase reports what TriggerRebase would run, creating nothing.
+	PreviewRebase(ctx context.Context, sourceRunID string, includeChangedUpstream bool) (*runv1.PreviewRebaseResponse, error)
+	// TriggerRebase restarts a failed or cancelled run on the live release;
+	// expectedReleaseID is the release the caller previewed.
+	TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error)
+	// CancelRun cancels a run by id. It takes no request id: cancelling a run
+	// that is already cancelling or cancelled changes nothing.
+	CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error)
 	TriggerNodeRun(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
@@ -32,7 +42,11 @@ type RunClient interface {
 
 	ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*runv1.GetScheduleGraphResponse, error)
+	GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error)
+	GetRunGraph(ctx context.Context, runID string) (*runv1.GetRunGraphResponse, error)
+	ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int32) (*runv1.ListRunsResponse, error)
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)
+	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
 	Close() error
@@ -42,10 +56,11 @@ type RunClient interface {
 // the server refused as UNAVAILABLE or ABORTED.
 var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
-// commandMethods are the RPCs that start or cancel a run by request id. The
-// dialled client retries these on UNAVAILABLE and ABORTED, and only these: the
-// server answers a repeated id with the run its first call made, so a retry
-// cannot duplicate work, while a read needs no retry.
+// commandMethods are the RPCs that start or cancel a run by request id; so not
+// CancelRun, which names the run and takes none. The dialled client retries
+// these on UNAVAILABLE and ABORTED, and only these: the server answers a
+// repeated id with the run its first call made, so a retry cannot duplicate
+// work, while a read needs no retry.
 var commandMethods = map[string]bool{
 	runv1.RunService_StartRun_FullMethodName:             true,
 	runv1.RunService_TriggerRerun_FullMethodName:         true,
@@ -161,6 +176,37 @@ func (c *runGRPCClient) CancelSchedule(ctx context.Context, requestID, scheduleN
 	})
 }
 
+func (c *runGRPCClient) TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error) {
+	return c.api.TriggerRerun(withActor(ctx, actor), &runv1.TriggerRerunRequest{
+		RequestId:   requestID,
+		SourceRunId: sourceRunID,
+	})
+}
+
+func (c *runGRPCClient) PreviewRebase(ctx context.Context, sourceRunID string, includeChangedUpstream bool) (*runv1.PreviewRebaseResponse, error) {
+	return c.api.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{
+		SourceRunId:            sourceRunID,
+		IncludeChangedUpstream: includeChangedUpstream,
+	})
+}
+
+func (c *runGRPCClient) TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error) {
+	return c.api.TriggerRebase(withActor(ctx, actor), &runv1.TriggerRebaseRequest{
+		RequestId:              requestID,
+		SourceRunId:            sourceRunID,
+		IncludeChangedUpstream: includeChangedUpstream,
+		ExpectedReleaseId:      expectedReleaseID,
+	})
+}
+
+func (c *runGRPCClient) CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error) {
+	return c.api.CancelRun(ctx, &runv1.CancelRunRequest{
+		RunId:              runID,
+		CancelledBy:        by,
+		CancellationReason: reason,
+	})
+}
+
 func (c *runGRPCClient) ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error) {
 	return c.api.ListSchedules(ctx, &runv1.ListSchedulesRequest{})
 }
@@ -173,6 +219,31 @@ func (c *runGRPCClient) ListTasks(ctx context.Context, runID, taskStatus string,
 	return c.api.ListTasks(ctx, &runv1.ListTasksRequest{
 		RunId:      runID,
 		Status:     taskStatus,
+		PageSize:   pageSize,
+		PageOffset: pageOffset,
+	})
+}
+
+func (c *runGRPCClient) GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error) {
+	return c.api.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
+}
+
+func (c *runGRPCClient) GetRunGraph(ctx context.Context, runID string) (*runv1.GetRunGraphResponse, error) {
+	return c.api.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: runID})
+}
+
+func (c *runGRPCClient) ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int32) (*runv1.ListRunsResponse, error) {
+	return c.api.ListRuns(ctx, &runv1.ListRunsRequest{
+		ScheduleName: scheduleName,
+		PageSize:     pageSize,
+		PageOffset:   pageOffset,
+	})
+}
+
+func (c *runGRPCClient) ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error) {
+	return c.api.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{
+		RunId:      runID,
+		TaskId:     taskID,
 		PageSize:   pageSize,
 		PageOffset: pageOffset,
 	})
