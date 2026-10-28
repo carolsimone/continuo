@@ -54,6 +54,12 @@ var (
 	// is empty.
 	ErrScheduleNameRequired = errors.New("schedule_name is required")
 
+	// ErrScheduleNameTooLong is returned by ValidateScheduleName, and so by
+	// every run constructor, for a schedule name of more than
+	// MaxScheduleNameChars characters. The error returned names the limit and
+	// the name's length.
+	ErrScheduleNameTooLong = errors.New("schedule_name is too long")
+
 	// ErrRunIDRequired is returned by a run constructor whose caller-supplied
 	// run id is the nil UUID: every run takes its id from its caller, so an
 	// unset id would otherwise collide across every run created without one.

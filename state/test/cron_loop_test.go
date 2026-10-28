@@ -18,6 +18,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/cronloop"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -444,6 +445,32 @@ func TestCronLoop_AScheduleWithAnInvalidNodeTypeRecordsAFailedRun(t *testing.T) 
 	assert.Equal(t, 1, c.metrics.counted("invalid_node_type"))
 	assert.Zero(t, c.metrics.counted("empty_selection"))
 	assert.Contains(t, c.logs.String(), "failure_reason=invalid_node_type")
+}
+
+// A row whose schedule name is longer than a run carries, which UpsertSchedule
+// refuses but a row written by hand can hold, cannot fire: its fire fails with
+// the run's refusal and rolls back, so no run is written and its slot stays
+// due, and the pass counts the fire failed and fires the tenant's other due
+// schedule.
+func TestCronLoop_ANameLongerThanARunCarriesFailsItsFire(t *testing.T) {
+	long := "cron-long-" + strings.Repeat("l", run.MaxScheduleNameChars+1-len("cron-long-"))
+	c := newCronTenantOf(t,
+		scheduledNode("raw", "daily", "dbt-model", "daily"),
+		scheduledNode("raw", "long_tag", "dbt-model", long))
+	slot := march(10, 1, 0)
+	c.clock.set(slot)
+	c.schedule(t, long, "0 1 * * *", slot)
+	c.schedule(t, "daily", "0 1 * * *", slot)
+
+	err := c.loop(false).Pass(context.Background(), c.clock.Now())
+
+	require.ErrorIs(t, err, run.ErrScheduleNameTooLong)
+	assert.Contains(t, err.Error(), long, "the pass's error names the schedule")
+	assert.Empty(t, c.runs(t, long), "no run is written")
+	assert.True(t, slot.Equal(c.nextFire(t, long)), "the slot stays due: next fire %s", c.nextFire(t, long))
+	assert.Equal(t, 1, c.metrics.counted("failed"))
+	require.Len(t, c.runs(t, "daily"), 1, "the pass fires the other due schedule")
+	assert.Equal(t, 1, c.metrics.counted("started"))
 }
 
 // A slot that already has its run, which uq_runs_scheduled_for allows once,

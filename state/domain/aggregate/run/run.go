@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -146,14 +147,46 @@ func (r *Run) SetScheduledFor(slot time.Time) error {
 	return nil
 }
 
+// MaxScheduleNameChars is the longest schedule name, counted in characters, a
+// run carries; every run constructor refuses a longer one. Every schedule name
+// is held to it: a schedule with a longer name could never record a run.
+const MaxScheduleNameChars = 50
+
+// ValidateScheduleName returns ErrScheduleNameRequired for an empty schedule
+// name and ErrScheduleNameTooLong for one of more than MaxScheduleNameChars
+// characters, counted as characters rather than bytes. It is the check every
+// run constructor makes of its schedule name, so a caller can refuse a name
+// before it reads or writes anything.
+func ValidateScheduleName(name string) error {
+	if name == "" {
+		return ErrScheduleNameRequired
+	}
+	if n := utf8.RuneCountInString(name); n > MaxScheduleNameChars {
+		return scheduleNameTooLongError{chars: n}
+	}
+	return nil
+}
+
+// scheduleNameTooLongError is ErrScheduleNameTooLong for a name of chars
+// characters; its message names the limit and the name's length.
+type scheduleNameTooLongError struct{ chars int }
+
+func (e scheduleNameTooLongError) Error() string {
+	return fmt.Sprintf("schedule_name must be at most %d characters long, not %d", MaxScheduleNameChars, e.chars)
+}
+
+func (e scheduleNameTooLongError) Is(target error) bool { return target == ErrScheduleNameTooLong }
+
 // NewPendingRun creates the PENDING Run id of a schedule, fired by cron or
 // triggered. The caller chooses id, so a command can record the run it
-// creates before the run exists; a nil id is ErrRunIDRequired. A trigger's
-// caller flow: SchedulePolicy.EnsureScheduleKnown →
+// creates before the run exists; a nil id is ErrRunIDRequired, and a schedule
+// name ValidateScheduleName refuses is its error. A trigger's caller flow:
+// ValidateScheduleName → SchedulePolicy.EnsureScheduleKnown →
 // SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start →
-// SaveRun. A cron fire skips EnsureScheduleKnown, since its schedule's row
-// knows the name, and stamps the run with its slot (SetScheduledFor) before
-// the first SaveRun.
+// SaveRun. A cron fire calls neither ValidateScheduleName nor
+// EnsureScheduleKnown, since its schedule's row authorises the name, so
+// NewPendingRun is what refuses a row whose name is too long; a fire stamps
+// the run with its slot (SetScheduledFor) before the first SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual StartRun (cron, etc.) pass
@@ -174,8 +207,8 @@ func NewPendingRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -221,8 +254,8 @@ func NewDerivedRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -265,8 +298,8 @@ func NewSingleNodeRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired
@@ -309,8 +342,8 @@ func NewPromotedSeedsRun(
 	if tenantID == "" {
 		return nil, ErrNoTenant
 	}
-	if scheduleName == "" {
-		return nil, ErrScheduleNameRequired
+	if err := ValidateScheduleName(scheduleName); err != nil {
+		return nil, err
 	}
 	if id == uuid.Nil {
 		return nil, ErrRunIDRequired

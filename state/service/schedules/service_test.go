@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/schedule"
 	"github.com/carolsimone/continuo/state/service/schedules"
 )
@@ -361,6 +362,7 @@ func TestSchedulesUpsert_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
 		h.liveModels(tenantA, map[string]int{name: 1})
 		_, _, err := h.svc.Upsert(context.Background(), tenantA, upsert(name, "0 1 * * *", "UTC"), "alice@example.com")
 		require.ErrorIs(t, err, schedules.ErrInvalid, "a name of 51 characters (%d bytes) is refused", len(name))
+		require.ErrorIs(t, err, run.ErrScheduleNameTooLong, "the refusal is the run's own limit")
 		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
 		assert.Zero(t, h.rows.gets, "nothing is read")
 		assert.Zero(t, h.rows.saves, "nothing is written")

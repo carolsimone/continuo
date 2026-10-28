@@ -3,6 +3,7 @@ package runservice_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -369,6 +370,7 @@ func TestCommands_MapTheRefusals(t *testing.T) {
 		{runplan.ErrTargetNotFound, codes.NotFound},
 		{run.ErrTaskNotFound, codes.NotFound},
 		{runplan.ErrFullRefreshUnsupported, codes.InvalidArgument},
+		{run.ErrScheduleNameTooLong, codes.InvalidArgument},
 		{run.ErrScheduleHasActiveRun, codes.FailedPrecondition},
 		{runplan.ErrEmptySelection, codes.FailedPrecondition},
 		{runplan.ErrNoTests, codes.FailedPrecondition},
@@ -397,6 +399,14 @@ func TestCommands_MapTheRefusals(t *testing.T) {
 	_, err := srv.TriggerRebase(ctxOf(tenantA), &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: uuid.NewString()})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Equal(t, "the live release changed; preview again", status.Convert(err).Message())
+
+	tooLong := run.ValidateScheduleName(strings.Repeat("a", run.MaxScheduleNameChars+1))
+	require.Error(t, tooLong)
+	srv = newCommandServer(newStore(), &fakeCommands{err: tooLong})
+	_, err = srv.StartRun(ctxOf(tenantA), &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: "daily"})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", status.Convert(err).Message(),
+		"a name longer than a run carries is answered with the run's own message")
 }
 
 // A cancel of a run that ended succeeded, failed or skipped is

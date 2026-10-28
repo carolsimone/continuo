@@ -86,8 +86,10 @@ type RunServiceClient interface {
 	// is returned.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
-	//	                      full_refresh, which targets a single node only.
+	//	INVALID_ARGUMENT    - empty schedule_name or one longer than 50
+	//	                      characters, the longest a run carries, an unknown
+	//	                      operation, or full_refresh, which targets a single
+	//	                      node only.
 	//	NOT_FOUND           - no model of the tenant's live release carries the
 	//	                      schedule_name, and it has no cron.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its
@@ -642,8 +644,10 @@ type RunServiceServer interface {
 	// is returned.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - empty schedule_name, an unknown operation, or
-	//	                      full_refresh, which targets a single node only.
+	//	INVALID_ARGUMENT    - empty schedule_name or one longer than 50
+	//	                      characters, the longest a run carries, an unknown
+	//	                      operation, or full_refresh, which targets a single
+	//	                      node only.
 	//	NOT_FOUND           - no model of the tenant's live release carries the
 	//	                      schedule_name, and it has no cron.
 	//	FAILED_PRECONDITION - the schedule already has an active run, or its

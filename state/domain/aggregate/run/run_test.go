@@ -142,6 +142,52 @@ func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
 	}
 }
 
+// A schedule name may be up to 50 characters long, counted in characters
+// rather than bytes. A longer name is ErrScheduleNameTooLong, with a message
+// that names the limit and the name's length.
+func TestNewPendingRun_RefusesANameLongerThanFiftyCharacters(t *testing.T) {
+	fifty, fiftyOne := strings.Repeat("a", 50), strings.Repeat("a", 51)
+	accented, accentedTooLong := strings.Repeat("é", 50), strings.Repeat("é", 51)
+	require.Len(t, accented, 100, "each é is two bytes")
+
+	for _, name := range []string{fifty, accented} {
+		r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		require.NoError(t, err, "a name of 50 characters (%d bytes) is a run's", len(name))
+		assert.Equal(t, name, r.ScheduleName())
+	}
+
+	for _, name := range []string{fiftyOne, accentedTooLong} {
+		_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), name, run.KindTrigger, nil, "alice", model.OperationRun, run.ReleaseStamp{}, time.Now())
+		require.ErrorIs(t, err, run.ErrScheduleNameTooLong, "a name of 51 characters (%d bytes) is refused", len(name))
+		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", err.Error())
+	}
+}
+
+// Every run constructor holds the schedule name to the same limit.
+func TestRunConstructors_RefuseANameLongerThanARunCarries(t *testing.T) {
+	tooLong := strings.Repeat("a", run.MaxScheduleNameChars+1)
+	stamp := run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}
+	constructors := map[string]func(name string) error{
+		"NewDerivedRun": func(name string) error {
+			_, err := run.NewDerivedRun("acme", uuid.New(), name, run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+			return err
+		},
+		"NewSingleNodeRun": func(name string) error {
+			_, err := run.NewSingleNodeRun("acme", uuid.New(), name, model.OperationRun, nil, "alice", stamp, time.Now())
+			return err
+		},
+		"NewPromotedSeedsRun": func(name string) error {
+			_, err := run.NewPromotedSeedsRun("acme", uuid.New(), name, stamp, time.Now())
+			return err
+		},
+	}
+	for constructor, build := range constructors {
+		require.NoError(t, build(tooLong[:run.MaxScheduleNameChars]), constructor)
+		assert.ErrorIs(t, build(tooLong), run.ErrScheduleNameTooLong, constructor)
+		assert.ErrorIs(t, build(""), run.ErrScheduleNameRequired, constructor)
+	}
+}
+
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
 	_, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "x", run.Kind("bogus"), nil, identity.SystemUserID, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != run.ErrInvalidKind {

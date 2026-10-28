@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/schedule"
@@ -29,15 +29,13 @@ const upcomingFires = 3
 // between its read and its save.
 const lastWriteWinsTries = 3
 
-// maxNameChars is the longest schedule name, in characters, a run of the
-// schedule can store: every fire of a longer name would fail to store its run.
-const maxNameChars = 50
-
 // ErrInvalid marks an input the service refuses before it reads or writes
-// anything: an empty schedule name or one longer than maxNameChars characters,
-// a negative expected version, or a cron or timezone the cron parser refuses. The error's message is the reason alone,
-// fit to show the operator; for a refusal of the parser it is the parser's
-// own message.
+// anything: a schedule name run.ValidateScheduleName refuses (an empty one, or
+// one longer than run.MaxScheduleNameChars characters, which no run of the
+// schedule could carry), a negative expected version, or a cron or timezone
+// the cron parser refuses. The error's message is the reason alone, fit to
+// show the operator; for a refusal of the parser it is the parser's own
+// message.
 var ErrInvalid = errors.New("invalid schedule input")
 
 // invalidInput is an ErrInvalid whose message is its reason.
@@ -48,9 +46,6 @@ func (e invalidInput) Is(target error) bool { return target == ErrInvalid }
 func (e invalidInput) Unwrap() error        { return e.reason }
 
 func invalid(reason error) error { return invalidInput{reason: reason} }
-
-// errNameRequired is the reason an empty schedule name is refused.
-var errNameRequired = errors.New("schedule_name is required")
 
 // UpsertInput is an operator's edit of one schedule: the cron it runs on, read
 // in the IANA timezone, what it is for, and whether it is paused.
@@ -129,11 +124,8 @@ func New(
 // release carries it. A name that has a row is edited whatever the live
 // release holds, and a row whose stored cron no longer parses is saved over.
 func (s *Service) Upsert(ctx context.Context, tenantID string, in UpsertInput, by string) (*schedule.Schedule, []time.Time, error) {
-	if in.Name == "" {
-		return nil, nil, invalid(errNameRequired)
-	}
-	if n := utf8.RuneCountInString(in.Name); n > maxNameChars {
-		return nil, nil, invalid(fmt.Errorf("schedule_name must be at most %d characters long, not %d", maxNameChars, n))
+	if err := run.ValidateScheduleName(in.Name); err != nil {
+		return nil, nil, invalid(err)
 	}
 	if in.ExpectedVersion < 0 {
 		return nil, nil, invalid(errors.New("expected_version must not be negative"))
@@ -209,7 +201,7 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 // progress goes on. It returns ErrInvalid for an empty name.
 func (s *Service) Delete(ctx context.Context, tenantID, name string) error {
 	if name == "" {
-		return invalid(errNameRequired)
+		return invalid(run.ErrScheduleNameRequired)
 	}
 	if _, err := s.schedules.Delete(ctx, tenantID, name); err != nil {
 		return fmt.Errorf("delete schedule %q: %w", name, err)

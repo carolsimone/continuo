@@ -103,7 +103,10 @@ type CronFireResult struct {
 // The two skips write nothing and leave the transaction usable. A run another
 // caller started between the active-run check and the insert ends the
 // transaction: that is an error wrapping run.ErrScheduleHasActiveRun, and the
-// caller rolls back.
+// caller rolls back. A schedule name longer than a run carries, which only a
+// row written outside the schedule commands can hold, is
+// run.ErrScheduleNameTooLong from the run's constructor, and the caller rolls
+// back.
 func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, tenantID, name string, slot time.Time) (CronFireResult, error) {
 	in := StartRunInput{
 		RunID: uuid.New(), TenantID: tenantID, ScheduleName: name, Kind: run.KindCron,
@@ -128,13 +131,14 @@ func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, 
 }
 
 // StartInTransaction starts the run in.RunID inside u's open transaction,
-// which the caller commits or rolls back. The tenant must know the schedule: a
-// model of its live release carries the name, or the name has a cron
-// (run.ErrScheduleNotFound otherwise). A schedule that already has an active
-// run is run.ErrScheduleHasActiveRun, and a schedule with a cron that no model
-// of the live release carries is the selection's refusal,
-// runplan.ErrEmptySelection. A refusal writes nothing and leaves the caller to
-// roll back.
+// which the caller commits or rolls back. A schedule name longer than a run
+// carries is run.ErrScheduleNameTooLong, whatever the tenant knows of it. The
+// tenant must know the schedule: a model of its live release carries the
+// name, or the name has a cron (run.ErrScheduleNotFound otherwise). A schedule
+// that already has an active run is run.ErrScheduleHasActiveRun, and a
+// schedule with a cron that no model of the live release carries is the
+// selection's refusal, runplan.ErrEmptySelection. A refusal writes nothing and
+// leaves the caller to roll back.
 func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWork, in StartRunInput) error {
 	outcome, err := h.check(ctx, u, in)
 	if err != nil {
@@ -154,14 +158,20 @@ func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWo
 }
 
 // check enforces a trigger's pre-conditions, read in u's transaction before
-// the run is written: a schedule the tenant knows, and no active run of it. A
-// schedule with an active run is OutcomeSkippedActive.
+// the run is written: a schedule name a run can carry, a schedule the tenant
+// knows, and no active run of it. A schedule with an active run is
+// OutcomeSkippedActive.
 //
-// It takes the topology lock first, which the transaction then holds, so the
-// live release whose models it counts is the one the run is created on: a
-// promotion that has not committed is waited for, and one that commits after
-// the lock is taken waits for the run.
+// The name is checked before anything is read, so a name no run can carry is
+// refused alike whether or not the tenant knows it. The topology lock comes
+// next, which the transaction then holds, so the live release whose models it
+// counts is the one the run is created on: a promotion that has not committed
+// is waited for, and one that commits after the lock is taken waits for the
+// run.
 func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (ActivationOutcome, error) {
+	if err := run.ValidateScheduleName(in.ScheduleName); err != nil {
+		return 0, err
+	}
 	if err := u.Topology().LockTopology(ctx); err != nil {
 		return 0, fmt.Errorf("lock the topology for the schedule check: %w", err)
 	}

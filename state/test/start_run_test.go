@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -52,6 +53,36 @@ func TestStartRun_ANameWithACronButNoModelsIsAnEmptySelection(t *testing.T) {
 	assert.Zero(t, commandRecords(t, requestID), "a refused call stores no record")
 	assert.Zero(t, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name))
 	assert.Equal(t, 1, scheduleRowsOf(t, name), "the cron stays")
+}
+
+// A schedule name may be up to 50 characters long, the longest a run carries.
+// A trigger of a longer name is InvalidArgument with the run's own message,
+// whether or not a model of the live release carries the name, and creates
+// no run and stores no record; a name of 50 characters starts.
+func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
+	ctx := context.Background()
+	prefix := "start-long-" + uuid.NewString()[:8] + "-"
+	fifty := prefix + strings.Repeat("f", 50-len(prefix))
+	carried := prefix + strings.Repeat("c", 51-len(prefix))
+	uncarried := prefix + strings.Repeat("u", 51-len(prefix))
+	require.Len(t, fifty, 50)
+	require.Len(t, carried, 51)
+	promoteRelease(t, stateDB,
+		scheduledNode("mart", "long_fifty_"+uuid.NewString()[:8], "dbt-model", fifty),
+		scheduledNode("mart", "long_carried_"+uuid.NewString()[:8], "dbt-model", carried))
+
+	for _, name := range []string{carried, uncarried} {
+		requestID := uuid.NewString()
+		_, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: name})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", status.Convert(err).Message())
+		assert.Zero(t, commandRecords(t, requestID), "a refused call stores no record")
+		assert.Zero(t, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name), "and creates no run")
+	}
+
+	runID := startRun(t, fifty)
+	t.Cleanup(func() { finishRun(t, runID) })
+	assert.Equal(t, "running", runStatusOf(t, runID), "a name of 50 characters starts")
 }
 
 // A schedule whose stored cron no longer parses is still a schedule state
