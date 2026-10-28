@@ -34,6 +34,9 @@ type fakeCron struct {
 	listErrs []error
 	listed   int
 
+	// upsertErrs are the errors of the first upserts, in order; upsertErr
+	// answers every upsert after them.
+	upsertErrs []error
 	upsertResp *runv1.UpsertScheduleResponse
 	upsertErr  error
 	upserts    []*runv1.UpsertScheduleRequest
@@ -67,8 +70,12 @@ func (f *fakeCron) ListAllSchedules(_ context.Context) (*runv1.ListSchedulesResp
 
 func (f *fakeCron) UpsertSchedule(_ context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {
 	f.calls = append(f.calls, "upsert")
+	n := len(f.upserts)
 	f.upserts = append(f.upserts, req)
 	f.actors = append(f.actors, actor)
+	if n < len(f.upsertErrs) && f.upsertErrs[n] != nil {
+		return nil, f.upsertErrs[n]
+	}
 	return f.upsertResp, f.upsertErr
 }
 
@@ -104,7 +111,7 @@ func dailySummary() *runv1.ScheduleSummary {
 		UpdatedAt:    timestamppb.New(time.Date(2026, 10, 21, 12, 2, 0, 0, time.UTC)),
 		ModelCount:   41,
 		NextFireAt:   timestamppb.New(time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)),
-		CronWords:    "At 01:00 AM",
+		CronWords:    "At 01:00",
 	}
 }
 
@@ -213,7 +220,7 @@ func TestSetCron_PrintsTheNextThreeFires(t *testing.T) {
 			time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC),
 			time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC),
 			time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC)),
-		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00 AM"},
+		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00"},
 	}
 
 	stdout, stderr, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "Europe/Paris"}, false, "")
@@ -223,7 +230,7 @@ func TestSetCron_PrintsTheNextThreeFires(t *testing.T) {
 	out := decodeSetCron(t, stdout)
 	assert.Equal(t, "daily", out.ScheduleName)
 	assert.Equal(t, "0 2 * * *", out.Cron)
-	assert.Equal(t, "At 02:00 AM", out.CronWords, "the words come from PreviewSchedule")
+	assert.Equal(t, "At 02:00", out.CronWords, "the words come from PreviewSchedule")
 	assert.Equal(t, "Europe/Paris", out.Timezone)
 	assert.False(t, out.Paused)
 	assert.EqualValues(t, 4, out.Version)
@@ -260,9 +267,9 @@ func TestSetCron_AGivenDescriptionReplacesTheCurrentOne(t *testing.T) {
 	assert.Equal(t, "Nightly load", fake.upserts[0].GetDescription())
 }
 
-// The last write wins: no expected version is sent, so another editor's save a
-// moment earlier is replaced rather than refused.
-func TestSetCron_SendsNoExpectedVersion(t *testing.T) {
+// The version of the schedule as listed travels with the save, so an edit made
+// since the list is refused rather than overwritten.
+func TestSetCron_SendsTheVersionItRead(t *testing.T) {
 	fake := &fakeCron{
 		lists:      []*runv1.ListSchedulesResponse{listOf(dailySummary())},
 		upsertResp: savedDaily("0 2 * * *", "", false),
@@ -272,7 +279,150 @@ func TestSetCron_SendsNoExpectedVersion(t *testing.T) {
 
 	require.Equal(t, 0, exit)
 	require.Len(t, fake.upserts, 1)
-	assert.Zero(t, fake.upserts[0].GetExpectedVersion(), "set-cron never checks a version")
+	assert.EqualValues(t, 3, fake.upserts[0].GetExpectedVersion(), "the version of the schedule as listed")
+}
+
+// A schedule with no cron has no version to check: its first cron is saved
+// with none, whether the live release lists the name or no row exists yet.
+func TestSetCron_AFirstCronSendsNoVersion(t *testing.T) {
+	for name, list := range map[string]*runv1.ListSchedulesResponse{
+		"listed with no cron": listOf(manualSummary("ghost")),
+		"not listed":          listOf(dailySummary()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeCron{
+				lists:      []*runv1.ListSchedulesResponse{list},
+				upsertResp: savedDaily("0 2 * * *", "", false),
+			}
+
+			_, _, exit := runCron(t, NewSetCronCommand, fake, []string{"ghost", "0 2 * * *", "UTC"}, false, "")
+
+			require.Equal(t, 0, exit)
+			require.Len(t, fake.upserts, 1)
+			assert.Zero(t, fake.upserts[0].GetExpectedVersion(), "a first cron is saved with no version check")
+		})
+	}
+}
+
+// Another edit saved between the list and the save is ABORTED. set-cron reads
+// the schedule again and saves once more, with the version and the paused flag
+// and description that edit left: the cron is the only thing it replaces.
+func TestSetCron_ARetryReReadsAndKeepsAConcurrentPauseAndDescription(t *testing.T) {
+	pausedMeanwhile := dailySummary()
+	pausedMeanwhile.Paused = true
+	pausedMeanwhile.Description = "Held for the audit"
+	pausedMeanwhile.Version = 4
+	pausedMeanwhile.UpdatedBy = "bob@example.com"
+	fake := &fakeCron{
+		lists:      []*runv1.ListSchedulesResponse{listOf(dailySummary()), listOf(pausedMeanwhile)},
+		upsertErrs: []error{status.Error(codes.Aborted, "schedule \"daily\" is at version 4, not 3")},
+		upsertResp: &runv1.UpsertScheduleResponse{Schedule: &runv1.Schedule{
+			ScheduleName: "daily", Cron: "0 2 * * *", Timezone: "UTC", Description: "Held for the audit", Paused: true, Version: 5,
+		}},
+	}
+
+	stdout, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC"}, false, "")
+
+	require.Equal(t, 0, exit, stdout)
+	require.Len(t, fake.upserts, 2, "one retry")
+	first, second := fake.upserts[0], fake.upserts[1]
+	assert.EqualValues(t, 3, first.GetExpectedVersion())
+	assert.False(t, first.GetPaused())
+	assert.Equal(t, "Runs daily at 1am", first.GetDescription())
+	assert.EqualValues(t, 4, second.GetExpectedVersion(), "the retry carries the version of the new read")
+	assert.True(t, second.GetPaused(), "the pause saved in between is kept")
+	assert.Equal(t, "Held for the audit", second.GetDescription(), "the description saved in between is kept")
+	assert.Equal(t, "0 2 * * *", second.GetCron(), "the cron is still the one asked for")
+	assert.Equal(t, []string{"list", "upsert", "list", "upsert"}, fake.calls[:4], "the retry reads the schedules again before saving")
+	out := decodeSetCron(t, stdout)
+	assert.True(t, out.Paused)
+	assert.EqualValues(t, 5, out.Version)
+}
+
+// A description given on the command line is the one asked for: a retry sends
+// it again rather than the description another edit left.
+func TestSetCron_ARetryKeepsAGivenDescription(t *testing.T) {
+	changed := dailySummary()
+	changed.Description = "Edited meanwhile"
+	changed.Version = 4
+	fake := &fakeCron{
+		lists:      []*runv1.ListSchedulesResponse{listOf(dailySummary()), listOf(changed)},
+		upsertErrs: []error{status.Error(codes.Aborted, "stale")},
+		upsertResp: savedDaily("0 2 * * *", "Nightly load", false),
+	}
+
+	_, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC", "Nightly load"}, false, "")
+
+	require.Equal(t, 0, exit)
+	require.Len(t, fake.upserts, 2)
+	assert.Equal(t, "Nightly load", fake.upserts[1].GetDescription())
+	assert.EqualValues(t, 4, fake.upserts[1].GetExpectedVersion())
+}
+
+// A schedule whose cron another editor removed between the reads has no
+// version any more, so its retry is saved as a first cron.
+func TestSetCron_ARetryAfterTheCronWasRemovedSendsNoVersion(t *testing.T) {
+	fake := &fakeCron{
+		lists:      []*runv1.ListSchedulesResponse{listOf(dailySummary()), listOf(manualSummary("daily"))},
+		upsertErrs: []error{status.Error(codes.Aborted, "removed")},
+		upsertResp: savedDaily("0 2 * * *", "", false),
+	}
+
+	_, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC"}, false, "")
+
+	require.Equal(t, 0, exit)
+	require.Len(t, fake.upserts, 2)
+	assert.Zero(t, fake.upserts[1].GetExpectedVersion())
+	assert.False(t, fake.upserts[1].GetPaused())
+}
+
+// A second conflict is reported, as pause does, and nothing is saved a third
+// time.
+func TestSetCron_ASecondConflictExitsWithTheConflictCode(t *testing.T) {
+	changed := dailySummary()
+	changed.Version = 4
+	changed.UpdatedBy = "bob@example.com"
+	fake := &fakeCron{
+		lists:     []*runv1.ListSchedulesResponse{listOf(dailySummary()), listOf(changed)},
+		upsertErr: status.Error(codes.Aborted, "the schedule was changed by another edit"),
+	}
+
+	stdout, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC"}, false, "")
+
+	assert.Equal(t, 4, exit)
+	e := errorOf(t, stdout)
+	assert.Equal(t, output.CodeConflict, e.Code)
+	assert.Equal(t, "changed by bob@example.com while this ran; run it again", e.Message)
+	require.Len(t, fake.upserts, 2, "one retry, no more")
+	assert.EqualValues(t, 4, fake.upserts[1].GetExpectedVersion())
+	assert.Empty(t, fake.previews, "nothing was saved, so no words are read")
+}
+
+// Only a conflict is retried: a refusal that another read cannot change is
+// returned at once.
+func TestSetCron_OtherErrorsAreNotRetried(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		exit int
+	}{
+		"invalid argument": {status.Error(codes.InvalidArgument, "cron: never fires"), 2},
+		"not found":        {status.Error(codes.NotFound, "no model has the tag"), 3},
+		"internal":         {status.Error(codes.Internal, "boom"), 6},
+		"maintenance":      {maintenanceRefusal(), 7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeCron{
+				lists:     []*runv1.ListSchedulesResponse{listOf(dailySummary())},
+				upsertErr: tc.err,
+			}
+
+			_, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC"}, false, "")
+
+			assert.Equal(t, tc.exit, exit)
+			assert.Len(t, fake.upserts, 1, "saved once")
+			assert.Equal(t, 1, fake.listed, "read once")
+		})
+	}
 }
 
 // A paused schedule keeps its pause when its cron changes; "schedule resume"
@@ -318,7 +468,8 @@ func TestSetCron_AnUnquotedCronExits2AndSaysToQuoteIt(t *testing.T) {
 	assert.Equal(t, 2, exit)
 	e := errorOf(t, stdout)
 	assert.Equal(t, output.CodeUsage, e.Code)
-	assert.Contains(t, e.Message, "quote")
+	assert.Contains(t, e.Message, "ONE argument")
+	assert.Contains(t, e.Message, "quote", "a shell needs the five fields quoted to pass them as one")
 	assert.Empty(t, fake.calls, "no RPC is made")
 }
 
@@ -373,7 +524,10 @@ func TestSetCron_ANameDifferingOnlyByCaseIsAnotherSchedule(t *testing.T) {
 	stdout, _, exit := runCron(t, NewSetCronCommand, fake, []string{"Daily", "0 2 * * *", "UTC"}, false, "")
 
 	assert.Equal(t, 3, exit)
-	assert.Equal(t, output.CodeNotFound, errorOf(t, stdout).Code)
+	e := errorOf(t, stdout)
+	assert.Equal(t, output.CodeNotFound, e.Code)
+	assert.Contains(t, e.Message, "no model of the live release has the tag Daily", "the server's reason is kept")
+	assert.Contains(t, e.Message, "did you mean 'daily'?", "the listed name that differs only by case is offered")
 	require.Len(t, fake.upserts, 1)
 	assert.Equal(t, "Daily", fake.upserts[0].GetScheduleName())
 	assert.Empty(t, fake.upserts[0].GetDescription(), "the description of 'daily' is not borrowed")
@@ -389,6 +543,7 @@ func TestSetCron_ANameWithNoModelsAndNoCronExits3(t *testing.T) {
 	e := errorOf(t, stdout)
 	assert.Equal(t, output.CodeNotFound, e.Code)
 	assert.Contains(t, e.Message, "ghost")
+	assert.NotContains(t, e.Message, "did you mean", "no listed name resembles it")
 	assert.Empty(t, fake.previews, "nothing was saved, so no words are read")
 }
 
@@ -463,7 +618,7 @@ func TestSetCron_HumanModeWritesOneSummaryToStderr(t *testing.T) {
 		upsertResp: savedDaily("0 2 * * *", "", false,
 			time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC),
 			time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)),
-		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00 AM"},
+		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00"},
 	}
 
 	stdout, stderr, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "Europe/Paris"}, true, "")
@@ -472,7 +627,7 @@ func TestSetCron_HumanModeWritesOneSummaryToStderr(t *testing.T) {
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "daily")
 	assert.Contains(t, stderr, "0 2 * * *")
-	assert.Contains(t, stderr, "At 02:00 AM")
+	assert.Contains(t, stderr, "At 02:00")
 	assert.Contains(t, stderr, "2026-10-28T01:00:00Z")
 }
 
@@ -481,7 +636,7 @@ func TestSetCron_OutputMatchesItsSchema(t *testing.T) {
 		lists: []*runv1.ListSchedulesResponse{listOf(dailySummary())},
 		upsertResp: savedDaily("0 2 * * *", "Runs daily at 1am", false,
 			time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC)),
-		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00 AM"},
+		previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 02:00"},
 	}
 	stdout, _, exit := runCron(t, NewSetCronCommand, fake, []string{"daily", "0 2 * * *", "UTC"}, false, "")
 	require.Equal(t, 0, exit)

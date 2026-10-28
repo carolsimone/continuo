@@ -125,12 +125,12 @@ func TestDeleteSchedule_SendsTheNameAndTheActor(t *testing.T) {
 }
 
 func TestPreviewSchedule_SendsTheCronAndTheTimezone(t *testing.T) {
-	srv := &scheduleEditServer{previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 01:00 AM"}}
+	srv := &scheduleEditServer{previewResp: &runv1.PreviewScheduleResponse{CronWords: "At 01:00"}}
 	c := dialScheduleEdit(t, srv)
 
 	resp, err := c.PreviewSchedule(context.Background(), "0 1 * * *", "Europe/Paris")
 	require.NoError(t, err)
-	assert.Equal(t, "At 01:00 AM", resp.GetCronWords())
+	assert.Equal(t, "At 01:00", resp.GetCronWords())
 	require.Len(t, srv.previews, 1)
 	assert.Equal(t, "0 1 * * *", srv.previews[0].GetCron())
 	assert.Equal(t, "Europe/Paris", srv.previews[0].GetTimezone())

@@ -79,12 +79,15 @@ Every command that starts or cancels a run (`schedule trigger|test|build|cancel`
 and `node trigger|test|build|full-refresh`) sends one request id per invocation:
 `CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
 answers a repeat of the same id and arguments with the run the first call made
-and writes nothing. The client retries such a command up to three tries on
-UNAVAILABLE (100 ms, then 400 ms apart) with the same id; it never retries a
-read, and it does not retry a refusal for maintenance mode. A schedule edit
-(`set-cron`, `remove-cron`, `pause`, `resume`) sends no request id and is
-retried on UNAVAILABLE only: its ABORTED is a stale version, which a repeat
-cannot settle.
+and writes nothing. The client retries such a command, with the same id, up to
+three tries in all (100 ms, then 400 ms apart) when the state service answers
+UNAVAILABLE, or ABORTED because concurrent calls of the same id kept rolling
+back. It does not retry a refusal for maintenance mode, and it never retries a
+read. A schedule edit (`set-cron`, `remove-cron`, `pause`, `resume`) sends no
+request id and is retried the same way on UNAVAILABLE only: its ABORTED is a
+stale version, which sending the same request again cannot settle. `set-cron`
+answers that ABORTED itself, by reading the schedule again and saving once
+more; `pause` and `resume` exit 4 (see below).
 
 With `--human`, stdout is empty and a single line is written to stderr:
 
@@ -99,30 +102,38 @@ a cron. Calls RunService.ListSchedules. Success prints a JSON object to
 stdout:
 
 ```json
-{"schedules":[{"schedule_name":"daily","cron_expression":"0 1 * * *","cron_words":"At 01:00 AM","has_cron":true,"paused":false,"next_fire_at":"2026-10-28T00:00:00Z","description":"Runs daily at 1am","timezone":"Europe/Paris","model_count":41,"has_active_run":false,"last_run_id":"…","last_run_status":"succeeded","last_run_at":"2026-10-27T00:00:00Z","updated_by":"alice@example.com","updated_at":"2026-10-21T12:02:00Z"}]}
+{"schedules":[{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00","has_cron":true,"paused":false,"version":3,"next_fire_at":"2026-10-28T00:00:00Z","description":"Runs daily at 1am","timezone":"Europe/Paris","model_count":41,"has_active_run":false,"last_run_id":"…","last_run_status":"succeeded","last_run_at":"2026-10-27T00:00:00Z","updated_by":"alice@example.com","updated_at":"2026-10-21T12:02:00Z"}]}
 ```
 
 A schedule is scheduled (`has_cron` and not `paused`), paused, or manual
 (`has_cron` false: it runs only when triggered). `description`, `cron_words`,
 `next_fire_at`, `last_run_at`, `updated_by` and `updated_at` are omitted when
-empty. `model_count` is how many models of the live release carry the
-schedule's tag.
+empty. `cron` and `version` are the fields `set-cron`, `pause` and `resume`
+print for the schedule they saved; `version` counts the edits of the cron, from
+1, and is 0 while the schedule has no cron. `model_count` is how many models of
+the live release carry the schedule's tag.
 
 ### `schedule set-cron <name> <cron> <timezone> [description]`
 
-Sets when a schedule runs on its own. A cron of several fields is one
-argument, so quote it. Without `[description]` the current description is
-kept; a blank one is a usage error. The command sends no version (the last
-write wins) and keeps a pause. Calls RunService.UpsertSchedule, then
-PreviewSchedule for the words. Success prints:
+Sets when a schedule runs on its own. Pass the five fields of the cron as one
+argument (in a shell, quote it). The command re-sends the schedule's current
+paused flag and description along with the cron, so a pause is kept; without
+`[description]` the current description is kept, and a blank one is a usage
+error. It sends the version it read as the expected version, so an edit saved
+since is never overwritten: on a conflict it reads the schedule again and saves
+once more, and a second conflict exits 4 with `changed by <who> while this ran;
+run it again`. The cron itself is last-write-wins. A first cron is saved with no
+version. Calls RunService.UpsertSchedule, then PreviewSchedule for the words.
+Success prints:
 
 ```json
-{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00 AM","timezone":"Europe/Paris","description":"Runs daily at 1am","paused":false,"version":4,"next_fire_times":["2026-10-28T00:00:00Z","2026-10-29T00:00:00Z","2026-10-30T00:00:00Z"]}
+{"schedule_name":"daily","cron":"0 1 * * *","cron_words":"At 01:00","timezone":"Europe/Paris","description":"Runs daily at 1am","paused":false,"version":4,"next_fire_times":["2026-10-28T00:00:00Z","2026-10-29T00:00:00Z","2026-10-30T00:00:00Z"]}
 ```
 
 A name no model of the live release carries, with no cron yet, is
-`not_found` (exit 3); a cron or timezone the parser refuses is `usage`
-(exit 2) with the parser's message.
+`not_found` (exit 3), with a `did you mean` when a listed name differs only by
+case; a cron or timezone the parser refuses is `usage` (exit 2) with the
+parser's message.
 
 ### `schedule pause <name>` and `schedule resume <name>`
 
@@ -244,6 +255,11 @@ Triggered run cd4423ae-9161-4773-aa43-3ec087f24a0a for schedule 'daily_ingest'
 - **Thin client, server owns the rules.** Pre-conditions (schedule
   exists, no concurrent run, …) are enforced by the state service. The
   CLI only translates gRPC status codes into exit codes and JSON shapes.
-- **No retries, no backoff.** The `retryable` bit is advice for the
-  caller. The CLI exits immediately so the caller (agent, shell loop,
-  CI step) owns the retry policy.
+- **Bounded retries, the caller owns the rest.** The client repeats only
+  what is safe to repeat: a command that starts or cancels a run (same
+  request id; up to three tries, 100 ms then 400 ms apart, on UNAVAILABLE or
+  ABORTED) and a schedule edit (on UNAVAILABLE only). `set-cron` also reads
+  the schedule again and saves once more after a stale version. Any other
+  error, and any error left once those tries are spent, exits at once. The
+  `retryable` bit is advice for the caller (agent, shell loop, CI step), who
+  owns any further retry policy.

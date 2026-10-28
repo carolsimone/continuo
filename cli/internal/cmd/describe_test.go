@@ -212,4 +212,8 @@ func TestDescribe_CronCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing
 		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &exitCodes))
 		assert.Contains(t, exitCodes, 7, "%s is refused in maintenance mode", path)
 	}
+
+	var setCronCodes []int
+	require.NoError(t, json.Unmarshal(setCron.ExitCodes, &setCronCodes))
+	assert.Contains(t, setCronCodes, 4, "set-cron must document the conflict of a schedule that changed twice while it ran")
 }

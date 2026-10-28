@@ -49,7 +49,7 @@ func NewPauseCommand(factory RunClientFactory, cfg *config.Config, stdout, stder
 		long: `Pause a schedule: nothing starts on its own until it is resumed.
 
 Use when the user asks to pause, hold, stop or disable the automatic runs of a
-schedule (during maintenance, or after a data incident) without losing its cron.
+schedule (during an upstream outage, or after a data incident) without losing its cron.
 The cron, timezone and description are kept. A run of the schedule already in
 progress goes on, and a manual "schedule trigger" still works. Fires that come
 due while it is paused do not run later.
@@ -152,7 +152,7 @@ func newPauseResumeCommand(spec pauseSpec, factory RunClientFactory, cfg *config
 				})
 				cancel()
 				if err != nil {
-					return emit(stdout, stderr, cfg.Human, pauseError(cmd, cfg, c, name, err))
+					return emit(stdout, stderr, cfg.Human, saveError(cmd, cfg, c, name, err))
 				}
 				saved := resp.GetSchedule()
 				result.Changed = true
@@ -178,23 +178,29 @@ func newPauseResumeCommand(spec pauseSpec, factory RunClientFactory, cfg *config
 // differs from a listed one only by case names that one: schedule names are
 // tags and are case-sensitive.
 func noSuchSchedule(name string, all []*runv1.ScheduleSummary) output.CLIError {
+	return output.CLIError{Code: output.CodeNotFound, Message: fmt.Sprintf("no schedule named '%s'", name) + caseHint(name, all)}
+}
+
+// caseHint is the sentence a not_found for name ends with when a listed
+// schedule differs from it only by case: schedule names are tags and are
+// case-sensitive. It is empty when no listed name resembles name.
+func caseHint(name string, all []*runv1.ScheduleSummary) string {
 	var similar []string
 	for _, s := range all {
 		if strings.EqualFold(s.GetScheduleName(), name) {
 			similar = append(similar, "'"+s.GetScheduleName()+"'")
 		}
 	}
-	msg := fmt.Sprintf("no schedule named '%s'", name)
-	if len(similar) > 0 {
-		msg += "; schedule names are case-sensitive, did you mean " + strings.Join(similar, " or ") + "?"
+	if len(similar) == 0 {
+		return ""
 	}
-	return output.CLIError{Code: output.CodeNotFound, Message: msg}
+	return "; schedule names are case-sensitive, did you mean " + strings.Join(similar, " or ") + "?"
 }
 
-// pauseError turns a failed save into the CLI's error. UpsertSchedule answers a
-// conflict only as ABORTED, the expected version being stale; the error then
-// says who changed the schedule.
-func pauseError(cmd *cobra.Command, cfg *config.Config, c client.RunClient, name string, err error) output.CLIError {
+// saveError turns a failed save of pause, resume or set-cron into the CLI's
+// error. UpsertSchedule answers a conflict only as ABORTED, the expected
+// version being stale; the error then says who changed the schedule.
+func saveError(cmd *cobra.Command, cfg *config.Config, c client.RunClient, name string, err error) output.CLIError {
 	e := output.FromGRPC(err)
 	if e.Code != output.CodeConflict {
 		return e

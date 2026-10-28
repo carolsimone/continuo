@@ -64,14 +64,14 @@ func runList(t *testing.T, fake client.RunClient, args []string, human bool) (st
 
 // scheduleJSON is the expected JSON shape for a single schedule entry.
 type scheduleJSON struct {
-	ScheduleName   string `json:"schedule_name"`
-	CronExpression string `json:"cron_expression"`
-	Description    string `json:"description,omitempty"`
-	Timezone       string `json:"timezone"`
-	HasActiveRun   bool   `json:"has_active_run"`
-	LastRunId      string `json:"last_run_id"`
-	LastRunStatus  string `json:"last_run_status"`
-	LastRunAt      string `json:"last_run_at,omitempty"`
+	ScheduleName  string `json:"schedule_name"`
+	Cron          string `json:"cron"`
+	Description   string `json:"description,omitempty"`
+	Timezone      string `json:"timezone"`
+	HasActiveRun  bool   `json:"has_active_run"`
+	LastRunId     string `json:"last_run_id"`
+	LastRunStatus string `json:"last_run_status"`
+	LastRunAt     string `json:"last_run_at,omitempty"`
 }
 
 type listResponseJSON struct {
@@ -107,7 +107,7 @@ func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 
 	s := payload.Schedules[0]
 	assert.Equal(t, "daily_ingest", s.ScheduleName)
-	assert.Equal(t, "0 3 * * *", s.CronExpression)
+	assert.Equal(t, "0 3 * * *", s.Cron)
 	assert.Equal(t, "UTC", s.Timezone)
 	assert.False(t, s.HasActiveRun)
 	assert.Equal(t, "sched_01HXYZ", s.LastRunId)
@@ -362,7 +362,7 @@ func fullSummary() *runv1.ScheduleSummary {
 		UpdatedBy:     "alice@example.com",
 		UpdatedAt:     timestamppb.New(time.Date(2026, 10, 21, 12, 2, 0, 0, time.UTC)),
 		ModelCount:    41,
-		CronWords:     "At 01:00 AM",
+		CronWords:     "At 01:00",
 	}
 }
 
@@ -421,8 +421,9 @@ func TestList_CarriesTheFieldsOfAScheduledSchedule(t *testing.T) {
 	require.Len(t, payload.Schedules, 1)
 	s := payload.Schedules[0]
 	assert.Equal(t, "daily", s["schedule_name"])
-	assert.Equal(t, "0 1 * * *", s["cron_expression"])
-	assert.Equal(t, "At 01:00 AM", s["cron_words"])
+	assert.Equal(t, "0 1 * * *", s["cron"])
+	assert.Equal(t, "At 01:00", s["cron_words"])
+	assert.EqualValues(t, 3, s["version"], "the version pause, resume and set-cron send back as the expected version")
 	assert.Equal(t, "Europe/Paris", s["timezone"])
 	assert.Equal(t, true, s["has_cron"])
 	assert.Equal(t, false, s["paused"])
@@ -472,7 +473,9 @@ func TestList_AManualScheduleHasNoCron(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	s := payload.Schedules[0]
 	assert.Equal(t, false, s["has_cron"])
-	assert.Equal(t, "", s["cron_expression"])
+	assert.Equal(t, "", s["cron"])
+	assert.EqualValues(t, 0, s["version"], "a schedule with no cron has no version")
+	assert.NotContains(t, s, "cron_expression", "the cron is named \"cron\" in every command")
 	assert.Equal(t, false, s["paused"])
 	assert.EqualValues(t, 5, s["model_count"])
 }
