@@ -6,7 +6,9 @@
 # check on the release-flow scripts (they have no other CI gate). Runs
 # identically in CI (install-test.yml) and locally; needs Helm 3.16 or newer
 # (the egress checks render with --skip-schema-validation), Go, and Python 3
-# with PyYAML (Helm and Python are preinstalled on the CI runner).
+# with PyYAML (Helm and Python are preinstalled on the CI runner). It needs no
+# Kubernetes cluster and no kubeconfig: every check renders offline with
+# `helm template` or lints with `helm lint`, and nothing contacts an API server.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -150,24 +152,39 @@ grep -qF 'services[state].volumes[extra-config]: configMap.name is empty' "${tmp
 
 # NOTES.txt tells an upgrading operator that schedules are no longer read from
 # the chart, and an installing one nothing about it. `helm template` prints no
-# notes, so this runs a client-side dry run of an install, and of an upgrade of
-# a release held by the in-memory storage driver.
+# notes and `helm install|upgrade --dry-run=client` asks the API server for its
+# version, so the check renders NOTES.txt as an ordinary template: in a copy of
+# the chart, the file's text becomes a named template (`probe.notes`) that a
+# ConfigMap includes, and `helm template --is-upgrade` or without it sets
+# .Release.IsUpgrade to true or false for it.
 echo "--- NOTES.txt: the schedules note prints on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
-printf '[]\n' > "${tmp}/releases-none.json"
-printf '%s\n' '[{"name":"continuo","namespace":"default","version":1,"info":{"status":"deployed"},"chart":{"metadata":{"name":"continuo","version":"0.0.1","apiVersion":"v2"}},"config":{},"manifest":""}]' \
-  > "${tmp}/releases-deployed.json"
-HELM_DRIVER=memory HELM_MEMORY_DRIVER_DATA="${tmp}/releases-none.json" \
-  helm install continuo "$CHART" --dry-run=client --namespace default > "${tmp}/notes-install.txt" \
-  || { echo "FAIL: helm install --dry-run=client failed"; exit 1; }
-HELM_DRIVER=memory HELM_MEMORY_DRIVER_DATA="${tmp}/releases-deployed.json" \
-  helm upgrade continuo "$CHART" --dry-run=client --namespace default > "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: helm upgrade --dry-run=client failed"; exit 1; }
+notes_chart="${tmp}/notes-chart"
+cp -R "$CHART" "$notes_chart"
+{
+  printf '{{- define "probe.notes" -}}\n'
+  cat "${notes_chart}/templates/NOTES.txt"
+  printf '\n{{- end -}}\n'
+} > "${notes_chart}/templates/_probe.tpl"
+rm "${notes_chart}/templates/NOTES.txt"
+cat > "${notes_chart}/templates/probe.yaml" <<'PROBE'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notes-probe
+data:
+  notes.txt: |
+{{ include "probe.notes" . | indent 4 }}
+PROBE
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade --show-only templates/probe.yaml \
+  > "${tmp}/notes-upgrade.txt" || { echo "FAIL: rendering NOTES.txt as an upgrade failed"; exit 1; }
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --show-only templates/probe.yaml \
+  > "${tmp}/notes-install.txt" || { echo "FAIL: rendering NOTES.txt as an install failed"; exit 1; }
 for notes in install upgrade; do
-  grep -q '^ACCESS$' "${tmp}/notes-${notes}.txt" || { echo "FAIL: the ${notes} dry run printed no NOTES.txt"; exit 1; }
+  grep -q '^ *ACCESS$' "${tmp}/notes-${notes}.txt" || { echo "FAIL: the ${notes} render printed no NOTES.txt"; exit 1; }
 done
-grep -qF "$schedules_note" "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the upgrade notes do not say that schedules are no longer read from the chart"; exit 1; }
+[ "$(grep -cF "$schedules_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that schedules are no longer read from the chart"; exit 1; }
 if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
 fi
