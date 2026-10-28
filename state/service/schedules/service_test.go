@@ -490,8 +490,9 @@ func TestSchedulesPreview_RefusesWhatTheParserRefusesWithItsMessage(t *testing.T
 }
 
 // List is one entry per name the live release has or that has a row, by name:
-// design §9.3's four rows. Each carries its cron, in words, its models and its
-// last run.
+// a scheduled schedule (a row and models), a paused one, a manual one (models
+// and no row) and a flagged one (a row whose models are gone). Each carries
+// its cron, in words, its models and its last run.
 func TestSchedulesList_IsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

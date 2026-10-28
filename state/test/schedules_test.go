@@ -331,8 +331,9 @@ func TestSchedules_DeletingACronLeavesItsActiveRunRunning(t *testing.T) {
 }
 
 // ListSchedules is one entry per name the live release has or that has a cron:
-// design §9.3's four rows of a scheduled, a paused, a manual and a flagged
-// schedule.
+// a scheduled schedule (a cron and models), a paused one, a manual one (models
+// and no cron) and a flagged one (a cron whose models a later release
+// dropped).
 func TestSchedules_ListIsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 	prefix := "u" + uuid.NewString()[:6]
 	daily, hourly, manual, weekly := prefix+"-daily", prefix+"-hourly", prefix+"-e2e", prefix+"-weekly"
