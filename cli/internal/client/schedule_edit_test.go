@@ -136,9 +136,9 @@ func TestPreviewSchedule_SendsTheCronAndTheTimezone(t *testing.T) {
 	assert.Equal(t, "Europe/Paris", srv.previews[0].GetTimezone())
 }
 
-// ABORTED on an upsert is a stale expected_version. Sending the same request
-// again cannot settle it, so it is returned at once and the caller reads the
-// schedule again.
+// ABORTED on an upsert with an expected_version above 0 is a stale version.
+// Sending the same request again cannot settle it, so it is returned at once
+// and the caller reads the schedule again.
 func TestRunClient_DoesNotRetryAScheduleEditOnAborted(t *testing.T) {
 	aborted := status.Error(codes.Aborted, "the schedule changed")
 	srv := &scheduleEditServer{upsertErrs: []error{aborted, aborted, aborted}, deleteErrs: []error{aborted, aborted, aborted}}

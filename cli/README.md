@@ -121,10 +121,10 @@ Sets when a schedule runs on its own. Pass the five fields of the cron as one
 argument (in a shell, quote it). The command re-sends the schedule's current
 paused flag and description along with the cron, so a pause is kept; without
 `[description]` the current description is kept, and a blank one is a usage
-error. It sends the version it read as the expected version, so an edit saved
-since is never overwritten: on a conflict it reads the schedule again and saves
-once more, and a second conflict exits 4 with `changed by <who> while this ran;
-run it again`. The cron itself is last-write-wins. A first cron is saved with no
+error. It sends the version it read as the expected version, so a pause saved since
+is never overwritten (a `[description]` you pass replaces the stored one): on a
+conflict it reads the schedule again and saves once more, and a second conflict
+exits 4 with `changed by <who> while this ran; run it again`. The cron itself is last-write-wins. A first cron is saved with no
 version. Calls RunService.UpsertSchedule, then PreviewSchedule for the words.
 Success prints:
 

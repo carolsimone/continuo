@@ -83,9 +83,12 @@ var commandMethods = map[string]bool{
 }
 
 // scheduleEditMethods are the RPCs that change the cron of a schedule. They
-// carry no request id and are retried on UNAVAILABLE only: their ABORTED is a
-// stale expected_version, which sending the same request again cannot settle,
-// so it is returned at once for the caller to read the schedule again.
+// carry no request id and are retried on UNAVAILABLE only; their ABORTED is
+// returned at once for the caller to read the schedule again. With an
+// expected_version above 0 that ABORTED is a stale version, which sending the
+// same request again cannot settle. With expected_version 0, as a first cron
+// is sent, it means other edits saved first on each of the server's three
+// tries, which sending the request again can settle.
 var scheduleEditMethods = map[string]bool{
 	runv1.RunService_UpsertSchedule_FullMethodName: true,
 	runv1.RunService_DeleteSchedule_FullMethodName: true,

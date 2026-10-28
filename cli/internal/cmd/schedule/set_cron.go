@@ -36,9 +36,11 @@ const setCronTries = 2
 // [description]`. It reads the schedules for the description and the pause to
 // keep and for the version to expect, then saves the cron. When another edit
 // saved the schedule in between it reads again and saves once more, so the
-// cron is last-write-wins while a pause or a description saved concurrently is
-// never overwritten. The words of the cron come from a preview of the saved
-// cron; the schedule is saved whether or not they can be read.
+// cron is last-write-wins while a pause saved concurrently is never
+// overwritten; a description it is given replaces the stored one, and without
+// one it keeps the description it read last. The words of the cron come from
+// a preview of the saved cron; the schedule is saved whether or not they can
+// be read.
 func NewSetCronCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-cron <name> <cron> <timezone> [description]",
@@ -69,10 +71,12 @@ next fire counts from now.
 Only a schedule's first cron needs a model of the live release with its tag; a
 schedule that has a cron can be changed whatever the live release holds.
 
-set-cron sends the version it read, so a pause or a description saved by another
-edit since is never overwritten: it reads the schedule again, saves once more
-with what that edit left, and exits 4 if the schedule changed again. The cron
-itself is last-write-wins: a cron another editor saved a moment ago is replaced.
+set-cron sends the version it read, so a concurrent pause is never overwritten;
+a description you pass replaces the stored one. When another edit saved the
+schedule since, set-cron reads it again, saves once more with the pause that
+edit left (and its description, unless you passed one), and exits 4 if the
+schedule changed again. The cron itself is last-write-wins: a cron another
+editor saved a moment ago is replaced.
 
 Output (stdout, JSON):
   {"schedule_name":string,"cron":string,"cron_words":string,"timezone":string,
@@ -82,7 +86,7 @@ Output (stdout, JSON):
   saved description; each is omitted when empty.
 
 Errors:
-  usage      (exit 2)  wrong number of arguments (a cron whose fields were not passed as one argument arrives as several), a blank argument, or a cron or timezone the parser refuses; the message is the parser's
+  usage      (exit 2)  wrong number of arguments (a cron whose fields were not passed as one argument arrives as several), a blank argument, a name longer than 50 characters, or a cron or timezone the parser refuses; the message says why (for a cron or timezone, it is the parser's)
   not_found  (exit 3)  the schedule has no cron yet and no model of the live release has its tag; a listed name that differs only by case is offered as "did you mean"
   conflict   (exit 4)  another edit saved the schedule twice while this ran ("changed by <who> while this ran; run it again"); nothing was changed by this command, so run it again
   unavailable(exit 5)  the state service is unreachable

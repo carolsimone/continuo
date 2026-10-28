@@ -451,17 +451,19 @@ database:
   # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
   # agent-chat 20/5, dead-letter-controller 12/5). Each limit is a cap per pod,
   # and the sum of the caps is the worst case: with the defaults and one
-  # replica of each service, 152 pooled connections plus nine LISTEN
+  # replica of each service, 152 pooled connections plus ten LISTEN
   # connections: one in each pod of the seven services that run an outbox
-  # relay (every Go service except agent-chat), and a second in state (its
-  # node lease waker) and in execution-controller (its dispatcher); 161 in all.
+  # relay (every Go service except agent-chat), a second in
+  # execution-controller (its dispatcher), and a second and a third in state
+  # (its node lease waker and its cron loop); 162 in all.
   # Consumers handle one message at a time, so steady-state use is far lower.
   # The LISTEN connections sit outside the pool and need a session-mode path
   # to Postgres. Behind a transaction-mode pooler the relays publish on their
   # 5 s poll instead of on commit, execution-controller's dispatcher starts
-  # queued work on its 5 s poll, and state grants a freed node lease on its
+  # queued work on its 5 s poll, state grants a freed node lease on its
   # lease waker's 60 s pass or the attempt reconcile's pass, which grants freed
-  # nodes before it looks for stalled runs.
+  # nodes before it looks for stalled runs, and state's cron loop sees a cron
+  # edit on its next pass, at most 60 s later.
   # maxOpenConns applies to every Go service, orchestrator included, whose 13
   # consumers need about two connections each: do not set it below about 30,
   # or handlers that hold a transaction and need a second connection stall

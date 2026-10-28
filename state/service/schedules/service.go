@@ -116,10 +116,11 @@ func New(
 // fires: none while it is paused. The next fire counts from now, and the
 // version goes up by one from the stored row's.
 //
-// The edit is saved at the version of the row it read, so the stored version
-// only ever goes up. With in.ExpectedVersion 0, an edit whose save finds that
-// another edit saved first reads the row again and saves over it, up to three
-// times in all: the last write wins.
+// The edit is saved at the version of the row it read, so while one row lasts
+// its version never repeats or goes back; a name whose cron Delete removed and
+// an edit creates again starts over at version 1. With in.ExpectedVersion 0, an
+// edit whose save finds that another edit saved first reads the row again and
+// saves over it, up to three times in all: the last write wins.
 //
 // It returns ErrInvalid for an input it refuses, schedule.ErrStaleVersion when
 // in.ExpectedVersion is above 0 and the schedule is not at that version (or
