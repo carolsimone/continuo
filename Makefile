@@ -308,6 +308,10 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # titles are accepted and which labels each yields, and (against a stub gh)
 # the add and remove calls that keep a pull request's type labels equal to its
 # title.
+# ci-disk-usage_test.sh and ci-free-disk_test.sh run the CI disk scripts against
+# stub df and docker commands: the free-space minimum that stops a job and the
+# values it refuses, and the one image removal that opens a job on a
+# self-hosted runner.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
@@ -348,6 +352,8 @@ guards: bench-test
 	bash scripts/release/open-site-bump-pr_test.sh
 	bash scripts/pr-title-type_test.sh
 	bash scripts/sync-pr-type-labels_test.sh
+	bash scripts/ci-disk-usage_test.sh
+	bash scripts/ci-free-disk_test.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
