@@ -20,6 +20,13 @@ var (
 	// log it, and Save and Delete work on its row.
 	ErrStoredCronInvalid = errors.New("stored cron or timezone does not parse")
 
+	// ErrTenantRequired, ErrNameRequired and ErrExpressionRequired are returned
+	// by New and ReplaceUnreadable for a schedule that has no tenant, no name
+	// or no expression to fire through: it could be neither stored nor fired.
+	ErrTenantRequired     = errors.New("a schedule needs a tenant")
+	ErrNameRequired       = errors.New("a schedule needs a name")
+	ErrExpressionRequired = errors.New("a schedule needs a parsed cron expression")
+
 	// ErrUnknownName is returned when a command would give a schedule name its
 	// first row and no model of the live release carries that name as its
 	// schedule tag.

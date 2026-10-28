@@ -131,20 +131,20 @@ func TestMain(m *testing.M) {
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build the RunService ----
+	cronParser, err := cron.NewParser()
+	if err != nil {
+		logger.Error("Failed to build the cron parser", "error", err)
+		os.Exit(1)
+	}
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, clk, logger, cronParser)
 	}
 	runReadRepo := postgres.NewRunReadRepository(db)
 	nodeRunsOf := func(tenantID string) postgres.NodeRunRepository {
 		return postgres.NewNodeRunRepository(db, tenantID, logger)
 	}
 	runCommands = svchandlers.NewRunCommands(integrationUoWFactory, noRunMetrics{}, defaultPlanner, logger)
-	cronParser, err := cron.NewParser()
-	if err != nil {
-		logger.Error("Failed to build the cron parser", "error", err)
-		os.Exit(1)
-	}
 	scheduleService = schedules.New(
 		postgres.NewScheduleRepository(db, nil, cronParser, logger),
 		postgres.NewLiveScheduleModelRepository(db),

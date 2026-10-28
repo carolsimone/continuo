@@ -72,7 +72,9 @@ func at(hour, minute int) time.Time {
 
 func newHourly(t *testing.T, now time.Time) *schedule.Schedule {
 	t.Helper()
-	return schedule.New("default", "daily", "0 * * * *", "UTC", "every hour", false, everyHour{}, "alice@example.com", now)
+	s, err := schedule.New("default", "daily", "0 * * * *", "UTC", "every hour", false, everyHour{}, "alice@example.com", now)
+	require.NoError(t, err)
+	return s
 }
 
 func TestSchedule_NewStartsAtVersionOneWithTheNextFire(t *testing.T) {
@@ -100,7 +102,8 @@ func TestSchedule_NewStartsAtVersionOneWithTheNextFire(t *testing.T) {
 func TestSchedule_ReplaceUnreadableRaisesTheStoredVersion(t *testing.T) {
 	now := at(0, 30)
 
-	s := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "every hour", false, everyHour{}, "bob@example.com", now)
+	s, err := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "every hour", false, everyHour{}, "bob@example.com", now)
+	require.NoError(t, err)
 
 	assert.Equal(t, "default", s.TenantID())
 	assert.Equal(t, "daily", s.Name())
@@ -115,11 +118,38 @@ func TestSchedule_ReplaceUnreadableRaisesTheStoredVersion(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, at(1, 0).Equal(next), "next fire: got %s", next)
 
-	paused := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "", true, everyHour{}, "bob@example.com", now)
+	paused, err := schedule.ReplaceUnreadable("default", "daily", 5, "0 * * * *", "UTC", "", true, everyHour{}, "bob@example.com", now)
+	require.NoError(t, err)
 	assert.Equal(t, int64(6), paused.Version())
 	assert.True(t, paused.Paused())
 	_, ok = paused.NextFireAt()
 	assert.False(t, ok, "a paused schedule has no next fire")
+}
+
+// A schedule is identified by its tenant and name and fires through its
+// expression, so New and ReplaceUnreadable refuse a schedule with none of them
+// rather than build one that cannot be stored or fired.
+func TestSchedule_NewRefusesWhatCannotBeStoredOrFired(t *testing.T) {
+	now := at(0, 30)
+	for name, tc := range map[string]struct {
+		tenant, name string
+		expr         schedule.Expression
+		want         error
+	}{
+		"no tenant":     {"", "daily", everyHour{}, schedule.ErrTenantRequired},
+		"no name":       {"default", "", everyHour{}, schedule.ErrNameRequired},
+		"no expression": {"default", "daily", nil, schedule.ErrExpressionRequired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := schedule.New(tc.tenant, tc.name, "0 * * * *", "UTC", "", false, tc.expr, "alice@example.com", now)
+			require.ErrorIs(t, err, tc.want)
+			assert.Nil(t, s)
+
+			s, err = schedule.ReplaceUnreadable(tc.tenant, tc.name, 5, "0 * * * *", "UTC", "", false, tc.expr, "alice@example.com", now)
+			require.ErrorIs(t, err, tc.want)
+			assert.Nil(t, s)
+		})
+	}
 }
 
 func TestSchedule_DueIsTheLatestMissedSlot(t *testing.T) {
@@ -207,7 +237,8 @@ func TestSchedule_ReplaceKeepsTheVersionCountingUp(t *testing.T) {
 }
 
 func TestSchedule_PausedHasNoNextFire(t *testing.T) {
-	s := schedule.New("default", "daily", "0 * * * *", "UTC", "", true, everyHour{}, "alice@example.com", at(0, 30))
+	s, err := schedule.New("default", "daily", "0 * * * *", "UTC", "", true, everyHour{}, "alice@example.com", at(0, 30))
+	require.NoError(t, err)
 
 	_, ok := s.NextFireAt()
 	assert.False(t, ok)
@@ -230,7 +261,8 @@ func TestSchedule_PausedHasNoNextFire(t *testing.T) {
 }
 
 func TestSchedule_AnExpressionWithNoFurtherFireLeavesNoNextFire(t *testing.T) {
-	s := schedule.New("default", "once", "0 0 30 2 *", "UTC", "", false, never{}, "alice@example.com", at(0, 30))
+	s, err := schedule.New("default", "once", "0 0 30 2 *", "UTC", "", false, never{}, "alice@example.com", at(0, 30))
+	require.NoError(t, err)
 	_, ok := s.NextFireAt()
 	assert.False(t, ok)
 

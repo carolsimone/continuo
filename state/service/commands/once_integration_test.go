@@ -46,7 +46,7 @@ func newOnceFixture(t *testing.T) *onceFixture {
 }
 
 func (f *onceFixture) newUoW() uow.UnitOfWork {
-	return postgres.NewPostgresUnitOfWork(f.db, ports.SystemClock{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return postgres.NewPostgresUnitOfWork(f.db, ports.SystemClock{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 }
 
 // pending builds the pending run a start command would create for schedule.

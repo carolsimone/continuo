@@ -178,7 +178,7 @@ func (c *cronTenant) cleanup() {
 
 // factory returns a unit of work that reads the tenant's clock.
 func (c *cronTenant) factory() uow.UnitOfWork {
-	return postgres.NewPostgresUnitOfWork(stateDB, c.clock, c.logger, postgres.WithCronParser(c.parser))
+	return postgres.NewPostgresUnitOfWork(stateDB, c.clock, c.logger, c.parser)
 }
 
 // loop is a cron loop over state's database; with maintenance on it starts no

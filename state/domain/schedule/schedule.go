@@ -52,11 +52,30 @@ type Schedule struct {
 
 // New returns the schedule an operator creates at `now`: version 1, edited by
 // `by`, with its next fire counted from `now`, and none while it is paused.
-// expr is the parsed form of cron in timezone.
-func New(tenantID, name, cron, timezone, description string, paused bool, expr Expression, by string, now time.Time) *Schedule {
+// expr is the parsed form of cron in timezone. A schedule with no tenant, no
+// name or no expr is refused with ErrTenantRequired, ErrNameRequired or
+// ErrExpressionRequired.
+func New(tenantID, name, cron, timezone, description string, paused bool, expr Expression, by string, now time.Time) (*Schedule, error) {
+	if err := validateIdentity(tenantID, name, expr); err != nil {
+		return nil, err
+	}
 	s := &Schedule{tenantID: tenantID, name: name}
 	s.edit(cron, timezone, description, paused, expr, by, now)
-	return s
+	return s, nil
+}
+
+// validateIdentity refuses a schedule that has no tenant, no name or no
+// expression.
+func validateIdentity(tenantID, name string, expr Expression) error {
+	switch {
+	case tenantID == "":
+		return ErrTenantRequired
+	case name == "":
+		return ErrNameRequired
+	case expr == nil:
+		return ErrExpressionRequired
+	}
+	return nil
 }
 
 // ReplaceUnreadable returns the schedule an operator's edit at `now` by `by`
@@ -64,7 +83,8 @@ func New(tenantID, name, cron, timezone, description string, paused bool, expr E
 // rebuilt: the edit's cron, timezone, description and paused flag, with expr
 // the parsed form of cron in timezone, at the version after storedVersion, the
 // row's. Of the stored row only the identity and the version are kept. The
-// next fire counts from now, and there is none while the schedule is paused.
+// next fire counts from now, and there is none while the schedule is paused. A
+// schedule with no tenant, no name or no expr is refused as New refuses it.
 func ReplaceUnreadable(
 	tenantID, name string,
 	storedVersion int64,
@@ -73,10 +93,13 @@ func ReplaceUnreadable(
 	expr Expression,
 	by string,
 	now time.Time,
-) *Schedule {
+) (*Schedule, error) {
+	if err := validateIdentity(tenantID, name, expr); err != nil {
+		return nil, err
+	}
 	s := &Schedule{tenantID: tenantID, name: name, version: storedVersion}
 	s.edit(cron, timezone, description, paused, expr, by, now)
-	return s
+	return s, nil
 }
 
 // Rehydrate restores a schedule from its stored fields. nextFireAt is nil when

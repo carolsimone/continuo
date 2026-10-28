@@ -55,7 +55,7 @@ type promotionHarness struct {
 func newPromotionHarness(db *sqlx.DB) *promotionHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger, nil)
 	}
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, nil, logger)

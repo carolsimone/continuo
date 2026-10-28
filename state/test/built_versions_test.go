@@ -36,7 +36,7 @@ type builtHarness struct {
 func newBuiltHarness(db *sqlx.DB) *builtHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	return &builtHarness{db: db, logger: logger, factory: func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger, nil)
 	}}
 }
 

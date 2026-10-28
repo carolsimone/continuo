@@ -80,7 +80,7 @@ func TestLiveScheduleModels_TheUnitOfWorkCountsInItsTransaction(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
-	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), nil)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
 	_, err := u.Topology().SaveRelease(ctx, topoRelease(t, tenant, "rel-1", 1, "sha-1", graphSpec("orders", "dbt-model", "daily")))

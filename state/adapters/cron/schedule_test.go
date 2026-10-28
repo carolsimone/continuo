@@ -54,7 +54,8 @@ func TestSchedule_FiresOncePerDayAcrossBothDSTChanges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := schedule.New("default", "nightly", "30 2 * * *", "Europe/Paris", "", false, expr, "alice@example.com", tc.from)
+			s, err := schedule.New("default", "nightly", "30 2 * * *", "Europe/Paris", "", false, expr, "alice@example.com", tc.from)
+			require.NoError(t, err)
 
 			fires := fireDates(t, s, loc, tc.from, tc.to)
 
@@ -167,7 +168,8 @@ func TestSchedule_AnHourlyCronFiresEveryElapsedHourAcrossBothDSTChanges(t *testi
 		{"2026-10-25", utc(2026, time.October, 24, 12, 0), 25},
 		{"2027-03-28", utc(2027, time.March, 27, 12, 0), 23},
 	} {
-		s := schedule.New("default", "hourly", "0 * * * *", "Europe/Paris", "", false, expr, "alice@example.com", tc.from)
+		s, err := schedule.New("default", "hourly", "0 * * * *", "Europe/Paris", "", false, expr, "alice@example.com", tc.from)
+		require.NoError(t, err)
 
 		fires := fireDates(t, s, loc, tc.from, tc.from.Add(72*time.Hour))
 

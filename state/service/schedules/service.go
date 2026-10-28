@@ -183,12 +183,15 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 	var saved *schedule.Schedule
 	switch {
 	case !found:
-		saved = schedule.New(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+		saved, err = schedule.New(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	case unreadable != nil:
-		saved = schedule.ReplaceUnreadable(tenantID, in.Name, storedVersion, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+		saved, err = schedule.ReplaceUnreadable(tenantID, in.Name, storedVersion, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	default:
 		saved = stored
 		saved.Replace(cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("build schedule %q: %w", in.Name, err)
 	}
 	if err := s.schedules.Save(ctx, saved, storedVersion); err != nil {
 		return nil, fmt.Errorf("save schedule %q: %w", in.Name, err)

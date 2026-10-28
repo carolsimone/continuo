@@ -84,7 +84,7 @@ func newLoggingScheduleRepo(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser) (
 
 // scheduleUnitOfWork returns a unit of work that parses crons with parser.
 func scheduleUnitOfWork(db *sqlx.DB, parser ports.CronParser) *postgres.PostgresUnitOfWork {
-	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), postgres.WithCronParser(parser))
+	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), parser)
 }
 
 // holdScheduleScanLock takes the advisory lock of the test that commits due
@@ -112,7 +112,9 @@ func describedSchedule(t *testing.T, parser ports.CronParser, tenant, name, desc
 	t.Helper()
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
-	return schedule.New(tenant, name, "0 * * * *", "UTC", description, false, expr, "alice@example.com", created)
+	s, err := schedule.New(tenant, name, "0 * * * *", "UTC", description, false, expr, "alice@example.com", created)
+	require.NoError(t, err)
+	return s
 }
 
 // dueSchedule returns a stored hourly schedule whose next fire is nextFire.
