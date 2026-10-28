@@ -74,6 +74,11 @@ UPGRADE NOTES
 
 {{- if .Release.IsUpgrade }}
 
+Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 BREAKING: upgrade through continuo 0.10.0 first. This release drops
 release-controller's inline topology columns, and its database migration
 refuses to run until release-controller 0.10.0 has started once and

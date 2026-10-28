@@ -64,8 +64,6 @@ def add_cancellation_reason(text: str) -> str:
 CASES = [
     {"name": "shared config (global.logLevel)", "configmap": "config",
      "args": ["--set", "global.logLevel=DEBUG"]},
-    {"name": "files/schedules.yaml", "configmap": "schedules",
-     "file": "files/schedules.yaml", "edit": append_yaml_comment},
     {"name": "files/dbt-commands.yaml", "configmap": "dbt-commands",
      "file": "files/dbt-commands.yaml", "edit": append_yaml_comment},
     {"name": "files/service_repos.yaml", "configmap": "service-repos",

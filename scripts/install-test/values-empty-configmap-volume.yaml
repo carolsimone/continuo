@@ -1,0 +1,14 @@
+# An operator-supplied `services` list whose state entry mounts a volume that
+# names no ConfigMap. The chart mounts no ConfigMap of its own into state, so
+# an empty configMap.name has nothing to resolve to and would render a volume
+# the API server refuses; lint.sh asserts the render fails and names the entry.
+services:
+  - name: state
+    enabled: true
+    httpPort: 8082
+    grpcPort: 50051
+    volumeMounts:
+      - {name: extra-config, mountPath: /etc/continuo, readOnly: true}
+    volumes:
+      - name: extra-config
+        configMap: {name: ""}

@@ -640,17 +640,6 @@ services:
       POSTGRES_DB: continuo_state
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
-      SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
-    volumeMounts:
-      - {name: schedules, mountPath: /etc/continuo, readOnly: true}
-    # state reads schedules.yaml only at startup. An empty configMap.name mounts
-    # the chart's schedules ConfigMap (files/schedules.yaml), whose digest is on
-    # the pod template, so `helm upgrade` rolls state when it changes. Helm cannot
-    # hash a ConfigMap of your own named here: after editing it, run
-    # `kubectl rollout restart deployment/state`.
-    volumes:
-      - name: schedules
-        configMap: {name: ""}
 
   - name: orchestrator
     enabled: true
