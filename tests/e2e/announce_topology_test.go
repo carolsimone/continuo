@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
-	"github.com/lib/pq"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -86,48 +86,84 @@ func readLivePointer(ctx context.Context, clients *testClients) livePointer {
 	return p
 }
 
-// catalogPromotionSeq is the promotion seq the default tenant's schedule
-// catalog in state last applied, or -1 when it cannot be read.
-func catalogPromotionSeq(ctx context.Context, clients *testClients) int64 {
-	var seq int64
-	if err := clients.stateDB.QueryRowContext(ctx,
-		`SELECT promotion_seq FROM schedule_catalog_state WHERE tenant_id = 'default'`).Scan(&seq); err != nil {
-		return -1
+// stateLiveRelease is state's live release of the default tenant: the release
+// it names, the promotion seq it was applied under, and how many of the
+// release's nodes carry each schedule name. The zero value is a tenant with no
+// live release.
+type stateLiveRelease struct {
+	releaseID    string
+	promotionSeq int64
+	models       map[string]int
+}
+
+// readStateLiveRelease reads state's live release and its node count per
+// schedule name in one statement, so the counts are those of the release it
+// names.
+func readStateLiveRelease(ctx context.Context, clients *testClients) (stateLiveRelease, error) {
+	var rows []struct {
+		ReleaseID    string         `db:"release_id"`
+		PromotionSeq int64          `db:"promotion_seq"`
+		ScheduleName sql.NullString `db:"schedule_name"`
+		Models       int            `db:"models"`
 	}
-	return seq
+	if err := clients.stateDB.SelectContext(ctx, &rows, `
+		SELECT live.release_id, live.promotion_seq, n.schedule_name, count(n.node_key)::int AS models
+		FROM live_release live
+		LEFT JOIN topology_nodes n
+		  ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id AND n.schedule_name <> ''
+		WHERE live.tenant_id = $1
+		GROUP BY live.release_id, live.promotion_seq, n.schedule_name`, events.DefaultTenantID); err != nil {
+		return stateLiveRelease{}, fmt.Errorf("read state's live release: %w", err)
+	}
+	live := stateLiveRelease{models: make(map[string]int, len(rows))}
+	for _, row := range rows {
+		live.releaseID, live.promotionSeq = row.ReleaseID, row.PromotionSeq
+		if row.ScheduleName.Valid {
+			live.models[row.ScheduleName.String] = row.Models
+		}
+	}
+	return live, nil
 }
 
-// scheduleActive reports whether state's schedule catalog lists name as active.
-func scheduleActive(ctx context.Context, clients *testClients, name string) bool {
-	var active bool
-	err := clients.stateDB.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM schedule_catalog WHERE schedule_name = $1 AND removed_at IS NULL)`,
-		name).Scan(&active)
-	return err == nil && active
+// withoutModels returns the schedules no node of the live release carries.
+func (l stateLiveRelease) withoutModels(schedules []string) []string {
+	var missing []string
+	for _, s := range schedules {
+		if l.models[s] == 0 {
+			missing = append(missing, s)
+		}
+	}
+	return missing
 }
 
-// waitForAnnouncedTopology waits until the orchestrator has applied the
-// announcement (:Meta names its release, at its seq or later) and state's
-// schedule catalog has reconciled to it: the catalog's applied seq reached the
-// announcement's and every schedule the topology declares is active.
+// waitForAnnouncedTopology waits until both readers of a promotion have
+// applied the announcement: the orchestrator's :Meta names its release, at its
+// seq or later, and state's live release is the announced release, with a
+// node of each of schedules, so a StartRun of any of them selects the
+// announced nodes. A timeout names what each of them last held.
 func waitForAnnouncedTopology(t *testing.T, ctx context.Context, clients *testClients, res announceResult, schedules []string) {
 	t.Helper()
-	pollUntil(t, ctx, 60*time.Second, time.Second, func() (bool, error) {
-		live := readLivePointer(ctx, clients)
-		if live.releaseID != res.ReleaseID || live.promotionSeq < res.PromotionSeq {
-			return false, nil
+	var (
+		orchestrator livePointer
+		state        stateLiveRelease
+		stateErr     error
+	)
+	pollUntilDescribed(t, ctx, 60*time.Second, time.Second, func() (bool, error) {
+		orchestrator = readLivePointer(ctx, clients)
+		state, stateErr = readStateLiveRelease(ctx, clients)
+		if stateErr != nil {
+			return false, stateErr
 		}
-		if catalogPromotionSeq(ctx, clients) < res.PromotionSeq {
-			return false, nil
-		}
-		var active int
-		if err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM schedule_catalog WHERE removed_at IS NULL AND schedule_name = ANY($1)`,
-			pq.Array(schedules)).Scan(&active); err != nil {
-			return false, nil
-		}
-		return active == len(schedules), nil
-	}, fmt.Sprintf("timeout waiting for announced topology %s (promotion seq %d) to be applied", res.ReleaseID, res.PromotionSeq))
+		return orchestrator.releaseID == res.ReleaseID && orchestrator.promotionSeq >= res.PromotionSeq &&
+			state.releaseID == res.ReleaseID && state.promotionSeq >= res.PromotionSeq &&
+			len(state.withoutModels(schedules)) == 0, nil
+	}, func() string {
+		return fmt.Sprintf("timeout waiting for announced topology %s (promotion seq %d) to be applied: "+
+			"the orchestrator's live release is %q at seq %d; state's live release is %q at seq %d "+
+			"(last read error: %v), and no node of it carries the schedules %v",
+			res.ReleaseID, res.PromotionSeq, orchestrator.releaseID, orchestrator.promotionSeq,
+			state.releaseID, state.promotionSeq, stateErr, state.withoutModels(schedules))
+	})
 }
 
 // entryFields returns a stream entry's string-valued fields, the form the

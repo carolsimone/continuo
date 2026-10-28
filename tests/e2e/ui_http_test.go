@@ -50,7 +50,7 @@ func verifyUIService(t *testing.T, ctx context.Context, runID string) {
 
 	t.Logf("✅ ui /api/runs/%s: present (status=%v)", runID, runBody["status"])
 
-	// ── GET /api/schedules — verify schedule catalog entry has correct last_run_id ─
+	// ── GET /api/schedules — verify the run's schedule names it as its last run ─
 	schedulesBody := mustGetJSON(t, base+"/api/schedules")
 	schedulesList, ok := schedulesBody["schedules"].([]interface{})
 	require.True(t, ok, "GET /api/schedules: 'schedules' field missing or wrong type")

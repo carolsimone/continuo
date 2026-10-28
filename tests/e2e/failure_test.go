@@ -45,7 +45,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
+	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
 	t.Log("Starting a run of the schedule...")

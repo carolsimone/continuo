@@ -104,7 +104,7 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
-	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
+	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
 	t.Logf("StartRun operation=build on %q", failureTestScheduleName)
@@ -169,7 +169,7 @@ func TestBuildOperationRerun(t *testing.T) {
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
-	t.Log("Seeding topology directly into Neo4j + schedule_catalog...")
+	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
 	// ── Drive a whole-DAG build run to FAILED ───────────────────────────────
