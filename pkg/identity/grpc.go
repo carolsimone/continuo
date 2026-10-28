@@ -17,16 +17,6 @@ type ctxKey struct{}
 // acts for is stored; WithTenant writes it and TenantFromContext reads it.
 type tenantKey struct{}
 
-// NewOutgoingContext attaches id to ctx's outgoing gRPC metadata under
-// MetadataKey. The ui Node client sets the same header directly; this
-// helper is the Go-client equivalent used by any Go caller that forwards an
-// initiating user (e.g. internal services acting on a user's behalf). A system
-// identity is still propagated explicitly so the receiver records "system"
-// rather than guessing from an absent header.
-func NewOutgoingContext(ctx context.Context, id Identity) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, MetadataKey, id.UserID)
-}
-
 // FromIncomingContext reads the initiating-user header from ctx's incoming gRPC
 // metadata and returns the corresponding Identity. A missing, empty, or
 // whitespace-only header yields the system sentinel, so unauthenticated and

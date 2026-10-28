@@ -221,7 +221,7 @@ test-go: test-deps-up
 
 .PHONY: test-ui
 test-ui:
-	cd ui && npm ci && npm test
+	cd ui && npm ci && npm test && npm run knip
 
 .PHONY: test-topology
 test-topology:
@@ -244,6 +244,9 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # pytest suite and shellcheck in containers, so it needs Docker.
 #
 # The check scripts:
+# - check-dead-go: no Go function may be unreachable from every service main
+#   (deadcode, see scripts/check-dead-go.sh). golangci-lint's `unused` skips
+#   exported names and counts test callers, so it cannot see these.
 # - check-ci-alignment: ci.yml must call shared scripts / Make targets, never
 #   re-implement build/run/wait logic (or these guards) inline.
 # - check-docker-state-isolation: a workflow job must not share ~/.docker
@@ -324,6 +327,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
+	bash scripts/check-dead-go.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh

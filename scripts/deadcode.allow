@@ -1,0 +1,24 @@
+# Findings deadcode reports that are intentional. One extended regex per line,
+# matched against "path: symbol" (line numbers stripped). Keep each entry narrow.
+# Test doubles that live in non-_test files.
+^state/service/uow/fake\.go: 
+# Accessors and constructors kept only for tests.
+^agent-chat/service/chat/session\.go: Session\.ThreadID$
+^agent-remediation/service/proposals/reconciler\.go: Reconciler\.Degraded$
+^execution-controller/adapters/k8s/client\.go: K8sClient\.setClientsetForTest$
+^orchestrator/adapters/grpc/server\.go: Server\.Addr$
+^pkg/liveness/registry\.go: Registry\.(Ready|Live)$
+^pkg/outbox/testaccess\.go: 
+# Deliberate test seams (exercised by tests, no production caller).
+^pkg/messageprocessing/dedup\.go: Dedup$
+^execution-controller/domain/model/(deployment|status)\.go: (Reconstitute|AllStatuses)$
+^remediation/domain/failure/classify\.go: Classify$
+^execution-controller/service/validation/aggregate\.go: Emit(Validation|SeedBuild)AggregateIfComplete$
+^orchestrator/adapters/neo4j/client\.go: NewNeo4jClient$
+^pkg/events/manifest_loaded_candidate\.go: ManifestLoaded
+^pkg/redis/streamconsumer\.go: With(ReclaimMinIdle|WorkerPool)$
+^pkg/config/(llm|loglevel)\.go: Accepted
+^state/domain/aggregate/run/status\.go: RunStatuses$
+# Interface-conformance and fmt.Stringer methods deadcode cannot see being used.
+^state/domain/runplan/rebase\.go: Rebase\.Select$
+^state/domain/seeds/seeds\.go: Decision\.String$

@@ -154,6 +154,7 @@ All should be added to the `docker-compose.yml` file at the root of the project.
 * You need to access the service/image using docker. Once you are in the container, you can run all the
   `tests`. Tests must pass successfully.
 * Abide by the Go coding standards.
+* Dead code fails CI twice over: golangci-lint's `unused` catches unexported code, `make guards` runs `scripts/check-dead-go.sh` (`deadcode`: functions no service `main` reaches, exported ones included; intentional exceptions go in `scripts/deadcode.allow`) and `npm run knip` in `ui/` (production mode, config in `ui/knip.jsonc`). Delete the code rather than allowlist it; a test that is the only caller does not make code live.
 * `pkg` folder should contain all the logic shared between services.
 
 **Running the e2e test:**

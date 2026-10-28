@@ -79,8 +79,7 @@ func reject(format string, a ...any) ports.ToolResult {
 }
 
 // orderedArgValues returns the positional argv values for def in ParamOrder
-// sequence, skipping absent or whitespace-only entries. It is shared by
-// Execute and CommandString to keep argv assembly in one place.
+// sequence, skipping absent or whitespace-only entries.
 func orderedArgValues(def ports.ToolDef, args map[string]string) []string {
 	var out []string
 	for _, name := range def.ParamOrder {
@@ -216,12 +215,4 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 // id and the tool call id, so the same call always maps to the same id.
 func requestID(threadID uuid.UUID, toolCallID string) string {
 	return uuid.NewSHA1(agentChatRequestNamespace, []byte(threadID.String()+"\x00"+toolCallID)).String()
-}
-
-// CommandString renders the argv as displayed to the user in tool ticks.
-// Whitespace-only optional values are skipped so the display matches the real argv.
-func CommandString(cliName string, def ports.ToolDef, args map[string]string) string {
-	parts := append([]string{cliName}, def.CLIPath...)
-	parts = append(parts, orderedArgValues(def, args)...)
-	return strings.Join(parts, " ")
 }

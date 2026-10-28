@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6.41.0/schema.json",
+  // Production mode: a test that imports a symbol does not keep it alive.
+  // The client bundle and the Express server are the two entry points.
+  "entry": ["src/client/main.tsx!", "src/server/index.ts!"],
+  "project": ["src/**/*.{ts,tsx}!"],
+  // Generated from pkg/streams/contract.yaml.
+  "ignore": ["src/server/generated/**"],
+  // An export used only inside its own file is not dead code.
+  "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    // NodesPanel's default component is rendered only by nodes-panel.test.tsx;
+    // the file's helpers are used by RunNodeTable and NodeTableBody.
+    "src/client/NodesPanel.tsx": ["exports"]
+  }
+}
