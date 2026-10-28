@@ -7,9 +7,9 @@
 // was down, are counted and logged. In maintenance mode, or while the
 // schedule's previous run is active, the slot is consumed with no run. Each
 // fire is bounded by FireTimeout; a fire that fails or runs out of time keeps
-// its slot and is counted as failed. The loop sleeps until the earliest next
-// fire after its last pass, a wake signal (a change to the schedules) or its
-// tick.
+// its slot, is counted as failed and is tried again only after a backoff that
+// grows with each failure. The loop sleeps until the earliest next fire after
+// its last pass, a wake signal (a change to the schedules) or its tick.
 package cronloop
 
 import (
@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -35,6 +36,17 @@ const DueLimit = 100
 // in the pass. A fire still going at FireTimeout rolls back and leaves its
 // slot due, and a later pass fires it.
 const FireTimeout = 30 * time.Second
+
+// FailureBackoffBase is how long a pass leaves a schedule alone after the first
+// failure of its fire, and FailureBackoffMax the longest it leaves it: each
+// further failure of the same schedule doubles the wait until it reaches the
+// maximum. A schedule whose fire fails every time, for a defect no retry can
+// mend, is then tried a few times an hour, not at every pass, and takes none of
+// the pass's DueLimit places meanwhile.
+const (
+	FailureBackoffBase = time.Minute
+	FailureBackoffMax  = 15 * time.Minute
+)
 
 // The outcomes a fire counts, as continuo_cron_fires_total names them.
 const (
@@ -56,12 +68,33 @@ type Loop struct {
 	logger      *slog.Logger
 	// fireTimeout bounds each fire: FireTimeout.
 	fireTimeout time.Duration
+
+	// failing holds the schedules whose fire failed and has not succeeded since,
+	// each with the instant a pass may try it again. Only this process's own
+	// passes feed it: another replica keeps a table of its own.
+	mu      sync.Mutex
+	failing map[scheduleKey]failure
+}
+
+// scheduleKey identifies a schedule: its tenant and name.
+type scheduleKey struct{ tenantID, name string }
+
+// failure is a schedule's run of failed fires: how many in a row, the version
+// of the row they failed at (an operator's edit ends the run), and when a pass
+// may try the fire again.
+type failure struct {
+	version int64
+	count   int
+	retryAt time.Time
 }
 
 // New builds the loop. starter starts the run of each slot; with maintenance
 // on, no run is started and every due slot is consumed.
 func New(newUoW func() uow.UnitOfWork, starter *handlers.StartRunHandler, metrics ports.RunMetrics, maintenance bool, logger *slog.Logger) *Loop {
-	return &Loop{newUoW: newUoW, starter: starter, metrics: metrics, maintenance: maintenance, logger: logger, fireTimeout: FireTimeout}
+	return &Loop{
+		newUoW: newUoW, starter: starter, metrics: metrics, maintenance: maintenance, logger: logger,
+		fireTimeout: FireTimeout, failing: map[scheduleKey]failure{},
+	}
 }
 
 // Run passes now, then again when the earliest next fire after the last pass
@@ -123,30 +156,122 @@ func (l *Loop) untilNextFire(ctx context.Context, passedAt time.Time, tick time.
 // schedules gauge. The due schedules are read without a lock, leaving out
 // those another pass holds; each fire locks its schedule's row and reads it
 // again, so two passes fire a slot once. A schedule whose fire fails or runs
-// out of time keeps its slot for a later pass, does not stop the others and is
-// counted as a failed fire, unless ctx has ended (a shutdown is not a failed
-// fire); Pass returns every failure.
+// out of time keeps its slot, does not stop the others and is counted as a
+// failed fire, unless ctx has ended (a shutdown is not a failed fire); Pass
+// returns every failure.
+//
+// A schedule whose fire failed is not tried again until its backoff has passed
+// (FailureBackoffBase, doubled by each failure up to FailureBackoffMax) or an
+// operator edits it. Such a schedule is read with the due ones but skipped, and
+// the read asks for one more row for each, so it takes none of the DueLimit
+// places.
 func (l *Loop) Pass(ctx context.Context, now time.Time) error {
 	schedules := l.newUoW().Schedules()
-	due, err := schedules.ListDue(ctx, now, DueLimit)
+	due, err := schedules.ListDue(ctx, now, DueLimit+l.waiting(now))
 	if err != nil {
 		return fmt.Errorf("read the due schedules: %w", err)
 	}
-	var errs []error
+	still := make(map[scheduleKey]bool, len(due))
 	for _, s := range due {
+		still[scheduleKey{s.TenantID(), s.Name()}] = true
+	}
+	var errs []error
+	attempted := 0
+	for _, s := range due {
+		k := scheduleKey{s.TenantID(), s.Name()}
+		if l.inBackoff(k, s.Version(), now) {
+			continue
+		}
+		if attempted == DueLimit {
+			break
+		}
+		attempted++
 		if err := l.fireWithin(ctx, s.TenantID(), s.Name(), now); err != nil {
 			if ctx.Err() == nil {
 				l.metrics.CronFire(outcomeFailed)
+				l.recordFailure(k, s.Version(), now)
 			}
 			errs = append(errs, err)
+			continue
 		}
+		l.clearFailure(k)
 	}
+	l.forgetSchedulesNotDue(still)
 	scheduled, paused, unparsable, err := schedules.Count(ctx)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}
 	l.metrics.Schedules(scheduled, paused, unparsable)
 	return errors.Join(errs...)
+}
+
+// waiting counts the schedules whose backoff has not passed at now.
+func (l *Loop) waiting(now time.Time) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, f := range l.failing {
+		if now.Before(f.retryAt) {
+			n++
+		}
+	}
+	return n
+}
+
+// inBackoff reports whether a pass at now leaves k alone: its fire failed at
+// this version of the row and its backoff has not passed.
+func (l *Loop) inBackoff(k scheduleKey, version int64, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	f, failed := l.failing[k]
+	return failed && f.version == version && now.Before(f.retryAt)
+}
+
+// recordFailure notes that the fire of k, a row at version, failed in a pass at
+// now, and when a pass may try it again.
+func (l *Loop) recordFailure(k scheduleKey, version int64, now time.Time) {
+	l.mu.Lock()
+	f := l.failing[k]
+	if f.version != version {
+		f = failure{version: version}
+	}
+	f.count++
+	f.retryAt = now.Add(backoff(f.count))
+	l.failing[k] = f
+	l.mu.Unlock()
+	l.logger.Warn("Cron fire failed; the schedule is tried again after a backoff",
+		"tenant_id", k.tenantID, "schedule_name", k.name, "consecutive_failures", f.count, "retry_at", f.retryAt)
+}
+
+// clearFailure ends k's run of failed fires: its fire did not fail.
+func (l *Loop) clearFailure(k scheduleKey) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.failing, k)
+}
+
+// forgetSchedulesNotDue drops the backoff of every schedule that is not among
+// those due in this pass: it was fired by another replica, edited, paused or
+// deleted, and is tried afresh if it fails again.
+func (l *Loop) forgetSchedulesNotDue(due map[scheduleKey]bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k := range l.failing {
+		if !due[k] {
+			delete(l.failing, k)
+		}
+	}
+}
+
+// backoff is how long a schedule waits after its count-th failure in a row:
+// FailureBackoffBase after the first, doubled by each one after it, at most
+// FailureBackoffMax.
+func backoff(count int) time.Duration {
+	wait := FailureBackoffBase
+	for i := 1; i < count && wait < FailureBackoffMax; i++ {
+		wait *= 2
+	}
+	return min(wait, FailureBackoffMax)
 }
 
 // fireWithin fires tenantID's schedule name as fire does, within the loop's

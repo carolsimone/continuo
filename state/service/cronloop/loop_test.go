@@ -831,7 +831,8 @@ func TestCronLoop_ARowThatFailsDoesNotStopTheOthers(t *testing.T) {
 }
 
 // A fire that fails is counted as failed once in each pass that tries it: the
-// row keeps its slot, so every pass tries it again and counts it again.
+// row keeps its slot, so a pass after its backoff tries it again and counts it
+// again.
 func TestCronLoop_AFailedFireIsCountedOncePerPass(t *testing.T) {
 	ctx := context.Background()
 	slot := nov(2, 1, 0)
@@ -843,10 +844,121 @@ func TestCronLoop_AFailedFireIsCountedOncePerPass(t *testing.T) {
 	require.Error(t, loop.Pass(ctx, w.clock.Now()))
 	assert.Equal(t, map[string]int{"failed": 1}, w.metrics.counted(), "the first pass counts its failed fire once")
 
-	require.Error(t, loop.Pass(ctx, w.clock.Now()))
-	assert.Equal(t, map[string]int{"failed": 2}, w.metrics.counted(), "the second pass tries the row again and counts it again")
+	require.Error(t, loop.Pass(ctx, w.clock.Now().Add(cronloop.FailureBackoffBase)))
+	assert.Equal(t, map[string]int{"failed": 2}, w.metrics.counted(), "the pass after the backoff tries the row again and counts it again")
 	assert.Equal(t, 2, w.metrics.callsOf("failed"))
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the failed row keeps its slot")
+}
+
+// A row whose fire fails is not tried again until its backoff has passed: the
+// first retry waits FailureBackoffBase, each failure doubles the wait, and a
+// pass that skips the row counts nothing and fails nothing.
+func TestCronLoop_AFailingRowWaitsForItsBackoffBeforeItIsTriedAgain(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	gets := func() int { return w.schedules.gets[key(tenant, "daily")] }
+	base := cronloop.FailureBackoffBase
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, 1, gets())
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(base-time.Second)), "a pass inside the backoff skips the row")
+	assert.Equal(t, 1, gets(), "the row is not tried inside its backoff")
+	assert.Equal(t, map[string]int{"failed": 1}, w.metrics.counted(), "a skipped row is not a failed fire")
+
+	require.Error(t, loop.Pass(ctx, slot.Add(base)), "the pass at the end of the backoff tries the row")
+	assert.Equal(t, 2, gets())
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(3*base-time.Second)), "each failure doubles the wait: 2 bases after the second")
+	assert.Equal(t, 2, gets())
+	require.Error(t, loop.Pass(ctx, slot.Add(3*base)))
+	assert.Equal(t, 3, gets())
+	assert.Equal(t, map[string]int{"failed": 3}, w.metrics.counted())
+}
+
+// The wait between tries never exceeds FailureBackoffMax, however many fires of
+// the row have failed.
+func TestCronLoop_TheBackoffOfAFailingRowIsCapped(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+
+	for i := range 12 {
+		now := slot.Add(time.Duration(i) * cronloop.FailureBackoffMax)
+		require.Error(t, loop.Pass(ctx, now), "try %d, a whole FailureBackoffMax after the one before", i+1)
+	}
+	assert.Equal(t, 12, w.schedules.gets[key(tenant, "daily")])
+}
+
+// A row in its backoff takes none of a pass's DueLimit places: the pass reads
+// the due rows with the places of the rows it will skip added to its limit, so
+// DueLimit rows that can fire do fire.
+func TestCronLoop_AFailingRowInItsBackoffTakesNoneOfTheDueLimit(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "aaa-failing", "0 1 * * *", daily{1, 0, paris}, slot.Add(-time.Hour))
+	w.schedules.failGet[key(tenant, "aaa-failing")] = errors.New("connection reset")
+	for i := range 2*cronloop.DueLimit + 50 {
+		w.schedules.add(tenant, fmt.Sprintf("s%03d", i), "0 1 * * *", daily{1, 0, paris}, slot)
+	}
+	loop := w.loop(false)
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, cronloop.DueLimit-1, w.runs.count(), "the failing row, oldest, took a place of the first pass")
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(time.Second)))
+	assert.Equal(t, 2*cronloop.DueLimit-1, w.runs.count(), "in its backoff it takes none of the second pass's places")
+}
+
+// An operator's edit raises the schedule's version and ends its backoff: the
+// next pass tries the row at once.
+func TestCronLoop_AnEditEndsTheBackoffOfAFailingRow(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	require.Error(t, loop.Pass(ctx, slot))
+
+	delete(w.schedules.failGet, key(tenant, "daily"))
+	w.schedules.rows[key(tenant, "daily")].version++
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(time.Second)))
+	assert.Len(t, w.runs.of(tenant, "daily"), 1, "the edited row fires inside the old backoff")
+}
+
+// A fire that succeeds ends the row's backoff: a later failure of the row waits
+// the base again, not the doubled wait it had reached.
+func TestCronLoop_ASuccessfulFireEndsTheBackoffOfAFailingRow(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+	require.Error(t, loop.Pass(ctx, slot))
+	require.Error(t, loop.Pass(ctx, slot.Add(base)))
+
+	delete(w.schedules.failGet, key(tenant, "daily"))
+	require.NoError(t, loop.Pass(ctx, slot.Add(3*base)))
+	require.Len(t, w.runs.of(tenant, "daily"), 1)
+
+	nextSlot := nov(3, 1, 0)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	before := w.schedules.gets[key(tenant, "daily")]
+	require.Error(t, loop.Pass(ctx, nextSlot))
+	require.Error(t, loop.Pass(ctx, nextSlot.Add(base)), "the wait after a recovery starts from the base again")
+	assert.Equal(t, before+2, w.schedules.gets[key(tenant, "daily")])
 }
 
 // A fire that ends because the loop's context ended, as at shutdown, is not a
@@ -1112,7 +1224,7 @@ func TestCronLoop_AFireThatRunsOutOfTimeRollsBackAndLeavesTheOthers(t *testing.T
 	assert.Equal(t, map[string]int{"failed": 1, "started": 1}, w.metrics.counted(), "a fire that runs out of time is a failed fire")
 
 	w.schedules.setStuck(tenant, "daily", false)
-	w.pass(t, ctx, loop)
+	require.NoError(t, loop.Pass(ctx, slot.Add(cronloop.FailureBackoffBase)))
 	runs := w.runs.of(tenant, "daily")
 	require.Len(t, runs, 1)
 	assert.True(t, slot.Equal(*runs[0].ScheduledFor()))
