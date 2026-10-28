@@ -160,7 +160,7 @@ func main() {
 	}
 	logger.Info("Neo4j schema initialized")
 
-	// 2. PostgreSQL client (for outbox / message processing)
+	// 2. PostgreSQL client (for message processing)
 	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)

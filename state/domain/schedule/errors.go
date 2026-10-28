@@ -13,11 +13,12 @@ var (
 	// or it was deleted since it was read. Nothing is written.
 	ErrStaleVersion = errors.New("schedule was changed by another edit")
 
-	// ErrStoredCronInvalid is returned by ScheduleRepository.Get when the
-	// cron or timezone stored for a schedule no longer parses (a zone the
-	// timezone database has dropped, or a row written by hand), as a
-	// *StoredCronInvalidError. List and ListDue leave such a schedule out and
-	// log it, and Save and Delete work on its row.
+	// ErrStoredCronInvalid is returned by ScheduleRepository.Get and
+	// LoadForUpdate when the cron or timezone stored for a schedule no longer
+	// parses (a zone the timezone database has dropped, or a row written by
+	// hand), as a *StoredCronInvalidError. ListWithUnreadable names such a
+	// schedule apart from the others, ListDue leaves it out and logs it, and
+	// Save and Delete work on its row.
 	ErrStoredCronInvalid = errors.New("stored cron or timezone does not parse")
 
 	// ErrTenantRequired, ErrNameRequired and ErrExpressionRequired are returned

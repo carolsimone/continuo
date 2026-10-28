@@ -96,9 +96,9 @@ var schemaStatements = []string{
 //     fail ParseNodeType on every scheduled run. Idempotent: once no :Table
 //     carries 'python-model' it matches nothing.
 //   - remove_topology_root_service_metadata: strips the retired
-//     service_metadata property from :TopologyRoot. Nothing writes or reads it
-//     since schedules left the topology; a leftover value is dead weight on the
-//     singleton. Idempotent: REMOVE on an absent property is a no-op.
+//     service_metadata property from :TopologyRoot. Nothing writes or reads it,
+//     and a leftover value is dead weight on the singleton. Idempotent: REMOVE
+//     on an absent property is a no-op.
 var dataMigrations = []string{
 	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
 	"MATCH ()-[p:PREVIOUS]->() DELETE p",
