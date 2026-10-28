@@ -21,7 +21,7 @@ import (
 
 const testRunID = "11111111-1111-4111-8111-111111111111"
 
-// fakeRunClient implements the read RPCs of client.RunClient; any other method
+// fakeRunClient implements the run RPCs of client.RunClient; any other method
 // panics through the nil embedded interface, which a test never reaches.
 type fakeRunClient struct {
 	client.RunClient
@@ -37,6 +37,64 @@ type fakeRunClient struct {
 	attemptCalls  []attemptCall
 	graphCalls    int
 	deadlineCalls []bool
+
+	cancelRun    *runv1.Run
+	cancelErr    error
+	cancelCalls  []cancelCall
+	rerunResp    *runv1.TriggerRerunResponse
+	rerunErr     error
+	rerunCalls   []rerunCall
+	preview      *runv1.PreviewRebaseResponse
+	previewErr   error
+	previewCalls []previewCall
+	rebaseResp   *runv1.TriggerRebaseResponse
+	rebaseErr    error
+	rebaseCalls  []rebaseCall
+}
+
+type cancelCall struct{ runID, reason, by string }
+
+type rerunCall struct{ requestID, runID, actor string }
+
+type previewCall struct {
+	runID           string
+	changedUpstream bool
+}
+
+type rebaseCall struct {
+	requestID, runID, expectedReleaseID, actor string
+	changedUpstream                            bool
+}
+
+func (f *fakeRunClient) CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error) {
+	_, has := ctx.Deadline()
+	f.deadlineCalls = append(f.deadlineCalls, has)
+	f.cancelCalls = append(f.cancelCalls, cancelCall{runID, reason, by})
+	if f.cancelErr != nil {
+		return nil, f.cancelErr
+	}
+	return &runv1.RunResponse{Run: f.cancelRun}, nil
+}
+
+func (f *fakeRunClient) TriggerRerun(ctx context.Context, requestID, runID, actor string) (*runv1.TriggerRerunResponse, error) {
+	_, has := ctx.Deadline()
+	f.deadlineCalls = append(f.deadlineCalls, has)
+	f.rerunCalls = append(f.rerunCalls, rerunCall{requestID, runID, actor})
+	return f.rerunResp, f.rerunErr
+}
+
+func (f *fakeRunClient) PreviewRebase(ctx context.Context, runID string, changedUpstream bool) (*runv1.PreviewRebaseResponse, error) {
+	_, has := ctx.Deadline()
+	f.deadlineCalls = append(f.deadlineCalls, has)
+	f.previewCalls = append(f.previewCalls, previewCall{runID, changedUpstream})
+	return f.preview, f.previewErr
+}
+
+func (f *fakeRunClient) TriggerRebase(ctx context.Context, requestID, runID, expectedReleaseID string, changedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error) {
+	_, has := ctx.Deadline()
+	f.deadlineCalls = append(f.deadlineCalls, has)
+	f.rebaseCalls = append(f.rebaseCalls, rebaseCall{requestID, runID, expectedReleaseID, actor, changedUpstream})
+	return f.rebaseResp, f.rebaseErr
 }
 
 type attemptCall struct {
@@ -101,8 +159,18 @@ func executeHuman(t *testing.T, build commandBuilder, fake client.RunClient, arg
 
 func executeMode(t *testing.T, build commandBuilder, fake client.RunClient, human bool, args ...string) (stdout, stderr string, exit int) {
 	t.Helper()
+	return executeConfigured(t, build, fake, &config.Config{Timeout: 2 * time.Second, Human: human}, args...)
+}
+
+// executeAs is execute with the CONTINUO_ACTOR identity set to actor.
+func executeAs(t *testing.T, build commandBuilder, fake client.RunClient, actor string, args ...string) (stdout, stderr string, exit int) {
+	t.Helper()
+	return executeConfigured(t, build, fake, &config.Config{Timeout: 2 * time.Second, Actor: actor}, args...)
+}
+
+func executeConfigured(t *testing.T, build commandBuilder, fake client.RunClient, cfg *config.Config, args ...string) (stdout, stderr string, exit int) {
+	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
 	cmd := build(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	err := cmd.Execute()

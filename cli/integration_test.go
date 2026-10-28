@@ -64,6 +64,22 @@ type stubRunServer struct {
 	// succeeds; startIDs is the request id of every StartRun received.
 	startFailures int
 	startIDs      []string
+
+	// rebaseExpected is the release the stub treats as live; a TriggerRebase
+	// naming another release is refused FAILED_PRECONDITION. rebaseReqs holds
+	// every TriggerRebase received.
+	rebaseExpected string
+	rebaseReqs     []*runv1.TriggerRebaseRequest
+}
+
+func (s *stubRunServer) TriggerRebase(_ context.Context, req *runv1.TriggerRebaseRequest) (*runv1.TriggerRebaseResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rebaseReqs = append(s.rebaseReqs, req)
+	if req.GetExpectedReleaseId() != s.rebaseExpected {
+		return nil, status.Error(codes.FailedPrecondition, "the live release changed; preview again")
+	}
+	return &runv1.TriggerRebaseResponse{RunId: "run_rebase_1", ScheduleName: "daily_ingest"}, nil
 }
 
 func (s *stubRunServer) StartRun(_ context.Context, req *runv1.StartRunRequest) (*runv1.StartRunResponse, error) {
@@ -272,4 +288,43 @@ func TestCLI_RunShowOfAnUnknownRunExitsNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 3, exitErr.ExitCode())
 	assert.Contains(t, string(out), `"not_found"`)
+}
+
+func TestCLI_RunRebaseAgainstInProcessServer(t *testing.T) {
+	srv := &stubRunServer{rebaseExpected: "rel-9"}
+	endpoint := serveRun(t, srv)
+	const requestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+
+	cmd := exec.Command(cliBinary, "--endpoint", endpoint, "run", "rebase", integRunID, "rel-9", "true")
+	cmd.Env = append(os.Environ(), "CONTINUO_REQUEST_ID="+requestID)
+	out, err := cmd.Output()
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{"run_id":"run_rebase_1","schedule_name":"daily_ingest"}`, string(out))
+	require.Len(t, srv.rebaseReqs, 1)
+	assert.Equal(t, requestID, srv.rebaseReqs[0].GetRequestId())
+	assert.Equal(t, integRunID, srv.rebaseReqs[0].GetSourceRunId())
+	assert.Equal(t, "rel-9", srv.rebaseReqs[0].GetExpectedReleaseId())
+	assert.True(t, srv.rebaseReqs[0].GetIncludeChangedUpstream())
+}
+
+func TestCLI_RunRebaseOfAMovedReleaseExitsConflictAndSaysPreviewAgain(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{rebaseExpected: "rel-10"})
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "run", "rebase", integRunID, "rel-9").Output()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 4, exitErr.ExitCode())
+	assert.Contains(t, string(out), "continuo run rebase-preview "+integRunID)
+}
+
+func TestCLI_RunRebaseWithoutAReleaseIDExitsUsage(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{})
+
+	_, err := exec.Command(cliBinary, "--endpoint", endpoint, "run", "rebase", integRunID).Output()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 2, exitErr.ExitCode())
 }

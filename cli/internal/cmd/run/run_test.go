@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRunGroup_HoldsTheReadCommands(t *testing.T) {
+func TestRunGroup_HoldsItsCommands(t *testing.T) {
 	cmd := NewCommand(&config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
 
 	var names []string
 	for _, c := range cmd.Commands() {
 		names = append(names, c.Name())
 	}
-	assert.Subset(t, names, []string{"show", "graph", "attempts"})
+	assert.Subset(t, names, []string{"show", "graph", "attempts", "cancel", "rerun", "rebase-preview", "rebase"})
 }

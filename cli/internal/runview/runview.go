@@ -90,7 +90,7 @@ func Load(ctx context.Context, r Reader, timeout time.Duration, runID string) (V
 		return View{}, err
 	}
 
-	view := View{Run: toRun(resp.GetRun()), Tasks: make([]Task, 0, len(tasks))}
+	view := View{Run: ToRun(resp.GetRun()), Tasks: make([]Task, 0, len(tasks))}
 	for _, t := range tasks {
 		task := Task{
 			Node:           Node(t.GetServiceName(), t.GetSchemaName(), t.GetTableName()),
@@ -163,7 +163,8 @@ func loadLatestAttempts(ctx context.Context, r Reader, timeout time.Duration, ru
 	}
 }
 
-func toRun(r *runv1.Run) *Run {
+// ToRun renders a run as its JSON form.
+func ToRun(r *runv1.Run) *Run {
 	return &Run{
 		RunID:              r.GetRunId(),
 		ScheduleName:       r.GetScheduleName(),

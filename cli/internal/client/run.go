@@ -25,6 +25,16 @@ type RunClient interface {
 	TriggerScheduleTest(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	TriggerScheduleBuild(ctx context.Context, requestID, scheduleName, actor string) (*runv1.StartRunResponse, error)
 	CancelSchedule(ctx context.Context, requestID, scheduleName, reason, by string) (*runv1.CancelActiveRunResponse, error)
+	// TriggerRerun re-executes what did not succeed in a failed or cancelled run.
+	TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error)
+	// PreviewRebase reports what TriggerRebase would run, creating nothing.
+	PreviewRebase(ctx context.Context, sourceRunID string, includeChangedUpstream bool) (*runv1.PreviewRebaseResponse, error)
+	// TriggerRebase restarts a failed or cancelled run on the live release;
+	// expectedReleaseID is the release the caller previewed.
+	TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error)
+	// CancelRun cancels a run by id. It takes no request id: cancelling a run
+	// that is already cancelling or cancelled changes nothing.
+	CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error)
 	TriggerNodeRun(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
@@ -46,7 +56,8 @@ type RunClient interface {
 // the server refused as UNAVAILABLE or ABORTED.
 var retryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
-// commandMethods are the RPCs that start or cancel a run by request id. The
+// commandMethods are the RPCs that start or cancel a run by request id (so not
+// CancelRun, which names the run and takes none). The
 // dialled client retries these on UNAVAILABLE and ABORTED, and only these: the
 // server answers a repeated id with the run its first call made, so a retry
 // cannot duplicate work, while a read needs no retry.
@@ -160,6 +171,37 @@ func (c *runGRPCClient) CancelSchedule(ctx context.Context, requestID, scheduleN
 	return c.api.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
 		RequestId:          requestID,
 		ScheduleName:       scheduleName,
+		CancelledBy:        by,
+		CancellationReason: reason,
+	})
+}
+
+func (c *runGRPCClient) TriggerRerun(ctx context.Context, requestID, sourceRunID, actor string) (*runv1.TriggerRerunResponse, error) {
+	return c.api.TriggerRerun(withActor(ctx, actor), &runv1.TriggerRerunRequest{
+		RequestId:   requestID,
+		SourceRunId: sourceRunID,
+	})
+}
+
+func (c *runGRPCClient) PreviewRebase(ctx context.Context, sourceRunID string, includeChangedUpstream bool) (*runv1.PreviewRebaseResponse, error) {
+	return c.api.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{
+		SourceRunId:            sourceRunID,
+		IncludeChangedUpstream: includeChangedUpstream,
+	})
+}
+
+func (c *runGRPCClient) TriggerRebase(ctx context.Context, requestID, sourceRunID, expectedReleaseID string, includeChangedUpstream bool, actor string) (*runv1.TriggerRebaseResponse, error) {
+	return c.api.TriggerRebase(withActor(ctx, actor), &runv1.TriggerRebaseRequest{
+		RequestId:              requestID,
+		SourceRunId:            sourceRunID,
+		IncludeChangedUpstream: includeChangedUpstream,
+		ExpectedReleaseId:      expectedReleaseID,
+	})
+}
+
+func (c *runGRPCClient) CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error) {
+	return c.api.CancelRun(ctx, &runv1.CancelRunRequest{
+		RunId:              runID,
 		CancelledBy:        by,
 		CancellationReason: reason,
 	})
