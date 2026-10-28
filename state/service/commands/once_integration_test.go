@@ -248,3 +248,53 @@ func TestOnce_ACommandThatFindsItsRunIsRecordedUnderItInPostgres(t *testing.T) {
 	assert.True(t, replayed)
 	assert.Equal(t, 2, calls, "the create and one cancel; the retry did not run")
 }
+
+// Two cancels of one request both miss the first look. The first cancels the
+// run and commits its record while the second's do still runs; the second's
+// do then finds no active run. The second looks for the record again in its
+// own transaction, sees the first's committed record and returns the first's
+// run as a replay instead of settling as no_run.
+func TestOnce_ANoRunResultReplaysTheRecordAConcurrentCallCommittedInPostgres(t *testing.T) {
+	f := newOnceFixture(t)
+	r := f.pending(t, "cancel-race")
+	calls := 0
+	_, _, err := commands.Once(context.Background(), f.newUoW, f.metrics, f.record(uuid.New(), r, "cancel-race", "run"), create(r, &calls))
+	require.NoError(t, err)
+
+	rec := commandrequest.Record{TenantID: f.tenant, RequestID: uuid.New(), Command: "cancel_active_run",
+		Fingerprint: commandrequest.Fingerprint("cancel_active_run", "cancel-race")}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	type result struct {
+		runID    uuid.UUID
+		replayed bool
+		err      error
+	}
+	second := make(chan result, 1)
+	go func() {
+		runID, replayed, err := commands.Once(context.Background(), f.newUoW, f.metrics, rec,
+			func(uow.UnitOfWork) (uuid.UUID, error) {
+				close(entered) // the first look has missed
+				<-release      // the first cancel has committed
+				return uuid.Nil, nil
+			})
+		second <- result{runID, replayed, err}
+	}()
+
+	<-entered
+	runID, replayed, err := commands.Once(context.Background(), f.newUoW, f.metrics, rec,
+		func(uow.UnitOfWork) (uuid.UUID, error) { return r.RunID(), nil })
+	require.NoError(t, err)
+	assert.Equal(t, r.RunID(), runID)
+	assert.False(t, replayed)
+	close(release)
+
+	got := <-second
+	require.NoError(t, got.err)
+	assert.Equal(t, r.RunID(), got.runID, "the second call returns the run the first cancelled")
+	assert.True(t, got.replayed)
+	assert.Equal(t, 1, f.metrics.counts["cancel_active_run/created"])
+	assert.Equal(t, 1, f.metrics.counts["cancel_active_run/replayed"])
+	assert.Zero(t, f.metrics.counts["cancel_active_run/no_run"])
+	assert.Equal(t, 2, f.requestCount(t), "the start's record and the first cancel's")
+}

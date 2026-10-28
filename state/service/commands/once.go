@@ -67,11 +67,17 @@ var (
 //     the transaction back and replays that call's record.
 //
 // A do that returns uuid.Nil acted on no run (a cancel of a schedule with no
-// active run). The record's run key cannot name a run that does not exist, so
-// Once stores no record: it commits the transaction (do wrote nothing a run
-// would own), returns uuid.Nil with replayed false and counts the call no_run.
-// A retry runs do again and finds the schedule's state as it then is. A
-// command that claimed a run id up front must not return uuid.Nil.
+// active run). Two calls of one request can both miss the first look, and the
+// one that commits first can leave no run for the other's do to find (a
+// cancel that ended the run at once). So Once looks for the record again in
+// the same transaction, which reads what committed since: a record found
+// there is that call's, and Once rolls back and replays it (or returns
+// commandrequest.ErrReused for another fingerprint) as it does for a record
+// found first. With no record, the record's run key cannot name a run that
+// does not exist, so Once stores none: it commits the transaction (do wrote
+// nothing a run would own), returns uuid.Nil with replayed false and counts
+// the call no_run. A retry runs do again and finds the schedule's state as it
+// then is. A command that claimed a run id up front must not return uuid.Nil.
 //
 // Each call is counted by command and outcome: created, replayed, conflict or
 // no_run. A call that returns another error is not counted.
@@ -115,8 +121,9 @@ func Once(
 }
 
 // runOnce runs do in one transaction of u and commits it. claimed is false,
-// with the transaction rolled back and do's effects discarded, when the claim
-// of rec found a record already committed by another call.
+// with the transaction rolled back and do's effects discarded, when another
+// call of the request has committed its record: the claim of rec found it, or
+// do acted on no run and a second look found it.
 func runOnce(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -162,6 +169,18 @@ func runOnce(
 			return uuid.Nil, false, err
 		}
 		if !ok {
+			return uuid.Nil, false, nil
+		}
+	case rec.RunID == uuid.Nil:
+		// No run to act on may mean a concurrent call of the same request
+		// acted on it first: its record commits with its effect, so a record
+		// this transaction now reads belongs to that call, and Once replays
+		// or refuses it.
+		_, found, err := u.CommandRequests().Find(ctx, rec.TenantID, rec.RequestID)
+		if err != nil {
+			return uuid.Nil, false, err
+		}
+		if found {
 			return uuid.Nil, false, nil
 		}
 	}

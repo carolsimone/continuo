@@ -130,6 +130,60 @@ func TestOnce_ACommandThatActsOnNoRunStoresNoRecord(t *testing.T) {
 	assert.Zero(t, u.RollbackCalled)
 }
 
+// Two calls of one request that both miss the first look: the other call
+// cancels the run and commits its record while this call's do runs, so this
+// do finds no active run. Once looks for the record again before it settles
+// on no_run, and replays the other call's run instead.
+func TestOnce_ANoRunResultReplaysTheRecordAConcurrentCallCommitted(t *testing.T) {
+	requests := newMemoryRequests()
+	newUoW, u := fakeUoW(requests)
+	metrics := newOutcomeCounter()
+	rec := newRecord(uuid.Nil)
+	winner := rec
+	winner.RunID = uuid.New()
+	calls := 0
+	do := func(uow.UnitOfWork) (uuid.UUID, error) {
+		calls++
+		requests.rows[winner.RequestID] = winner // the concurrent call commits
+		return uuid.Nil, nil
+	}
+
+	runID, replayed, err := commands.Once(context.Background(), newUoW, metrics, rec, do)
+
+	require.NoError(t, err)
+	assert.Equal(t, winner.RunID, runID, "the run the concurrent call recorded")
+	assert.True(t, replayed)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, 1, metrics.count("replayed"))
+	assert.Zero(t, metrics.count("no_run"))
+	assert.Zero(t, requests.nClaim)
+	assert.Zero(t, u.CommitCalled, "this call's transaction is discarded")
+	assert.Equal(t, 1, u.RollbackCalled)
+}
+
+// The record a concurrent call committed while do ran carries other
+// parameters: the request id was reused, and Once refuses it.
+func TestOnce_ANoRunResultRefusesARecordACallCommittedWithOtherParameters(t *testing.T) {
+	requests := newMemoryRequests()
+	newUoW, u := fakeUoW(requests)
+	metrics := newOutcomeCounter()
+	rec := newRecord(uuid.Nil)
+	other := rec
+	other.RunID = uuid.New()
+	other.Fingerprint = commandrequest.Fingerprint(command, "weekly", "run")
+	do := func(uow.UnitOfWork) (uuid.UUID, error) {
+		requests.rows[other.RequestID] = other
+		return uuid.Nil, nil
+	}
+
+	_, _, err := commands.Once(context.Background(), newUoW, metrics, rec, do)
+
+	require.ErrorIs(t, err, commandrequest.ErrReused)
+	assert.Equal(t, 1, metrics.count("conflict"))
+	assert.Zero(t, metrics.count("no_run"))
+	assert.Zero(t, u.CommitCalled)
+}
+
 // A command that finds its run inside do (cancel by schedule name) is
 // recorded under that run after do returns, and a retry replays it.
 func TestOnce_ACommandThatFindsItsRunIsRecordedUnderIt(t *testing.T) {
