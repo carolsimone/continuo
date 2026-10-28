@@ -92,6 +92,13 @@ jobs:
       - name: Disk usage (start)
         run: bash scripts/ci-disk-usage.sh "start of job"
 
+      - name: Remove unused Docker images
+        # Self-hosted only; a GitHub-hosted runner starts with none. Removes the
+        # images the earlier jobs on this box left behind. The build cache stays,
+        # and scripts/setup.sh builds or pulls every image the job needs.
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: bash scripts/ci-free-disk.sh
+
       - name: Isolate Docker client state
         # Keeps this job's builder selection and registry credentials out of the
         # ~/.docker that the two runner agents would otherwise share. Requires the
@@ -204,6 +211,14 @@ jobs:
           exit "$rc"
 
       - name: Disk usage (after infrastructure)
+        # On the self-hosted box the job stops here below 6 GiB free. The steps
+        # up to the e2e run write about 3.5 GiB more (build caches in the service
+        # containers), and the 2 GiB checked before e2e is what that suite needs:
+        # once the disk is nearly full MinIO answers every write with HTTP 507,
+        # which fails each e2e test that uploads to S3. A GitHub-hosted runner
+        # sets no minimum.
+        env:
+          CI_MIN_FREE_GIB: ${{ runner.environment == 'self-hosted' && '6' || '' }}
         run: bash scripts/ci-disk-usage.sh "after set up infrastructure"
 
       - name: Wait for service containers
@@ -292,6 +307,10 @@ jobs:
         run: bash tests/e2e/start-services.sh
 
       - name: Disk usage (before e2e)
+        # Stops the job below 2 GiB free on the self-hosted box; see the check
+        # after infrastructure.
+        env:
+          CI_MIN_FREE_GIB: ${{ runner.environment == 'self-hosted' && '2' || '' }}
         run: bash scripts/ci-disk-usage.sh "before e2e"
 
       - name: Start ui + deploy + e2e
