@@ -249,11 +249,12 @@ func TestOnce_ACommandThatFindsItsRunIsRecordedUnderItInPostgres(t *testing.T) {
 	assert.Equal(t, 2, calls, "the create and one cancel; the retry did not run")
 }
 
-// Two cancels of one request both miss the first look. The first cancels the
-// run and commits its record while the second's do still runs; the second's
-// do then finds no active run. The second looks for the record again in its
-// own transaction, sees the first's committed record and returns the first's
-// run as a replay instead of settling as no_run.
+// Two cancels of one request both miss the first look. The second's do has
+// already read in its transaction when the first cancels the run and commits
+// its record; the second's do then acts on no run. The second looks for the
+// record again in its own transaction, sees the first's record, committed
+// after that transaction's first statement, and returns the first's run as a
+// replay instead of settling as no_run.
 func TestOnce_ANoRunResultReplaysTheRecordAConcurrentCallCommittedInPostgres(t *testing.T) {
 	f := newOnceFixture(t)
 	r := f.pending(t, "cancel-race")
@@ -273,7 +274,17 @@ func TestOnce_ANoRunResultReplaysTheRecordAConcurrentCallCommittedInPostgres(t *
 	second := make(chan result, 1)
 	go func() {
 		runID, replayed, err := commands.Once(context.Background(), f.newUoW, f.metrics, rec,
-			func(uow.UnitOfWork) (uuid.UUID, error) {
+			func(u uow.UnitOfWork) (uuid.UUID, error) {
+				// The cancel's own read is the transaction's first statement,
+				// so the recheck that follows it must see a record committed
+				// after it: each statement reads what has committed by then.
+				active, err := u.Run().GetActiveRun(context.Background(), f.tenant, "cancel-race")
+				if err != nil {
+					return uuid.Nil, err
+				}
+				if active == nil {
+					return uuid.Nil, errors.New("the run is active before the first cancel")
+				}
 				close(entered) // the first look has missed
 				<-release      // the first cancel has committed
 				return uuid.Nil, nil
