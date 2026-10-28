@@ -11,6 +11,7 @@
     "start": "NODE_ENV=production node dist-server/index.js",
     "test": "vitest run",
     "lint": "eslint src/",
+    "knip": "knip --production",
     "fmt": "prettier --write \"src/**/*.{ts,tsx,css}\""
   },
   "dependencies": {
@@ -48,6 +49,7 @@
     "concurrently": "^8.2.2",
     "eslint": "^8.57.0",
     "jsdom": "^29.1.1",
+    "knip": "6.41.0",
     "prettier": "^3.9.10",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
