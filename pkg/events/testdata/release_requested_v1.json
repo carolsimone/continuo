@@ -1,0 +1,18 @@
+{
+  "input": {
+    "release_id": "rel-2026-10-28-0001",
+    "manifest_keys": [
+      {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-2026-10-28-0001/manifest.json", "kind": "dbt"},
+      {"service": "service-py", "s3_uri": "s3://continuo/service-py/rel-2026-10-28-0001/contract.yaml", "kind": "python"}
+    ],
+    "image_tags": {"service-1": "0.16.0", "service-py": "0.16.0"}
+  },
+  "payload": {
+    "release_id": "rel-2026-10-28-0001",
+    "manifest_keys": [
+      {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-2026-10-28-0001/manifest.json", "kind": "dbt"},
+      {"service": "service-py", "s3_uri": "s3://continuo/service-py/rel-2026-10-28-0001/contract.yaml", "kind": "python"}
+    ],
+    "image_tags": {"service-1": "0.16.0", "service-py": "0.16.0"}
+  }
+}

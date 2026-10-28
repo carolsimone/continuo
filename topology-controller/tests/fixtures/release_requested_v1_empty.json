@@ -1,0 +1,10 @@
+{
+  "input": {
+    "release_id": "rel-2026-10-28-0002"
+  },
+  "payload": {
+    "release_id": "rel-2026-10-28-0002",
+    "manifest_keys": [],
+    "image_tags": {}
+  }
+}

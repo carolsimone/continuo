@@ -4,6 +4,7 @@ error the consumer dead-letters at once; a well-formed one parses into the
 value the use case consumes."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -236,3 +237,38 @@ def test_every_error_message_names_the_stream_through_the_contract_constant(fiel
 def test_the_message_says_what_is_wrong_with_the_payload(fields, fragment):
     with pytest.raises(PermanentMessageError, match=fragment):
         parse_release_requested(fields, _DEFAULT_BUCKET)
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _release_requested_fixture(name: str) -> dict:
+    return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))["payload"]
+
+
+def test_the_payload_release_controller_writes_parses_into_a_release_requested():
+    """release_requested_v1.json is the payload release-controller's Go test
+    renders from its input; this decodes the identical copy."""
+    payload = _release_requested_fixture("release_requested_v1.json")
+
+    got = parse_release_requested(_fields(payload), _DEFAULT_BUCKET)
+
+    assert got == ReleaseRequested(
+        release_id=payload["release_id"],
+        requests=[
+            ManifestRequest(service="service-1", key="service-1/rel-2026-10-28-0001/manifest.json", kind=ManifestKind.DBT),
+            ManifestRequest(service="service-py", key="service-py/rel-2026-10-28-0001/contract.yaml", kind=ManifestKind.PYTHON),
+        ],
+        bucket="continuo",
+        image_tags={"service-1": "0.16.0", "service-py": "0.16.0"},
+    )
+
+
+def test_the_empty_payload_release_controller_writes_parses_into_the_default_bucket():
+    payload = _release_requested_fixture("release_requested_v1_empty.json")
+
+    got = parse_release_requested(_fields(payload), _DEFAULT_BUCKET)
+
+    assert got == ReleaseRequested(
+        release_id=payload["release_id"], requests=[], bucket=_DEFAULT_BUCKET, image_tags={},
+    )
