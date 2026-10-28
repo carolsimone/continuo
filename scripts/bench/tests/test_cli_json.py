@@ -12,8 +12,17 @@ def test_has_schedule_on_empty_output():
 
 
 def test_run_state_reports_the_listed_run_even_when_older():
-    doc = {"schedule_name": "s", "run_id": "r-old", "has_active_run": False, "last_run_status": "succeeded"}
+    doc = {"run": {"run_id": "r-old", "schedule_name": "s", "status": "succeeded"}, "tasks": []}
     assert cli_json.run_state(doc) == ("r-old", False, "succeeded")
+
+
+def test_run_state_counts_pending_running_and_cancelling_runs_as_live():
+    for status in ("pending", "running", "cancelling"):
+        assert cli_json.run_state({"run": {"run_id": "r", "status": status}, "tasks": []}) == ("r", True, status)
+
+
+def test_run_state_of_a_schedule_that_never_ran():
+    assert cli_json.run_state({"run": None, "tasks": []}) == ("", False, "")
 
 
 def test_schedule_names_are_sorted():

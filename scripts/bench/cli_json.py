@@ -12,8 +12,15 @@ def has_schedule(doc: dict, name: str) -> bool:
     return any(entry.get("schedule_name") == name for entry in doc.get("schedules", []))
 
 
+# The statuses of a run that still holds its schedule.
+ACTIVE_RUN_STATUSES = ("pending", "running", "cancelling")
+
+
 def run_state(doc: dict) -> tuple:
-    return doc.get("run_id", ""), bool(doc.get("has_active_run")), doc.get("last_run_status", "")
+    """(run id, whether the run is live, its status) from `schedule status` output; a schedule that never ran has "run": null."""
+    run = doc.get("run") or {}
+    status = run.get("status", "")
+    return run.get("run_id", ""), status in ACTIVE_RUN_STATUSES, status
 
 
 def schedule_names(doc: dict) -> list:

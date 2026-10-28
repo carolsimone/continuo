@@ -33,6 +33,42 @@ type scriptedRunServer struct {
 	gotUserID     string
 	gotSingleNode *runv1.TriggerSingleNodeRunRequest
 	gotCancel     *runv1.CancelActiveRunRequest
+	gotAttempts   *runv1.ListRunAttemptsRequest
+	gotRuns       *runv1.ListRunsRequest
+	gotRunID      string
+	getRunCalls   int
+}
+
+func (s *scriptedRunServer) GetRun(_ context.Context, req *runv1.GetRunRequest) (*runv1.RunResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getRunCalls++
+	s.gotRunID = req.GetRunId()
+	if len(s.errs) >= s.getRunCalls && s.errs[s.getRunCalls-1] != nil {
+		return nil, s.errs[s.getRunCalls-1]
+	}
+	return &runv1.RunResponse{Run: &runv1.Run{RunId: req.GetRunId()}}, nil
+}
+
+func (s *scriptedRunServer) GetRunGraph(_ context.Context, req *runv1.GetRunGraphRequest) (*runv1.GetRunGraphResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotRunID = req.GetRunId()
+	return &runv1.GetRunGraphResponse{RunPromotionSeq: 4}, nil
+}
+
+func (s *scriptedRunServer) ListRuns(_ context.Context, req *runv1.ListRunsRequest) (*runv1.ListRunsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotRuns = req
+	return &runv1.ListRunsResponse{TotalCount: 9}, nil
+}
+
+func (s *scriptedRunServer) ListRunAttempts(_ context.Context, req *runv1.ListRunAttemptsRequest) (*runv1.ListRunAttemptsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotAttempts = req
+	return &runv1.ListRunAttemptsResponse{TotalCount: 3}, nil
 }
 
 func (s *scriptedRunServer) StartRun(ctx context.Context, req *runv1.StartRunRequest) (*runv1.StartRunResponse, error) {
@@ -285,4 +321,44 @@ func TestCancelSchedule_SendsTheRequestIDAndWhoCancelled(t *testing.T) {
 	assert.Equal(t, "daily", srv.gotCancel.GetScheduleName())
 	assert.Equal(t, "bad data", srv.gotCancel.GetCancellationReason())
 	assert.Equal(t, "alice", srv.gotCancel.GetCancelledBy())
+}
+
+func TestRunClient_RunReadsForwardTheirArguments(t *testing.T) {
+	srv := &scriptedRunServer{}
+	c := dialScripted(t, srv)
+	ctx := context.Background()
+
+	run, err := c.GetRun(ctx, "run-1")
+	require.NoError(t, err)
+	assert.Equal(t, "run-1", run.GetRun().GetRunId())
+
+	graph, err := c.GetRunGraph(ctx, "run-2")
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), graph.GetRunPromotionSeq())
+	assert.Equal(t, "run-2", srv.gotRunID)
+
+	runs, err := c.ListRuns(ctx, "daily", 25, 50)
+	require.NoError(t, err)
+	assert.Equal(t, int32(9), runs.GetTotalCount())
+	assert.Equal(t, "daily", srv.gotRuns.GetScheduleName())
+	assert.Equal(t, int32(25), srv.gotRuns.GetPageSize())
+	assert.Equal(t, int32(50), srv.gotRuns.GetPageOffset())
+
+	attempts, err := c.ListRunAttempts(ctx, "run-3", "task-1", 200, 400)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), attempts.GetTotalCount())
+	assert.Equal(t, "run-3", srv.gotAttempts.GetRunId())
+	assert.Equal(t, "task-1", srv.gotAttempts.GetTaskId())
+	assert.Equal(t, int32(200), srv.gotAttempts.GetPageSize())
+	assert.Equal(t, int32(400), srv.gotAttempts.GetPageOffset())
+}
+
+func TestRunClient_DoesNotRetryAGetRunOnUnavailable(t *testing.T) {
+	srv := &scriptedRunServer{errs: []error{status.Error(codes.Unavailable, "connection reset")}}
+	c := dialScripted(t, srv)
+
+	_, err := c.GetRun(context.Background(), "run-1")
+
+	require.Error(t, err)
+	assert.Equal(t, 1, srv.getRunCalls, "a read is sent once")
 }

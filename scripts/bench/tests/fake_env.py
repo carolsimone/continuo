@@ -59,8 +59,9 @@ elif cmd == ["schedule", "status"]:
     if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
         unavailable()
     state = read("state")
-    print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "has_active_run": state == "running",
-                      "last_run_status": state}))
+    current = read("current")
+    run = {"run_id": current, "schedule_name": sys.argv[3], "status": state} if current else None
+    print(json.dumps({"run": run, "tasks": []}))
 elif cmd == ["schedule", "cancel"]:
     if os.environ.get("FAKE_CANCEL_FAIL"):
         unavailable()

@@ -32,7 +32,11 @@ type RunClient interface {
 
 	ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*runv1.GetScheduleGraphResponse, error)
+	GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error)
+	GetRunGraph(ctx context.Context, runID string) (*runv1.GetRunGraphResponse, error)
+	ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int32) (*runv1.ListRunsResponse, error)
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)
+	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
 	Close() error
@@ -173,6 +177,31 @@ func (c *runGRPCClient) ListTasks(ctx context.Context, runID, taskStatus string,
 	return c.api.ListTasks(ctx, &runv1.ListTasksRequest{
 		RunId:      runID,
 		Status:     taskStatus,
+		PageSize:   pageSize,
+		PageOffset: pageOffset,
+	})
+}
+
+func (c *runGRPCClient) GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error) {
+	return c.api.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
+}
+
+func (c *runGRPCClient) GetRunGraph(ctx context.Context, runID string) (*runv1.GetRunGraphResponse, error) {
+	return c.api.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: runID})
+}
+
+func (c *runGRPCClient) ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int32) (*runv1.ListRunsResponse, error) {
+	return c.api.ListRuns(ctx, &runv1.ListRunsRequest{
+		ScheduleName: scheduleName,
+		PageSize:     pageSize,
+		PageOffset:   pageOffset,
+	})
+}
+
+func (c *runGRPCClient) ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error) {
+	return c.api.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{
+		RunId:      runID,
+		TaskId:     taskID,
 		PageSize:   pageSize,
 		PageOffset: pageOffset,
 	})

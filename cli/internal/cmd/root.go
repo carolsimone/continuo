@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/cmd/dlq"
 	"github.com/carolsimone/continuo/cli/internal/cmd/node"
 	"github.com/carolsimone/continuo/cli/internal/cmd/precedents"
+	"github.com/carolsimone/continuo/cli/internal/cmd/run"
 	"github.com/carolsimone/continuo/cli/internal/cmd/schedule"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
@@ -36,7 +37,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		flagHuman                bool
 	)
 
-	// Shared config pointer. The schedule subcommand and its children capture
+	// Shared config pointer. The schedule, node and run subcommands and their children capture
 	// this pointer at registration time; PersistentPreRunE populates *cfg
 	// after flags are parsed and before any RunE fires.
 	cfg := &config.Config{}
@@ -82,6 +83,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(run.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(dlq.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))

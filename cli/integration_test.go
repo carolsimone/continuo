@@ -85,6 +85,27 @@ func (s *stubRunServer) GetScheduleGraph(_ context.Context, _ *runv1.GetSchedule
 	return s.graphResp, nil
 }
 
+const integRunID = "11111111-1111-4111-8111-111111111111"
+
+func (s *stubRunServer) GetRun(_ context.Context, req *runv1.GetRunRequest) (*runv1.RunResponse, error) {
+	if req.GetRunId() != integRunID {
+		return nil, status.Error(codes.NotFound, "run not found")
+	}
+	return &runv1.RunResponse{Run: &runv1.Run{RunId: integRunID, ScheduleName: "daily_ingest", Status: "failed"}}, nil
+}
+
+func (s *stubRunServer) ListTasks(context.Context, *runv1.ListTasksRequest) (*runv1.ListTasksResponse, error) {
+	return &runv1.ListTasksResponse{TotalCount: 1, Tasks: []*runv1.Task{
+		{TaskId: "t1", ServiceName: "svc", SchemaName: "raw", TableName: "orders", Status: "failed", Attempt: 1},
+	}}, nil
+}
+
+func (s *stubRunServer) ListRunAttempts(context.Context, *runv1.ListRunAttemptsRequest) (*runv1.ListRunAttemptsResponse, error) {
+	return &runv1.ListRunAttemptsResponse{TotalCount: 1, Attempts: []*runv1.TaskAttempt{
+		{TaskId: "t1", Attempt: 1, Status: "failed", FailureClass: "task", FailureReason: "dbt_error"},
+	}}, nil
+}
+
 // serveRun serves srv on a loopback port and returns its address.
 func serveRun(t *testing.T, srv runv1.RunServiceServer) string {
 	t.Helper()
@@ -220,4 +241,35 @@ func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
 	var edges []json.RawMessage
 	require.NoError(t, json.Unmarshal(payload["edges"], &edges))
 	assert.Len(t, edges, 1, "expected one edge entry")
+}
+
+func TestCLI_RunShowAgainstInProcessServer(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{})
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "run", "show", integRunID).Output()
+	require.NoError(t, err)
+
+	var payload struct {
+		Run   map[string]any `json:"run"`
+		Tasks []struct {
+			Node          string `json:"node"`
+			FailureReason string `json:"failure_reason"`
+		} `json:"tasks"`
+	}
+	require.NoError(t, json.Unmarshal(out, &payload))
+	assert.Equal(t, "failed", payload.Run["status"])
+	require.Len(t, payload.Tasks, 1)
+	assert.Equal(t, "svc.raw.orders", payload.Tasks[0].Node)
+	assert.Equal(t, "dbt_error", payload.Tasks[0].FailureReason)
+}
+
+func TestCLI_RunShowOfAnUnknownRunExitsNotFound(t *testing.T) {
+	endpoint := serveRun(t, &stubRunServer{})
+
+	out, err := exec.Command(cliBinary, "--endpoint", endpoint, "run", "show", "22222222-2222-4222-8222-222222222222").Output()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 3, exitErr.ExitCode())
+	assert.Contains(t, string(out), `"not_found"`)
 }
