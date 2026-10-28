@@ -41,7 +41,9 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	// Cleanups run last in, first out: registered first, the close runs after
+	// the deletions registered below.
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 
@@ -94,7 +96,9 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	// Cleanups run last in, first out: registered first, the close runs after
+	// the deletions registered below.
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 
@@ -168,29 +172,37 @@ func yearlyCronOnYesterday(t *testing.T, ctx context.Context, clients *testClien
 
 // deleteScheduleAndRuns deletes the default tenant's schedules row of name,
 // so it fires no more, then the runs of name with their tasks and outbox rows.
+// It runs as a t.Cleanup registered after the one that closes the clients, so
+// it runs before that close. It attempts every statement, then fails the test
+// with each one that failed: a row left behind can fire during a later test.
 func deleteScheduleAndRuns(t *testing.T, clients *testClients, name string) {
+	t.Helper()
 	bg := context.Background()
+	var errs []error
 	if err := deleteScheduleRow(bg, clients, name); err != nil {
-		t.Logf("Warning: %v", err)
+		errs = append(errs, err)
 	}
 	var runIDs []string
 	if err := clients.stateDB.SelectContext(bg, &runIDs,
 		`SELECT run_id FROM runs WHERE tenant_id = $1 AND schedule_name = $2`, events.DefaultTenantID, name); err != nil {
-		t.Logf("Warning: failed to list the runs of %s: %v", name, err)
+		errs = append(errs, fmt.Errorf("list the runs of %s: %w", name, err))
 	}
 	for _, runID := range runIDs {
 		if _, err := clients.stateDB.ExecContext(bg,
 			`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
-			t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", runID, err)
+			errs = append(errs, fmt.Errorf("delete the state_outbox rows of run %s: %w", runID, err))
 		}
 	}
 	if _, err := clients.stateDB.ExecContext(bg, `
 		DELETE FROM tasks WHERE tenant_id = $1 AND run_id IN (
 			SELECT run_id FROM runs WHERE tenant_id = $1 AND schedule_name = $2)`, events.DefaultTenantID, name); err != nil {
-		t.Logf("Warning: failed to delete the tasks of %s: %v", name, err)
+		errs = append(errs, fmt.Errorf("delete the tasks of %s: %w", name, err))
 	}
 	if _, err := clients.stateDB.ExecContext(bg,
 		`DELETE FROM runs WHERE tenant_id = $1 AND schedule_name = $2`, events.DefaultTenantID, name); err != nil {
-		t.Logf("Warning: failed to delete the runs of %s: %v", name, err)
+		errs = append(errs, fmt.Errorf("delete the runs of %s: %w", name, err))
+	}
+	for _, err := range errs {
+		t.Errorf("cleanup of schedule %s: %v", name, err)
 	}
 }

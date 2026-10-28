@@ -56,7 +56,9 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	// Cleanups run last in, first out: registered first, the close runs after
+	// the row's deletion registered below.
+	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 
@@ -67,8 +69,9 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 
 	require.NoError(t, deleteScheduleRow(ctx, clients, testScheduleName), "start with %s manual", testScheduleName)
 	t.Cleanup(func() {
+		// A row left behind gives e2e-schedule a cron in every later test.
 		if err := deleteScheduleRow(context.Background(), clients, testScheduleName); err != nil {
-			t.Logf("Warning: %v", err)
+			t.Errorf("cleanup of schedule %s: %v", testScheduleName, err)
 		}
 	})
 	runsBefore := runsOfSchedule(t, ctx, clients, testScheduleName)
