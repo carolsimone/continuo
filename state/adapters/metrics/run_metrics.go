@@ -73,7 +73,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}, []string{"command", "outcome"}),
 		cronFires: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_cron_fires_total",
-			Help: "Fires of the schedules' crons, by outcome: started (a run started), skipped_active (the schedule's previous run is still active), skipped_maintenance (maintenance mode is on), empty_selection (a failed run recorded, the live release giving the schedule nothing to run), or missed (one older slot left unfired by the fire of the latest one, counted per slot).",
+			Help: "Fires of the schedules' crons, by outcome: started (a run started), skipped_active (the schedule's previous run is still active), skipped_maintenance (maintenance mode is on), empty_selection (a failed run recorded, the live release giving the schedule nothing to run), invalid_node_type (a failed run recorded, the schedule's selection holding a node of a type the node_type vocabulary does not declare), or missed (the older slots the fire of the latest one left unfired, one per slot and at most 1000 per fire).",
 		}, []string{"outcome"}),
 		schedules: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "continuo_schedules",
@@ -113,6 +113,11 @@ func (m *RunMetrics) CommandRequest(command, outcome string) {
 
 // CronFire counts one fire outcome of a schedule's cron.
 func (m *RunMetrics) CronFire(outcome string) { m.cronFires.WithLabelValues(outcome).Inc() }
+
+// CronFires adds n to a fire outcome of a schedule's cron.
+func (m *RunMetrics) CronFires(outcome string, n int) {
+	m.cronFires.WithLabelValues(outcome).Add(float64(n))
+}
 
 // Schedules sets the gauges of the scheduled and the paused schedules.
 func (m *RunMetrics) Schedules(scheduled, paused int) {

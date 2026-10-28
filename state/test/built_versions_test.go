@@ -138,11 +138,11 @@ func (h *builtHarness) fire(ctx context.Context, tenantID, schedule string, slot
 		return uuid.Nil, 0, err
 	}
 	defer u.Rollback() //nolint:errcheck
-	id, outcome, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).HandleCronFire(ctx, u, tenantID, schedule, slot)
+	fired, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).HandleCronFire(ctx, u, tenantID, schedule, slot)
 	if err != nil {
 		return uuid.Nil, 0, err
 	}
-	return id, outcome, u.Commit()
+	return fired.RunID, fired.Outcome, u.Commit()
 }
 
 // legacyRun saves a running run on releaseID whose tasks state did not plan:
@@ -336,4 +336,5 @@ func (noRunMetrics) LeaseGranted(time.Duration)    {}
 func (noRunMetrics) LeaseRepaired()                {}
 func (noRunMetrics) CommandRequest(string, string) {}
 func (noRunMetrics) CronFire(string)               {}
+func (noRunMetrics) CronFires(string, int)         {}
 func (noRunMetrics) Schedules(int, int)            {}

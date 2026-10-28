@@ -90,15 +90,16 @@ func TestRunMetrics_LeaseSeries(t *testing.T) {
 	}
 }
 
-// The cron fire counter counts each outcome, missed once per slot, and the
-// schedules gauge reports the last pass's counts by state.
+// The cron fire counter counts each outcome, and the missed slots of a fire
+// all at once; the schedules gauge reports the last pass's counts by state.
 func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 	reg := pkgmetrics.New("state")
 	m := NewRunMetrics(reg)
 	m.CronFire("started")
-	m.CronFire("missed")
-	m.CronFire("missed")
+	m.CronFires("missed", 2)
+	m.CronFires("missed", 1000)
 	m.CronFire("skipped_active")
+	m.CronFire("invalid_node_type")
 	m.Schedules(4, 2)
 	m.Schedules(3, 1)
 
@@ -107,8 +108,9 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`continuo_cron_fires_total{outcome="started",service="state"} 1`,
-		`continuo_cron_fires_total{outcome="missed",service="state"} 2`,
+		`continuo_cron_fires_total{outcome="missed",service="state"} 1002`,
 		`continuo_cron_fires_total{outcome="skipped_active",service="state"} 1`,
+		`continuo_cron_fires_total{outcome="invalid_node_type",service="state"} 1`,
 		`continuo_schedules{service="state",state="scheduled"} 3`,
 		`continuo_schedules{service="state",state="paused"} 1`,
 	} {

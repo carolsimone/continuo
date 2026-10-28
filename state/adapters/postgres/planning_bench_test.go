@@ -180,6 +180,7 @@ func (noRunMetrics) LeaseGranted(time.Duration)    {}
 func (noRunMetrics) LeaseRepaired()                {}
 func (noRunMetrics) CommandRequest(string, string) {}
 func (noRunMetrics) CronFire(string)               {}
+func (noRunMetrics) CronFires(string, int)         {}
 func (noRunMetrics) Schedules(int, int)            {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it

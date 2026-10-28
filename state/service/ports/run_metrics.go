@@ -37,10 +37,17 @@ type RunMetrics interface {
 	// CronFire counts one outcome of a schedule's fire: started (it started a
 	// run), skipped_active (the schedule's previous run is still active),
 	// skipped_maintenance (maintenance mode is on), empty_selection (it
-	// recorded a failed run, the live release giving it nothing to run), or
-	// missed (one older slot the fire of the latest one left unfired; a fire
-	// counts one per such slot).
+	// recorded a failed run, the live release giving the schedule nothing to
+	// run), invalid_node_type (it recorded a failed run, the schedule's
+	// selection holding a node of a type the node_type vocabulary does not
+	// declare), or missed (an older slot the fire of the latest one left
+	// unfired).
 	CronFire(outcome string)
+
+	// CronFires counts n fires of outcome at once, as CronFire counts one: a
+	// fire counts the older slots it left unfired as n missed, one per slot
+	// and at most 1000.
+	CronFires(outcome string, n int)
 
 	// Schedules sets the gauges of the schedules of every tenant: how many
 	// are scheduled and how many are paused.

@@ -61,6 +61,7 @@ func (m *recordingMetrics) LeaseGranted(wait time.Duration) { m.granted = append
 func (m *recordingMetrics) LeaseRepaired()                  { m.repaired++ }
 func (m *recordingMetrics) CommandRequest(string, string)   {}
 func (m *recordingMetrics) CronFire(string)                 {}
+func (m *recordingMetrics) CronFires(string, int)           {}
 func (m *recordingMetrics) Schedules(int, int)              {}
 
 // runs serves the runs it holds for update, each only under its own tenant,

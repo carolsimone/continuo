@@ -74,6 +74,18 @@ type StartRunInput struct {
 	ScheduledFor *time.Time
 }
 
+// CronFireResult is what a cron fire did.
+type CronFireResult struct {
+	// Outcome is what starting the slot's run did.
+	Outcome ActivationOutcome
+	// RunID is the run the fire created; uuid.Nil when it created none.
+	RunID uuid.UUID
+	// FailureReason is the reason a refused run was recorded failed with:
+	// empty_selection or invalid_node_type for OutcomeRunRefused, and empty
+	// for every other outcome.
+	FailureReason run.RunFailureReason
+}
+
 // HandleCronFire fires the slot of tenantID's schedule name inside u's open
 // transaction, which the caller commits or rolls back. It creates the cron run
 // of the slot, stamped with it (scheduled_for), initiated by the system, of
@@ -82,35 +94,37 @@ type StartRunInput struct {
 // name: a schedule no model carries records a run refused as an empty
 // selection.
 //
-// It returns (id, OutcomeRunStarted) for a run created and dispatched, (id,
-// OutcomeRunRefused) for a run recorded failed because the live release gives
-// the schedule nothing it can run, (uuid.Nil, OutcomeSkippedActive) when the
-// schedule already has an active run, and (uuid.Nil, OutcomeSlotTaken) when
-// the slot already has its run. The two skips write nothing and leave the
-// transaction usable. A run another caller started between the active-run
-// check and the insert ends the transaction: that is an error wrapping
-// run.ErrScheduleHasActiveRun, and the caller rolls back.
-func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, tenantID, name string, slot time.Time) (uuid.UUID, ActivationOutcome, error) {
+// Its result is OutcomeRunStarted with the run for a run created and
+// dispatched; OutcomeRunRefused with the run and its failure reason for a run
+// recorded failed because the live release gives the schedule nothing it can
+// run (empty_selection) or a node of a type the node_type vocabulary does not
+// declare (invalid_node_type); OutcomeSkippedActive when the schedule already
+// has an active run; and OutcomeSlotTaken when the slot already has its run.
+// The two skips write nothing and leave the transaction usable. A run another
+// caller started between the active-run check and the insert ends the
+// transaction: that is an error wrapping run.ErrScheduleHasActiveRun, and the
+// caller rolls back.
+func (h *StartRunHandler) HandleCronFire(ctx context.Context, u uow.UnitOfWork, tenantID, name string, slot time.Time) (CronFireResult, error) {
 	in := StartRunInput{
 		RunID: uuid.New(), TenantID: tenantID, ScheduleName: name, Kind: run.KindCron,
 		Initiator: identity.System(), Operation: model.OperationRun, ScheduledFor: &slot,
 	}
 	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), tenantID, name); err != nil {
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			return uuid.Nil, OutcomeSkippedActive, nil
+			return CronFireResult{Outcome: OutcomeSkippedActive}, nil
 		}
-		return uuid.Nil, 0, fmt.Errorf("check the active run of %s: %w", name, err)
+		return CronFireResult{}, fmt.Errorf("check the active run of %s: %w", name, err)
 	}
-	outcome, err := h.create(ctx, u, in)
+	outcome, failure, err := h.create(ctx, u, in)
 	switch {
 	case err != nil:
-		return uuid.Nil, 0, err
+		return CronFireResult{}, err
 	case outcome == OutcomeSkippedActive:
-		return uuid.Nil, 0, fmt.Errorf("fire the %s slot of %s: %w", slot.UTC().Format(time.RFC3339), name, run.ErrScheduleHasActiveRun)
+		return CronFireResult{}, fmt.Errorf("fire the %s slot of %s: %w", slot.UTC().Format(time.RFC3339), name, run.ErrScheduleHasActiveRun)
 	case outcome == OutcomeSlotTaken:
-		return uuid.Nil, OutcomeSlotTaken, nil
+		return CronFireResult{Outcome: OutcomeSlotTaken}, nil
 	}
-	return in.RunID, outcome, nil
+	return CronFireResult{Outcome: outcome, RunID: in.RunID, FailureReason: failure}, nil
 }
 
 // StartInTransaction starts the run in.RunID inside u's open transaction,
@@ -129,7 +143,7 @@ func (h *StartRunHandler) StartInTransaction(ctx context.Context, u uow.UnitOfWo
 	if outcome == OutcomeSkippedActive {
 		return run.ErrScheduleHasActiveRun
 	}
-	outcome, err = h.create(ctx, u, in)
+	outcome, _, err = h.create(ctx, u, in)
 	if err != nil {
 		return err
 	}
@@ -168,30 +182,31 @@ func (h *StartRunHandler) check(ctx context.Context, u uow.UnitOfWork, in StartR
 // one, and dispatches its ready tasks, inside u's open transaction. A refused
 // selection of a trigger is returned and creates nothing; a refused cron
 // selection, and a benign refusal of either kind, records the run finished and
-// is OutcomeRunRefused. A run that loses the race for the schedule's one
-// active run is OutcomeSkippedActive, after which the transaction cannot go
-// on; a cron run whose slot already has its run is OutcomeSlotTaken, and
-// writes nothing.
-func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (ActivationOutcome, error) {
+// is OutcomeRunRefused, with the failure reason the run was recorded with
+// (empty for a benign refusal, which records the run skipped). A run that
+// loses the race for the schedule's one active run is OutcomeSkippedActive,
+// after which the transaction cannot go on; a cron run whose slot already has
+// its run is OutcomeSlotTaken, and writes nothing.
+func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in StartRunInput) (ActivationOutcome, run.RunFailureReason, error) {
 	name := in.ScheduleName
 	sel, err := h.planner.Schedule(ctx, u, in.TenantID, name, in.Operation)
 	refusal := scheduleRefusal(err)
 	if err != nil && refusal == nil {
-		return 0, fmt.Errorf("select the run of %s: %w", name, err)
+		return 0, "", fmt.Errorf("select the run of %s: %w", name, err)
 	}
 	benign := errors.Is(refusal, runplan.ErrNoTests)
 	if refusal != nil && in.Kind != run.KindCron && !benign {
-		return 0, refusal
+		return 0, "", refusal
 	}
 
 	now := u.Clock().Now()
 	newRun, err := run.NewPendingRun(in.TenantID, in.RunID, name, in.Kind, in.SourceRunID, in.Initiator.UserID, in.Operation, sel.Stamp, now)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if in.ScheduledFor != nil {
 		if err := newRun.SetScheduledFor(*in.ScheduledFor); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
@@ -200,28 +215,32 @@ func (h *StartRunHandler) create(ctx context.Context, u uow.UnitOfWork, in Start
 		// the transaction. A trigger answers it as it answers the pre-check
 		// (FailedPrecondition); a cron fire rolls back.
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
-			return OutcomeSkippedActive, nil
+			return OutcomeSkippedActive, "", nil
 		}
 		if errors.Is(err, run.ErrSlotTaken) {
-			return OutcomeSlotTaken, nil
+			return OutcomeSlotTaken, "", nil
 		}
-		return 0, fmt.Errorf("save: %w", err)
+		return 0, "", fmt.Errorf("save: %w", err)
 	}
 	outcome := OutcomeRunStarted
+	var failure run.RunFailureReason
 	if refusal != nil {
 		if err := h.finishRefused(ctx, u, newRun, benign, refusal, now); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		outcome = OutcomeRunRefused
+		if recorded := newRun.FailureReason(); recorded != nil {
+			failure = *recorded
+		}
 	} else if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
-		return 0, err
+		return 0, "", err
 	}
 
 	u.AfterCommit(func() {
 		h.logger.Info("Schedule activated", "tenant_id", in.TenantID, "run_id", newRun.RunID(), "schedule_name", name, "kind", string(in.Kind),
 			"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
 	})
-	return outcome, nil
+	return outcome, failure, nil
 }
 
 // finishRefused finishes r, whose selection was refused, without tasks:

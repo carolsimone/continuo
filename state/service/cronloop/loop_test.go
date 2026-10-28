@@ -346,12 +346,17 @@ func (l *liveGraphs) ScheduleGraph(_ context.Context, _, _, scheduleName string)
 	return l.graphs[scheduleName], nil
 }
 
-// ordersToRevenue is raw.orders feeding mart.revenue, both in schedule name.
-func ordersToRevenue(name string) topology.Graph {
+// ordersToRevenue is raw.orders feeding mart.revenue, both dbt models in
+// schedule name.
+func ordersToRevenue(name string) topology.Graph { return ordersToRevenueOfType(name, "dbt-model") }
+
+// ordersToRevenueOfType is raw.orders feeding mart.revenue, both of nodeType,
+// in schedule name.
+func ordersToRevenueOfType(name, nodeType string) topology.Graph {
 	node := func(schema, table string) topology.Node {
 		return topology.Node{
 			Key: topology.KeyOf(schema, table), ServiceName: "svc", SchemaName: schema, TableName: table,
-			NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "svc:1", ScheduleName: name,
+			NodeType: nodeType, ContentHash: "h-" + table, ImageTag: "svc:1", ScheduleName: name,
 		}
 	}
 	return topology.NewGraph(
@@ -396,18 +401,29 @@ func (m *unaskedModels) CountOf(context.Context, string, string) (int, error) {
 	return 1, nil
 }
 
-// firesCounted records the cron fires counted by outcome and the last
-// schedules gauge.
+// firesCounted records the cron fires counted by outcome, the calls that
+// counted them, and the last schedules gauge.
 type firesCounted struct {
 	mu                sync.Mutex
 	fires             map[string]int
+	calls             map[string]int
 	scheduled, paused int
 }
 
-func (m *firesCounted) CronFire(outcome string) {
+func (m *firesCounted) CronFire(outcome string) { m.CronFires(outcome, 1) }
+
+func (m *firesCounted) CronFires(outcome string, n int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.fires[outcome]++
+	m.fires[outcome] += n
+	m.calls[outcome]++
+}
+
+// callsOf is how many calls counted fires of outcome.
+func (m *firesCounted) callsOf(outcome string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls[outcome]
 }
 
 func (m *firesCounted) Schedules(scheduled, paused int) {
@@ -454,7 +470,9 @@ func (b *lockedBuffer) String() string {
 
 // world is everything one test's loop reads and writes, behind the fake unit
 // of work every pass of the loop uses. Tenant acme's live release is rel-1,
-// whose daily and hourly schedules each hold raw.orders feeding mart.revenue.
+// whose daily and hourly schedules each hold raw.orders feeding mart.revenue,
+// and whose legacy schedule holds the same two nodes with a node type the
+// node_type vocabulary does not declare.
 type world struct {
 	clock     *fixedClock
 	schedules *scheduleRows
@@ -477,14 +495,17 @@ func newWorld(now time.Time) *world {
 		tasks:     &dispatchedTasks{},
 		outbox:    &recordedEvents{},
 		models:    &unaskedModels{},
-		metrics:   &firesCounted{fires: map[string]int{}},
+		metrics:   &firesCounted{fires: map[string]int{}, calls: map[string]int{}},
 		logs:      &lockedBuffer{},
 		u:         &uow.FakeUnitOfWork{},
 	}
 	w.u.ScheduleRepo = w.schedules
 	w.u.TopologyRepo = &liveGraphs{
 		LiveReleaseOnly: uow.LiveReleaseOnly{Live: topology.Pointer{TenantID: tenant, ReleaseID: "rel-1", PromotionSeq: 4}},
-		graphs:          map[string]topology.Graph{"daily": ordersToRevenue("daily"), "hourly": ordersToRevenue("hourly")},
+		graphs: map[string]topology.Graph{
+			"daily": ordersToRevenue("daily"), "hourly": ordersToRevenue("hourly"),
+			"legacy": ordersToRevenueOfType("legacy", "spreadsheet"),
+		},
 	}
 	w.u.SetRunRepo(w.runs)
 	w.u.SetTaskCollection(w.tasks)
@@ -593,6 +614,7 @@ func TestCronLoop_OnlyTheLatestMissedSlotFires(t *testing.T) {
 	assert.True(t, nov(2, 3, 0).Equal(*runs[0].ScheduledFor()), "scheduled for: got %s", runs[0].ScheduledFor())
 	assert.True(t, nov(2, 4, 0).Equal(w.nextFire("hourly")))
 	assert.Equal(t, map[string]int{"started": 1, "missed": 2}, w.metrics.counted(), "missed counts slots")
+	assert.Equal(t, 1, w.metrics.callsOf("missed"), "the missed slots of a fire are counted in one call")
 	logs := w.logs.String()
 	assert.Contains(t, logs, "missed=2")
 	assert.Contains(t, logs, "schedule_name=hourly")
@@ -662,6 +684,32 @@ func TestCronLoop_AScheduleWithNoModelsRecordsAFailedRun(t *testing.T) {
 	assert.False(t, w.nextFire("weekly").IsZero())
 	assert.True(t, w.nextFire("weekly").After(slot), "the slot is consumed")
 	assert.Equal(t, map[string]int{"empty_selection": 1}, w.metrics.counted())
+	assert.Contains(t, w.logs.String(), "failure_reason=empty_selection")
+}
+
+// A fire of a schedule whose live graph holds a node of a type the node_type
+// vocabulary does not declare records a failed run for the slot with failure
+// reason invalid_node_type, and counts and logs that outcome, not
+// empty_selection.
+func TestCronLoop_AScheduleWithAnInvalidNodeTypeRecordsAFailedRun(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "legacy", "0 1 * * *", daily{1, 0, paris}, slot)
+
+	require.NoError(t, w.loop(false).Pass(ctx))
+
+	runs := w.runs.of(tenant, "legacy")
+	require.Len(t, runs, 1)
+	assert.Equal(t, run.RunStatusFailed, runs[0].Status())
+	require.NotNil(t, runs[0].FailureReason())
+	assert.Equal(t, run.RunFailureInvalidNodeType, *runs[0].FailureReason())
+	assert.Empty(t, w.outbox.dispatched())
+	assert.True(t, nov(3, 1, 0).Equal(w.nextFire("legacy")), "the slot is consumed")
+	assert.Equal(t, map[string]int{"invalid_node_type": 1}, w.metrics.counted())
+	logs := w.logs.String()
+	assert.Contains(t, logs, "failure_reason=invalid_node_type")
+	assert.NotContains(t, logs, "empty_selection")
 }
 
 // A slot that already has its run (uq_runs_scheduled_for) gets no second run;

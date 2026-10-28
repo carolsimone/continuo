@@ -91,10 +91,12 @@ type cronMetrics struct {
 	passes int
 }
 
-func (m *cronMetrics) CronFire(outcome string) {
+func (m *cronMetrics) CronFire(outcome string) { m.CronFires(outcome, 1) }
+
+func (m *cronMetrics) CronFires(outcome string, n int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.fires[outcome]++
+	m.fires[outcome] += n
 }
 
 func (m *cronMetrics) Schedules(int, int) {
@@ -128,6 +130,16 @@ type cronTenant struct {
 
 func newCronTenant(t *testing.T, schedules ...string) *cronTenant {
 	t.Helper()
+	specs := make([]topology.NodeSpec, 0, len(schedules))
+	for _, s := range schedules {
+		specs = append(specs, scheduledNode("raw", strings.ReplaceAll(s, "-", "_"), "dbt-model", s))
+	}
+	return newCronTenantOf(t, specs...)
+}
+
+// newCronTenantOf is a tenant of its own whose live release holds specs.
+func newCronTenantOf(t *testing.T, specs ...topology.NodeSpec) *cronTenant {
+	t.Helper()
 	parser, err := cron.NewParser()
 	require.NoError(t, err)
 	logs := &syncBuffer{}
@@ -137,10 +149,6 @@ func newCronTenant(t *testing.T, schedules ...string) *cronTenant {
 	}
 	t.Cleanup(func() { c.cleanup() })
 
-	specs := make([]topology.NodeSpec, 0, len(schedules))
-	for _, s := range schedules {
-		specs = append(specs, scheduledNode("raw", strings.ReplaceAll(s, "-", "_"), "dbt-model", s))
-	}
 	releaseID := "rel-" + uuid.NewString()[:8]
 	rel, err := topology.NewRelease(c.id, releaseID, 1,
 		"s3://continuo/tenants/"+c.id+"/topologies/"+releaseID+"/topology.json.gz", "sha-"+releaseID, specs)
@@ -413,6 +421,29 @@ func TestCronLoop_AScheduleWithNoModelsRecordsAFailedRun(t *testing.T) {
 	assert.True(t, slot.Equal(*runs[0].ScheduledFor))
 	assert.True(t, march(16, 3, 0).Equal(c.nextFire(t, "weekly")))
 	assert.Equal(t, 1, c.metrics.counted("empty_selection"))
+}
+
+// A fire of legacy, whose model in the live release has a node type the
+// node_type vocabulary does not declare, records a failed run for the slot
+// with failure reason invalid_node_type, and counts that outcome rather than
+// empty_selection.
+func TestCronLoop_AScheduleWithAnInvalidNodeTypeRecordsAFailedRun(t *testing.T) {
+	c := newCronTenantOf(t, scheduledNode("raw", "legacy", "spreadsheet", "legacy"))
+	slot := march(10, 1, 0)
+	c.clock.set(slot)
+	c.schedule(t, "legacy", "0 1 * * *", slot)
+
+	c.passUntil(t, c.loop(false), c.movedFrom(t, "legacy", slot))
+
+	runs := c.runs(t, "legacy")
+	require.Len(t, runs, 1)
+	assert.Equal(t, "failed", runs[0].Status)
+	assert.Equal(t, "invalid_node_type", runs[0].FailureReason.String)
+	assert.True(t, slot.Equal(*runs[0].ScheduledFor))
+	assert.True(t, march(11, 1, 0).Equal(c.nextFire(t, "legacy")))
+	assert.Equal(t, 1, c.metrics.counted("invalid_node_type"))
+	assert.Zero(t, c.metrics.counted("empty_selection"))
+	assert.Contains(t, c.logs.String(), "failure_reason=invalid_node_type")
 }
 
 // A slot that already has its run, which uq_runs_scheduled_for allows once,

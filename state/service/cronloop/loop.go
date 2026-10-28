@@ -21,7 +21,6 @@ import (
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
-	"github.com/google/uuid"
 )
 
 // DueLimit is how many due schedules one pass fires, the earliest next fire
@@ -40,6 +39,7 @@ const (
 	outcomeSkippedActive      = "skipped_active"
 	outcomeSkippedMaintenance = "skipped_maintenance"
 	outcomeEmptySelection     = "empty_selection"
+	outcomeInvalidNodeType    = "invalid_node_type"
 	outcomeMissed             = "missed"
 )
 
@@ -162,10 +162,10 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 	}
 	firstMissed, _ := s.NextFireAt()
 
-	var runID uuid.UUID
+	var fired handlers.CronFireResult
 	outcome := outcomeSkippedMaintenance
 	if !l.maintenance {
-		id, started, err := l.starter.HandleCronFire(ctx, u, tenantID, name, slot)
+		res, err := l.starter.HandleCronFire(ctx, u, tenantID, name, slot)
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			l.logger.Info("Cron fire rolled back: a run of the schedule started at the moment of the fire; the next pass consumes the slot",
 				"tenant_id", tenantID, "schedule_name", name, "slot", slot)
@@ -174,7 +174,7 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 		if err != nil {
 			return fmt.Errorf("fire the %s slot of schedule %q of tenant %q: %w", slot.UTC().Format(time.RFC3339), name, tenantID, err)
 		}
-		runID, outcome = id, outcomeOf(started)
+		fired, outcome = res, outcomeOf(res)
 	}
 	// The row is locked, and a fire keeps the version, so the save at the
 	// version read always matches.
@@ -184,7 +184,7 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 	}
 	next, _ := s.NextFireAt()
 	u.AfterCommit(func() {
-		l.record(tenantID, name, slot, next, runID, outcome, missed, firstMissed)
+		l.record(tenantID, name, slot, next, fired, outcome, missed, firstMissed)
 	})
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit the fire of schedule %q of tenant %q: %w", name, tenantID, err)
@@ -193,13 +193,17 @@ func (l *Loop) fire(ctx context.Context, tenantID, name string, now time.Time) e
 	return nil
 }
 
-// outcomeOf is the outcome a fire counts for what starting its run did; a
-// slot that already had its run counts none.
-func outcomeOf(started handlers.ActivationOutcome) string {
-	switch started {
+// outcomeOf is the outcome a fire counts for what starting its run did: a
+// refused run counts its failure reason, and a slot that already had its run
+// counts none.
+func outcomeOf(fired handlers.CronFireResult) string {
+	switch fired.Outcome {
 	case handlers.OutcomeRunStarted:
 		return outcomeStarted
 	case handlers.OutcomeRunRefused:
+		if fired.FailureReason == run.RunFailureInvalidNodeType {
+			return outcomeInvalidNodeType
+		}
 		return outcomeEmptySelection
 	case handlers.OutcomeSkippedActive:
 		return outcomeSkippedActive
@@ -210,21 +214,22 @@ func outcomeOf(started handlers.ActivationOutcome) string {
 
 // record counts and logs a committed fire: its outcome, and the missed slots
 // before it, from firstMissed on.
-func (l *Loop) record(tenantID, name string, slot, next time.Time, runID uuid.UUID, outcome string, missed int, firstMissed time.Time) {
+func (l *Loop) record(tenantID, name string, slot, next time.Time, fired handlers.CronFireResult, outcome string, missed int, firstMissed time.Time) {
 	attrs := []any{"tenant_id", tenantID, "schedule_name", name, "slot", slot, "next_fire_at", next}
 	if missed > 0 {
-		for range missed {
-			l.metrics.CronFire(outcomeMissed)
-		}
+		l.metrics.CronFires(outcomeMissed, missed)
 		l.logger.Warn("Cron fire skipped missed slots: only the latest due slot fires",
 			append(attrs, "missed", missed, "first_missed", firstMissed)...)
 	}
 	switch outcome {
 	case outcomeStarted:
-		l.logger.Info("Cron fire started a run", append(attrs, "run_id", runID)...)
+		l.logger.Info("Cron fire started a run", append(attrs, "run_id", fired.RunID)...)
 	case outcomeEmptySelection:
 		l.logger.Warn("Cron fire recorded a failed run: the live release gives the schedule nothing to run",
-			append(attrs, "run_id", runID)...)
+			append(attrs, "run_id", fired.RunID, "failure_reason", string(fired.FailureReason))...)
+	case outcomeInvalidNodeType:
+		l.logger.Warn("Cron fire recorded a failed run: the schedule's selection holds a node of a type the node_type vocabulary does not declare",
+			append(attrs, "run_id", fired.RunID, "failure_reason", string(fired.FailureReason))...)
 	case outcomeSkippedActive:
 		l.logger.Info("Cron fire skipped: the schedule's previous run is still active", attrs...)
 	case outcomeSkippedMaintenance:
