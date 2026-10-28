@@ -1,11 +1,22 @@
 import type { WireOperation } from '../server/shared/operation';
 import type { AttemptStatus, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
 
+// ScheduleSummary is one schedule name: its cron when it has one, how many
+// models of the live release carry its tag, and its last run.
 export interface ScheduleSummary {
   schedule_name: string;
-  cron_expression: string;
+  // The cron, "" when the schedule has none: it then runs only when triggered,
+  // its version is 0 and its times are null.
+  cron: string;
+  timezone: string;     // IANA zone the cron is read in
   description: string;
-  timezone: string;
+  paused: boolean;      // nothing starts on its own while paused
+  next_fire_at: string | null;  // null while paused, with no cron, or when the cron fires no more
+  version: number;      // counts the edits of the cron, from 1
+  updated_by: string;   // who made the latest edit of the cron
+  updated_at: string | null;
+  model_count: number;  // models of the live release with the schedule's tag
+  cron_words: string;   // the cron in English words; "" when they cannot describe it
   has_active_run: boolean;
   last_run_at: string | null;
   // The status of the schedule's latest run, "" when it has never run. With
@@ -16,6 +27,12 @@ export interface ScheduleSummary {
 
 export interface SchedulesResponse {
   schedules: ScheduleSummary[];
+}
+
+// A cron read by the parser that fires it, from GET /api/schedules/cron-preview.
+export interface CronPreview {
+  cron_words: string;         // "" when the words cannot describe the cron
+  next_fire_times: string[];  // its next three fires from now
 }
 
 // One run, from GET /api/runs/:id.

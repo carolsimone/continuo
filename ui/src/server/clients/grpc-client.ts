@@ -52,6 +52,9 @@ export interface GrpcClient {
   triggerRebase: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
   triggerSingleNodeRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
   cancelRun: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  upsertSchedule: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  deleteSchedule: (request: any, metadata: grpc.Metadata, callback: Callback) => void;
+  previewSchedule: (request: any, callback: Callback) => void;
   previewRebase: (request: any, callback: Callback) => void;
   getRun: (request: any, callback: Callback) => void;
   listRuns: (request: any, callback: Callback) => void;
