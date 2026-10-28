@@ -11,7 +11,8 @@ The fakes keep their state in FAKE_DIR:
                      delete` ("kubectl <arguments>"), in call order; `delete jobs` fails once
                      FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, and every `kubectl delete` takes
                      FAKE_DELETE_SLEEP seconds. Like the real CLI, a failing call prints an error envelope on
-                     stdout and exits 5: `schedule status` (one line in status-calls per call, failed or not)
+                     stdout and exits 5: `schedule list` (one line in status-calls per call, failed or not; it lists the schedules named by
+                     FAKE_SCHEDULES, bench-s and bench-sq by default, all in the latest run's state)
                      fails when FAKE_STATUS_FAIL is set or the file
                      FAKE_STATUS_FAIL_WHEN_EXISTS names exists, and `schedule cancel` when FAKE_CANCEL_FAIL is
                      set; with FAKE_CANCEL_NOOP a cancel is accepted and the run stays live
@@ -52,16 +53,18 @@ if cmd == ["schedule", "trigger"]:
         with open(d / "logs" / extra.name, "a") as log:
             log.write(extra.read_text())
     print(json.dumps({"run_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
-elif cmd == ["schedule", "status"]:
+elif cmd == ["schedule", "list"]:
     with open(d / "status-calls", "a") as calls:
-        calls.write("status\n")
+        calls.write("list\n")
     marker = os.environ.get("FAKE_STATUS_FAIL_WHEN_EXISTS")
     if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
         unavailable()
     state = read("state")
     current = read("current")
-    run = {"run_id": current, "schedule_name": sys.argv[3], "status": state} if current else None
-    print(json.dumps({"run": run, "tasks": []}))
+    entries = [{"schedule_name": name, "cron_expression": "", "timezone": "UTC", "last_run_id": current,
+                "has_active_run": state in ("pending", "running", "cancelling"), "last_run_status": state}
+               for name in os.environ.get("FAKE_SCHEDULES", "bench-s,bench-sq").split(",")]
+    print(json.dumps({"schedules": entries}))
 elif cmd == ["schedule", "cancel"]:
     if os.environ.get("FAKE_CANCEL_FAIL"):
         unavailable()

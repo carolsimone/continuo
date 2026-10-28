@@ -12,15 +12,13 @@ def has_schedule(doc: dict, name: str) -> bool:
     return any(entry.get("schedule_name") == name for entry in doc.get("schedules", []))
 
 
-# The statuses of a run that still holds its schedule.
-ACTIVE_RUN_STATUSES = ("pending", "running", "cancelling")
-
-
-def run_state(doc: dict) -> tuple:
-    """(run id, whether the run is live, its status) from `schedule status` output; a schedule that never ran has "run": null."""
-    run = doc.get("run") or {}
-    status = run.get("status", "")
-    return run.get("run_id", ""), status in ACTIVE_RUN_STATUSES, status
+def run_state(doc: dict, name: str):
+    """(last run id, whether a run holds the schedule, its status) of schedule NAME from `schedule list` output, or None when
+    the list has no such schedule. A schedule that never ran has an empty run id and status."""
+    for entry in doc.get("schedules", []):
+        if entry.get("schedule_name") == name:
+            return entry.get("last_run_id", ""), bool(entry.get("has_active_run")), entry.get("last_run_status", "")
+    return None
 
 
 def schedule_names(doc: dict) -> list:
@@ -34,14 +32,18 @@ def same_schedules(a: dict, b: dict) -> bool:
 def main(argv: list) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
     if not argv:
-        log.error("usage: cli_json.py has-schedule NAME | run-state | field NAME | schedule-names | same-schedules FILE")
+        log.error("usage: cli_json.py has-schedule NAME | run-state NAME | field NAME | schedule-names | same-schedules FILE")
         return 2
     doc = json.load(sys.stdin)
     command = argv[0]
     if command == "has-schedule" and len(argv) == 2:
         return 0 if has_schedule(doc, argv[1]) else 1
-    if command == "run-state" and len(argv) == 1:
-        run_id, running, status = run_state(doc)
+    if command == "run-state" and len(argv) == 2:
+        state = run_state(doc, argv[1])
+        if state is None:
+            log.error("schedule %s is not in the CLI output", argv[1])
+            return 1
+        run_id, running, status = state
         print(f"{run_id} {'true' if running else 'false'} {status}")
         return 0
     if command == "field" and len(argv) == 2:
