@@ -42,7 +42,7 @@ const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 
 type Callback = (err: any, res: any) => void;
 
-// GrpcClient is the RunService client of state: the one public API for runs,
+// GrpcClient is the RunService client of run-controller: the one public API for runs,
 // their tasks and attempts, nodes, schedules and the live release's topology.
 // A call that changes state takes the caller's metadata (userMetadata) before
 // its callback; a read does not.

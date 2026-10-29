@@ -72,7 +72,7 @@ describe('nodes router', () => {
     expect(res.body.tasks[0].task_status).toBe('failed');
     expect(res.body.tasks[0]).not.toHaveProperty('terminal_status');
     // The structured result key must survive the DTO reconstruction: this route
-    // rebuilds each run field by field, so a new state field is dropped unless
+    // rebuilds each run field by field, so a new run-controller field is dropped unless
     // it is mapped explicitly.
     expect(res.body.tasks[0].run_results_uri).toBe('run-results/task-executions/svc/schema/tbl/e1.json');
     expect(res.body.tasks[0].attempt).toBe(2);
@@ -93,7 +93,7 @@ describe('nodes router', () => {
     expect(mockListNodeTasks).not.toHaveBeenCalled();
   });
 
-  it('GET /:svc/:schema/:table/runs forwards operation=test to the state client', async () => {
+  it('GET /:svc/:schema/:table/runs forwards operation=test to the run-controller client', async () => {
     mockListNodeTasks.mockImplementation((_req, cb) => cb(null, { tasks: [] }));
     await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=test');
     expect(mockListNodeTasks).toHaveBeenCalledWith(
@@ -240,7 +240,7 @@ describe('nodes router', () => {
     expect(mockListNodes).not.toHaveBeenCalled();
   });
 
-  it('GET / forwards operation=test to the state client', async () => {
+  it('GET / forwards operation=test to the run-controller client', async () => {
     mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
     await request(makeApp()).get('/api/nodes?operation=test');
     expect(mockListNodes).toHaveBeenCalledWith(
@@ -304,11 +304,11 @@ describe('nodes router', () => {
 
   it('GET /services maps a gRPC error to its HTTP status', async () => {
     mockListNodeServices.mockImplementation((_req, cb) =>
-      cb({ code: grpc.status.UNAVAILABLE, message: 'state down' }),
+      cb({ code: grpc.status.UNAVAILABLE, message: 'run-controller down' }),
     );
     const res = await request(makeApp()).get('/api/nodes/services');
     expect(res.status).toBe(500);
-    expect(res.body.error).toContain('state down');
+    expect(res.body.error).toContain('run-controller down');
   });
 
   it('GET /:svc/:schema/:table/meta maps node metadata', async () => {

@@ -417,7 +417,7 @@ describe('NodeDetailPage — task timeout', () => {
     ...over,
   });
 
-  // Answers the catalog search like state does: the search term is a
+  // Answers the catalog search like run-controller does: the search term is a
   // case-insensitive exact match on the table name, and nothing else.
   function serveRows(rows: ReturnType<typeof mkSummary>[]) {
     serve(url => {
@@ -1027,7 +1027,7 @@ describe('NodeDetailPage — request id', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
     await screen.findByText('Request failed — please try again');
-    history = jsonResp({ error: 'state unavailable' }, 503);
+    history = jsonResp({ error: 'run-controller unavailable' }, 503);
     await roundTripOperation();
     fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
 

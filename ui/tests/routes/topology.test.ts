@@ -31,10 +31,10 @@ describe('routes/topology: GET /schedules reads RunService', () => {
     });
   });
 
-  it('answers 500 when state fails', async () => {
-    mockListScheduleTopologies.mockImplementation((_req: any, cb: any) => cb(new Error('state down')));
+  it('answers 500 when run-controller fails', async () => {
+    mockListScheduleTopologies.mockImplementation((_req: any, cb: any) => cb(new Error('run-controller down')));
     const res = await request(app).get('/api/topology/schedules');
     expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/state down/);
+    expect(res.body.error).toMatch(/run-controller down/);
   });
 });

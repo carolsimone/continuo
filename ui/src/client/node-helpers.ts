@@ -77,7 +77,7 @@ export interface SnapshotGroup {
   lastRunAt: string | null;     // created_at of the representative run
 }
 
-// Stale-mode (snapshot_of_run) eligibility mirrors state.TriggerSingleNodeRun's
+// Stale-mode (snapshot_of_run) eligibility mirrors run-controller.TriggerSingleNodeRun's
 // validation: the source RUN must be terminal (scheduler-level status), not the
 // per-task status on this node. A FAILED run where this node stayed PENDING is a
 // valid source; an in-flight run where this node already succeeded is NOT.

@@ -8,7 +8,7 @@ interface Props {
   // The run to cancel. A cancel is addressed to the run itself, so a run
   // that ended and was followed by another is not cancelled by mistake.
   runId: string;
-  // Called once state has accepted the cancel, before the dialog closes.
+  // Called once run-controller has accepted the cancel, before the dialog closes.
   onCancelled: () => void;
   onClose: () => void;
 }

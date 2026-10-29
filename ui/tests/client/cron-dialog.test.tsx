@@ -398,9 +398,9 @@ describe('CronDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
 
     // A refused save ends the request, and the dialog closes again.
-    answer({ status: 500, body: { error: 'state down' } });
+    answer({ status: 500, body: { error: 'run-controller down' } });
     await advance();
-    expect(screen.getByText('state down')).toBeInTheDocument();
+    expect(screen.getByText('run-controller down')).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.click(overlay);
@@ -541,7 +541,7 @@ describe('CronDialog', () => {
     holder.remove();
     expect(document.body).toHaveFocus();
 
-    answer({ status: 500, body: { error: 'state down' } });
+    answer({ status: 500, body: { error: 'run-controller down' } });
     await advance();
 
     expect(input).toBeEnabled();
@@ -561,7 +561,7 @@ describe('CronDialog', () => {
     outside.focus();
     fireEvent.click(saveButton());
     await advance();
-    answer({ status: 500, body: { error: 'state down' } });
+    answer({ status: 500, body: { error: 'run-controller down' } });
     await advance();
     expect(outside).toHaveFocus();
 
@@ -572,7 +572,7 @@ describe('CronDialog', () => {
     fireEvent.click(save);
     await advance();
     outside.focus();
-    answer({ status: 500, body: { error: 'state down' } });
+    answer({ status: 500, body: { error: 'run-controller down' } });
     await advance();
     expect(outside).toHaveFocus();
     outside.remove();
