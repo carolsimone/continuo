@@ -242,7 +242,7 @@ docker.io/library/service-py                        v1                   cca6848
 ```
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
-by default, which tells continuo's executor to resolve dbt job images as an
+by default, which tells continuo's execution-controller to resolve dbt job images as an
 unprefixed `<service>:<image_tag>`, and it launches them with
 `imagePullPolicy: IfNotPresent`. So the image you already loaded onto the node
 with `kind load` is the one it runs, and nothing is ever pulled from a registry.
@@ -1072,7 +1072,7 @@ the oldest one that is not terminal is the one holding the queue.
 **A python node fails at run time with `carries no explicit tag or digest`,
 and the run never finishes.** The python release was posted with a bare
 `image_tag` like `"v1"`. A python release's `image_tag` is used exactly as
-written as the full image reference (`service-py:v1`); with a bare tag the executor
+written as the full image reference (`service-py:v1`); with a bare tag execution-controller
 cannot build the pod spec and the node fails without ever creating a Job.
 Cancel the run, re-release the python service with the full reference (a new
 `release_id`, and re-upload its contract under that id), and run again.

@@ -14,7 +14,7 @@ The images built from `base/` and `services/*` are not long-running services
 dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
 container's `Command` explicitly from
 [`deploy/continuo/files/dbt-commands.yaml`](../deploy/continuo/files/dbt-commands.yaml)
-(via the executor's `CommandResolver` — the default dialect, or a per-team
+(via execution-controller's `CommandResolver` — the default dialect, or a per-team
 override such as `customname-dbt run-model`). That `Command` replaces the image's
 own `base/entrypoint.sh` ENTRYPOINT entirely for every dispatched Job — the
 resolved verb depends on the run's Operation and node type (`run`/`seed`/
@@ -177,7 +177,7 @@ Each service has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`.
 `services/*/profiles.yml`). `base/entrypoint.sh` (which logs the job
 parameters — `schedule_name`, `table_name`, `schema_name`, `job_name`,
 `service_name` — then runs `dbt run --select $TABLE_NAME`) is the image's
-default `ENTRYPOINT`, but executor-created Jobs override `Command`
+default `ENTRYPOINT`, but execution-controller-created Jobs override `Command`
 explicitly (see [Job, not a service](#job-not-a-service) above), so it only
 runs when a Job is launched *without* an explicit command — e.g. manual
 debugging via `docker run`/`kubectl run`, not the production dispatch path.

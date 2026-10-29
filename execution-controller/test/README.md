@@ -1,4 +1,4 @@
-# Executor database tests
+# execution-controller database tests
 
 Database tests connect through the standard `POSTGRES_HOST`, `POSTGRES_PORT`,
 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DB_SSLMODE` settings.
@@ -24,8 +24,8 @@ env POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 POSTGRES_DB=continuo_execution \
   REQUIRE_TEST_DEPS=1 GOFLAGS=-p=1 go test -tags integration -count=1 -v ./...
 ```
 
-All executor database suites acquire the same session advisory lock, including
-when Go runs packages concurrently. Each test requires empty executor tables,
+All execution-controller database suites acquire the same session advisory lock, including
+when Go runs packages concurrently. Each test requires empty execution-controller tables,
 owns every row inserted while it holds the lock, and truncates those rows at
 cleanup. Setup refuses a nonempty database without deleting existing data.
 Use a database with no running controller, relay, or external writer; the lock

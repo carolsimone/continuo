@@ -20,7 +20,7 @@ For dbt nodes, whose images are resolved and configured differently, see
 
 Unlike dbt images, a python node's image is **not** composed from the service
 name. The `image_tag` you send on `POST /api/v1/releases` is a complete registry
-reference (`<registry>/<image>:<tag>`), and the executor runs it verbatim: no
+reference (`<registry>/<image>:<tag>`), and execution-controller runs it verbatim: no
 prefix is prepended, and the service name is not used. `global.teamImagePrefix`
 does not apply.
 
@@ -36,13 +36,13 @@ The engine is part of the image **name**, not the tag, so the tag position
 stays free for an immutable `<version>@sha256:<digest>` pin.
 
 The base is dual-role: the same image serves the blue/green validation Jobs
-(which the executor runs with an explicit `validation-op` command) and your
+(which execution-controller runs with an explicit `validation-op` command) and your
 domain image (which uses the base's default command, the node harness). You
 never set a command yourself.
 
 ## What your container must do
 
-The executor sets **no command**: your image's entrypoint is the runtime
+execution-controller sets **no command**: your image's entrypoint is the runtime
 harness, which looks up the node named by `NODE_ID` in the contract files baked
 into the image, imports its `script`, runs it, conforms the returned dataframe
 to the declared columns, and performs the only write. Overriding the entrypoint
@@ -68,7 +68,7 @@ warehouse Secret, so its keys reach your container as env vars and a warehouse
 key of the same name wins. An explicitly set variable (`NODE_ID`, `TABLE_NAME`,
 `TARGET_SCHEMA`) beats both.
 
-`CONTRACT_DIR` and `APP_ROOT` are **not** set by the executor — the runtime base
+`CONTRACT_DIR` and `APP_ROOT` are **not** set by execution-controller — the runtime base
 image declares them, because the image owns its own layout.
 
 Nothing else is injected. In particular your image never receives S3
@@ -88,7 +88,7 @@ ownership changes. The e2e fixture in this repository
 
 Because the base runs as non-root, a `RUN` step that installs packages cannot
 write to site-packages. Switch to root for the install and switch back, so the
-image still ends on the uid the executor expects:
+image still ends on the uid execution-controller expects:
 
 ```dockerfile
 USER root
