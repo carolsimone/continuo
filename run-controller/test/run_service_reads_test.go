@@ -18,7 +18,7 @@ import (
 func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	runID := startRun(t, schedule)
 
 	got, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
@@ -101,11 +101,13 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 func TestRunService_AnotherTenantsRunDoesNotExist(t *testing.T) {
 	ctx := context.Background()
 	runID := uuid.New()
-	_, err := stateDB.ExecContext(ctx, `
+	_, err := runControllerDB.ExecContext(ctx, `
 		INSERT INTO runs (tenant_id, run_id, schedule_name, status) VALUES ('acme', $1, $2, 'running')`,
 		runID, "acme-"+runID.String()[:8])
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = stateDB.Exec(`DELETE FROM runs WHERE tenant_id = 'acme' AND run_id = $1`, runID) })
+	t.Cleanup(func() {
+		_, _ = runControllerDB.Exec(`DELETE FROM runs WHERE tenant_id = 'acme' AND run_id = $1`, runID)
+	})
 
 	_, err = runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID.String()})
 	assert.Equal(t, codes.NotFound, status.Code(err))

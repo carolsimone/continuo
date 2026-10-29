@@ -155,10 +155,10 @@ func newCronTenantOf(t *testing.T, specs ...topology.NodeSpec) *cronTenant {
 		"s3://continuo/tenants/"+c.id+"/topologies/"+releaseID+"/topology.json.gz", "sha-"+releaseID, specs)
 	require.NoError(t, err)
 	ctx := context.Background()
-	tx, err := stateDB.BeginTxx(ctx, nil)
+	tx, err := runControllerDB.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	topo := postgres.NewTopologyRepository(stateDB, tx)
+	topo := postgres.NewTopologyRepository(runControllerDB, tx)
 	require.NoError(t, topo.LockTopology(ctx))
 	_, err = topo.SaveRelease(ctx, rel)
 	require.NoError(t, err)
@@ -170,15 +170,15 @@ func newCronTenantOf(t *testing.T, specs ...topology.NodeSpec) *cronTenant {
 // cleanup deletes every row of the tenant.
 func (c *cronTenant) cleanup() {
 	ctx := context.Background()
-	_, _ = stateDB.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id IN (SELECT run_id FROM runs WHERE tenant_id = $1)`, c.id)
+	_, _ = runControllerDB.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id IN (SELECT run_id FROM runs WHERE tenant_id = $1)`, c.id)
 	for _, table := range []string{"runs", "node_leases", "schedules", "live_release", "topology_releases"} {
-		_, _ = stateDB.ExecContext(ctx, `DELETE FROM `+table+` WHERE tenant_id = $1`, c.id)
+		_, _ = runControllerDB.ExecContext(ctx, `DELETE FROM `+table+` WHERE tenant_id = $1`, c.id)
 	}
 }
 
 // factory returns a unit of work that reads the tenant's clock.
 func (c *cronTenant) factory() uow.UnitOfWork {
-	return postgres.NewPostgresUnitOfWork(stateDB, c.clock, c.logger, c.parser)
+	return postgres.NewPostgresUnitOfWork(runControllerDB, c.clock, c.logger, c.parser)
 }
 
 // loop is a cron loop over run-controller's database; with maintenance on it starts no
@@ -191,7 +191,7 @@ func (c *cronTenant) loop(maintenance bool) *cronloop.Loop {
 // next fire is next.
 func (c *cronTenant) schedule(t *testing.T, name, cronExpr string, next time.Time) {
 	t.Helper()
-	_, err := stateDB.Exec(`
+	_, err := runControllerDB.Exec(`
 		INSERT INTO schedules (tenant_id, name, cron, timezone, next_fire_at, updated_by, updated_at)
 		VALUES ($1, $2, $3, 'Europe/Paris', $4, 'alice@example.com', $5)`, c.id, name, cronExpr, next, march(1, 0, 0))
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ type scheduleRow struct {
 func (c *cronTenant) row(t *testing.T, name string) scheduleRow {
 	t.Helper()
 	var r scheduleRow
-	require.NoError(t, stateDB.Get(&r, `SELECT cron, next_fire_at, version, updated_by FROM schedules WHERE tenant_id = $1 AND name = $2`, c.id, name))
+	require.NoError(t, runControllerDB.Get(&r, `SELECT cron, next_fire_at, version, updated_by FROM schedules WHERE tenant_id = $1 AND name = $2`, c.id, name))
 	return r
 }
 
@@ -237,7 +237,7 @@ type cronRun struct {
 func (c *cronTenant) runs(t *testing.T, name string) []cronRun {
 	t.Helper()
 	var out []cronRun
-	require.NoError(t, stateDB.Select(&out, `
+	require.NoError(t, runControllerDB.Select(&out, `
 		SELECT run_id, kind, status, scheduled_for, initiated_by, release_id, failure_reason
 		  FROM runs WHERE tenant_id = $1 AND schedule_name = $2 ORDER BY scheduled_for, created_at`, c.id, name))
 	return out
@@ -287,7 +287,7 @@ func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	assert.True(t, slot.Equal(*r.ScheduledFor), "scheduled for: got %s", r.ScheduledFor)
 	assert.Equal(t, identity.SystemUserID, r.InitiatedBy)
 	assert.True(t, r.ReleaseID.Valid, "the run names the live release")
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID),
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID),
 		"the ready task's dispatch is in the outbox")
 
 	row := c.row(t, "daily")
@@ -392,9 +392,9 @@ func TestCronLoop_AnActiveRunConsumesTheSlot(t *testing.T) {
 	assert.True(t, march(12, 1, 0).Equal(c.nextFire(t, "daily")))
 	assert.Equal(t, 1, c.metrics.counted("skipped_active"))
 
-	_, err := stateDB.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE run_id = $1`, first[0].RunID)
+	_, err := runControllerDB.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE run_id = $1`, first[0].RunID)
 	require.NoError(t, err)
-	releaseLeasesOf(t, stateDB, first[0].RunID)
+	releaseLeasesOf(t, runControllerDB, first[0].RunID)
 	c.clock.set(march(12, 1, 0))
 	c.passUntil(t, c.loop(false), c.movedFrom(t, "daily", march(12, 1, 0)))
 
@@ -480,7 +480,7 @@ func TestCronLoop_ASlotThatHasItsRunIsConsumedWithoutASecondRun(t *testing.T) {
 	slot := march(10, 1, 0)
 	c.clock.set(slot)
 	existing := uuid.New()
-	_, err := stateDB.Exec(`
+	_, err := runControllerDB.Exec(`
 		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, kind, initiated_by, scheduled_for)
 		VALUES ($1, $2, 'daily', 'succeeded', $3, now(), 'cron', 'system', $3)`, c.id, existing, slot)
 	require.NoError(t, err)
@@ -525,7 +525,7 @@ func (c *cronTenant) upsert(ctx context.Context, name, cronExpr string) error {
 func waitForLockWaiters(t *testing.T, n int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return countOf(t, stateDB, `
+		return countOf(t, runControllerDB, `
 			SELECT count(*) FROM pg_stat_activity
 			 WHERE datname = current_database() AND wait_event_type = 'Lock'`) >= n
 	}, 10*time.Second, 20*time.Millisecond, "%d sessions never waited for a lock", n)
@@ -557,10 +557,10 @@ func TestCronLoop_AnUpsertRacingTheFireLeavesOneRunAndTheNewCron(t *testing.T) {
 
 	// The fire takes the topology lock once it holds the row; holding that
 	// lock keeps the fire inside its transaction until the save waits too.
-	holder, err := stateDB.BeginTxx(ctx, nil)
+	holder, err := runControllerDB.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer holder.Rollback() //nolint:errcheck
-	require.NoError(t, postgres.NewTopologyRepository(stateDB, holder).LockTopology(ctx))
+	require.NoError(t, postgres.NewTopologyRepository(runControllerDB, holder).LockTopology(ctx))
 
 	fired := make(chan error, 1)
 	go func() {
@@ -595,7 +595,7 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 	c := newCronTenant(t, "daily")
 	slot := march(10, 1, 0)
 	c.clock.set(slot)
-	waker, err := pkgoutbox.NewPostgresWaker(ctx, stateDSN, postgres.SchedulesChannel, c.logger)
+	waker, err := pkgoutbox.NewPostgresWaker(ctx, runControllerDSN, postgres.SchedulesChannel, c.logger)
 	require.NoError(t, err)
 	defer waker.Close() //nolint:errcheck
 	done := make(chan struct{})

@@ -50,7 +50,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //
 //	POST /releases → release.requested:v1 → topology-controller candidate parse
 //	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
-//	set → validation.requested:v1 → executor/k8s run a real dbt --empty job →
+//	set → validation.requested:v1 → execution-controller runs a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
 //	→ release.promoted:v2 → orchestrator loads the artifact and swaps the Neo4j topology.
 //
@@ -258,7 +258,7 @@ func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients)
 
 // deleteParseCacheProdArtifact removes the prod-context partial-parse artifact
 // for (service, imageTag) from MinIO, mirroring the canonical key the
-// executor's compile leg writes to and the hydrate-parse-cache initContainer
+// execution-controller's compile leg writes to and the hydrate-parse-cache initContainer
 // reads from: s3://<bucket>/<service>/parse-cache/<image_tag>/partial_parse.msgpack
 // (see execution-controller/service/artifacts.ParseCacheProdURI). Deleting it proves
 // the degrade path end-to-end: a run Job that can no longer fetch the artifact
@@ -707,7 +707,7 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 // release-controller's service_prod pointer table (DB continuo_release) — the
 // production source of truth for each service's current image. setup.sh /
 // provision-k8s-test-env.sh seed one service_prod row per service with the real
-// content-addressed tag the kind dbt images are loaded under. The executor
+// content-addressed tag the kind dbt images are loaded under. execution-controller
 // composes the dbt job image as service-<n>:<image_tag>, so this tag must match
 // the kind image exactly.
 func readServiceImageTag(t *testing.T, ctx context.Context, clients *testClients, service string) string {
@@ -1040,7 +1040,7 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 // assertCandidateSchemaDropped polls the dbt warehouse until the release's
 // _candidate_<sanitized releaseID> schema is absent from
 // information_schema.schemata. On the validation.result:v1 terminal
-// (kind=complete) the executor schedules a one-shot engine-image drop_schema
+// (kind=complete) execution-controller schedules a one-shot engine-image drop_schema
 // Job (it does not connect to the warehouse itself), so the drop is
 // asynchronous and this must poll. The schema name is computed with the same
 // sanitization release-controller applies (non-[A-Za-z0-9_] → _).
@@ -1061,7 +1061,7 @@ func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *te
 
 // assertNoValidationJobsDispatched confirms no mode=validation K8s Job was ever
 // created for releaseID. A release that skips validation never emits
-// validation.requested:v1, so the executor never dispatches a job. A short
+// validation.requested:v1, so execution-controller never dispatches a job. A short
 // grace window absorbs any in-flight dispatch race before the final assertion.
 func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()

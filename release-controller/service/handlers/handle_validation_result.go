@@ -29,7 +29,7 @@ type HandleValidationResultInput struct {
 // The kind=complete message is emitted last, after every per-node message on
 // validation.result:v1, so a single in-order consumer has normally stored every
 // node's outcome by the time this runs. The decision itself reads only
-// aggregate_status (which executor computed from every node's terminal outcome),
+// aggregate_status (which execution-controller computed from every node's terminal outcome),
 // so it is order-independent and needs no completeness barrier: if a node is
 // absent from the store — a projection write not yet delivered, or permanently
 // dropped — the decision still stands on aggregate_status and logs the missing

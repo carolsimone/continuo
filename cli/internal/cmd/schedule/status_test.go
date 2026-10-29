@@ -23,8 +23,8 @@ import (
 
 const statusRunID = "11111111-1111-4111-8111-111111111111"
 
-// fakeStateStatus implements client.RunClient for status tests.
-type fakeStateStatus struct {
+// fakeRunControllerStatus implements client.RunClient for status tests.
+type fakeRunControllerStatus struct {
 	client.RunClient
 	schedules    *runv1.ListSchedulesResponse
 	schedulesErr error
@@ -44,7 +44,7 @@ type fakeStateStatus struct {
 	deadlines map[string][]bool
 }
 
-func (f *fakeStateStatus) noteDeadline(rpc string, ctx context.Context) {
+func (f *fakeRunControllerStatus) noteDeadline(rpc string, ctx context.Context) {
 	if f.deadlines == nil {
 		f.deadlines = map[string][]bool{}
 	}
@@ -52,12 +52,12 @@ func (f *fakeStateStatus) noteDeadline(rpc string, ctx context.Context) {
 	f.deadlines[rpc] = append(f.deadlines[rpc], has)
 }
 
-func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error) {
+func (f *fakeRunControllerStatus) ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error) {
 	f.noteDeadline("ListSchedules", ctx)
 	return f.schedules, f.schedulesErr
 }
 
-func (f *fakeStateStatus) GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error) {
+func (f *fakeRunControllerStatus) GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error) {
 	f.noteDeadline("GetRun", ctx)
 	f.getRunIDs = append(f.getRunIDs, runID)
 	if f.runErr != nil {
@@ -66,7 +66,7 @@ func (f *fakeStateStatus) GetRun(ctx context.Context, runID string) (*runv1.RunR
 	return &runv1.RunResponse{Run: f.run}, nil
 }
 
-func (f *fakeStateStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32) (*runv1.ListTasksResponse, error) {
+func (f *fakeRunControllerStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32) (*runv1.ListTasksResponse, error) {
 	f.noteDeadline("ListTasks", ctx)
 	if f.taskErr != nil {
 		return nil, f.taskErr
@@ -76,7 +76,7 @@ func (f *fakeStateStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32
 	return resp, nil
 }
 
-func (f *fakeStateStatus) ListRunAttempts(ctx context.Context, _, _ string, _, offset int32) (*runv1.ListRunAttemptsResponse, error) {
+func (f *fakeRunControllerStatus) ListRunAttempts(ctx context.Context, _, _ string, _, offset int32) (*runv1.ListRunAttemptsResponse, error) {
 	f.noteDeadline("ListRunAttempts", ctx)
 	if offset > 0 {
 		return &runv1.ListRunAttemptsResponse{TotalCount: f.attemptsTotal}, nil
@@ -84,7 +84,7 @@ func (f *fakeStateStatus) ListRunAttempts(ctx context.Context, _, _ string, _, o
 	return &runv1.ListRunAttemptsResponse{TotalCount: f.attemptsTotal, Attempts: f.attempts}, nil
 }
 
-func (f *fakeStateStatus) Close() error { return nil }
+func (f *fakeRunControllerStatus) Close() error { return nil }
 
 func runStatus(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
@@ -125,8 +125,8 @@ type statusPayloadJSON struct {
 	Tasks []statusTaskJSON `json:"tasks"`
 }
 
-func ranSchedule() *fakeStateStatus {
-	return &fakeStateStatus{
+func ranSchedule() *fakeRunControllerStatus {
+	return &fakeRunControllerStatus{
 		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 			{ScheduleName: "other", LastRunId: "run-9"},
 			{ScheduleName: "daily", LastRunId: statusRunID, HasActiveRun: false, LastRunStatus: "failed"},
@@ -211,7 +211,7 @@ func TestScheduleStatus_UnknownNameExits3(t *testing.T) {
 }
 
 func TestScheduleStatus_ANeverRunScheduleReturnsANullRunAndNoTasks(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+	fake := &fakeRunControllerStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 		{ScheduleName: "daily"},
 	}}}
 
@@ -233,7 +233,7 @@ func TestScheduleStatus_AListTasksFailureExits5(t *testing.T) {
 }
 
 func TestScheduleStatus_WrongArgCountExits2(t *testing.T) {
-	stdout, _, exit := runStatus(t, &fakeStateStatus{}, []string{}, false)
+	stdout, _, exit := runStatus(t, &fakeRunControllerStatus{}, []string{}, false)
 	assert.Equal(t, 2, exit)
 
 	// A usage error must still emit the machine-readable envelope on stdout,

@@ -41,7 +41,7 @@ func runTest(t *testing.T, fake client.RunClient, args []string, human bool) (st
 }
 
 func TestScheduleTest_ForwardsActor(t *testing.T) {
-	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "s1"}}
+	fake := &fakeRunController{testResp: &runv1.StartRunResponse{RunId: "s1"}}
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "okta.example.com|alice"}
 	cmd := NewTestCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
@@ -53,7 +53,7 @@ func TestScheduleTest_ForwardsActor(t *testing.T) {
 }
 
 func TestScheduleTest_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
+	fake := &fakeRunController{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runTest(t, fake, []string{"daily_ingest"}, false)
 
@@ -69,7 +69,7 @@ func TestScheduleTest_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestScheduleTest_NotFoundExits3(t *testing.T) {
-	fake := &fakeState{testErr: status.Error(codes.NotFound, "schedule 'missing' not found")}
+	fake := &fakeRunController{testErr: status.Error(codes.NotFound, "schedule 'missing' not found")}
 
 	stdout, _, exit := runTest(t, fake, []string{"missing"}, false)
 
@@ -82,7 +82,7 @@ func TestScheduleTest_NotFoundExits3(t *testing.T) {
 }
 
 func TestScheduleTest_MissingArgumentExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := runTest(t, fake, []string{}, false)
 
@@ -93,7 +93,7 @@ func TestScheduleTest_MissingArgumentExits2(t *testing.T) {
 }
 
 func TestScheduleTest_TooManyArgumentsExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	_, _, exit := runTest(t, fake, []string{"daily_ingest", "extra"}, false)
 
@@ -101,7 +101,7 @@ func TestScheduleTest_TooManyArgumentsExits2(t *testing.T) {
 }
 
 func TestScheduleTest_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
+	fake := &fakeRunController{testResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runTest(t, fake, []string{"daily_ingest"}, true)
 

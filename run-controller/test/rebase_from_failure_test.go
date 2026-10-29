@@ -26,7 +26,7 @@ type rebaseTask struct {
 func rebaseTasks(t *testing.T, runID string) []rebaseTask {
 	t.Helper()
 	var out []rebaseTask
-	require.NoError(t, stateDB.Select(&out, `
+	require.NoError(t, runControllerDB.Select(&out, `
 		SELECT node_key, status, inherited_from_task_id IS NOT NULL AS inherited
 		FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, runID))
 	return out
@@ -36,9 +36,9 @@ func rebaseTasks(t *testing.T, runID string) []rebaseTask {
 // releases its tasks' node leases.
 func finishRun(t *testing.T, runID string) {
 	t.Helper()
-	_, err := stateDB.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
+	_, err := runControllerDB.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, runID)
 	require.NoError(t, err)
-	releaseLeasesOf(t, stateDB, uuid.MustParse(runID))
+	releaseLeasesOf(t, runControllerDB, uuid.MustParse(runID))
 }
 
 // TestRebaseFromFailure previews and rebases a failed run through run-controller's
@@ -50,7 +50,7 @@ func finishRun(t *testing.T, runID string) {
 func TestRebaseFromFailure(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rebase-from-failure"
-	h := newBuiltHarness(stateDB)
+	h := newBuiltHarness(runControllerDB)
 	nodes := func(yHash, qHash string) []topology.NodeSpec {
 		y := scheduledNode("mart", "rff_y", "dbt-model", schedule, "mart.rff_x")
 		y.ContentHash = yHash
@@ -62,23 +62,23 @@ func TestRebaseFromFailure(t *testing.T) {
 			scheduledNode("mart", "rff_p", "dbt-model", schedule), q,
 		}
 	}
-	source := promoteRelease(t, stateDB, nodes("sha256:rff_y", "sha256:rff_q")...)
+	source := promoteRelease(t, runControllerDB, nodes("sha256:rff_y", "sha256:rff_q")...)
 
 	trig, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: schedule})
 	require.NoError(t, err)
 	srcID := trig.RunId
-	_, err = stateDB.Exec(`
+	_, err = runControllerDB.Exec(`
 		UPDATE tasks SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, attempt = 2
 		WHERE run_id = $1`, srcID)
 	require.NoError(t, err)
 	finishRun(t, srcID)
 	at := time.Now().UTC().Add(-time.Hour)
-	_, err = stateDB.Exec(`
+	_, err = runControllerDB.Exec(`
 		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
 		SELECT tenant_id, task_id, 0, job_name, 'succeeded', $2, $2, 42.5 FROM tasks WHERE run_id = $1 AND node_key = 'mart.rff_y'`, srcID, at)
 	require.NoError(t, err)
 
-	live := promoteRelease(t, stateDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)
+	live := promoteRelease(t, runControllerDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)
 	require.NotEqual(t, source, live)
 	changedY := &runv1.ChangedUpstreamNode{ServiceName: "service-1", SchemaName: "mart", TableName: "rff_y", Downstream: 1, LastSuccessSeconds: 42.5}
 
@@ -118,7 +118,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	})
 
 	t.Run("a rebase previewed on another live release is refused and creates no run", func(t *testing.T) {
-		before := countOf(t, stateDB, `SELECT count(*) FROM runs`)
+		before := countOf(t, runControllerDB, `SELECT count(*) FROM runs`)
 
 		_, err := runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{
 			RequestId: uuid.NewString(), SourceRunId: srcID, IncludeChangedUpstream: true, ExpectedReleaseId: source.ReleaseID,
@@ -126,7 +126,7 @@ func TestRebaseFromFailure(t *testing.T) {
 
 		require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 		assert.Equal(t, "the live release changed; preview again", status.Convert(err).Message())
-		assert.Equal(t, before, countOf(t, stateDB, `SELECT count(*) FROM runs`))
+		assert.Equal(t, before, countOf(t, runControllerDB, `SELECT count(*) FROM runs`))
 	})
 
 	var activeID string
@@ -163,7 +163,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	// built it with the live rff_y, and so still offers the fix.
 	t.Run("a rebase of a rebase compares an inherited success with the release that built it", func(t *testing.T) {
 		require.NotEmpty(t, activeID, "the rebase without the option is the source")
-		_, err := stateDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1 AND node_key = 'mart.rff_z'`, activeID)
+		_, err := runControllerDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1 AND node_key = 'mart.rff_z'`, activeID)
 		require.NoError(t, err)
 
 		pv, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})

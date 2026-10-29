@@ -1,4 +1,4 @@
-# dbt command dialect for executor-created Kubernetes Jobs.
+# dbt command dialect for execution-controller-created Kubernetes Jobs.
 #
 # Every configured block must be COMPLETE: the `default` block is required and
 # must define all eight command keys, and every `services.<name>` override must
@@ -11,7 +11,7 @@
 # schema routed via the DBT_TARGET_SCHEMA env var + generate_schema_name macro),
 # compile (validation-pipeline leg: command + absolute manifest_path, plus optional
 # partial_parse_path — must live in the same directory as manifest_path, since the
-# executor mounts the parse-cache volume at that directory in the team container),
+# execution-controller mounts the parse-cache volume at that directory in the team container),
 # parse (parse-export/rehearsal leg; no placeholders). full_refresh (optional)
 # rebuilds one dbt model from scratch, and seed_full_refresh (optional) rebuilds
 # one dbt seed from scratch; a block without one of them cannot full-refresh that

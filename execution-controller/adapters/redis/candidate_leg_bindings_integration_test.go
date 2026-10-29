@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -32,7 +32,7 @@ func TestSeedBuildRequestedBinding_MarksDedupRowCompleted(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	binding := executorredis.NewSeedBuildRequestedBinding(
+	binding := ecredis.NewSeedBuildRequestedBinding(
 		func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) },
 		handlers.NewSeedBuildRequestedHandler(logger), &recordingSchemaCreator{}, logger)
 	releaseID := "rel-seed-completed-1"
@@ -56,7 +56,7 @@ func TestCompileRequestedBinding_MarksDedupRowCompleted(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	binding := executorredis.NewCompileRequestedBinding(
+	binding := ecredis.NewCompileRequestedBinding(
 		func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) },
 		handlers.NewCompileRequestedHandler(logger), logger)
 	releaseID := "rel-compile-completed-1"

@@ -12,7 +12,7 @@ const mockListNodeServices = vi.fn();
 const mockGetNode = vi.fn();
 const mockGetNodeVersions = vi.fn();
 
-const mockStateClient = {
+const mockRunClient = {
   listNodeTasks: mockListNodeTasks,
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
   listNodes: mockListNodes,
@@ -27,7 +27,7 @@ const mockGraphClient = { getNode: mockGetNode, getNodeVersions: mockGetNodeVers
 function makeApp() {
   const app = express();
   app.use(express.json());
-  app.use('/api/nodes', createNodesRouter(mockStateClient as any, mockGraphClient as any));
+  app.use('/api/nodes', createNodesRouter(mockRunClient as any, mockGraphClient as any));
   return app;
 }
 

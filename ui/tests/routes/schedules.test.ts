@@ -14,7 +14,7 @@ const mockUpsertSchedule = vi.fn();
 const mockDeleteSchedule = vi.fn();
 const mockPreviewSchedule = vi.fn();
 
-const mockStateClient = {
+const mockRunClient = {
   startRun: mockStartRun,
   listSchedules: mockListSchedules,
   listRuns: mockListRuns,
@@ -46,7 +46,7 @@ const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
 
 const app = express();
 app.use(express.json());
-app.use('/api/schedules', createSchedulesRouter(mockStateClient as any));
+app.use('/api/schedules', createSchedulesRouter(mockRunClient as any));
 
 describe('GET /api/schedules', () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -212,7 +212,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
       req.user = { userId: 'okta|alice', email: 'a@x', name: 'A', role: 'operator' };
       next();
     });
-    authedApp.use('/api/schedules', createSchedulesRouter(mockStateClient as any));
+    authedApp.use('/api/schedules', createSchedulesRouter(mockRunClient as any));
 
     const res = await request(authedApp).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
     expect(res.status).toBe(200);

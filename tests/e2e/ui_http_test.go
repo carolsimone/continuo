@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyUIService asserts the ui HTTP API returns correct data for the
+// verifyUIHTTPAPI asserts the ui HTTP API returns correct data for the
 // run created by the e2e test.  Status fields are polled because the
 // run-controller service propagates job-completion events asynchronously after the k8s
 // jobs finish (execution-controller → gRPC → run-controller service → DB), so the scheduler
@@ -24,7 +24,7 @@ import (
 //
 // The function is a no-op when UI_HTTP_BASE is unset so developer runs without
 // the UI container are not broken.
-func verifyUIService(t *testing.T, ctx context.Context, runID string) {
+func verifyUIHTTPAPI(t *testing.T, ctx context.Context, runID string) {
 	t.Helper()
 
 	base := os.Getenv("UI_HTTP_BASE")

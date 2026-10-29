@@ -132,12 +132,12 @@ func TestDispatchProblemRefusesAJobNameKubernetesCannotRead(t *testing.T) {
 	assert.Contains(t, message, "job_name", "no job name")
 }
 
-// Every name run-controller gives an attempt (pkg/domain.ComputeJobName: a DNS-1123
-// label of at most 63 characters, with the -r{attempt} suffix after the
-// first attempt) is accepted. The names are those the function returns for
+// Every name run-controller gives an attempt (pkg/domain.ComputeJobName: a
+// DNS-1123 label of at most 63 characters, with the -r{attempt} suffix after
+// the first attempt) is accepted. The names are those the function returns for
 // service-1 / analytics / int_customer_orders_aggregated_daily and
 // service-1 / analytics / orders in run 3f2a9c1e-..., at the attempts shown.
-func TestDispatchProblemAcceptsTheJobNamesStateComputes(t *testing.T) {
+func TestDispatchProblemAcceptsTheJobNamesRunControllerComputes(t *testing.T) {
 	for name, jobName := range map[string]string{
 		"a short name":                             "service-1-analytics-orders-3f2a9c1e",
 		"a short retry":                            "service-1-analytics-orders-3f2a9c1e-r1",

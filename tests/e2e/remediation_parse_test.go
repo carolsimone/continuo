@@ -72,7 +72,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// a whole second pipeline in kind — compile service-2 with the overlay,
 	// build the candidate schema, run the validation Jobs — and matches what
 	// the validation lane's own trigger-to-terminal-proposal wait budgets for
-	// the same span (see remediation_agent_test.go).
+	// the same span (TestE2E_AgentRemediation_ProposesFixForRejection).
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
 

@@ -23,20 +23,20 @@ import (
 // tenant.
 func commandRecords(t *testing.T, requestID string) int {
 	t.Helper()
-	return countOf(t, stateDB, `SELECT count(*) FROM command_requests WHERE request_id = $1`, requestID)
+	return countOf(t, runControllerDB, `SELECT count(*) FROM command_requests WHERE request_id = $1`, requestID)
 }
 
 // outboxRowsOf counts the outbox rows runID's transactions wrote.
 func outboxRowsOf(t *testing.T, runID string) int {
 	t.Helper()
-	return countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
+	return countOf(t, runControllerDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 }
 
 // runStatusOf reads the status of runID.
 func runStatusOf(t *testing.T, runID string) string {
 	t.Helper()
 	var s string
-	require.NoError(t, stateDB.Get(&s, `SELECT status FROM runs WHERE run_id = $1`, runID))
+	require.NoError(t, runControllerDB.Get(&s, `SELECT status FROM runs WHERE run_id = $1`, runID))
 	return s
 }
 
@@ -44,9 +44,9 @@ func runStatusOf(t *testing.T, runID string) string {
 // attempt would, and releases its tasks' node leases.
 func endCancelled(t *testing.T, runID string) {
 	t.Helper()
-	_, err := stateDB.Exec(`UPDATE runs SET status = 'cancelled', completed_at = now() WHERE run_id = $1`, runID)
+	_, err := runControllerDB.Exec(`UPDATE runs SET status = 'cancelled', completed_at = now() WHERE run_id = $1`, runID)
 	require.NoError(t, err)
-	releaseLeasesOf(t, stateDB, uuid.MustParse(runID))
+	releaseLeasesOf(t, runControllerDB, uuid.MustParse(runID))
 }
 
 // startRun starts a run of schedule through RunService under a request id of
@@ -69,7 +69,7 @@ func requireReused(t *testing.T, err error) {
 func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-retry"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	requestID := uuid.NewString()
 
 	first, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: schedule})
@@ -84,13 +84,13 @@ func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 	require.NoError(t, err, "an empty operation is read as run")
 	assert.Equal(t, first.GetRunId(), spelled.GetRunId())
 
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
 	assert.Equal(t, 1, commandRecords(t, requestID))
 	assert.Equal(t, dispatched, outboxRowsOf(t, first.GetRunId()), "a replay writes no outbox row")
 
 	_, err = runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: schedule, Operation: "build"})
 	requireReused(t, err)
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
 	assert.Equal(t, dispatched, outboxRowsOf(t, first.GetRunId()), "a refused reuse writes no outbox row")
 }
 
@@ -100,7 +100,7 @@ func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-concurrent"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	req := &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: schedule}
 
 	var (
@@ -125,7 +125,7 @@ func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
 	require.NoError(t, errs[1])
 	t.Cleanup(func() { finishRun(t, ids[0]) })
 	assert.Equal(t, ids[0], ids[1], "both calls answer with the one run")
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
 	assert.Equal(t, 1, commandRecords(t, req.GetRequestId()))
 	assert.Equal(t, 1, outboxRowsOf(t, ids[0]), "the run's one node is dispatched once")
 }
@@ -135,7 +135,7 @@ func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
 func TestStartRun_ARefusedCallStoresNothing(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-start-refused"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	active := startRun(t, schedule)
 	requestID := uuid.NewString()
 
@@ -155,12 +155,12 @@ func TestStartRun_ARefusedCallStoresNothing(t *testing.T) {
 // run in each.
 func TestStartRun_TheSameRequestIDInTwoTenantsIsTwoRuns(t *testing.T) {
 	ctx := context.Background()
-	other := newEdgeTenant(t, stateDB)
-	_, err := stateDB.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE tenant_id = $1 AND run_id = $2`, other.id, other.runID)
+	other := newEdgeTenant(t, runControllerDB)
+	_, err := runControllerDB.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE tenant_id = $1 AND run_id = $2`, other.id, other.runID)
 	require.NoError(t, err)
-	releaseLeasesOf(t, stateDB, other.runID)
+	releaseLeasesOf(t, runControllerDB, other.runID)
 	const schedule = "rs-two-tenants"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	requestID := uuid.New()
 	alice := identity.FromUserID("okta|alice")
 
@@ -173,13 +173,15 @@ func TestStartRun_TheSameRequestIDInTwoTenantsIsTwoRuns(t *testing.T) {
 		TenantID: other.id, RequestID: requestID, ScheduleName: other.schedule, Initiator: alice,
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = stateDB.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, theirs.RunID) })
+	t.Cleanup(func() {
+		_, _ = runControllerDB.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, theirs.RunID)
+	})
 
 	assert.False(t, mine.Replayed)
 	assert.False(t, theirs.Replayed, "another tenant's record of the id is not a repeat")
 	assert.NotEqual(t, mine.RunID, theirs.RunID)
 	var tenantOf string
-	require.NoError(t, stateDB.Get(&tenantOf, `SELECT tenant_id FROM runs WHERE run_id = $1`, theirs.RunID))
+	require.NoError(t, runControllerDB.Get(&tenantOf, `SELECT tenant_id FROM runs WHERE run_id = $1`, theirs.RunID))
 	assert.Equal(t, other.id, tenantOf)
 	assert.Equal(t, 2, commandRecords(t, requestID.String()))
 }
@@ -189,7 +191,7 @@ func TestStartRun_TheSameRequestIDInTwoTenantsIsTwoRuns(t *testing.T) {
 func failedSource(t *testing.T, schedule string) string {
 	t.Helper()
 	src := startRun(t, schedule)
-	_, err := stateDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, src)
+	_, err := runControllerDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, src)
 	require.NoError(t, err)
 	finishRun(t, src)
 	return src
@@ -198,7 +200,7 @@ func failedSource(t *testing.T, schedule string) string {
 func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rerun-retry"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
 
@@ -210,7 +212,7 @@ func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
 	assert.Equal(t, first.GetRunId(), again.GetRunId())
 	assert.Equal(t, schedule, first.GetScheduleName())
 	assert.Equal(t, schedule, again.GetScheduleName(), "a replay answers with the run's schedule name")
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
 
 	_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: requestID, SourceRunId: src})
 	requireReused(t, err)
@@ -219,7 +221,7 @@ func TestTriggerRerun_ARetryReturnsTheSameRun(t *testing.T) {
 func TestTriggerRebase_ARetryReturnsTheSameRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-rebase-retry"
-	live := promoteSchedules(t, stateDB, schedule)
+	live := promoteSchedules(t, runControllerDB, schedule)
 	src := failedSource(t, schedule)
 	requestID := uuid.NewString()
 	req := &runv1.TriggerRebaseRequest{RequestId: requestID, SourceRunId: src, ExpectedReleaseId: live.ReleaseID}
@@ -237,13 +239,13 @@ func TestTriggerRebase_ARetryReturnsTheSameRun(t *testing.T) {
 		RequestId: requestID, SourceRunId: src, ExpectedReleaseId: live.ReleaseID, IncludeChangedUpstream: true,
 	})
 	requireReused(t, err)
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE source_run_id = $1`, src))
 }
 
 func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-single"
-	promoteRelease(t, stateDB,
+	promoteRelease(t, runControllerDB,
 		scheduledNode("mart", "rs_single_a", "dbt-model", schedule),
 		scheduledNode("mart", "rs_single_b", "dbt-model", schedule))
 	requestID := uuid.NewString()
@@ -265,7 +267,7 @@ func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 	_, err = runClient.TriggerSingleNodeRun(ctx, nodeRun("rs_single_b"))
 	requireReused(t, err)
 	assert.Equal(t, 1, commandRecords(t, requestID))
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM tasks WHERE node_key LIKE 'mart.rs_single_%'`))
+	assert.Equal(t, 1, countOf(t, runControllerDB, `SELECT count(*) FROM tasks WHERE node_key LIKE 'mart.rs_single_%'`))
 }
 
 // A retry of a cancel by schedule name answers with the run its first call
@@ -273,7 +275,7 @@ func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-active"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	r1 := startRun(t, schedule)
 	requestID := uuid.NewString()
 	cancel := &runv1.CancelActiveRunRequest{RequestId: requestID, ScheduleName: schedule, CancelledBy: "bob"}
@@ -284,7 +286,7 @@ func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *t
 	assert.Equal(t, "cancelling", runStatusOf(t, r1))
 	endCancelled(t, r1)
 
-	h := newBuiltHarness(stateDB)
+	h := newBuiltHarness(runControllerDB)
 	r2, outcome, err := h.fire(ctx, pkgevents.DefaultTenantID, schedule, time.Now().Truncate(time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
@@ -305,7 +307,7 @@ func TestCancelActiveRun_ARetryAfterCronStartedTheNextRunCancelsNothingMore(t *t
 func TestCancelActiveRun_NoActiveRunStoresNothing(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-none"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	requestID := uuid.NewString()
 	cancel := &runv1.CancelActiveRunRequest{RequestId: requestID, ScheduleName: schedule}
 
@@ -326,10 +328,10 @@ func TestCancelActiveRun_NoActiveRunStoresNothing(t *testing.T) {
 func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-cancel-run"
-	promoteSchedules(t, stateDB, schedule)
+	promoteSchedules(t, runControllerDB, schedule)
 	r := startRun(t, schedule)
 	outbox := func() int {
-		return countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r)
+		return countOf(t, runControllerDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r)
 	}
 
 	first, err := runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: r, CancelledBy: "bob", CancellationReason: "wrong data"})
@@ -367,7 +369,7 @@ func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 func TestPreviewRebase_IsServedOnRunService(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "rs-preview"
-	live := promoteSchedules(t, stateDB, schedule)
+	live := promoteSchedules(t, runControllerDB, schedule)
 	src := failedSource(t, schedule)
 
 	got, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: src})

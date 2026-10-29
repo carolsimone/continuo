@@ -53,7 +53,7 @@ func deleteScheduleRowsAtEnd(t *testing.T, tenant string, names ...string) {
 	t.Helper()
 	t.Cleanup(func() {
 		for _, name := range names {
-			_, _ = stateDB.Exec(`DELETE FROM schedules WHERE tenant_id = $1 AND name = $2`, tenant, name)
+			_, _ = runControllerDB.Exec(`DELETE FROM schedules WHERE tenant_id = $1 AND name = $2`, tenant, name)
 		}
 	})
 }
@@ -66,7 +66,7 @@ func asUser(user string) context.Context {
 // scheduleRowsOf counts the default tenant's schedule rows of name.
 func scheduleRowsOf(t *testing.T, name string) int {
 	t.Helper()
-	return countOf(t, stateDB, `SELECT count(*) FROM schedules WHERE tenant_id = 'default' AND name = $1`, name)
+	return countOf(t, runControllerDB, `SELECT count(*) FROM schedules WHERE tenant_id = 'default' AND name = $1`, name)
 }
 
 // summaryOf returns the ListSchedules entry of name, nil when there is none.
@@ -97,7 +97,7 @@ func summariesOf(t *testing.T, name string) []*runv1.ScheduleSummary {
 // of name at version whose zone the parser does not know.
 func insertUnparsableRow(t *testing.T, name string, version int64) {
 	t.Helper()
-	_, err := stateDB.Exec(`
+	_, err := runControllerDB.Exec(`
 		INSERT INTO schedules (tenant_id, name, cron, timezone, version, updated_by)
 		VALUES ('default', $1, '0 3 1 1 *', 'Mars/Olympus', $2, 'by-hand')`, name, version)
 	require.NoError(t, err)
@@ -130,13 +130,13 @@ func promoteTenantRelease(t *testing.T, tenant string, specs ...topology.NodeSpe
 	ctx := context.Background()
 	releaseID := "rel-" + uuid.NewString()[:8]
 	t.Cleanup(func() {
-		_, _ = stateDB.Exec(`DELETE FROM live_release WHERE tenant_id = $1`, tenant)
-		_, _ = stateDB.Exec(`DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
+		_, _ = runControllerDB.Exec(`DELETE FROM live_release WHERE tenant_id = $1`, tenant)
+		_, _ = runControllerDB.Exec(`DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
 	})
-	tx, err := stateDB.BeginTxx(ctx, nil)
+	tx, err := runControllerDB.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	topo := postgres.NewTopologyRepository(stateDB, tx)
+	topo := postgres.NewTopologyRepository(runControllerDB, tx)
 	require.NoError(t, topo.LockTopology(ctx))
 	rel, err := topology.NewRelease(tenant, releaseID, 1,
 		"s3://continuo/tenants/"+tenant+"/topologies/"+releaseID+"/topology.json.gz", "sha-"+releaseID, specs)
@@ -152,7 +152,7 @@ func promoteTenantRelease(t *testing.T, tenant string, specs ...topology.NodeSpe
 // fires, the first of which is the stored next fire.
 func TestSchedules_UpsertCreatesAndReturnsTheNextThreeFires(t *testing.T) {
 	name := newScheduleName(t, "sched-create")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 
 	resp, err := runClient.UpsertSchedule(asUser("alice@example.com"), &runv1.UpsertScheduleRequest{
 		ScheduleName: name, Cron: yearlyCron, Timezone: parisZone, Description: "Runs on new year's day",
@@ -185,7 +185,7 @@ func TestSchedules_UpsertCreatesAndReturnsTheNextThreeFires(t *testing.T) {
 		Version    int64        `db:"version"`
 		UpdatedBy  string       `db:"updated_by"`
 	}
-	require.NoError(t, stateDB.Get(&row, `
+	require.NoError(t, runControllerDB.Get(&row, `
 		SELECT cron, timezone, next_fire_at, version, updated_by
 		  FROM schedules WHERE tenant_id = 'default' AND name = $1`, name))
 	assert.Equal(t, yearlyCron, row.Cron)
@@ -199,7 +199,7 @@ func TestSchedules_UpsertCreatesAndReturnsTheNextThreeFires(t *testing.T) {
 // A call that names no user is recorded as the system's edit.
 func TestSchedules_AnUnnamedCallerIsRecordedAsTheSystem(t *testing.T) {
 	name := newScheduleName(t, "sched-system")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 
 	resp, err := runClient.UpsertSchedule(context.Background(), &runv1.UpsertScheduleRequest{
 		ScheduleName: name, Cron: yearlyCron, Timezone: parisZone,
@@ -213,7 +213,7 @@ func TestSchedules_AnUnnamedCallerIsRecordedAsTheSystem(t *testing.T) {
 // is NotFound and writes nothing.
 func TestSchedules_UpsertRefusesANewNameWithNoModels(t *testing.T) {
 	name := newScheduleName(t, "sched-unknown")
-	promoteSchedules(t, stateDB, "sched-other-"+uuid.NewString()[:8])
+	promoteSchedules(t, runControllerDB, "sched-other-"+uuid.NewString()[:8])
 
 	_, err := runClient.UpsertSchedule(asUser("alice@example.com"), &runv1.UpsertScheduleRequest{
 		ScheduleName: name, Cron: yearlyCron, Timezone: parisZone,
@@ -229,9 +229,9 @@ func TestSchedules_UpsertRefusesANewNameWithNoModels(t *testing.T) {
 // with no models, and can still be paused and resumed.
 func TestSchedules_UpsertEditsAFlaggedScheduleWhoseModelsAreGone(t *testing.T) {
 	name := newScheduleName(t, "sched-flagged")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, false)
-	promoteSchedules(t, stateDB, "sched-other-"+uuid.NewString()[:8])
+	promoteSchedules(t, runControllerDB, "sched-other-"+uuid.NewString()[:8])
 
 	flagged := summaryOf(t, name)
 	require.NotNil(t, flagged, "a name with a cron is listed whatever the live release holds")
@@ -254,7 +254,7 @@ func TestSchedules_UpsertEditsAFlaggedScheduleWhoseModelsAreGone(t *testing.T) {
 // leaves the newer edit in place.
 func TestSchedules_AStaleVersionIsAborted(t *testing.T) {
 	name := newScheduleName(t, "sched-stale")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, false)
 	upsertYearly(t, "bob@example.com", name, 1, true)
 
@@ -285,7 +285,7 @@ func TestSchedules_DeleteOfAMissingCronSucceeds(t *testing.T) {
 	require.NoError(t, err)
 
 	name := newScheduleName(t, "sched-delete")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, false)
 	for range 2 {
 		_, err = runClient.DeleteSchedule(ctx, &runv1.DeleteScheduleRequest{ScheduleName: name})
@@ -308,7 +308,7 @@ func TestSchedules_DeleteOfAMissingCronSucceeds(t *testing.T) {
 func TestSchedules_DeletingACronLeavesItsActiveRunRunning(t *testing.T) {
 	ctx := context.Background()
 	name := newScheduleName(t, "sched-active")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, false)
 	runID := startRun(t, name)
 	t.Cleanup(func() {
@@ -353,14 +353,14 @@ func TestSchedules_ListIsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 		withoutWeekly = append(withoutWeekly, set...)
 	}
 	withWeekly = append(append(withWeekly, withoutWeekly...), nodes(weekly, 1)...)
-	promoteRelease(t, stateDB, withWeekly...)
+	promoteRelease(t, runControllerDB, withWeekly...)
 	upsertYearly(t, "alice@example.com", daily, 0, false)
 	_, err := runClient.UpsertSchedule(asUser("bob@example.com"), &runv1.UpsertScheduleRequest{
 		ScheduleName: hourly, Cron: "0 * * * *", Timezone: parisZone, Paused: true,
 	})
 	require.NoError(t, err)
 	upsertYearly(t, "alice@example.com", weekly, 0, false)
-	promoteRelease(t, stateDB, withoutWeekly...)
+	promoteRelease(t, runControllerDB, withoutWeekly...)
 
 	resp, err := runClient.ListSchedules(context.Background(), &runv1.ListSchedulesRequest{})
 	require.NoError(t, err)
@@ -412,7 +412,7 @@ func TestSchedules_ListIsTheUnionOfTheLiveReleaseAndTheRows(t *testing.T) {
 // and an edit saves over it, raising its version.
 func TestSchedules_UpsertRepairsARowWhoseStoredCronNoLongerParses(t *testing.T) {
 	name := newScheduleName(t, "sched-broken")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	insertUnparsableRow(t, name, 4)
 
 	listed := summariesOf(t, name)
@@ -435,7 +435,7 @@ func TestSchedules_UpsertRepairsARowWhoseStoredCronNoLongerParses(t *testing.T) 
 // removes it.
 func TestSchedules_ListShowsAnUnparsableRowOfANameWithNoModelsWithNoCron(t *testing.T) {
 	name := newScheduleName(t, "sched-broken-gone")
-	promoteSchedules(t, stateDB, "sched-other-"+uuid.NewString()[:8])
+	promoteSchedules(t, runControllerDB, "sched-other-"+uuid.NewString()[:8])
 	insertUnparsableRow(t, name, 3)
 
 	listed := summariesOf(t, name)
@@ -479,7 +479,7 @@ func TestSchedules_AnotherTenantsSchedulesAreInvisible(t *testing.T) {
 	_, err = runClient.DeleteSchedule(ctx, &runv1.DeleteScheduleRequest{ScheduleName: name})
 	require.NoError(t, err)
 
-	still, ok, err := postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil).Get(ctx, tenant, name)
+	still, ok, err := postgres.NewScheduleRepository(runControllerDB, nil, testParser(t), nil).Get(ctx, tenant, name)
 	require.NoError(t, err)
 	require.True(t, ok, "a delete of the default tenant leaves another tenant's row")
 	assert.Equal(t, "bob@example.com", still.UpdatedBy())
@@ -503,7 +503,7 @@ type pausedAfterRead struct {
 func newPausedAfterRead(t *testing.T) *pausedAfterRead {
 	t.Helper()
 	p := &pausedAfterRead{
-		ScheduleRepository: postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil),
+		ScheduleRepository: postgres.NewScheduleRepository(runControllerDB, nil, testParser(t), nil),
 		read:               make(chan struct{}),
 		resumeSave:         make(chan struct{}),
 	}
@@ -526,8 +526,8 @@ func (p *pausedAfterRead) resume() { p.resumed.Do(func() { close(p.resumeSave) }
 // scheduleServiceOver is the schedules service run-controller runs, over repo.
 func scheduleServiceOver(t *testing.T, repo repository.ScheduleRepository) *schedules.Service {
 	t.Helper()
-	return schedules.New(repo, postgres.NewLiveScheduleModelRepository(stateDB),
-		postgres.NewRunRepository(stateDB, slog.Default()), testParser(t), ports.SystemClock{})
+	return schedules.New(repo, postgres.NewLiveScheduleModelRepository(runControllerDB),
+		postgres.NewRunRepository(runControllerDB, slog.Default()), testParser(t), ports.SystemClock{})
 }
 
 // upsertResult is what an Upsert run in a goroutine returned.
@@ -578,7 +578,7 @@ func storedVersionOf(t *testing.T, tenant, name string) (version int64, cronText
 		Cron      string `db:"cron"`
 		UpdatedBy string `db:"updated_by"`
 	}
-	require.NoError(t, stateDB.Get(&row, `SELECT version, cron, updated_by FROM schedules WHERE tenant_id = $1 AND name = $2`, tenant, name))
+	require.NoError(t, runControllerDB.Get(&row, `SELECT version, cron, updated_by FROM schedules WHERE tenant_id = $1 AND name = $2`, tenant, name))
 	return row.Version, row.Cron, row.UpdatedBy
 }
 
@@ -600,7 +600,7 @@ func TestSchedules_TwoLastWriteWinsEditsSaveAtIncreasingVersions(t *testing.T) {
 	ctx := context.Background()
 	name := "race-" + uuid.NewString()[:8]
 	tenant := raceTenant(t, name)
-	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil))
+	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(runControllerDB, nil, testParser(t), nil))
 	created, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: yearlyCron, Timezone: parisZone}, "alice@example.com")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), created.Version())
@@ -627,7 +627,7 @@ func TestSchedules_ACreateRacingACreateAndAnEditSavesAtIncreasingVersions(t *tes
 	ctx := context.Background()
 	name := "race-" + uuid.NewString()[:8]
 	tenant := raceTenant(t, name)
-	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(stateDB, nil, testParser(t), nil))
+	plain := scheduleServiceOver(t, postgres.NewScheduleRepository(runControllerDB, nil, testParser(t), nil))
 
 	paused, done := upsertPausedAfterRead(t, tenant, schedules.UpsertInput{Name: name, Cron: "0 4 1 1 *", Timezone: parisZone}, "bob@example.com")
 	created, _, err := plain.Upsert(ctx, tenant, schedules.UpsertInput{Name: name, Cron: yearlyCron, Timezone: parisZone}, "alice@example.com")
@@ -654,7 +654,7 @@ func TestPreviewSchedule_InvalidCronIsInvalidArgumentWithTheParsersMessage(t *te
 	ctx := context.Background()
 	parser := testParser(t)
 	name := newScheduleName(t, "sched-preview")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	for _, c := range []struct{ cron, timezone string }{
 		{"CRON_TZ=Europe/Paris 0 1 * * *", parisZone},
 		{"TZ=UTC 0 1 * * *", "UTC"},

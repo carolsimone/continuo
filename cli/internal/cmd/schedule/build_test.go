@@ -41,7 +41,7 @@ func runBuild(t *testing.T, fake client.RunClient, args []string, human bool) (s
 }
 
 func TestScheduleBuild_ForwardsActor(t *testing.T) {
-	fake := &fakeState{buildResp: &runv1.StartRunResponse{RunId: "s1"}}
+	fake := &fakeRunController{buildResp: &runv1.StartRunResponse{RunId: "s1"}}
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "okta.example.com|alice"}
 	cmd := NewBuildCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
@@ -53,7 +53,7 @@ func TestScheduleBuild_ForwardsActor(t *testing.T) {
 }
 
 func TestScheduleBuild_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{buildResp: &runv1.StartRunResponse{RunId: "sched_456"}}
+	fake := &fakeRunController{buildResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runBuild(t, fake, []string{"daily_ingest"}, false)
 
@@ -69,7 +69,7 @@ func TestScheduleBuild_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestScheduleBuild_NotFoundExits3(t *testing.T) {
-	fake := &fakeState{buildErr: status.Error(codes.NotFound, "schedule 'missing' not found")}
+	fake := &fakeRunController{buildErr: status.Error(codes.NotFound, "schedule 'missing' not found")}
 
 	stdout, _, exit := runBuild(t, fake, []string{"missing"}, false)
 
@@ -82,7 +82,7 @@ func TestScheduleBuild_NotFoundExits3(t *testing.T) {
 }
 
 func TestScheduleBuild_ConflictExits4(t *testing.T) {
-	fake := &fakeState{buildErr: status.Error(codes.FailedPrecondition, "a run is already active")}
+	fake := &fakeRunController{buildErr: status.Error(codes.FailedPrecondition, "a run is already active")}
 
 	_, _, exit := runBuild(t, fake, []string{"daily_ingest"}, false)
 
@@ -90,7 +90,7 @@ func TestScheduleBuild_ConflictExits4(t *testing.T) {
 }
 
 func TestScheduleBuild_UnavailableExits5(t *testing.T) {
-	fake := &fakeState{buildErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeRunController{buildErr: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := runBuild(t, fake, []string{"daily_ingest"}, false)
 
@@ -98,7 +98,7 @@ func TestScheduleBuild_UnavailableExits5(t *testing.T) {
 }
 
 func TestScheduleBuild_MissingArgumentExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := runBuild(t, fake, []string{}, false)
 
@@ -109,7 +109,7 @@ func TestScheduleBuild_MissingArgumentExits2(t *testing.T) {
 }
 
 func TestScheduleBuild_TooManyArgumentsExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	_, _, exit := runBuild(t, fake, []string{"daily_ingest", "extra"}, false)
 
@@ -117,7 +117,7 @@ func TestScheduleBuild_TooManyArgumentsExits2(t *testing.T) {
 }
 
 func TestScheduleBuild_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{buildResp: &runv1.StartRunResponse{RunId: "sched_456"}}
+	fake := &fakeRunController{buildResp: &runv1.StartRunResponse{RunId: "sched_456"}}
 
 	stdout, stderr, exit := runBuild(t, fake, []string{"daily_ingest"}, true)
 

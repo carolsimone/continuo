@@ -13,19 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The migrated run-controller database has every column run-controller checks for at startup,
-// so a column a migration renames or drops fails here rather than as a
-// service that refuses to boot.
+// The migrated run-controller database has every column run-controller checks
+// for at startup, so a column a migration renames or drops fails here rather
+// than as a service that refuses to boot.
 func TestSchemaColumns_TheMigratedDatabasePassesTheStartupSchemaCheck(t *testing.T) {
 	db := newTestDB(t)
 	require.NoError(t, svchandlers.CheckSchema(context.Background(), postgres.NewSchemaColumns(db)))
 }
 
-// run-controller reads the schedule names from the live release it stores, so the
-// run-controller database holds no schedule catalog: neither schedule_catalog nor
-// schedule_catalog_state exists, a run stores no service metadata, and the
-// columns run-controller requires at startup name none of them.
-func TestStateSchema_TheCatalogIsGone(t *testing.T) {
+// run-controller reads the schedule names from the live release it stores, so
+// the run-controller database holds no schedule catalog: neither
+// schedule_catalog nor schedule_catalog_state exists, a run stores no service
+// metadata, and the columns run-controller requires at startup name none of
+// them.
+func TestRunControllerSchema_TheCatalogIsGone(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 

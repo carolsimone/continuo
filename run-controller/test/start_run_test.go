@@ -22,13 +22,13 @@ func TestStartRun_ANameNoModelHasIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	known := "start-known-" + uuid.NewString()[:8]
 	unknown := "start-unknown-" + uuid.NewString()[:8]
-	promoteSchedules(t, stateDB, known)
+	promoteSchedules(t, runControllerDB, known)
 	requestID := uuid.NewString()
 
 	_, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: unknown})
 	require.Equal(t, codes.NotFound, status.Code(err), "%v", err)
 	assert.Zero(t, commandRecords(t, requestID), "a refused call stores no record")
-	assert.Zero(t, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, unknown))
+	assert.Zero(t, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, unknown))
 
 	runID := startRun(t, known)
 	t.Cleanup(func() { finishRun(t, runID) })
@@ -42,16 +42,16 @@ func TestStartRun_ANameNoModelHasIsNotFound(t *testing.T) {
 func TestStartRun_ANameWithACronButNoModelsIsAnEmptySelection(t *testing.T) {
 	ctx := context.Background()
 	name := newScheduleName(t, "start-cron-only")
-	promoteSchedules(t, stateDB, name)
+	promoteSchedules(t, runControllerDB, name)
 	upsertYearly(t, "alice@example.com", name, 0, true)
-	promoteSchedules(t, stateDB, "start-elsewhere-"+uuid.NewString()[:8])
+	promoteSchedules(t, runControllerDB, "start-elsewhere-"+uuid.NewString()[:8])
 	requestID := uuid.NewString()
 
 	_, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: name})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 	assert.Contains(t, status.Convert(err).Message(), "the selection is empty")
 	assert.Zero(t, commandRecords(t, requestID), "a refused call stores no record")
-	assert.Zero(t, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name))
+	assert.Zero(t, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name))
 	assert.Equal(t, 1, scheduleRowsOf(t, name), "the cron stays")
 }
 
@@ -67,7 +67,7 @@ func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
 	uncarried := prefix + strings.Repeat("u", 51-len(prefix))
 	require.Len(t, fifty, 50)
 	require.Len(t, carried, 51)
-	promoteRelease(t, stateDB,
+	promoteRelease(t, runControllerDB,
 		scheduledNode("mart", "long_fifty_"+uuid.NewString()[:8], "dbt-model", fifty),
 		scheduledNode("mart", "long_carried_"+uuid.NewString()[:8], "dbt-model", carried))
 
@@ -77,7 +77,7 @@ func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
 		require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
 		assert.Equal(t, "schedule_name must be at most 50 characters long, not 51", status.Convert(err).Message())
 		assert.Zero(t, commandRecords(t, requestID), "a refused call stores no record")
-		assert.Zero(t, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name), "and creates no run")
+		assert.Zero(t, countOf(t, runControllerDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, name), "and creates no run")
 	}
 
 	runID := startRun(t, fifty)
@@ -91,7 +91,7 @@ func TestStartRun_ANameWhoseStoredCronNoLongerParsesIsKnown(t *testing.T) {
 	ctx := context.Background()
 	name := newScheduleName(t, "start-bad-cron")
 	insertUnparsableRow(t, name, 1)
-	promoteSchedules(t, stateDB, "start-elsewhere-"+uuid.NewString()[:8])
+	promoteSchedules(t, runControllerDB, "start-elsewhere-"+uuid.NewString()[:8])
 
 	_, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: name})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
@@ -107,14 +107,14 @@ func TestStartRun_ANameWhoseStoredCronNoLongerParsesIsKnown(t *testing.T) {
 func TestStartRun_TheMadeUpNameOfASingleNodeRunNeedsNoModelOrCron(t *testing.T) {
 	ctx := context.Background()
 	table := "made_up_" + uuid.NewString()[:8]
-	promoteRelease(t, stateDB, scheduledNode("mart", table, "dbt-model", ""))
+	promoteRelease(t, runControllerDB, scheduledNode("mart", table, "dbt-model", ""))
 
 	single, err := runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
 		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err, "a single-node run starts under its made-up name")
 	assert.Zero(t, scheduleRowsOf(t, single.GetScheduleName()))
-	_, err = stateDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, single.GetRunId())
+	_, err = runControllerDB.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, single.GetRunId())
 	require.NoError(t, err)
 	finishRun(t, single.GetRunId())
 

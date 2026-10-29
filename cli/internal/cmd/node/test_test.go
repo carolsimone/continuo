@@ -39,7 +39,7 @@ func runTest(t *testing.T, fake client.RunClient, cfg *config.Config, args []str
 }
 
 func TestTestNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9", ScheduleName: "single-node-run-abcd1234"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, stderr, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -56,7 +56,7 @@ func TestTestNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestTestNode_ForwardsActorFromConfig(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -66,7 +66,7 @@ func TestTestNode_ForwardsActorFromConfig(t *testing.T) {
 }
 
 func TestTestNode_EmptyActorWhenUnset(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, _ = runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -75,7 +75,7 @@ func TestTestNode_EmptyActorWhenUnset(t *testing.T) {
 }
 
 func TestTestNode_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeNodeState{}
+	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics"})
@@ -87,7 +87,7 @@ func TestTestNode_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestTestNode_InvalidArgumentExits2(t *testing.T) {
-	fake := &fakeNodeState{testErr: status.Error(codes.InvalidArgument, "no tests defined for node")}
+	fake := &fakeNodeRunController{testErr: status.Error(codes.InvalidArgument, "no tests defined for node")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -96,7 +96,7 @@ func TestTestNode_InvalidArgumentExits2(t *testing.T) {
 }
 
 func TestTestNode_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeState{testErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeRunController{testErr: status.Error(codes.Unavailable, "server down")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -105,7 +105,7 @@ func TestTestNode_UnavailableExits5(t *testing.T) {
 }
 
 func TestTestNode_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 
 	stdout, stderr, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -117,7 +117,7 @@ func TestTestNode_HumanModeUsesStderr(t *testing.T) {
 }
 
 func TestTestNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -127,7 +127,7 @@ func TestTestNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
 }
 
 func TestTestNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
-	fake := &fakeNodeState{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	fake := &fakeNodeRunController{testResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
@@ -137,7 +137,7 @@ func TestTestNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
 }
 
 func TestTestNode_FiveArgsExits2(t *testing.T) {
-	fake := &fakeNodeState{}
+	fake := &fakeNodeRunController{}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	stdout, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
@@ -150,7 +150,7 @@ func TestTestNode_FiveArgsExits2(t *testing.T) {
 }
 
 func TestTestNode_SourceRunNotFoundExits3(t *testing.T) {
-	fake := &fakeNodeState{testErr: status.Error(codes.NotFound, "source run not found")}
+	fake := &fakeNodeRunController{testErr: status.Error(codes.NotFound, "source run not found")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
@@ -159,7 +159,7 @@ func TestTestNode_SourceRunNotFoundExits3(t *testing.T) {
 }
 
 func TestTestNode_SourceRunNotTerminalExits4(t *testing.T) {
-	fake := &fakeNodeState{testErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
+	fake := &fakeNodeRunController{testErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
@@ -172,7 +172,7 @@ func TestTestNode_SourceRunNotTerminalExits4(t *testing.T) {
 // asked for a snapshot and must not get a run against current code instead.
 func TestTestNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 	for _, empty := range []string{"", "   "} {
-		fake := &fakeNodeState{}
+		fake := &fakeNodeRunController{}
 		cfg := &config.Config{Timeout: 2 * time.Second}
 
 		stdout, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders", empty})

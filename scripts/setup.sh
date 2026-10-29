@@ -4,7 +4,7 @@ set -eo pipefail
 CLUSTER_NAME="continuo"
 
 # Tag the python e2e fixture domain image is built and side-loaded under. The
-# e2e posts this exact string as a release's image_tag; the executor runs a
+# e2e posts this exact string as a release's image_tag; execution-controller runs a
 # python-node node's image verbatim, so the two must agree.
 PY_FIXTURE_IMAGE="continuo-e2e-py-probe:latest"
 KIND_VERSION="v0.30.0"
@@ -79,7 +79,7 @@ DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 # The python e2e fixture: a domain image built the way a real domain repository
 # builds one — the published runtime base plus that service's contracts and
 # scripts. The e2e posts this exact tag as the release's image_tag, and the
-# executor runs it verbatim.
+# execution-controller runs it verbatim.
 echo "Building python e2e fixture image..."
 DOCKER_BUILDKIT=1 docker build -t "${PY_FIXTURE_IMAGE}" tests/e2e/fixtures/py-probe/
 echo "Pulling continuo-python-runtime (postgres) image..."
@@ -238,7 +238,7 @@ kubectl create clusterrolebinding ${CLUSTER_NAME}-app-admin \
   --clusterrole=cluster-admin \
   --serviceaccount=default:${CLUSTER_NAME}-app-sa || echo "ClusterRoleBinding already exists, continuing..."
 
-# Warehouse credentials for the validation pods, which the executor attaches via
+# Warehouse credentials for the validation pods, which execution-controller attaches via
 # envFrom (VALIDATION_WAREHOUSE_SECRET). The host bridge IP is used because the
 # validation Job runs inside kind and reaches Postgres on the host, not via the
 # compose service name.

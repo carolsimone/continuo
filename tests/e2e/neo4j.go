@@ -12,8 +12,8 @@ import (
 
 // queryNeo4jRecords runs a read cypher query against the shared in-process
 // Neo4j driver (clients.neo4jDriver, dialed once by setupClients and already
-// used by the topology-seeding helpers in remediation_batch_test.go and
-// remediation_agent_test.go) and returns every result record. Provenance
+// used by the topology-seeding helpers of the single-node and batched
+// agent-remediation tests) and returns every result record. Provenance
 // assertions read through this same bolt connection rather than shelling out
 // to cypher-shell in a sibling container, since the driver is already here.
 func queryNeo4jRecords(t *testing.T, ctx context.Context, clients *testClients, cypher string, params map[string]any) []*neo4jdriver.Record {

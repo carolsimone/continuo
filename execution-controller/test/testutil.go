@@ -13,19 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SetupPostgres connects to an externally migrated executor test database.
-// Every executor DB suite shares a session advisory lock, so each test owns
+// SetupPostgres connects to an externally migrated execution-controller test database.
+// Every execution-controller DB suite shares a session advisory lock, so each test owns
 // all rows inserted after its empty-table check. A database containing rows
 // is refused rather than clearing data belonging to another process.
 func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 	t.Helper()
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; configure an empty executor database and run its Flyway migrations")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; configure an empty execution-controller database and run its Flyway migrations")
 	}
 	db, err := sqlx.Connect("postgres", cfg.DSN())
 	if err != nil {
-		testdeps.Unavailable(t, "executor postgres unreachable: %v", err)
+		testdeps.Unavailable(t, "execution-controller postgres unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -36,7 +36,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 	t.Cleanup(func() {
 		_, unlockErr := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(861248012)`)
 		if unlockErr != nil {
-			t.Errorf("release executor test lock: %v", unlockErr)
+			t.Errorf("release execution-controller test lock: %v", unlockErr)
 		}
 		_ = lockConn.Close()
 	})
@@ -46,7 +46,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 	lockCtx, lockCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer lockCancel()
 	_, err = lockConn.ExecContext(lockCtx, `SELECT pg_advisory_lock(861248012)`)
-	require.NoError(t, err, "serialize executor database tests")
+	require.NoError(t, err, "serialize execution-controller database tests")
 
 	for _, table := range []string{"execution_outbox", "deployments", "validation_aggregates", "cancelled_runs", "message_processing"} {
 		var present bool
@@ -54,7 +54,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 		require.True(t, present, "%s missing: run Flyway migrations from db/migration/execution before testing", table)
 		var count int
 		require.NoError(t, db.Get(&count, `SELECT count(*) FROM `+table))
-		require.Zero(t, count, "%s contains data: use an empty, dedicated executor test database without running controllers", table)
+		require.Zero(t, count, "%s contains data: use an empty, dedicated execution-controller test database without running controllers", table)
 	}
 
 	var once sync.Once
@@ -64,7 +64,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 			defer cleanCancel()
 			_, cleanErr := db.ExecContext(cleanCtx, `TRUNCATE execution_outbox, deployments, validation_aggregates, cancelled_runs, message_processing`)
 			if cleanErr != nil {
-				t.Errorf("clean executor test-owned rows: %v", cleanErr)
+				t.Errorf("clean execution-controller test-owned rows: %v", cleanErr)
 			}
 		})
 	}

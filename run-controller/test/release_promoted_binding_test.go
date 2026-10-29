@@ -19,7 +19,7 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
-	stateredis "github.com/carolsimone/continuo/run-controller/adapters/redis"
+	rcredis "github.com/carolsimone/continuo/run-controller/adapters/redis"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	svchandlers "github.com/carolsimone/continuo/run-controller/service/handlers"
 	svcports "github.com/carolsimone/continuo/run-controller/service/ports"
@@ -59,7 +59,7 @@ func newPromotionHarness(db *sqlx.DB) *promotionHarness {
 	}
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, nil, logger)
-	return &promotionHarness{artifacts: artifacts, binding: stateredis.NewReleasePromotedBinding(factory, handler, logger)}
+	return &promotionHarness{artifacts: artifacts, binding: rcredis.NewReleasePromotedBinding(factory, handler, logger)}
 }
 
 // publish stores releaseID's artifact under checksum sha and returns its URI.

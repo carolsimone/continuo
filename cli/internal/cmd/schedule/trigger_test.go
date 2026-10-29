@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type fakeState struct {
+type fakeRunController struct {
 	client.RunClient
 
 	resp            *runv1.StartRunResponse
@@ -44,28 +44,28 @@ type fakeState struct {
 	gotBuildActor        string
 }
 
-func (f *fakeState) TriggerSchedule(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) TriggerSchedule(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
 	f.gotTriggerActor = actor
 	return f.resp, f.err
 }
 
-func (f *fakeState) TriggerScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) TriggerScheduleTest(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestScheduleName = name
 	f.gotTestActor = actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeState) TriggerScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
+func (f *fakeRunController) TriggerScheduleBuild(_ context.Context, requestID, name, actor string) (*runv1.StartRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildScheduleName = name
 	f.gotBuildActor = actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeState) CancelSchedule(_ context.Context, requestID, name, reason, by string) (*runv1.CancelActiveRunResponse, error) {
+func (f *fakeRunController) CancelSchedule(_ context.Context, requestID, name, reason, by string) (*runv1.CancelActiveRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotScheduleName = name
 	f.gotCancelReason = reason
@@ -73,7 +73,7 @@ func (f *fakeState) CancelSchedule(_ context.Context, requestID, name, reason, b
 	return f.cancelResp, f.cancelErr
 }
 
-func (f *fakeState) Close() error { return nil }
+func (f *fakeRunController) Close() error { return nil }
 
 // run invokes the trigger command end-to-end with the provided fake client and args.
 // It captures stdout/stderr and returns the exit code.
@@ -119,14 +119,14 @@ func runTriggerWithActor(t *testing.T, fake client.RunClient, args []string, act
 }
 
 func TestTrigger_ForwardsActor(t *testing.T) {
-	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "s1"}}
+	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "s1"}}
 	exit := runTriggerWithActor(t, fake, []string{"daily"}, "okta.example.com|alice")
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "okta.example.com|alice", fake.gotTriggerActor)
 }
 
 func TestTrigger_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, false)
 
@@ -142,7 +142,7 @@ func TestTrigger_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestTrigger_NotFoundExits3(t *testing.T) {
-	fake := &fakeState{err: status.Error(codes.NotFound, "schedule 'missing' not found")}
+	fake := &fakeRunController{err: status.Error(codes.NotFound, "schedule 'missing' not found")}
 
 	stdout, _, exit := run(t, fake, []string{"missing"}, false)
 
@@ -156,7 +156,7 @@ func TestTrigger_NotFoundExits3(t *testing.T) {
 }
 
 func TestTrigger_FailedPreconditionExits4(t *testing.T) {
-	fake := &fakeState{err: status.Error(codes.FailedPrecondition, "already running")}
+	fake := &fakeRunController{err: status.Error(codes.FailedPrecondition, "already running")}
 
 	stdout, _, exit := run(t, fake, []string{"daily_ingest"}, false)
 
@@ -170,7 +170,7 @@ func TestTrigger_FailedPreconditionExits4(t *testing.T) {
 }
 
 func TestTrigger_UnavailableExits5(t *testing.T) {
-	fake := &fakeState{err: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeRunController{err: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := run(t, fake, []string{"daily_ingest"}, false)
 
@@ -178,7 +178,7 @@ func TestTrigger_UnavailableExits5(t *testing.T) {
 }
 
 func TestTrigger_MissingArgumentExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := run(t, fake, []string{}, false)
 
@@ -189,7 +189,7 @@ func TestTrigger_MissingArgumentExits2(t *testing.T) {
 }
 
 func TestTrigger_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{resp: &runv1.StartRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := run(t, fake, []string{"daily_ingest"}, true)
 
@@ -206,23 +206,23 @@ const fixedRequestID = "5d21c0de-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
 func TestScheduleCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 	t.Setenv("CONTINUO_REQUEST_ID", fixedRequestID)
 	ok := &runv1.StartRunResponse{RunId: "r1"}
-	cases := map[string]func(fake *fakeState) (int, []string){
-		"trigger": func(fake *fakeState) (int, []string) {
+	cases := map[string]func(fake *fakeRunController) (int, []string){
+		"trigger": func(fake *fakeRunController) (int, []string) {
 			fake.resp = ok
 			_, _, exit := run(t, fake, []string{"daily"}, false)
 			return exit, fake.gotRequestIDs
 		},
-		"test": func(fake *fakeState) (int, []string) {
+		"test": func(fake *fakeRunController) (int, []string) {
 			fake.testResp = ok
 			_, _, exit := runTest(t, fake, []string{"daily"}, false)
 			return exit, fake.gotRequestIDs
 		},
-		"build": func(fake *fakeState) (int, []string) {
+		"build": func(fake *fakeRunController) (int, []string) {
 			fake.buildResp = ok
 			_, _, exit := runBuild(t, fake, []string{"daily"}, false)
 			return exit, fake.gotRequestIDs
 		},
-		"cancel": func(fake *fakeState) (int, []string) {
+		"cancel": func(fake *fakeRunController) (int, []string) {
 			fake.cancelResp = &runv1.CancelActiveRunResponse{RunId: "r1"}
 			_, _, exit := runCancel(t, fake, []string{"daily", "why"}, false, "")
 			return exit, fake.gotRequestIDs
@@ -230,7 +230,7 @@ func TestScheduleCommands_SendTheRequestIDOfTheInvocation(t *testing.T) {
 	}
 	for name, invoke := range cases {
 		t.Run(name, func(t *testing.T) {
-			exit, ids := invoke(&fakeState{})
+			exit, ids := invoke(&fakeRunController{})
 			assert.Equal(t, 0, exit)
 			assert.Equal(t, []string{fixedRequestID}, ids)
 		})

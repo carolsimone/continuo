@@ -1,5 +1,5 @@
 // Package commandcfg resolves the container argv for every dbt operation the
-// executor dispatches, from an optional deploy-time dbt-commands.yaml. A
+// execution-controller dispatches, from an optional deploy-time dbt-commands.yaml. A
 // missing file yields the built-in plain-dbt commands. A field this build
 // doesn't recognize is logged as a warning and ignored (so a config that has
 // grown a new key a rolling-deploy binary doesn't know about yet, or vice
@@ -18,7 +18,7 @@ type compileSpec struct {
 	// PartialParsePath is the absolute path where the team's dbt writes
 	// partial_parse.msgpack. Empty defaults to
 	// dirname(ManifestPath)/partial_parse.msgpack. When set, it must live in
-	// the same directory as ManifestPath: the executor mounts the parse-cache
+	// the same directory as ManifestPath: execution-controller mounts the parse-cache
 	// volume at dirname(PartialParsePath) in every run/seed/build pod for this
 	// team's image, and a directory that differs from the --target-path
 	// dbt writes both artifacts into would shadow the team's actual project

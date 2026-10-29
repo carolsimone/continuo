@@ -24,7 +24,7 @@ import (
 // amount_eur has been dropped upstream, mirroring a real
 // fx_transactions_eur.amount_eur removal. BOTH models are valid SQL that COMPILES;
 // the break is not a missing relation. It surfaces only when the downstream is
-// validated against the candidate-built upstream, where the executor's
+// validated against the candidate-built upstream, where execution-controller's
 // execution-time SQL rewrite (approach B — see the revert in
 // dbt/services/service-2/models/xprobe_down.sql's history) redirects
 // e2e_schema.xbreak_up to the candidate schema and the warehouse raises
@@ -44,7 +44,7 @@ const (
 //
 //	POST /releases (service-2) → cross-service closure schedules
 //	{xbreak_up, xbreak_down} with the gating edge xbreak_down -> xbreak_up →
-//	executor/k8s build xbreak_up (service-3) into the candidate schema first →
+//	execution-controller builds xbreak_up (service-3) into the candidate schema first →
 //	xbreak_down validates against it and fails on the DROPPED amount_eur column
 //	(valid SQL, column simply gone — not a missing relation) →
 //	validation.result:v1 terminal rejects the release with reject_reason

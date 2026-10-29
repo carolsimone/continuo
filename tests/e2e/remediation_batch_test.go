@@ -884,9 +884,9 @@ FROM e2e_schema.ftable_c c`
 
 // batchProposalRow is the batched view of a proposal row: the set the attempt
 // addressed, each node's outcome, every file it changed, and every
-// verification run that judged it. The single-node projection is proposalRow in
-// remediation_agent_test.go; a batched attempt cannot be read through that one,
-// because its scalar node_id and file_path columns hold only a representative.
+// verification run that judged it. The single-node projection is proposalRow;
+// a batched attempt cannot be read through that one, because its scalar
+// node_id and file_path columns hold only a representative.
 type batchProposalRow struct {
 	ID              string `db:"id"`
 	NodeID          string `db:"node_id"`
@@ -1039,8 +1039,8 @@ type proposedEdit struct {
 
 // batchProposedPayload is the batched projection of remediation.proposed:v1:
 // the whole set the attempt resolved and every file it changed. The single-node
-// projection of the same event is remediationProposedPayload in
-// remediation_agent_test.go, which does not decode the edits array.
+// projection of the same event is remediationProposedPayload, which does not
+// decode the edits array.
 type batchProposedPayload struct {
 	ReleaseID       string         `json:"release_id"`
 	NodeID          string         `json:"node_id"`
@@ -1193,8 +1193,8 @@ type topologyModel struct {
 // form the full repository path.
 //
 // The nodes are removed via t.Cleanup so they do not leak into other tests.
-// seedFTableETopologyNode in remediation_agent_test.go owns ftable_e and its
-// private ancestor; this seeds the nodes no existing helper places.
+// seedFTableETopologyNode owns ftable_e and its private ancestor; this seeds
+// the nodes no existing helper places.
 func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClients, models ...topologyModel) {
 	t.Helper()
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{

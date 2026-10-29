@@ -35,7 +35,7 @@ func runFullRefresh(t *testing.T, fake client.RunClient, cfg *config.Config, arg
 }
 
 func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeState{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
 	stdout, stderr, exit := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"},
 		[]string{"finance", "analytics", "orders", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"})
 
@@ -49,12 +49,12 @@ func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestFullRefreshNode_WrongArgCountIsUsage(t *testing.T) {
-	_, _, exit := runFullRefresh(t, &fakeNodeState{}, &config.Config{Timeout: time.Second}, []string{"finance", "analytics"})
+	_, _, exit := runFullRefresh(t, &fakeNodeRunController{}, &config.Config{Timeout: time.Second}, []string{"finance", "analytics"})
 	assert.Equal(t, 2, exit)
 }
 
 func TestFullRefreshNode_ServerInvalidArgumentIsUsage(t *testing.T) {
-	fake := &fakeNodeState{fullRefreshErr: status.Error(codes.InvalidArgument, "bad triple")}
+	fake := &fakeNodeRunController{fullRefreshErr: status.Error(codes.InvalidArgument, "bad triple")}
 	_, _, exit := runFullRefresh(t, fake, &config.Config{Timeout: time.Second}, []string{"finance", "analytics", "orders"})
 	assert.Equal(t, 2, exit)
 }

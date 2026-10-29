@@ -68,7 +68,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	verifyRootNodesDispatched(t, ctx, dispatchTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
-	verifyExecutorDeployedJobs(t, ctx, clients, level0, testScheduleName)
+	verifyExecutionControllerDeployedJobs(t, ctx, clients, level0, testScheduleName)
 	verifyJobsCompleted(t, ctx, clients, level0, testScheduleName)
 
 	t.Log("Phase 1 complete: level 0 (seeds) succeeded")

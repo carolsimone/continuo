@@ -142,9 +142,9 @@ func TestTenantEdges(t *testing.T) {
 		t.Skip("integration test")
 	}
 	ctx := context.Background()
-	e := newEdgeTenant(t, stateDB)
-	require.Equal(t, string(run.RunStatusRunning), e.runStatus(t, stateDB))
-	require.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, stateDB))
+	e := newEdgeTenant(t, runControllerDB)
+	require.Equal(t, string(run.RunStatusRunning), e.runStatus(t, runControllerDB))
+	require.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB))
 	runID := e.runID.String()
 	service, schema, table := e.node()
 
@@ -200,27 +200,27 @@ func TestTenantEdges(t *testing.T) {
 		})
 		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of a node only another tenant's release holds")
 
-		assert.Equal(t, string(run.RunStatusRunning), e.runStatus(t, stateDB), "the run is left as it was")
-		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, stateDB))
+		assert.Equal(t, string(run.RunStatusRunning), e.runStatus(t, runControllerDB), "the run is left as it was")
+		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB))
 		var runs int
-		require.NoError(t, stateDB.Get(&runs, `SELECT count(*) FROM runs WHERE schedule_name = $1`, e.schedule))
+		require.NoError(t, runControllerDB.Get(&runs, `SELECT count(*) FROM runs WHERE schedule_name = $1`, e.schedule))
 		assert.Equal(t, 1, runs, "no command created a run of the schedule in any tenant")
 	})
 
 	t.Run("reports", func(t *testing.T) {
-		h := newBuiltHarness(stateDB)
+		h := newBuiltHarness(runControllerDB)
 		binding := redis.NewTaskStatusReportBinding(h.factory,
 			svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, h.logger), h.logger)
 
 		err := binding(ctx, e.report(t, pkgevents.DefaultTenantID))
 		require.ErrorIs(t, err, pkgevents.ErrPermanent, "a report naming another tenant than its run's is dead-lettered")
-		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, stateDB), "the report changed nothing")
+		assert.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB), "the report changed nothing")
 		var dedup int
-		require.NoError(t, stateDB.Get(&dedup, `SELECT count(*) FROM message_processing WHERE stream_name = $1 AND message_id = $2`,
+		require.NoError(t, runControllerDB.Get(&dedup, `SELECT count(*) FROM message_processing WHERE stream_name = $1 AND message_id = $2`,
 			streams.TaskStatusUpdatedV2, e.messages[0]))
 		assert.Zero(t, dedup, "the refused report's transaction rolled back")
 
 		require.NoError(t, binding(ctx, e.report(t, e.id)))
-		assert.Equal(t, string(run.AttemptQueued), e.attemptStatus(t, stateDB), "the report under its run's tenant is applied")
+		assert.Equal(t, string(run.AttemptQueued), e.attemptStatus(t, runControllerDB), "the report under its run's tenant is applied")
 	})
 }

@@ -24,7 +24,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -95,7 +95,7 @@ func (r *runReads) ObserveRun(context.Context, string) (model.RunObservation, er
 	return model.NewRunObservation(r.jobs), nil
 }
 
-// fenceFlow drives the fence of one run against the executor test database.
+// fenceFlow drives the fence of one run against the execution-controller test database.
 type fenceFlow struct {
 	t       *testing.T
 	db      *sqlx.DB
@@ -109,7 +109,7 @@ type fenceFlow struct {
 
 func newFenceFlow(t *testing.T) *fenceFlow {
 	t.Helper()
-	db, cleanup := executortest.SetupPostgres(t)
+	db, cleanup := ectest.SetupPostgres(t)
 	t.Cleanup(cleanup)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &fenceFlow{t: t, db: db, logger: logger, repo: postgres.NewDeploymentsRepository(db, logger),

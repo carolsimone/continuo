@@ -43,7 +43,7 @@ type JobParams struct {
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives as env vars; empty for every other node.
 	SecretRef string
-	// Operation selects the dbt verb the executor runs for this node.
+	// Operation selects the dbt verb execution-controller runs for this node.
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
 	// NodeType — a seed load is plain, non-destructive `dbt seed`.
 	// pkg_model.OperationTest runs `dbt test --select <node>`.

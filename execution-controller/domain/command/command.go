@@ -32,7 +32,7 @@ type DeployTask struct {
 	SecretRef string
 	// Attempt is which attempt of the task this is, as run-controller numbered it.
 	Attempt int
-	// Operation selects the dbt verb the executor runs for this node. Empty
+	// Operation selects the dbt verb execution-controller runs for this node. Empty
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
 	Operation string

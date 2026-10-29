@@ -24,9 +24,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/adapters/cron"
 	"github.com/carolsimone/continuo/run-controller/adapters/http"
-	statemetrics "github.com/carolsimone/continuo/run-controller/adapters/metrics"
+	rcmetrics "github.com/carolsimone/continuo/run-controller/adapters/metrics"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
-	statepublisher "github.com/carolsimone/continuo/run-controller/adapters/publisher"
+	rcpublisher "github.com/carolsimone/continuo/run-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/run-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/run-controller/adapters/s3"
 	"github.com/carolsimone/continuo/run-controller/config"
@@ -246,7 +246,7 @@ func main() {
 	// Closing the listener can wait on a connection attempt in progress, so
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
-	outboxPub := statepublisher.NewOutboxPublisher(redisClient, logger)
+	outboxPub := rcpublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
 		postgres.OutboxTable,
@@ -357,7 +357,7 @@ func main() {
 	// Every task run-controller plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
-	runMetrics := statemetrics.NewRunMetrics(metricsReg)
+	runMetrics := rcmetrics.NewRunMetrics(metricsReg)
 	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 

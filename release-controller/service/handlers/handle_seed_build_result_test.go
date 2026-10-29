@@ -224,7 +224,7 @@ func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "_candidate_rel_seed_fail_schema", payload["candidate_schema"],
-		"release.rejected:v1 must carry candidate_schema so executor can tear down the schema")
+		"release.rejected:v1 must carry candidate_schema so execution-controller can tear down the schema")
 }
 
 // topoTwoSeeds returns a topology with two dbt-seeds so we can test the
@@ -324,7 +324,7 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 }
 
 // TestHandleSeedBuildResult_OKThenValidationCompletePromotes proves the
-// seed-build leg leaves the persisted validation set equal to what the executor
+// seed-build leg leaves the persisted validation set equal to what execution-controller
 // actually emits per-node events for (the non-seed models). After the seed
 // builds ok, only the downstream model is checked, so only that node's per-node
 // result lands. The validation terminal (kind=complete) must then PROMOTE, not stall
@@ -339,13 +339,13 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	}))
 
 	// The persisted validation set must exclude the built seed so the barrier's
-	// expected set matches the executor's per-node emissions.
+	// expected set matches execution-controller's per-node emissions.
 	r := mustGetRelease(t, store, releaseID)
 	require.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
 		"persisted validation set must drop the just-built seed")
 
-	// Executor validates only the non-seed model and emits one per-node result;
+	// execution-controller validates only the non-seed model and emits one per-node result;
 	// the seed gets no validation event.
 	seedValidationNodes(t, deps, releaseID, []handlers.NodeResult{
 		{NodeID: "model.fin.report", Status: "ok"},
@@ -414,7 +414,7 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidate
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "_candidate_rel_seed_only_schema", payload["candidate_schema"],
-		"release.promoted:v2 on seed-only path must carry candidate_schema so executor can tear down the schema")
+		"release.promoted:v2 on seed-only path must carry candidate_schema so execution-controller can tear down the schema")
 }
 
 // topoSeedsWithFilePath returns a topology with two dbt-seeds that each carry

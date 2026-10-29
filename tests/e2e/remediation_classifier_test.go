@@ -24,7 +24,7 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 // classifier end-to-end through the realistic emit path:
 //
 //	POST /releases (service-2, ftable_e as changed node)
-//	→ validation.requested:v1 → executor/k8s run a real dbt --empty job
+//	→ validation.requested:v1 → execution-controller runs a real dbt --empty job
 //	→ ftable_e fails (references public.wrong_name which does not exist)
 //	→ validation.result:v1 terminal (kind=complete, release rejected)
 //	→ release.rejected:v1 → remediation classifier classifies the node

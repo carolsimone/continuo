@@ -21,7 +21,7 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
-	stateredis "github.com/carolsimone/continuo/run-controller/adapters/redis"
+	rcredis "github.com/carolsimone/continuo/run-controller/adapters/redis"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -60,7 +60,7 @@ func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{
 		db: db, tenant: tenant, factory: factory, reconciler: reconciler, artifacts: artifacts,
-		binding: stateredis.NewReleasePromotedBinding(factory, handler, logger),
+		binding: rcredis.NewReleasePromotedBinding(factory, handler, logger),
 	}
 }
 

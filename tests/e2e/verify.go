@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyExecutorDeployedJobs checks that executor deployed k8s jobs
-func verifyExecutorDeployedJobs(
+// verifyExecutionControllerDeployedJobs checks that execution-controller deployed k8s jobs
+func verifyExecutionControllerDeployedJobs(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
@@ -26,7 +26,7 @@ func verifyExecutorDeployedJobs(
 ) {
 	// Use app=dbt-job rather than schedule=<name> because seed nodes
 	// carry schedule_name="seed" in Neo4j regardless of the parent schedule,
-	// so their K8s jobs get label schedule=seed.  Filtering by the executor
+	// so their K8s jobs get label schedule=seed.  Filtering by the execution-controller
 	// app label and then checking table_name labels avoids this mismatch.
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
 		jobList, err := getK8sJobs(ctx, "app=dbt-job")
@@ -47,7 +47,7 @@ func verifyExecutorDeployedJobs(
 		}
 
 		return containsAll(deployedTables, expectedTables), nil
-	}, fmt.Sprintf("Timeout waiting for executor to deploy %d jobs", len(expectedTables)))
+	}, fmt.Sprintf("Timeout waiting for execution-controller to deploy %d jobs", len(expectedTables)))
 
 	t.Logf("✅ execution-controller deployed %d jobs", len(expectedTables))
 }
@@ -132,8 +132,8 @@ func verifyFullDAGExecution(
 	for i, level := range levels {
 		t.Logf("Verifying level %d: %v", i, level)
 
-		// Wait for executor to deploy these jobs
-		verifyExecutorDeployedJobs(t, ctx, clients, level, testScheduleName)
+		// Wait for execution-controller to deploy these jobs
+		verifyExecutionControllerDeployedJobs(t, ctx, clients, level, testScheduleName)
 
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)

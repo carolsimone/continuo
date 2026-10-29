@@ -41,7 +41,7 @@ func runList(t *testing.T, fake client.RunClient, args []string, human bool) (st
 }
 
 func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 7,
 		Nodes: []*runv1.NodeSummary{{
 			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
@@ -111,7 +111,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 }
 
 func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, nil, false)
 
@@ -126,7 +126,7 @@ func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 }
 
 func TestList_NegativeSentinelsAreOmitted(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 1,
 		Nodes: []*runv1.NodeSummary{{
 			ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran",
@@ -156,7 +156,7 @@ func TestList_NegativeSentinelsAreOmitted(t *testing.T) {
 }
 
 func TestList_PositionalArgIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"orders"}, false)
 
@@ -167,7 +167,7 @@ func TestList_PositionalArgIsUsageError(t *testing.T) {
 }
 
 func TestList_InvalidOperationIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"--operation", "deploy"}, false)
 
@@ -179,7 +179,7 @@ func TestList_InvalidOperationIsUsageError(t *testing.T) {
 func TestList_LimitOutOfRangeIsUsageError(t *testing.T) {
 	for _, limit := range []string{"0", "-5", "201"} {
 		t.Run("limit="+limit, func(t *testing.T) {
-			fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
+			fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 			stdout, _, exit := runList(t, fake, []string{"--limit", limit}, false)
 			assert.Equal(t, 2, exit)
 			assert.Contains(t, stdout, `"code":"usage"`)
@@ -189,7 +189,7 @@ func TestList_LimitOutOfRangeIsUsageError(t *testing.T) {
 }
 
 func TestList_NegativeOffsetIsUsageError(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{}}
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"--offset", "-1"}, false)
 
@@ -199,7 +199,7 @@ func TestList_NegativeOffsetIsUsageError(t *testing.T) {
 }
 
 func TestList_UnavailableMapsToExit5(t *testing.T) {
-	fake := &fakeNodeState{listErr: status.Error(codes.Unavailable, "connection refused")}
+	fake := &fakeNodeRunController{listErr: status.Error(codes.Unavailable, "connection refused")}
 
 	stdout, stderr, exit := runList(t, fake, nil, false)
 
@@ -210,7 +210,7 @@ func TestList_UnavailableMapsToExit5(t *testing.T) {
 }
 
 func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 42,
 		Nodes: []*runv1.NodeSummary{
 			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run"},
@@ -231,7 +231,7 @@ func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
 }
 
 func TestList_HumanModeEmptyPageSummary(t *testing.T) {
-	fake := &fakeNodeState{listResp: &runv1.ListNodesResponse{TotalCount: 0}}
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{TotalCount: 0}}
 
 	_, stderr, exit := runList(t, fake, nil, true)
 

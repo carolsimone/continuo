@@ -432,7 +432,7 @@ func TestCreateValidationJob_PullPolicyOverride(t *testing.T) {
 	}
 }
 
-// The executor bakes in no engine: with VALIDATION_IMAGE unset the node fails
+// execution-controller bakes in no engine: with VALIDATION_IMAGE unset the node fails
 // permanently rather than silently defaulting to one engine. The SRE sets
 // VALIDATION_IMAGE (Helm/compose) to the chosen engine's runner image.
 func TestCreateValidationJob_MissingImageErrors(t *testing.T) {

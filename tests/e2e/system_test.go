@@ -75,7 +75,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Verify ui HTTP API returns the correct data
 	t.Log("Verifying ui HTTP API...")
-	verifyUIService(t, ctx, schedulerIDStr)
+	verifyUIHTTPAPI(t, ctx, schedulerIDStr)
 
 	// ── Audit fields: the run's kind and its tasks' images are stored ──
 	t.Log("Verifying audit fields (kind, image_tag)...")

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
@@ -87,7 +87,7 @@ func TestRunCancelledBinding_DeletesTheJobsAfterCommit(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, d))
 	term := &committedDeletes{t: t, db: db, statuses: map[string]string{}}
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
-	bind := executorredis.NewRunCancelledBinding(newUoW,
+	bind := ecredis.NewRunCancelledBinding(newUoW,
 		handlers.NewRunCancelledHandler(jobsHolding{}, term, noStopMetrics{}, logger), logger)
 	unseen := pkgevents.CancelledAttempt{TaskID: uuid.NewString(), Attempt: 0, JobName: "dbt-public-items-" + runID.String()[:8]}
 	msg := runCancelledMessage(t, msgID(1), runID, unseen)
@@ -110,7 +110,7 @@ func TestRunCancelledBinding_AnUnreadableCancelIsPermanent(t *testing.T) {
 	defer cleanup()
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
-	bind := executorredis.NewRunCancelledBinding(newUoW,
+	bind := ecredis.NewRunCancelledBinding(newUoW,
 		handlers.NewRunCancelledHandler(jobsHolding{}, &committedDeletes{}, noStopMetrics{}, logger), logger)
 	msg := runCancelledMessage(t, msgID(1), uuid.New())
 	msg.Values["payload"] = `{"run_id":"not-a-uuid"}`

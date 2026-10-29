@@ -29,7 +29,7 @@ func pythonParams() JobParams {
 
 // TestBuildPythonPodSpec_InjectsExactlyTheNormativeEnv pins the boundary
 // contract's env table as a closed set. It is asserted exactly, not as a
-// subset: every variable the executor injects becomes a surface a domain image
+// subset: every variable execution-controller injects becomes a surface a domain image
 // can read, and therefore one we can never remove.
 func TestBuildPythonPodSpec_InjectsExactlyTheNormativeEnv(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
@@ -289,7 +289,7 @@ func TestCreateQueryJob_PythonNode_UsesPythonPodSpec(t *testing.T) {
 
 	job := fetchJob(t, client, "default", "run-py-probe")
 	assert.Equal(t, "dbt-job", job.Labels["app"],
-		"the executor job selector drives the concurrency cap and must not change")
+		"the execution-controller job selector drives the concurrency cap and must not change")
 	assert.Equal(t, "python", job.Labels["runtime"])
 	assert.NotContains(t, job.Labels, "mode", "a production run Job carries no mode label")
 	for k, v := range job.Labels {
@@ -320,7 +320,7 @@ func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 
 	job := fetchJob(t, client, "default", "run-csv-probe")
 	assert.Equal(t, "dbt-job", job.Labels["app"],
-		"the executor job selector drives the concurrency cap and must not change")
+		"the execution-controller job selector drives the concurrency cap and must not change")
 	assert.Equal(t, "python", job.Labels["runtime"])
 	assert.NotContains(t, job.Labels, "mode", "a production run Job carries no mode label")
 

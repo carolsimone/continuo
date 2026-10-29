@@ -37,7 +37,7 @@ const (
 	pyAPISecret = "continuo-api-probe"
 
 	// pyFixtureImage is the domain image scripts/setup.sh builds and side-loads
-	// into kind. The release posts it as image_tag and the executor runs it
+	// into kind. The release posts it as image_tag and execution-controller runs it
 	// verbatim, so this string must match setup.sh's PY_FIXTURE_IMAGE.
 	pyFixtureImage = "continuo-e2e-py-probe:latest"
 
@@ -273,7 +273,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 	return releaseID, cleanup
 }
 
-// TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves the executor's
+// TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves execution-controller's
 // python runtime dispatch end to end. It promotes the python fixture service,
 // then runs each of its nodes: the conforming script node materializes real
 // rows in the warehouse through the harness, the non-conforming one fails

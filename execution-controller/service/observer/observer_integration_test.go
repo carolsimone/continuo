@@ -23,7 +23,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -39,7 +39,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// harness wires an Observer to the executor test database and fake
+// harness wires an Observer to the execution-controller test database and fake
 // Kubernetes ports, its clock fixed at now.
 type harness struct {
 	db    *sqlx.DB
@@ -58,7 +58,7 @@ type harness struct {
 
 func newHarness(t testing.TB) *harness {
 	t.Helper()
-	db, cleanup := executortest.SetupPostgres(t)
+	db, cleanup := ectest.SetupPostgres(t)
 	t.Cleanup(cleanup)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cache := &fakeCache{}
