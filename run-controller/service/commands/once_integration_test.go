@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// onceFixture is a real state database, a tenant no other test uses (its runs,
+// onceFixture is a real run-controller database, a tenant no other test uses (its runs,
 // and with them its command requests, are deleted when the test ends) and the
 // counter Once reports to.
 type onceFixture struct {

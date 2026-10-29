@@ -34,7 +34,7 @@ func (RunFinalized) runDomainEvent()    {}
 func (e RunFinalized) RunID() uuid.UUID { return e.ID }
 
 // RunCancelled is the cancel of a run: who cancelled it, why, and the
-// attempts state still waits for. Run.Cancel records it naming no attempt;
+// attempts run-controller still waits for. Run.Cancel records it naming no attempt;
 // StopQuestion.Cancel re-sends it naming each attempt asked to stop that has
 // not answered. Translated to run.cancelled:v1.
 type RunCancelled struct {
@@ -49,18 +49,18 @@ type RunCancelled struct {
 func (RunCancelled) runDomainEvent()    {}
 func (e RunCancelled) RunID() uuid.UUID { return e.ID }
 
-// TaskDispatched is recorded for each attempt of a task state dispatches: by
+// TaskDispatched is recorded for each attempt of a task run-controller dispatches: by
 // Run.Start for each ready task, by Run.RecordAttemptReport for each task a
 // success makes ready and for the next attempt of a task a retryable failure
 // leaves with retries left. The attempt reconcile produces one too, through
-// Question.Dispatch, each time state asks about an attempt that has gone
-// quiet: it carries the status state knows the attempt in, and the attempt's
+// Question.Dispatch, each time run-controller asks about an attempt that has gone
+// quiet: it carries the status run-controller knows the attempt in, and the attempt's
 // next question waits for the next window. It carries the run, the task and
-// the attempt's number, state's view of the attempt (KnownStatus: dispatched
+// the attempt's number, run-controller's view of the attempt (KnownStatus: dispatched
 // until execution-controller acknowledged it), the node it builds as the run's
 // release holds it, the attempt's Kubernetes Job name, the dbt verb and how
 // long the attempt's container may run. TenantID is the tenant of the run,
-// which the event's outbox row stores. No retry budget travels: state decides
+// which the event's outbox row stores. No retry budget travels: run-controller decides
 // every retry.
 type TaskDispatched struct {
 	ID           uuid.UUID

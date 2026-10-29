@@ -26,7 +26,7 @@ const (
 	copyTopologyEdges = `COPY topology_edges (tenant_id, release_id, upstream_key, downstream_key) FROM STDIN`
 )
 
-// TopologyRepository implements repository.TopologyRepository over state's
+// TopologyRepository implements repository.TopologyRepository over run-controller's
 // Postgres. Writes run in the unit of work's transaction; reads run in it when
 // one is open, so they see its writes and the lock it holds.
 type TopologyRepository struct {

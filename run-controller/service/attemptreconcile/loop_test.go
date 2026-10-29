@@ -182,7 +182,7 @@ func newFake(attempts *fakeAttempts, outbox *recordingOutbox) *uow.FakeUnitOfWor
 	return f
 }
 
-// Each due attempt is dispatched again with the status state knows it in, in
+// Each due attempt is dispatched again with the status run-controller knows it in, in
 // its own transaction, and its next check moves to its next window.
 func TestPass_AsksAboutEachDueAttemptWithItsKnownStatus(t *testing.T) {
 	quiet := repository.AttemptKey{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), Attempt: 0}

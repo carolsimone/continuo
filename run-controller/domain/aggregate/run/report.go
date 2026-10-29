@@ -9,21 +9,21 @@ import (
 )
 
 // StallAfter is how long a run with no attempt in flight may go without
-// progress before state fails it as stalled. Every legitimate wait has its own
-// clock, so such a run is left behind by a defect in state; the value is not
+// progress before run-controller fails it as stalled. Every legitimate wait has its own
+// clock, so such a run is left behind by a defect in run-controller; the value is not
 // an operator setting.
 const StallAfter = 5 * time.Minute
 
 // StallAfterFailedGrant is how long a run may go without progress while the
-// grant of a waiting task of it fails before state fails the run as stalled
+// grant of a waiting task of it fails before run-controller fails the run as stalled
 // without that grant (FailStalledWithoutGrants). A grant that fails on every
-// try, which only a defect in state causes, would otherwise keep the run
+// try, which only a defect in run-controller causes, would otherwise keep the run
 // active and every task queued behind its waiting task waiting for ever; a
 // run idle for less is left for the next pass to grant again, so a grant that
 // failed on a transient error is retried.
 const StallAfterFailedGrant = 2 * StallAfter
 
-// TaskDefaults are the install's settings for the tasks state plans: the
+// TaskDefaults are the install's settings for the tasks run-controller plans: the
 // retry budget stamped on each task when its run is created, and the timeout
 // of a task whose node declares none.
 type TaskDefaults struct {
@@ -62,7 +62,7 @@ func Retryable(class model.FailureClass) bool {
 	return false
 }
 
-// NextCheckAfter is how long state waits, from now, before it asks
+// NextCheckAfter is how long run-controller waits, from now, before it asks
 // execution-controller about an attempt in status s that has already been
 // asked about checksSent times. An attempt still dispatched is asked about
 // after 5 minutes, then 10, 20, 40 and every 60; an acknowledged one after 30
@@ -79,7 +79,7 @@ func NextCheckAfter(s AttemptStatus, checksSent int) time.Duration {
 	return 0
 }
 
-// NextStopCheckAfter is how long state waits, from now, before it re-sends
+// NextStopCheckAfter is how long run-controller waits, from now, before it re-sends
 // the cancel of a run for an attempt it asked to stop and has re-sent the
 // cancel for checksSent times: 5 minutes, then 10, 20, 40 and every 60,
 // whatever status the attempt last reported.

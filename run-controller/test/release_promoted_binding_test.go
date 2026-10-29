@@ -44,7 +44,7 @@ func (m *memoryArtifacts) Load(_ context.Context, uri, sha256 string) (svcports.
 	return a, nil
 }
 
-// promotionHarness drives state's release.promoted:v2 binding against a real
+// promotionHarness drives run-controller's release.promoted:v2 binding against a real
 // Postgres. Every delivery gets a fresh stream message id.
 type promotionHarness struct {
 	artifacts *memoryArtifacts

@@ -24,9 +24,9 @@ import (
 // field, and its id is threaded to the handler so the task.dispatch:v1 rows
 // the report writes carry provenance back to it.
 //
-// A report for a run state never created, for a run of another tenant than
-// its envelope names, for a task its run does not hold, for an attempt state
-// never dispatched, or a stopped report of an attempt state never asked to
+// A report for a run run-controller never created, for a run of another tenant than
+// its envelope names, for a task its run does not hold, for an attempt run-controller
+// never dispatched, or a stopped report of an attempt run-controller never asked to
 // stop, is permanent (permanentWhenNeverValid); every other handler error
 // keeps its class. See bindStreamHandler for the shared pipeline and
 // ACK-policy semantics.
@@ -48,7 +48,7 @@ func NewTaskStatusReportBinding(
 // under the tenant its envelope names (postgres.ErrNotFound, which the run's
 // lock returns), for a task its run does not hold (run.ErrTaskNotHeld), for
 // an attempt the task was never dispatched (run.ErrAttemptNotIssued) or a
-// stopped report of an open attempt state never asked to stop
+// stopped report of an open attempt run-controller never asked to stop
 // (run.ErrStopNotRequested) is permanent: a run's row and tasks are stored,
 // under the run's tenant, in the transaction that creates it, before any task
 // is dispatched, each attempt's row in the transaction that dispatches it,

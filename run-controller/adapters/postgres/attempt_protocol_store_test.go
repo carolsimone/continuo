@@ -32,7 +32,7 @@ func dueIn(t *testing.T, tx *sqlx.Tx, taskID any, attempt int) *time.Duration {
 	return &d
 }
 
-// The attempts state dispatches are written in one statement, dispatched,
+// The attempts run-controller dispatches are written in one statement, dispatched,
 // each due for its first check on the database clock.
 func TestTaskAttempts_AddAttemptsWritesDispatchedAttemptsDueOnTheDatabaseClock(t *testing.T) {
 	db := newTestDB(t)

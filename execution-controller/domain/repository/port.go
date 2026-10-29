@@ -91,12 +91,12 @@ type ValidationAggregateRepository interface {
 	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
 }
 
-// CancelledRunsRepository holds the run fence: every run state cancelled,
+// CancelledRunsRepository holds the run fence: every run run-controller cancelled,
 // in cancelled_runs. No attempt of a fenced run starts, and every Job of it is
 // deleted.
 type CancelledRunsRepository interface {
 	// Insert fences runID. Fencing a fenced run again keeps one fence and
-	// restarts its age, so a fence outlives the last cancel state sent for
+	// restarts its age, so a fence outlives the last cancel run-controller sent for
 	// the run by DeleteOlderThan's age.
 	Insert(ctx context.Context, runID uuid.UUID) error
 	// Exists reports whether runID is fenced.

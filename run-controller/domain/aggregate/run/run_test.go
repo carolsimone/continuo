@@ -615,7 +615,7 @@ func freshPendingRun(t *testing.T) *run.Run {
 	return r
 }
 
-// runningRunWithProjection returns a RUNNING run whose tasks state did not
+// runningRunWithProjection returns a RUNNING run whose tasks run-controller did not
 // plan, holding one pending task per id (stored in tc) with init=completed,
 // total=N and terminal=0.
 func runningRunWithProjection(t *testing.T, tc *fakeTaskCollection, taskIDs ...uuid.UUID) *run.Run {

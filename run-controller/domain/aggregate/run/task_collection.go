@@ -43,7 +43,7 @@ type TaskCollection interface {
 	// unchanged when it is not, and cleared once the attempt is final.
 	SaveAttempt(ctx context.Context, a Attempt) error
 
-	// AddAttempts inserts the attempts state has just dispatched, in one
+	// AddAttempts inserts the attempts run-controller has just dispatched, in one
 	// statement: each with its DispatchedAt (the database clock when nil), no
 	// report yet, and its first check NextCheckIn after the database clock.
 	AddAttempts(ctx context.Context, attempts []Attempt) error
@@ -189,8 +189,8 @@ type StopCounts struct {
 	Stopping  int
 }
 
-// StopTarget is an attempt state asked to stop: its task, its number, the
-// Kubernetes Job that runs it, and how often state has re-sent the cancel for
+// StopTarget is an attempt run-controller asked to stop: its task, its number, the
+// Kubernetes Job that runs it, and how often run-controller has re-sent the cancel for
 // it.
 type StopTarget struct {
 	TaskID     uuid.UUID

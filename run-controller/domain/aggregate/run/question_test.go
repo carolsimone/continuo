@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A question is the attempt's dispatch again, its known status the one state
+// A question is the attempt's dispatch again, its known status the one run-controller
 // holds, its timeout its node's; the next one waits for the next window.
 func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 	declared := 5400
@@ -30,7 +30,7 @@ func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, next)
 }
 
-// A stop question is the run's cancel again, naming every attempt state still
+// A stop question is the run's cancel again, naming every attempt run-controller still
 // waits for.
 func TestStopQuestion_CancelNamesEveryAttempt(t *testing.T) {
 	attempts := []StopTarget{

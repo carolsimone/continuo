@@ -208,7 +208,7 @@ func TestCommands_ARunOfAnotherTenantIsNotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
-// A command that reaches state without a tenant is Internal before it acts.
+// A command that reaches run-controller without a tenant is Internal before it acts.
 func TestCommands_ARequestWithoutATenantIsInternal(t *testing.T) {
 	cmds := &fakeCommands{runOf: map[string]uuid.UUID{tenantA: uuid.New()}}
 	srv := newCommandServer(newStore(), cmds)

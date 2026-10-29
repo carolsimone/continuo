@@ -15,7 +15,7 @@ type AttemptKey struct {
 	Attempt  int32
 }
 
-// AttemptRepository serves state's attempt reconcile: the attempts due to be
+// AttemptRepository serves run-controller's attempt reconcile: the attempts due to be
 // asked about, the runs that stalled, and, inside the unit of work's
 // transaction, the lock and the record of one question. Due times compare
 // against the database clock. Its scans (DueAttempts, StalledRuns, DueStops)
@@ -49,12 +49,12 @@ type AttemptRepository interface {
 	MarkQuestioned(ctx context.Context, key AttemptKey, next time.Duration) error
 
 	// DueStops returns up to limit cancelling runs of any tenant that have an
-	// open attempt state asked to stop whose next check is due, the longest
+	// open attempt run-controller asked to stop whose next check is due, the longest
 	// due first.
 	DueStops(ctx context.Context, limit int) ([]RunRef, error)
 
 	// LockStops locks, FOR UPDATE SKIP LOCKED, every open attempt of the
-	// cancelling run that state asked to stop, and returns them with the
+	// cancelling run that run-controller asked to stop, and returns them with the
 	// run's cancelled_by and cancellation_reason: the cancel to send again,
 	// naming each attempt that has not answered. found is false, and nothing
 	// is held, when the run is no longer cancelling, another transaction holds

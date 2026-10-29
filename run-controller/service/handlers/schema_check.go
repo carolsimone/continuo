@@ -9,7 +9,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/service/ports"
 )
 
-// RequiredColumns are the columns state's code reads that a state database not
+// RequiredColumns are the columns run-controller's code reads that a run-controller database not
 // yet migrated lacks: the per-attempt rows (task_attempts), the attempt counter
 // on tasks, the timeout a release stores for each node, why a run
 // failed when no task of it failed, when a stop was requested of an attempt,
@@ -32,9 +32,9 @@ var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topolo
 	"schedules.paused", "schedules.next_fire_at", "schedules.version", "schedules.updated_by", "schedules.updated_at",
 	"runs.scheduled_for"}
 
-// ErrSchemaNotReady reports a state database that lacks a column the running
+// ErrSchemaNotReady reports a run-controller database that lacks a column the running
 // code reads.
-var ErrSchemaNotReady = errors.New("the state database is not migrated")
+var ErrSchemaNotReady = errors.New("the run-controller database is not migrated")
 
 // CheckSchema returns ErrSchemaNotReady, naming each missing column, until
 // every required column exists. With the bundled Postgres a new pod can start
@@ -43,11 +43,11 @@ var ErrSchemaNotReady = errors.New("the state database is not migrated")
 func CheckSchema(ctx context.Context, cols ports.SchemaColumns) error {
 	missing, err := cols.Missing(ctx, RequiredColumns)
 	if err != nil {
-		return fmt.Errorf("read the state database schema: %w", err)
+		return fmt.Errorf("read the run-controller database schema: %w", err)
 	}
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s absent; state starts once the state database migration "+
+	return fmt.Errorf("%w: %s absent; run-controller starts once the run-controller database migration "+
 		"(the chart's db-init-migrate Job) has applied it", ErrSchemaNotReady, strings.Join(missing, ", "))
 }

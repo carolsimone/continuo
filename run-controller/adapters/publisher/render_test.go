@@ -111,7 +111,7 @@ func TestRender_ADispatchThatDoesNotDecodeIsPermanent(t *testing.T) {
 }
 
 // A run.cancelled:v1 row renders as the golden entry: its payload, the cancel,
-// under an envelope that names the row as the event, state as its producer and
+// under an envelope that names the row as the event, run-controller as its producer and
 // the row's creation as when it occurred.
 func TestRender_RunCancelledMatchesTheGoldenFixture(t *testing.T) {
 	for _, name := range []string{"run_cancelled_v1.json", "run_cancelled_v1_attempts.json"} {
@@ -162,7 +162,7 @@ func TestRender_ACancelThatDoesNotDecodeIsPermanent(t *testing.T) {
 	require.ErrorIs(t, err, pkgevents.ErrPermanent)
 }
 
-// wrapped stores payload as a state outbox row does: under its tenant.
+// wrapped stores payload as a run-controller outbox row does: under its tenant.
 func wrapped(t *testing.T, tenantID string, payload []byte) []byte {
 	t.Helper()
 	stored, err := outbox.WrapTenant(tenantID, payload)

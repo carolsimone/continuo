@@ -43,7 +43,7 @@ func TestCancelledRuns_DeleteOlderThanKeepsTheReplayHorizon(t *testing.T) {
 }
 
 // Fencing a fenced run again, as each re-send of its cancel does, restarts
-// the fence's age: a fence state keeps re-sending is never swept, however
+// the fence's age: a fence run-controller keeps re-sending is never swept, however
 // long ago the first cancel was.
 func TestCancelledRuns_AReInsertRefreshesTheFence(t *testing.T) {
 	db, cleanup := setupPostgres(t)

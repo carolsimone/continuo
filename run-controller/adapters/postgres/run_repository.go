@@ -197,7 +197,7 @@ func (r *RunRepository) ListUnplannedActive(ctx context.Context) ([]repository.R
 		SELECT tenant_id, run_id FROM runs
 		WHERE status = ANY($1::text[]) AND planned_at IS NULL
 		ORDER BY created_at, tenant_id, run_id`, pq.Array(activeRunStatuses())); err != nil {
-		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
+		return nil, fmt.Errorf("list the active runs run-controller did not plan: %w", err)
 	}
 	return runRefs(rows), nil
 }

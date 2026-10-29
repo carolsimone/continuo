@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// tenantKeyExemptTables are the tables of the state database whose keys do not
+// tenantKeyExemptTables are the tables of the run-controller database whose keys do not
 // lead with tenant_id: the stream dedup and the outbox, whose rows are keyed by
 // their own ids, and Flyway's history.
 var tenantKeyExemptTables = []string{"message_processing", "state_outbox", "flyway_schema_history"}
 
-// stateKey is a primary key, unique index or foreign key of a state table, with
+// stateKey is a primary key, unique index or foreign key of a run-controller table, with
 // its columns in key order and, for a foreign key, the referenced columns.
 type stateKey struct {
 	Table      string
@@ -73,7 +73,7 @@ func stateKeys(t *testing.T, db *sqlx.DB) []stateKey {
 	return out
 }
 
-// Every primary key, unique index and foreign key of the state tables, except
+// Every primary key, unique index and foreign key of the run-controller tables, except
 // the dedup's and the outbox's, starts with tenant_id, and a foreign key
 // references a key that starts with tenant_id too. The keys the run tables and
 // the schedules hold are exactly the tenant-led ones listed.

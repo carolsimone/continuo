@@ -12,7 +12,7 @@ import (
 )
 
 // ParseTaskStatusReport decodes one task.status.updated:v2 entry, envelope
-// fields plus a typed payload, into the report state applies, with the tenant
+// fields plus a typed payload, into the report run-controller applies, with the tenant
 // its envelope names. A decode failure (no envelope, an unknown
 // schema_version, a run or task id that is not a UUID, a missing or negative
 // attempt, an unknown status, a failure without a declared reason or with

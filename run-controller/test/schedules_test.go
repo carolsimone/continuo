@@ -114,7 +114,7 @@ func upsertYearly(t *testing.T, user, name string, expected int64, paused bool) 
 	return resp
 }
 
-// testParser is the parser state fires crons with.
+// testParser is the parser run-controller fires crons with.
 func testParser(t *testing.T) *cron.Parser {
 	t.Helper()
 	parser, err := cron.NewParser()
@@ -487,7 +487,7 @@ func TestSchedules_AnotherTenantsSchedulesAreInvisible(t *testing.T) {
 	require.ErrorIs(t, err, schedule.ErrStaleVersion)
 }
 
-// pausedAfterRead is the schedule repository state edits with, except that
+// pausedAfterRead is the schedule repository run-controller edits with, except that
 // its first Get, once it has read the row, signals read and waits for resume:
 // a test saves other edits between that edit's read and its save.
 type pausedAfterRead struct {
@@ -523,7 +523,7 @@ func (p *pausedAfterRead) Get(ctx context.Context, tenantID, name string) (*sche
 // resume lets the paused edit go on to its save.
 func (p *pausedAfterRead) resume() { p.resumed.Do(func() { close(p.resumeSave) }) }
 
-// scheduleServiceOver is the schedules service state runs, over repo.
+// scheduleServiceOver is the schedules service run-controller runs, over repo.
 func scheduleServiceOver(t *testing.T, repo repository.ScheduleRepository) *schedules.Service {
 	t.Helper()
 	return schedules.New(repo, postgres.NewLiveScheduleModelRepository(stateDB),

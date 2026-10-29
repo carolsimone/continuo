@@ -362,7 +362,7 @@ type TaskAttempt struct {
 	// only for a succeeded attempt, so read it together with status and
 	// failure_reason.
 	ExitCode         int32                  `protobuf:"varint,7,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	DispatchedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`                // when state dispatched the attempt
+	DispatchedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`                // when run-controller dispatched the attempt
 	QueuedAt         *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`                            // unset until reported
 	StartedAt        *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                        // unset until reported
 	FinishedAt       *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`                     // unset until the attempt finished
@@ -4060,7 +4060,7 @@ type ScheduleTopologySummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
 	NodeCount     int32                  `protobuf:"varint,2,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`              // nodes of the schedule in the live release
-	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when state loaded the live release
+	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when run-controller loaded the live release
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

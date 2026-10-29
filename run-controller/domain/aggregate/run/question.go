@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Question is an attempt state asks execution-controller about because
+// Question is an attempt run-controller asks execution-controller about because
 // nothing was heard of it within its window: the attempt, its status as
-// state last knew it, how often it has been asked about, and what its
+// run-controller last knew it, how often it has been asked about, and what its
 // dispatch carries.
 type Question struct {
 	RunID        uuid.UUID
@@ -29,7 +29,7 @@ type Question struct {
 // Dispatch is the question as a dispatch of the attempt, its known status the
 // attempt's, and how long from now the attempt is asked about again.
 // execution-controller answers it with the attempt's latest report, and
-// creates the attempt only when it holds no record of it and state still
+// creates the attempt only when it holds no record of it and run-controller still
 // knows it as dispatched.
 func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 	return TaskDispatched{
@@ -46,7 +46,7 @@ func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 	}, NextCheckAfter(q.Status, q.ChecksSent+1)
 }
 
-// StopQuestion is the cancel of a cancelling run state sends again because
+// StopQuestion is the cancel of a cancelling run run-controller sends again because
 // attempts it asked to stop have not answered within their window: the run,
 // who cancelled it and why, and those attempts.
 type StopQuestion struct {

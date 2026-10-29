@@ -32,7 +32,7 @@ type ReleasePromotedInput struct {
 }
 
 // ReleasePromotedHandler stores each promoted release's topology and moves
-// state's live-release pointer.
+// run-controller's live-release pointer.
 //
 // Load reads the release's topology artifact before the transaction opens.
 // Handle then, in the message's transaction, stores the release once and moves

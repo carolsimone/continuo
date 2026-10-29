@@ -10,7 +10,7 @@ import (
 )
 
 // LiveScheduleModelRepository implements repository.LiveScheduleModels over
-// state's copy of the promoted topologies: each read joins the tenant's
+// run-controller's copy of the promoted topologies: each read joins the tenant's
 // live_release row to that release's topology_nodes, in the transaction bound
 // by WithTx when there is one, so a command never waits for a second
 // connection while it holds its own, else on the autocommit db.

@@ -49,7 +49,7 @@ var (
 	stateDSN string
 )
 
-// TestMain sets up a real PostgreSQL testcontainer and a live gRPC state server,
+// TestMain sets up a real PostgreSQL testcontainer and a live gRPC run-controller server,
 // shared across all tests in the package.
 func TestMain(m *testing.M) {
 	ctx := context.Background()

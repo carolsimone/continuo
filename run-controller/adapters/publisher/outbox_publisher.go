@@ -12,10 +12,10 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// producer names state as the producer of the enveloped streams it writes.
+// producer names run-controller as the producer of the enveloped streams it writes.
 const producer = "run-controller"
 
-// OutboxPublisher publishes state's outbox entries to Redis streams. Each
+// OutboxPublisher publishes run-controller's outbox entries to Redis streams. Each
 // outbox row represents one event, rendered as a field map (Render) and
 // written via XADD to the stream named by StreamName: a task.dispatch:v1 or
 // run.cancelled:v1 row under an envelope, a dead-letter row as its dead-letter

@@ -47,7 +47,7 @@ type Run struct {
 	cancelledBy        *string
 	cancellationReason *string
 	// plannedAt is when Start chose and stored the run's tasks; nil on a run
-	// whose tasks state did not choose.
+	// whose tasks run-controller did not choose.
 	plannedAt *time.Time
 	// failureReason says why the run failed when no task of it failed; nil
 	// otherwise.
@@ -719,7 +719,7 @@ func (r *Run) dispatchAttemptZero(ctx context.Context, tasks TaskCollection, rea
 	return events, nil
 }
 
-// firstAttempt is attempt 0 of a task state dispatches at at: dispatched, due
+// firstAttempt is attempt 0 of a task run-controller dispatches at at: dispatched, due
 // for its first check.
 func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 	return Attempt{TaskID: taskID, Number: 0, JobName: jobName, Status: AttemptDispatched,

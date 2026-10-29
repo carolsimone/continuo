@@ -17,7 +17,7 @@ import (
 )
 
 // The benchmarks below measure the run-planning hot paths on synthetic
-// releases stored in the test database the state migrations built:
+// releases stored in the test database the run-controller migrations built:
 //
 //	go test -tags integration -run '^$' -bench 'StartRun|TaskSucceeded|TaskFailedRetry|FinalFailure|ReconcileDue' -benchtime 20x ./adapters/postgres/
 

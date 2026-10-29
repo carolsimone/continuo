@@ -90,7 +90,7 @@ func ActiveRunStatuses() []RunStatus {
 }
 
 // TaskStatus is the lifecycle status of one task within a Run. A task waits
-// pending until it is ready; once state dispatches an attempt of it the task
+// pending until it is ready; once run-controller dispatches an attempt of it the task
 // is dispatched, then queued while execution-controller waits for a slot,
 // then running once the attempt's main container starts. A failed attempt
 // with retries left dispatches the next one, so the task is failed only once

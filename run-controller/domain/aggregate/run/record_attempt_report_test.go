@@ -172,7 +172,7 @@ func TestRecordAttemptReport_ThreeAttemptsThenTheTaskFails(t *testing.T) {
 	assert.Len(t, tc.skipped, 6, "ftable_c to ftable_h all read ftable_a")
 }
 
-// A failure state would never retry fails the task at once, budget or not: a
+// A failure run-controller would never retry fails the task at once, budget or not: a
 // timeout would take as long again, and an invalid dispatch can never run.
 func TestRecordAttemptReport_ANonRetryableFailureFailsTheTaskWithBudgetLeft(t *testing.T) {
 	for _, reason := range []model.FailureReason{model.FailureReasonStartTimeout, model.FailureReasonDeadlineExceeded,
@@ -235,7 +235,7 @@ func TestRecordAttemptReport_ALateReportOfAnOlderAttemptLeavesTheNewerOneAlone(t
 	assert.Equal(t, run.AttemptRunning, current.Status)
 }
 
-// A report for an attempt state never dispatched is refused: the attempt
+// A report for an attempt run-controller never dispatched is refused: the attempt
 // after the current one, and attempt 0 of a task that waits for its upstreams.
 func TestRecordAttemptReport_AReportForAnAttemptStateNeverIssuedIsRefused(t *testing.T) {
 	r, tc, g := startedFailureRun(t)
@@ -547,7 +547,7 @@ func TestRecordAttemptReport_TheLastStoppedTaskEndsTheRunCancelled(t *testing.T)
 	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_b")])
 }
 
-// A stopped report of an attempt state never asked to stop is refused before
+// A stopped report of an attempt run-controller never asked to stop is refused before
 // anything is written.
 func TestRecordAttemptReport_AStoppedReportForATaskNotStoppingIsRefused(t *testing.T) {
 	r, tc, g := startedFailureRun(t)

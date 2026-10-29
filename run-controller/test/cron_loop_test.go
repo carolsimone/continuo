@@ -181,7 +181,7 @@ func (c *cronTenant) factory() uow.UnitOfWork {
 	return postgres.NewPostgresUnitOfWork(stateDB, c.clock, c.logger, c.parser)
 }
 
-// loop is a cron loop over state's database; with maintenance on it starts no
+// loop is a cron loop over run-controller's database; with maintenance on it starts no
 // run.
 func (c *cronTenant) loop(maintenance bool) *cronloop.Loop {
 	return cronloop.New(c.factory, svchandlers.NewStartRunHandler(defaultPlanner, c.logger), c.metrics, maintenance, c.logger)
@@ -325,7 +325,7 @@ func TestCronLoop_TwoPassesOnOneSlotMakeOneRun(t *testing.T) {
 	assert.True(t, march(11, 1, 0).Equal(c.nextFire(t, "daily")))
 }
 
-// state is down from 00:55 to 03:10: the loop that starts at 03:10 finds the
+// run-controller is down from 00:55 to 03:10: the loop that starts at 03:10 finds the
 // 01:00 slot due and fires it once, late; another pass after it makes nothing.
 func TestCronLoop_ARestartAcrossADueSlotFiresItOnceLate(t *testing.T) {
 	c := newCronTenant(t, "daily")

@@ -530,7 +530,7 @@ func TestAttemptReport_ARunThatEndedChangesNothing(t *testing.T) {
 	}
 }
 
-// A report for a task the run does not hold, or for an attempt state never
+// A report for a task the run does not hold, or for an attempt run-controller never
 // dispatched, surfaces its error, which the binding marks permanent; the run
 // is not saved.
 func TestAttemptReport_AReportThatCanNeverApplyFailsTheMessage(t *testing.T) {
@@ -538,8 +538,8 @@ func TestAttemptReport_AReportThatCanNeverApplyFailsTheMessage(t *testing.T) {
 		taskColl *fakeTaskStatusTaskCollection
 		want     error
 	}{
-		"a task the run does not hold":  {&fakeTaskStatusTaskCollection{prevExists: false}, run.ErrTaskNotHeld},
-		"an attempt state never issued": {&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true}, run.ErrAttemptNotIssued},
+		"a task the run does not hold":           {&fakeTaskStatusTaskCollection{prevExists: false}, run.ErrTaskNotHeld},
+		"an attempt run-controller never issued": {&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true}, run.ErrAttemptNotIssued},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -672,7 +672,7 @@ type taskStatusClock struct{ at time.Time }
 
 func (c taskStatusClock) Now() time.Time { return c.at }
 
-// plannedRun builds a RUNNING run of total tasks, none terminal, that state
+// plannedRun builds a RUNNING run of total tasks, none terminal, that run-controller
 // planned on releaseID with operation op.
 func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32) *run.Run {
 	r := run.HydrateRun(pkgevents.DefaultTenantID,
@@ -694,13 +694,13 @@ func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32)
 	return r
 }
 
-// newReleaseTaskStatusRun builds a RUNNING one-task run state planned on
+// newReleaseTaskStatusRun builds a RUNNING one-task run run-controller planned on
 // releaseID.
 func newReleaseTaskStatusRun(id uuid.UUID, releaseID string) *run.Run {
 	return plannedRun(id, releaseID, model.OperationRun, 1)
 }
 
-// A succeeded task of a run state planned records the version it loaded: the
+// A succeeded task of a run run-controller planned records the version it loaded: the
 // node's content hash in the run's release and the task's image.
 func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
@@ -726,9 +726,9 @@ func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 	}}, mats.built)
 }
 
-// A success records a loaded version for a run state planned whose operation
+// A success records a loaded version for a run run-controller planned whose operation
 // writes the table: run, build and full refresh. A test only reads the table,
-// and a run whose tasks state did not plan may have built another release's
+// and a run whose tasks run-controller did not plan may have built another release's
 // version, so neither records.
 func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
@@ -745,7 +745,7 @@ func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 		{"a planned build", plannedRun(scheduleID, "rel-1", model.OperationBuild, 1), true},
 		{"a planned full refresh", plannedRun(scheduleID, "rel-1", model.OperationFullRefresh, 1), true},
 		{"a planned test", plannedRun(scheduleID, "rel-1", model.OperationTest, 1), false},
-		{"a run state did not plan", unplanned, false},
+		{"a run run-controller did not plan", unplanned, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

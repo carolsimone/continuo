@@ -2,7 +2,7 @@ package ports
 
 import "time"
 
-// RunMetrics counts what state's reconcile loop, report handler, lease waker
+// RunMetrics counts what run-controller's reconcile loop, report handler, lease waker
 // and cron loop do to runs.
 type RunMetrics interface {
 	// RunStalled counts one run failed as stalled.

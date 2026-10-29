@@ -17,7 +17,7 @@ import (
 )
 
 // reportEntry reads the golden task.status.updated:v2 entry of status as the
-// Redis message state receives: every field a string, the payload JSON.
+// Redis message run-controller receives: every field a string, the payload JSON.
 func reportEntry(t *testing.T, status string) goredis.XMessage {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_status_updated_v2_"+status+".json")) //nolint:gosec // G304: a fixed fixture path

@@ -4,7 +4,7 @@
 // partial-parse artifact into a run pod and reports its outcome on the
 // container's termination message; execution-controller's Job observation
 // (domain/model/job_observation.go) parses that message into the attempt's
-// facts, which reach state as task_attempts.parse_cache, and
+// facts, which reach run-controller as task_attempts.parse_cache, and
 // adapters/k8s/jobs_create.go names the initContainer it builds. These constants are the single Go source of
 // truth for the three sentinel strings that stitch the Python fetcher and
 // execution-controller together — the cross-language guard in

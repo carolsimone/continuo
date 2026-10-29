@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The design's table of what a dispatch leads to: only a dispatch state still
+// The design's table of what a dispatch leads to: only a dispatch run-controller still
 // knows as dispatched, with neither a record nor a Job of the attempt, creates
 // the attempt.
 func TestDecideDispatch(t *testing.T) {
@@ -132,7 +132,7 @@ func TestDispatchProblemRefusesAJobNameKubernetesCannotRead(t *testing.T) {
 	assert.Contains(t, message, "job_name", "no job name")
 }
 
-// Every name state gives an attempt (pkg/domain.ComputeJobName: a DNS-1123
+// Every name run-controller gives an attempt (pkg/domain.ComputeJobName: a DNS-1123
 // label of at most 63 characters, with the -r{attempt} suffix after the
 // first attempt) is accepted. The names are those the function returns for
 // service-1 / analytics / int_customer_orders_aggregated_daily and

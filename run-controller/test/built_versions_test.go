@@ -25,8 +25,8 @@ import (
 	"github.com/carolsimone/continuo/run-controller/service/uow"
 )
 
-// builtHarness runs state's handlers against a real Postgres through the unit
-// of work state's consumers use.
+// builtHarness runs run-controller's handlers against a real Postgres through the unit
+// of work run-controller's consumers use.
 type builtHarness struct {
 	db      *sqlx.DB
 	factory func() uow.UnitOfWork
@@ -145,7 +145,7 @@ func (h *builtHarness) fire(ctx context.Context, tenantID, schedule string, slot
 	return fired.RunID, fired.Outcome, u.Commit()
 }
 
-// legacyRun saves a running run on releaseID whose tasks state did not plan:
+// legacyRun saves a running run on releaseID whose tasks run-controller did not plan:
 // planned_at is NULL, and its one pending task at raw.table records no
 // dispatch. It returns the run and its task.
 func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UUID, uuid.UUID) {
@@ -216,7 +216,7 @@ func (h *builtHarness) loaded(t *testing.T, key string) (loadedRow, bool) {
 }
 
 // TestBuiltVersions drives task.status.updated:v2 against a real Postgres: a
-// succeeded task of a run state planned with a writing operation records the
+// succeeded task of a run run-controller planned with a writing operation records the
 // version it loaded, the content hash of its node in the run's release, and
 // the other cases record nothing. Every subtest uses its own release and node.
 func TestBuiltVersions(t *testing.T) {

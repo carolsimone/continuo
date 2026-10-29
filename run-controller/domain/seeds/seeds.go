@@ -49,7 +49,7 @@ const (
 	AttemptSucceeded
 )
 
-// Materialization is what state knows about one node in the warehouse: the
+// Materialization is what run-controller knows about one node in the warehouse: the
 // content last loaded ("" when none is recorded) and its latest build request.
 type Materialization struct {
 	Key                topology.NodeKey
@@ -95,7 +95,7 @@ func (d Decision) String() string {
 	}
 }
 
-// Decide applies the seed rules to one desired seed and what state knows about
+// Decide applies the seed rules to one desired seed and what run-controller knows about
 // it (found is false when no row exists). The rules apply in order: no hash →
 // skip; built at the desired hash → nothing; a build in flight → wait; the
 // build of the desired hash failed → no retry; otherwise → build. The image
@@ -147,7 +147,7 @@ type BuiltSource string
 const (
 	// SourceBuild: a run loaded it.
 	SourceBuild BuiltSource = "build"
-	// SourceAdopted: it was recorded as already loaded when state applied its
+	// SourceAdopted: it was recorded as already loaded when run-controller applied its
 	// first promotion.
 	SourceAdopted BuiltSource = "adopted"
 )
@@ -177,7 +177,7 @@ func Adopted(d Desired, releaseID string, at time.Time) Built {
 	}
 }
 
-// Adoptions returns the seeds to record as already loaded when state applies
+// Adoptions returns the seeds to record as already loaded when run-controller applies
 // its first promotion, in key order. An install's first release (bootstrap)
 // adopts nothing. Otherwise every seed whose unique id is not in
 // changedUniqueIDs is adopted, and every seed when the release's first

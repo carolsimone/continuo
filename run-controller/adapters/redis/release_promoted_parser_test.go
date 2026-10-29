@@ -32,7 +32,7 @@ func TestParseReleasePromoted_ReadsTheEnvelopeAndThePayload(t *testing.T) {
 	}, evt)
 }
 
-// An entry state cannot key or read is dead-lettered.
+// An entry run-controller cannot key or read is dead-lettered.
 func TestParseReleasePromoted_RejectsAnUnreadableEntryAsPermanent(t *testing.T) {
 	cases := map[string]goredis.XMessage{
 		"no envelope": {ID: "1-0", Values: map[string]interface{}{"e2e_dead_letter_probe": "x"}},

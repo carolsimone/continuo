@@ -1,5 +1,5 @@
-// Package runsettle cancels, when state starts, every active run of every
-// tenant whose tasks state did not plan. Such a run's tasks record neither
+// Package runsettle cancels, when run-controller starts, every active run of every
+// tenant whose tasks run-controller did not plan. Such a run's tasks record neither
 // when they were dispatched nor which of them wait on which, so no status
 // update can move it on; cancelling it ends it, or stops the work it has in
 // flight (Run.Cancel), and run.cancelled:v1 tells execution-controller to
@@ -20,12 +20,12 @@ import (
 )
 
 // Reason is the cancellation reason recorded on each run Settle cancels.
-const Reason = "the run's tasks were not planned by state, so it cannot continue"
+const Reason = "the run's tasks were not planned by run-controller, so it cannot continue"
 
 // Settle cancels every pending or running run of every tenant whose tasks
-// state did not plan, each in a transaction of its own under the run's
+// run-controller did not plan, each in a transaction of its own under the run's
 // tenant, and returns how many it cancelled. A run that finished, or that
-// state planned, between the list and its own transaction is left as it is.
+// run-controller planned, between the list and its own transaction is left as it is.
 func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logger) (int, error) {
 	refs, err := listUnplanned(ctx, newUoW())
 	if err != nil {
@@ -39,7 +39,7 @@ func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logg
 		}
 		if done {
 			cancelled++
-			logger.Warn("Cancelled a run whose tasks state did not plan", "tenant_id", ref.TenantID, "run_id", ref.RunID,
+			logger.Warn("Cancelled a run whose tasks run-controller did not plan", "tenant_id", ref.TenantID, "run_id", ref.RunID,
 				"reason", Reason)
 		}
 	}
@@ -53,7 +53,7 @@ func listUnplanned(ctx context.Context, u uow.UnitOfWork) ([]repository.RunRef, 
 	defer func() { _ = u.Rollback() }()
 	refs, err := u.Run().ListUnplannedActive(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
+		return nil, fmt.Errorf("list the active runs run-controller did not plan: %w", err)
 	}
 	return refs, nil
 }

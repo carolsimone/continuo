@@ -111,7 +111,7 @@ func TestPlan_NothingToBuildIsEmpty(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-// On the first promotion state applies: a bootstrap release adopts nothing;
+// On the first promotion run-controller applies: a bootstrap release adopts nothing;
 // otherwise every seed not in changed_node_ids is adopted, and every seed when
 // the release's first promote-seed run already exists. A seed without a
 // content hash is never adopted, and no other node type is.

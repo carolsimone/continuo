@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// oldRunNames matches the table and column names no object of the state
+// oldRunNames matches the table and column names no object of the run-controller
 // schema may carry: scheduler_tracker, task_tracker, schedule_id and
 // last_heartbeat_at.
 const oldRunNames = `scheduler_tracker|task_tracker|schedule_id|last_heartbeat_at`
 
-// No constraint, index, trigger, function, table or column of the state
+// No constraint, index, trigger, function, table or column of the run-controller
 // schema matches oldRunNames, by name or in its definition.
 func TestRunNamesSchema_NoObjectNamesTheOldTables(t *testing.T) {
 	db := newTestDB(t)
@@ -47,7 +47,7 @@ func TestRunNamesSchema_NoObjectNamesTheOldTables(t *testing.T) {
 		 WHERE schemaname = 'public' AND tablename ~ $1
 		ORDER BY 1`, oldRunNames))
 
-	assert.Empty(t, objects, "the state schema still names the old run tables or columns")
+	assert.Empty(t, objects, "the run-controller schema still names the old run tables or columns")
 }
 
 // The run tables are runs and tasks, keyed by run_id, and a run carries the

@@ -1,4 +1,4 @@
-// Package leasewaker is state's lease waker: it grants the write lease on each
+// Package leasewaker is run-controller's lease waker: it grants the write lease on each
 // node no task holds to the task that has waited longest for it, dispatching
 // that task, and deletes the leases whose holder task has ended without
 // releasing them. A pass covers every tenant: each tenant's node is its own,
@@ -73,7 +73,7 @@ func (w *Waker) Pass(ctx context.Context) error {
 	}
 	for _, l := range repaired {
 		w.metrics.LeaseRepaired()
-		w.logger.Error("Deleted the node lease of a task that ended without releasing it, which a defect in state causes",
+		w.logger.Error("Deleted the node lease of a task that ended without releasing it, which a defect in run-controller causes",
 			"tenant_id", l.TenantID, "node_key", l.NodeKey, "task_id", l.TaskID, "run_id", l.RunID, "task_status", l.TaskStatus,
 			"acquired_at", l.AcquiredAt)
 	}

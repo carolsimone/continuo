@@ -7,9 +7,9 @@ import { parseLimit, parseOffset } from './paging';
 import { requireRequestId } from './request-id';
 import { toISO } from './timestamp';
 
-// RELEASE_MOVED_MESSAGE is the exact text state's TriggerRebase refuses with
+// RELEASE_MOVED_MESSAGE is the exact text run-controller's TriggerRebase refuses with
 // (FAILED_PRECONDITION) when the live release is no longer the one the caller
-// previewed. A deploycheck guard pins it to state's copy.
+// previewed. A deploycheck guard pins it to run-controller's copy.
 export const RELEASE_MOVED_MESSAGE = 'the live release changed; preview again';
 
 // parseQueryFlag reads an optional boolean query parameter: absent is false,
@@ -40,16 +40,16 @@ function parseRebaseOptions(body: unknown): RebaseOptions | string {
   return { include_changed_upstream: include, expected_release_id: expected };
 }
 
-// isReleaseMoved reports whether a TriggerRebase failure is state's refusal of
+// isReleaseMoved reports whether a TriggerRebase failure is run-controller's refusal of
 // a rebase whose previewed release is no longer live.
 function isReleaseMoved(err: any): boolean {
   return err?.code === grpc.status.FAILED_PRECONDITION && err?.details === RELEASE_MOVED_MESSAGE;
 }
 
-// toRun maps a Run onto the HTTP response. State sends "" for a string it does
+// toRun maps a Run onto the HTTP response. run-controller sends "" for a string it does
 // not have, which crosses as null; the int64 promotion_seq (a string under
 // longs: String) becomes a number. Statuses are the lowercase run_status
-// values state sends and cross unchanged.
+// values run-controller sends and cross unchanged.
 function toRun(r: any) {
   return {
     run_id: r.run_id,
@@ -107,7 +107,7 @@ export function createRunsRouter(client: GrpcClient) {
   const router = Router();
 
   // GET /api/runs/:id/tasks?limit=&offset= — tasks for a run (paged).
-  // `total_count` lets a caller detect truncation; state imposes no server-side
+  // `total_count` lets a caller detect truncation; run-controller imposes no server-side
   // cap here, so the max is enforced on this side.
   router.get('/:id/tasks', (req, res) => {
     client.listTasks(
@@ -142,8 +142,8 @@ export function createRunsRouter(client: GrpcClient) {
 
   // GET /api/runs/:id/attempts?task_id=&limit=&offset= — one page of a run's
   // task attempts in (task_id, attempt) order, or of one task's when task_id
-  // is set. The max of 200 is state's own page cap, so the page size requested
-  // is the page size returned. State sends "" and 0 for a value it does not
+  // is set. The max of 200 is run-controller's own page cap, so the page size requested
+  // is the page size returned. run-controller sends "" and 0 for a value it does not
   // have; those cross this route as null.
   router.get('/:id/attempts', (req, res) => {
     client.listRunAttempts(
@@ -281,7 +281,7 @@ export function createRunsRouter(client: GrpcClient) {
       userMetadata(req),
       (err: any, response: any) => {
         if (err) return sendGrpcError(res, err);
-        if (!response?.run) return res.status(500).json({ error: 'state returned no run' });
+        if (!response?.run) return res.status(500).json({ error: 'run-controller returned no run' });
         res.json(toRun(response.run));
       }
     );

@@ -55,7 +55,7 @@ type Attempt struct {
 	FailureReason *string
 
 	// DispatchedAt is when the attempt was dispatched. Attempt 0 takes the
-	// task's dispatch time, which state's own clock stamped when it dispatched
+	// task's dispatch time, which run-controller's own clock stamped when it dispatched
 	// the task. A later attempt, or attempt 0 of a task with no dispatch
 	// time, is nil until it is first saved, when the database clock stamps it.
 	DispatchedAt *time.Time
@@ -72,7 +72,7 @@ type Attempt struct {
 	ParseCache       *string
 	ParseCacheReason *string
 
-	// NextCheckIn is when, from now on the database clock, state next asks
+	// NextCheckIn is when, from now on the database clock, run-controller next asks
 	// execution-controller about the attempt; zero when saving it leaves the
 	// stored next check as it is. A final attempt is never asked about.
 	NextCheckIn time.Duration

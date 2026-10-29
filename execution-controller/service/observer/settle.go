@@ -16,7 +16,7 @@ import (
 // slot. A release leg's node settles through outcomes.Recorder. A production
 // attempt is reported succeeded, stopped (it was asked to stop because its
 // run was cancelled, and did not succeed first) or failed, with every fact
-// seen of it; state decides what follows. A stopped attempt is counted once
+// seen of it; run-controller decides what follows. A stopped attempt is counted once
 // the transaction commits.
 func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deployment, v model.Verdict, now time.Time) error {
 	if d.Mode() != model.ModeProduction {

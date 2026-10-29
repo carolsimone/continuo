@@ -107,7 +107,7 @@ func TestDecodeRunCancelled_ReadsMissingAttemptsAsNone(t *testing.T) {
 	assert.Empty(t, p.Attempts)
 }
 
-// cancelledFields is a run.cancelled:v1 entry of state with the given payload
+// cancelledFields is a run.cancelled:v1 entry of run-controller with the given payload
 // members.
 func cancelledFields(payload string) map[string]string {
 	return map[string]string{

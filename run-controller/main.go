@@ -96,7 +96,7 @@ func main() {
 		logger.Warn("Maintenance mode is on: cron fires are skipped and RPCs that start runs are refused")
 	}
 	if len(cfg.IgnoredPoolKeys) > 0 {
-		logger.Warn("Ignoring Postgres pool settings state does not read; set DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS instead",
+		logger.Warn("Ignoring Postgres pool settings run-controller does not read; set DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS instead",
 			"ignored", strings.Join(cfg.IgnoredPoolKeys, ", "))
 	}
 
@@ -180,11 +180,11 @@ func main() {
 		return db.Close()
 	})
 
-	// state reads columns a state database not yet migrated lacks, so it
+	// run-controller reads columns a run-controller database not yet migrated lacks, so it
 	// refuses to start until the migration has applied; the pod restarts until
 	// it has. Nothing else has started yet.
 	if err := svchandlers.CheckSchema(ctx, postgres.NewSchemaColumns(db)); err != nil {
-		logger.Error("Refusing to start: the state database is not migrated", "error", err)
+		logger.Error("Refusing to start: the run-controller database is not migrated", "error", err)
 		os.Exit(1)
 	}
 
@@ -251,7 +251,7 @@ func main() {
 		db,
 		postgres.OutboxTable,
 		outboxPub,
-		nil, // no terminal-failure hook for state
+		nil, // no terminal-failure hook for run-controller
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()},
 	)
@@ -291,16 +291,16 @@ func main() {
 		return postgres.NewPostgresUnitOfWork(db, clk, logger, cronParser)
 	}
 
-	// A run whose tasks state did not plan cannot move on: no status update
+	// A run whose tasks run-controller did not plan cannot move on: no status update
 	// can dispatch or skip its tasks. Every such run, of any tenant, is
 	// cancelled under its own tenant before any consumer starts, so its Jobs
 	// are suppressed and its schedule is free to run again.
 	settled, err := runsettle.Settle(ctx, uowFactory, logger)
 	if err != nil {
-		logger.Error("Failed to cancel the active runs state did not plan", "error", err)
+		logger.Error("Failed to cancel the active runs run-controller did not plan", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("Active runs state did not plan cancelled", "runs", settled)
+	logger.Info("Active runs run-controller did not plan cancelled", "runs", settled)
 
 	// Retention sweeper — keeps the unbounded-growth tables in check:
 	// processed state_outbox rows, message_processing dedup rows (which retain
@@ -342,7 +342,7 @@ func main() {
 	go retentionSweeper.Run(ctx)
 
 	// release.promoted:v2 stores each promoted release's topology in Postgres
-	// and moves state's live-release pointer. The handler reads the release's
+	// and moves run-controller's live-release pointer. The handler reads the release's
 	// topology artifact from object storage before its transaction opens.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
@@ -354,14 +354,14 @@ func main() {
 	// moves a tenant's live release, for that tenant, and every
 	// seedReconcileInterval from the loop started below, once per tenant with
 	// a live release; maintenance mode stops it creating runs.
-	// Every task state plans gets the install's retry budget, and each
+	// Every task run-controller plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
 	runMetrics := statemetrics.NewRunMetrics(metricsReg)
 	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
-	// Every state consumer is the same shape: a domain handler wrapped by a
+	// Every run-controller consumer is the same shape: a domain handler wrapped by a
 	// redis binding (parser + dedup + UoW transaction), driven by a
 	// StreamConsumer on its (stream, group). They are declared in one table and
 	// started uniformly via runConsumer below; consumer lifecycle is tied to
@@ -514,7 +514,7 @@ func main() {
 	// Everything is initialised and serving: readiness may now turn true.
 	startup.Done()
 
-	logger.Info("State service started successfully",
+	logger.Info("run-controller service started successfully",
 		"grpc_port", cfg.GRPCPort,
 		"health_port", cfg.HealthPort,
 	)

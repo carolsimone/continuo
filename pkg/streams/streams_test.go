@@ -85,9 +85,9 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	}
 }
 
-// state reads the schedule names from the live release it stores, so
+// run-controller reads the schedule names from the live release it stores, so
 // orchestrator announces none: schedules.loaded:v1 is retired, and no stream
-// keeps the group state read it with.
+// keeps the group run-controller read it with.
 func TestSchedulesLoadedV1_IsRetired(t *testing.T) {
 	const name, group = "schedules.loaded:v1", "state-schedule-catalog"
 	if _, live := Groups[name]; live {

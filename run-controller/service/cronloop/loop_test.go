@@ -553,7 +553,7 @@ func TestCronLoop_TwoPassesOnOneSlotMakeOneRun(t *testing.T) {
 	assert.Equal(t, map[string]int{"started": 1}, w.metrics.counted())
 }
 
-// state is down from 00:55 to 03:10: the loop that starts at 03:10 finds the
+// run-controller is down from 00:55 to 03:10: the loop that starts at 03:10 finds the
 // 01:00 slot due and fires it once, late, and counts no missed slot.
 func TestCronLoop_ARestartAcrossADueSlotFiresItOnceLate(t *testing.T) {
 	ctx := context.Background()

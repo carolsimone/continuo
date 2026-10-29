@@ -13,7 +13,7 @@ import (
 // stream consumers write.
 const ServiceName = "run-controller"
 
-// The retry budget's default and the range state accepts: the chart's
+// The retry budget's default and the range run-controller accepts: the chart's
 // runs.taskMaxRetries, 0 to 10.
 const (
 	DefaultTaskMaxRetries = 2
@@ -21,7 +21,7 @@ const (
 	MaxTaskMaxRetries     = 10
 )
 
-// taskMaxRetriesKey names the retry budget stamped on each task state plans.
+// taskMaxRetriesKey names the retry budget stamped on each task run-controller plans.
 const taskMaxRetriesKey = "TASK_MAX_RETRIES"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
@@ -58,18 +58,18 @@ type Config struct {
 	ShutdownGrace time.Duration
 
 	// IgnoredPoolKeys names DB_POOL_SIZE and DB_MAX_OVERFLOW when they are set.
-	// state does not read them: its pool limits come from DB_MAX_OPEN_CONNS
+	// run-controller does not read them: its pool limits come from DB_MAX_OPEN_CONNS
 	// and DB_MAX_IDLE_CONNS.
 	IgnoredPoolKeys []string
 
-	// Maintenance is MAINTENANCE_ENABLED: while true, state skips cron fires and
+	// Maintenance is MAINTENANCE_ENABLED: while true, run-controller skips cron fires and
 	// refuses the RPCs that start runs.
 	Maintenance bool
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 
-	// TaskMaxRetries is TASK_MAX_RETRIES: how many retries each task state
+	// TaskMaxRetries is TASK_MAX_RETRIES: how many retries each task run-controller
 	// plans gets after its first attempt, stamped on the task when its run is
 	// created.
 	TaskMaxRetries int
@@ -108,7 +108,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 // taskMaxRetries reads TASK_MAX_RETRIES, a whole number from MinTaskMaxRetries
 // to MaxTaskMaxRetries; unset selects DefaultTaskMaxRetries. Any other value
-// is recorded on v, so state refuses to start.
+// is recorded on v, so run-controller refuses to start.
 func taskMaxRetries(v *pkgconfig.Validator) int {
 	raw := os.Getenv(taskMaxRetriesKey)
 	if raw == "" {

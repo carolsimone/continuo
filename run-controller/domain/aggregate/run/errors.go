@@ -121,16 +121,16 @@ var (
 	ErrTaskNotHeld = errors.New("the run holds no such task")
 
 	// ErrAttemptNotIssued is returned by Run.RecordAttemptReport when the task
-	// has no row for the reported attempt: state never dispatched it. state
+	// has no row for the reported attempt: run-controller never dispatched it. run-controller
 	// writes an attempt's row in the transaction that dispatches it, so such a
 	// report never becomes valid; the stream binding dead-letters it at once.
-	ErrAttemptNotIssued = errors.New("state never dispatched the reported attempt")
+	ErrAttemptNotIssued = errors.New("run-controller never dispatched the reported attempt")
 
 	// ErrStopNotRequested is returned by Run.RecordAttemptReport for a stopped
-	// report of an open attempt state never asked to stop: only the current
+	// report of an open attempt run-controller never asked to stop: only the current
 	// attempt of a stopping task is stopped on request, so such a report never
 	// becomes valid.
-	ErrStopNotRequested = errors.New("state never asked the reported attempt to stop")
+	ErrStopNotRequested = errors.New("run-controller never asked the reported attempt to stop")
 
 	// ErrInvalidRunFailureReason is returned by Run.MarkDispatchTerminal when
 	// it is asked to fail a run with no failure reason or one that

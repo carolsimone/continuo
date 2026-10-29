@@ -15,7 +15,7 @@ import (
 )
 
 // recordsBuiltVersions reports whether a succeeded task of r loaded its node's
-// version of r's release into the warehouse: state chose r's tasks from that
+// version of r's release into the warehouse: run-controller chose r's tasks from that
 // release, and r's operation writes the table. A test only reads it.
 func recordsBuiltVersions(r *run.Run) bool {
 	return r.PlannedAt() != nil && r.ReleaseID() != "" && r.Operation() != model.OperationTest

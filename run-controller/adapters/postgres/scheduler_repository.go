@@ -505,7 +505,7 @@ type RunRowUpdate struct {
 	// LastProgressAt is the run's progress clock: the last dispatch or applied
 	// task status change.
 	LastProgressAt *time.Time
-	// PlannedAt is when state chose and stored the run's tasks.
+	// PlannedAt is when run-controller chose and stored the run's tasks.
 	PlannedAt *time.Time
 	// FailureReason is why the run failed when no task of it failed.
 	FailureReason *string

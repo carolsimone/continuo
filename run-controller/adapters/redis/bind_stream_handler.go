@@ -14,7 +14,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// streamBinding describes one Redis-stream binding. Every state consumer runs
+// streamBinding describes one Redis-stream binding. Every run-controller consumer runs
 // the identical parse → load (when set) → begin → rollback-defer → dedup →
 // handle → mark completed → commit pipeline (bindStreamHandler below); the only
 // things that vary per stream are captured here.

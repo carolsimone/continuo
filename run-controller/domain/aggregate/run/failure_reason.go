@@ -8,7 +8,7 @@ type RunFailureReason string
 
 const (
 	// RunFailureStalled: the run had no attempt in flight and made no progress
-	// for StallAfter, which only a defect in state can cause.
+	// for StallAfter, which only a defect in run-controller can cause.
 	RunFailureStalled RunFailureReason = "stalled"
 	// RunFailureEmptySelection: a cron fire's selection held no node to run.
 	RunFailureEmptySelection RunFailureReason = "empty_selection"

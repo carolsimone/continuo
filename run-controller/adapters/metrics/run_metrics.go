@@ -1,4 +1,4 @@
-// Package metrics holds state's own Prometheus series.
+// Package metrics holds run-controller's own Prometheus series.
 package metrics
 
 import (
@@ -9,9 +9,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RunMetrics counts the runs state's reconcile loop failed as stalled, gauges
+// RunMetrics counts the runs run-controller's reconcile loop failed as stalled, gauges
 // the runs that are cancelling, times how long a cancel takes, and records
-// the node write leases state grants: the tasks waiting, how long each
+// the node write leases run-controller grants: the tasks waiting, how long each
 // granted task waited, the leases the lease waker repaired, and how each call
 // of a command that creates or cancels a run ended. It counts the outcomes of
 // the cron loop's fires and gauges the schedules scheduled, paused and unparsable.
@@ -39,7 +39,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 	m := &RunMetrics{
 		stalled: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "continuo_runs_stalled_total",
-			Help: "Runs state failed as stalled: no attempt in flight and no progress for five minutes, which only a defect in state causes.",
+			Help: "Runs run-controller failed as stalled: no attempt in flight and no progress for five minutes, which only a defect in run-controller causes.",
 		}),
 		cancelling: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "continuo_runs_cancelling",
@@ -60,12 +60,12 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}),
 		leaseWaitSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "continuo_node_lease_wait_seconds",
-			Help:    "Seconds a task waited for the write lease on its node before state granted it.",
+			Help:    "Seconds a task waited for the write lease on its node before run-controller granted it.",
 			Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400},
 		}),
 		leasesRepaired: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "continuo_node_leases_repaired_total",
-			Help: "Node write leases the lease waker deleted because their task had ended without releasing them, which only a defect in state causes.",
+			Help: "Node write leases the lease waker deleted because their task had ended without releasing them, which only a defect in run-controller causes.",
 		}),
 		commandRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_command_requests_total",

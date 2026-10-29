@@ -14,7 +14,7 @@ import (
 // messages this binding handles. It is also the value stored in the
 // message_processing.stream_name column for dedup rows.
 //
-// state has one consumer group on this stream, so its dedup rows are scoped by
+// run-controller has one consumer group on this stream, so its dedup rows are scoped by
 // the stream name rather than by a group name.
 const releasePromotedStreamName = streams.ReleasePromotedV2
 

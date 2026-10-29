@@ -34,7 +34,7 @@ import (
 // stopping and the attempt keeps the next check its stop set. Stopped cancels
 // the task, succeeded makes it succeeded and failed fails it, never retried;
 // nothing is dispatched and nothing skipped. A stopped report of an open
-// attempt state never asked to stop is refused with ErrStopNotRequested
+// attempt run-controller never asked to stop is refused with ErrStopNotRequested
 // before anything is written.
 //
 // A task of a run that writes its nodes holds the write lease on its node from
@@ -49,7 +49,7 @@ import (
 // cancelling run cancelled, a running one failed if any task failed or was
 // cancelled and succeeded otherwise. Dispatching the tasks a success makes
 // ready and skipping the tasks a final failure blocks read the run's graph
-// only on a running run whose tasks state planned; the next attempt of a
+// only on a running run whose tasks run-controller planned; the next attempt of a
 // retryable failure reads its node from the run's release on every running
 // run.
 //
@@ -244,7 +244,7 @@ type StallCheck struct {
 }
 
 // FailStalled ends r when it is active, has made no progress for StallAfter
-// and has no work in flight: only a defect in state leaves a run so.
+// and has no work in flight: only a defect in run-controller leaves a run so.
 //
 // A running run's task that waits for a node lease and is next in line for a
 // free node (GrantableWaits: no task holds the node, and the task is its
@@ -259,7 +259,7 @@ type StallCheck struct {
 // stopping, a task waiting for a node lease whose holder is one of those, and
 // a task waiting behind an older waiter of a running run for its node, which
 // the node's next grant serves first. A lease wait therefore ends its run only
-// when no grant serves it, which only a defect in state causes: its node is
+// when no grant serves it, which only a defect in run-controller causes: its node is
 // held by a task that has ended without releasing it, the run's release holds
 // no such node for the tenant, or its grant keeps failing
 // (FailStalledWithoutGrants).

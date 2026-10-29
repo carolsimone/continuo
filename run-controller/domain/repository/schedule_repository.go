@@ -7,7 +7,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/schedule"
 )
 
-// ScheduleRepository stores the schedules state fires. A schedule belongs to
+// ScheduleRepository stores the schedules run-controller fires. A schedule belongs to
 // its tenant: the same name in two tenants is two schedules. Inside a
 // transaction a call sees, and a write belongs to, that transaction.
 type ScheduleRepository interface {

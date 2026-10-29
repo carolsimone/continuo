@@ -41,7 +41,7 @@ func finishRun(t *testing.T, runID string) {
 	releaseLeasesOf(t, stateDB, uuid.MustParse(runID))
 }
 
-// TestRebaseFromFailure previews and rebases a failed run through state's
+// TestRebaseFromFailure previews and rebases a failed run through run-controller's
 // gRPC server: rebase-from-failure has two branches, mart.rff_x → mart.rff_y →
 // mart.rff_z and mart.rff_p → mart.rff_q. The source run's rff_z failed; the
 // live release fixes rff_y and changes rff_q. A rebase with the option

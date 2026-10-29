@@ -9,7 +9,7 @@ import (
 )
 
 // ParseReleasePromoted decodes one release.promoted:v2 entry, envelope fields
-// plus a typed payload, into the event state handles. A decode failure (no
+// plus a typed payload, into the event run-controller handles. A decode failure (no
 // envelope, an unknown schema_version, no release_id, a promotion_seq below 1,
 // no topology URI or checksum) or an envelope without a tenant_id is
 // permanent: the consumer dead-letters the entry.

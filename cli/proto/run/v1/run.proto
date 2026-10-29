@@ -15,7 +15,7 @@ import "google/protobuf/timestamp.proto";
 //
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
-// fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
+// fields are missing or malformed is INVALID_ARGUMENT, and a failure of run-controller
 // itself, or a request that reaches it without a tenant, is INTERNAL; the lists
 // below name the other codes of each RPC. A run of another tenant
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
@@ -357,7 +357,7 @@ service RunService {
   rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
 
   // ListScheduleTopologies returns, for each schedule of the live release, its
-  // node count and the time state loaded that release. It is empty when no
+  // node count and the time run-controller loaded that release. It is empty when no
   // release is live.
   // Errors: none beyond the service-wide ones.
   rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
@@ -424,7 +424,7 @@ message TaskAttempt {
   // only for a succeeded attempt, so read it together with status and
   // failure_reason.
   int32 exit_code = 7;
-  google.protobuf.Timestamp dispatched_at = 8;    // when state dispatched the attempt
+  google.protobuf.Timestamp dispatched_at = 8;    // when run-controller dispatched the attempt
   google.protobuf.Timestamp queued_at = 9;        // unset until reported
   google.protobuf.Timestamp started_at = 10;      // unset until reported
   google.protobuf.Timestamp finished_at = 11;     // unset until the attempt finished
@@ -822,7 +822,7 @@ message ListScheduleTopologiesRequest {}
 message ScheduleTopologySummary {
   string schedule_name = 1;
   int32 node_count = 2;                       // nodes of the schedule in the live release
-  google.protobuf.Timestamp last_updated_at = 3;  // when state loaded the live release
+  google.protobuf.Timestamp last_updated_at = 3;  // when run-controller loaded the live release
 }
 
 message ListScheduleTopologiesResponse {

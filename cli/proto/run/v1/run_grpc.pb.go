@@ -57,7 +57,7 @@ const (
 //
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
-// fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
+// fields are missing or malformed is INVALID_ARGUMENT, and a failure of run-controller
 // itself, or a request that reaches it without a tenant, is INTERNAL; the lists
 // below name the other codes of each RPC. A run of another tenant
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
@@ -358,7 +358,7 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
-	// node count and the time state loaded that release. It is empty when no
+	// node count and the time run-controller loaded that release. It is empty when no
 	// release is live.
 	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
@@ -615,7 +615,7 @@ func (c *runServiceClient) ListScheduleTopologies(ctx context.Context, in *ListS
 //
 // The tenant of a call is the one the caller's identity carries; no request
 // names it. Every error below is a gRPC status code. A call whose request
-// fields are missing or malformed is INVALID_ARGUMENT, and a failure of state
+// fields are missing or malformed is INVALID_ARGUMENT, and a failure of run-controller
 // itself, or a request that reaches it without a tenant, is INTERNAL; the lists
 // below name the other codes of each RPC. A run of another tenant
 // is a run that does not exist: NOT_FOUND where an RPC names NOT_FOUND, and an
@@ -916,7 +916,7 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (empty schedule_name).
 	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
 	// ListScheduleTopologies returns, for each schedule of the live release, its
-	// node count and the time state loaded that release. It is empty when no
+	// node count and the time run-controller loaded that release. It is empty when no
 	// release is live.
 	// Errors: none beyond the service-wide ones.
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)

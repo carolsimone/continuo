@@ -21,7 +21,7 @@ type TaskAttempt struct {
 	FailureClass  *string
 	FailureReason *string
 	ExitCode      *int
-	// DispatchedAt is when state dispatched the attempt, on the database
+	// DispatchedAt is when run-controller dispatched the attempt, on the database
 	// clock.
 	DispatchedAt     time.Time
 	QueuedAt         *time.Time

@@ -30,7 +30,7 @@ type DeployTask struct {
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives as env vars; empty for every other node.
 	SecretRef string
-	// Attempt is which attempt of the task this is, as state numbered it.
+	// Attempt is which attempt of the task this is, as run-controller numbered it.
 	Attempt int
 	// Operation selects the dbt verb the executor runs for this node. Empty
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by

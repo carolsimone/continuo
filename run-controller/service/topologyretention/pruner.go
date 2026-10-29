@@ -1,4 +1,4 @@
-// Package topologyretention deletes the promoted topologies state no longer
+// Package topologyretention deletes the promoted topologies run-controller no longer
 // needs.
 package topologyretention
 

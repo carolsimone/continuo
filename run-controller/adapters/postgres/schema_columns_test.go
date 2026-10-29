@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The migrated state database has every column state checks for at startup,
+// The migrated run-controller database has every column run-controller checks for at startup,
 // so a column a migration renames or drops fails here rather than as a
 // service that refuses to boot.
 func TestSchemaColumns_TheMigratedDatabasePassesTheStartupSchemaCheck(t *testing.T) {
@@ -21,10 +21,10 @@ func TestSchemaColumns_TheMigratedDatabasePassesTheStartupSchemaCheck(t *testing
 	require.NoError(t, svchandlers.CheckSchema(context.Background(), postgres.NewSchemaColumns(db)))
 }
 
-// state reads the schedule names from the live release it stores, so the
-// state database holds no schedule catalog: neither schedule_catalog nor
+// run-controller reads the schedule names from the live release it stores, so the
+// run-controller database holds no schedule catalog: neither schedule_catalog nor
 // schedule_catalog_state exists, a run stores no service metadata, and the
-// columns state requires at startup name none of them.
+// columns run-controller requires at startup name none of them.
 func TestStateSchema_TheCatalogIsGone(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -40,7 +40,7 @@ func TestStateSchema_TheCatalogIsGone(t *testing.T) {
 	assert.Equal(t, []string{"runs.service_metadata"}, missing, "runs keeps its schedule name and drops its service metadata")
 
 	for _, c := range svchandlers.RequiredColumns {
-		assert.False(t, strings.HasPrefix(c, "schedule_catalog"), "state requires %s", c)
-		assert.NotEqual(t, "runs.service_metadata", c, "state requires %s", c)
+		assert.False(t, strings.HasPrefix(c, "schedule_catalog"), "run-controller requires %s", c)
+		assert.NotEqual(t, "runs.service_metadata", c, "run-controller requires %s", c)
 	}
 }

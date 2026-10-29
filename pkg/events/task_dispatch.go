@@ -10,12 +10,12 @@ import (
 const TaskDispatchSchemaVersion = 1
 
 // TaskDispatch is the payload of a task.dispatch:v1 entry: one attempt of one
-// task of a run, as state decided it. KnownStatus is state's view of the
+// task of a run, as run-controller decided it. KnownStatus is run-controller's view of the
 // attempt when it wrote the entry, a value of the attempt_status vocabulary:
 // dispatched on the first send and on every send before execution-controller
 // acknowledged it, queued or running on a question about an acknowledged
 // attempt. TimeoutSeconds is how long the attempt's container may run once
-// its Job has started its pod. No retry budget travels: state decides every
+// its Job has started its pod. No retry budget travels: run-controller decides every
 // retry.
 type TaskDispatch struct {
 	RunID          string              `json:"run_id"`

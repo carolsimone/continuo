@@ -1,4 +1,4 @@
-// Package attemptreconcile is state's attempt reconcile: every pass it asks
+// Package attemptreconcile is run-controller's attempt reconcile: every pass it asks
 // execution-controller about each attempt nothing was heard of within its
 // window, by dispatching the attempt again with its known status, and fails
 // each run left with nothing in flight and no progress as stalled. Each scan
@@ -9,7 +9,7 @@
 // waiting for a node lease is never failed while a grant can serve it; a
 // grant that keeps failing ends its run once the run has been idle for
 // run.StallAfterFailedGrant. Before it looks for stalled runs it runs a hook,
-// which state wires to a lease waker pass, so most freed nodes are granted
+// which run-controller wires to a lease waker pass, so most freed nodes are granted
 // before the scan lists their waiters.
 package attemptreconcile
 
@@ -234,12 +234,12 @@ func (l *Loop) failStalled(ctx context.Context, ref repository.RunRef) error {
 	}
 	l.metrics.RunStalled()
 	if grantErr != nil {
-		l.logger.Error("Failed a stalled run whose waiting task could not be granted its node's lease, which a defect in state causes",
+		l.logger.Error("Failed a stalled run whose waiting task could not be granted its node's lease, which a defect in run-controller causes",
 			"tenant_id", ref.TenantID, "run_id", ref.RunID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastProgressAt(),
 			"idle_for_at_least", run.StallAfterFailedGrant.String(), "grant_error", grantErr)
 		return nil
 	}
-	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
+	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in run-controller causes",
 		"tenant_id", ref.TenantID, "run_id", ref.RunID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastProgressAt())
 	return nil
 }

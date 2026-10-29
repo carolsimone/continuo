@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// state refuses to start on a database that lacks a column its code reads, so
+// run-controller refuses to start on a database that lacks a column its code reads, so
 // main.go checks the schema before it waits for Redis, settles the active runs
 // or starts any consumer.
 func TestStartupChecksTheStateSchemaFirst(t *testing.T) {

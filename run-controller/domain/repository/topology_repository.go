@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 )
 
-// ErrReleaseChecksumConflict reports a promotion of a release state has already
+// ErrReleaseChecksumConflict reports a promotion of a release run-controller has already
 // stored, announced with a different topology artifact checksum. A release's
 // topology never changes, so no retry can reconcile the two.
 var ErrReleaseChecksumConflict = errors.New("a loaded release arrived with a different topology checksum")

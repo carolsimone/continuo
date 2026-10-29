@@ -45,7 +45,7 @@ func TestCheckSchema_ReadFailureIsNotAMissingSchema(t *testing.T) {
 	}
 }
 
-// state refuses to start until every run table whose keys lead with tenant_id
+// run-controller refuses to start until every run table whose keys lead with tenant_id
 // has the column, and the command requests table exists.
 func TestCheckSchema_RequiresTheTenantColumns(t *testing.T) {
 	required := map[string]bool{}
@@ -59,7 +59,7 @@ func TestCheckSchema_RequiresTheTenantColumns(t *testing.T) {
 	}
 }
 
-// state refuses to start until the schedules table has every column and the
+// run-controller refuses to start until the schedules table has every column and the
 // runs table has the slot a scheduled run records.
 func TestCheckSchema_RequiresTheSchedulesColumns(t *testing.T) {
 	required := map[string]bool{}

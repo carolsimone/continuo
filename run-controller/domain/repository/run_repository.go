@@ -1,6 +1,6 @@
-// Package repository declares state's domain repository ports: the
+// Package repository declares run-controller's domain repository ports: the
 // collection-like abstractions over the Run and Schedule aggregates and the
-// releases state stores.
+// releases run-controller stores.
 // Implementations live in run-controller/adapters/postgres.
 package repository
 
@@ -55,7 +55,7 @@ type RunRepository interface {
 	RunExists(ctx context.Context, tenantID string, id uuid.UUID) (bool, error)
 
 	// ListUnplannedActive returns the PENDING, RUNNING or CANCELLING runs of
-	// every tenant whose tasks state did not plan (planned_at is NULL), each
+	// every tenant whose tasks run-controller did not plan (planned_at is NULL), each
 	// with its tenant, oldest first. It reads inside the bound transaction and
 	// needs one.
 	ListUnplannedActive(ctx context.Context) ([]RunRef, error)

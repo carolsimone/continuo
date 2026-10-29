@@ -337,7 +337,7 @@ func onlyTask(t *testing.T, db *sqlx.DB, runID uuid.UUID) uuid.UUID {
 // run's lock the two differ. The task waiting on the free node is that node's
 // next waiter, so the re-check grants it the node and dispatches it rather
 // than failing the run. No grant can serve the wait behind the ended holder,
-// which only a defect in state leaves, so the re-check fails that run.
+// which only a defect in run-controller leaves, so the re-check fails that run.
 func TestStalledRuns_ALeaseWaitOnAFreeNodeIsListedAndGrantedUnderTheLock(t *testing.T) {
 	db := newTestDB(t)
 	tables := leaseTables("free", "ended")

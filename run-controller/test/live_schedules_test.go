@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// defaultPlanner plans runs with the task defaults state's main uses.
+// defaultPlanner plans runs with the task defaults run-controller's main uses.
 var defaultPlanner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // releaseLeasesOf deletes the node write leases the tasks of runID hold, as

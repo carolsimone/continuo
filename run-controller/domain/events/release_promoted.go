@@ -1,6 +1,6 @@
 package events
 
-// ReleasePromoted is the typed form of release.promoted:v2 as state uses it:
+// ReleasePromoted is the typed form of release.promoted:v2 as run-controller uses it:
 // the tenant from the event envelope, the promoted release and its promotion
 // seq, the URI and SHA-256 of its topology artifact, the non-test nodes whose
 // content changed against the previous prod topology, and whether the release

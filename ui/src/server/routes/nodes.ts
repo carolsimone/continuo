@@ -73,7 +73,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   });
 
   // GET /api/nodes/services — distinct active service names, for the catalog
-  // and Remediation-tab service filters. Backed by the ListNodeServices state
+  // and Remediation-tab service filters. Backed by the ListNodeServices run-controller
   // read (a single DISTINCT query), independent of the paginated catalog.
   router.get('/services', (_req, res) => {
     stateClient.listNodeServices({}, (err: any, response: any) => {
@@ -122,7 +122,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
 
   // POST /api/nodes/:service/:schema/:table/run
   // Body: { request_id } → latest mode; { request_id, source_run_id } →
-  // snapshot_of_run mode. request_id is the browser-minted UUID state uses to
+  // snapshot_of_run mode. request_id is the browser-minted UUID run-controller uses to
   // start one run for a repeated action.
   router.post('/:service/:schema/:table/run', (req, res) => {
     const requestId = requireRequestId(req, res);

@@ -23,7 +23,7 @@ var _ ports.SchemaColumns = (*SchemaColumns)(nil)
 func (c *SchemaColumns) Missing(ctx context.Context, want []string) ([]string, error) {
 	missing, err := pkgdb.MissingColumns(ctx, c.db, want)
 	if err != nil {
-		return nil, fmt.Errorf("state database: %w", err)
+		return nil, fmt.Errorf("run-controller database: %w", err)
 	}
 	return missing, nil
 }

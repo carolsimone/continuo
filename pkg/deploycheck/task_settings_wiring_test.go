@@ -22,11 +22,11 @@ func TestTaskSettingsReachEveryDeploymentPath(t *testing.T) {
 		}
 	}
 	compose := readRepoFile(t, "docker-compose.yml")
-	for svc, keys := range map[string][]string{
+	for dir, keys := range map[string][]string{
 		"run-controller":       {"TASK_MAX_RETRIES", pkgconfig.TaskTimeoutEnvKey},
 		"execution-controller": {pkgconfig.TaskTimeoutEnvKey},
 	} {
-		svc = composeServiceName(svc)
+		svc := composeServiceName(dir)
 		block := regexp.MustCompile(`(?ms)^  ` + regexp.QuoteMeta(svc) + `:\n(.*?)(?:^  \S|\z)`).FindStringSubmatch(compose)
 		for _, key := range keys {
 			if block == nil || !strings.Contains(block[1], key+"=") {

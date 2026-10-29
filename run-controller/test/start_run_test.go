@@ -14,7 +14,7 @@ import (
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 )
 
-// A trigger names a schedule state knows: a model of the tenant's live release
+// A trigger names a schedule run-controller knows: a model of the tenant's live release
 // carries the name, or the name has a cron. A name with neither is NotFound
 // and stores nothing, while a name a model carries starts with no cron and
 // nothing else to say it exists.
@@ -37,7 +37,7 @@ func TestStartRun_ANameNoModelHasIsNotFound(t *testing.T) {
 }
 
 // A name whose cron outlived its models (a later release dropped every model
-// carrying it) is a schedule state knows with nothing to run: a trigger of it
+// carrying it) is a schedule run-controller knows with nothing to run: a trigger of it
 // is refused as an empty selection, creates no run and stores no record.
 func TestStartRun_ANameWithACronButNoModelsIsAnEmptySelection(t *testing.T) {
 	ctx := context.Background()
@@ -85,7 +85,7 @@ func TestStartRun_ANameLongerThanARunCarriesIsInvalidArgument(t *testing.T) {
 	assert.Equal(t, "running", runStatusOf(t, runID), "a name of 50 characters starts")
 }
 
-// A schedule whose stored cron no longer parses is still a schedule state
+// A schedule whose stored cron no longer parses is still a schedule run-controller
 // knows: a trigger of it with no models is the empty selection, not NotFound.
 func TestStartRun_ANameWhoseStoredCronNoLongerParsesIsKnown(t *testing.T) {
 	ctx := context.Background()

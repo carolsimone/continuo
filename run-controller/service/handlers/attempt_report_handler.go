@@ -19,7 +19,7 @@ import (
 // of a retryable failure, the dispatch of the tasks a success makes ready, the
 // skip of what a final failure blocks, and finalization), saves the run and
 // writes the dispatches it recorded to the outbox. When the report makes a
-// task of a run state planned with an operation that writes the table
+// task of a run run-controller planned with an operation that writes the table
 // succeeded, it also records the version the task loaded into the warehouse,
 // which the seed reconcile compares with the live release. When the report
 // ends a cancelling run, it observes how long the cancel took once the
@@ -40,9 +40,9 @@ func NewAttemptReportHandler(tasks run.TaskDefaults, metrics ports.RunMetrics, l
 // run evt names under the tenant evt carries, the tenant of the report's
 // envelope, and applies the report under the run's tenant. The error of
 // locking a run with no row, run.ErrTaskNotHeld, run.ErrAttemptNotIssued and
-// run.ErrStopNotRequested propagate wrapped: a report naming a run state never
+// run.ErrStopNotRequested propagate wrapped: a report naming a run run-controller never
 // created, a run of another tenant than its envelope's, a task the run does
-// not hold, an attempt state never dispatched or a stopped attempt state never
+// not hold, an attempt run-controller never dispatched or a stopped attempt run-controller never
 // asked to stop can never be applied, so the stream binding marks them
 // permanent (permanentWhenNeverValid) and the consumer dead-letters the report
 // at once.

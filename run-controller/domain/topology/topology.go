@@ -1,4 +1,4 @@
-// Package topology models a promoted release's topology as state stores it:
+// Package topology models a promoted release's topology as run-controller stores it:
 // the release's nodes keyed by schema and table, the edges between them, and
 // the pointer to the release that is live for a tenant.
 package topology

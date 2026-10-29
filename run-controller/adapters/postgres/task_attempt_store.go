@@ -108,7 +108,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, tenantID string, a run.Attemp
 	return nil
 }
 
-// addAttempts inserts the tenant's attempts state has just dispatched with one
+// addAttempts inserts the tenant's attempts run-controller has just dispatched with one
 // INSERT over arrays: each with its dispatched_at (the database clock when nil) and
 // next_check_at NextCheckIn after the database clock, which the database
 // evaluates, so the attempt clocks compare against one clock.

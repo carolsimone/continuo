@@ -1,6 +1,6 @@
 // Package seedreconcile loads into the warehouse the dbt seeds of each
 // tenant's live release whose content it does not hold. A pass, for one
-// tenant, compares each live seed's content hash with the version state last
+// tenant, compares each live seed's content hash with the version run-controller last
 // recorded as loaded for that tenant and, for the seeds that differ, creates
 // one promote-seed run of the tenant, which dispatches every one of them as it
 // is created, and records a build request per seed. A pass runs inside every
@@ -62,7 +62,7 @@ func New(uowFactory func() uow.UnitOfWork, maintenance bool, tasks run.TaskDefau
 // nothing and creates nothing: the pass that followed the live release's own
 // move committed with it, and the periodic pass covers whatever changed since.
 //
-// The first promotion state applies records the seeds it adopts as already
+// The first promotion run-controller applies records the seeds it adopts as already
 // loaded, and a pass over the new live release follows every move.
 func (r *Reconciler) AfterPromotion(ctx context.Context, u uow.UnitOfWork, t ports.PromotionTrigger) error {
 	if t.Outcome != topology.PointerMoved {
@@ -151,7 +151,7 @@ func (r *Reconciler) Loop(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// adopt records, on the first promotion state applies, the seeds treated as
+// adopt records, on the first promotion run-controller applies, the seeds treated as
 // already loaded at the release's content: none for an install's first release
 // (bootstrap); otherwise every seed the release did not change, and every seed
 // when the release's first promote-seed run already exists.

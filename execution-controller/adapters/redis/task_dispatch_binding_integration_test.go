@@ -83,7 +83,7 @@ func (f *dispatchFlow) rebind() {
 }
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox
-// row of state, with the given known status and payload edits.
+// row of run-controller, with the given known status and payload edits.
 func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func(*pkgevents.TaskDispatch)) {
 	f.t.Helper()
 	f.seq++
@@ -176,7 +176,7 @@ func TestTaskDispatch_AnOlderAttemptCreatesNothing(t *testing.T) {
 	assert.Len(t, f.reports(), 1)
 }
 
-// A question about an attempt state knows as acknowledged, of which nothing is
+// A question about an attempt run-controller knows as acknowledged, of which nothing is
 // held, is answered attempt_lost, and the answer is kept.
 func TestTaskDispatch_AnAcknowledgedAttemptWithNoTraceIsLost(t *testing.T) {
 	db, cleanup := setupPostgres(t)

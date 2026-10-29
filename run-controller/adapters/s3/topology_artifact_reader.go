@@ -1,4 +1,4 @@
-// Package s3 implements state's object-storage port, the topology-artifact
+// Package s3 implements run-controller's object-storage port, the topology-artifact
 // reader, over pkg/objectstore's Reader role.
 package s3
 
@@ -46,7 +46,7 @@ type artifactEntry struct {
 var _ ports.TopologyArtifactReader = (*TopologyArtifactReader)(nil)
 
 // NewTopologyArtifactReader builds a TopologyArtifactReader that reads through
-// objects; state passes the shared object-store client.
+// objects; run-controller passes the shared object-store client.
 func NewTopologyArtifactReader(objects objectstore.Reader) *TopologyArtifactReader {
 	return newTopologyArtifactReader(objects, topologyArtifactCacheSize)
 }

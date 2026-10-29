@@ -138,7 +138,7 @@ func main() {
 	// below is safe and does not alias the process environment. The initiating
 	// identity is not baked in here: Execute stamps CONTINUO_ACTOR per call from
 	// the authenticated chat operator, so each action is attributed to the human
-	// who approved it (empty → state's system sentinel).
+	// who approved it (empty → run-controller's system sentinel).
 	cliEnv := append(
 		os.Environ(),
 		"CONTINUO_STATE_ADDR="+cfg.StateAddr,

@@ -213,7 +213,7 @@ func TestAttemptReport_AStoppingSuccessRecordsTheLoadedVersion(t *testing.T) {
 // A cancelling run still holds its schedule: it blocks a new run of the
 // schedule, is the schedule's active run, shows as running in the schedule
 // list, is an active run of the live release's drift report and, with tasks
-// state did not plan, is listed among the unplanned active runs.
+// run-controller did not plan, is listed among the unplanned active runs.
 func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

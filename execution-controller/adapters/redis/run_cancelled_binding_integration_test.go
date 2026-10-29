@@ -50,7 +50,7 @@ func (c *countedStops) AttemptStopped() { c.stopped++ }
 func (*countedStops) JobReaped(string)  {}
 
 // runCancelledMessage is one run.cancelled:v1 entry of runID, as a new outbox
-// row of state.
+// row of run-controller.
 func runCancelledMessage(t *testing.T, id string, runID uuid.UUID, attempts ...pkgevents.CancelledAttempt) goredis.XMessage {
 	t.Helper()
 	outboxID := uuid.New()

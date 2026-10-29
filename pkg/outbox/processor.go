@@ -16,7 +16,7 @@ import (
 )
 
 // Publisher performs whatever side effects an outbox entry represents.
-// For event-only services (state, orchestrator), implementations simply XADD
+// For event-only services (run-controller, orchestrator), implementations simply XADD
 // entry.Payload to entry.StreamName. For services with multi-step semantics
 // (executor: K8s deploy + multiple XADDs), the implementation is service-aware.
 type Publisher interface {

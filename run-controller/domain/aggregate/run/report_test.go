@@ -91,7 +91,7 @@ func TestAttempt_ApplyKeepsEveryFactTheReportCarries(t *testing.T) {
 	assert.Zero(t, a.NextCheckIn, "a final attempt is never asked about")
 }
 
-// state asks about an attempt it has heard nothing of: an unacknowledged one
+// run-controller asks about an attempt it has heard nothing of: an unacknowledged one
 // after 5 minutes, then 10, 20, 40 and every 60; an acknowledged one after 30
 // minutes of silence, and every 30 after that.
 func TestNextCheckAfter(t *testing.T) {
@@ -110,7 +110,7 @@ func TestNextCheckAfter(t *testing.T) {
 	}
 }
 
-// state re-sends the cancel for an attempt it asked to stop after 5 minutes,
+// run-controller re-sends the cancel for an attempt it asked to stop after 5 minutes,
 // then 10, 20, 40 and every 60.
 func TestNextStopCheckAfter(t *testing.T) {
 	for checks, want := range map[int]time.Duration{

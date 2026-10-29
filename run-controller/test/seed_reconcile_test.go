@@ -37,7 +37,7 @@ func (h *reconcileHarness) firstPromoteSeedRunID(releaseID string) uuid.UUID {
 	return seeds.RunID(h.tenant, releaseID, 1)
 }
 
-// reconcileHarness runs the seed reconcile, alone and inside state's
+// reconcileHarness runs the seed reconcile, alone and inside run-controller's
 // release.promoted:v2 binding, with releases of one tenant of its own. A pass
 // of the reconciler covers every tenant with a live release.
 type reconcileHarness struct {
@@ -91,7 +91,7 @@ func (h *reconcileHarness) loaded(t *testing.T, schema, table, hash string) {
 }
 
 // promote delivers one release.promoted:v2 entry for the harness's tenant to
-// state's binding, with the artifact it names held in memory.
+// run-controller's binding, with the artifact it names held in memory.
 func (h *reconcileHarness) promote(t *testing.T, releaseID string, seq int64, bootstrap bool, changed []string, nodes ...topology.NodeSpec) {
 	t.Helper()
 	uri := "s3://continuo/tenants/" + h.tenant + "/topologies/" + releaseID + "/topology.json.gz"
@@ -355,7 +355,7 @@ func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []st
 }
 
 // TestSeedReconcile_ReplayOfSeveralRetainedPromotions delivers three retained
-// promotions oldest first, as an upgraded state does when its consumer group
+// promotions oldest first, as an upgraded run-controller does when its consumer group
 // starts at the beginning of the stream. orders changes in every release and
 // users changes once. Each seed is built once during the replay, however many
 // releases it changes in: a build in flight holds back a later one, so orders

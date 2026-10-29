@@ -15,7 +15,7 @@ import (
 )
 
 // ScheduleGraphRepository implements repository.ScheduleGraphRepository over
-// state's copy of the promoted topologies. Every read starts from the tenant's
+// run-controller's copy of the promoted topologies. Every read starts from the tenant's
 // live_release row and reads that release's rows only; a release never
 // changes, so a pointer that moves during a read leaves it a consistent view.
 type ScheduleGraphRepository struct {

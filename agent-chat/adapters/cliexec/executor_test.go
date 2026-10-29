@@ -121,7 +121,7 @@ func TestExecutor_NilEnvStillInheritsParentWhenStampingActor(t *testing.T) {
 }
 
 func TestExecutor_EmptyUserIDOmitsActor(t *testing.T) {
-	// Empty userID must leave CONTINUO_ACTOR unset so state records the system sentinel.
+	// Empty userID must leave CONTINUO_ACTOR unset so run-controller records the system sentinel.
 	e := NewExecutor(testCatalog(t), actorCLI(t), []string{"PATH=/usr/bin:/bin"}, 5*time.Second, 4096,
 		slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	res := e.Execute(context.Background(), "", uuid.New(),

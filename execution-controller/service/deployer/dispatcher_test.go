@@ -227,7 +227,7 @@ func TestDispatcher_BudgetExhaustedReportsCreateFailed(t *testing.T) {
 
 	got := failedReport(t, db)
 	assert.Equal(t, pkgmodel.AttemptStatusFailed, got.Status)
-	assert.Equal(t, "infra", got.FailureClass, "Kubernetes refused the Job on every try: state may retry it")
+	assert.Equal(t, "infra", got.FailureClass, "Kubernetes refused the Job on every try: run-controller may retry it")
 	assert.Equal(t, "create_failed", got.FailureReason)
 	assert.Equal(t, "apiserver down", got.ErrorMessage)
 }
@@ -1000,7 +1000,7 @@ func TestLaunch_AFencedReservedRowWhoseJobExistsIsAdoptedTerminating(t *testing.
 
 // A reserved row of a fenced run whose attempt has no Job but a pod that has
 // not finished writes nothing: the row stays reserved and nothing is
-// reported while the pod can still run. The fence, which state's next
+// reported while the pod can still run. The fence, which run-controller's next
 // cancel sends again, stops it then.
 func TestLaunch_AFencedReservedRowWithAnUnfinishedPodWritesNothing(t *testing.T) {
 	f := newFencedLaunch(t)

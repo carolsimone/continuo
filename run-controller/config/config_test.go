@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// state sizes its pool from DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS. Load names
+// run-controller sizes its pool from DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS. Load names
 // the set pool keys it does not read, so main can warn about them.
 func TestLoad_NamesTheIgnoredPoolKeys(t *testing.T) {
 	cases := []struct {
@@ -48,7 +48,7 @@ func TestLoad_RequiresMaintenance(t *testing.T) {
 	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
 }
 
-// state reads topology artifacts from object storage, so it refuses to start
+// run-controller reads topology artifacts from object storage, so it refuses to start
 // without the bucket's endpoint, name and region.
 func TestLoad_RequiresS3(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "")
@@ -112,8 +112,8 @@ func TestLoad_TaskTimeout(t *testing.T) {
 	assert.Equal(t, 3*time.Hour, Load(&pkgconfig.Validator{}).TaskTimeout)
 }
 
-// The chart's runs.taskMaxRetries is the range state accepts: a value the chart
-// allows but state refused would render and then stop state at startup.
+// The chart's runs.taskMaxRetries is the range run-controller accepts: a value the chart
+// allows but run-controller refused would render and then stop run-controller at startup.
 func TestTaskMaxRetriesRangeMatchesTheChart(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
 	require.NoError(t, err)

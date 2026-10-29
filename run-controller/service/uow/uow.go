@@ -1,4 +1,4 @@
-// Package uow provides a Unit-of-Work abstraction over state's Postgres
+// Package uow provides a Unit-of-Work abstraction over run-controller's Postgres
 // repositories so handlers can orchestrate over repos without seeing the
 // underlying database driver or transaction type.
 package uow
@@ -12,7 +12,7 @@ import (
 	ports "github.com/carolsimone/continuo/run-controller/service/ports"
 )
 
-// UnitOfWork exposes the repos state's handlers need plus tx lifecycle.
+// UnitOfWork exposes the repos run-controller's handlers need plus tx lifecycle.
 // Each accessor returns a repository bound to the UoW's active transaction:
 // the repo's write/FOR-UPDATE methods run inside that tx, while read/query
 // methods use the autocommit DB. Handlers never touch the transaction directly.

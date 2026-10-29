@@ -1,5 +1,5 @@
 // Package repositorytest holds contract suites for the repository ports of the
-// state domain, so an in-memory fake and the adapter behind a port are held to
+// run-controller domain, so an in-memory fake and the adapter behind a port are held to
 // the same behaviour by the same assertions.
 package repositorytest
 

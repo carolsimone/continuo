@@ -22,7 +22,7 @@ func TestRunsSchema_ScheduleNameHoldsTheLongestNameARunCarries(t *testing.T) {
 	require.NoError(t, db.Get(&width, `
 		SELECT character_maximum_length FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name = 'runs' AND column_name = 'schedule_name'`),
-		"runs.schedule_name exists; apply the state migrations")
+		"runs.schedule_name exists; apply the run-controller migrations")
 	require.True(t, width.Valid, "runs.schedule_name has a maximum length")
 	assert.Equal(t, int64(run.MaxScheduleNameChars), width.Int64)
 }

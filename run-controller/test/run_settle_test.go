@@ -40,7 +40,7 @@ func (o ownRunList) ListUnplannedActive(ctx context.Context) ([]repository.RunRe
 	return slices.DeleteFunc(all, func(r repository.RunRef) bool { return !slices.Contains(o.ids, r.RunID) }), nil
 }
 
-// TestSettle cancels, against a real Postgres, the active runs state did not
+// TestSettle cancels, against a real Postgres, the active runs run-controller did not
 // plan and leaves the runs it planned.
 func TestSettle(t *testing.T) {
 	if testing.Short() {

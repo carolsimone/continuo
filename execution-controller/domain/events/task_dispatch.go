@@ -7,9 +7,9 @@ import (
 )
 
 // TaskDispatch is the parsed task.dispatch:v1 payload: one attempt of one
-// task as state decided it, with state's view of the attempt (KnownStatus).
+// task as run-controller decided it, with run-controller's view of the attempt (KnownStatus).
 // Only RunID, TaskID and Attempt are known to be valid; the other fields are
-// as state wrote them. TenantID is the tenant of the dispatch's envelope.
+// as run-controller wrote them. TenantID is the tenant of the dispatch's envelope.
 type TaskDispatch struct {
 	TenantID       string
 	RunID          uuid.UUID

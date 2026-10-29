@@ -130,7 +130,7 @@ func requireCode(t *testing.T, err error, code codes.Code, what string) {
 	assert.Equal(t, code, status.Code(err), "%s: %v", what, err)
 }
 
-// TestTenantEdges drives the places where work enters state against a run of
+// TestTenantEdges drives the places where work enters run-controller against a run of
 // a tenant other than the one the gRPC edge resolves, default. Every gRPC read
 // and command reads that tenant's run, task, schedule and node as ones that do
 // not exist and leaves the run as it was. A task.status.updated:v2 report

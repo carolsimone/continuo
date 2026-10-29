@@ -1,9 +1,9 @@
-// Package cronloop is state's cron loop: it fires the schedules of every
+// Package cronloop is run-controller's cron loop: it fires the schedules of every
 // tenant whose next fire has come. Each schedule row stores the instant of its
 // next slot; a pass fires each due schedule in a transaction of its own that
 // locks the schedule's row, starts the run of the slot (stamped with it, so a
 // slot never has two runs) and moves the next fire on to the slot after it.
-// Only a schedule's latest due slot fires: older slots it missed, while state
+// Only a schedule's latest due slot fires: older slots it missed, while run-controller
 // was down, are counted and logged. In maintenance mode, or while the
 // schedule's previous run is active, the slot is consumed with no run. Each
 // fire is bounded by FireTimeout; a fire that fails or runs out of time keeps
@@ -103,7 +103,7 @@ func New(newUoW func() uow.UnitOfWork, starter *handlers.StartRunHandler, metric
 // one past DueLimit or one it could not fire (its stored cron no longer
 // parses, its fire failed or ran out of time, or another transaction held its
 // row), is tried again by the pass a wake signal or the tick brings. With wake
-// the schedules channel, as state runs it, every committed fire notifies it,
+// the schedules channel, as run-controller runs it, every committed fire notifies it,
 // so a pass that fired DueLimit schedules is followed by another at once.
 func (l *Loop) Run(ctx context.Context, wake <-chan struct{}, tick time.Duration) {
 	for {
