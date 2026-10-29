@@ -43,7 +43,6 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 	defer cleanupTestData(t, ctx, clients, retryScheduleName)
 
 	verifyServicesHealthy(t)

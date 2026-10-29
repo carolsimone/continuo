@@ -35,7 +35,6 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	requireReleaseControllerHealthy(t, clients)

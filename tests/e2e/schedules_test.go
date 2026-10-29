@@ -58,7 +58,6 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 	clients := setupClients(t, ctx)
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the row's deletion registered below.
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 

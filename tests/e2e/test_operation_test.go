@@ -31,7 +31,6 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"
@@ -89,7 +88,6 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"
@@ -125,7 +123,6 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"
@@ -180,7 +177,6 @@ func TestWholeDAGTestOperation(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const seedSchedule = "seed"
 
@@ -245,7 +241,6 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const noTestsSchedule = failureTestScheduleName // e2e-schedule-failure: all nodes test_count=0
 
@@ -301,7 +296,6 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"

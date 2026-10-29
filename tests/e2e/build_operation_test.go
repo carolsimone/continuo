@@ -30,7 +30,6 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"
@@ -96,7 +95,6 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
@@ -161,7 +159,6 @@ func TestBuildOperationRerun(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)

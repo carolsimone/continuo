@@ -46,7 +46,8 @@ type testClients struct {
 	uiBase                 string
 }
 
-// setupClients initializes all client connections
+// setupClients initializes all client connections and closes them when the
+// test and its cleanups have ended.
 func setupClients(t *testing.T, ctx context.Context) *testClients {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -115,7 +116,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
 	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
 
-	return &testClients{
+	clients := &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
 		runClient:              runv1.NewRunServiceClient(stateConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
@@ -135,6 +136,11 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		logger:                 logger,
 		uiBase:                 uiBase,
 	}
+	// Registered here, before the test can register a cleanup of its own, so
+	// cleanups run first in, first out: every one that reads or deletes rows
+	// finds the pools open. A test never closes the clients itself.
+	t.Cleanup(func() { clients.close(ctx) })
+	return clients
 }
 
 // newMinioS3Client builds an S3 client pointed at the e2e MinIO endpoint

@@ -34,7 +34,6 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	defer func() {
 		cleanupTestData(t, ctx, clients, failureTestScheduleName)

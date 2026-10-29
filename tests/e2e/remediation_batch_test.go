@@ -83,7 +83,6 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -279,7 +278,6 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -535,7 +533,6 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -761,7 +758,6 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -1257,7 +1253,6 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)

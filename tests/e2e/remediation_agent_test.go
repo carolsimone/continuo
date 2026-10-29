@@ -54,7 +54,6 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -392,7 +391,6 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	releaseID := "e2e-opening-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.opening_sweep"
@@ -497,7 +495,6 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	releaseID := "e2e-norepo-sweep-" + uuid.NewString()[:8]
 	const nodeID = "model.p.norepo_sweep"

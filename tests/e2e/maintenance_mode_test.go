@@ -145,7 +145,6 @@ func TestMaintenanceMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "maintenance-mode")

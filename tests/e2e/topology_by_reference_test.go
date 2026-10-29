@@ -33,7 +33,6 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	const staleSchedule = "e2e-stale-probe"
 	tap := startStreamTap(t, ctx, clients.redisClient, streams.ReleasePromotedV2)
@@ -133,7 +132,6 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	t.Cleanup(func() { clients.close(ctx) })
 
 	seedTopology(t, ctx, clients)
 	before := readLivePointer(ctx, clients)

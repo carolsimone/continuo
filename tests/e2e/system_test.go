@@ -23,7 +23,6 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Setup clients
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	// Cleanup at end (runs even on failure)
 	defer func() {
