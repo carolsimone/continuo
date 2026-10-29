@@ -136,7 +136,7 @@ elif args[0] == "ps":
 elif args[0] == "stats":
     if os.environ.get("FAKE_DOCKER_STATS_FAIL"):
         sys.exit("Error response from daemon: fake stats failure")
-    print("state\t1.00%\t10MiB / 1GiB")
+    print("run-controller\t1.00%\t10MiB / 1GiB")
 elif args[0] == "exec":
     rest = [a for a in args[1:] if a not in ("-i", "-e", "REDISCLI_AUTH")]
     if any(part.endswith("announce-topology") for part in rest):

@@ -10,7 +10,7 @@ cat > "$TMP/helm" <<'STUB'
 #!/usr/bin/env bash
 echo 'image: "ghcr.io/carolsimone/continuo-minio:2025.7.23"'
 echo 'image: "ghcr.io/carolsimone/continuo-mc:2025.7.21"'
-echo 'image: "ghcr.io/carolsimone/continuo-state:v9"'
+echo 'image: "ghcr.io/carolsimone/continuo-run-controller:v9"'
 STUB
 cat > "$TMP/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -25,6 +25,6 @@ bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: all-pullable should pass"; fail=
 # Case 2: a datastore image 401s → fail.
 STUB_BAD="continuo-mc" bash "$SCRIPT" >/dev/null 2>&1 && { echo "FAIL: a 401 datastore image should fail"; fail=1; } || true
 # Case 3: a 401 on a NON-datastore (our service) image must NOT fail this guard.
-STUB_BAD="continuo-state" bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: service image is out of scope, should still pass"; fail=1; }
+STUB_BAD="continuo-run-controller" bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: service image is out of scope, should still pass"; fail=1; }
 
 [[ $fail -eq 0 ]] && echo "ALL PASS" || { echo "TESTS FAILED"; exit 1; }

@@ -76,7 +76,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments, a blank task id, or an id that is not a UUID
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run attempts 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a\n  continuo run attempts 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a 7c9e6679-7425-40de-944b-e07fc1f90ae7",
 		Annotations: map[string]string{
@@ -98,7 +98,7 @@ Errors:
 				taskID = args[1]
 			}
 
-			c, err := factory(cmd.Context(), cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

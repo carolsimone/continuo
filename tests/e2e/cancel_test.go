@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +68,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	verifyRootNodesDispatched(t, ctx, dispatchTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
-	verifyExecutorDeployedJobs(t, ctx, clients, level0, testScheduleName)
+	verifyExecutionControllerDeployedJobs(t, ctx, clients, level0, testScheduleName)
 	verifyJobsCompleted(t, ctx, clients, level0, testScheduleName)
 
 	t.Log("Phase 1 complete: level 0 (seeds) succeeded")
@@ -158,7 +158,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 	lastStatus := "(not read)"
 	pollUntilDescribed(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
-		err := clients.stateDB.Get(&status, `
+		err := clients.runControllerDB.Get(&status, `
 			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
@@ -180,7 +180,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()
 	var count int
-	err := clients.stateDB.QueryRowContext(ctx, `
+	err := clients.runControllerDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM tasks
 		WHERE run_id = $1 AND status = 'cancelled'
@@ -208,8 +208,8 @@ func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients,
 			}
 		}
 		return true, nil // cancelled run no longer active
-	}, "Timeout waiting for cancelled run to leave state active set")
-	t.Logf("✅ state no longer reports run %s as active", want)
+	}, "Timeout waiting for cancelled run to leave run-controller's active set")
+	t.Logf("✅ run-controller no longer reports run %s as active", want)
 }
 
 // verifyRunFenced polls execution-controller's database until it has a row in

@@ -5,7 +5,7 @@ import (
 )
 
 // CommandResolver resolves the container argv for every dbt operation the
-// executor dispatches to a Kubernetes Job. Implementations resolve a team's
+// execution-controller dispatches to a Kubernetes Job. Implementations resolve a team's
 // declared command dialect with precedence service override > deployment
 // default > built-in plain dbt, so events keep carrying intent (node type +
 // table name) and command strings exist only at Job-build time.

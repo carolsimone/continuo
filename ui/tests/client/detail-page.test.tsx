@@ -1173,7 +1173,7 @@ describe('DetailPage — header drift chip', () => {
 describe('DetailPage — attempts pagination regression', () => {
   // The attempts endpoint pages at 200 rows. Regression: DetailPage once
   // issued a single raw fetch and silently dropped every row past 200. This
-  // fixture serves 412 attempts across three pages (200/200/12) in state's
+  // fixture serves 412 attempts across three pages (200/200/12) in run-controller's
   // (task_id, attempt) order: t1's attempts 0..400 fill indices 0..400 and a
   // second task fills the rest, so t1's highest-numbered attempt — the one
   // its row reads — sits at index 400, deep into the third page. A mock that
@@ -1301,7 +1301,7 @@ describe('DetailPage — historical run attempts', () => {
       fireEvent.click(container.querySelector('.run-row')!);
       fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
 
-      // The past run's rows come from state, not from its graph snapshot:
+      // The past run's rows come from run-controller, not from its graph snapshot:
       // the task carries its own attempt, read as attempt+1 / max_retries+1.
       const nameCell = await screen.findByText('old_orders');
       const row = nameCell.closest('tr')!;

@@ -22,7 +22,7 @@ data:
   REDIS_ADDR: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
   NEO4J_URI: {{ include "continuo.neo4j.uri" . | quote }}
   NEO4J_USER: {{ include "continuo.neo4j.username" . | quote }}
-  STATE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
+  RUN_CONTROLLER_GRPC_ADDR: {{ .Values.global.runControllerGrpcAddr | quote }}
   ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
   AGENT_REMEDIATION_GRPC_ADDR: {{ .Values.global.agentRemediationGrpcAddr | quote }}
   AGENT_CHAT_GRPC_ADDR: {{ .Values.global.agentChatGrpcAddr | quote }}

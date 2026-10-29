@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	executorpg "github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecpg "github.com/carolsimone/continuo/execution-controller/adapters/postgres"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
@@ -76,7 +76,7 @@ func pipelineLogger() *slog.Logger {
 }
 
 // noopSchemaCreator stubs the candidate-schema pre-create. The pipeline test
-// drives the executor command queue, not the dbt warehouse, so the binding's
+// drives the execution-controller command queue, not the dbt warehouse, so the binding's
 // warehouse-side schema creation is a no-op here.
 type noopSchemaCreator struct{}
 
@@ -86,8 +86,8 @@ func (noopSchemaCreator) EnsureCandidateSchema(context.Context, string) error { 
 // binding over the live *sqlx.DB.
 func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return executorpg.NewPostgresUnitOfWork(db, logger) }
-	return executorredis.NewValidationRequestedBinding(
+	uowFactory := func() uow.UnitOfWork { return ecpg.NewPostgresUnitOfWork(db, logger) }
+	return ecredis.NewValidationRequestedBinding(
 		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
 
@@ -99,7 +99,7 @@ func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XM
 func recordNodeOutcome(t *testing.T, db *sqlx.DB, releaseID, nodeID, outcome string) {
 	t.Helper()
 	logger := pipelineLogger()
-	u := executorpg.NewPostgresUnitOfWork(db, logger)
+	u := ecpg.NewPostgresUnitOfWork(db, logger)
 	ctx := context.Background()
 	require.NoError(t, u.Begin(ctx))
 	err := outcomes.NewRecorder(logger).Record(ctx, u, outcomes.NodeOutcome{
@@ -121,16 +121,16 @@ func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatch
 	return deployer.NewDispatcher(
 		db, dep, absentJobs{},
 		func(exec outbox.Executor) repository.DeploymentRepository {
-			return executorpg.NewDeploymentsRepository(exec, logger)
+			return ecpg.NewDeploymentsRepository(exec, logger)
 		},
 		func(exec outbox.Executor) repository.ValidationAggregateRepository {
-			return executorpg.NewValidationAggregateRepository(exec)
+			return ecpg.NewValidationAggregateRepository(exec)
 		},
 		func(exec outbox.Executor) repository.AdmissionRepository {
-			return executorpg.NewAdmissionRepository(exec, logger)
+			return ecpg.NewAdmissionRepository(exec, logger)
 		},
 		func(exec outbox.Executor) repository.CancelledRunsRepository {
-			return executorpg.NewCancelledRunsRepository(exec)
+			return ecpg.NewCancelledRunsRepository(exec)
 		},
 		50, logger, deployer.DispatcherConfig{},
 	)

@@ -377,6 +377,7 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, repo.lastOutbox, "expected an outbox entry to be created")
 	require.Equal(t, streams.RemediationPrOpenedV1, repo.lastOutbox.StreamName)
+	require.Equal(t, event.AggregateType, repo.lastOutbox.AggregateType, "the service's events share one outbox aggregate type")
 	require.True(t, repo.committed, "expected the unit of work to be committed")
 	require.Equal(t, fixedClock{}.Now(), repo.lastRecordPR.openedAt,
 		"an unset OpenedAt must fall back to the service clock, as the normal client-side flow relies on")
@@ -617,6 +618,7 @@ func TestService_RecordOutcome_EmitsPRClosedAtomically(t *testing.T) {
 	require.Equal(t, closedAt, repo.lastClosedAt)
 	require.NotNil(t, repo.lastOutbox, "expected a pr_closed outbox entry")
 	require.Equal(t, streams.RemediationPrClosedV1, repo.lastOutbox.StreamName)
+	require.Equal(t, event.AggregateType, repo.lastOutbox.AggregateType, "the service's events share one outbox aggregate type")
 	require.True(t, repo.committed, "expected the unit of work to be committed")
 }
 

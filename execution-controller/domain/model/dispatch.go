@@ -29,22 +29,22 @@ const (
 	AdoptJob
 	// CreateAttempt: the dispatch is new; the attempt is queued for its Job.
 	CreateAttempt
-	// ReportLost: state knows the attempt as acknowledged, yet neither its
+	// ReportLost: run-controller knows the attempt as acknowledged, yet neither its
 	// record nor its Job is held, and no pod of it is left; it is reported
 	// failed as attempt_lost.
 	ReportLost
-	// AwaitOrphanPod: state knows the attempt as acknowledged and neither its
+	// AwaitOrphanPod: run-controller knows the attempt as acknowledged and neither its
 	// record nor its Job is held, but a pod of it has not finished (its Job
 	// was deleted without its pods). Nothing is written: the pod may still
-	// write the table, and state asks again.
+	// write the table, and run-controller asks again.
 	AwaitOrphanPod
 )
 
 // DecideDispatch decides what a dispatch leads to, from whether the attempt's
 // record is held, whether a later attempt's is, the problem (if any) that
 // stops the dispatch from running, whether a Job carrying the task and
-// attempt exists, whether a pod of the attempt has not finished, and state's
-// known status. Only a dispatch state still knows as dispatched creates an
+// attempt exists, whether a pod of the attempt has not finished, and run-controller's
+// known status. Only a dispatch run-controller still knows as dispatched creates an
 // attempt: an acknowledged attempt is never run again because of a question,
 // and is reported lost only once no pod of it can run.
 func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt, podOfAttemptRunning bool,
@@ -80,7 +80,7 @@ const (
 	StopAdopted FencedAction = iota + 1
 	// AwaitFencedPod: no Job of the attempt exists, but a pod of it has not
 	// finished (its Job was deleted without its pods). Nothing is written
-	// while the pod can still run; state's next cancel names the attempt
+	// while the pod can still run; run-controller's next cancel names the attempt
 	// again.
 	AwaitFencedPod
 	// StoreStopped: neither a Job nor an unfinished pod of the attempt
@@ -107,13 +107,13 @@ func DecideFenced(jobOfAttempt, podOfAttemptUnfinished bool) FencedAction {
 const maxJobNameLen = 63
 
 // jobNamePattern is a DNS-1123 label: lowercase alphanumerics and hyphens,
-// starting and ending alphanumeric. It is the form of every job_name state
+// starting and ending alphanumeric. It is the form of every job_name run-controller
 // computes, and the only one the Kubernetes API can look up by name or by the
 // Job-name label selector.
 var jobNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 // DispatchProblem returns the reason and message of what stops cmd, the
-// command of a dispatch state knows in knownStatus (dispatched, queued or
+// command of a dispatch run-controller knows in knownStatus (dispatched, queued or
 // running; any other value cannot run), from running; an empty
 // reason when nothing does. A job_name that is not a DNS-1123 label of 1 to 63
 // characters stops it: Kubernetes can never read such a Job, so no lookup of

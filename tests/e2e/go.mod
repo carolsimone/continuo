@@ -5,7 +5,7 @@ go 1.26.10
 replace (
 	github.com/carolsimone/continuo/orchestrator => ../../orchestrator
 	github.com/carolsimone/continuo/pkg => ../../pkg
-	github.com/carolsimone/continuo/state => ../../state
+	github.com/carolsimone/continuo/run-controller => ../../run-controller
 )
 
 require (
@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
 	github.com/carolsimone/continuo/orchestrator v0.0.0-00010101000000-000000000000
 	github.com/carolsimone/continuo/pkg v0.0.0
-	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/run-controller v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jmoiron/sqlx v1.4.0

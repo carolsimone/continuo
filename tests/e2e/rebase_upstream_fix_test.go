@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// rebaseReleaseMovedMessage is the text of state's refusal of a rebase whose
+// rebaseReleaseMovedMessage is the text of run-controller's refusal of a rebase whose
 // caller previewed a release that is no longer live. The ui recognises the
 // refusal by this exact text.
 const rebaseReleaseMovedMessage = "the live release changed; preview again"
@@ -40,7 +40,7 @@ const rebaseReleaseMovedMessage = "the live release changed; preview again"
 // The e2e dbt projects are baked into the service images, so the announcement
 // changes ftable_c's content hash but not its SQL, and ftable_e fails again in
 // every rebase. That a fixed upstream node makes the failure pass is covered by
-// state's TestRebaseFromFailure.
+// run-controller's TestRebaseFromFailure.
 func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -59,7 +59,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 
 	// The source run is stamped with the release live when it starts.
 	base := seedTopology(t, ctx, clients)
-	waitForStateLiveRelease(t, ctx, clients, base)
+	waitForRunControllerLiveRelease(t, ctx, clients, base)
 
 	// ── The source run fails on the base release ────────────────────────────
 	srcIDStr := startFailureScheduleRun(t, ctx, clients)
@@ -89,7 +89,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	live := announceTopology(t, ctx, "e2e-rebase-"+uuid.NewString()[:8], nodes)
 	defer restoreDefaultTopology(t, ctx, clients)
 	waitForAnnouncedTopology(t, ctx, clients, live, schedules)
-	waitForStateLiveRelease(t, ctx, clients, live)
+	waitForRunControllerLiveRelease(t, ctx, clients, live)
 
 	wantChanged := []rebaseChangedNode{{Service: "service-3", Schema: seedSchemaName, Table: "ftable_c", Downstream: 3}}
 
@@ -263,7 +263,7 @@ func readRunStamp(t *testing.T, ctx context.Context, clients *testClients, runID
 	t.Helper()
 	var releaseID sql.NullString
 	var seq sql.NullInt64
-	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
+	require.NoError(t, clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT release_id, promotion_seq FROM runs WHERE run_id = $1`, runID).Scan(&releaseID, &seq))
 	return runStamp{ReleaseID: releaseID.String, PromotionSeq: seq.Int64}
 }
@@ -272,7 +272,7 @@ func readRunStamp(t *testing.T, ctx context.Context, clients *testClients, runID
 func countScheduleRuns(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &n,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &n,
 		`SELECT count(*) FROM runs WHERE schedule_name = $1`, scheduleName))
 	return n
 }
@@ -293,7 +293,7 @@ func triggerRebaseOnto(t *testing.T, ctx context.Context, clients *testClients, 
 	assert.Equal(t, failureTestScheduleName, resp.GetScheduleName())
 	t.Logf("Rebase run created: run_id=%s include_changed_upstream=%v", runID, includeChangedUpstream)
 
-	assert.Equal(t, "rebase", queryRunKind(t, clients.stateDB, runID))
+	assert.Equal(t, "rebase", queryRunKind(t, clients.runControllerDB, runID))
 	assert.Equal(t, source.String(), queryRunSourceRunID(t, clients, runID))
 	assert.Equal(t, runStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, readRunStamp(t, ctx, clients, runID),
 		"a rebase runs on the live release")
@@ -306,11 +306,11 @@ type rebaseTask struct {
 	Inherited bool // carried over from the source as succeeded, not executed
 }
 
-// readRebaseTasks reads the tasks of runID by table name. state stores a
+// readRebaseTasks reads the tasks of runID by table name. run-controller stores a
 // run's tasks in the transaction that creates it.
 func readRebaseTasks(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) map[string]rebaseTask {
 	t.Helper()
-	rows, err := clients.stateDB.QueryContext(ctx, `
+	rows, err := clients.runControllerDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NOT NULL AS inherited
 		FROM tasks
 		WHERE run_id = $1`, runID)

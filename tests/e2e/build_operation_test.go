@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,13 +202,13 @@ func TestBuildOperationRerun(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err, "rerun run_id must be a valid UUID")
 
-	newKind := queryRunKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.runControllerDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
 	t.Log("Waiting for rerun tasks rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
-		qErr := clients.stateDB.QueryRowContext(ctx,
+		qErr := clients.runControllerDB.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {

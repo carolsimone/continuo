@@ -15,7 +15,7 @@ service="${1:?}"; payload="${2:?}"; schedule="${3:?}"; out="${4:?}"
 start_after="${5:-30}"; outage_s="${6:-600}"
 bench_setup_redis
 target="$(bench_container "${service}")"
-consumers=(state orchestrator execution-controller)
+consumers=(run-controller orchestrator execution-controller)
 for c in "${consumers[@]}"; do
   docker exec "${c}" test -f "/tmp/${c}.log" \
     || { echo "outage.sh: no /tmp/${c}.log in ${c}; start the services with start_local_services.sh" >&2; exit 2; }

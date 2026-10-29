@@ -41,7 +41,7 @@ func (r *fakeRepo) putOpen(originalAt time.Time) deadletter.DeadLetter {
 	dl := deadletter.DeadLetter{
 		ID: uuid.New(), DedupKey: uuid.NewString(), Source: deadletter.SourceConsumer,
 		FailureKind: model.DeadLetterKind("permanent"), Stream: "orders.changed:v1", Group: "billing",
-		OriginalMessageID: "1-0", Producer: "state", Error: "boom", DeliveryCount: 3,
+		OriginalMessageID: "1-0", Producer: "run-controller", Error: "boom", DeliveryCount: 3,
 		Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: originalAt, RecordedAt: originalAt.Add(time.Minute), Status: deadletter.StatusOpen,
 	}

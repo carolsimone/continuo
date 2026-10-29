@@ -23,22 +23,22 @@ UPGRADE NOTES
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
 
-  From continuo 0.11.x or earlier: the state service now plans every run.
-  When it first starts on this version, it cancels each run still pending or
-  running that it did not plan (cancelled by "system", reason "the run's tasks
-  were not planned by state, so it cannot continue"). Their queued tasks never
-  start, and the results of Jobs already running are ignored. Such a run
-  cannot be rerun: trigger its schedule again. To keep in-flight runs, upgrade
-  with none active: turn maintenance on, wait until no run is pending or
-  running, upgrade, then turn maintenance off.
+  From continuo 0.11.x or earlier: the run-controller service now plans every
+  run. When it first starts on this version, it cancels each run still pending
+  or running that it did not plan (cancelled by "system", reason "the run's
+  tasks were not planned by run-controller, so it cannot continue"). Their
+  queued tasks never start, and the results of Jobs already running are
+  ignored. Such a run cannot be rerun: trigger its schedule again. To keep
+  in-flight runs, upgrade with none active: turn maintenance on, wait until no
+  run is pending or running, upgrade, then turn maintenance off.
 
   Release topologies live in object storage (tenants/<tenant>/topologies/ in
   your bucket).
   With an external bucket (s3.*), grant topology-controller write access and
   release-controller read/write/delete access to tenants/, and keep any
   lifecycle expiry rule off that prefix.
-  orchestrator and state also read tenants/ (read access with an external
-  bucket).
+  orchestrator and run-controller also read tenants/ (read access with an
+  external bucket).
 {{- if .Values.validation.imageTag }}
 
   BREAKING — validation.imageTag is set on this release, and the validation
@@ -125,7 +125,26 @@ Ready and a run has completed, drop the old databases yourself: DROP DATABASE
 continuo_executor; DROP DATABASE continuo_k8s;
 This chart never drops a database. If your values override services[].name
 entries for either old service, replace them with one execution-controller
-entry (see values.yaml). Consumer-group names are unchanged; do not delete any.
+entry (see values.yaml). That merge renames no consumer group; do not delete any
+for it.
+
+BREAKING: "state" is now "run-controller": the image continuo-run-controller,
+the Deployment, Service and NetworkPolicy, the address run-controller:50051 and
+the database continuo_run_controller. Before upgrading, rename its database:
+ALTER DATABASE continuo_state RENAME TO continuo_run_controller; otherwise a
+fresh empty database is created and the run history is stranded. If your
+values set global.stateGrpcAddr, rename it to global.runControllerGrpcAddr; if
+they override services[].name entries, name the entry of that service
+run-controller with POSTGRES_DB continuo_run_controller. The consumer groups
+follow their services' names (state-task-status-updated,
+state-release-promoted and the nine executor-* groups of execution-controller
+become run-controller-* and execution-controller-*). In this order, as the
+CHANGELOG's entry for this version describes in full: redrive the open dead
+letters of those groups and let the consumers finish them (after the upgrade a
+dead letter of an old group cannot be redriven); scale state and
+execution-controller to 0 with an empty pending list on every old group; take a
+pg_dump of continuo_state; and only then create each new group at its old
+group's last-delivered id; rename the database; upgrade; destroy the old groups.
 {{- end }}
 
 {{- if eq (include "continuo.egress.enabled" .) "true" }}

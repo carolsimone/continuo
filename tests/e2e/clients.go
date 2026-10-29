@@ -14,7 +14,7 @@ import (
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -34,7 +34,7 @@ type testClients struct {
 	neo4jDriver            neo4jdriver.DriverWithContext
 	executionDB            *sqlx.DB
 	orchestratorDB         *sqlx.DB
-	stateDB                *sqlx.DB
+	runControllerDB        *sqlx.DB
 	releaseDB              *sqlx.DB
 	dbtDB                  *sqlx.DB
 	remediationDB          *sqlx.DB
@@ -55,7 +55,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	// Get hosts from environment (use service names for docker-compose)
 	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
-	stateHost := getEnv("STATE_HOST", "state")
+	runControllerHost := getEnv("RUN_CONTROLLER_HOST", "run-controller")
 	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
 	deadLetterHost := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
 	redisHost := getEnv("REDIS_HOST", "redis")
@@ -70,12 +70,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to orchestrator service")
 
-	// Setup state gRPC client (RunService, port 50051)
-	stateConn, err := grpc.NewClient(
-		fmt.Sprintf("%s:50051", stateHost),
+	// Setup run-controller gRPC client (RunService, port 50051)
+	runControllerConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50051", runControllerHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to state service")
+	require.NoError(t, err, "Failed to connect to run-controller service")
 
 	// Setup agent-remediation gRPC client (RemediationProposals, port 50054)
 	agentRemediationConn, err := grpc.NewClient(
@@ -109,7 +109,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Setup PostgreSQL connections for each database
 	executionDB := connectPostgres(t, pgHost, "continuo_execution")
 	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
-	stateDB := connectPostgres(t, pgHost, "continuo_state")
+	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
@@ -118,14 +118,14 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	clients := &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
-		runClient:              runv1.NewRunServiceClient(stateConn),
+		runClient:              runv1.NewRunServiceClient(runControllerConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
 		executionDB:            executionDB,
 		orchestratorDB:         orchestratorDB,
-		stateDB:                stateDB,
+		runControllerDB:        runControllerDB,
 		releaseDB:              releaseDB,
 		dbtDB:                  dbtDB,
 		remediationDB:          remediationDB,
@@ -185,7 +185,7 @@ func (c *testClients) close(ctx context.Context) {
 	_ = c.neo4jDriver.Close(closeCtx)
 	_ = c.executionDB.Close()
 	_ = c.orchestratorDB.Close()
-	_ = c.stateDB.Close()
+	_ = c.runControllerDB.Close()
 	_ = c.releaseDB.Close()
 	_ = c.dbtDB.Close()
 	_ = c.remediationDB.Close()

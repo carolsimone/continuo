@@ -100,7 +100,7 @@ under `## [Unreleased]`, and pass `bash scripts/install-test/lint.sh`. CI enforc
 three.
 
 Give the pull request a Conventional Commit title, `<type>[(<scope>)][!]: <summary>`,
-for example `fix(state): stop double-dispatching a retried task`. The type is one of
+for example `fix(run-controller): stop double-dispatching a retried task`. The type is one of
 `feat`, `fix`, `refactor`, `docs`, `perf`, `ci`, `test`, `chore`, `build` or `security`,
 and `!` marks a breaking change. A CI check fails any other title, and a workflow labels
 the pull request from it and from the directories it changes, so there are no labels to

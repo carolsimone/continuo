@@ -9,7 +9,7 @@ WORKDIR /app
 # service-owned dirs means a change to another service does not invalidate
 # this image's cache.
 COPY go.work go.work.sum* ./
-COPY state/go.mod state/go.sum ./state/
+COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
@@ -23,7 +23,7 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
 # other services' source trees to be present in this image.
-RUN go work edit -dropuse=./state \
+RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./orchestrator \
     && go work edit -dropuse=./execution-controller \

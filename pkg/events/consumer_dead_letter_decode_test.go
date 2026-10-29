@@ -13,7 +13,7 @@ import (
 func TestDecodeConsumerDeadLetter_RoundTripsTheWriter(t *testing.T) {
 	at := time.Date(2026, 10, 5, 12, 0, 0, 123456000, time.UTC)
 	values, err := ConsumerDeadLetterFields(DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at,
+		TenantID: "default", Producer: "run-controller", OccurredAt: at,
 		Stream: "node.updated:v1", Group: "orchestrator-node-updated", MessageID: "1759665600000-0",
 		Fields: map[string]string{"a": "1"}, FailureKind: model.DeadLetterKindPermanent, Error: "boom", DeliveryCount: 1,
 	})
@@ -28,7 +28,7 @@ func TestDecodeConsumerDeadLetter_RoundTripsTheWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Producer != "state" || !env.OccurredAt.Equal(at) || env.SchemaVersion != 1 || env.TenantID != "default" {
+	if env.Producer != "run-controller" || !env.OccurredAt.Equal(at) || env.SchemaVersion != 1 || env.TenantID != "default" {
 		t.Fatalf("envelope = %+v", env)
 	}
 	if dl.OriginalStream != "node.updated:v1" || dl.OriginalGroup != "orchestrator-node-updated" ||
@@ -76,7 +76,7 @@ func TestDecodeConsumerDeadLetter_GoldenFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode golden fixture: %v", err)
 	}
-	if env.Producer != "state" || env.TenantID != "default" || !env.OccurredAt.Equal(fx.Input.OccurredAt) {
+	if env.Producer != "run-controller" || env.TenantID != "default" || !env.OccurredAt.Equal(fx.Input.OccurredAt) {
 		t.Fatalf("envelope = %+v", env)
 	}
 	if dl.OriginalStream != fx.Input.OriginalStream || dl.OriginalGroup != fx.Input.OriginalGroup ||

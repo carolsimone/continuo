@@ -37,8 +37,8 @@ metadata:
     app.kubernetes.io/name: {{ $svc.name }}
 spec:
   replicas: {{ dig "replicas" 1 $svc }}
-  {{- if eq $svc.name "state" }}
-  # Every state pod consumes the task status group and dispatches what a
+  {{- if eq $svc.name "run-controller" }}
+  # Every run-controller pod consumes the task status group and dispatches what a
   # success unblocks, so a pod of the previous release must be gone before the
   # new one consumes: an old pod would record the success of a run the new pod
   # planned without dispatching its downstream tasks.

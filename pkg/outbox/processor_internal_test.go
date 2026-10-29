@@ -20,7 +20,7 @@ func internalTestLogger() *slog.Logger {
 }
 
 // plainPublisher implements only Publish (no BatchPublisher), like the
-// executor/k8s multi-step publishers.
+// execution-controller multi-step publishers.
 type plainPublisher struct {
 	calls   int
 	failIdx map[int]error // 1-based call number -> error
@@ -84,7 +84,7 @@ func TestPublish_UsesBatchPublisherWhenAvailable(t *testing.T) {
 }
 
 // TestPublish_FallsBackToPerEntryWhenNoBatchPublisher asserts a Publish-only
-// publisher (executor/k8s style) keeps its sequential semantics.
+// publisher (execution-controller style) keeps its sequential semantics.
 func TestPublish_FallsBackToPerEntryWhenNoBatchPublisher(t *testing.T) {
 	pub := &plainPublisher{}
 	p := newProc(pub)

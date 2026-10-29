@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
-log_info "Starting K8s controller setup for E2E tests..."
+log_info "Starting execution-controller setup for E2E tests..."
 
 # Step 1: Detect docker bridge IP
 log_info "Detecting docker bridge IP..."
@@ -115,18 +115,6 @@ envsubst < validation-warehouse-secret.yaml | kubectl apply -f - || {
     log_error "Failed to apply validation warehouse Secret"
     exit 1
 }
-
-# Remove any obsolete executor-controller / k8s-controller resources left over
-# from a kind cluster provisioned before the merge. They share this service's
-# consumer groups, so a leftover controller could consume a candidate completion,
-# find no matching deployment, and ACK it without settling the new release.
-# --wait blocks until the old pods terminate; --ignore-not-found makes this a
-# no-op on a fresh cluster.
-log_info "Removing any obsolete executor-controller/k8s-controller resources..."
-for old in executor-controller k8s-controller; do
-    kubectl delete deployment,service,serviceaccount,role,rolebinding "${old}" \
-        -n default --ignore-not-found --wait --timeout=60s || true
-done
 
 # The start-timeout e2e test applies the e2e-no-pods ResourceQuota, which
 # forbids every new pod in the namespace, and deletes it when it ends. Delete

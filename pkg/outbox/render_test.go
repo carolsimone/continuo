@@ -47,13 +47,13 @@ func TestBuildDeadLetterEntry_EmbedsRenderedFields(t *testing.T) {
 	created := time.Date(2026, 10, 5, 9, 0, 0, 1000, time.UTC)
 	failed := &Entry{ID: uuid.New(), AggregateID: uuid.New(), EventType: "node_updated", StreamName: "node.updated:v1", CreatedAt: created}
 	pub := &renderingPublisher{values: map[string]any{"node_id": "a.b", "attempt": 2}}
-	dl := buildDeadLetterEntry(failed, "state_outbox", pub, model.DeadLetterKindTransientExhausted, errors.New("redis down"), 13)
+	dl := buildDeadLetterEntry(failed, "run_controller_outbox", pub, model.DeadLetterKindTransientExhausted, errors.New("redis down"), 13)
 
 	var p DeadLetterPayload
 	if err := json.Unmarshal(dl.Payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.OutboxTable != "state_outbox" || p.OriginalCreatedAt != created.Format(OriginalCreatedAtLayout) {
+	if p.OutboxTable != "run_controller_outbox" || p.OriginalCreatedAt != created.Format(OriginalCreatedAtLayout) {
 		t.Fatalf("payload = %+v", p)
 	}
 	var fields map[string]string
@@ -71,7 +71,7 @@ func TestBuildDeadLetterEntry_EmbedsRenderedFields(t *testing.T) {
 func TestBuildDeadLetterEntry_UnrenderableRowHasNoFields(t *testing.T) {
 	failed := &Entry{ID: uuid.New(), AggregateID: uuid.New(), EventType: "bad", StreamName: "s:v1", CreatedAt: time.Now()}
 	pub := &renderingPublisher{err: errors.New("cannot decode")}
-	dl := buildDeadLetterEntry(failed, "state_outbox", pub, model.DeadLetterKindPermanent, errors.New("cannot decode"), 1)
+	dl := buildDeadLetterEntry(failed, "run_controller_outbox", pub, model.DeadLetterKindPermanent, errors.New("cannot decode"), 1)
 	var p DeadLetterPayload
 	if err := json.Unmarshal(dl.Payload, &p); err != nil {
 		t.Fatal(err)

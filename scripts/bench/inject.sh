@@ -2,7 +2,7 @@
 # Announces a benchmark topology through release-controller's announce-topology
 # (artifact, next promotion seq, release.promoted:v2) and, when SCHEDULE is
 # given, waits until `continuo schedule list` lists it, which it does once the
-# release is state's live release. On a shared install the
+# release is run-controller's live release. On a shared install the
 # payload must be a topology_io.py union that contains every live node (see
 # README). The payload's release id must be fresh: announce-topology refuses
 # one that already names a run or current_prod.

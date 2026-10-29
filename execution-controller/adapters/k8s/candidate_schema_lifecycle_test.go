@@ -26,7 +26,7 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(os.Stderr, 
 
 // The schema-op Job runs the engine image with only the schema + op env and the
 // operator warehouse Secret via envFrom — no S3, no candidate SQL, no table — so the
-// executor never connects to the warehouse. VALIDATION_IMAGE/VALIDATION_WAREHOUSE_SECRET
+// execution-controller never connects to the warehouse. VALIDATION_IMAGE/VALIDATION_WAREHOUSE_SECRET
 // come from TestMain.
 func TestSchemaOpJob_RunsEngineImageWithSecretAndOpEnv(t *testing.T) {
 	job, err := schemaOpJob(schemaOpEnsure, "_candidate_rel_123", "ensure-schema-candidate-rel-123", "default")
@@ -174,7 +174,7 @@ func TestWaitForSchemaOpJob_SucceededReturnsNil(t *testing.T) {
 }
 
 // A hung DDL pod must not hold the Job Active forever: the Job's ActiveDeadlineSeconds
-// matches the executor's wait timeout, so the kubelet kills the pod and the Job goes
+// matches execution-controller's wait timeout, so the kubelet kills the pod and the Job goes
 // terminal (JobFailed/DeadlineExceeded) — a state submitSchemaOpJob can clear on retry.
 func TestSchemaOpJob_SetsActiveDeadlineMatchingWaitTimeout(t *testing.T) {
 	job, err := schemaOpJob(schemaOpEnsure, "_candidate_x", "ensure-schema-candidate-x", "default")

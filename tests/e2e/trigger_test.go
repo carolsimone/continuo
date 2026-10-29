@@ -41,7 +41,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Announce the e2e DAG. seedTopology returns once state's live release has
+	// Announce the e2e DAG. seedTopology returns once run-controller's live release has
 	// the seed schedule's models, which is what StartRun needs to know it.
 	seedTopology(t, ctx, clients)
 
@@ -120,7 +120,7 @@ func waitForAllTasksSucceeded(
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 		for _, table := range tables {
 			var status string
-			err := clients.stateDB.QueryRowContext(ctx, `
+			err := clients.runControllerDB.QueryRowContext(ctx, `
 				SELECT status FROM tasks
 				WHERE run_id = $1 AND table_name = $2
 			`, scheduleID, table).Scan(&status)

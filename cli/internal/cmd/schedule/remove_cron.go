@@ -38,7 +38,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments or a blank name
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; edits are refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule remove-cron daily",
@@ -56,7 +56,7 @@ Errors:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			c, err := factory(cmd.Context(), cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

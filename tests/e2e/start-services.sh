@@ -8,9 +8,9 @@ start_service(){ start_go_service "$1" "$3"; }
 
 log_info "Starting all services..."
 
-# Start state service first (dependency for others)
-start_service "state" "state" "state"
-check_health "state" 8082 || exit 1
+# Start the run-controller first (dependency for others)
+start_service "run-controller" "run-controller" "run-controller"
+check_health "run-controller" 8082 || exit 1
 
 # Copy kubeconfig so orchestrator can run kubectl during e2e tests
 docker exec orchestrator mkdir -p /root/.kube

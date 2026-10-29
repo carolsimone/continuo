@@ -49,7 +49,7 @@ type AttemptFacts struct {
 	// AwaitingStopSince is when a pod of the attempt was first seen
 	// terminating, or on a node that stopped reporting.
 	AwaitingStopSince *time.Time
-	// StopRequestedAt is when state asked for the attempt to stop because its
+	// StopRequestedAt is when run-controller asked for the attempt to stop because its
 	// run was cancelled.
 	StopRequestedAt *time.Time
 	// Reason is why the attempt failed; empty until decided.

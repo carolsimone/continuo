@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,16 +74,16 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 	newRunID, err := uuid.Parse(rerunResp.RunId)
 	require.NoError(t, err)
 
-	sourceKind := queryRunKind(t, clients.stateDB, schedulerID)
+	sourceKind := queryRunKind(t, clients.runControllerDB, schedulerID)
 	assert.Equal(t, "trigger", sourceKind, "source row must NOT be mutated")
 
-	newKind := queryRunKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.runControllerDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
 	t.Log("Waiting for rerun tasks rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
-		qErr := clients.stateDB.QueryRowContext(ctx,
+		qErr := clients.runControllerDB.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
@@ -92,7 +92,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 		return count >= 8, nil
 	}, "tasks rows for rerun run did not materialise (expected 8)")
 
-	rows, err := clients.stateDB.QueryContext(ctx, `
+	rows, err := clients.runControllerDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NULL AS is_real
 		FROM tasks
 		WHERE run_id = $1
@@ -140,7 +140,7 @@ func startFailureScheduleRun(
 		RequestId:    uuid.NewString(),
 		ScheduleName: failureTestScheduleName,
 	})
-	require.NoError(t, err, "Failed to start a run of the failure schedule via state service")
+	require.NoError(t, err, "Failed to start a run of the failure schedule via run-controller service")
 	t.Logf("Started a run of the failure schedule: run_id=%s", resp.GetRunId())
 	return resp.GetRunId()
 }

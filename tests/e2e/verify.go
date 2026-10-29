@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyExecutorDeployedJobs checks that executor deployed k8s jobs
-func verifyExecutorDeployedJobs(
+// verifyExecutionControllerDeployedJobs checks that execution-controller deployed k8s jobs
+func verifyExecutionControllerDeployedJobs(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
@@ -26,7 +26,7 @@ func verifyExecutorDeployedJobs(
 ) {
 	// Use app=dbt-job rather than schedule=<name> because seed nodes
 	// carry schedule_name="seed" in Neo4j regardless of the parent schedule,
-	// so their K8s jobs get label schedule=seed.  Filtering by the executor
+	// so their K8s jobs get label schedule=seed.  Filtering by the execution-controller
 	// app label and then checking table_name labels avoids this mismatch.
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
 		jobList, err := getK8sJobs(ctx, "app=dbt-job")
@@ -47,13 +47,13 @@ func verifyExecutorDeployedJobs(
 		}
 
 		return containsAll(deployedTables, expectedTables), nil
-	}, fmt.Sprintf("Timeout waiting for executor to deploy %d jobs", len(expectedTables)))
+	}, fmt.Sprintf("Timeout waiting for execution-controller to deploy %d jobs", len(expectedTables)))
 
 	t.Logf("✅ execution-controller deployed %d jobs", len(expectedTables))
 }
 
 // verifyJobsCompleted checks that all tasks have reached 'succeeded' status in
-// the state DB. Using the state DB (rather than K8s job status) is more reliable:
+// the run-controller DB. Using the run-controller DB (rather than K8s job status) is more reliable:
 // K8s jobs may be short-lived or cleaned up before the poll catches them.
 func verifyJobsCompleted(
 	t *testing.T,
@@ -65,7 +65,7 @@ func verifyJobsCompleted(
 	pollUntil(t, ctx, 8*time.Minute, 2*time.Second, func() (bool, error) {
 		for _, table := range tables {
 			var status string
-			err := clients.stateDB.QueryRowContext(ctx, `
+			err := clients.runControllerDB.QueryRowContext(ctx, `
 				SELECT tt.status
 				FROM tasks tt
 				JOIN runs st ON tt.run_id = st.run_id
@@ -103,9 +103,9 @@ func verifyNextLevelDispatched(
 			}
 		}
 		return matchCount >= len(nextLevelTables), nil
-	}, fmt.Sprintf("Timeout waiting for state to dispatch %d nodes", len(nextLevelTables)))
+	}, fmt.Sprintf("Timeout waiting for run-controller to dispatch %d nodes", len(nextLevelTables)))
 
-	t.Logf("✅ state dispatched %d nodes", len(nextLevelTables))
+	t.Logf("✅ run-controller dispatched %d nodes", len(nextLevelTables))
 }
 
 // getDAGLevels returns happy-path DAG nodes grouped by execution level.
@@ -132,13 +132,13 @@ func verifyFullDAGExecution(
 	for i, level := range levels {
 		t.Logf("Verifying level %d: %v", i, level)
 
-		// Wait for executor to deploy these jobs
-		verifyExecutorDeployedJobs(t, ctx, clients, level, testScheduleName)
+		// Wait for execution-controller to deploy these jobs
+		verifyExecutionControllerDeployedJobs(t, ctx, clients, level, testScheduleName)
 
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
 
-		// If not last level, verify state dispatched the next level
+		// If not last level, verify run-controller dispatched the next level
 		if i < len(levels)-1 {
 			verifyNextLevelDispatched(t, ctx, dispatchTap, levels[i+1], scheduleID)
 		}
@@ -188,7 +188,7 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 	t.Log("✅ dialect routing verified: service-1 jobs run customname-dbt, service-2/3 jobs run built-in dbt")
 }
 
-// verifyRootNodesDispatched verifies that state dispatched attempt 0 of each
+// verifyRootNodesDispatched verifies that run-controller dispatched attempt 0 of each
 // expected root node to task.dispatch:v1 when it created the run, once.
 func verifyRootNodesDispatched(
 	t *testing.T,
@@ -231,16 +231,16 @@ func verifyRootNodesDispatched(
 		seenStreamTables[d.TableName] = true
 	}
 
-	t.Logf("✅ state dispatched %d root nodes to task.dispatch:v1", expectedCount)
+	t.Logf("✅ run-controller dispatched %d root nodes to task.dispatch:v1", expectedCount)
 }
 
-// verifyTasksSkipped polls state DB until every task of schedulerID at one of
-// tables is 'skipped': state skipped it when an upstream failed for good.
+// verifyTasksSkipped polls run-controller DB until every task of schedulerID at one of
+// tables is 'skipped': run-controller skipped it when an upstream failed for good.
 func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID, tables []string) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
 		var skipped int
-		err := clients.stateDB.GetContext(ctx, &skipped, `
+		err := clients.runControllerDB.GetContext(ctx, &skipped, `
 			SELECT count(*) FROM tasks
 			WHERE run_id = $1 AND table_name = ANY($2) AND status = 'skipped'`,
 			schedulerID, pq.Array(tables))
@@ -254,7 +254,7 @@ func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients,
 
 // verifyNodeExhaustedRetries waits until tableName's task of schedulerID has
 // failed for good: every attempt its budget allowed (max_retries + 1) failed
-// with a failure of class task, each the next attempt state dispatched, and
+// with a failure of class task, each the next attempt run-controller dispatched, and
 // the task ended failed at its last attempt.
 func verifyNodeExhaustedRetries(
 	t *testing.T,
@@ -270,7 +270,7 @@ func verifyNodeExhaustedRetries(
 		var taskID uuid.UUID
 		var attempt int
 		var status string
-		err := clients.stateDB.QueryRowContext(ctx, `
+		err := clients.runControllerDB.QueryRowContext(ctx, `
 			SELECT task_id, attempt, max_retries, status
 			FROM tasks
 			WHERE run_id = $1 AND table_name = $2
@@ -279,7 +279,7 @@ func verifyNodeExhaustedRetries(
 			return false, err
 		}
 		var rows []string
-		if err := clients.stateDB.SelectContext(ctx, &rows, `
+		if err := clients.runControllerDB.SelectContext(ctx, &rows, `
 			SELECT attempt::text || ':' || status || ':' || coalesce(failure_class, '')
 			FROM task_attempts
 			WHERE task_id = $1
@@ -303,13 +303,13 @@ func verifyNodeExhaustedRetries(
 	t.Logf("✅ %s failed all %d attempts its budget allows", tableName, maxRetries+1)
 }
 
-// taskOfRun returns the task_id of tableName's task in runID. state writes
+// taskOfRun returns the task_id of tableName's task in runID. run-controller writes
 // every task of a run in the transaction that creates the run, so the row is
 // there once the trigger has returned.
 func taskOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID, tableName string) uuid.UUID {
 	t.Helper()
 	var taskID uuid.UUID
-	require.NoError(t, clients.stateDB.GetContext(ctx, &taskID,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &taskID,
 		`SELECT task_id FROM tasks WHERE run_id = $1 AND table_name = $2`, runID, tableName),
 		"run %s holds no task at %s", runID, tableName)
 	return taskID
@@ -319,7 +319,7 @@ func taskOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uu
 // "attempt:status", followed by ":class:reason" for a failed attempt.
 func attemptRows(ctx context.Context, clients *testClients, taskID uuid.UUID) ([]string, error) {
 	rows := []string{}
-	err := clients.stateDB.SelectContext(ctx, &rows, `
+	err := clients.runControllerDB.SelectContext(ctx, &rows, `
 		SELECT attempt::text || ':' || status
 		       || coalesce(':' || failure_class || ':' || failure_reason, '')
 		  FROM task_attempts
@@ -341,7 +341,7 @@ type endedTask struct {
 // cancelled or skipped.
 func taskEnded(ctx context.Context, clients *testClients, taskID uuid.UUID) (bool, error) {
 	var status string
-	if err := clients.stateDB.GetContext(ctx, &status,
+	if err := clients.runControllerDB.GetContext(ctx, &status,
 		`SELECT status FROM tasks WHERE task_id = $1`, taskID); err != nil {
 		return false, err
 	}
@@ -354,7 +354,7 @@ func taskEnded(ctx context.Context, clients *testClients, taskID uuid.UUID) (boo
 
 // waitForTaskEnded waits until taskID's task has ended and returns it. The task
 // and its attempt rows are logged under label whenever they change, so a
-// timeout shows what the poll last saw. state records a failed attempt and
+// timeout shows what the poll last saw. run-controller records a failed attempt and
 // dispatches the next one in the same transaction, so the rows read once the
 // task has ended are all the attempts it will ever have.
 func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, label string, timeout time.Duration) endedTask {
@@ -363,7 +363,7 @@ func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, t
 	lastSeen := ""
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		var cur endedTask
-		if err := clients.stateDB.QueryRowContext(ctx,
+		if err := clients.runControllerDB.QueryRowContext(ctx,
 			`SELECT status, attempt, max_retries FROM tasks WHERE task_id = $1`, taskID).
 			Scan(&cur.status, &cur.attempt, &cur.maxRetries); err != nil {
 			return false, err
@@ -389,13 +389,13 @@ func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, t
 	return ended
 }
 
-// attemptReportedAt returns when state recorded the last report of attempt n of
+// attemptReportedAt returns when run-controller recorded the last report of attempt n of
 // taskID: task_attempts.last_report_at, on the database clock. For an attempt
-// that has ended it is when state learned how it ended.
+// that has ended it is when run-controller learned how it ended.
 func attemptReportedAt(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, n int) time.Time {
 	t.Helper()
 	var at time.Time
-	require.NoError(t, clients.stateDB.GetContext(ctx, &at,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &at,
 		`SELECT last_report_at FROM task_attempts WHERE task_id = $1 AND attempt = $2`, taskID, n),
 		"attempt %d of task %s has no report time", n, taskID)
 	return at
@@ -418,7 +418,7 @@ func verifyNoJobsDeployed(
 }
 
 // verifySchedulerSucceeded polls runs until the schedule reaches
-// 'succeeded' status, confirming state finalised the run correctly.
+// 'succeeded' status, confirming run-controller finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
 	ctx context.Context,
@@ -428,7 +428,7 @@ func verifySchedulerSucceeded(
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
-		err := clients.stateDB.Get(&status, `
+		err := clients.runControllerDB.Get(&status, `
 			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
@@ -451,7 +451,7 @@ func verifySchedulerFailed(
 	t.Helper()
 	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
-		err := clients.stateDB.Get(&status, `
+		err := clients.runControllerDB.Get(&status, `
 			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
@@ -474,7 +474,7 @@ func verifySchedulerSkipped(
 	t.Helper()
 	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
-		err := clients.stateDB.Get(&status, `
+		err := clients.runControllerDB.Get(&status, `
 			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {

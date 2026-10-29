@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// RunCancelledHandler fences a run state cancelled and stops the run's work.
+// RunCancelledHandler fences a run run-controller cancelled and stops the run's work.
 // In one transaction it takes the run's lock exclusively, waiting for every
 // dispatch of the run that may be storing an attempt, inserts the fence,
 // which every gate that starts work reads, then stops each production row of
@@ -29,12 +29,12 @@ import (
 // launch can create a Job of a locked row after it, and its cost does not
 // grow with the number of rows. A pending or reserved row with
 // neither a Job nor an unfinished pod ends stopped and is reported stopped;
-// one with an unfinished pod but no Job is left for state's next cancel. Each
+// one with an unfinished pod but no Job is left for run-controller's next cancel. Each
 // attempt the cancel names is answered too: a row
 // that has ended has its last report sent again; an attempt with no row but a
 // Job has its record rebuilt and moved to terminating; one with neither is
 // stored stopped and reported stopped, unless a pod of it has not finished,
-// in which case nothing is written for it and state's next cancel names it
+// in which case nothing is written for it and run-controller's next cancel names it
 // again. Each attempt reported stopped is counted once the transaction
 // commits.
 type RunCancelledHandler struct {
@@ -155,7 +155,7 @@ type attemptOf struct {
 // to terminating and the Job's name is returned for deletion; with neither a
 // Job nor an unfinished pod the row ends stopped and is reported stopped; an
 // unfinished pod without its Job leaves the row as it is, unsaved, while the
-// pod can still run, and state's next cancel stops it. A row whose Job exists
+// pod can still run, and run-controller's next cancel stops it. A row whose Job exists
 // (starting or running) moves to terminating and its Job's name is returned
 // for deletion; one terminating keeps its reason and gains the stop. A row
 // that has ended has its last report sent again.
@@ -192,7 +192,7 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, sna
 		job = d.JobName()
 	case model.StopAwaitPod:
 		h.logger.Error("A row of a cancelled run awaits its launch and has no Job, but a pod of its attempt has not finished — "+
-			"nothing is reported until the pod is gone; state asks again",
+			"nothing is reported until the pod is gone; run-controller asks again",
 			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", d.JobName(), "status", d.Status())
 		return "", nil
 	}
@@ -230,7 +230,7 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, s
 		}
 	case model.AwaitFencedPod:
 		h.logger.Error("A named attempt of a cancelled run has no record and no Job, but a pod of it has not finished — "+
-			"nothing is reported until the pod is gone; state asks again",
+			"nothing is reported until the pod is gone; run-controller asks again",
 			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return "", nil
 	case model.StoreStopped:

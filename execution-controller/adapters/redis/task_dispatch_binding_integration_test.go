@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -79,11 +79,11 @@ func newDispatchFlow(t *testing.T, db *sqlx.DB) *dispatchFlow {
 func (f *dispatchFlow) rebind() {
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(f.db, logger) }
-	f.handler = executorredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, f.stops, logger), logger)
+	f.handler = ecredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, f.stops, logger), logger)
 }
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox
-// row of state, with the given known status and payload edits.
+// row of run-controller, with the given known status and payload edits.
 func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func(*pkgevents.TaskDispatch)) {
 	f.t.Helper()
 	f.seq++
@@ -94,7 +94,7 @@ func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func
 		edit(&p)
 	}
 	outboxID := uuid.New()
-	fields, err := pkgevents.TaskDispatchFields(outboxID.String(), "default", "state", nowUTC(), p)
+	fields, err := pkgevents.TaskDispatchFields(outboxID.String(), "default", "run-controller", nowUTC(), p)
 	require.NoError(f.t, err)
 	values := map[string]any{"outbox_entry_id": outboxID.String()}
 	for k, v := range fields {
@@ -176,7 +176,7 @@ func TestTaskDispatch_AnOlderAttemptCreatesNothing(t *testing.T) {
 	assert.Len(t, f.reports(), 1)
 }
 
-// A question about an attempt state knows as acknowledged, of which nothing is
+// A question about an attempt run-controller knows as acknowledged, of which nothing is
 // held, is answered attempt_lost, and the answer is kept.
 func TestTaskDispatch_AnAcknowledgedAttemptWithNoTraceIsLost(t *testing.T) {
 	db, cleanup := setupPostgres(t)
@@ -358,9 +358,9 @@ func msgID(seq int) string { return fmt.Sprintf("%d-0", 1700000000000+seq) }
 
 func nowUTC() time.Time { return time.Now().UTC() }
 
-// setupPostgres connects to the externally migrated, empty executor test database.
+// setupPostgres connects to the externally migrated, empty execution-controller test database.
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
-	return executortest.SetupPostgres(t)
+	return ectest.SetupPostgres(t)
 }
 
 // countRows executes a COUNT(*) query and returns the result.

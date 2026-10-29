@@ -13,7 +13,7 @@ import (
 // typed payload. An entry whose run, task or attempt cannot be read never
 // becomes valid, so the error is permanent and the consumer dead-letters it; so
 // is an entry that names no tenant, whose attempt's reports could not be
-// published under one. The other fields are returned as state wrote them; the
+// published under one. The other fields are returned as run-controller wrote them; the
 // handler records an attempt whose fields cannot run as failed.
 func ParseTaskDispatch(msg goredis.XMessage) (events.TaskDispatch, error) {
 	env, p, err := pkgevents.DecodeTaskDispatch(stringFields(msg.Values))

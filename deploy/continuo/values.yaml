@@ -34,7 +34,7 @@ global:
   # unset, so team images resolve to bare unprefixed names (side-loaded).
   teamImagePrefix: ""
 
-  stateGrpcAddr: state:50051
+  runControllerGrpcAddr: run-controller:50051
   orchestratorGrpcAddr: orchestrator:50052
   agentRemediationGrpcAddr: agent-remediation:50054  # in-cluster gRPC address release-controller uses to read remediation attempts before starting a retry round
   agentChatGrpcAddr: agent-chat:50053
@@ -405,9 +405,9 @@ execution:
   kubeClientQPS: 50
   kubeClientBurst: 100
 
-# Task runs. state decides every attempt of every task. A failed attempt is
-# retried at once, while its task has retries left, unless it failed by
-# timing out or because the dispatch cannot run (failure classes timeout and
+# Task runs. run-controller decides every attempt of every task. A failed
+# attempt is retried at once, while its task has retries left, unless it failed
+# by timing out or because the dispatch cannot run (failure classes timeout and
 # invalid); taskMaxRetries is how many retries a task gets after its first
 # attempt (0 to 10), stamped on each task when its run is created. A task's
 # container may run for its node's declared timeout_minutes; a node that
@@ -415,7 +415,8 @@ execution:
 # taskTimeoutHours (1 to 168). Kubernetes stops a Job once the start timeout
 # plus that time has passed since the Job started (its activeDeadlineSeconds),
 # and the attempt fails with deadline_exceeded. A value outside its range
-# fails the install, and state and execution-controller refuse to start on it.
+# fails the install, and run-controller and execution-controller refuse to
+# start on it.
 runs:
   taskMaxRetries: 2
   taskTimeoutHours: 24
@@ -424,13 +425,14 @@ runs:
 # work already running finish: ui, the public release API and the CLI refuse new
 # runs, triggers, releases, remediation retries, schedule edits and dead-letter
 # redrives with HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in
-# maintenance mode"; state consumes each cron slot that comes due with no run
-# (it is not caught up afterwards); release-controller activates no queued
-# release; agent-remediation records each fix attempt that comes due as
+# maintenance mode"; run-controller consumes each cron slot that comes due with
+# no run (it is not caught up afterwards); release-controller activates no
+# queued release; agent-remediation records each fix attempt that comes due as
 # skipped, and **Retry remediation** starts it once maintenance is off. Runs,
 # releases and fix verifications already in progress complete. Enforced by ui,
-# state, release-controller, agent-remediation and dead-letter-controller, which
-# refuse to start on any value other than true or false. Changing it restarts every continuo service (the shared ConfigMap
+# run-controller, release-controller, agent-remediation and
+# dead-letter-controller, which refuse to start on any value other than true or
+# false. Changing it restarts every continuo service (the shared ConfigMap
 # changes); turn it on with
 #   helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true
 # and off again with --set maintenance.enabled=false.
@@ -447,24 +449,24 @@ database:
   # Postgres connection-pool limits for the Go services, published to them as
   # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
   # each service's own default, sized to how many queries it runs at once
-  # (open/idle: state 20/10, orchestrator 35/5, execution-controller 30/5,
-  # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
-  # agent-chat 20/5, dead-letter-controller 12/5). Each limit is a cap per pod,
-  # and the sum of the caps is the worst case: with the defaults and one
-  # replica of each service, 152 pooled connections plus nine LISTEN
-  # connections: one in each pod of the six services that run an outbox relay
-  # (state, execution-controller, release-controller, remediation,
-  # agent-remediation, dead-letter-controller), a second in
-  # execution-controller (its dispatcher), and a second and a third in state
-  # (its node lease waker and its cron loop); 161 in all.
+  # (open/idle: run-controller 20/10, orchestrator 35/5,
+  # execution-controller 30/5, release-controller 15/5, remediation 10/5,
+  # agent-remediation 10/5, agent-chat 20/5, dead-letter-controller 12/5). Each
+  # limit is a cap per pod, and the sum of the caps is the worst case: with the
+  # defaults and one replica of each service, 152 pooled connections plus nine
+  # LISTEN connections: one in each pod of the six services that run an outbox
+  # relay (run-controller, execution-controller, release-controller,
+  # remediation, agent-remediation, dead-letter-controller), a second in
+  # execution-controller (its dispatcher), and a second and a third in
+  # run-controller (its node lease waker and its cron loop); 161 in all.
   # Consumers handle one message at a time, so steady-state use is far lower.
   # The LISTEN connections sit outside the pool and need a session-mode path
   # to Postgres. Behind a transaction-mode pooler the relays publish on their
   # 5 s poll instead of on commit, execution-controller's dispatcher starts
-  # queued work on its 5 s poll, state grants a freed node lease on its
-  # lease waker's 60 s pass or the attempt reconcile's pass, which grants freed
-  # nodes before it looks for stalled runs, and state's cron loop sees a cron
-  # edit on its next pass, at most 60 s later.
+  # queued work on its 5 s poll, run-controller grants a freed node lease on
+  # its lease waker's 60 s pass or the attempt reconcile's pass, which grants
+  # freed nodes before it looks for stalled runs, and run-controller's cron
+  # loop sees a cron edit on its next pass, at most 60 s later.
   # maxOpenConns applies to every Go service, orchestrator included, whose 13
   # consumers need about two connections each: do not set it below about 30,
   # or handlers that hold a transaction and need a second connection stall
@@ -583,10 +585,11 @@ egress:
     resources: {}
 
 metrics:
-  # Every Go service (state, orchestrator, execution-controller,
+  # Every Go service (run-controller, orchestrator, execution-controller,
   # release-controller, remediation, agent-remediation, agent-chat,
-  # dead-letter-controller, egress-proxy) serves Prometheus metrics at /metrics on this port, on a listener of its own, so a
-  # scraper can be admitted to it without reaching the service's other ports.
+  # dead-letter-controller, egress-proxy) serves Prometheus metrics at /metrics
+  # on this port, on a listener of its own, so a scraper can be admitted to it
+  # without reaching the service's other ports.
   # Published to the services as METRICS_PORT on the shared ConfigMap. Must
   # differ from every service's httpPort and grpcPort and, while the egress-proxy
   # renders, from its ports 3128 and 8093 (rendering fails otherwise).
@@ -620,7 +623,7 @@ defaultResources:
   limits: {cpu: "1", memory: 512Mi}
 
 services:
-  - name: state
+  - name: run-controller
     enabled: true
     replicas: 1
     httpPort: 8082
@@ -635,12 +638,13 @@ services:
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
-      # S3 credentials are NOT listed here. state reads each promoted release's
-      # topology artifact, and the deployment template injects the credentials
-      # for every storage-reading service (see continuo.s3.credentialServices in
-      # _helpers.tpl). Endpoint, bucket and region arrive via the shared ConfigMap.
+      # S3 credentials are NOT listed here. run-controller reads each promoted
+      # release's topology artifact, and the deployment template injects the
+      # credentials for every storage-reading service (see
+      # continuo.s3.credentialServices in _helpers.tpl). Endpoint, bucket and
+      # region arrive via the shared ConfigMap.
     env:
-      POSTGRES_DB: continuo_state
+      POSTGRES_DB: continuo_run_controller
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
 
@@ -692,7 +696,7 @@ services:
       POSTGRES_DB: continuo_agent_chat
       HEALTH_PORT: "8091"
       GRPC_PORT: "50053"
-      CONTINUO_STATE_ADDR: state:50051
+      CONTINUO_RUN_CONTROLLER_ADDR: run-controller:50051
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
       CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__  # rendered from global.deadLetterControllerGrpcAddr
       LLM_PROVIDER: __LLM_PROVIDER__

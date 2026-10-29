@@ -15,16 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyUIService asserts the ui HTTP API returns correct data for the
+// verifyUIHTTPAPI asserts the ui HTTP API returns correct data for the
 // run created by the e2e test.  Status fields are polled because the
-// state service propagates job-completion events asynchronously after the k8s
-// jobs finish (execution-controller → gRPC → state service → DB), so the scheduler
+// run-controller service propagates job-completion events asynchronously after the k8s
+// jobs finish (execution-controller → gRPC → run-controller service → DB), so the scheduler
 // and task records may still show "pending"/"running" immediately after
 // verifyFullDAGExecution returns.
 //
 // The function is a no-op when UI_HTTP_BASE is unset so developer runs without
 // the UI container are not broken.
-func verifyUIService(t *testing.T, ctx context.Context, runID string) {
+func verifyUIHTTPAPI(t *testing.T, ctx context.Context, runID string) {
 	t.Helper()
 
 	base := os.Getenv("UI_HTTP_BASE")
@@ -36,7 +36,7 @@ func verifyUIService(t *testing.T, ctx context.Context, runID string) {
 	t.Logf("Verifying ui at %s (run_id=%s)...", base, runID)
 
 	// ── GET /api/runs/:id — verify specific run is present and succeeded ─
-	// verifySchedulerSucceeded already confirmed the state DB shows "succeeded"
+	// verifySchedulerSucceeded already confirmed the run-controller DB shows "succeeded"
 	// before this function is called; the UI check confirms the HTTP API also
 	// surfaces the correct status.
 	runBody := mustGetJSON(t, fmt.Sprintf("%s/api/runs/%s", base, runID))

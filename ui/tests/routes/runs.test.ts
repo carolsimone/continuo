@@ -58,7 +58,7 @@ function authedApp() {
 describe('routes/runs: GET /api/runs/:id', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('answers the run under run_id, with its statuses as state sends them', async () => {
+  it('answers the run under run_id, with its statuses as run-controller sends them', async () => {
     mockGetRun.mockImplementation((req: any, cb: any) => {
       expect(req).toEqual({ run_id: 'run-3' });
       cb(null, { run: {
@@ -106,7 +106,7 @@ describe('routes/runs: GET /api/runs/:id', () => {
     mockGetRun
       .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.NOT_FOUND, 'no such run')))
       .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'run_id is not a UUID')))
-      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('state down')));
+      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('run-controller down')));
     expect((await request(app).get('/api/runs/a')).status).toBe(404);
     expect((await request(app).get('/api/runs/b')).status).toBe(400);
     expect((await request(app).get('/api/runs/c')).status).toBe(500);
@@ -306,7 +306,7 @@ describe('routes/runs: GET /:id/attempts', () => {
         run_results_uri: 'run-results/task-attempts/svc/sc/tbl/task-1-1.json',
       },
       {
-        // Empty strings and a zero run time are state's "not set": they cross
+        // Empty strings and a zero run time are run-controller's "not set": they cross
         // the route as null, so the client never renders a blank cell.
         task_id: 'task-2', attempt: 0, job_name: 'core-sales-items-0', status: 'dispatched',
         failure_class: null, failure_reason: null,
@@ -334,7 +334,7 @@ describe('routes/runs: GET /:id/attempts', () => {
     );
   });
 
-  it('clamps limit to the state-side max of 200', async () => {
+  it("clamps limit to run-controller's max of 200", async () => {
     mockListRunAttempts.mockImplementation((_req: any, cb: any) => cb(null, { attempts: [], total_count: 0 }));
     await request(app).get('/api/runs/abc-123/attempts?limit=500');
     expect(mockListRunAttempts).toHaveBeenLastCalledWith(
@@ -385,7 +385,7 @@ describe('routes/runs: GET /:id/graph', () => {
     expect(res.body).not.toHaveProperty('latest_topology_generation');
   });
 
-  it('returns task statuses as the state service sends them', async () => {
+  it('returns task statuses as the run-controller service sends them', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         nodes: [{ service_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model', status: 'skipped' }],
@@ -433,7 +433,7 @@ describe('routes/runs: GET /:id/graph', () => {
     expect(res.body.latest_promotion_seq).toBe(0);
   });
 
-  it('emits edges upstream -> consumer, reversing the dependent -> dependency edge state sends', async () => {
+  it('emits edges upstream -> consumer, reversing the dependent -> dependency edge run-controller sends', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         nodes: [],
@@ -451,7 +451,7 @@ describe('routes/runs: GET /:id/graph', () => {
   it('maps a gRPC status to its HTTP status', async () => {
     mockGetRunGraph
       .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'run_id is not a UUID')))
-      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('state down')));
+      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('run-controller down')));
     expect((await request(app).get('/api/runs/bad/graph')).status).toBe(400);
     expect((await request(app).get('/api/runs/run-1/graph')).status).toBe(500);
   });
@@ -460,7 +460,7 @@ describe('routes/runs: GET /:id/graph', () => {
 describe('routes/runs: GET /:id/tasks', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('returns tasks with the status state sends', async () => {
+  it('returns tasks with the status run-controller sends', async () => {
     mockListTasks.mockImplementation((_req: any, callback: any) => {
       callback(null, {
         tasks: [
@@ -671,7 +671,7 @@ describe('routes/runs: POST /:id/rebase', () => {
     [{ expected_release_id: 7 }],
     [{ expected_release_id: null }],
     [[true]],
-  ])('refuses the body %j with 400 before calling state', async (body) => {
+  ])('refuses the body %j with 400 before calling run-controller', async (body) => {
     const res = await request(app).post(`/api/runs/${VALID_ID}/rebase`)
       .send(Array.isArray(body) ? body : { request_id: REQUEST_ID, ...(body as object) });
 
@@ -817,7 +817,7 @@ describe('routes/runs: GET /:id/rebase-preview', () => {
   });
 
   it.each(['maybe', 'TRUE', '1', '', 'true&include_changed_upstream=false'])(
-    'refuses include_changed_upstream=%s with 400 before calling state',
+    'refuses include_changed_upstream=%s with 400 before calling run-controller',
     async (value) => {
       const res = await request(app).get(`/api/runs/${VALID_ID}/rebase-preview?include_changed_upstream=${value}`);
 

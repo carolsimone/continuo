@@ -13,7 +13,7 @@ import (
 )
 
 // nodeSummary is the JSON-serialisable representation of one catalog row.
-// The three statistics the state service reports as -1 when it has nothing
+// The three statistics the run-controller service reports as -1 when it has nothing
 // to measure (no terminal task, no timed task) are pointers so that sentinel
 // is omitted rather than emitted as a misleading negative number.
 type nodeSummary struct {
@@ -45,7 +45,7 @@ type listPayload struct {
 // explicitly so --help and describe show a concrete number.
 const defaultListLimit int32 = 50
 
-// maxListLimit is the largest page the state service returns. A larger
+// maxListLimit is the largest page the run-controller service returns. A larger
 // --limit is rejected as a usage error rather than silently clamped, so a
 // caller never believes it received a bigger page than the server can give.
 const maxListLimit int32 = 200
@@ -104,7 +104,7 @@ Errors:
   usage      (exit 2)  a positional argument was given, --operation is not
                        run|test|build, --limit is outside 1..200, or --offset
                        is negative
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node list --search orders
   continuo node list --service finance --operation test --limit 20 --offset 20`,
@@ -140,7 +140,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -167,7 +167,7 @@ Errors:
 	return cmd
 }
 
-// optionalStat turns the state service's -1 "not measurable" sentinel into a
+// optionalStat turns the run-controller service's -1 "not measurable" sentinel into a
 // nil pointer so the JSON field is omitted; any other value is kept as-is.
 func optionalStat(v int32) *int32 {
 	if v < 0 {

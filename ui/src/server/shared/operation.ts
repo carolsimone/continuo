@@ -30,7 +30,7 @@ export function isNodeOperation(v: unknown): v is NodeOperation {
 // {} keeps the known literals visible to autocomplete and narrowing.
 export type WireOperation = NodeOperation | (string & {});
 
-// operationFromWire maps the state service's operation to the value the ui
+// operationFromWire maps the run-controller service's operation to the value the ui
 // reports. An empty or absent value is a plain run. A value this ui does not
 // know is passed through unchanged so a newer backend's operation is shown as
 // sent rather than disguised as a run.

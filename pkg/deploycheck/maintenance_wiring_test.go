@@ -13,7 +13,7 @@ import (
 
 // enforcingServices are the services that refuse new work in maintenance mode
 // and refuse to start without MAINTENANCE_ENABLED.
-var enforcingServices = []string{"state", "release-controller", "agent-remediation", "dead-letter-controller"}
+var enforcingServices = []string{"run-controller", "release-controller", "agent-remediation", "dead-letter-controller"}
 
 func readRepoFile(t *testing.T, rel ...string) string {
 	t.Helper()

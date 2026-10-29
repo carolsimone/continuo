@@ -12,7 +12,7 @@ import (
 //
 // NodeID carries the dbt unique_id of the node (the producer emits it under
 // the per-node "unique_id" key). It is the node's identity throughout the
-// executor: the K8s Job name, the deployments.node_id column, and
+// execution-controller: the K8s Job name, the deployments.node_id column, and
 // the (release_id, node_id) lookup key all derive from this value.
 //
 // UpstreamNodeIDs lists the dbt unique_ids of in-set nodes (intra- AND
@@ -49,11 +49,11 @@ type ValidationNode struct {
 
 // ValidationRequested is the parsed validation.requested:v1 stream payload —
 // a typed, in-process representation of a candidate-release validation request
-// emitted by release-controller. The executor enqueues one validation
+// emitted by release-controller. execution-controller enqueues one validation
 // deployment per node in Nodes.
 //
 // OutboxEntryID is the release-controller outbox row ID, carried through as
-// the message_processing_id provenance field on the executor's outbox row.
+// the message_processing_id provenance field on execution-controller's outbox row.
 // Zero value (uuid.Nil) means the inbound message did not carry the field;
 // dedup then relies solely on the shared (msg.ID, stream_name) layer.
 //

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The state service refuses a single-node run it cannot plan at the RPC, so the
+// The run-controller service refuses a single-node run it cannot plan at the RPC, so the
 // help text an LLM reads must say the refusal is the command's own error and no
 // run exists, not that the failure shows up later in a run's history.
 func TestNodeRunCommands_HelpDescribesTheRefusalsAtTheRPC(t *testing.T) {

@@ -42,7 +42,7 @@ func TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	cases := []struct{ producer, stream, group string }{
-		{"state", streams.TaskStatusUpdatedV2, streams.StateTaskStatusUpdated},
+		{"run-controller", streams.TaskStatusUpdatedV2, streams.RunControllerTaskStatusUpdated},
 		{"topology-controller", streams.ReleaseRequestedV1, streams.TopologyControllerReleaseRequested},
 	}
 	for _, tc := range cases {
@@ -76,14 +76,14 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	// release.promoted:v2 has four consumer groups. Both orchestrator groups and
-	// state's reject an entry without an envelope as a permanent failure (their
+	// run-controller's reject an entry without an envelope as a permanent failure (their
 	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
 	// so each dead-letters the original; execution-controller's teardown is
 	// best-effort and acknowledges it. group is the one the redrive addresses;
 	// the others must acknowledge the redriven entry without a handler.
 	const stream = streams.ReleasePromotedV2
 	const group = streams.OrchestratorReleasePromoted
-	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.StateReleasePromoted, streams.ExecutorReleasePromoted}
+	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.RunControllerReleasePromoted, streams.ExecutionControllerReleasePromoted}
 
 	// 1-2. Publish the malformed entry and wait for the dead letter of the group
 	// that will be redriven. The sibling groups dead-letter the same original;
@@ -92,8 +92,8 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.StateReleasePromoted, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
+	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 	require.True(t, dl.GetRedrivable(), "a dead letter whose fields are a message, of a stream and group the streams contract declares, is redrivable")
 
@@ -184,8 +184,8 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.StateReleasePromoted, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
+	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 
 	// dlq list consumer <stream>: exit 0 and a dead_letters array holding the
@@ -241,7 +241,7 @@ func TestDeadLetter_BacklogMetricIsExposed(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV2)
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV2, streams.StateTaskStatusUpdated, id, "open")
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV2, streams.RunControllerTaskStatusUpdated, id, "open")
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, dl.GetId()) })
 
 	body := scrapeMetrics(t, getEnv("DEAD_LETTER_HOST", "dead-letter-controller"))

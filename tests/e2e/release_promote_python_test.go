@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ const (
 	pyAPISecret = "continuo-api-probe"
 
 	// pyFixtureImage is the domain image scripts/setup.sh builds and side-loads
-	// into kind. The release posts it as image_tag and the executor runs it
+	// into kind. The release posts it as image_tag and execution-controller runs it
 	// verbatim, so this string must match setup.sh's PY_FIXTURE_IMAGE.
 	pyFixtureImage = "continuo-e2e-py-probe:latest"
 
@@ -273,7 +273,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 	return releaseID, cleanup
 }
 
-// TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves the executor's
+// TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves execution-controller's
 // python runtime dispatch end to end. It promotes the python fixture service,
 // then runs each of its nodes: the conforming script node materializes real
 // rows in the warehouse through the harness, the non-conforming one fails
@@ -334,7 +334,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 
 		var runResultsURI string
 		pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-			err := clients.stateDB.QueryRowContext(ctx, `
+			err := clients.runControllerDB.QueryRowContext(ctx, `
 				SELECT COALESCE(a.run_results_uri, '')
 				FROM task_attempts a
 				JOIN tasks t ON t.task_id = a.task_id

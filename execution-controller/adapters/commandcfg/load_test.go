@@ -170,7 +170,7 @@ default:
 }
 
 // PartialParsePath must live in the same directory as ManifestPath: the
-// executor mounts the parse-cache emptyDir at dirname(PartialParsePath) in
+// execution-controller mounts the parse-cache emptyDir at dirname(PartialParsePath) in
 // every run/seed/build pod for the team's image, and a directory that
 // differs from the --target-path dbt actually writes both artifacts into
 // would shadow the team's real project files (dbt_project.yml, models/, …)
@@ -417,7 +417,7 @@ func TestParseContextValidation_BuiltinAndShippedConfigsPass(t *testing.T) {
 
 // A field this build doesn't recognize (e.g. a newer chart's dbt-commands.yaml
 // carrying an operation key an older rolling-deploy binary predates) must not
-// crash-loop the executor: Load warns and proceeds with the field dropped.
+// crash-loop execution-controller: Load warns and proceeds with the field dropped.
 func TestLoad_UnknownFieldWarnsAndLoads(t *testing.T) {
 	path := writeConfig(t, `
 default:

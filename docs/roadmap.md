@@ -27,7 +27,7 @@ decision by design.
 ### Automatic detection of performance regressions with maintenance agent remediation
 
 The graph database already stores every diff and the code of each node, and the
-`state` database has the run history — each node's ancestry and history are
+`run-controller` database has the run history — each node's ancestry and history are
 queryable. The missing piece is using that to flag a node whose run time is
 getting worse and to point at the change that caused it. A "maintenance" agent harness 
 with the right skills propose a solution the data team will have to edit or merge.

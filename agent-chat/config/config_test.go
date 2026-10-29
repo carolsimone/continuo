@@ -82,6 +82,18 @@ func TestLoad_UnsetProvider_SingleMissingEntry(t *testing.T) {
 		"descriptive entry must not fire for an unset provider, got %v", missing)
 }
 
+// The address agent-chat hands the continuo CLI for run-controller is
+// CONTINUO_RUN_CONTROLLER_ADDR, and defaults to the Service the chart and
+// docker-compose both create.
+func TestLoad_RunControllerAddr(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CONTINUO_RUN_CONTROLLER_ADDR", "")
+	assert.Equal(t, "run-controller:50051", Load(&pkgconfig.Validator{}).RunControllerAddr)
+
+	t.Setenv("CONTINUO_RUN_CONTROLLER_ADDR", "run-controller.ops.svc:50051")
+	assert.Equal(t, "run-controller.ops.svc:50051", Load(&pkgconfig.Validator{}).RunControllerAddr)
+}
+
 func TestLoad_DeadLetterAddr(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("CONTINUO_DEAD_LETTER_ADDR", "dead-letter-controller:50055")

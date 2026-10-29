@@ -1,7 +1,7 @@
 import { NODE_ONLY_OPERATIONS, RUN_OPERATIONS, type RunOperation } from '../shared/operation';
 
 // parseOperation normalises the run-operation body field to the wire values the
-// state trigger RPCs accept. "" and "run" both mean the default run operation
+// run-controller trigger RPCs accept. "" and "run" both mean the default run operation
 // (sent as ""); "test"/"build" pass through; anything else is rejected (null),
 // so the route can 400 before ever calling gRPC.
 const ALLOWED: ReadonlySet<string> = new Set<string>(['', ...RUN_OPERATIONS]);
@@ -14,7 +14,7 @@ export function parseOperation(raw: unknown): string | null {
 }
 
 // parseNodeOperation normalises the Nodes-tab operation filter to the DB domain
-// the state read RPCs expect: 'run' | 'test' | 'build'. Empty/absent and 'run'
+// the run-controller read RPCs expect: 'run' | 'test' | 'build'. Empty/absent and 'run'
 // both mean model ('run'); 'test'/'build' pass through; anything else is
 // rejected (null) so the route can 400 before calling gRPC.
 const NODE_OPS: ReadonlySet<string> = new Set<string>(RUN_OPERATIONS);

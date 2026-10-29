@@ -97,7 +97,7 @@ spec:
                 [ "$tries" -gt 100 ] && echo "postgres never became reachable" && exit 1
                 echo "waiting for postgres ($tries)..."; sleep 3
               done
-              for db in continuo_state continuo_execution continuo_orchestrator \
+              for db in continuo_run_controller continuo_execution continuo_orchestrator \
                         continuo_release continuo_agent_chat \
                         continuo_remediation continuo_agent_remediation \
                         continuo_dead_letter continuo_dbt; do

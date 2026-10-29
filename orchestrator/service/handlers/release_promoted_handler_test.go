@@ -149,7 +149,7 @@ func TestReleasePromoted_EmptyTopology_PromotesNoNodes(t *testing.T) {
 // ── no event ──────────────────────────────────────────────────────────────────
 
 // A promotion commits whether it applied, was redelivered or was stale: it
-// publishes nothing, because state reads the schedule names from its own copy
+// publishes nothing, because run-controller reads the schedule names from its own copy
 // of the release and plans seed loads from it, whatever seeds the promotion
 // changed.
 func TestReleasePromoted_CommitsForEveryOutcome(t *testing.T) {

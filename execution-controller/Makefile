@@ -8,11 +8,11 @@ build:
 run:
 	go run .
 
-# Run all tests against an externally migrated, empty executor test database.
+# Run all tests against an externally migrated, empty execution-controller test database.
 # See test/README.md for POSTGRES_* configuration and isolation requirements.
 test:
 	@echo "Running all tests..."
-	@echo "NOTE: Database tests require an empty, externally migrated executor database"
+	@echo "NOTE: Database tests require an empty, externally migrated execution-controller database"
 	go test -v ./... -timeout 5m
 
 # Run unit tests only with fakes (no Docker required)
@@ -20,7 +20,7 @@ test-unit:
 	@echo "Running unit tests with fakes (no Docker required)..."
 	go test -v ./test/fakes_test.go -timeout 2m
 
-# Run integration tests against the externally migrated executor database.
+# Run integration tests against the externally migrated execution-controller database.
 test-integration:
 	@echo "Running integration tests..."
 	REQUIRE_TEST_DEPS=1 go test -tags integration -v ./... -timeout 5m

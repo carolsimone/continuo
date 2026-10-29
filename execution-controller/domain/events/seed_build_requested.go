@@ -20,7 +20,7 @@ type SeedBuildNode struct {
 
 // SeedBuildRequested is the parsed seed.build.requested:v1 stream payload — a
 // typed, in-process representation of a candidate-release seed-build request
-// emitted by release-controller. The executor enqueues one seed-build
+// emitted by release-controller. execution-controller enqueues one seed-build
 // deployment per seed in Seeds.
 //
 // OutboxEntryID is the release-controller outbox row ID, carried through as

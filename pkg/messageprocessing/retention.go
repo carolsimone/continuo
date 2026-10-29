@@ -25,7 +25,7 @@ type Pruner interface {
 
 // NewPruner constructs a Pruner over the message_processing table for the
 // given executor (*sqlx.DB for autocommit sweeps). outboxTable is the caller's
-// outbox table (e.g. "execution_outbox", "state_outbox"): a
+// outbox table (e.g. "execution_outbox", "run_controller_outbox"): a
 // message_processing row still referenced by a row in that table — pending,
 // scheduled, processed-but-within-its-own-retention-window, or permanently
 // dead-lettered as 'failed' — is never selected for deletion, so the delete

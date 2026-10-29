@@ -24,7 +24,7 @@ def candidate_schema_name(release_id: str) -> str:
 
     Mirrors release-controller's sanitizeSchemaSuffix exactly: any character that
     is not [A-Za-z0-9_] becomes '_'. Both sides must agree so the rewritten refs
-    match the schema the executor creates.
+    match the schema execution-controller creates.
     """
     return "_candidate_" + _NON_SCHEMA_SAFE.sub("_", release_id)
 

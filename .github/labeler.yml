@@ -14,10 +14,10 @@
 # that ships with a test or a doc edit. Workflow and script changes carry no
 # area; their type label (ci/cd, chore) says what they are.
 
-area/state:
+area/run-controller:
   - changed-files:
       - all-globs-to-any-file:
-          - 'state/**'
+          - 'run-controller/**'
           - '!**/*_test.go'
           - '!**/test_*.py'
           - '!**/tests/**'

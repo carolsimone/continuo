@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Makes a pull request's type labels match its title.
 #
-#   PR_TITLE='fix(state): ...' GH_REPO=owner/repo scripts/sync-pr-type-labels.sh 123
+#   PR_TITLE='fix(run-controller): ...' GH_REPO=owner/repo scripts/sync-pr-type-labels.sh 123
 #
 # The labels pr-title-type.sh prints for the title are added when missing. Every
 # other type label (bug, enhancement, refactoring, documentation, performance,

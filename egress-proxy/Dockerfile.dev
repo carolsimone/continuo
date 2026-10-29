@@ -6,7 +6,7 @@ WORKDIR /app
 # can satisfy every dependency go.work cites; only the modules this image
 # builds against (pkg, egress-proxy) get their source trees later.
 COPY go.work go.work.sum* ./
-COPY state/go.mod state/go.sum ./state/
+COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
@@ -20,7 +20,7 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop the use-directives of modules this image does not build, so
 # `go build` does not need their source trees.
-RUN go work edit -dropuse=./state \
+RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./orchestrator \
     && go work edit -dropuse=./execution-controller \

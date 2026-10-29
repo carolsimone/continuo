@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 
 // RunRedirect opens a run addressed by its id alone (/run/:id): it reads the
-// run's schedule from state and replaces itself with that schedule's run page,
+// run's schedule from run-controller and replaces itself with that schedule's run page,
 // opened on this run. A run that cannot be read is named in an error strip.
 export default function RunRedirect() {
   const { id = '' } = useParams<{ id: string }>();

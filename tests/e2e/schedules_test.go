@@ -15,7 +15,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
@@ -31,7 +31,7 @@ const (
 )
 
 // TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule drives the
-// schedule RPCs against the deployed state, on e2e-schedule, whose cron the
+// schedule RPCs against the deployed run-controller, on e2e-schedule, whose cron the
 // test creates paused, so nothing fires and no other test's StartRun of the
 // schedule meets an active cron run:
 //
@@ -108,7 +108,7 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 	assert.Equal(t, scheduleEditor, listed.GetUpdatedBy())
 	assert.Equal(t, wantModels, int(listed.GetModelCount()), "listed with the live release's models of it")
 	var storedNext sql.NullTime
-	require.NoError(t, clients.stateDB.GetContext(ctx, &storedNext,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &storedNext,
 		`SELECT next_fire_at FROM schedules WHERE tenant_id = $1 AND name = $2`, events.DefaultTenantID, testScheduleName))
 	assert.False(t, storedNext.Valid, "the row the cron loop reads has no next fire: %s", describeSchedule(ctx, clients, testScheduleName))
 	t.Logf("✅ ListSchedules lists %s paused with no next fire and %d models", testScheduleName, listed.GetModelCount())
@@ -194,7 +194,7 @@ func findListedSchedule(ctx context.Context, clients *testClients, name string) 
 // deleteScheduleRow deletes the default tenant's schedules row of name, which
 // leaves the schedule with no cron.
 func deleteScheduleRow(ctx context.Context, clients *testClients, name string) error {
-	if _, err := clients.stateDB.ExecContext(ctx,
+	if _, err := clients.runControllerDB.ExecContext(ctx,
 		`DELETE FROM schedules WHERE tenant_id = $1 AND name = $2`, events.DefaultTenantID, name); err != nil {
 		return fmt.Errorf("delete the schedules row of %s: %w", name, err)
 	}
@@ -213,7 +213,7 @@ func describeSchedule(ctx context.Context, clients *testClients, name string) st
 		UpdatedBy  string       `db:"updated_by"`
 		UpdatedAt  time.Time    `db:"updated_at"`
 	}
-	err := clients.stateDB.GetContext(ctx, &row, `
+	err := clients.runControllerDB.GetContext(ctx, &row, `
 		SELECT cron, timezone, paused, next_fire_at, version, updated_by, updated_at
 		FROM schedules WHERE tenant_id = $1 AND name = $2`, events.DefaultTenantID, name)
 	switch {
@@ -241,7 +241,7 @@ func describeRuns(ctx context.Context, clients *testClients, name string) string
 		ScheduledFor  sql.NullTime   `db:"scheduled_for"`
 		CreatedAt     time.Time      `db:"created_at"`
 	}
-	if err := clients.stateDB.SelectContext(ctx, &rows, `
+	if err := clients.runControllerDB.SelectContext(ctx, &rows, `
 		SELECT run_id, kind, status, failure_reason, scheduled_for, created_at
 		FROM runs WHERE tenant_id = $1 AND schedule_name = $2
 		ORDER BY created_at`, events.DefaultTenantID, name); err != nil {

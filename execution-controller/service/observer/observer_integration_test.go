@@ -23,7 +23,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -39,7 +39,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// harness wires an Observer to the executor test database and fake
+// harness wires an Observer to the execution-controller test database and fake
 // Kubernetes ports, its clock fixed at now.
 type harness struct {
 	db    *sqlx.DB
@@ -58,7 +58,7 @@ type harness struct {
 
 func newHarness(t testing.TB) *harness {
 	t.Helper()
-	db, cleanup := executortest.SetupPostgres(t)
+	db, cleanup := ectest.SetupPostgres(t)
 	t.Cleanup(cleanup)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cache := &fakeCache{}
@@ -226,7 +226,7 @@ func TestProcess_AFailedAttemptIsReportedWithItsClassAndQueuesNothing(t *testing
 	assert.Equal(t, "oom_killed", status[0]["failure_reason"])
 	assert.EqualValues(t, 137, status[0]["exit_code"])
 	assert.Equal(t, "Killed", status[0]["error_message"])
-	assert.Equal(t, 1, h.attempts(t, dep.Command().TaskID), "state decides whether the task runs again")
+	assert.Equal(t, 1, h.attempts(t, dep.Command().TaskID), "run-controller decides whether the task runs again")
 }
 
 func TestProcess_ALaterAttemptIsReportedAtItsOwnNumber(t *testing.T) {
@@ -445,7 +445,7 @@ func TestSettle_ReportsAStoppedAttemptOfACancelledRun(t *testing.T) {
 
 // An attempt whose container failed before its run was cancelled, but which
 // the observer had not settled yet when the stop was recorded, is reported
-// failed with its own class and reason, not stopped: state then ends the
+// failed with its own class and reason, not stopped: run-controller then ends the
 // stopping task failed. The row ends done with the outcome failed.
 func TestSettle_AFailureReachedBeforeTheStopIsReportedAsItself(t *testing.T) {
 	h := newHarness(t)
@@ -842,7 +842,7 @@ func TestObserver_DeletesALiveJobOfAFencedRunWithNoStartedRow(t *testing.T) {
 
 // A Job Kubernetes created although its create call failed, whose row then
 // ended failed without deploying it, is deleted when the watch sees it, in a
-// run that is not fenced: the attempt was reported failed, and state may be
+// run that is not fenced: the attempt was reported failed, and run-controller may be
 // running the task's next attempt.
 func TestObserver_DeletesAJobWhoseRowFailedBeforeItWasDeployed(t *testing.T) {
 	h := newHarness(t)

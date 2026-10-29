@@ -11,8 +11,9 @@ import (
 )
 
 // The task settings reach every process that acts on them: the chart's shared
-// ConfigMap, state and execution-controller in compose, and execution-controller
-// in the e2e cluster (state runs in compose there).
+// ConfigMap, run-controller and execution-controller in compose, and
+// execution-controller in the e2e cluster (run-controller runs in compose
+// there).
 func TestTaskSettingsReachEveryDeploymentPath(t *testing.T) {
 	cm := readRepoFile(t, "deploy", "continuo", "templates", "configmap.yaml")
 	for _, key := range []string{"TASK_MAX_RETRIES", pkgconfig.TaskTimeoutEnvKey} {
@@ -22,7 +23,7 @@ func TestTaskSettingsReachEveryDeploymentPath(t *testing.T) {
 	}
 	compose := readRepoFile(t, "docker-compose.yml")
 	for svc, keys := range map[string][]string{
-		"state":                {"TASK_MAX_RETRIES", pkgconfig.TaskTimeoutEnvKey},
+		"run-controller":       {"TASK_MAX_RETRIES", pkgconfig.TaskTimeoutEnvKey},
 		"execution-controller": {pkgconfig.TaskTimeoutEnvKey},
 	} {
 		block := regexp.MustCompile(`(?ms)^  ` + regexp.QuoteMeta(svc) + `:\n(.*?)(?:^  \S|\z)`).FindStringSubmatch(compose)
@@ -69,7 +70,7 @@ func TestTaskTimeoutRangeMatchesTheChart(t *testing.T) {
 // Both services read the task timeout through the shared loader, so they
 // accept the same range.
 func TestTaskTimeoutServicesLoadItThroughPkgConfig(t *testing.T) {
-	for _, svc := range []string{"state", "execution-controller"} {
+	for _, svc := range []string{"run-controller", "execution-controller"} {
 		if !strings.Contains(readRepoFile(t, svc, "config", "config.go"), "pkgconfig.LoadTaskTimeout(v)") {
 			t.Errorf("%s/config/config.go does not read %s through pkgconfig.LoadTaskTimeout", svc, pkgconfig.TaskTimeoutEnvKey)
 		}

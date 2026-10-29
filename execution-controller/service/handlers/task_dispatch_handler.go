@@ -20,11 +20,11 @@ import (
 // attempt it holds is answered with the attempt's last report; a dispatch of
 // an attempt older than one it holds creates nothing; a dispatch that cannot
 // run is recorded failed; a dispatch whose Job exists without a record has
-// its record rebuilt; a new dispatch state still knows as dispatched is
-// queued for its Job; and an attempt state knows as acknowledged that it
+// its record rebuilt; a new dispatch run-controller still knows as dispatched is
+// queued for its Job; and an attempt run-controller knows as acknowledged that it
 // holds no trace of, neither a record nor a Job nor a pod the cache or a live
 // read of the API shows, is reported attempt_lost. A dispatch of a fenced run
-// (one state cancelled) that is not held creates no Job: the attempt is
+// (one run-controller cancelled) that is not held creates no Job: the attempt is
 // stored stopped, or, when its Job exists, adopted to be stopped. A dispatch
 // that may store an attempt takes its run's lock shared before it reads the
 // fence, so a fence being written is waited for and met, and a fence written
@@ -116,11 +116,11 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		return h.add(ctx, u, model.NewDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
 	case model.AwaitOrphanPod:
 		h.logger.Error("An acknowledged attempt has no record and no Job, but a pod of it has not finished — "+
-			"nothing is reported until the pod is gone; state asks again",
+			"nothing is reported until the pod is gone; run-controller asks again",
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName, "known_status", evt.KnownStatus)
 		return nil
 	case model.ReportLost:
-		message := fmt.Sprintf("state knows attempt %d as %s, and execution-controller holds neither its record nor its Job",
+		message := fmt.Sprintf("run-controller knows attempt %d as %s, and execution-controller holds neither its record nor its Job",
 			cmd.Attempt, evt.KnownStatus)
 		h.logger.Error("An acknowledged attempt is lost", "task_id", cmd.TaskID, "attempt", cmd.Attempt, "known_status", evt.KnownStatus)
 		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, pkgmodel.FailureReasonAttemptLost, message, now), pkgmodel.AttemptStatusFailed, message)
@@ -134,7 +134,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 // with the stop recorded: the observer deletes the Job and reports the
 // attempt stopped once its pods are gone. With no Job but a pod of the
 // attempt that has not finished (its Job was deleted with orphan
-// propagation), nothing is written while the pod can still run; state's next
+// propagation), nothing is written while the pod can still run; run-controller's next
 // cancel names the attempt again. Otherwise the attempt is stored done with
 // the outcome stopped and reported stopped.
 func (h *TaskDispatchHandler) acceptFenced(ctx context.Context, u uow.UnitOfWork, cmd command.DeployTask, procID *uuid.UUID, now time.Time) error {
@@ -153,7 +153,7 @@ func (h *TaskDispatchHandler) acceptFenced(ctx context.Context, u uow.UnitOfWork
 		return h.add(ctx, u, d, pkgmodel.AttemptStatusQueued, "")
 	case model.AwaitFencedPod:
 		h.logger.Error("A dispatch of a cancelled run has no record and no Job, but a pod of it has not finished — "+
-			"nothing is reported until the pod is gone; state asks again",
+			"nothing is reported until the pod is gone; run-controller asks again",
 			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return nil
 	case model.StoreStopped:

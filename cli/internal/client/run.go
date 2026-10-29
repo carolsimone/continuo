@@ -170,7 +170,7 @@ type runGRPCClient struct {
 	api  runv1.RunServiceClient
 }
 
-// userIDMetadataKey is the gRPC metadata header the state service reads to
+// userIDMetadataKey is the gRPC metadata header the run-controller service reads to
 // attribute an action to an initiating identity. It mirrors
 // pkg/identity.MetadataKey, which the CLI cannot import (public-gRPC-only rule),
 // so the literal is duplicated here deliberately.
@@ -309,7 +309,7 @@ func (c *runGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table
 // singleNodeRequest builds a TriggerSingleNodeRun request. An empty
 // sourceRunID selects the "latest" metadata mode; a non-empty one selects
 // "snapshot_of_run", pinning the run to the metadata the given past run used.
-// The state service rejects any other combination, so the CLI never sends one.
+// The run-controller service rejects any other combination, so the CLI never sends one.
 func singleNodeRequest(requestID, service, schema, table, sourceRunID, operation string) *runv1.TriggerSingleNodeRunRequest {
 	req := &runv1.TriggerSingleNodeRunRequest{
 		RequestId:      requestID,
@@ -327,7 +327,7 @@ func singleNodeRequest(requestID, service, schema, table, sourceRunID, operation
 }
 
 // metadata_source values accepted by TriggerSingleNodeRun. They mirror the
-// state service's run.MetadataSource* constants, which the CLI cannot import
+// run-controller service's run.MetadataSource* constants, which the CLI cannot import
 // (public-gRPC-only rule), so the literals are duplicated here deliberately.
 const (
 	metadataSourceLatest        = "latest"

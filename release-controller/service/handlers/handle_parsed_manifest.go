@@ -275,7 +275,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// schema before its dependents. Only scope seeds the downstream closure: a
 	// verification's context rebuilds are pulled in only where they land in this
 	// set as ancestors, never expanded to their own other descendants. The
-	// executor builds each seed from compiled SQL whose schema-qualified refs are
+	// execution-controller builds each seed from compiled SQL whose schema-qualified refs are
 	// rewritten to the candidate schema, gated in dependency order.
 	changedClosure := release.DescendantsClosure(topo, scope)
 	validationIDs := unionSorted(changedClosure, release.FullAncestorsClosure(topo, changedClosure))
@@ -605,7 +605,7 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 // schema build. candidate_artifact_uri is derived from the run and the node
 // (candidateArtifactURI). Dispatch ordering is deterministic but NOT
 // topological; per-node execution sequencing is enforced at runtime by the
-// executor's gating on upstream_node_ids, not by position in this list.
+// execution-controller's gating on upstream_node_ids, not by position in this list.
 func validationNodesInOrder(bucket, releaseID string, topo release.Topology, validationIDs []string, inSet, rebuiltFromCandidate map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {

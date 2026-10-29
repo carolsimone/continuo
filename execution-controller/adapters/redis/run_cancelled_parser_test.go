@@ -38,7 +38,7 @@ func fixtureCancel(t *testing.T, name string) goredis.XMessage {
 }
 
 // The first send of a cancel names no attempt; a re-send names each attempt
-// state waits for, with its Job.
+// run-controller waits for, with its Job.
 func TestParseRunCancelled_ReadsTheGoldenFixtures(t *testing.T) {
 	runID := uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
 	for name, want := range map[string]events.RunCancelled{

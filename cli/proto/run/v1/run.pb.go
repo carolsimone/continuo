@@ -362,7 +362,7 @@ type TaskAttempt struct {
 	// only for a succeeded attempt, so read it together with status and
 	// failure_reason.
 	ExitCode         int32                  `protobuf:"varint,7,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	DispatchedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`                // when state dispatched the attempt
+	DispatchedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`                // when run-controller dispatched the attempt
 	QueuedAt         *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`                            // unset until reported
 	StartedAt        *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                        // unset until reported
 	FinishedAt       *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`                     // unset until the attempt finished
@@ -4060,7 +4060,7 @@ type ScheduleTopologySummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
 	NodeCount     int32                  `protobuf:"varint,2,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`              // nodes of the schedule in the live release
-	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when state loaded the live release
+	LastUpdatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_updated_at,json=lastUpdatedAt,proto3" json:"last_updated_at,omitempty"` // when run-controller loaded the live release
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4569,7 +4569,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x0fPreviewSchedule\x12\x1e.run.v1.PreviewScheduleRequest\x1a\x1f.run.v1.PreviewScheduleResponse\x12L\n" +
 	"\rListSchedules\x12\x1c.run.v1.ListSchedulesRequest\x1a\x1d.run.v1.ListSchedulesResponse\x12U\n" +
 	"\x10GetScheduleGraph\x12\x1f.run.v1.GetScheduleGraphRequest\x1a .run.v1.GetScheduleGraphResponse\x12g\n" +
-	"\x16ListScheduleTopologies\x12%.run.v1.ListScheduleTopologiesRequest\x1a&.run.v1.ListScheduleTopologiesResponseB:Z8github.com/carolsimone/continuo/state/proto/run/v1;runv1b\x06proto3"
+	"\x16ListScheduleTopologies\x12%.run.v1.ListScheduleTopologiesRequest\x1a&.run.v1.ListScheduleTopologiesResponseBCZAgithub.com/carolsimone/continuo/run-controller/proto/run/v1;runv1b\x06proto3"
 
 var (
 	file_proto_run_v1_run_proto_rawDescOnce sync.Once

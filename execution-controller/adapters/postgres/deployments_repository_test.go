@@ -14,7 +14,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -25,7 +25,7 @@ import (
 )
 
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
-	return executortest.SetupPostgres(t)
+	return ectest.SetupPostgres(t)
 }
 
 func testLogger() *slog.Logger {
@@ -660,10 +660,10 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 		"exactly one validation terminal (kind=complete) row — never zero (lost) and never two (double)")
 }
 
-// TestMigration_ExecutorDeploymentsHasFailedContainerColumn asserts flyway
+// TestMigration_DeploymentsHasFailedContainerColumn asserts flyway
 // migration V21 ran and created the failed_container column on
 // deployments (the table the mode CHECK constraint targets).
-func TestMigration_ExecutorDeploymentsHasFailedContainerColumn(t *testing.T) {
+func TestMigration_DeploymentsHasFailedContainerColumn(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 

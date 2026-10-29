@@ -23,8 +23,8 @@ import (
 // A then B, and then replays A's release.promoted:v2 entry under a fresh event
 // id and without its outbox entry id — a late delivery or a redrive that dedup
 // cannot recognise. A has a model of a schedule B drops, so applying the
-// replay would swap the orchestrator's live graph and state's live release
-// back to A, and give that schedule its model again: state would list it and
+// replay would swap the orchestrator's live graph and run-controller's live release
+// back to A, and give that schedule its model again: run-controller would list it and
 // start it. Neither may happen: A's promotion seq is below the live one.
 func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	if testing.Short() {
@@ -54,7 +54,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	b := announceTopology(t, ctx, "e2e-late-b-"+uuid.NewString()[:8], nodes)
 	waitForAnnouncedTopology(t, ctx, clients, b, schedules)
 	require.Greater(t, b.PromotionSeq, a.PromotionSeq)
-	// With B live in state, the stale schedule has no model and no cron.
+	// With B live in run-controller, the stale schedule has no model and no cron.
 	require.Empty(t, staleScheduleKnown(ctx, clients, staleSchedule, b), "B drops the %s schedule", staleSchedule)
 
 	entry := findPromotionEntry(t, ctx, tap, a.ReleaseID)
@@ -70,7 +70,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 
 	// Both groups that apply a promotion handle the replay before the live
 	// pointers are read.
-	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.StateReleasePromoted} {
+	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.RunControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, group, replayID)
 		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, group, replayID, "open"),
 			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
@@ -83,7 +83,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	defer tick.Stop()
 	for {
 		if known := staleScheduleKnown(ctx, clients, staleSchedule, b); known != "" {
-			t.Fatalf("a late promotion must not move state's live release off %s or give %s a model again: %s",
+			t.Fatalf("a late promotion must not move run-controller's live release off %s or give %s a model again: %s",
 				b.ReleaseID, staleSchedule, known)
 		}
 		select {
@@ -94,18 +94,18 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	}
 }
 
-// staleScheduleKnown says how state still knows the schedule name, which the
-// announcement want has no model of, and is empty when it does not: state's
+// staleScheduleKnown says how run-controller still knows the schedule name, which the
+// announcement want has no model of, and is empty when it does not: run-controller's
 // live release is another than want (by release id and promotion seq), a node
 // of it carries name, or ListSchedules lists name. A failed read says so too.
 func staleScheduleKnown(ctx context.Context, clients *testClients, name string, want announceResult) string {
-	state, err := readStateLiveRelease(ctx, clients)
+	runController, err := readRunControllerLiveRelease(ctx, clients)
 	if err != nil {
 		return err.Error()
 	}
-	if state.releaseID != want.ReleaseID || state.promotionSeq != want.PromotionSeq || state.models[name] > 0 {
-		return fmt.Sprintf("state's live release is %q at seq %d with %d nodes of %s; want %q at seq %d with none",
-			state.releaseID, state.promotionSeq, state.models[name], name, want.ReleaseID, want.PromotionSeq)
+	if runController.releaseID != want.ReleaseID || runController.promotionSeq != want.PromotionSeq || runController.models[name] > 0 {
+		return fmt.Sprintf("run-controller's live release is %q at seq %d with %d nodes of %s; want %q at seq %d with none",
+			runController.releaseID, runController.promotionSeq, runController.models[name], name, want.ReleaseID, want.PromotionSeq)
 	}
 	listed, err := findListedSchedule(ctx, clients, name)
 	if err != nil {
@@ -180,15 +180,15 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	assert.Contains(t, dl.GetError(), storedSHA, "the dead letter names the object's actual hash")
 	assert.Equal(t, before, readLivePointer(ctx, clients), "a corrupt artifact must never move the live pointer")
 
-	// state's group reads the same artifact and refuses it for the same reason.
-	stateDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.StateReleasePromoted, id, "open")
-	cleanup = append(cleanup, stateDL.GetId())
-	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(stateDL.GetFailureKind()))
-	assert.Contains(t, strings.ToLower(stateDL.GetError()), "checksum")
+	// run-controller's group reads the same artifact and refuses it for the same reason.
+	runControllerDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.RunControllerReleasePromoted, id, "open")
+	cleanup = append(cleanup, runControllerDL.GetId())
+	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(runControllerDL.GetFailureKind()))
+	assert.Contains(t, strings.ToLower(runControllerDL.GetError()), "checksum")
 
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.
-	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutorReleasePromoted} {
+	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutionControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, g, id)
 		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, g, id, "open"); other != nil {
 			cleanup = append(cleanup, other.GetId())

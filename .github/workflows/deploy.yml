@@ -71,7 +71,7 @@ jobs:
               - 'config/**'
               - 'db/**'
               - 'deploy/**'
-              - 'state/**'
+              - 'run-controller/**'
               - 'orchestrator/**'
               - 'execution-controller/**'
               - 'ui/**'
@@ -84,12 +84,12 @@ jobs:
               - 'dead-letter-controller/**'
               - 'egress-proxy/**'
               - 's3-sidecar/**'
-            state:
+            run_controller:
               - 'Dockerfile.base'
               - 'go.work'
               - 'go.work.sum'
               - 'pkg/**'
-              - 'state/**'
+              - 'run-controller/**'
             orchestrator:
               - 'Dockerfile.base'
               - 'go.work'
@@ -152,7 +152,7 @@ jobs:
       - name: Build publish matrix
         id: matrix
         env:
-          STATE_CHANGED: ${{ steps.filter.outputs.state }}
+          RUN_CONTROLLER_CHANGED: ${{ steps.filter.outputs.run_controller }}
           ORCHESTRATOR_CHANGED: ${{ steps.filter.outputs.orchestrator }}
           EXECUTION_CONTROLLER_CHANGED: ${{ steps.filter.outputs.execution_controller }}
           UI_CHANGED: ${{ steps.filter.outputs.ui }}
@@ -168,7 +168,7 @@ jobs:
         run: |
           matrix="$(
             jq -cn \
-              --arg state "$STATE_CHANGED" \
+              --arg run_controller "$RUN_CONTROLLER_CHANGED" \
               --arg orchestrator "$ORCHESTRATOR_CHANGED" \
               --arg execution_controller "$EXECUTION_CONTROLLER_CHANGED" \
               --arg ui "$UI_CHANGED" \
@@ -183,7 +183,7 @@ jobs:
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               '{
                 include: [
-                  {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
+                  {service: "run-controller", changed: $run_controller, dockerfile: "run-controller/Dockerfile.prod", context: "."},
                   {service: "orchestrator", changed: $orchestrator, dockerfile: "orchestrator/Dockerfile.prod", context: "."},
                   {service: "execution-controller", changed: $execution_controller, dockerfile: "execution-controller/Dockerfile.prod", context: "."},
                   {service: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},

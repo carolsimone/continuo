@@ -17,7 +17,7 @@ import (
 // validation.result:v1 stream and, per message kind, either projects one node's
 // outcome into the release read model or decides the terminal promote-or-reject.
 //
-// executor emits the kind=complete message last, after every kind=node row for
+// execution-controller emits the kind=complete message last, after every kind=node row for
 // the release; the per-node rows publish in parallel and, in the normal case,
 // flush in the same created_at-ordered outbox batch as the terminal, so a single
 // in-order consumer has already projected every node by the time it decides. The

@@ -5,7 +5,7 @@ import "time"
 // RunCancelledSchemaVersion is the schema_version of run.cancelled:v1 entries.
 const RunCancelledSchemaVersion = 1
 
-// RunCancelled is the payload of a run.cancelled:v1 entry: state cancelled
+// RunCancelled is the payload of a run.cancelled:v1 entry: run-controller cancelled
 // the run, and every attempt of it that was dispatched and has not ended must
 // be stopped. CancelledBy and Reason are the operator's own words and only
 // displayed. Attempts lists each attempt to stop with the name of its Job; it

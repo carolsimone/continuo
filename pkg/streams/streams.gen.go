@@ -4,15 +4,15 @@ package streams
 
 // Stream names.
 const (
-	// TaskDispatchV1 — One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
+	// TaskDispatchV1 — One attempt of a task, from run-controller to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever run-controller asks about an attempt that has gone quiet, with run-controller's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
 	TaskDispatchV1 = "task.dispatch:v1"
-	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
 	TaskStatusUpdatedV2 = "task.status.updated:v2"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each service that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
-	// RunCancelledV1 — A run's cancel, from state to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. state writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
+	// RunCancelledV1 — A run's cancel, from run-controller to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. run-controller writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
 	RunCancelledV1 = "run.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
@@ -30,7 +30,7 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; state stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
 	ReleasePromotedV2 = "release.promoted:v2"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
@@ -50,48 +50,48 @@ const (
 
 // Consumer groups.
 const (
-	// ExecutorTaskDispatch — execution-controller consumer group on task.dispatch:v1.
-	ExecutorTaskDispatch = "executor-task-dispatch"
-	// StateTaskStatusUpdated — state consumer group on task.status.updated:v2.
-	StateTaskStatusUpdated = "state-task-status-updated"
+	// ExecutionControllerTaskDispatch — execution-controller consumer group on task.dispatch:v1.
+	ExecutionControllerTaskDispatch = "execution-controller-task-dispatch"
+	// RunControllerTaskStatusUpdated — run-controller consumer group on task.status.updated:v2.
+	RunControllerTaskStatusUpdated = "run-controller-task-status-updated"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
 	DeadLetterControllerConsumerDeadLetters = "dead-letter-controller-consumer-dead-letters"
-	// ExecutorRunCancelled — execution-controller consumer group on run.cancelled:v1.
-	ExecutorRunCancelled = "executor-run-cancelled"
+	// ExecutionControllerRunCancelled — execution-controller consumer group on run.cancelled:v1.
+	ExecutionControllerRunCancelled = "execution-controller-run-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v2.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
-	// ExecutorValidationRequested — execution-controller consumer group on validation.requested:v1.
-	ExecutorValidationRequested = "executor-validation-requested"
+	// ExecutionControllerValidationRequested — execution-controller consumer group on validation.requested:v1.
+	ExecutionControllerValidationRequested = "execution-controller-validation-requested"
 	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
 	ReleaseControllerValidationResult = "release-controller-validation-result"
-	// ExecutorValidationResultTeardown — execution-controller consumer group on validation.result:v1.
-	ExecutorValidationResultTeardown = "executor-validation-result-teardown"
-	// ExecutorSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
-	ExecutorSeedBuildRequested = "executor-seed-build-requested"
+	// ExecutionControllerValidationResultTeardown — execution-controller consumer group on validation.result:v1.
+	ExecutionControllerValidationResultTeardown = "execution-controller-validation-result-teardown"
+	// ExecutionControllerSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
+	ExecutionControllerSeedBuildRequested = "execution-controller-seed-build-requested"
 	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
-	// ExecutorCompileRequested — execution-controller consumer group on compile.requested:v1.
-	ExecutorCompileRequested = "executor-compile-requested"
+	// ExecutionControllerCompileRequested — execution-controller consumer group on compile.requested:v1.
+	ExecutionControllerCompileRequested = "execution-controller-compile-requested"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v2.
-	ExecutorReleasePromoted = "executor-release-promoted"
-	// StateReleasePromoted — state consumer group on release.promoted:v2.
-	StateReleasePromoted = "state-release-promoted"
+	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v2.
+	ExecutionControllerReleasePromoted = "execution-controller-release-promoted"
+	// RunControllerReleasePromoted — run-controller consumer group on release.promoted:v2.
+	RunControllerReleasePromoted = "run-controller-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
-	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
-	ExecutorReleaseRejected = "executor-release-rejected"
-	// ExecutorPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
-	ExecutorPipelineRunFinished = "executor-pipeline-run-finished"
+	// ExecutionControllerReleaseRejected — execution-controller consumer group on release.rejected:v1.
+	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
+	// ExecutionControllerPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
+	ExecutionControllerPipelineRunFinished = "execution-controller-pipeline-run-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
 	RemediationRetryRequested = "remediation-retry-requested"
 	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v2.
@@ -134,22 +134,22 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
-	TaskDispatchV1:              {ExecutorTaskDispatch},
-	TaskStatusUpdatedV2:         {StateTaskStatusUpdated},
+	TaskDispatchV1:              {ExecutionControllerTaskDispatch},
+	TaskStatusUpdatedV2:         {RunControllerTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
-	RunCancelledV1:              {ExecutorRunCancelled},
+	RunCancelledV1:              {ExecutionControllerRunCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
 	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
-	ValidationRequestedV1:       {ExecutorValidationRequested},
-	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutorValidationResultTeardown},
-	SeedBuildRequestedV1:        {ExecutorSeedBuildRequested},
+	ValidationRequestedV1:       {ExecutionControllerValidationRequested},
+	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutionControllerValidationResultTeardown},
+	SeedBuildRequestedV1:        {ExecutionControllerSeedBuildRequested},
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
-	CompileRequestedV1:          {ExecutorCompileRequested},
+	CompileRequestedV1:          {ExecutionControllerCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted, StateReleasePromoted},
-	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
-	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
+	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
+	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
+	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
 	RemediationRequestedV2:      {AgentRemediationRemediationRequested, OrchestratorRemediationRequestedRejections},
 	RemediationProposedV1:       {},

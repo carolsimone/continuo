@@ -20,19 +20,19 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fakeStateList is a RunClient fake for list_test.go. It answers
+// fakeRunControllerList is a RunClient fake for list_test.go. It answers
 // ListAllSchedules and, embedding the interface, panics on any other call.
-type fakeStateList struct {
+type fakeRunControllerList struct {
 	client.RunClient
 	resp *runv1.ListSchedulesResponse
 	err  error
 }
 
-func (f *fakeStateList) ListAllSchedules(_ context.Context) (*runv1.ListSchedulesResponse, error) {
+func (f *fakeRunControllerList) ListAllSchedules(_ context.Context) (*runv1.ListSchedulesResponse, error) {
 	return f.resp, f.err
 }
 
-func (f *fakeStateList) Close() error { return nil }
+func (f *fakeRunControllerList) Close() error { return nil }
 
 // runList invokes the list command end-to-end with the provided fake client.
 // It captures stdout/stderr and returns the exit code.
@@ -80,7 +80,7 @@ type listResponseJSON struct {
 
 func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -116,7 +116,7 @@ func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 }
 
 func TestList_EmptySchedulesReturnsEmptyArray(t *testing.T) {
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{},
 		},
@@ -138,7 +138,7 @@ func TestList_EmptySchedulesReturnsEmptyArray(t *testing.T) {
 
 func TestList_HumanModeRunningSchedule(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -163,7 +163,7 @@ func TestList_HumanModeRunningSchedule(t *testing.T) {
 
 func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -187,7 +187,7 @@ func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
 }
 
 func TestList_HumanModeIdleScheduleNoLastRun(t *testing.T) {
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -209,7 +209,7 @@ func TestList_HumanModeIdleScheduleNoLastRun(t *testing.T) {
 }
 
 func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -240,7 +240,7 @@ func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 }
 
 func TestList_DescriptionOmittedWhenEmpty(t *testing.T) {
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -266,7 +266,7 @@ func TestList_DescriptionOmittedWhenEmpty(t *testing.T) {
 }
 
 func TestList_DescriptionIncludedWhenNonEmpty(t *testing.T) {
-	fake := &fakeStateList{
+	fake := &fakeRunControllerList{
 		resp: &runv1.ListSchedulesResponse{
 			Schedules: []*runv1.ScheduleSummary{
 				{
@@ -291,7 +291,7 @@ func TestList_DescriptionIncludedWhenNonEmpty(t *testing.T) {
 }
 
 func TestList_NotFoundExits3(t *testing.T) {
-	fake := &fakeStateList{err: status.Error(codes.NotFound, "not found")}
+	fake := &fakeRunControllerList{err: status.Error(codes.NotFound, "not found")}
 
 	stdout, _, exit := runList(t, fake, []string{}, false)
 
@@ -305,7 +305,7 @@ func TestList_NotFoundExits3(t *testing.T) {
 }
 
 func TestList_UnavailableExits5(t *testing.T) {
-	fake := &fakeStateList{err: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeRunControllerList{err: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := runList(t, fake, []string{}, false)
 
@@ -334,7 +334,7 @@ func TestList_FactoryErrorEmitsJSONAndExits(t *testing.T) {
 }
 
 func TestList_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"extra"}, false)
 
@@ -370,7 +370,7 @@ func fullSummary() *runv1.ScheduleSummary {
 // JSON the command emits: the same keys at the top level and in every entry,
 // for an entry that carries every optional field.
 func TestList_OutputMatchesItsSchema(t *testing.T) {
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
 	stdout, _, exit := runList(t, fake, []string{}, false)
 	require.Equal(t, 0, exit)
 
@@ -386,7 +386,7 @@ func TestList_OutputMatchesItsSchema(t *testing.T) {
 // An entry with no cron and no run omits its optional fields and keeps the
 // others, so the schema's keys are the entry's keys plus the optional ones.
 func TestList_AnEntryWithNothingOptionalCarriesOnlyItsRequiredKeys(t *testing.T) {
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
 	stdout, _, exit := runList(t, fake, []string{}, false)
 	require.Equal(t, 0, exit)
 
@@ -409,7 +409,7 @@ func TestList_AnEntryWithNothingOptionalCarriesOnlyItsRequiredKeys(t *testing.T)
 }
 
 func TestList_CarriesTheFieldsOfAScheduledSchedule(t *testing.T) {
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{fullSummary()}}}
 
 	stdout, _, exit := runList(t, fake, []string{}, false)
 
@@ -443,7 +443,7 @@ func TestList_APausedScheduleHasNoNextFire(t *testing.T) {
 		ScheduleName: "hourly", Cron: "0 * * * *", Timezone: "Europe/Paris", Paused: true, ModelCount: 6,
 		UpdatedBy: "bob@example.com", UpdatedAt: timestamppb.New(time.Date(2026, 10, 27, 13, 2, 0, 0, time.UTC)),
 	}
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{paused}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{paused}}}
 
 	stdout, _, exit := runList(t, fake, []string{}, false)
 
@@ -462,7 +462,7 @@ func TestList_APausedScheduleHasNoNextFire(t *testing.T) {
 // A schedule the live release has and that has no cron is listed with its
 // models and no cron: it runs only when triggered.
 func TestList_AManualScheduleHasNoCron(t *testing.T) {
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{{ScheduleName: "e2e-schedule", ModelCount: 5}}}}
 
 	stdout, _, exit := runList(t, fake, []string{}, false)
 
@@ -484,7 +484,7 @@ func TestList_HumanModeShowsTheCronOrThatTheScheduleIsManualOrPaused(t *testing.
 	scheduled := fullSummary()
 	paused := &runv1.ScheduleSummary{ScheduleName: "hourly", Cron: "0 * * * *", Timezone: "UTC", Paused: true}
 	manual := &runv1.ScheduleSummary{ScheduleName: "e2e-schedule"}
-	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{scheduled, paused, manual}}}
+	fake := &fakeRunControllerList{resp: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{scheduled, paused, manual}}}
 
 	_, stderr, exit := runList(t, fake, []string{}, true)
 

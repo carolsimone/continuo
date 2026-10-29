@@ -1,0 +1,5 @@
+// Package events defines the typed handler-facing event structs for the
+// run-controller service. Adapter-layer parsers (run-controller/adapters/redis/*_parser.go)
+// translate raw Redis messages into these types; service handlers consume
+// them and never see JSON, goredis, or *sqlx.DB.
+package events

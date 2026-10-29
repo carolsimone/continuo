@@ -5,7 +5,7 @@ import type { Request } from 'express';
 
 // Canonical gRPC metadata header carrying the initiating user's stable id into
 // the backend services. It MUST match pkg/identity.MetadataKey on the Go side
-// (the state server interceptor reads this exact, lowercase key); the two are
+// (the run-controller server interceptor reads this exact, lowercase key); the two are
 // the single propagation contract. gRPC lowercases metadata keys, so this is
 // already lowercase.
 export const USER_ID_METADATA_KEY = 'x-continuo-user-id';
@@ -42,7 +42,7 @@ const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 
 type Callback = (err: any, res: any) => void;
 
-// GrpcClient is the RunService client of state: the one public API for runs,
+// GrpcClient is the RunService client of run-controller: the one public API for runs,
 // their tasks and attempts, nodes, schedules and the live release's topology.
 // A call that changes state takes the caller's metadata (userMetadata) before
 // its callback; a read does not.

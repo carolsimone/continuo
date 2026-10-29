@@ -20,7 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type fakeNodeState struct {
+type fakeNodeRunController struct {
 	client.RunClient
 
 	runsResp     *runv1.ListNodeTasksResponse
@@ -71,41 +71,41 @@ type fakeNodeState struct {
 	gotListOffset    int32
 }
 
-func (f *fakeNodeState) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error) {
+func (f *fakeNodeRunController) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error) {
 	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListLimit, f.gotListOffset = search, service, operation, limit, offset
 	return f.listResp, f.listErr
 }
 
-func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
+func (f *fakeNodeRunController) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
 	f.gotSvc, f.gotSchema, f.gotTable, f.gotOperation, f.gotLimit = service, schema, table, operation, limit
 	return f.runsResp, f.runsErr
 }
 
-func (f *fakeNodeState) TriggerNodeRun(_ context.Context, requestID, service, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeRun(_ context.Context, requestID, service, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTrigSvc, f.gotTrigSourceRun, f.gotActor = service, sourceRunID, actor
 	return f.trigResp, f.trigErr
 }
 
-func (f *fakeNodeState) TriggerNodeTest(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeTest(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = service, schema, table, sourceRunID, actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = service, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeState) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
 	return f.fullRefreshResp, f.fullRefreshErr
 }
 
-func (f *fakeNodeState) Close() error { return nil }
+func (f *fakeNodeRunController) Close() error { return nil }
 
 // runHistory invokes the history command against fake.
 func runHistory(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
@@ -133,7 +133,7 @@ func runHistory(t *testing.T, fake client.RunClient, args []string, human bool) 
 }
 
 func TestHistory_SuccessMapsAllFields(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
 		RunStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
 		Attempt: 1, FailureClass: "task", FailureReason: "exit_code",
@@ -168,13 +168,13 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "task", r["failure_class"])
 	assert.Equal(t, "exit_code", r["failure_reason"])
 	// The structured result key must reach the CLI payload: it is vendored
-	// through this module.s own proto copy, so a state-side addition is invisible
-	// here until that copy is regenerated.
+	// through this module.s own proto copy, so a run-controller-side addition is
+	// invisible here until that copy is regenerated.
 	assert.Equal(t, "run-results/task-executions/finance/analytics/orders/e1.json", r["run_results_uri"])
 }
 
 func TestHistory_OperationFlagIsForwarded(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", TaskStatus: "succeeded", Operation: "test",
 	}}}}
 
@@ -192,7 +192,7 @@ func TestHistory_OperationFlagIsForwarded(t *testing.T) {
 }
 
 func TestHistory_InvalidOperationFlagExits2(t *testing.T) {
-	fake := &fakeNodeState{}
+	fake := &fakeNodeRunController{}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders", "--operation", "bogus"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -201,14 +201,14 @@ func TestHistory_InvalidOperationFlagExits2(t *testing.T) {
 }
 
 func TestHistory_EmptyResultIsEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: nil}}
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: nil}}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, `"runs":[]`)
 }
 
 func TestHistory_OmitsEmptyOptionalFields(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", TaskStatus: "running", // no run_status/completed_at/error/log key
 	}}}}
 	stdout, _, _ := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
@@ -222,7 +222,7 @@ func TestHistory_OmitsEmptyOptionalFields(t *testing.T) {
 }
 
 func TestHistory_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeNodeState{}
+	fake := &fakeNodeRunController{}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -231,18 +231,18 @@ func TestHistory_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestHistory_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeState{runsErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeRunController{runsErr: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 5, exit)
 }
 
 func TestHistory_ContentHashComesWithEachRun(t *testing.T) {
-	stateFake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
+	runControllerFake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_1", TaskStatus: "succeeded", ContentHash: "c1"},
 		{RunId: "run_2", TaskStatus: "succeeded"}, // names no release
 	}}}
 
-	stdout, _, exit := runHistory(t, stateFake, []string{"finance", "analytics", "orders"}, false)
+	stdout, _, exit := runHistory(t, runControllerFake, []string{"finance", "analytics", "orders"}, false)
 
 	assert.Equal(t, 0, exit)
 	var payload struct {
@@ -256,7 +256,7 @@ func TestHistory_ContentHashComesWithEachRun(t *testing.T) {
 }
 
 func TestHistory_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_1", TaskStatus: "succeeded", Kind: "single_node_run", CompletedAt: "2026-07-10T10:05:00Z",
 	}}}}
 	stdout, stderr, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, true)
@@ -268,7 +268,7 @@ func TestHistory_HumanModeUsesStderr(t *testing.T) {
 
 // Human mode renders the same content hash the JSON payload carries.
 func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
-	stateFake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
+	runControllerFake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_1", TaskStatus: "succeeded", ContentHash: "sha256:abcdef123456789"},
 		{RunId: "run_2", TaskStatus: "succeeded"}, // names no release
 	}}}
@@ -276,7 +276,7 @@ func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
 	cmd := NewHistoryCommand(
-		func(context.Context, string) (client.RunClient, error) { return stateFake, nil },
+		func(context.Context, string) (client.RunClient, error) { return runControllerFake, nil },
 		cfg, &outBuf, &errBuf,
 	)
 	cmd.SetArgs([]string{"finance", "analytics", "orders"})
@@ -308,7 +308,7 @@ func TestHistory_LongNamesTheRunAndTaskStatuses(t *testing.T) {
 // A run whose task waits for the node's lease says why, on which run and since
 // when; a run that waits for nothing omits all three.
 func TestHistory_ReportsALeaseWaitAndItsHolder(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
 		{RunId: "run_2", TaskStatus: "pending", WaitReason: "node_lease", WaitingOnRunId: "run_1", WaitingSince: "2026-10-24T10:05:00Z"},
 		{RunId: "run_1", TaskStatus: "running"},
 	}}}
@@ -332,7 +332,7 @@ func TestHistory_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 // The output_schema annotation declares every field a run can carry: a run
 // with every field set emits exactly the keys its runs item declares.
 func TestHistory_OutputSchemaDeclaresEveryRunField(t *testing.T) {
-	fake := &fakeNodeState{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{{
 		RunId: "run_2", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
 		RunStatus: "running", TaskId: "task_2", TaskStatus: "pending", Attempt: 1,
 		ImageTag: "img:v9", CreatedAt: "2026-10-24T10:00:00Z", StartedAt: "2026-10-24T10:01:00Z",

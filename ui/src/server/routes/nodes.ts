@@ -23,7 +23,7 @@ function csvSourceUri(rawCode: unknown): string {
   }
 }
 
-export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
+export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
   // GET /api/nodes?search=&service=&limit=&offset= — node catalog (paged)
@@ -41,7 +41,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
       offset: parseOffset(req.query.offset),
     };
-    stateClient.listNodes(q, (err: any, response: any) => {
+    runClient.listNodes(q, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       res.json({
         total_count: Number(response.total_count ?? 0),
@@ -66,17 +66,17 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   // GET /api/nodes/names?service= — distinct node table names for search autocomplete
   router.get('/names', (req, res) => {
     const service = typeof req.query.service === 'string' ? req.query.service : '';
-    stateClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
+    runClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       res.json({ names: response.table_names || [] });
     });
   });
 
   // GET /api/nodes/services — distinct active service names, for the catalog
-  // and Remediation-tab service filters. Backed by the ListNodeServices state
+  // and Remediation-tab service filters. Backed by the ListNodeServices run-controller
   // read (a single DISTINCT query), independent of the paginated catalog.
   router.get('/services', (_req, res) => {
-    stateClient.listNodeServices({}, (err: any, response: any) => {
+    runClient.listNodeServices({}, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       res.json({ services: response.service_names || [] });
     });
@@ -86,7 +86,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   router.get('/:service/:schema/:table/runs', (req, res) => {
     const operation = parseNodeOperation(req.query.operation);
     if (operation === null) return res.status(400).json({ error: 'invalid operation' });
-    stateClient.listNodeTasks(
+    runClient.listNodeTasks(
       {
         service_name: req.params.service,
         schema_name:  req.params.schema,
@@ -122,7 +122,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
 
   // POST /api/nodes/:service/:schema/:table/run
   // Body: { request_id } → latest mode; { request_id, source_run_id } →
-  // snapshot_of_run mode. request_id is the browser-minted UUID state uses to
+  // snapshot_of_run mode. request_id is the browser-minted UUID run-controller uses to
   // start one run for a repeated action.
   router.post('/:service/:schema/:table/run', (req, res) => {
     const requestId = requireRequestId(req, res);
@@ -133,7 +133,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
-    stateClient.triggerSingleNodeRun(
+    runClient.triggerSingleNodeRun(
       {
         request_id:      requestId,
         service_name:    req.params.service,

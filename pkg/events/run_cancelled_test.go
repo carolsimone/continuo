@@ -50,7 +50,7 @@ func TestRunCancelledFields_MatchGoldenFixtures(t *testing.T) {
 
 // A cancel with no attempt in flight still carries attempts as an array.
 func TestRunCancelledFields_WritesNoAttemptsAsAnEmptyArray(t *testing.T) {
-	got, err := events.RunCancelledFields("e", "default", "state", time.Date(2026, 10, 23, 9, 14, 7, 0, time.UTC), events.RunCancelled{
+	got, err := events.RunCancelledFields("e", "default", "run-controller", time.Date(2026, 10, 23, 9, 14, 7, 0, time.UTC), events.RunCancelled{
 		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", CancelledBy: "alice@example.com",
 	})
 	require.NoError(t, err)
@@ -107,14 +107,14 @@ func TestDecodeRunCancelled_ReadsMissingAttemptsAsNone(t *testing.T) {
 	assert.Empty(t, p.Attempts)
 }
 
-// cancelledFields is a run.cancelled:v1 entry of state with the given payload
+// cancelledFields is a run.cancelled:v1 entry of run-controller with the given payload
 // members.
 func cancelledFields(payload string) map[string]string {
 	return map[string]string{
 		"event_id":       "e",
 		"tenant_id":      "default",
 		"occurred_at":    "2026-10-23T09:14:07.000000Z",
-		"producer":       "state",
+		"producer":       "run-controller",
 		"schema_version": "1",
 		"payload":        "{" + payload + "}",
 	}

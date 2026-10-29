@@ -99,7 +99,7 @@ func (l *liveJobs) ObserveLive(context.Context, string) (model.JobObservation, e
 	return l.job, l.err
 }
 
-// acknowledgedDispatch is a question from state about attempt 1 of a task it
+// acknowledgedDispatch is a question from run-controller about attempt 1 of a task it
 // knows as running.
 func acknowledgedDispatch() events.TaskDispatch {
 	return events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1,
@@ -209,7 +209,7 @@ func TestTaskDispatch_OnlyAnAttemptAboutToBeReportedLostIsReadLive(t *testing.T)
 
 // An acknowledged attempt with neither a record nor a Job, whose pod a live
 // read still shows running (its Job was deleted with orphan propagation), is
-// not reported lost: nothing is stored or reported, and state asks again.
+// not reported lost: nothing is stored or reported, and run-controller asks again.
 func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *testing.T) {
 	evt := acknowledgedDispatch()
 	started := time.Now()
@@ -230,7 +230,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *t
 
 // A dispatch of a fenced run with neither a record nor a Job of the attempt,
 // but a pod of it a live read shows running, is not answered stopped while
-// the pod can still write: nothing is stored or reported, and state's next
+// the pod can still write: nothing is stored or reported, and run-controller's next
 // cancel names the attempt again.
 func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testing.T) {
 	evt := acknowledgedDispatch()

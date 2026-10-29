@@ -30,13 +30,13 @@ run(){
 }
 writes(){ grep -c . "$tmp/log" || true; }
 
-run 'fix(state): stop a double dispatch'
+run 'fix(run-controller): stop a double dispatch'
 assert "an unlabelled fix gains bug" "[ $rc -eq 0 ] && [ \"\$(writes)\" = 1 ] && grep -q 'POST repos/o/r/issues/7/labels -f labels\[\]=bug' $tmp/log"
 
-run 'fix(state): stop a double dispatch' bug area/state
+run 'fix(run-controller): stop a double dispatch' bug area/run-controller
 assert "a correct label is not touched, and area/* is ignored" "[ $rc -eq 0 ] && [ \"\$(writes)\" = 0 ]"
 
-run 'feat(state): add attempts' bug area/state
+run 'feat(run-controller): add attempts' bug area/run-controller
 assert "a title edited from fix to feat swaps bug for enhancement" "[ \$(writes) = 2 ] && grep -q 'DELETE repos/o/r/issues/7/labels/bug' $tmp/log && grep -q 'labels\[\]=enhancement' $tmp/log"
 
 run 'feat(cli)!: rename node trigger' enhancement

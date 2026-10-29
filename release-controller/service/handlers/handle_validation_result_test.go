@@ -900,7 +900,7 @@ func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 	var candidateSchema string
 	require.NoError(t, json.Unmarshal(payload["candidate_schema"], &candidateSchema))
 	assert.Equal(t, "_candidate_rA", candidateSchema,
-		"release.promoted:v2 must carry candidate_schema for executor teardown")
+		"release.promoted:v2 must carry candidate_schema for execution-controller teardown")
 }
 
 // TestHandleValidationResult_Rejected_CarriesChangedAncestors verifies that

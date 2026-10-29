@@ -97,7 +97,7 @@ type Config struct {
 	VerificationPollInterval time.Duration
 
 	// RetentionDays and RetentionSweepIntervalMin pace the retention sweeper:
-	// processed remediation_agent_outbox rows are deleted after RetentionDays,
+	// processed agent_remediation_outbox rows are deleted after RetentionDays,
 	// message_processing dedup rows after the longer of RetentionDays and the
 	// 30-day replay horizon, every RetentionSweepIntervalMin minutes. Both have
 	// safe defaults.

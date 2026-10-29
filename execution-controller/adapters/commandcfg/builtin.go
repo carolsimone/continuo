@@ -6,8 +6,8 @@ import pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 // dbt-commands.yaml file is configured. run/seed/snapshot delegate to the pkg
 // model NodeType.Command (the single source for those verbs) with the
 // {{ node }} placeholder as the table name; test/build/seed_build/compile are
-// the executor's own plain-dbt commands. Seed is a normal, non-destructive
-// `dbt seed`. full_refresh and seed_full_refresh are the executor's plain-dbt
+// execution-controller's own plain-dbt commands. Seed is a normal, non-destructive
+// `dbt seed`. full_refresh and seed_full_refresh are execution-controller's plain-dbt
 // model and seed rebuilds, used only by the explicit single-node full-refresh
 // operation. The block is always complete — TestBuiltinDefault_IsComplete pins
 // that it passes the same checks applied to file-provided blocks.

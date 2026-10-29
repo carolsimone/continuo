@@ -472,7 +472,7 @@ func (d *Deployment) AwaitsLaunch() bool {
 	return d.status == StatusPending || d.status == StatusReserved
 }
 
-// Stop records that state asked the attempt to stop, as the time of the first
+// Stop records that run-controller asked the attempt to stop, as the time of the first
 // request. A deployment whose Job exists (starting or running) moves to
 // terminating, where it keeps its slot until its pods are gone; a terminating
 // one stays as it is, keeping the reason it was ended for. A deployment that

@@ -210,7 +210,7 @@ func validateOpSet(path string, ops *opSet) error {
 			case stdpath.Dir(pp) != stdpath.Dir(mp):
 				return fmt.Errorf(
 					"%s.compile.partial_parse_path: must live in the same directory as manifest_path (got %q vs %q) — "+
-						"the executor mounts the parse-cache volume at that directory in every run/seed/build pod for "+
+						"execution-controller mounts the parse-cache volume at that directory in every run/seed/build pod for "+
 						"this team's image, which would replace (shadow) it if the two artifacts don't share a directory",
 					path, pp, mp)
 			}
@@ -245,7 +245,7 @@ const noPartialParseFlag = "--no-partial-parse"
 // and "--flag=value" forms are recognized; the last occurrence of a flag
 // wins. A value that is itself an unsubstituted {{ placeholder }} is ignored
 // (the flag is treated as absent) — its real value is only known once the
-// executor substitutes it per-dispatch, so it can never be compared
+// execution-controller substitutes it per-dispatch, so it can never be compared
 // statically against a literal value in the parse argv (which cannot itself
 // contain placeholders — validateTemplate rejects that).
 func parseContextFlags(argv []string) map[string]string {
@@ -307,7 +307,7 @@ func firstDivergentFlag(a, b map[string]string) string {
 // these into its partial-parse validity check; if a runtime op's set differs
 // from the parse argv the compile-time rehearsal exercised, the rehearsal can
 // pass while every runtime pod re-parses from scratch (and parse_cache_reason
-// is still recorded as hydrated, since the executor never re-checks at
+// is still recorded as hydrated, since execution-controller never re-checks at
 // dispatch time).
 func validateParseContext(path string, ops *opSet) error {
 	parseFlags := parseContextFlags(ops.Parse)

@@ -81,11 +81,11 @@ done
 echo "--- http port env names match what each service reads (defaults)"
 python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
-# state's pods all consume one status consumer group and dispatch what a success
-# unblocks, so the previous release's pod must be gone before the new one
-# consumes anything: state rolls with Recreate.
-echo "--- state rolls with Recreate (defaults)"
-python3 scripts/install-test/assert-state-recreate.py "${tmp}/defaults.yaml"
+# run-controller's pods all consume one status consumer group and dispatch what
+# a success unblocks, so the previous release's pod must be gone before the new
+# one consumes anything: run-controller rolls with Recreate.
+echo "--- run-controller rolls with Recreate (defaults)"
+python3 scripts/install-test/assert-run-controller-recreate.py "${tmp}/defaults.yaml"
 
 # A bundled Redis is a StatefulSet with no ordering guarantee against the
 # Deployments, so every service whose code connects to Redis must wait for it
@@ -145,9 +145,9 @@ python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
 echo "--- an empty configMap.name on a service with no chart ConfigMap fails the render"
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
      -f scripts/install-test/values-empty-configmap-volume.yaml > /dev/null 2> "${tmp}/emptyvolume.err"; then
-  echo "FAIL: a state volume with an empty configMap.name rendered; the API server would refuse the Deployment"; exit 1
+  echo "FAIL: a run-controller volume with an empty configMap.name rendered; the API server would refuse the Deployment"; exit 1
 fi
-grep -qF 'services[state].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
+grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
 
 # NOTES.txt tells an upgrading operator that schedules are no longer read from
@@ -359,7 +359,7 @@ done
 grep -q 'K8S_CLIENT_QPS: "50"' "${tmp}/execution-null.yaml" && grep -q 'K8S_CLIENT_BURST: "100"' "${tmp}/execution-null.yaml" \
   || { echo "FAIL: a release without execution values must get the default rate limit"; exit 1; }
 
-# runs.taskMaxRetries and runs.taskTimeoutHours reach state and
+# runs.taskMaxRetries and runs.taskTimeoutHours reach run-controller and
 # execution-controller through the shared ConfigMap, the timeout in seconds; a
 # value outside its range fails the render, and values without a runs block
 # (as `helm upgrade --reuse-values` can produce) render the defaults.
@@ -398,7 +398,7 @@ deployment_env_entries() {
     $0 ~ ("^ +- name: (" pattern ")$") { hits = hits $0 "\n" }
     END { flush(); if (!found) exit 3 }' "$2"
 }
-for svc in state execution-controller; do
+for svc in run-controller execution-controller; do
   shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'TASK_MAX_RETRIES|TASK_TIMEOUT_SECONDS')" \
     || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
   if [ -n "$shadows" ]; then
@@ -593,14 +593,14 @@ done
 # Enterprise on 443 here) still goes through the proxy. A name with a trailing
 # dot is no in-cluster name and goes through the proxy.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set global.stateGrpcAddr=state.other.svc:50051 > "${tmp}/egress-np-global.yaml"
+  --set global.runControllerGrpcAddr=run-controller.other.svc:50051 > "${tmp}/egress-np-global.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-global.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80","FOO_ALT_URL":"http://foo.tools.svc:08080","TRAILING_DOT_ADDR":"state.:50051"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80","FOO_ALT_URL":"http://foo.tools.svc:08080","TRAILING_DOT_ADDR":"run-controller.:50051"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
   > "${tmp}/egress-np-env.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-env.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default:50051","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator.default.svc.cluster.local:50052"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"orchestrator","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default:50051","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator.default.svc.cluster.local:50052"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"orchestrator","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
   > "${tmp}/egress-np-forms.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.yaml"
 # An in-cluster address the allowlist admits on the port the agents use is left
@@ -610,12 +610,12 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.
 # a wildcard allowlist entry over the cluster domain matches them on another
 # port; an llm.baseUrl on localhost needs no allowlist entry.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator:50052"}}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator:50052"}}]' \
   > "${tmp}/egress-allowlisted-local.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-local.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'egress.privateDomains=["*.svc.cluster.local"]' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default.svc.cluster.local:50051"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default.svc.cluster.local:50051"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
   > "${tmp}/egress-allowlisted-wildcard.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-wildcard.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -648,8 +648,8 @@ grep -q 'kubernetes.io/metadata.name: ops$' "${tmp}/egress-np-dlc.yaml" \
   || { echo "FAIL: a global.*GrpcAddr in another namespace must reach the agents' egress policy"; exit 1; }
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set global.deadLetterControllerGrpcAddr=dlc.corp.example:50055 \
-  --set global.stateGrpcAddr=state.corp.example:50051 > "${tmp}/egress-np-fqdn.yaml"
-if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|state\.corp\.example'; then
+  --set global.runControllerGrpcAddr=run-controller.corp.example:50051 > "${tmp}/egress-np-fqdn.yaml"
+if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|run-controller\.corp\.example'; then
   echo "FAIL: a global.*GrpcAddr whose host is no in-cluster name must go through the proxy, not NO_PROXY"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-fqdn.yaml"
@@ -664,7 +664,7 @@ done
 # nothing; an address in link-local or a cloud metadata range, one that is no
 # valid address and a port outside 1-65535 fail the render naming the key.
 echo "--- egress: an IP address in the agents' env or a global.*GrpcAddr is a direct destination"
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set global.stateGrpcAddr=10.0.0.5:50051 \
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set global.runControllerGrpcAddr=10.0.0.5:50051 \
   --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://10.0.0.9:8080/v1","LOCAL_ADDR":"127.0.0.1:9000","LISTEN_ADDR":"0.0.0.0:8081"}},{"name":"agent-remediation","enabled":true,"env":{"BAR_ADDR":"[fd00::9]:50051"}}]' \
   > "${tmp}/egress-np-ip.yaml"
 for cidr in 10.0.0.5/32 10.0.0.9/32 '"fd00::9/128"'; do
@@ -679,8 +679,8 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-np-ip.
   --direct 10.0.0.5/32=50051 --direct 10.0.0.9/32=8080 --direct fd00::9/128=50051
 refuse_render 'services[name=agent-chat].env.META_URL="http://169.254.169.254/latest": its host 169.254.169.254 lies in' \
   --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"META_URL":"http://169.254.169.254/latest"}}]'
-refuse_render 'global.stateGrpcAddr="[fd00:ec2::254]:50051": its host fd00:ec2::254 lies in' \
-  --set 'global.stateGrpcAddr=[fd00:ec2::254]:50051'
+refuse_render 'global.runControllerGrpcAddr="[fd00:ec2::254]:50051": its host fd00:ec2::254 lies in' \
+  --set 'global.runControllerGrpcAddr=[fd00:ec2::254]:50051'
 refuse_render 'services[name=agent-remediation].env.BAD_ADDR="999.0.0.1:80": its host 999.0.0.1 has the octet "999"' \
   --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"BAD_ADDR":"999.0.0.1:80"}}]'
 refuse_render 'services[name=agent-chat].env.FOO_ADDR="10.0.0.9:70000" has a port outside 1-65535' \

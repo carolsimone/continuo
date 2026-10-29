@@ -58,21 +58,21 @@ def test_compare_takes_the_relative_change_against_a_negative_value_by_its_size(
 
 
 def test_compare_reports_each_services_cost_per_thousand_tasks_and_peak_memory():
-    before = {"dag-500": [rep(1, usage_run={"state": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}})]}
-    after = {"dag-500": [rep(1, usage_run={"state": {"cpu_seconds": 1.0, "mem_max_mib": 30.0},
+    before = {"dag-500": [rep(1, usage_run={"orchestrator": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}})]}
+    after = {"dag-500": [rep(1, usage_run={"orchestrator": {"cpu_seconds": 1.0, "mem_max_mib": 30.0},
                                            "run-controller": {"cpu_seconds": 4.0, "mem_max_mib": 40.0}})]}
     markdown = compare.compare(before, after, "A", "B")
-    assert "| state | 2.0 | 1.0 | -1.0 (-50%) | 20 | 30 | +10 (+50%) |" in markdown
+    assert "| orchestrator | 2.0 | 1.0 | -1.0 (-50%) | 20 | 30 | +10 (+50%) |" in markdown
     assert "| run-controller | — | 4.0 | — | — | 40 | — |" in markdown
 
 
 def test_compare_reports_the_idle_footprint():
-    idle_a = {"state": {"cpu_avg_m": 4.0, "mem_avg_mib": 8.0}}
-    idle_b = {"state": {"cpu_avg_m": 2.0, "mem_avg_mib": 10.0}}
+    idle_a = {"run-controller": {"cpu_avg_m": 4.0, "mem_avg_mib": 8.0}}
+    idle_b = {"run-controller": {"cpu_avg_m": 2.0, "mem_avg_mib": 10.0}}
     before = {"smoke": [rep(1, usage_idle=idle_a)]}
     after = {"smoke": [rep(1, usage_idle=idle_b)]}
     markdown = compare.compare(before, after, "A", "B")
-    assert "| state | 4 | 2 | -2 (-50%) | 8 | 10 | +2 (+25%) |" in markdown
+    assert "| run-controller | 4 | 2 | -2 (-50%) | 8 | 10 | +2 (+25%) |" in markdown
 
 
 def write_reps(root, scenario, reps):

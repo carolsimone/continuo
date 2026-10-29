@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +56,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 }
 
 // TestFullRefreshRejectedOnSchedule verifies a whole-schedule full refresh is
-// refused at the state API.
+// refused at the run-controller API.
 func TestFullRefreshRejectedOnSchedule(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")

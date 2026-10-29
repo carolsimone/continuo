@@ -24,7 +24,7 @@ import (
 // ReleasePromotedHandler consumes release.promoted:v2 on the topology-swap group.
 // It reads the promoted release's topology from its artifact and swaps the live
 // Neo4j topology when the promotion is newer than the live one, recording the
-// message in its Postgres dedup row. It writes no event: state reads the
+// message in its Postgres dedup row. It writes no event: run-controller reads the
 // schedule names of a release, and plans its seed loads, from its own copy of
 // every promoted topology.
 //

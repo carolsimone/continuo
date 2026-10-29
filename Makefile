@@ -21,7 +21,7 @@ build-dev: build-base
 # Build single service for rapid iteration
 .PHONY: build-service
 build-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-service SERVICE=state" && exit 1)
+	@test -n "$(SERVICE)" || (echo "Usage: make build-service SERVICE=run-controller" && exit 1)
 	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build $(SERVICE)
 
 # Rebuild base from scratch (rarely needed)
@@ -36,7 +36,7 @@ build: build-dev
 # Build all production images
 .PHONY: build-prod
 build-prod: build-base
-	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-run-controller:prod -f run-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
@@ -49,7 +49,7 @@ build-prod: build-base
 # Build single production service
 .PHONY: build-prod-service
 build-prod-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=state" && exit 1)
+	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=run-controller" && exit 1)
 	DOCKER_BUILDKIT=1 docker build -t continuo-$(SERVICE):prod -f $(SERVICE)/Dockerfile.prod .
 
 up: dev-env
@@ -81,7 +81,7 @@ security-scan:  ## Run the vulnerability and secret scanners (SCAN=vuln|secrets|
 
 .PHONY: e2e-setup
 e2e-setup:  ## Provision K8s test environment for E2E testing
-	@echo "Setting up K8s controllers..."
+	@echo "Setting up execution-controller..."
 	@bash tests/e2e/provision-k8s-test-env.sh
 
 .PHONY: e2e-test
@@ -91,9 +91,9 @@ e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-s
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
-e2e-cleanup:  ## Cleanup K8s controllers
-	@echo "Cleaning up K8s controllers..."
-	@bash tests/e2e/cleanup-k8s-controllers.sh
+e2e-cleanup:  ## Cleanup the execution-controller
+	@echo "Cleaning up execution-controller..."
+	@bash tests/e2e/cleanup-execution-controller.sh
 
 .PHONY: e2e-start-services
 e2e-start-services:  ## Start Go services inside docker-compose containers and wait for health
@@ -125,7 +125,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
+	@for svc in flyway-run-controller flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -140,9 +140,9 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := state orchestrator execution-controller release-controller \
+GO_SERVICES := run-controller orchestrator execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
+FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
 
@@ -197,7 +197,7 @@ test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
-	    state) db=continuo_state;; \
+	    run-controller) db=continuo_run_controller;; \
 	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
@@ -244,6 +244,14 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # pytest suite and shellcheck in containers, so it needs Docker.
 #
 # The check scripts:
+# - check-service-names: no tracked file outside immutable history (Flyway
+#   migrations, the chart changelog, the release notes, the superpowers docs and
+#   the NOTES.txt upgrade warnings) may name a retired service in a form that is
+#   not an ordinary word: its database, outbox table, environment variables,
+#   address, image, compose service, consumer groups or test identifiers. Its
+#   _test.sh runs the guard against throwaway fixture repositories: every
+#   retired form fails it (status 1, naming the file), history and ordinary
+#   prose pass, and so does this repository.
 # - check-dead-go: no Go function may be unreachable from every service main
 #   (deadcode, see scripts/check-dead-go.sh). golangci-lint's `unused` skips
 #   exported names and counts test callers, so it cannot see these.
@@ -331,6 +339,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
+	bash scripts/check-service-names_test.sh
 	bash scripts/check-dead-go.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
@@ -360,10 +369,10 @@ guards: bench-test
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
-	diff state/proto/run/v1/run.proto ui/proto/run.proto
-	diff state/proto/run/v1/run.proto cli/proto/run/v1/run.proto
-	cmp state/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
-	cmp state/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
+	diff run-controller/proto/run/v1/run.proto ui/proto/run.proto
+	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
+	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
+	cmp run-controller/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
 
 .PHONY: stack-up
 stack-up:
@@ -374,9 +383,9 @@ e2e:
 	bash tests/e2e/start-services.sh
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
-	bash tests/e2e/deploy-k8s-controllers.sh
+	bash tests/e2e/deploy-execution-controller.sh
 	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
-	bash tests/e2e/cleanup-k8s-controllers.sh
+	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).
 .PHONY: ci

@@ -1,7 +1,7 @@
 """SQL that reads one run's rows for the per-hand-off breakdown, as one JSON array.
 
   run_rows.py deployments RUN_ID   execution-controller's production deployments of the run
-  run_rows.py tasks RUN_ID         state's tasks of the run
+  run_rows.py tasks RUN_ID         run-controller's tasks of the run
 
 Each prints one statement for `psql -At`. The run id must be a UUID: it is the
 only value placed into the statement.
@@ -22,7 +22,7 @@ QUERIES = {
         "'table', job_params->>'table_name', 'queued', created_at, 'created', deployed_at, 'recorded', outcome_at)"
         " ORDER BY created_at), '[]') FROM deployments"
         " WHERE run_id = '{run_id}' AND mode = 'production'"),
-    # One row per task: its table and when state first dispatched it.
+    # One row per task: its table and when run-controller first dispatched it.
     "tasks": (
         "SELECT coalesce(json_agg(json_build_object('table', table_name, 'dispatched', dispatched_at)), '[]')"
         " FROM tasks WHERE run_id = '{run_id}'"),

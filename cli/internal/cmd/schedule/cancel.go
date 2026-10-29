@@ -12,12 +12,12 @@ import (
 )
 
 // NewCancelCommand builds `continuo schedule cancel <schedule-name> <reason>`.
-// It asks the state service to cancel the active run of the named schedule: the
+// It asks the run-controller service to cancel the active run of the named schedule: the
 // run becomes cancelling and ends cancelled once its Jobs have stopped. reason is
 // a required positional recorded for audit. The cancelling identity is not a
 // command argument: it comes from cfg.Actor (the CONTINUO_ACTOR env var) so that
 // a caller such as the chat agent stamps a fixed identity without a flag. When
-// cfg.Actor is empty the state service records its own system identity.
+// cfg.Actor is empty the run-controller service records its own system identity.
 func NewCancelCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <schedule-name> <reason>",
@@ -27,7 +27,7 @@ func NewCancelCommand(factory RunClientFactory, cfg *config.Config, stdout, stde
 Use when the user asks to stop, cancel, or kill a schedule that is running now.
 
 A successful cancel means the run is now cancelling, not that it has stopped:
-the state service stops handing out work, and the run ends cancelled once
+the run-controller service stops handing out work, and the run ends cancelled once
 execution-controller has stopped every Job of it. Until then the run's status
 is cancelling and its tasks that were running show as stopping; read
 "schedule status <schedule-name>" to see when the run has ended.
@@ -40,7 +40,7 @@ Arguments:
                    and must be non-empty.
 
 The cancelling identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the state service records its own
+environment variable when set, otherwise the run-controller service records its own
 system identity.
 
 Output (stdout, JSON):
@@ -53,7 +53,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, or a blank reason
   conflict   (exit 4)  the schedule has no pending, running or cancelling run, the run ended before the cancel reached it, or the request id was used before with other arguments
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule cancel daily-revenue \"bad upstream data\"",
 		Annotations: map[string]string{
@@ -77,7 +77,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

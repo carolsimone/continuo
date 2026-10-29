@@ -127,7 +127,7 @@ export interface RunGraph {
 }
 
 // One attempt of one task, from /api/runs/:id/attempts. `attempt` is
-// 0-based; a value state has not recorded yet is null.
+// 0-based; a value run-controller has not recorded yet is null.
 export interface TaskAttempt {
   task_id: string;
   attempt: number;

@@ -15,7 +15,7 @@ linters:
       rules:
         main:
           deny:
-            - pkg: github.com/carolsimone/continuo/state
+            - pkg: github.com/carolsimone/continuo/run-controller
               desc: "cli consumes services only via public gRPC; no backend internals (AGENTS.md)"
             - pkg: github.com/carolsimone/continuo/orchestrator
               desc: "cli consumes services only via public gRPC; no backend internals (AGENTS.md)"

@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +48,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	seedTopology(t, ctx, clients)
 
-	// Trigger the single-node run via the state gRPC.
+	// Trigger the single-node run via the run-controller gRPC.
 	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetService, targetSchema, targetTable)
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    targetService,
@@ -77,7 +77,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	// Assert exactly one task was dispatched.
 	t.Log("Verifying tasks has exactly 1 row...")
 	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
+	err = clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`,
 		runID,
 	).Scan(&taskCount)
@@ -85,26 +85,26 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	require.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node run")
 
 	// Assert image_tag is populated.
-	imageTag := queryFirstTaskImageTag(t, clients.stateDB, runID)
+	imageTag := queryFirstTaskImageTag(t, clients.runControllerDB, runID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be non-empty")
 	t.Logf("tasks image_tag=%s", imageTag)
 
 	// Assert the run's kind is "single_node_run".
-	runKind := queryRunKind(t, clients.stateDB, runID)
+	runKind := queryRunKind(t, clients.runControllerDB, runID)
 	assert.Equal(t, "single_node_run", runKind, "runs.kind must be 'single_node_run'")
 
 	// Assert the run has no source run (latest mode has none).
 	assert.Empty(t, queryRunSourceRunID(t, clients, runID),
 		"source_run_id must be empty for a latest-mode single-node run")
 
-	// Assert state's ListNodeTasks RPC returns this run's task as the most
+	// Assert run-controller's ListNodeTasks RPC returns this run's task as the most
 	// recent row for the target node, with the right kind, image_tag,
 	// and non-nil timings.
 	//
 	// The attempt's final report carries its times, but the run can be read
-	// before state has applied it: poll ListNodeTasks until the run appears with
+	// before run-controller has applied it: poll ListNodeTasks until the run appears with
 	// its started_at and completed_at before asserting.
-	t.Log("Polling state.ListNodeTasks until the new run appears with execution timestamps...")
+	t.Log("Polling run-controller.ListNodeTasks until the new run appears with execution timestamps...")
 	var top *runv1.NodeTask
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
 		listResp, err := clients.runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{
@@ -296,13 +296,13 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 
 	// Postgres: remove tasks (its task_attempts go with it through the
 	// foreign key's cascade) → runs.
-	_, _ = clients.stateDB.Exec(`DELETE FROM tasks WHERE run_id = $1`, runID)
-	_, _ = clients.stateDB.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
+	_, _ = clients.runControllerDB.Exec(`DELETE FROM tasks WHERE run_id = $1`, runID)
+	_, _ = clients.runControllerDB.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
 
 	// The run's outbox rows. A failed delete leaves rows for later tests to trip
 	// over, so it is logged rather than discarded.
-	if _, err := clients.stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
-		t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", runID, err)
+	if _, err := clients.runControllerDB.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID); err != nil {
+		t.Logf("Warning: failed to delete run_controller_outbox rows for run %s: %v", runID, err)
 	}
 
 	// K8s jobs created for this run.
@@ -322,7 +322,7 @@ func readTaskImageTag(
 ) string {
 	t.Helper()
 	var imageTag string
-	err := clients.stateDB.GetContext(context.Background(), &imageTag,
+	err := clients.runControllerDB.GetContext(context.Background(), &imageTag,
 		`SELECT image_tag
 		   FROM tasks
 		  WHERE run_id   = $1

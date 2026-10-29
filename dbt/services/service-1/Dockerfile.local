@@ -1,7 +1,7 @@
 FROM dbt-base:latest
 
 # customname-dbt is a dbt alias exercising the dbt-commands.yaml dialect path in
-# e2e: the executor dispatches service-1 jobs as `customname-dbt run --select ...`.
+# e2e: execution-controller dispatches service-1 jobs as `customname-dbt run --select ...`.
 # The symlink lands in /usr/local/bin, so this single step needs root.
 USER root
 RUN ln -s "$(command -v dbt)" /usr/local/bin/customname-dbt

@@ -21,7 +21,7 @@ func parseMain(t *testing.T) *ast.File {
 
 // TestMain_ConsumesOnlyTopologyAndCaseBaseStreams pins the streams orchestrator
 // reads: the two release.promoted:v2 groups (topology swap, code versions) and
-// the three case-base groups. state plans, dispatches, unblocks and finalizes
+// the three case-base groups. run-controller plans, dispatches, unblocks and finalizes
 // runs, so orchestrator consumes no run stream.
 func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	seen := map[string]bool{}

@@ -251,7 +251,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   }, [lastRunId]);
 
   // The run the Run tab shows — a selected past run, else the latest — has
-  // its tasks and every attempt of every task read from state. A past run is
+  // its tasks and every attempt of every task read from run-controller. A past run is
   // read once; the latest run is re-read every 5 s until it is terminal. A
   // poll reads the rows alongside the run's status, so the poll that first
   // sees the run terminal may hold rows from before the run ended: once that

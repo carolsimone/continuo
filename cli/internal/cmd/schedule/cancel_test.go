@@ -44,7 +44,7 @@ func runCancel(t *testing.T, fake client.RunClient, args []string, human bool, a
 }
 
 func TestCancel_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "bad upstream data"}, false, "")
 
@@ -61,7 +61,7 @@ func TestCancel_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
-	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "agent-chat-llm")
 
@@ -70,7 +70,7 @@ func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
 }
 
 func TestCancel_EmptyActorSendsEmptyCancelledBy(t *testing.T) {
-	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "")
 
@@ -79,7 +79,7 @@ func TestCancel_EmptyActorSendsEmptyCancelledBy(t *testing.T) {
 }
 
 func TestCancel_MissingReasonArgumentExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest"}, false, "")
 
@@ -91,7 +91,7 @@ func TestCancel_MissingReasonArgumentExits2(t *testing.T) {
 }
 
 func TestCancel_BlankReasonExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", ""}, false, "")
 
@@ -103,7 +103,7 @@ func TestCancel_BlankReasonExits2(t *testing.T) {
 }
 
 func TestCancel_TooManyArgumentsExits2(t *testing.T) {
-	fake := &fakeState{}
+	fake := &fakeRunController{}
 
 	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", "reason", "extra"}, false, "")
 
@@ -114,7 +114,7 @@ func TestCancel_TooManyArgumentsExits2(t *testing.T) {
 }
 
 func TestCancel_FailedPreconditionExits4(t *testing.T) {
-	fake := &fakeState{cancelErr: status.Error(codes.FailedPrecondition, "no active run for schedule \"daily_ingest\"")}
+	fake := &fakeRunController{cancelErr: status.Error(codes.FailedPrecondition, "no active run for schedule \"daily_ingest\"")}
 
 	stdout, _, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, false, "")
 
@@ -128,7 +128,7 @@ func TestCancel_FailedPreconditionExits4(t *testing.T) {
 }
 
 func TestCancel_UnavailableExits5(t *testing.T) {
-	fake := &fakeState{cancelErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeRunController{cancelErr: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, false, "")
 
@@ -136,7 +136,7 @@ func TestCancel_UnavailableExits5(t *testing.T) {
 }
 
 func TestCancel_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
+	fake := &fakeRunController{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, true, "")
 

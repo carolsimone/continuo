@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
@@ -50,11 +50,11 @@ func (c *countedStops) AttemptStopped() { c.stopped++ }
 func (*countedStops) JobReaped(string)  {}
 
 // runCancelledMessage is one run.cancelled:v1 entry of runID, as a new outbox
-// row of state.
+// row of run-controller.
 func runCancelledMessage(t *testing.T, id string, runID uuid.UUID, attempts ...pkgevents.CancelledAttempt) goredis.XMessage {
 	t.Helper()
 	outboxID := uuid.New()
-	fields, err := pkgevents.RunCancelledFields(outboxID.String(), "default", "state", nowUTC(),
+	fields, err := pkgevents.RunCancelledFields(outboxID.String(), "default", "run-controller", nowUTC(),
 		pkgevents.RunCancelled{RunID: runID.String(), CancelledBy: "alice", Reason: "wrong window", Attempts: attempts})
 	require.NoError(t, err)
 	values := map[string]any{"outbox_entry_id": outboxID.String()}
@@ -87,7 +87,7 @@ func TestRunCancelledBinding_DeletesTheJobsAfterCommit(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, d))
 	term := &committedDeletes{t: t, db: db, statuses: map[string]string{}}
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
-	bind := executorredis.NewRunCancelledBinding(newUoW,
+	bind := ecredis.NewRunCancelledBinding(newUoW,
 		handlers.NewRunCancelledHandler(jobsHolding{}, term, noStopMetrics{}, logger), logger)
 	unseen := pkgevents.CancelledAttempt{TaskID: uuid.NewString(), Attempt: 0, JobName: "dbt-public-items-" + runID.String()[:8]}
 	msg := runCancelledMessage(t, msgID(1), runID, unseen)
@@ -110,7 +110,7 @@ func TestRunCancelledBinding_AnUnreadableCancelIsPermanent(t *testing.T) {
 	defer cleanup()
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
-	bind := executorredis.NewRunCancelledBinding(newUoW,
+	bind := ecredis.NewRunCancelledBinding(newUoW,
 		handlers.NewRunCancelledHandler(jobsHolding{}, &committedDeletes{}, noStopMetrics{}, logger), logger)
 	msg := runCancelledMessage(t, msgID(1), uuid.New())
 	msg.Values["payload"] = `{"run_id":"not-a-uuid"}`

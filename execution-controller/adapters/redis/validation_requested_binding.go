@@ -58,7 +58,7 @@ func validationDedupKey(releaseID string) uuid.UUID {
 // run `dbt seed --empty` and create the schema through dbt's own non-race-safe
 // path) finds the schema already present, so no two parallel root jobs race
 // `CREATE SCHEMA` on pg_namespace. Schema creation runs against the warehouse
-// outside the executor's Unit-of-Work transaction; a failure returns before any
+// outside execution-controller's Unit-of-Work transaction; a failure returns before any
 // deployment row is enqueued and the message is retried.
 func NewValidationRequestedBinding(
 	uowFactory func() uow.UnitOfWork,

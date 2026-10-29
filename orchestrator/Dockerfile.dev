@@ -28,7 +28,7 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
 # other services' source trees to be present in this image.
-RUN go work edit -dropuse=./state \
+RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./release-controller \

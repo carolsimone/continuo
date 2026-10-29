@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
-	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -25,7 +25,7 @@ import (
 
 // recordingSchemaCreator is a no-op CandidateSchemaCreator that records the
 // schemas it was asked to ensure. The binding's candidate-schema pre-create runs
-// against the dbt warehouse, which these executor-DB integration tests do not
+// against the dbt warehouse, which these execution-controller database integration tests do not
 // provision, so creation is stubbed; the recorded names let a test assert the
 // pre-create fired exactly once per release.
 type recordingSchemaCreator struct {
@@ -47,7 +47,7 @@ func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.
 	}
 	handler := handlers.NewValidationRequestedHandler(logger)
 	creator := &recordingSchemaCreator{}
-	binding := executorredis.NewValidationRequestedBinding(uowFactory, handler, creator, logger)
+	binding := ecredis.NewValidationRequestedBinding(uowFactory, handler, creator, logger)
 	return binding, creator
 }
 

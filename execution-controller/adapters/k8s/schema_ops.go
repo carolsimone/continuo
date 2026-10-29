@@ -14,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Candidate-schema lifecycle ops run as one-shot engine-image Jobs: the executor
+// Candidate-schema lifecycle ops run as one-shot engine-image Jobs: execution-controller
 // schedules them and blocks on the result but never connects to the warehouse itself.
 const (
 	schemaOpEnsure = "ensure_schema"
@@ -128,7 +128,7 @@ func schemaOpJobTerminal(job *batchv1.Job) (succeeded, failed bool) {
 // terminates: Succeeded -> nil, Failed (or timeout) -> error. It is idempotent by job
 // name — a redelivered trigger waits on the in-flight Job instead of duplicating it —
 // and a leftover terminal Job from a prior attempt is cleared first so a retry runs
-// clean. The engine adapter runs the DDL; the executor holds no warehouse connection.
+// clean. The engine adapter runs the DDL; execution-controller holds no warehouse connection.
 func (c *K8sClient) RunSchemaOpJob(ctx context.Context, op, candidateSchema, jobName, namespace string) error {
 	if err := c.submitSchemaOpJob(ctx, op, candidateSchema, jobName, namespace); err != nil {
 		return err

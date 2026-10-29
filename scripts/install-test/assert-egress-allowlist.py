@@ -123,7 +123,7 @@ CASES = [
     ("agent-remediation without GITHUB_BASE_URL",
      ["--set-json", 'services=[{"name":"agent-remediation","enabled":true}]'], ANTHROPIC | GITHUB),
     ("no agent-remediation entry",
-     ["--set-json", 'services=[{"name":"state","enabled":true}]'], ANTHROPIC | GITHUB),
+     ["--set-json", 'services=[{"name":"run-controller","enabled":true}]'], ANTHROPIC | GITHUB),
     # Ports of URLs are read in base 10, as written.
     ("URL port with a leading zero", llm_url("http://gpu:08080"), {("gpu", 8080, True)} | GITHUB),
     ("GitHub Enterprise port with a leading zero",

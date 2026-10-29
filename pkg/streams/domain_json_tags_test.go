@@ -16,7 +16,7 @@ import (
 // a module directory relative to the repo root; the guard walks "<module>/domain".
 // topology-controller is Python and holds no Go files, so it is not listed.
 var domainModules = []string{
-	"state",
+	"run-controller",
 	"orchestrator",
 	"execution-controller",
 	"release-controller",

@@ -66,7 +66,7 @@
         "env": {"type": "string"},
         "logLevel": {"type": "string"},
         "teamImagePrefix": {"type": "string"},
-        "stateGrpcAddr": {"type": "string"},
+        "runControllerGrpcAddr": {"type": "string"},
         "orchestratorGrpcAddr": {"type": "string"},
         "agentRemediationGrpcAddr": {"type": "string"},
         "agentChatGrpcAddr": {"type": "string"},

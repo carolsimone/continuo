@@ -28,7 +28,7 @@ start_sampler() {
     # stdout is detached so the command substitution that captures the PID returns at once.
     "${here}/sample.sh" k8s "$1" 5 "${BENCH_K8S_NAMESPACE:-continuo}" --kubeconfig "${BENCH_KUBECONFIG}" >/dev/null 2>&1 &
   else
-    "${here}/sample.sh" docker "$1" 5 state orchestrator execution-controller \
+    "${here}/sample.sh" docker "$1" 5 run-controller orchestrator execution-controller \
       "$(bench_container postgres)" "$(bench_container redis)" "$(bench_container neo4j)" >/dev/null 2>&1 &
   fi
   echo $!
@@ -106,7 +106,7 @@ for rep in $(seq 1 "${reps}"); do
   stop_sampler
   bench_kubectl get jobs -l "schedule=${schedule}" -o json | python3 "${here}/k8s_json.py" slim-jobs > "${out}/jobs-rep${rep}.json"
   export_rows deployments execution-controller "${out}/deployments-rep${rep}.json"
-  export_rows tasks state "${out}/tasks-rep${rep}.json"
+  export_rows tasks run-controller "${out}/tasks-rep${rep}.json"
   python3 "${here}/collect.py" --scenario "${name}" --rep "${rep}" --operation "${op}" --run-id "${run_id}" \
     --deployments "${out}/deployments-rep${rep}.json" --tasks "${out}/tasks-rep${rep}.json" \
     --payload "${payload}" --jobs "${out}/jobs-rep${rep}.json" --trigger-ts "${trigger_ts}" --done-ts "${done_ts}" \

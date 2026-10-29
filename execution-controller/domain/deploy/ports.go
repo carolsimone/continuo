@@ -37,7 +37,7 @@ type JobSpec struct {
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives as env vars; empty for every other node.
 	SecretRef string
-	// Operation selects the dbt verb the executor runs for this node. Empty
+	// Operation selects the dbt verb execution-controller runs for this node. Empty
 	// is the default: dbt run/seed/snapshot by NodeType. "test" runs
 	// `dbt test --select <node>`.
 	Operation string

@@ -10,7 +10,7 @@ import { requireRequestId } from './request-id';
 import { toISO } from './timestamp';
 
 const DEFAULT_RUNS_PAGE = 10;
-// State clamps ListRuns page_size to this ceiling.
+// run-controller clamps ListRuns page_size to this ceiling.
 const MAX_RUNS_PAGE = 200;
 
 // The code of a 409 that refuses a cron edit because another edit saved first.
@@ -53,9 +53,9 @@ function toISOList(times: any): string[] {
 }
 
 // grpcDetails is the text of a failed RunService call that every route here
-// answers with: state's own message (the parser's, for a refused cron), which
+// answers with: run-controller's own message (the parser's, for a refused cron), which
 // grpc-js keeps in details while its message prefixes it with the status
-// code and name. An error raised before the call reached state has no
+// code and name. An error raised before the call reached run-controller has no
 // details and keeps its own message.
 function grpcDetails(err: any): string {
   return (typeof err?.details === 'string' && err.details) || err?.message || '';

@@ -25,7 +25,7 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 		host string
 		want []string
 	}{
-		{getEnv("STATE_HOST", "state"), withConsumersAndOutbox},
+		{getEnv("RUN_CONTROLLER_HOST", "run-controller"), withConsumersAndOutbox},
 		{getEnv("ORCHESTRATOR_HOST", "orchestrator"), withConsumers},
 		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), withConsumersAndOutbox},
 		{getEnv("REMEDIATION_HOST", "remediation"), withConsumersAndOutbox},

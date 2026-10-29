@@ -14,7 +14,7 @@ const mockUpsertSchedule = vi.fn();
 const mockDeleteSchedule = vi.fn();
 const mockPreviewSchedule = vi.fn();
 
-const mockStateClient = {
+const mockRunClient = {
   startRun: mockStartRun,
   listSchedules: mockListSchedules,
   listRuns: mockListRuns,
@@ -46,7 +46,7 @@ const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
 
 const app = express();
 app.use(express.json());
-app.use('/api/schedules', createSchedulesRouter(mockStateClient as any));
+app.use('/api/schedules', createSchedulesRouter(mockRunClient as any));
 
 describe('GET /api/schedules', () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -85,18 +85,18 @@ describe('GET /api/schedules', () => {
     expect(res.body).not.toHaveProperty('latest_promotion_seq');
   });
 
-  it('returns 500 if state call fails', async () => {
+  it('returns 500 if run-controller call fails', async () => {
     mockListSchedules.mockImplementation((_req: any, cb: any) =>
-      cb(new Error('state down'))
+      cb(new Error('run-controller down'))
     );
 
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'state down' });
+    expect(res.body).toEqual({ error: 'run-controller down' });
   });
 
-  it("maps the gRPC status of a refused read and answers with state's own message", async () => {
+  it("maps the gRPC status of a refused read and answers with run-controller's own message", async () => {
     mockListSchedules.mockImplementation((_req: any, cb: any) =>
       cb(grpcError(grpc.status.INVALID_ARGUMENT, 'bad request'))
     );
@@ -111,7 +111,7 @@ describe('GET /api/schedules', () => {
 describe('GET /api/schedules/:name/runs', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('lists completed runs from the state service', async () => {
+  it('lists completed runs from the run-controller service', async () => {
     mockListRuns.mockImplementation((req: any, cb: any) => {
       expect(req).toEqual({ schedule_name: 'daily', page_size: 10, page_offset: 0 });
       cb(null, { runs: [
@@ -134,7 +134,7 @@ describe('GET /api/schedules/:name/runs', () => {
     expect(res.body.total_count).toBe(2);
   });
 
-  it("answers 400 with state's own message when state refuses the request as INVALID_ARGUMENT", async () => {
+  it("answers 400 with run-controller's own message when run-controller refuses the request as INVALID_ARGUMENT", async () => {
     mockListRuns.mockImplementation((_req: any, cb: any) =>
       cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required'))
     );
@@ -169,7 +169,7 @@ describe('GET /api/schedules/:name/runs', () => {
       2, { schedule_name: 'daily', page_size: 10, page_offset: 0 }, expect.any(Function));
   });
 
-  it('reports a zero total when state sends none', async () => {
+  it('reports a zero total when run-controller sends none', async () => {
     mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, { runs: [] }));
 
     const res = await request(app).get('/api/schedules/daily/runs');
@@ -212,7 +212,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
       req.user = { userId: 'okta|alice', email: 'a@x', name: 'A', role: 'operator' };
       next();
     });
-    authedApp.use('/api/schedules', createSchedulesRouter(mockStateClient as any));
+    authedApp.use('/api/schedules', createSchedulesRouter(mockRunClient as any));
 
     const res = await request(authedApp).post('/api/schedules/hourly/trigger').send({ request_id: REQUEST_ID });
     expect(res.status).toBe(200);
@@ -231,7 +231,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     expect(seenUserId).toBe('system');
   });
 
-  it("returns 404 with state's own message when no model of the live release has the schedule", async () => {
+  it("returns 404 with run-controller's own message when no model of the live release has the schedule", async () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.NOT_FOUND, 'schedule "nope" not found in catalog')));
 
@@ -241,7 +241,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     expect(res.body).toEqual({ error: 'schedule "nope" not found in catalog' });
   });
 
-  it("returns 409 with state's own message when schedule already has an active run", async () => {
+  it("returns 409 with run-controller's own message when schedule already has an active run", async () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule "hourly" already has an active run')));
 
@@ -307,7 +307,7 @@ describe('routes/schedules: POST /:name/trigger', () => {
     expect(res.body).toEqual({ error: 'request_id reused with different parameters' });
   });
 
-  it('answers 503 maintenance when state refuses the trigger in maintenance mode', async () => {
+  it('answers 503 maintenance when run-controller refuses the trigger in maintenance mode', async () => {
     mockStartRun.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
 
     const res = await request(app).post('/api/schedules/daily/trigger').send({ request_id: REQUEST_ID });
@@ -350,10 +350,10 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     expect(res.body.promotion_seq).toBe(0);
   });
 
-  // State returns each edge from the dependent node to the node it reads. The
+  // run-controller returns each edge from the dependent node to the node it reads. The
   // ui draws and orders graphs in execution order, where `from` runs first, so
   // the route flips every edge exactly once here, at the boundary.
-  it('emits edges upstream -> consumer, reversing the dependent -> dependency edge state sends', async () => {
+  it('emits edges upstream -> consumer, reversing the dependent -> dependency edge run-controller sends', async () => {
     mockGetScheduleGraph.mockImplementation((_req: any, cb: any) => {
       cb(null, {
         nodes: [
@@ -369,7 +369,7 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     expect(res.body.edges).toEqual([{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.sales.orders' }]);
   });
 
-  it("maps a gRPC status to its HTTP status and answers with state's own message", async () => {
+  it("maps a gRPC status to its HTTP status and answers with run-controller's own message", async () => {
     mockGetScheduleGraph
       .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required')))
       .mockImplementationOnce((_req: any, cb: any) => cb(new Error('grpc error')));
@@ -450,7 +450,7 @@ describe('routes/schedules: PUT /:name/cron', () => {
       .mockImplementationOnce((_req: any, cb: any) => cb(null, {
         schedules: [{ schedule_name: 'daily', cron: '', updated_by: '' }],
       }))
-      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('state down')));
+      .mockImplementationOnce((_req: any, cb: any) => cb(new Error('run-controller down')));
 
     const removed = await request(app).put('/api/schedules/daily/cron').send(body);
     const unread = await request(app).put('/api/schedules/daily/cron').send(body);
@@ -482,7 +482,7 @@ describe('routes/schedules: PUT /:name/cron', () => {
     expect(res.body).toEqual({ error: 'schedule "ghost": no model of the live release belongs to this schedule' });
   });
 
-  it('answers 503 maintenance when state refuses the edit in maintenance mode', async () => {
+  it('answers 503 maintenance when run-controller refuses the edit in maintenance mode', async () => {
     mockUpsertSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
 
     const res = await request(app).put('/api/schedules/daily/cron').send(body);
@@ -525,7 +525,7 @@ describe('routes/schedules: DELETE /:name/cron', () => {
     expect(seenUserId).toBe('system');
   });
 
-  it('answers 503 maintenance when state refuses the removal in maintenance mode', async () => {
+  it('answers 503 maintenance when run-controller refuses the removal in maintenance mode', async () => {
     mockDeleteSchedule.mockImplementation((_req: any, _md: any, cb: any) => cb(maintenanceError()));
 
     const res = await request(app).delete('/api/schedules/daily/cron');
@@ -534,7 +534,7 @@ describe('routes/schedules: DELETE /:name/cron', () => {
     expect(res.body).toEqual({ error: MAINTENANCE_MESSAGE, code: MAINTENANCE_CODE });
   });
 
-  it("answers a refused removal with state's own message", async () => {
+  it("answers a refused removal with run-controller's own message", async () => {
     mockDeleteSchedule.mockImplementation((_req: any, _md: any, cb: any) =>
       cb(grpcError(grpc.status.INVALID_ARGUMENT, 'schedule_name is required')));
 
@@ -587,7 +587,7 @@ describe('routes/schedules: GET /cron-preview', () => {
     expect(res.body).toEqual({ error: 'unknown timezone "Mars/Olympus": use an IANA zone such as Europe/Paris or UTC' });
   });
 
-  it('sends an absent or repeated query value as empty, for state to refuse', async () => {
+  it('sends an absent or repeated query value as empty, for run-controller to refuse', async () => {
     mockPreviewSchedule.mockImplementation((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'cron is empty')));
 
     await request(app).get('/api/schedules/cron-preview?timezone=UTC&timezone=Europe%2FParis');

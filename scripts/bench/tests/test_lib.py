@@ -226,7 +226,7 @@ def test_sql_on_compose_runs_in_the_postgres_container_as_the_services_user(tmp_
     import fake_env
     env = fake_env.make(tmp_path, [])
     (Path(env["FAKE_DIR"]) / "tasks.json").write_text('[{"table": "a"}]\n')
-    out = run_lib(env, 'bench_sql state "SELECT 1 FROM tasks"')
+    out = run_lib(env, 'bench_sql run-controller "SELECT 1 FROM tasks"')
     assert out.returncode == 0, out.stderr
     assert out.stdout == '[{"table": "a"}]\n'
     psql = [json.loads(line) for line in (Path(env["FAKE_DIR"]) / "docker-calls.jsonl").read_text().splitlines()]
@@ -253,7 +253,7 @@ def test_sql_on_k8s_without_a_postgres_pod_fails_the_read_not_the_script(tmp_pat
     env = fake_env.make(tmp_path, [])
     env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null")
     env.pop("BENCH_PG_POD", None)
-    out = run_lib(env, 'if bench_sql state "SELECT 1"; then echo read; else echo "fell back"; fi')
+    out = run_lib(env, 'if bench_sql run-controller "SELECT 1"; then echo read; else echo "fell back"; fi')
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "fell back"
     assert "BENCH_PG_POD is not set" in out.stderr

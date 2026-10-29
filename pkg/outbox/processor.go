@@ -16,9 +16,9 @@ import (
 )
 
 // Publisher performs whatever side effects an outbox entry represents.
-// For event-only services (state, orchestrator), implementations simply XADD
+// For event-only services (run-controller, orchestrator), implementations simply XADD
 // entry.Payload to entry.StreamName. For services with multi-step semantics
-// (executor: K8s deploy + multiple XADDs), the implementation is service-aware.
+// (execution-controller: K8s deploy + multiple XADDs), the implementation is service-aware.
 type Publisher interface {
 	Publish(ctx context.Context, entry *Entry) error
 }
@@ -28,7 +28,7 @@ type Publisher interface {
 // XADDs). PublishBatch returns one error per entry, positionally aligned with
 // entries; a nil at index i means entry i succeeded. The processor uses this
 // path automatically when the publisher implements it, and falls back to
-// per-entry Publish otherwise — so multi-step publishers (executor) keep their
+// per-entry Publish otherwise — so multi-step publishers (execution-controller) keep their
 // sequential semantics untouched.
 //
 // Ordering guarantee: implementations MUST issue the per-entry side effects in

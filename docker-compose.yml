@@ -16,11 +16,11 @@ services:
     volumes:
       - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
 
-  flyway-state:
+  flyway-run-controller:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_run_controller -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/state:/flyway/sql
+      - ./db/migration/run_controller:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -121,11 +121,11 @@ services:
       retries: 10
       start_period: 90s
 
-  state:
+  run-controller:
     build:
       context: .
-      dockerfile: state/Dockerfile.dev
-    container_name: state
+      dockerfile: run-controller/Dockerfile.dev
+    container_name: run-controller
     depends_on:
       postgres:
         condition: service_started
@@ -140,7 +140,7 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
-      - POSTGRES_DB=continuo_state
+      - POSTGRES_DB=continuo_run_controller
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       - POSTGRES_HOST=postgres
@@ -160,7 +160,7 @@ services:
       - "8082:8082"   # Health check HTTP
       - "50051:50051" # gRPC
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
@@ -236,7 +236,7 @@ services:
     ports:
       - "8084:8084"   # Health check HTTP
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
@@ -301,7 +301,7 @@ services:
       - "8087:8087"   # Health check HTTP
       - "50052:50052" # gRPC
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
       - ./orchestrator:/app/orchestrator
@@ -564,7 +564,7 @@ services:
     depends_on:
       - postgres
       - flyway-agent-chat
-      - state
+      - run-controller
       - orchestrator
       - stub-llm
       - redis
@@ -579,7 +579,7 @@ services:
       - DB_SSLMODE=disable
       - GRPC_PORT=50053
       - HEALTH_PORT=8091
-      - CONTINUO_STATE_ADDR=state:50051
+      - CONTINUO_RUN_CONTROLLER_ADDR=run-controller:50051
       - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
       - CONTINUO_DEAD_LETTER_ADDR=dead-letter-controller:50055
       - REDIS_ADDR=redis:6379
@@ -594,16 +594,16 @@ services:
       # public API of LLM_PROVIDER=anthropic|openai.
       - LLM_BASE_URL=${LLM_BASE_URL-http://stub-llm:9100}
       # Outbound HTTP (the LLM) goes through egress-proxy. The gRPC dials to
-      # state, orchestrator and dead-letter-controller, which agent-chat's
-      # continuo CLI subprocess inherits, are the stack's own services and
-      # bypass it. stub-llm is deliberately absent from NO_PROXY: it is an
-      # allowlisted egress destination. The Go module hosts are listed so
-      # `go run` in this container can still fetch modules. minio is the S3
+      # run-controller, orchestrator and dead-letter-controller, which
+      # agent-chat's continuo CLI subprocess inherits, are the stack's own
+      # services and bypass it. stub-llm is deliberately absent from NO_PROXY:
+      # it is an allowlisted egress destination. The Go module hosts are listed
+      # so `go run` in this container can still fetch modules. minio is the S3
       # endpoint agent-chat is given when its archive is enabled; it is the
       # stack's own service and bypasses the proxy.
       - HTTP_PROXY=http://egress-proxy:3128
       - HTTPS_PROXY=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,state,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,run-controller,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
     ports:
       - "8091:8091"
       - "50053:50053"
@@ -622,7 +622,7 @@ services:
       dockerfile: tests/e2e/Dockerfile
     container_name: e2e
     depends_on:
-      state:
+      run-controller:
         condition: service_started
       orchestrator:
         condition: service_started
@@ -638,7 +638,7 @@ services:
         condition: service_started
     environment:
       - ORCHESTRATOR_HOST=orchestrator
-      - STATE_HOST=state
+      - RUN_CONTROLLER_HOST=run-controller
       - REDIS_HOST=redis
       - NEO4J_HOST=neo4j
       - POSTGRES_HOST=postgres
@@ -647,7 +647,7 @@ services:
     volumes:
       - ./kubeconfig:/app/kubeconfig
       - ./tests/e2e:/app/tests/e2e
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./orchestrator:/app/orchestrator
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
@@ -669,7 +669,7 @@ services:
       context: ./ui
     container_name: ui
     depends_on:
-      state:
+      run-controller:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
@@ -678,7 +678,7 @@ services:
       stub-github:
         condition: service_started
     environment:
-      - STATE_GRPC_ADDR=state:50051
+      - RUN_CONTROLLER_GRPC_ADDR=run-controller:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
       - PORT=8090
       - NODE_ENV=production
@@ -722,7 +722,7 @@ services:
     container_name: ui-auth
     profiles: ["auth-e2e"]
     depends_on:
-      state:
+      run-controller:
         condition: service_started
       redis:
         condition: service_started
@@ -735,7 +735,7 @@ services:
       stub-github:
         condition: service_started
     environment:
-      - STATE_GRPC_ADDR=state:50051
+      - RUN_CONTROLLER_GRPC_ADDR=run-controller:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
       - PORT=8090
       - NODE_ENV=production

@@ -40,7 +40,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, or a name longer than 50 characters
   not_found  (exit 3)  no model of the live release has the schedule's tag and the schedule has no cron (see "schedule list")
   conflict   (exit 4)  a run is already active for this schedule, or the request id was used before with other arguments
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule test daily",
@@ -60,7 +60,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

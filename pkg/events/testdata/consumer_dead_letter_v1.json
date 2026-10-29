@@ -1,7 +1,7 @@
 {
   "input": {
     "tenant_id": "default",
-    "producer": "state",
+    "producer": "run-controller",
     "occurred_at": "2026-10-03T12:34:56.789012Z",
     "original_stream": "example.stream:v1",
     "original_group": "example-group",
@@ -19,7 +19,7 @@
     "event_id": "b74523cc-cce4-5748-bda4-3c257c7ba72d",
     "tenant_id": "default",
     "occurred_at": "2026-10-03T12:34:56.789012Z",
-    "producer": "state",
+    "producer": "run-controller",
     "schema_version": "1",
     "payload": {
       "original_stream": "example.stream:v1",

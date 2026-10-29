@@ -12,7 +12,7 @@ Generated 2026-07-29. Regenerate with the commands in each section below.
 
 ## Go
 
-108 unique third-party modules across the nine Go modules (`state`, `orchestrator`,
+108 unique third-party modules across the nine Go modules (`run-controller`, `orchestrator`,
 `execution-controller`, `release-controller`, `remediation`,
 `agent-remediation`, `agent-chat`, `pkg`, `cli`).
 
@@ -28,7 +28,7 @@ No copyleft dependencies.
 
 ```bash
 go install github.com/google/go-licenses@latest
-for m in state orchestrator execution-controller release-controller \
+for m in run-controller orchestrator execution-controller release-controller \
          remediation agent-remediation agent-chat pkg cli; do
   (cd "$m" && go-licenses csv ./... 2>/dev/null)
 done

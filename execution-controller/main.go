@@ -258,23 +258,23 @@ func main() {
 		return c
 	}
 
-	taskDispatchConsumer := newConsumer(streams.TaskDispatchV1, streams.ExecutorTaskDispatch,
+	taskDispatchConsumer := newConsumer(streams.TaskDispatchV1, streams.ExecutionControllerTaskDispatch,
 		redis.NewTaskDispatchBinding(uowFactory, taskDispatchHandler, logger))
-	runCancelledConsumer := newConsumer(streams.RunCancelledV1, streams.ExecutorRunCancelled,
+	runCancelledConsumer := newConsumer(streams.RunCancelledV1, streams.ExecutionControllerRunCancelled,
 		redis.NewRunCancelledBinding(uowFactory, runCancelledHandler, logger))
-	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
+	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutionControllerValidationRequested,
 		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger))
-	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
+	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutionControllerSeedBuildRequested,
 		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger))
-	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutorCompileRequested,
+	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutionControllerCompileRequested,
 		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
-	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
+	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutionControllerValidationResultTeardown,
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger))
-	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutorPipelineRunFinished,
+	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutionControllerPipelineRunFinished,
 		redis.NewPipelineRunFinishedTeardownBinding(candidateSchemaCleaner, logger))
-	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV2, streams.ExecutorReleasePromoted,
+	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV2, streams.ExecutionControllerReleasePromoted,
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger))
-	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
+	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutionControllerReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger))
 
 	// ---- background workers ----

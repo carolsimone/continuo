@@ -24,7 +24,7 @@ var dnsUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // candidateSchemaJobRunner implements the candidate-schema lifecycle ports by scheduling
 // one-shot engine-image Jobs (harness ensure_schema/drop_schema ops) and blocking on the
-// result. The executor never connects to the warehouse; the engine adapter baked into
+// result. execution-controller never connects to the warehouse; the engine adapter baked into
 // VALIDATION_IMAGE owns the DDL dialect.
 type candidateSchemaJobRunner struct {
 	client    *K8sClient

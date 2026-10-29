@@ -314,7 +314,7 @@ func (d *Dispatcher) fenced(ctx context.Context, tx outbox.Executor, dep *model.
 // observer once its pods are gone; with neither a Job nor an unfinished pod
 // the row ends done with the outcome stopped and is reported stopped; an
 // unfinished pod without its Job leaves the row reserved and unsaved while
-// the pod can still run, and the fence that state's next cancel sends stops
+// the pod can still run, and the fence that run-controller's next cancel sends stops
 // it. A read that fails fails the launch, which leaves the row reserved.
 func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) (model.StopEffect, error) {
 	cmd := dep.Command()
@@ -338,7 +338,7 @@ func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentR
 		d.logger.Warn("A reserved attempt of a cancelled run already has its Job — the Job is adopted and stopped", logArgs...)
 	case model.StopAwaitPod:
 		d.logger.Error("A reserved attempt of a cancelled run has no Job, but a pod of it has not finished — "+
-			"nothing is reported until the pod is gone; state asks again", logArgs...)
+			"nothing is reported until the pod is gone; run-controller asks again", logArgs...)
 		return effect, nil
 	}
 	return effect, repo.Save(ctx, dep)
@@ -653,7 +653,7 @@ func creationFailureReason(err error) pkgmodel.FailureReason {
 
 // reportCreationFailure reports a production attempt whose Job could not
 // be created as failed, with the reason recorded in its facts and its message
-// cut to ErrorMessageMaxLen; state decides whether the task runs again. The
+// cut to ErrorMessageMaxLen; run-controller decides whether the task runs again. The
 // caller saves dep.
 func (d *Dispatcher) reportCreationFailure(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	message := reports.TruncateMessage(dep.Facts().Message, d.maxMessageLen)

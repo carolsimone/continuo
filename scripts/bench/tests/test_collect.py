@@ -43,7 +43,7 @@ def test_cancel_overlap_counts_old_jobs_still_running():
 
 
 def test_a_pause_in_sampling_during_the_run_is_recorded():
-    lines = [f"{iso(s)}\tstate-aaaaaaaaaa-bbbbb\t1m\t1Mi\n" for s in (0, 5, 400, 405)]
+    lines = [f"{iso(s)}\trun-controller-aaaaaaaaaa-bbbbb\t1m\t1Mi\n" for s in (0, 5, 400, 405)]
     jobs = {"items": [job("r1", "n00_0000", 2, 6)]}
     result = collect.build_result(
         scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,

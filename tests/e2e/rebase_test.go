@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,15 +64,15 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	t.Logf("Rebase run created: run_id=%s schedule_name=%s", newRunID, rebaseResp.ScheduleName)
 
 	// ── Source row stays unchanged ──────────────────────────────────────────
-	srcKind := queryRunKind(t, clients.stateDB, srcID)
+	srcKind := queryRunKind(t, clients.runControllerDB, srcID)
 	assert.Equal(t, "trigger", srcKind, "source row must NOT mutate — kind stays 'trigger'")
 
 	// ── New run row: kind='rebase', source_run_id=src ───────────────────────
-	newKind := queryRunKind(t, clients.stateDB, newRunID)
+	newKind := queryRunKind(t, clients.runControllerDB, newRunID)
 	assert.Equal(t, "rebase", newKind, "new run must have kind='rebase'")
 
 	var newSourceRunID *uuid.UUID
-	err = clients.stateDB.QueryRowContext(ctx,
+	err = clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT source_run_id FROM runs WHERE run_id = $1`, newRunID,
 	).Scan(&newSourceRunID)
 	require.NoError(t, err)
@@ -80,11 +80,11 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	assert.Equal(t, srcID, *newSourceRunID, "source_run_id must point to the source")
 
 	// ── Wait for the rebase run's tasks rows to materialise ──────────
-	// state stores the rebase run's tasks in the transaction that creates it.
+	// run-controller stores the rebase run's tasks in the transaction that creates it.
 	t.Log("Waiting for rebase tasks rows to land...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
-		qErr := clients.stateDB.QueryRowContext(ctx,
+		qErr := clients.runControllerDB.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
@@ -94,7 +94,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	}, "tasks rows for rebase run did not materialise")
 
 	// ── Assert partition shape ──────────────────────────────────────────────
-	rows, err := clients.stateDB.QueryContext(ctx, `
+	rows, err := clients.runControllerDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NULL AS is_real
 		FROM tasks
 		WHERE run_id = $1
@@ -212,7 +212,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
 		var status string
 		var completedAt *time.Time
-		qErr := clients.stateDB.QueryRowContext(ctx,
+		qErr := clients.runControllerDB.QueryRowContext(ctx,
 			`SELECT status, completed_at FROM runs WHERE run_id = $1`,
 			rebaseRunID,
 		).Scan(&status, &completedAt)
@@ -228,7 +228,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	// Read the final state for assertions.
 	var finalStatus string
 	var finalCompletedAt *time.Time
-	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
+	require.NoError(t, clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT status, completed_at FROM runs WHERE run_id = $1`,
 		rebaseRunID,
 	).Scan(&finalStatus, &finalCompletedAt))
@@ -244,7 +244,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	// the seeding invariant: inherited rows must contribute to
 	// terminal_task_count at projection time, not at task-status time.
 	var terminalCount, totalCount int32
-	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
+	require.NoError(t, clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT terminal_task_count, total_task_count
 		   FROM runs WHERE run_id = $1`,
 		rebaseRunID,
@@ -266,7 +266,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 // on assertion mismatch — no-op when counts match.
 func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
-	rows, err := clients.stateDB.QueryContext(ctx, `
+	rows, err := clients.runControllerDB.QueryContext(ctx, `
 		SELECT table_name, service_name, schema_name, status,
 		       inherited_from_task_id IS NULL AS is_real,
 		       COALESCE(image_tag, '') AS image_tag

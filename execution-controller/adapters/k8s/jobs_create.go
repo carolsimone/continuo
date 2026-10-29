@@ -81,7 +81,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		"service_name": params.ServiceName,
 	}
 	// The runtime label distinguishes python pods for operators without
-	// changing the app selector every executor Job carries.
+	// changing the app selector every execution-controller Job carries.
 	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
 	}
@@ -266,12 +266,12 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // Validation runs the external continuo-python-runtime-<engine> image (PostgreSQL and
 // Trino today) that bakes one engine adapter — never the per-service team image. The
 // SRE selects the engine at deploy time (Helm/compose) via VALIDATION_IMAGE; the
-// executor runs it with an explicit command (ValidationCommand), because the image's
+// execution-controller runs it with an explicit command (ValidationCommand), because the image's
 // default command runs the python-node harness rather than the validation runner.
 // The warehouse connection is not injected inline: the operator-owned
 // Secret named by VALIDATION_WAREHOUSE_SECRET is attached to the container via
 // envFrom, so the warehouse credentials are owned by the operator and separate from
-// the executor's own DB. The dbt-running team containers attach this same Secret —
+// execution-controller's own DB. The dbt-running team containers attach this same Secret —
 // it is the single warehouse connection for validation and dbt jobs alike.
 //
 // build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
@@ -283,7 +283,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // JSON validation spec (declared reads + output columns), not compiled SQL.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// VALIDATION_IMAGE names the engine's continuo-python-runtime-<engine> image; the SRE
-	// chooses the engine at deploy time (Helm/compose). The executor bakes in no
+	// chooses the engine at deploy time (Helm/compose). execution-controller bakes in no
 	// engine — a hardcoded default would silently force one — so an unset image
 	// fails the node permanently with an actionable reason.
 	image := os.Getenv("VALIDATION_IMAGE")
@@ -792,7 +792,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	return spec, nil
 }
 
-// buildPodSpec constructs the PodSpec for a query executor job.
+// buildPodSpec constructs the PodSpec for the Job of one dbt attempt.
 // The warehouse connection arrives via envFrom of the operator-owned Secret named
 // by VALIDATION_WAREHOUSE_SECRET; the team image's dbt profile reads the Secret's
 // engine-native keys (POSTGRES_*, TRINO_*, ...).
@@ -859,7 +859,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 // pythonKindEnv is the env each python node type adds to its run pod on top of
 // NODE_ID, TABLE_NAME, TARGET_SCHEMA and TASK_ATTEMPT. A python-csv harness
 // fetches its own source, so it receives the S3 credential env regardless of
-// the uri scheme; the executor knows only the node type and never parses the
+// the uri scheme; execution-controller knows only the node type and never parses the
 // contract's uri.
 var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 	pkg_model.NodeTypePythonNode: func() []corev1.EnvVar { return nil },
@@ -873,7 +873,7 @@ var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 // release's image_tag is a complete registry reference, built by the domain
 // repository FROM the engine-matched continuo-python-runtime base, and that
 // image's entrypoint is the harness that selects the node from the contract
-// files baked inside it. The executor therefore sets no command and resolves no
+// files baked inside it. execution-controller therefore sets no command and resolves no
 // dbt command dialect.
 //
 // The environment is exactly four variables: the three the harness requires,
@@ -1009,7 +1009,7 @@ func s3SidecarImage() string {
 }
 
 // jobPodSecurityContext returns the pod-level hardening applied to every
-// executor-created Job pod: the runtime default seccomp profile.
+// execution-controller-created Job pod: the runtime default seccomp profile.
 func jobPodSecurityContext() *corev1.PodSecurityContext {
 	return &corev1.PodSecurityContext{
 		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
@@ -1061,7 +1061,7 @@ func s3CredEnvVars() []corev1.EnvVar {
 // warehouseSecretEnvFrom returns the envFrom source that attaches the
 // operator-owned warehouse Secret (named by VALIDATION_WAREHOUSE_SECRET) to a
 // dbt-running container. dbt team profiles read the Secret's engine-native
-// keys (POSTGRES_*, TRINO_*, ...) directly; the executor forwards no warehouse
+// keys (POSTGRES_*, TRINO_*, ...) directly; execution-controller forwards no warehouse
 // connection env of its own. The compile parse rehearsal containers and every
 // dbt run/seed pod MUST attach this same source — connection drift between
 // them silently invalidates every hydrated partial-parse cache.
@@ -1183,7 +1183,7 @@ const overlayWorkDir = "/work"
 // owner of every staged file, so no team image needs a Dockerfile change to be
 // verifiable. Mirroring the project's absolute path under the workdir is what
 // lets overlayWorkdirPath re-point a configured artifact path at the copy
-// without the executor having to know where the team's project lives.
+// without execution-controller having to know where the team's project lives.
 func overlayStagePrefix() string {
 	work := overlayWorkDir
 	return "mkdir -p \"" + work + "${PWD%/*}\"" +

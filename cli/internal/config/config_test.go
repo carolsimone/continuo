@@ -9,28 +9,28 @@ import (
 
 func TestResolve_DefaultsWhenEmpty(t *testing.T) {
 	cfg := Resolve(Inputs{})
-	assert.Equal(t, "localhost:50051", cfg.StateEndpoint)
+	assert.Equal(t, "localhost:50051", cfg.RunControllerEndpoint)
 	assert.Equal(t, 10*time.Second, cfg.Timeout)
 	assert.False(t, cfg.Human)
 }
 
 func TestResolve_EnvOverridesDefault(t *testing.T) {
 	cfg := Resolve(Inputs{
-		EnvStateAddr: "state.cluster:50051",
-		EnvTimeout:   "30s",
+		EnvRunControllerAddr: "run-controller.cluster:50051",
+		EnvTimeout:           "30s",
 	})
-	assert.Equal(t, "state.cluster:50051", cfg.StateEndpoint)
+	assert.Equal(t, "run-controller.cluster:50051", cfg.RunControllerEndpoint)
 	assert.Equal(t, 30*time.Second, cfg.Timeout)
 }
 
 func TestResolve_FlagOverridesEnv(t *testing.T) {
 	cfg := Resolve(Inputs{
-		FlagEndpoint: "override:9999",
-		FlagTimeout:  "5s",
-		EnvStateAddr: "state.cluster:50051",
-		EnvTimeout:   "30s",
+		FlagEndpoint:         "override:9999",
+		FlagTimeout:          "5s",
+		EnvRunControllerAddr: "run-controller.cluster:50051",
+		EnvTimeout:           "30s",
 	})
-	assert.Equal(t, "override:9999", cfg.StateEndpoint)
+	assert.Equal(t, "override:9999", cfg.RunControllerEndpoint)
 	assert.Equal(t, 5*time.Second, cfg.Timeout)
 }
 

@@ -45,7 +45,7 @@ func DecodeTaskStatusReport(fields map[string]string) (Envelope, TaskStatusRepor
 }
 
 // validReportOutcome checks a report's status, a declared attempt_status
-// other than dispatched (which only state sends), and, for a failure, that its
+// other than dispatched (which only run-controller sends), and, for a failure, that its
 // reason is declared and its class is the reason's.
 func validReportOutcome(p TaskStatusReport) error {
 	if !p.Status.IsValid() || p.Status == model.AttemptStatusDispatched {

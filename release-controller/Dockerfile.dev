@@ -16,7 +16,7 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 # orchestrator is not dropped: agent-remediation, which release-controller
 # imports, requires it, and orchestrator's go.mod must resolve for the
 # workspace's module graph.
-RUN go work edit -dropuse=./state \
+RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./remediation \

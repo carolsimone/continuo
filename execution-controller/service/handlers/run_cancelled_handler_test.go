@@ -24,7 +24,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
-	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -95,7 +95,7 @@ func (r *runReads) ObserveRun(context.Context, string) (model.RunObservation, er
 	return model.NewRunObservation(r.jobs), nil
 }
 
-// fenceFlow drives the fence of one run against the executor test database.
+// fenceFlow drives the fence of one run against the execution-controller test database.
 type fenceFlow struct {
 	t       *testing.T
 	db      *sqlx.DB
@@ -109,7 +109,7 @@ type fenceFlow struct {
 
 func newFenceFlow(t *testing.T) *fenceFlow {
 	t.Helper()
-	db, cleanup := executortest.SetupPostgres(t)
+	db, cleanup := ectest.SetupPostgres(t)
 	t.Cleanup(cleanup)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &fenceFlow{t: t, db: db, logger: logger, repo: postgres.NewDeploymentsRepository(db, logger),
@@ -491,7 +491,7 @@ func TestRunCancelled_AdoptsAndStopsANamedAttemptsJobWithNoRow(t *testing.T) {
 }
 
 // An attempt the cancel names that has ended is answered with its last
-// report, whatever it was: state is waiting for it, and the report may have
+// report, whatever it was: run-controller is waiting for it, and the report may have
 // been lost.
 func TestRunCancelled_ResendsTheReportOfANamedAttemptThatEnded(t *testing.T) {
 	f := newFenceFlow(t)
@@ -536,7 +536,7 @@ func TestRunCancelled_IsIdempotent(t *testing.T) {
 	assert.Equal(t, 1, f.metrics.stopped)
 }
 
-// dispatchOf is state's dispatch of attempt 0 of a new task of the run.
+// dispatchOf is run-controller's dispatch of attempt 0 of a new task of the run.
 func (f *fenceFlow) dispatchOf() events.TaskDispatch {
 	cmd := f.command(0)
 	return events.TaskDispatch{TenantID: "default", RunID: f.runID, TaskID: uuid.MustParse(cmd.TaskID), Attempt: 0,
@@ -596,7 +596,7 @@ func waitOrNot(done <-chan error) (error, bool) {
 // A cancel that meets a dispatch of the run whose transaction has read no
 // fence and stored the attempt pending, uncommitted, waits for it: the fence
 // then sees the committed row and ends it stopped, so no pending row of a
-// fenced run is left for state's next cancel to find.
+// fenced run is left for run-controller's next cancel to find.
 func TestRunCancelled_WaitsForADispatchThatMayStoreAnAttemptOfTheRun(t *testing.T) {
 	f := newFenceFlow(t)
 	ctx := context.Background()
@@ -668,7 +668,7 @@ func TestTaskDispatch_WaitsForAFenceInProgressAndMeetsIt(t *testing.T) {
 // An attempt the cancel names that has neither a row nor a Job, but whose pod
 // a live read shows still running (its Job was deleted with orphan
 // propagation), is not reported stopped while the pod can still write:
-// nothing is stored or reported for it, and state's next cancel names it
+// nothing is stored or reported for it, and run-controller's next cancel names it
 // again. The run is fenced all the same.
 func TestRunCancelled_LeavesANamedAttemptWithAnOrphanPodUnanswered(t *testing.T) {
 	f := newFenceFlow(t)
@@ -763,7 +763,7 @@ func TestRunCancelled_AdoptsTheJobOfAPendingRowThatNeverRecordedIt(t *testing.T)
 
 // A pending row whose attempt has no Job but a pod that has not finished (its
 // Job was deleted with orphan propagation) is left as it is, with an error
-// logged: no stop is reported while the pod can still write, and state's
+// logged: no stop is reported while the pod can still write, and run-controller's
 // next cancel names the attempt again. The run is fenced all the same.
 func TestRunCancelled_LeavesAPendingRowWithAnUnfinishedPodAndNoJob(t *testing.T) {
 	f := newFenceFlow(t)

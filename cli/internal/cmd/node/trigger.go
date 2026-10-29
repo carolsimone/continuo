@@ -15,14 +15,14 @@ import (
 // latest topology metadata; with a fourth it reuses the metadata snapshot of
 // that past run.
 //
-// The command reports acceptance, not completion: the state service plans the
+// The command reports acceptance, not completion: the run-controller service plans the
 // run and durably records it with its first dispatches. A node the live release
 // does not hold is refused (not_found) and no run is created. A task whose node
 // another run is writing waits for that run's write before it is dispatched.
 //
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
-// state service records its own system identity.
+// run-controller service records its own system identity.
 func NewTriggerCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trigger <service> <schema> <table> [source-run-id]",
@@ -40,7 +40,7 @@ Arguments:
 ` + sourceRunArgDoc + `
 
 The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the state service records its own
+environment variable when set, otherwise the run-controller service records its own
 system identity.
 
 This command reports acceptance, not completion. On success the new run is
@@ -60,7 +60,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple
 ` + sourceRunErrorsDoc + `
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node trigger finance analytics orders
@@ -76,7 +76,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

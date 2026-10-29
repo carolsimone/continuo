@@ -9,7 +9,7 @@ import (
 
 // TaskTimeoutEnvKey names the task timeout: how long the container of a task
 // whose node declares no timeout may run, and how long the container of every
-// validation, seed-build and compile Job may run. state stamps it on each
+// validation, seed-build and compile Job may run. run-controller stamps it on each
 // such task's dispatch; execution-controller applies it to the release legs.
 const TaskTimeoutEnvKey = "TASK_TIMEOUT_SECONDS"
 

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,8 +52,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err, "Invalid run_id returned from StartRun")
 
-	// Verify state dispatched the root nodes to task.dispatch:v1
-	t.Log("Verifying state dispatched the root nodes...")
+	// Verify run-controller dispatched the root nodes to task.dispatch:v1
+	t.Log("Verifying run-controller dispatched the root nodes...")
 	verifyRootNodesDispatched(t, ctx, dispatchTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution
@@ -75,15 +75,15 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Verify ui HTTP API returns the correct data
 	t.Log("Verifying ui HTTP API...")
-	verifyUIService(t, ctx, schedulerIDStr)
+	verifyUIHTTPAPI(t, ctx, schedulerIDStr)
 
 	// ── Audit fields: the run's kind and its tasks' images are stored ──
 	t.Log("Verifying audit fields (kind, image_tag)...")
 
-	trackerKind := queryRunKind(t, clients.stateDB, schedulerID)
+	trackerKind := queryRunKind(t, clients.runControllerDB, schedulerID)
 	assert.Equal(t, "trigger", trackerKind, "runs.kind must be trigger after StartRun")
 
-	imageTag := queryFirstTaskImageTag(t, clients.stateDB, schedulerID)
+	imageTag := queryFirstTaskImageTag(t, clients.runControllerDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "tasks.image_tag must be populated")
 
 	t.Log("✅ audit assertions passed")
@@ -92,7 +92,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 }
 
 // startScheduleRun starts a run of the schedule through RunService.StartRun.
-// State creates the run, chooses its tasks and dispatches the ready ones itself.
+// run-controller creates the run, chooses its tasks and dispatches the ready ones itself.
 func startScheduleRun(
 	t *testing.T,
 	ctx context.Context,
@@ -102,7 +102,7 @@ func startScheduleRun(
 		RequestId:    uuid.NewString(),
 		ScheduleName: testScheduleName,
 	})
-	require.NoError(t, err, "Failed to start a run of the schedule via state service")
+	require.NoError(t, err, "Failed to start a run of the schedule via run-controller service")
 
 	t.Logf("Started a run of schedule %q: run_id=%s", testScheduleName, resp.GetRunId())
 	return resp.GetRunId()

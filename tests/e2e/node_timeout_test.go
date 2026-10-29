@@ -14,7 +14,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +30,7 @@ const (
 	// <service>/<release_id>/manifest.json for the service it compiles.
 	timeoutOnlyDeclaringService = "service-2"
 
-	// timeoutOnlyNodeKey is the declaring node's key in state's topology.
+	// timeoutOnlyNodeKey is the declaring node's key in run-controller's topology.
 	timeoutOnlyNodeKey = ftableEUniqueID
 
 	// timeoutOnlyMinutes is the declared meta.timeout_minutes, and
@@ -49,7 +49,7 @@ const (
 //	→ release-controller: every content_hash equals current_prod's, so no node
 //	  is changed and the release promotes with no validation.requested:v1 and
 //	  no validation Job
-//	→ release.promoted:v2 → state stores the release's nodes, ftable_e carrying
+//	→ release.promoted:v2 → run-controller stores the release's nodes, ftable_e carrying
 //	  28800 and every other node NULL but service-1's ftable_deadline, which
 //	  declares its own 60 seconds.
 //
@@ -60,7 +60,7 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	// compile + parse + promote (10m) + state applying the promotion (2m) +
+	// compile + parse + promote (10m) + run-controller applying the promotion (2m) +
 	// the no-validation grace window, with headroom.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -144,7 +144,7 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 		}
 	}
 
-	// State's live release carries the declared timeout on that node and no
+	// run-controller's live release carries the declared timeout on that node and no
 	// other node declares one.
 	waitForNodeTimeoutSeconds(t, ctx, clients, releaseID, timeoutOnlyNodeKey, timeoutOnlySeconds)
 	requireNoOtherNodeTimeout(t, ctx, clients, releaseID, timeoutOnlyNodeKey)
@@ -152,7 +152,7 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 		releaseID, timeoutOnlyNodeKey, timeoutOnlySeconds)
 }
 
-// waitForNodeTimeoutSeconds polls state until its live release is releaseID and
+// waitForNodeTimeoutSeconds polls run-controller until its live release is releaseID and
 // nodeKey carries timeout_seconds = want. The poll retries a missing row (the
 // release is not stored yet) silently; any other error and the last observed
 // value are kept for the failure message.
@@ -165,7 +165,7 @@ func waitForNodeTimeoutSeconds(t *testing.T, ctx context.Context, clients *testC
 	)
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		err := clients.stateDB.GetContext(ctx, &declared, `
+		err := clients.runControllerDB.GetContext(ctx, &declared, `
 			SELECT n.timeout_seconds
 			  FROM live_release l
 			  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
@@ -187,7 +187,7 @@ func waitForNodeTimeoutSeconds(t *testing.T, ctx context.Context, clients *testC
 		}
 		if time.Now().After(deadline) {
 			require.FailNow(t, fmt.Sprintf(
-				"timeout waiting for state's live release %s to carry timeout_seconds=%d on %s: last observed %s, last query error: %v",
+				"timeout waiting for run-controller's live release %s to carry timeout_seconds=%d on %s: last observed %s, last query error: %v",
 				releaseID, want, nodeKey, observed, lastErr))
 		}
 		select {
@@ -198,14 +198,14 @@ func waitForNodeTimeoutSeconds(t *testing.T, ctx context.Context, clients *testC
 	}
 }
 
-// requireNoOtherNodeTimeout asserts that, in state's copy of releaseID, no node
+// requireNoOtherNodeTimeout asserts that, in run-controller's copy of releaseID, no node
 // other than nodeKey carries a timeout, but for the deadline fixture: service-1's
 // ftable_deadline declares deadlineTimeoutMinutes in its model, so a release
 // that holds service-1's models carries that timeout on it.
 func requireNoOtherNodeTimeout(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string) {
 	t.Helper()
 	var others []string
-	require.NoError(t, clients.stateDB.SelectContext(ctx, &others, `
+	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &others, `
 		SELECT n.node_key || '=' || n.timeout_seconds
 		  FROM live_release l
 		  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
@@ -243,14 +243,14 @@ const (
 // task's timeout stops it and that a timeout is not retried:
 //
 //	ftable_deadline declares a one-minute task timeout and sleeps for ten
-//	→ StartRun(e2e-deadline) → state dispatches attempt 0 with the
+//	→ StartRun(e2e-deadline) → run-controller dispatches attempt 0 with the
 //	  node's timeout
 //	→ execution-controller gives its Job an activeDeadlineSeconds of the start
 //	  timeout plus that minute
 //	→ Kubernetes stops the Job at that deadline (DeadlineExceeded)
 //	→ execution-controller reports attempt 0 failed (timeout,
 //	  deadline_exceeded)
-//	→ state fails the task without a retry, skips ftable_deadline_down and
+//	→ run-controller fails the task without a retry, skips ftable_deadline_down and
 //	  fails the run.
 func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 	if testing.Short() {
@@ -273,7 +273,7 @@ func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 	cleanupTestData(t, ctx, clients, deadlineScheduleName)
 	startTimeout := jobStartTimeout(t, ctx)
 
-	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+	waitForRunControllerLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
 	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: deadlineScheduleName})
 	require.NoError(t, err, "StartRun(%s)", deadlineScheduleName)

@@ -39,20 +39,20 @@ bench_cli_run() {
   fi
 }
 
-# Compose only: REDIS_PASSWORD as the running state container received it, when
+# Compose only: REDIS_PASSWORD as the running run-controller container received it, when
 # not already set. The stack's .env is compose syntax, not shell, so it is
 # never sourced.
 bench_load_env() {
   if [ -z "${REDIS_PASSWORD:-}" ]; then
-    REDIS_PASSWORD="$(docker exec state printenv REDIS_PASSWORD 2>/dev/null || true)"
+    REDIS_PASSWORD="$(docker exec run-controller printenv REDIS_PASSWORD 2>/dev/null || true)"
   fi
-  : "${REDIS_PASSWORD:?REDIS_PASSWORD is not set and the state container does not carry it}"
+  : "${REDIS_PASSWORD:?REDIS_PASSWORD is not set and the run-controller container does not carry it}"
 }
 
-# Compose only: project of the running stack, read from the state container's
+# Compose only: project of the running stack, read from the run-controller container's
 # label, so the harness works from a worktree whose directory name differs.
 bench_project() {
-  docker inspect state --format '{{ index .Config.Labels "com.docker.compose.project" }}'
+  docker inspect run-controller --format '{{ index .Config.Labels "com.docker.compose.project" }}'
 }
 
 # Compose only: container id of a compose service in the running stack.
@@ -99,7 +99,7 @@ BENCH_REDIS_SH='read -r REDISCLI_AUTH && export REDISCLI_AUTH && exec redis-cli 
 bench_setup_redis() {
   local pw
   if [ "$(bench_target)" = "k8s" ]; then
-    pw="$(bench_env_value state REDIS_PASSWORD)"
+    pw="$(bench_env_value run-controller REDIS_PASSWORD)"
     BENCH_REDIS_CMD="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' \
       kubectl --kubeconfig "${BENCH_KUBECONFIG}" -n "${BENCH_K8S_NAMESPACE:-continuo}" exec -i \
       "${BENCH_REDIS_POD:?BENCH_REDIS_POD is required on k8s (discover.sh lists candidates)}" -c "${BENCH_REDIS_CONTAINER_NAME:-redis}" -- \
@@ -234,7 +234,7 @@ bench_spawn() {
 # Stops a scenario that is still running and returns non-zero, with a message,
 # when its run may still be live. It signals the runner CHILD (a process this
 # shell started; empty when none) and cancels SCHEDULE's live run, then waits for
-# CHILD to exit and cancels a run whose trigger reached state meanwhile. A CHILD
+# CHILD to exit and cancels a run whose trigger reached run-controller meanwhile. A CHILD
 # started with bench_spawn is signalled with its whole process group, so its
 # subshells, its sampler and any CLI call in flight end with it, a trigger call
 # included; any other CHILD is signalled alone. The cancel comes before the

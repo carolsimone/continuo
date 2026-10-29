@@ -32,7 +32,7 @@ body:
       label: Which component
       multiple: true
       options:
-        - state
+        - run-controller
         - orchestrator
         - execution-controller
         - release-controller

@@ -11,7 +11,7 @@ import (
 // ValidationCommand is the container command for every validation and
 // candidate-schema-op pod: the merged continuo-python-runtime-<engine>
 // image's validation entrypoint. The image's default command runs the
-// python-node harness instead, so the executor always sets this explicitly.
+// python-node harness instead, so execution-controller always sets this explicitly.
 //
 // Every node type — dbt model, snapshot, seed, and python model — runs the
 // same entrypoint; it dispatches on the VALIDATION_OP env var

@@ -2,7 +2,7 @@
 # Benchmark stand-in for dbt. execution-controller runs it as
 # `dbt <verb> --select <node>` with TABLE_NAME and JOB_NAME set. It prints one
 # line (an empty log skips the log upload), never prints "Nothing to do" (which
-# the executor reads as a no-op failure), optionally sleeps, fails for tables
+# execution-controller reads as a no-op failure), optionally sleeps, fails for tables
 # named fail_*, and fails a table named once_* on its first attempt only: a
 # retry's Job name ends in -r<attempt>.
 set -eu
