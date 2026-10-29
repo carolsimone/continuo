@@ -331,6 +331,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
+	bash scripts/check-service-names_test.sh
 	bash scripts/check-dead-go.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
