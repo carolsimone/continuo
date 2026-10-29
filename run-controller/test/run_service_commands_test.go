@@ -29,7 +29,7 @@ func commandRecords(t *testing.T, requestID string) int {
 // outboxRowsOf counts the outbox rows runID's transactions wrote.
 func outboxRowsOf(t *testing.T, runID string) int {
 	t.Helper()
-	return countOf(t, stateDB, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID)
+	return countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 }
 
 // runStatusOf reads the status of runID.
@@ -173,7 +173,7 @@ func TestStartRun_TheSameRequestIDInTwoTenantsIsTwoRuns(t *testing.T) {
 		TenantID: other.id, RequestID: requestID, ScheduleName: other.schedule, Initiator: alice,
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, theirs.RunID) })
+	t.Cleanup(func() { _, _ = stateDB.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, theirs.RunID) })
 
 	assert.False(t, mine.Replayed)
 	assert.False(t, theirs.Replayed, "another tenant's record of the id is not a repeat")
@@ -329,7 +329,7 @@ func TestCancelRun_ACancelledRunIsReturnedAsItIs(t *testing.T) {
 	promoteSchedules(t, stateDB, schedule)
 	r := startRun(t, schedule)
 	outbox := func() int {
-		return countOf(t, stateDB, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r)
+		return countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r)
 	}
 
 	first, err := runClient.CancelRun(ctx, &runv1.CancelRunRequest{RunId: r, CancelledBy: "bob", CancellationReason: "wrong data"})

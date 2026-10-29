@@ -303,7 +303,7 @@ func main() {
 	logger.Info("Active runs run-controller did not plan cancelled", "runs", settled)
 
 	// Retention sweeper — keeps the unbounded-growth tables in check:
-	// processed state_outbox rows, message_processing dedup rows (which retain
+	// processed run_controller_outbox rows, message_processing dedup rows (which retain
 	// a full payload per consumed message) and stored topologies. Processed
 	// outbox rows are kept RETENTION_DAYS; dedup rows, whatever their state,
 	// are kept at least 30 days (the replay horizon), longer when

@@ -48,9 +48,9 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
-	// Clean the run's state_outbox rows (its dispatches and cancellation)
+	// Clean the run's run_controller_outbox rows (its dispatches and cancellation)
 	if schedulerID != "" {
-		_, _ = clients.stateDB.Exec("DELETE FROM state_outbox WHERE aggregate_id = $1", schedulerID)
+		_, _ = clients.stateDB.Exec("DELETE FROM run_controller_outbox WHERE aggregate_id = $1", schedulerID)
 	}
 
 	// Clean state tables (do last to preserve scheduler_id)

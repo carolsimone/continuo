@@ -194,8 +194,8 @@ func deleteScheduleAndRuns(t *testing.T, clients *testClients, name string) {
 	}
 	for _, runID := range runIDs {
 		if _, err := clients.stateDB.ExecContext(bg,
-			`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
-			errs = append(errs, fmt.Errorf("delete the state_outbox rows of run %s: %w", runID, err))
+			`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID); err != nil {
+			errs = append(errs, fmt.Errorf("delete the run_controller_outbox rows of run %s: %w", runID, err))
 		}
 	}
 	if _, err := clients.stateDB.ExecContext(bg, `

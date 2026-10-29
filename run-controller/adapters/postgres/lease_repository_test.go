@@ -326,7 +326,7 @@ func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	require.NoError(t, err)
 	id := res.RunID
 	t.Cleanup(func() {
-		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, id)
+		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, id)
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 	})
 	r, err := newPlanningUoW(lf.db).Run().GetRun(ctx, lf.tenant, id)
@@ -358,7 +358,7 @@ func (f statusFlow) taskID(table string) uuid.UUID {
 func (f statusFlow) dispatches(t *testing.T) []pkgevents.TaskDispatch {
 	t.Helper()
 	var payloads [][]byte
-	require.NoError(t, f.db.Select(&payloads, `SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+	require.NoError(t, f.db.Select(&payloads, `SELECT payload FROM run_controller_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
 		f.r.RunID(), streams.TaskDispatchV1))
 	out := make([]pkgevents.TaskDispatch, 0, len(payloads))
 	for _, p := range payloads {
@@ -486,7 +486,7 @@ func failStalledUnderLock(t *testing.T, db *sqlx.DB, tenant string, runID uuid.U
 	t.Helper()
 	ctx := context.Background()
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 	})
 	var check run.StallCheck
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
@@ -672,7 +672,7 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 	}
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = ANY($1)`, pq.Array(runIDs))
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = ANY($1)`, pq.Array(runIDs))
 	})
 	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = ANY($1)`,
 		pq.Array(runIDs))
@@ -693,7 +693,7 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 		AND wait_reason IS NULL`, pq.Array(taskIDs)))
 	require.NoError(t, db.Get(&leases, `SELECT count(*) FROM node_leases WHERE tenant_id = $1 AND task_id = ANY($2)`,
 		tenant, pq.Array(taskIDs)))
-	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM state_outbox WHERE aggregate_id = ANY($1) AND stream_name = $2`,
+	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = ANY($1) AND stream_name = $2`,
 		pq.Array(runIDs), streams.TaskDispatchV1))
 	assert.Equal(t, n, dispatched, "every waiting task is dispatched")
 	assert.Equal(t, n, leases, "and holds its node's lease")
@@ -713,7 +713,7 @@ func staleWaitOn(t *testing.T, db *sqlx.DB, tenant, table string, since time.Tim
 	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 	})
 	return runID, ids[table]
 }

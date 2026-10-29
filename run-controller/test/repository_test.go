@@ -71,7 +71,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	}
 	require.NoError(t, err, "Failed to connect to database after retries")
 
-	// Apply migrations from db/migration/state/V*.sql so the test schema
+	// Apply migrations from db/migration/run_controller/V*.sql so the test schema
 	// stays in lock-step with production. See run-controller/test/migrations.go.
 	require.NoError(t, ApplyMigrations(db.DB), "Failed to apply migrations")
 

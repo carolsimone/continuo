@@ -125,7 +125,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
+	@for svc in flyway-run-controller flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -142,7 +142,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := run-controller orchestrator execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
+FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
 
@@ -197,7 +197,7 @@ test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
-	    run-controller) db=continuo_state;; \
+	    run-controller) db=continuo_run_controller;; \
 	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \

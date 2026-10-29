@@ -1,4 +1,4 @@
--- Run-history percentiles from state's database (continuo_state). Read-only.
+-- Run-history percentiles from state's database (continuo_run_controller). Read-only.
 --   psql -v kinds=cron,trigger -v days=30 -f run_history.sql
 -- busy_s = union of every attempt's container execution interval; idle_s = wall_s - busy_s.
 SET default_transaction_read_only = on;

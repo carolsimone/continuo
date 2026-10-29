@@ -48,7 +48,7 @@ var _ Repository = (*postgresRepository)(nil)
 type postgresRepository struct {
 	exec executor
 	// outboxTable is the caller's outbox table name (e.g. "execution_outbox",
-	// "state_outbox"), used only by DeleteOlderThan to exclude rows a live
+	// "run_controller_outbox"), used only by DeleteOlderThan to exclude rows a live
 	// outbox entry still references. Empty when the database has no outbox
 	// table: repositories built via NewPostgresRepository never call
 	// DeleteOlderThan (that method is reached only through the Pruner

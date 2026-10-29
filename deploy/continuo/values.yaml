@@ -640,7 +640,7 @@ services:
       # for every storage-reading service (see continuo.s3.credentialServices in
       # _helpers.tpl). Endpoint, bucket and region arrive via the shared ConfigMap.
     env:
-      POSTGRES_DB: continuo_state
+      POSTGRES_DB: continuo_run_controller
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
 

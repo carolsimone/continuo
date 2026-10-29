@@ -13,18 +13,19 @@ import (
 )
 
 // tenantKeysOutboxQuery extracts the expression and predicate from the
-// tenant-keys migration's UPDATE of the state_outbox rows, and evaluates them
-// over a fixture in a read-only SELECT.
+// tenant-keys migration's UPDATE of the outbox rows, and evaluates them over a
+// fixture in a read-only SELECT. The migration is read as written, so the
+// statement is matched by its shape and not by the outbox table's name.
 func tenantKeysOutboxQuery(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	b, err := os.ReadFile(filepath.Join(repoRoot, "db", "migration", "state", "V53__tenant_keys.sql")) //nolint:gosec // G304: a fixed migration path
+	b, err := os.ReadFile(filepath.Join(repoRoot, "db", "migration", "run_controller", "V53__tenant_keys.sql")) //nolint:gosec // G304: a fixed migration path
 	require.NoError(t, err)
 	body := regexp.MustCompile(`(?m)^\s*--[^\n]*`).ReplaceAllString(string(b), "")
-	statement := regexp.MustCompile(`(?s)UPDATE\s+state_outbox\s+SET\s+payload\s*=\s*([^;]+?)\s+WHERE\s+([^;]+)\s*;`)
+	statement := regexp.MustCompile(`(?s)UPDATE\s+[a-z_]+_outbox\s+SET\s+payload\s*=\s*([^;]+?)\s+WHERE\s+([^;]+)\s*;`)
 	parts := statement.FindStringSubmatch(body)
-	require.Len(t, parts, 3, "V53 must contain the state_outbox payload UPDATE")
+	require.Len(t, parts, 3, "V53 must contain the outbox payload UPDATE")
 	return `SELECT (CASE WHEN ` + parts[2] + ` THEN ` + parts[1] + ` ELSE payload END)::text
 		FROM (SELECT $1::jsonb AS payload, $2::text AS event_type) AS fixture`
 }

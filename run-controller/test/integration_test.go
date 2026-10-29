@@ -115,7 +115,7 @@ func TestMain(m *testing.M) {
 	}
 	defer db.Close()
 
-	// ---- Run migrations from db/migration/state/V*.sql ----
+	// ---- Run migrations from db/migration/run_controller/V*.sql ----
 	// Loaded from disk rather than hardcoded so the test schema stays in
 	// lock-step with production. See run-controller/test/migrations.go.
 	if err := ApplyMigrations(db.DB); err != nil {
@@ -248,7 +248,7 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 		require.Equal(t, "cancelling", before.Status)
 		var outboxBefore int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxBefore,
-			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID))
+			`SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID))
 
 		second, err := runClient.CancelActiveRun(ctx, &runv1.CancelActiveRunRequest{
 			RequestId: uuid.NewString(), ScheduleName: "daily-cancel-twice", CancelledBy: "bob", CancellationReason: "second",
@@ -265,7 +265,7 @@ func TestRunService_StartAndCancelByName(t *testing.T) {
 		assert.Equal(t, before, after, "a second cancel changes nothing")
 		var outboxAfter int
 		require.NoError(t, stateDB.GetContext(ctx, &outboxAfter,
-			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID))
+			`SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID))
 		assert.Equal(t, outboxBefore, outboxAfter, "a second cancel writes no outbox row")
 	})
 

@@ -132,7 +132,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID())
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 

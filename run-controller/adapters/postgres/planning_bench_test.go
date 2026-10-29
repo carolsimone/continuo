@@ -156,13 +156,13 @@ func BenchmarkReconcileDue(b *testing.B) {
 			UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
 			FROM tasks t WHERE a.task_id = t.task_id AND t.run_id = $1`, r.RunID())
 		require.NoError(b, err)
-		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, err = db.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID())
 		require.NoError(b, err)
 		b.StartTimer()
 		require.NoError(b, loop.Pass(ctx))
 		b.StopTimer()
 		var asked int
-		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.RunID()))
+		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID()))
 		require.Equalf(b, attemptreconcile.DueLimit, asked,
 			"with %d attempts due, a pass must ask about exactly DueLimit (%d) of them, one dispatch each; it asked about %d",
 			dag2000.nodes, attemptreconcile.DueLimit, asked)
@@ -210,14 +210,14 @@ func restoreRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 		UPDATE runs SET status = 'running', terminal_task_count = 0, completed_at = NULL
 		WHERE run_id = $1`, runID)
 	require.NoError(tb, err)
-	_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+	_, err = db.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 	require.NoError(tb, err)
 }
 
 // deleteRun deletes a run with its tasks and outbox rows.
 func deleteRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
-	_, err := db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+	_, err := db.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 	require.NoError(tb, err)
 	_, err = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
 	require.NoError(tb, err)

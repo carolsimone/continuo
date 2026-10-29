@@ -32,7 +32,7 @@ func TestOutboxPublisher_RunFinalizedWritesNoRow(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	var count int
-	require.NoError(t, db.GetContext(ctx, &count, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, scheduleID))
+	require.NoError(t, db.GetContext(ctx, &count, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, scheduleID))
 	assert.Zero(t, count)
 }
 
@@ -54,7 +54,7 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM run_controller_outbox WHERE aggregate_id = $1", id)
 
 	type outboxRow struct {
 		StreamName string `db:"stream_name"`
@@ -62,7 +62,7 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	}
 	var rows []outboxRow
 	err = db.SelectContext(ctx, &rows,
-		`SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1 ORDER BY id`,
+		`SELECT stream_name, payload FROM run_controller_outbox WHERE aggregate_id = $1 ORDER BY id`,
 		id,
 	)
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestTranslateRunEvent_RunCancelledIsARunCancelledV1Row(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			id := uuid.New()
-			t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id) })
+			t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM run_controller_outbox WHERE aggregate_id = $1", id) })
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
@@ -122,7 +122,7 @@ func TestTranslateRunEvent_RunCancelledIsARunCancelledV1Row(t *testing.T) {
 				Payload       []byte `db:"payload"`
 			}
 			require.NoError(t, db.GetContext(ctx, &stored,
-				`SELECT stream_name, event_type, aggregate_type, payload FROM state_outbox WHERE aggregate_id = $1`, id))
+				`SELECT stream_name, event_type, aggregate_type, payload FROM run_controller_outbox WHERE aggregate_id = $1`, id))
 			assert.Equal(t, streams.RunCancelledV1, stored.StreamName)
 			assert.Equal(t, streams.RunCancelledV1, stored.EventType, "the row's event type is the stream name")
 			assert.Equal(t, "scheduler", stored.AggregateType, "the run's dispatches share its aggregate")
@@ -155,11 +155,11 @@ func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
 		run.RunCancelled{ID: id, TenantID: "acme", Name: "sched", By: "", CancellationReason: "drift"},
 	}, uuid.Nil))
 	require.NoError(t, tx.Commit())
-	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM run_controller_outbox WHERE aggregate_id = $1", id)
 
 	var raw []byte
 	require.NoError(t, db.GetContext(ctx, &raw,
-		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+		`SELECT payload FROM run_controller_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
 		id, streams.RunCancelledV1,
 	))
 	_, wire, err := pkgoutbox.UnwrapTenant(raw)
@@ -190,7 +190,7 @@ func TestOutboxPublisher_AnEventWithoutATenantWritesNoRow(t *testing.T) {
 
 			require.ErrorIs(t, err, pkgoutbox.ErrNoTenant)
 			var count int
-			require.NoError(t, tx.GetContext(ctx, &count, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, id))
+			require.NoError(t, tx.GetContext(ctx, &count, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, id))
 			assert.Zero(t, count)
 		})
 	}
@@ -247,12 +247,12 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
 
-			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
+			defer db.ExecContext(ctx, "DELETE FROM run_controller_outbox WHERE aggregate_id = $1", aggID)
 
 			if tc.wantRows == 0 {
 				// Verify no row was inserted.
 				var count int
-				_ = db.GetContext(ctx, &count, `SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1`, aggID)
+				_ = db.GetContext(ctx, &count, `SELECT COUNT(*) FROM run_controller_outbox WHERE aggregate_id = $1`, aggID)
 				assert.Equal(t, 0, count, "%s should produce no outbox row", tc.name)
 				return
 			}
@@ -267,7 +267,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			var found outboxRow
 			err = db.GetContext(ctx, &found,
 				`SELECT stream_name, event_type, aggregate_type, max_retries, created_at
-				 FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
+				 FROM run_controller_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
 				aggID, tc.wantStream,
 			)
 			require.NoErrorf(t, err, "expected outbox row with stream %q for %s", tc.wantStream, tc.name)

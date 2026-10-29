@@ -16,11 +16,11 @@ services:
     volumes:
       - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
 
-  flyway-state:
+  flyway-run-controller:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_state -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_run_controller -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/state:/flyway/sql
+      - ./db/migration/run_controller:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -140,7 +140,7 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
-      - POSTGRES_DB=continuo_state
+      - POSTGRES_DB=continuo_run_controller
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       - POSTGRES_HOST=postgres

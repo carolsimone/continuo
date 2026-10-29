@@ -586,7 +586,7 @@ func TestAttemptReconcile_AResentCancelMovesEachStopToItsNextWindow(t *testing.T
 	loop := attemptreconcile.New(scopedUoW(db, tenant), testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 	outboxRows := func() int {
 		var n int
-		require.NoError(t, db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.RunID()))
+		require.NoError(t, db.Get(&n, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, f.r.RunID()))
 		return n
 	}
 	before := outboxRows()
@@ -640,7 +640,7 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 		EventType string `db:"event_type"`
 		Payload   []byte `db:"payload"`
 	}
-	require.NoError(t, db.Select(&rows, `SELECT event_type, payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+	require.NoError(t, db.Select(&rows, `SELECT event_type, payload FROM run_controller_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
 		f.r.RunID(), streams.RunCancelledV1))
 	require.Len(t, rows, 1, "one re-sent cancel")
 	assert.Equal(t, streams.RunCancelledV1, rows[0].EventType)

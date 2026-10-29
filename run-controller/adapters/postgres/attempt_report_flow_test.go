@@ -55,7 +55,7 @@ func (f statusFlow) dueIn(t *testing.T, key string, n int32) *time.Duration {
 func (f statusFlow) outboxRows(t *testing.T) int {
 	t.Helper()
 	var n int
-	require.NoError(t, f.db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.RunID()))
+	require.NoError(t, f.db.Get(&n, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, f.r.RunID()))
 	return n
 }
 

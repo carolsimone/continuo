@@ -301,8 +301,8 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 
 	// The run's outbox rows. A failed delete leaves rows for later tests to trip
 	// over, so it is logged rather than discarded.
-	if _, err := clients.stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
-		t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", runID, err)
+	if _, err := clients.stateDB.Exec(`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID); err != nil {
+		t.Logf("Warning: failed to delete run_controller_outbox rows for run %s: %v", runID, err)
 	}
 
 	// K8s jobs created for this run.

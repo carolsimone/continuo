@@ -42,10 +42,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY pkg/ ./pkg/
 COPY run-controller/ ./run-controller/
 
-# run-controller/test/migrations.go loads db/migration/state/V*.sql at test runtime
+# run-controller/test/migrations.go loads db/migration/run_controller/V*.sql at test runtime
 # so the in-container integration tests apply the same Flyway DDL as
 # production.
-COPY db/migration/state/ ./db/migration/state/
+COPY db/migration/run_controller/ ./db/migration/run_controller/
 
 WORKDIR /app/run-controller
 

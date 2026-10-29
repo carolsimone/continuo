@@ -150,7 +150,7 @@ The hand-off steps take, for each node, the upstream whose last Job finished las
 
 ## Run history
 
-`sql/run_history.sql` computes wall, busy, idle, first-start and finalize percentiles from state's database (`continuo_state`), read-only:
+`sql/run_history.sql` computes wall, busy, idle, first-start and finalize percentiles from state's database (`continuo_run_controller`), read-only:
 
 ```bash
 psql -v kinds=cron,trigger -v days=30 -f scripts/bench/sql/run_history.sql

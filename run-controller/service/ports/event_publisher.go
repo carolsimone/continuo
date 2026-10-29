@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// OutboxPublisher writes domain events to state_outbox inside the publisher's
+// OutboxPublisher writes domain events to run_controller_outbox inside the publisher's
 // bound transaction. The implementation switches on each event's concrete type
 // to derive stream_name, event_type, payload, aggregate_type, and retry budget.
 //

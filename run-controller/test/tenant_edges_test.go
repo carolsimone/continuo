@@ -75,7 +75,7 @@ func newEdgeTenant(t *testing.T, db *sqlx.DB) *edgeTenant {
 // cleanup deletes every row of the tenant and the dedup rows of its reports.
 func (e *edgeTenant) cleanup(db *sqlx.DB) {
 	ctx := context.Background()
-	_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, e.runID)
+	_, _ = db.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, e.runID)
 	_, _ = db.ExecContext(ctx, `DELETE FROM message_processing WHERE message_id = ANY($1) AND stream_name = $2`,
 		pq.Array(e.messages), streams.TaskStatusUpdatedV2)
 	for _, table := range []string{

@@ -109,7 +109,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Setup PostgreSQL connections for each database
 	executionDB := connectPostgres(t, pgHost, "continuo_execution")
 	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
-	stateDB := connectPostgres(t, pgHost, "continuo_state")
+	stateDB := connectPostgres(t, pgHost, "continuo_run_controller")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")

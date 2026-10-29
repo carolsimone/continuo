@@ -21,7 +21,7 @@ import (
 // OutboxTable is the outbox table this service writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.
-const OutboxTable = "state_outbox"
+const OutboxTable = "run_controller_outbox"
 
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
 // and writes them inside the bound transaction.

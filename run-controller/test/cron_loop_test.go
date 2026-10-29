@@ -170,7 +170,7 @@ func newCronTenantOf(t *testing.T, specs ...topology.NodeSpec) *cronTenant {
 // cleanup deletes every row of the tenant.
 func (c *cronTenant) cleanup() {
 	ctx := context.Background()
-	_, _ = stateDB.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id IN (SELECT run_id FROM runs WHERE tenant_id = $1)`, c.id)
+	_, _ = stateDB.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id IN (SELECT run_id FROM runs WHERE tenant_id = $1)`, c.id)
 	for _, table := range []string{"runs", "node_leases", "schedules", "live_release", "topology_releases"} {
 		_, _ = stateDB.ExecContext(ctx, `DELETE FROM `+table+` WHERE tenant_id = $1`, c.id)
 	}
@@ -287,7 +287,7 @@ func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	assert.True(t, slot.Equal(*r.ScheduledFor), "scheduled for: got %s", r.ScheduledFor)
 	assert.Equal(t, identity.SystemUserID, r.InitiatedBy)
 	assert.True(t, r.ReleaseID.Valid, "the run names the live release")
-	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.RunID),
+	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID),
 		"the ready task's dispatch is in the outbox")
 
 	row := c.row(t, "daily")

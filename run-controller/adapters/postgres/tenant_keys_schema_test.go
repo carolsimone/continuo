@@ -16,20 +16,20 @@ import (
 // tenantKeyExemptTables are the tables of the run-controller database whose keys do not
 // lead with tenant_id: the stream dedup and the outbox, whose rows are keyed by
 // their own ids, and Flyway's history.
-var tenantKeyExemptTables = []string{"message_processing", "state_outbox", "flyway_schema_history"}
+var tenantKeyExemptTables = []string{"message_processing", "run_controller_outbox", "flyway_schema_history"}
 
-// stateKey is a primary key, unique index or foreign key of a run-controller table, with
+// tableKey is a primary key, unique index or foreign key of a run-controller table, with
 // its columns in key order and, for a foreign key, the referenced columns.
-type stateKey struct {
+type tableKey struct {
 	Table      string
 	Name       string
 	Columns    []string
 	RefColumns []string
 }
 
-// stateKeys reads every primary key, unique index and foreign key of the
+// tableKeys reads every primary key, unique index and foreign key of the
 // public tables outside tenantKeyExemptTables, with their columns in key order.
-func stateKeys(t *testing.T, db *sqlx.DB) []stateKey {
+func tableKeys(t *testing.T, db *sqlx.DB) []tableKey {
 	t.Helper()
 	var rows []struct {
 		Table      string `db:"table_name"`
@@ -62,9 +62,9 @@ func stateKeys(t *testing.T, db *sqlx.DB) []stateKey {
 		JOIN pg_namespace ns ON ns.oid = r.relnamespace
 		WHERE ns.nspname = 'public' AND r.relkind = 'r' AND NOT (r.relname = ANY($1))
 		ORDER BY r.relname, k.key_name`, pq.Array(tenantKeyExemptTables)))
-	out := make([]stateKey, 0, len(rows))
+	out := make([]tableKey, 0, len(rows))
 	for _, row := range rows {
-		k := stateKey{Table: row.Table, Name: row.Name, Columns: strings.Split(row.Columns, ",")}
+		k := tableKey{Table: row.Table, Name: row.Name, Columns: strings.Split(row.Columns, ",")}
 		if row.RefColumns != "" {
 			k.RefColumns = strings.Split(row.RefColumns, ",")
 		}
@@ -79,10 +79,10 @@ func stateKeys(t *testing.T, db *sqlx.DB) []stateKey {
 // the schedules hold are exactly the tenant-led ones listed.
 func TestTenantKeysSchema_EveryKeyStartsWithTenantID(t *testing.T) {
 	db := newTestDB(t)
-	keys := stateKeys(t, db)
+	keys := tableKeys(t, db)
 	require.NotEmpty(t, keys)
 
-	byName := map[string]stateKey{}
+	byName := map[string]tableKey{}
 	for _, k := range keys {
 		byName[k.Name] = k
 		require.NotEmpty(t, k.Columns, "%s.%s has columns", k.Table, k.Name)
@@ -93,7 +93,7 @@ func TestTenantKeysSchema_EveryKeyStartsWithTenantID(t *testing.T) {
 		}
 	}
 
-	for name, want := range map[string]stateKey{
+	for name, want := range map[string]tableKey{
 		"runs_pkey":                   {Table: "runs", Columns: []string{"tenant_id", "run_id"}},
 		"uq_runs_active_per_schedule": {Table: "runs", Columns: []string{"tenant_id", "schedule_name"}},
 		"tasks_pkey":                  {Table: "tasks", Columns: []string{"tenant_id", "task_id"}},

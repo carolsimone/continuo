@@ -173,7 +173,7 @@ func TestSeedReconcile(t *testing.T) {
 			StreamName string `db:"stream_name"`
 			Payload    []byte `db:"payload"`
 		}
-		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
+		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM run_controller_outbox WHERE aggregate_id = $1`, runID))
 		assert.Equal(t, streams.TaskDispatchV1, outbox.StreamName, "the run dispatches the seed as it is created")
 		tenantID, wire, err := pkgoutbox.UnwrapTenant(outbox.Payload)
 		require.NoError(t, err)
@@ -339,7 +339,7 @@ func seedAt(table, hash string) topology.NodeSpec {
 func (h *reconcileHarness) seedDispatches(t *testing.T, releaseID string) int {
 	t.Helper()
 	return countOf(t, h.db, `
-		SELECT count(*) FROM state_outbox o JOIN runs s ON s.run_id = o.aggregate_id
+		SELECT count(*) FROM run_controller_outbox o JOIN runs s ON s.run_id = o.aggregate_id
 		WHERE o.stream_name = $1 AND s.release_id = $2`, streams.TaskDispatchV1, releaseID)
 }
 
@@ -349,7 +349,7 @@ func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []st
 	t.Helper()
 	var tables []string
 	require.NoError(t, h.db.Select(&tables, `
-		SELECT payload->'payload'->>'table_name' FROM state_outbox
+		SELECT payload->'payload'->>'table_name' FROM run_controller_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->'payload'->>'table_name'`, runID, streams.TaskDispatchV1))
 	return tables
 }
@@ -382,7 +382,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	assert.Equal(t, []uuid.UUID{runC}, h.promoteSeedRuns(t, relC), "the third release builds users")
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, runA))
 	assert.Equal(t, []string{"users"}, h.promotedSeedNodes(t, runC))
-	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE stream_name = $1 AND aggregate_id IN ($2, $3)`,
+	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM run_controller_outbox WHERE stream_name = $1 AND aggregate_id IN ($2, $3)`,
 		streams.TaskDispatchV1, runA, runC), "one dispatch per build")
 
 	orders := h.materialization(t, "raw.orders")

@@ -62,7 +62,7 @@ func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, _ = db.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, r.RunID())
 		_, _ = db.ExecContext(ctx, `DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 	return r
@@ -115,7 +115,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 
 	var taskIDs []string
 	require.NoError(t, db.Select(&taskIDs, `
-		SELECT payload->'payload'->>'task_id' FROM state_outbox
+		SELECT payload->'payload'->>'task_id' FROM run_controller_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->'payload'->>'table_name'`,
 		r.RunID(), streams.TaskDispatchV1))
 	assert.Equal(t, []string{
@@ -168,7 +168,7 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	in := fixture.Input.Payload
 	runID := uuid.MustParse(in.RunID)
-	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID) })
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID) })
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 		Payload       []byte `db:"payload"`
 	}
 	require.NoError(t, db.Get(&stored, `
-		SELECT stream_name, aggregate_type, event_type, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
+		SELECT stream_name, aggregate_type, event_type, payload FROM run_controller_outbox WHERE aggregate_id = $1`, runID))
 	assert.Equal(t, streams.TaskDispatchV1, stored.StreamName)
 	assert.Equal(t, "scheduler", stored.AggregateType)
 	assert.Equal(t, streams.TaskDispatchV1, stored.EventType)

@@ -113,7 +113,7 @@ func TestOutboxDeadLetterBinding_PublishableWhenFieldsPresent(t *testing.T) {
 		"original_event_type": "order_changed", "original_stream": "orders.changed:v1", "original_aggregate_id": "00000000-0000-0000-0000-000000000001",
 		"failure_kind": "transient_exhausted", "error": "redis down", "attempts": "13",
 		"failed_outbox_id": "00000000-0000-0000-0000-000000000002", "original_fields": `{"node_id":"a.b"}`,
-		"original_created_at": "2026-10-05T10:00:00.000000001Z", "outbox_table": "state_outbox", "outbox_entry_id": "x",
+		"original_created_at": "2026-10-05T10:00:00.000000001Z", "outbox_table": "run_controller_outbox", "outbox_entry_id": "x",
 	}
 	rec := &fakeRecorder{}
 	if err := NewOutboxDeadLetterBinding(rec, fixedClock{at}).Handle(context.Background(), xmsg("1759665600000-0", fields)); err != nil {
@@ -121,7 +121,7 @@ func TestOutboxDeadLetterBinding_PublishableWhenFieldsPresent(t *testing.T) {
 	}
 	dl := rec.got[0]
 	if dl.Source != deadletter.SourceOutbox || !dl.Publishable || dl.Fields["node_id"] != "a.b" || dl.Group != "" ||
-		dl.Producer != "state_outbox" || dl.DedupKey != deadletter.OutboxKey("state_outbox", "00000000-0000-0000-0000-000000000002") ||
+		dl.Producer != "run_controller_outbox" || dl.DedupKey != deadletter.OutboxKey("run_controller_outbox", "00000000-0000-0000-0000-000000000002") ||
 		dl.OriginalAt.Format(outbox.OriginalCreatedAtLayout) != "2026-10-05T10:00:00.000000001Z" || dl.DeliveryCount != 13 {
 		t.Fatalf("dl = %+v", dl)
 	}

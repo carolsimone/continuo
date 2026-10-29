@@ -44,7 +44,7 @@ func tenantRunOn(t *testing.T, db *sqlx.DB, tenant, releaseID, status string) uu
 		VALUES ($1, $2, $3, $4, $5, 1)`, tenant, runID, "tenants-"+runID.String()[:8], status, releaseID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenant, runID)
 	})
 	return runID
@@ -329,7 +329,7 @@ func TestLeaseWaker_GrantsEachTenantsFreedNodeToThatTenantsWaiter(t *testing.T) 
 			tenant, w.taskID))
 		assert.Equal(t, 1, attempts, "%s's waiter is dispatched with attempt 0 under its tenant", tenant)
 		var dispatches int
-		require.NoError(t, db.Get(&dispatches, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+		require.NoError(t, db.Get(&dispatches, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
 			w.runID, streams.TaskDispatchV1))
 		assert.Equal(t, 1, dispatches, tenant)
 	}

@@ -112,7 +112,7 @@ func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 		"ftable_a": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusPending, "ftable_d": run.TaskStatusPending,
 	})
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID)
 	})
 
 	cancelByID(t, db, tenant, runID, "alice", "bad data")
@@ -131,7 +131,7 @@ func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 		assert.Equal(t, want, got, table)
 	}
 	var outbox int
-	require.NoError(t, db.Get(&outbox, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID))
+	require.NoError(t, db.Get(&outbox, `SELECT count(*) FROM run_controller_outbox WHERE aggregate_id = $1`, runID))
 	assert.Equal(t, 1, outbox)
 }
 
