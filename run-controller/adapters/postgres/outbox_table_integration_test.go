@@ -29,12 +29,14 @@ func TestOutboxTableIsRunControllerOutbox(t *testing.T) {
 	var exists bool
 	require.NoError(t, db.Get(&exists, `SELECT to_regclass('run_controller_outbox') IS NOT NULL`))
 	assert.True(t, exists, "table run_controller_outbox exists")
-	var outboxTables []string
-	require.NoError(t, db.Select(&outboxTables, `
+	// Tables, views, materialized views and partitioned tables all count: a
+	// view standing in for another outbox name must fail this test too.
+	var outboxRelations []string
+	require.NoError(t, db.Select(&outboxRelations, `
 		SELECT relname FROM pg_class
-		WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace AND relname LIKE '%\_outbox'
+		WHERE relkind IN ('r', 'v', 'm', 'p') AND relnamespace = 'public'::regnamespace AND relname LIKE '%\_outbox'
 		ORDER BY relname`))
-	assert.Equal(t, []string{"run_controller_outbox"}, outboxTables, "the database holds no other outbox table")
+	assert.Equal(t, []string{"run_controller_outbox"}, outboxRelations, "the database holds no other outbox")
 
 	var triggers int
 	require.NoError(t, db.Get(&triggers, `
@@ -52,6 +54,8 @@ func TestOutboxTableIsRunControllerOutbox(t *testing.T) {
 
 	var indexes []string
 	require.NoError(t, db.Select(&indexes, `SELECT indexname FROM pg_indexes WHERE tablename = 'run_controller_outbox' ORDER BY indexname`))
+	// Every constraint of the table, including the NOT NULL constraints
+	// Postgres 18 stores in pg_constraint.
 	var constraints []string
 	require.NoError(t, db.Select(&constraints, `
 		SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('run_controller_outbox') ORDER BY conname`))

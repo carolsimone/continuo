@@ -133,13 +133,15 @@ func TestOutboxWakerWakesOnAgentRemediationOutbox(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = waker.Close() })
 
+	aggregateID := event.AggregateIDForRelease("r-waker")
+
 	u := NewUnitOfWork(db, slog.Default(), nil)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
 	require.NoError(t, u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: event.AggregateType,
-		AggregateID:   event.AggregateIDForRelease("r-waker"),
+		AggregateID:   aggregateID,
 		EventType:     event.PROpenedEventType,
 		Payload:       []byte(`{}`),
 		StreamName:    streams.RemediationPrOpenedV1,
@@ -152,4 +154,8 @@ func TestOutboxWakerWakesOnAgentRemediationOutbox(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the outbox waker was not woken by a row committed to agent_remediation_outbox")
 	}
+
+	var rows int
+	require.NoError(t, db.GetContext(ctx, &rows, `SELECT count(*) FROM agent_remediation_outbox WHERE aggregate_id = $1`, aggregateID))
+	assert.Equal(t, 1, rows, "the unit of work wrote its row to agent_remediation_outbox")
 }
