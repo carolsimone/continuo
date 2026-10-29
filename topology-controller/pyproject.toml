@@ -3,11 +3,11 @@ name = "topology-controller"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "sqlglot>=30.23.0",
+    "sqlglot>=30.24.0",
     "redis>=8.1.0",
-    "grpcio>=1.84.0",
+    "grpcio>=1.85.0",
     "protobuf>=7.36.2",
-    "boto3>=1.43.115",
+    "boto3>=1.43.118",
     "PyYAML>=6.0",
 ]
 
@@ -15,7 +15,7 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "pytest-mock>=3.17.0",
-    "grpcio-tools>=1.84.0",
+    "grpcio-tools>=1.85.0",
 ]
 
 [tool.hatch.build.targets.wheel]
