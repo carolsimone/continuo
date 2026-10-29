@@ -8,9 +8,9 @@
 # .claude/worktrees/ holds full stale copies of every module.
 #
 # Usage:
-#   scripts/lint-go.sh            # lint every module
-#   scripts/lint-go.sh state      # lint one module
-#   scripts/lint-go.sh --ci       # lint only modules listed in scripts/lint-ci-modules.txt
+#   scripts/lint-go.sh                 # lint every module
+#   scripts/lint-go.sh run-controller  # lint one module
+#   scripts/lint-go.sh --ci            # lint only modules listed in scripts/lint-ci-modules.txt
 set -uo pipefail
 
 # Single source of truth for the pinned version. Bump here only.

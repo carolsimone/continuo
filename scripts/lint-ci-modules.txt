@@ -1,5 +1,5 @@
 # Modules gated in CI (block PR on any finding). One module path per line, relative
-# to repo root (e.g. cli, state, tests/e2e). Grows as each service is cleaned to zero
+# to repo root (e.g. cli, run-controller, tests/e2e). Grows as each service is cleaned to zero
 # findings during the golangci-lint burn-down. Lines starting with # and blank lines
 # are ignored. When empty, `scripts/lint-go.sh --ci` lints nothing and exits 0.
 remediation
@@ -11,6 +11,6 @@ agent-remediation
 pkg
 orchestrator
 tests/e2e
-state
+run-controller
 dead-letter-controller
 egress-proxy

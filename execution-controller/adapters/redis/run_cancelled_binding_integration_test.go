@@ -54,7 +54,7 @@ func (*countedStops) JobReaped(string)  {}
 func runCancelledMessage(t *testing.T, id string, runID uuid.UUID, attempts ...pkgevents.CancelledAttempt) goredis.XMessage {
 	t.Helper()
 	outboxID := uuid.New()
-	fields, err := pkgevents.RunCancelledFields(outboxID.String(), "default", "state", nowUTC(),
+	fields, err := pkgevents.RunCancelledFields(outboxID.String(), "default", "run-controller", nowUTC(),
 		pkgevents.RunCancelled{RunID: runID.String(), CancelledBy: "alice", Reason: "wrong window", Attempts: attempts})
 	require.NoError(t, err)
 	values := map[string]any{"outbox_entry_id": outboxID.String()}

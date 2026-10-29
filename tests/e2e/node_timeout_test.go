@@ -14,7 +14,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )

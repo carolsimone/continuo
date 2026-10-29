@@ -19,7 +19,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"

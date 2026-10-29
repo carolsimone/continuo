@@ -36,7 +36,7 @@ build: build-dev
 # Build all production images
 .PHONY: build-prod
 build-prod: build-base
-	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-run-controller:prod -f run-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
@@ -49,7 +49,7 @@ build-prod: build-base
 # Build single production service
 .PHONY: build-prod-service
 build-prod-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=state" && exit 1)
+	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=run-controller" && exit 1)
 	DOCKER_BUILDKIT=1 docker build -t continuo-$(SERVICE):prod -f $(SERVICE)/Dockerfile.prod .
 
 up: dev-env
@@ -140,7 +140,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := state orchestrator execution-controller release-controller \
+GO_SERVICES := run-controller orchestrator execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
@@ -197,7 +197,7 @@ test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
-	    state) db=continuo_state;; \
+	    run-controller) db=continuo_state;; \
 	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
@@ -360,10 +360,10 @@ guards: bench-test
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
-	diff state/proto/run/v1/run.proto ui/proto/run.proto
-	diff state/proto/run/v1/run.proto cli/proto/run/v1/run.proto
-	cmp state/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
-	cmp state/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
+	diff run-controller/proto/run/v1/run.proto ui/proto/run.proto
+	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
+	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
+	cmp run-controller/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
 
 .PHONY: stack-up
 stack-up:

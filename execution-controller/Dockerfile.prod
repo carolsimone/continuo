@@ -10,7 +10,7 @@ WORKDIR /app
 
 # Copy workspace and all go.mod files (required by go.work)
 COPY go.work go.work.sum* ./
-COPY state/go.mod state/go.sum ./state/
+COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
@@ -31,7 +31,7 @@ RUN go mod download
 # Copy source code
 COPY execution-controller/ ./execution-controller/
 COPY pkg/ ./pkg/
-COPY state/ ./state/
+COPY run-controller/ ./run-controller/
 
 # Build static binary
 WORKDIR /app/execution-controller

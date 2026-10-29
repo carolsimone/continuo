@@ -32,5 +32,5 @@ clean:
 # @grpc/proto-loader reads this file at startup; drift here silently drops
 # fields on the wire (see tests/server/proto-wire.test.ts for the guard).
 sync-proto:
-	cp ../state/proto/run/v1/run.proto proto/run.proto
-	diff ../state/proto/run/v1/run.proto proto/run.proto
+	cp ../run-controller/proto/run/v1/run.proto proto/run.proto
+	diff ../run-controller/proto/run/v1/run.proto proto/run.proto

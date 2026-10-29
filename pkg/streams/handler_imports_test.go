@@ -20,18 +20,18 @@ import (
 // application packages exist under a service's tree.
 var handlerDirs = []string{
 	"orchestrator/service",
-	"state/service/attemptreconcile",
-	"state/service/commands",
-	"state/service/cronloop",
-	"state/service/handlers",
-	"state/service/leasewaker",
-	"state/service/ports",
-	"state/service/runreads",
-	"state/service/runsettle",
-	"state/service/runstart",
-	"state/service/schedules",
-	"state/service/seedreconcile",
-	"state/service/topologyretention",
+	"run-controller/service/attemptreconcile",
+	"run-controller/service/commands",
+	"run-controller/service/cronloop",
+	"run-controller/service/handlers",
+	"run-controller/service/leasewaker",
+	"run-controller/service/ports",
+	"run-controller/service/runreads",
+	"run-controller/service/runsettle",
+	"run-controller/service/runstart",
+	"run-controller/service/schedules",
+	"run-controller/service/seedreconcile",
+	"run-controller/service/topologyretention",
 	"execution-controller/service/handlers",
 	"execution-controller/service/deployer",
 	"execution-controller/service/outcomes",
@@ -54,7 +54,7 @@ var handlerDirs = []string{
 	"release-controller/service/uow",
 	"remediation/service/uow",
 	"agent-remediation/service/uow",
-	"state/service/uow",
+	"run-controller/service/uow",
 	"dead-letter-controller/service/uow",
 }
 
@@ -64,7 +64,7 @@ var handlerDirs = []string{
 // still import no adapters/* package; they reach every collaborator through
 // the read and application services behind ports.
 var grpcEdgeDirs = []string{
-	"state/internal/grpc/runservice",
+	"run-controller/internal/grpc/runservice",
 }
 
 // forbiddenAppImports are import-path fragments the application layer must not

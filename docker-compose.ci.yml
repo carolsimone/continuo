@@ -5,9 +5,9 @@ services:
   state:
     build:
       cache_from:
-        - "type=gha,scope=state"
+        - "type=gha,scope=run-controller"
       cache_to:
-        - "type=gha,scope=state,mode=max"
+        - "type=gha,scope=run-controller,mode=max"
 
   execution-controller:
     build:

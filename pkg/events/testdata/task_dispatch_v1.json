@@ -2,7 +2,7 @@
   "input": {
     "event_id": "5b1f2d0e-8c3a-4f7e-9a61-2d4c8e1b7f30",
     "tenant_id": "default",
-    "producer": "state",
+    "producer": "run-controller",
     "occurred_at": "2026-10-20T23:01:52.000412Z",
     "payload": {
       "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
@@ -26,7 +26,7 @@
     "event_id": "5b1f2d0e-8c3a-4f7e-9a61-2d4c8e1b7f30",
     "tenant_id": "default",
     "occurred_at": "2026-10-20T23:01:52.000412Z",
-    "producer": "state",
+    "producer": "run-controller",
     "schema_version": "1",
     "payload": {
       "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",

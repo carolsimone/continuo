@@ -265,10 +265,10 @@ func TestProcessSerial_AckSelectivity(t *testing.T) {
 // across calls (same hostname) so restarts reuse the registry entry rather than
 // leaking a new one each time.
 func TestConsumerName_StablePerHost(t *testing.T) {
-	a := consumerName("state-task-status-updated")
-	b := consumerName("state-task-status-updated")
+	a := consumerName("run-controller-task-status-updated")
+	b := consumerName("run-controller-task-status-updated")
 	assert.Equal(t, a, b, "consumer name must be stable across restarts (no registry leak)")
-	assert.True(t, len(a) > len("state-task-status-updated"),
+	assert.True(t, len(a) > len("run-controller-task-status-updated"),
 		"consumer name must include a per-pod suffix")
 }
 

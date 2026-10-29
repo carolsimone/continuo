@@ -70,7 +70,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 
 	// Both groups that apply a promotion handle the replay before the live
 	// pointers are read.
-	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.StateReleasePromoted} {
+	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.RunControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, group, replayID)
 		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, group, replayID, "open"),
 			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
@@ -181,7 +181,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	assert.Equal(t, before, readLivePointer(ctx, clients), "a corrupt artifact must never move the live pointer")
 
 	// state's group reads the same artifact and refuses it for the same reason.
-	stateDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.StateReleasePromoted, id, "open")
+	stateDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.RunControllerReleasePromoted, id, "open")
 	cleanup = append(cleanup, stateDL.GetId())
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(stateDL.GetFailureKind()))
 	assert.Contains(t, strings.ToLower(stateDL.GetError()), "checksum")

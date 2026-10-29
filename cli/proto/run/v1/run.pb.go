@@ -4569,7 +4569,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x0fPreviewSchedule\x12\x1e.run.v1.PreviewScheduleRequest\x1a\x1f.run.v1.PreviewScheduleResponse\x12L\n" +
 	"\rListSchedules\x12\x1c.run.v1.ListSchedulesRequest\x1a\x1d.run.v1.ListSchedulesResponse\x12U\n" +
 	"\x10GetScheduleGraph\x12\x1f.run.v1.GetScheduleGraphRequest\x1a .run.v1.GetScheduleGraphResponse\x12g\n" +
-	"\x16ListScheduleTopologies\x12%.run.v1.ListScheduleTopologiesRequest\x1a&.run.v1.ListScheduleTopologiesResponseB:Z8github.com/carolsimone/continuo/state/proto/run/v1;runv1b\x06proto3"
+	"\x16ListScheduleTopologies\x12%.run.v1.ListScheduleTopologiesRequest\x1a&.run.v1.ListScheduleTopologiesResponseBCZAgithub.com/carolsimone/continuo/run-controller/proto/run/v1;runv1b\x06proto3"
 
 var (
 	file_proto_run_v1_run_proto_rawDescOnce sync.Once

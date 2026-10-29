@@ -14,7 +14,7 @@ import (
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"

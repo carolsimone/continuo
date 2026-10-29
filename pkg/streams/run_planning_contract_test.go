@@ -10,7 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// runPlanningRetired are the streams nothing produces or consumes once state
+// runPlanningRetired are the streams nothing produces or consumes once run-controller
 // plans every run, dispatches ready tasks itself and skips the descendants of a
 // failed task in the status-update transaction.
 var runPlanningRetired = []string{
@@ -26,7 +26,7 @@ var runPlanningRetired = []string{
 }
 
 // executionProtocolRetired are the streams nothing produces or consumes once
-// state dispatches each attempt on task.dispatch:v1 and execution-controller
+// run-controller dispatches each attempt on task.dispatch:v1 and execution-controller
 // reports it on task.status.updated:v2, watching every Job itself.
 var executionProtocolRetired = []string{
 	"check.k8s:v1",
@@ -47,7 +47,7 @@ func TestRunPlanningStreams_AreRetired(t *testing.T) {
 }
 
 // TestRunDispatchStreams_HaveOneProducer pins who writes the two streams a
-// run's tasks move on: state dispatches every ready task, and
+// run's tasks move on: run-controller dispatches every ready task, and
 // execution-controller alone reports task statuses (no other service reports
 // a skipped task).
 func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
@@ -65,7 +65,7 @@ func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
 		t.Fatalf("parse contract.yaml: %v", err)
 	}
 	want := map[string][]string{
-		streams.TaskDispatchV1:      {"state"},
+		streams.TaskDispatchV1:      {"run-controller"},
 		streams.TaskStatusUpdatedV2: {"execution-controller"},
 	}
 	for _, s := range c.Streams {

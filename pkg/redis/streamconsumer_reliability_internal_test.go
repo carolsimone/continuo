@@ -40,7 +40,7 @@ func reliabilityConsumer(t *testing.T, handler MessageHandler, rec *recorder) (*
 	var logs bytes.Buffer
 	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", handler,
 		slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	c.SetService("state")
+	c.SetService("run-controller")
 	c.ackFn = func(_ context.Context, id string) error { rec.record("ack:" + id); return nil }
 	c.deadLetterFn = func(_ context.Context, v map[string]any) error {
 		rec.mu.Lock()
@@ -246,7 +246,7 @@ func TestProcessOne_PermanentErrorDeadLettersThenAcks(t *testing.T) {
 	assert.Equal(t, "orders:v1", p.OriginalStream)
 	assert.Equal(t, "svc-orders", p.OriginalGroup)
 	assert.Equal(t, map[string]string{"task_id": "t-1"}, p.Fields)
-	assert.Equal(t, "state", rec.deadLetters[0]["producer"])
+	assert.Equal(t, "run-controller", rec.deadLetters[0]["producer"])
 	assert.Equal(t, events.DefaultTenantID, rec.deadLetters[0]["tenant_id"])
 	assert.Equal(t, 1, strings.Count(logs.String(), logDeadLettered))
 }

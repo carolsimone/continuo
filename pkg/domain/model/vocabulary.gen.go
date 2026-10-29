@@ -339,7 +339,7 @@ func (v NodeType) Runtime() NodeRuntime {
 type RunStatus string
 
 const (
-	// RunStatusPending — state created the run and no task of it has been dispatched yet.
+	// RunStatusPending — run-controller created the run and no task of it has been dispatched yet.
 	RunStatusPending RunStatus = "pending"
 	// RunStatusRunning — at least one task of the run has been dispatched and the run has not ended.
 	RunStatusRunning RunStatus = "running"
@@ -347,7 +347,7 @@ const (
 	RunStatusCancelling RunStatus = "cancelling"
 	// RunStatusSucceeded — every task of the run succeeded.
 	RunStatusSucceeded RunStatus = "succeeded"
-	// RunStatusFailed — a task of the run failed for good, or state failed the run as stalled or unplannable.
+	// RunStatusFailed — a task of the run failed for good, or run-controller failed the run as stalled or unplannable.
 	RunStatusFailed RunStatus = "failed"
 	// RunStatusCancelled — the run was cancelled and every attempt of it has ended.
 	RunStatusCancelled RunStatus = "cancelled"
@@ -389,7 +389,7 @@ func (v RunStatus) IsValid() bool {
 	return false
 }
 
-// TaskStatus — Where one task of a run stands. A task waits pending until it is ready; state then dispatches an attempt of it, and the task follows that attempt through queued and running. A failed attempt with retries left dispatches the next one, so a task is failed only once it will not run again.
+// TaskStatus — Where one task of a run stands. A task waits pending until it is ready; run-controller then dispatches an attempt of it, and the task follows that attempt through queued and running. A failed attempt with retries left dispatches the next one, so a task is failed only once it will not run again.
 // Values come from the vocabulary "task_status" in contract.yaml, in
 // declaration order.
 type TaskStatus string
@@ -397,7 +397,7 @@ type TaskStatus string
 const (
 	// TaskStatusPending — the task waits for its upstream tasks, or for the write lease on its node.
 	TaskStatusPending TaskStatus = "pending"
-	// TaskStatusDispatched — state dispatched an attempt of the task and has no report of it yet.
+	// TaskStatusDispatched — run-controller dispatched an attempt of the task and has no report of it yet.
 	TaskStatusDispatched TaskStatus = "dispatched"
 	// TaskStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
 	TaskStatusQueued TaskStatus = "queued"
@@ -455,7 +455,7 @@ func (v TaskStatus) IsValid() bool {
 	return false
 }
 
-// Operation — The verb a run applies to its nodes. It is orthogonal to the node type: the type is what a node is, the operation is which verb runs against it. The default (run) is the empty string on the wire, so a message that names no operation reads as a plain run; state stores it as run.
+// Operation — The verb a run applies to its nodes. It is orthogonal to the node type: the type is what a node is, the operation is which verb runs against it. The default (run) is the empty string on the wire, so a message that names no operation reads as a plain run; run-controller stores it as run.
 // Values come from the vocabulary "operation" in contract.yaml, in
 // declaration order.
 type Operation string
@@ -523,13 +523,13 @@ func ParseOperation(s string) (Operation, error) {
 	return "", fmt.Errorf("unknown operation %q", s)
 }
 
-// AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2.
+// AttemptStatus — Where one attempt of a task stands, on the two task streams. run-controller sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2.
 // Values come from the vocabulary "attempt_status" in contract.yaml, in
 // declaration order.
 type AttemptStatus string
 
 const (
-	// AttemptStatusDispatched — state dispatched the attempt and has no report of it yet.
+	// AttemptStatusDispatched — run-controller dispatched the attempt and has no report of it yet.
 	AttemptStatusDispatched AttemptStatus = "dispatched"
 	// AttemptStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
 	AttemptStatusQueued AttemptStatus = "queued"
@@ -641,7 +641,7 @@ const (
 	FailureReasonNodeLost FailureReason = "node_lost"
 	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
 	FailureReasonJobMissing FailureReason = "job_missing"
-	// FailureReasonAttemptLost — state asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
+	// FailureReasonAttemptLost — run-controller asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
 	FailureReasonAttemptLost FailureReason = "attempt_lost"
 	// FailureReasonCreateFailed — Kubernetes refused the attempt's Job on every one of execution-controller's creation tries.
 	FailureReasonCreateFailed FailureReason = "create_failed"

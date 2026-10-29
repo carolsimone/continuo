@@ -10,6 +10,6 @@ use (
 	./pkg
 	./release-controller
 	./remediation
-	./state
+	./run-controller
 	./tests/e2e
 )

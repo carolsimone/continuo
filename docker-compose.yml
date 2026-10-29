@@ -124,7 +124,7 @@ services:
   state:
     build:
       context: .
-      dockerfile: state/Dockerfile.dev
+      dockerfile: run-controller/Dockerfile.dev
     container_name: state
     depends_on:
       postgres:
@@ -160,7 +160,7 @@ services:
       - "8082:8082"   # Health check HTTP
       - "50051:50051" # gRPC
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
@@ -236,7 +236,7 @@ services:
     ports:
       - "8084:8084"   # Health check HTTP
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
@@ -301,7 +301,7 @@ services:
       - "8087:8087"   # Health check HTTP
       - "50052:50052" # gRPC
     volumes:
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
       - ./orchestrator:/app/orchestrator
@@ -647,7 +647,7 @@ services:
     volumes:
       - ./kubeconfig:/app/kubeconfig
       - ./tests/e2e:/app/tests/e2e
-      - ./state:/app/state
+      - ./run-controller:/app/run-controller
       - ./orchestrator:/app/orchestrator
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg

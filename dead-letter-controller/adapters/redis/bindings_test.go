@@ -43,7 +43,7 @@ func xmsg(id string, values map[string]any) goredis.XMessage {
 
 func TestConsumerDeadLetterBinding_StoresAPublishableRow(t *testing.T) {
 	values, _ := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "orders.changed:v1", Group: "billing",
+		TenantID: "default", Producer: "run-controller", OccurredAt: at, Stream: "orders.changed:v1", Group: "billing",
 		MessageID: "1759665600000-0", Fields: map[string]string{"k": "v"}, FailureKind: model.DeadLetterKindTransientExhausted,
 		Error: "x", DeliveryCount: 5,
 	})
@@ -55,7 +55,7 @@ func TestConsumerDeadLetterBinding_StoresAPublishableRow(t *testing.T) {
 	dl := rec.got[0]
 	if dl.Source != deadletter.SourceConsumer || dl.Group != "billing" || !dl.Publishable ||
 		dl.DedupKey != deadletter.ConsumerKey("orders.changed:v1", "billing", "1759665600000-0") ||
-		!dl.OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) || dl.Producer != "state" || dl.DeliveryCount != 5 {
+		!dl.OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) || dl.Producer != "run-controller" || dl.DeliveryCount != 5 {
 		t.Fatalf("dl = %+v", dl)
 	}
 }
@@ -85,7 +85,7 @@ func TestConsumerDeadLetterBinding_StoreFailureReturnsError(t *testing.T) {
 // pending-until-stored path as an unreadable one, on the readable branch.
 func TestConsumerDeadLetterBinding_StoreFailureOfReadableReturnsError(t *testing.T) {
 	values, _ := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "orders.changed:v1", Group: "g",
+		TenantID: "default", Producer: "run-controller", OccurredAt: at, Stream: "orders.changed:v1", Group: "g",
 		MessageID: "1759665600000-0", Fields: map[string]string{"k": "v"}, FailureKind: model.DeadLetterKindPermanent,
 	})
 	rec := &fakeRecorder{err: errors.New("postgres down")}
@@ -96,7 +96,7 @@ func TestConsumerDeadLetterBinding_StoreFailureOfReadableReturnsError(t *testing
 
 func TestConsumerDeadLetterBinding_InvalidFailureKindIsUnreadable(t *testing.T) {
 	values, _ := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "s:v1", Group: "g",
+		TenantID: "default", Producer: "run-controller", OccurredAt: at, Stream: "s:v1", Group: "g",
 		MessageID: "1759665600000-0", Fields: map[string]string{"k": "v"}, FailureKind: model.DeadLetterKind("bogus"),
 	})
 	rec := &fakeRecorder{}

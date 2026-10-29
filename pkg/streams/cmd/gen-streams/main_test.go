@@ -11,7 +11,7 @@ streams:
   - name: node.updated:v1
     const: NodeUpdatedV1
     description: Node state transitions.
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: orchestrator-node-updated
@@ -43,11 +43,11 @@ func TestValidate_DuplicateStreamName(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers: []
   - name: a:v1
     const: BV1
-    producers: [state]
+    producers: [run-controller]
     consumers: []
 `
 	_, err := loadAndValidate(strings.NewReader(y))
@@ -61,11 +61,11 @@ func TestValidate_DuplicateStreamConst(t *testing.T) {
 streams:
   - name: a:v1
     const: SameConst
-    producers: [state]
+    producers: [run-controller]
     consumers: []
   - name: b:v1
     const: SameConst
-    producers: [state]
+    producers: [run-controller]
     consumers: []
 `
 	_, err := loadAndValidate(strings.NewReader(y))
@@ -79,14 +79,14 @@ func TestValidate_DuplicateGroup(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: same-group
         const: ConstA
   - name: b:v1
     const: BV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: same-group
@@ -103,14 +103,14 @@ func TestValidate_DuplicateGroupConst(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: group-a
         const: SameConst
   - name: b:v1
     const: BV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: group-b
@@ -127,7 +127,7 @@ func TestValidate_GroupNotHyphenated(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: orchestrator_node_updated
@@ -144,7 +144,7 @@ func TestValidate_UnknownService(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: nope-controller
         group: nope-group
@@ -161,7 +161,7 @@ func TestValidate_GroupUppercase(t *testing.T) {
 streams:
   - name: a:v1
     const: AV1
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: Orchestrator-Node-Updated
@@ -178,7 +178,7 @@ func TestValidate_GoIdentifier(t *testing.T) {
 streams:
   - name: a:v1
     const: 9NotIdentifier
-    producers: [state]
+    producers: [run-controller]
     consumers: []
 `
 	_, err := loadAndValidate(strings.NewReader(y))
@@ -212,7 +212,7 @@ streams:
   - name: update.graph:v1
     const: UpdateGraphV1
     description: Manifest refresh trigger.
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: topology-controller
         group: topology-controller-update-graph
@@ -228,7 +228,7 @@ streams:
   - name: irrelevant.to.python:v1
     const: IrrelevantV1
     description: Should not appear in Python output.
-    producers: [state]
+    producers: [run-controller]
     consumers:
       - service: orchestrator
         group: orchestrator-irrelevant
@@ -254,7 +254,7 @@ streams:
   - name: node.updated:v1
     const: NodeUpdatedV1
     description: Node state transitions.
-    producers: [state]
+    producers: [run-controller]
     consumers: []
 vocabularies:
   - name: parse_failure_kind
@@ -394,7 +394,7 @@ func TestEmitPythonStreams_HoldsNoVocabulary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := emitPythonStreams(c, "state")
+	src, err := emitPythonStreams(c, "run-controller")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,7 +946,7 @@ func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
 
 func TestValidate_RetiredStreamMustNotBeLive(t *testing.T) {
 	c := &Contract{
-		Streams:        []Stream{{Name: "a:v1", Const: "AV1", Description: "d", Producers: []string{"state"}}},
+		Streams:        []Stream{{Name: "a:v1", Const: "AV1", Description: "d", Producers: []string{"run-controller"}}},
 		RetiredStreams: []RetiredStream{{Name: "a:v1"}},
 	}
 	if err := validate(c); err == nil {
@@ -957,7 +957,7 @@ func TestValidate_RetiredStreamMustNotBeLive(t *testing.T) {
 func TestEmitGo_GroupsAndRetired(t *testing.T) {
 	c := &Contract{
 		Streams: []Stream{
-			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "state", Group: "state-a", Const: "StateA"}}},
+			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
 			{Name: "b:v1", Const: "BV1", Description: "d"},
 		},
 		RetiredStreams: []RetiredStream{{Name: "old:v1"}},
@@ -968,7 +968,7 @@ func TestEmitGo_GroupsAndRetired(t *testing.T) {
 	}
 	for _, want := range []string{
 		"var Groups = map[string][]string{",
-		"AV1: {StateA},",
+		"AV1: {RunControllerA},",
 		"BV1: {},",
 		"var Retired = []string{",
 		`"old:v1",`,

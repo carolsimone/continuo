@@ -51,7 +51,7 @@ repos:
   - pkg
   - release-controller
   - remediation
+  - run-controller
   - s3-sidecar
-  - state
   - topology-controller
   - ui

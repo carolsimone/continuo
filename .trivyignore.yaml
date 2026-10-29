@@ -48,7 +48,7 @@ misconfigurations:
       - "orchestrator/Dockerfile.dev"
       - "release-controller/Dockerfile.dev"
       - "remediation/Dockerfile.dev"
-      - "state/Dockerfile.dev"
+      - "run-controller/Dockerfile.dev"
       # Python service (topology-controller) dev image: docker-compose
       # bind-mounts the working tree and the uv-managed virtualenv/cache into
       # /app; runs as root for the same host-ownership reason.

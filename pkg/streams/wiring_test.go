@@ -15,7 +15,7 @@ import (
 // that must reference only pkg/streams constants — never string literals — for
 // stream names or consumer groups.
 var servicesWithMainGo = []string{
-	"state/main.go",
+	"run-controller/main.go",
 	"orchestrator/main.go",
 	"execution-controller/main.go",
 	"release-controller/main.go",
@@ -83,7 +83,7 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 }
 
 func looksLikeServicePrefixedGroup(s string) bool {
-	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-", "dead-letter-"} {
+	for _, p := range []string{"run-controller-", "orchestrator-", "execution-", "topology-", "agent-remediation-", "remediation-", "dead-letter-"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}
@@ -95,16 +95,16 @@ func looksLikeServicePrefixedGroup(s string) bool {
 // pkg/streams constants for stream names rather than inline literals. These are
 // the seams where a versioned-stream string is most likely to be hand-written:
 // Redis stream bindings (the message_processing.stream_name dedup value), the
-// message handlers (the dedup message_type argument), state's outbox writer
+// message handlers (the dedup message_type argument), run-controller's outbox writer
 // (each row's stream_name and event_type), and the shared consumer, event and
 // outbox packages that name the dead-letter streams.
 var streamLiteralScanDirs = []string{
-	"state/adapters/postgres",
-	"state/adapters/redis",
-	"state/service/commands",
-	"state/service/handlers",
-	"state/service/runreads",
-	"state/internal/grpc/runservice",
+	"run-controller/adapters/postgres",
+	"run-controller/adapters/redis",
+	"run-controller/service/commands",
+	"run-controller/service/handlers",
+	"run-controller/service/runreads",
+	"run-controller/internal/grpc/runservice",
 	"orchestrator/adapters/redis",
 	"orchestrator/service/handlers",
 	"execution-controller/adapters/redis",

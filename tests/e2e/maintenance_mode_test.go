@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ const maintenanceMessage = "continuo is in maintenance mode: new work is not acc
 // release-controller gates releases. Each entry is the container, its Go
 // module directory under /app and its health URL.
 var maintenanceServices = []struct{ container, dir, health string }{
-	{"state", "state", "http://state:8082/health"},
+	{"state", "run-controller", "http://state:8082/health"},
 	{"release-controller", "release-controller", "http://release-controller:8088/healthz"},
 }
 

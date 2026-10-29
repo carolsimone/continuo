@@ -6,15 +6,15 @@
 #   - Group name: lowercase kebab-case, no underscores, `<consuming service>-<purpose>`
 #     (TestConsumerGroupsStartWithTheirServiceName).
 #   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
-#   - Consumer const: PascalCase, service-prefixed (StateTaskStatusUpdated).
+#   - Consumer const: PascalCase, service-prefixed (RunControllerTaskStatusUpdated).
 
 streams:
   # ---------------- run lifecycle streams ----------------
 
   - name: task.dispatch:v1
     const: TaskDispatchV1
-    description: One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
-    producers: [state]
+    description: One attempt of a task, from run-controller to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever run-controller asks about an attempt that has gone quiet, with run-controller's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
+    producers: [run-controller]
     consumers:
       - service: execution-controller
         group: execution-controller-task-dispatch
@@ -22,19 +22,19 @@ streams:
 
   - name: task.status.updated:v2
     const: TaskStatusUpdatedV2
-    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
     consumers:
-      - service: state
-        group: state-task-status-updated
-        const: StateTaskStatusUpdated
+      - service: run-controller
+        group: run-controller-task-status-updated
+        const: RunControllerTaskStatusUpdated
 
   # ---------------- execution-controller streams ----------------
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each service that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
-    producers: [state, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
+    producers: [run-controller, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-outbox-dead-letters
@@ -43,7 +43,7 @@ streams:
   - name: consumer.dead_letter:v1
     const: ConsumerDeadLetterV1
     description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
-    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
+    producers: [run-controller, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-consumer-dead-letters
@@ -53,8 +53,8 @@ streams:
 
   - name: run.cancelled:v1
     const: RunCancelledV1
-    description: A run's cancel, from state to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. state writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
-    producers: [state]
+    description: A run's cancel, from run-controller to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. run-controller writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
+    producers: [run-controller]
     consumers:
       - service: execution-controller
         group: execution-controller-run-cancelled
@@ -139,7 +139,7 @@ streams:
 
   - name: release.promoted:v2
     const: ReleasePromotedV2
-    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; state stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
       - service: orchestrator
@@ -151,9 +151,9 @@ streams:
       - service: execution-controller
         group: execution-controller-release-promoted
         const: ExecutionControllerReleasePromoted
-      - service: state
-        group: state-release-promoted
-        const: StateReleasePromoted
+      - service: run-controller
+        group: run-controller-release-promoted
+        const: RunControllerReleasePromoted
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
@@ -429,7 +429,7 @@ vocabularies:
     values:
       - value: pending
         const: Pending
-        description: state created the run and no task of it has been dispatched yet.
+        description: run-controller created the run and no task of it has been dispatched yet.
       - value: running
         const: Running
         description: at least one task of the run has been dispatched and the run has not ended.
@@ -441,7 +441,7 @@ vocabularies:
         description: every task of the run succeeded.
       - value: failed
         const: Failed
-        description: a task of the run failed for good, or state failed the run as stalled or unplannable.
+        description: a task of the run failed for good, or run-controller failed the run as stalled or unplannable.
       - value: cancelled
         const: Cancelled
         description: the run was cancelled and every attempt of it has ended.
@@ -454,7 +454,7 @@ vocabularies:
     list_func: TaskStatusValues
     description: >-
       Where one task of a run stands. A task waits pending until it is ready;
-      state then dispatches an attempt of it, and the task follows that attempt
+      run-controller then dispatches an attempt of it, and the task follows that attempt
       through queued and running. A failed attempt with retries left dispatches
       the next one, so a task is failed only once it will not run again.
     values:
@@ -463,7 +463,7 @@ vocabularies:
         description: the task waits for its upstream tasks, or for the write lease on its node.
       - value: dispatched
         const: Dispatched
-        description: state dispatched an attempt of the task and has no report of it yet.
+        description: run-controller dispatched an attempt of the task and has no report of it yet.
       - value: queued
         const: Queued
         description: execution-controller accepted the attempt; it waits for a slot or its Job.
@@ -492,7 +492,7 @@ vocabularies:
       The verb a run applies to its nodes. It is orthogonal to the node type: the
       type is what a node is, the operation is which verb runs against it. The
       default (run) is the empty string on the wire, so a message that names no
-      operation reads as a plain run; state stores it as run.
+      operation reads as a plain run; run-controller stores it as run.
     # single_node_only: true marks an operation that may target only one node.
     # default: true marks the operation a message that names none stands for.
     values:
@@ -514,7 +514,7 @@ vocabularies:
   - name: attempt_status
     const: AttemptStatus
     description: >-
-      Where one attempt of a task stands, on the two task streams. state sends
+      Where one attempt of a task stands, on the two task streams. run-controller sends
       dispatched, queued or running as a dispatch's known_status on
       task.dispatch:v1; execution-controller reports queued, running,
       succeeded, failed or stopped as a report's status on
@@ -522,7 +522,7 @@ vocabularies:
     values:
       - value: dispatched
         const: Dispatched
-        description: state dispatched the attempt and has no report of it yet.
+        description: run-controller dispatched the attempt and has no report of it yet.
       - value: queued
         const: Queued
         description: execution-controller accepted the attempt; it waits for a slot or its Job.
@@ -596,7 +596,7 @@ vocabularies:
       - value: attempt_lost
         const: AttemptLost
         class: infra
-        description: state asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
+        description: run-controller asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
       - value: create_failed
         const: CreateFailed
         class: infra

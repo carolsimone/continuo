@@ -70,7 +70,7 @@ func run(c *rds.StreamConsumer) {}`, true},
 		{"aliased import with SetService", `package main
 import (
 	rds "github.com/carolsimone/continuo/pkg/redis"
-	"github.com/carolsimone/continuo/state/config"
+	"github.com/carolsimone/continuo/run-controller/config"
 )
 func run(c *rds.StreamConsumer) { c.SetService(config.ServiceName) }`, false},
 		{"unaliased import without SetService", `package main

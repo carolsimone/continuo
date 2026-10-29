@@ -33,7 +33,7 @@ func TestLintCIModulesCoversWorkspace(t *testing.T) {
 	}
 }
 
-// workspaceModules returns the go.work member paths (e.g. "state", "tests/e2e").
+// workspaceModules returns the go.work member paths (e.g. "run-controller", "tests/e2e").
 func workspaceModules(t *testing.T, root string) []string {
 	t.Helper()
 	path := filepath.Join(root, "go.work")

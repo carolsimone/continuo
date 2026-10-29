@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package run.v1;
 
-option go_package = "github.com/carolsimone/continuo/state/proto/run/v1;runv1";
+option go_package = "github.com/carolsimone/continuo/run-controller/proto/run/v1;runv1";
 
 import "google/protobuf/timestamp.proto";
 

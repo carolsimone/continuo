@@ -94,7 +94,7 @@ func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func
 		edit(&p)
 	}
 	outboxID := uuid.New()
-	fields, err := pkgevents.TaskDispatchFields(outboxID.String(), "default", "state", nowUTC(), p)
+	fields, err := pkgevents.TaskDispatchFields(outboxID.String(), "default", "run-controller", nowUTC(), p)
 	require.NoError(f.t, err)
 	values := map[string]any{"outbox_entry_id": outboxID.String()}
 	for k, v := range fields {

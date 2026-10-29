@@ -15,7 +15,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
-	runv1 "github.com/carolsimone/continuo/state/proto/run/v1"
+	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"

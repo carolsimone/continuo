@@ -96,7 +96,7 @@ func validDispatchFields(extra string) map[string]string {
 		"event_id":       "e",
 		"tenant_id":      "default",
 		"occurred_at":    "2026-10-20T23:01:52.000000Z",
-		"producer":       "state",
+		"producer":       "run-controller",
 		"schema_version": "1",
 		"payload":        payload + "}",
 	}

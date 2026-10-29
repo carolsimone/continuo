@@ -55,7 +55,7 @@ func redriveEntry(dl deadletter.DeadLetter, body []byte) *outbox.Entry {
 func sample(key string, original time.Time) deadletter.DeadLetter {
 	return deadletter.DeadLetter{ID: uuid.New(), DedupKey: key, Source: deadletter.SourceConsumer,
 		FailureKind: model.DeadLetterKindPermanent, Stream: "orders.changed:v1", Group: "g", OriginalMessageID: "1-0",
-		Producer: "state", Error: "boom", DeliveryCount: 1, Fields: map[string]string{"k": "v"}, Publishable: true,
+		Producer: "run-controller", Error: "boom", DeliveryCount: 1, Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: original.UTC().Truncate(time.Microsecond), RecordedAt: original.UTC().Truncate(time.Microsecond), Status: deadletter.StatusOpen}
 }
 
