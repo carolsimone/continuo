@@ -88,7 +88,7 @@ func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
 // attempts.
 func TestRunCancelledV1_ExecutionControllerIsTheOnlyConsumer(t *testing.T) {
 	got := streams.Groups[streams.RunCancelledV1]
-	if want := []string{streams.ExecutorRunCancelled}; !slices.Equal(got, want) {
+	if want := []string{streams.ExecutionControllerRunCancelled}; !slices.Equal(got, want) {
 		t.Fatalf("%s groups = %v, want %v", streams.RunCancelledV1, got, want)
 	}
 }

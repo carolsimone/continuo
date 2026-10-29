@@ -83,7 +83,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	// the others must acknowledge the redriven entry without a handler.
 	const stream = streams.ReleasePromotedV2
 	const group = streams.OrchestratorReleasePromoted
-	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.StateReleasePromoted, streams.ExecutorReleasePromoted}
+	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.StateReleasePromoted, streams.ExecutionControllerReleasePromoted}
 
 	// 1-2. Publish the malformed entry and wait for the dead letter of the group
 	// that will be redriven. The sibling groups dead-letter the same original;

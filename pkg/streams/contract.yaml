@@ -3,7 +3,8 @@
 #
 # Naming policy:
 #   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
-#   - Group name: lowercase kebab-case, no underscores. Frozen per consumer.
+#   - Group name: lowercase kebab-case, no underscores, `<consuming service>-<purpose>`
+#     (TestConsumerGroupsStartWithTheirServiceName).
 #   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
 #   - Consumer const: PascalCase, service-prefixed (StateTaskStatusUpdated).
 
@@ -16,8 +17,8 @@ streams:
     producers: [state]
     consumers:
       - service: execution-controller
-        group: executor-task-dispatch
-        const: ExecutorTaskDispatch
+        group: execution-controller-task-dispatch
+        const: ExecutionControllerTaskDispatch
 
   - name: task.status.updated:v2
     const: TaskStatusUpdatedV2
@@ -56,8 +57,8 @@ streams:
     producers: [state]
     consumers:
       - service: execution-controller
-        group: executor-run-cancelled
-        const: ExecutorRunCancelled
+        group: execution-controller-run-cancelled
+        const: ExecutionControllerRunCancelled
 
   # ---------------- release-controller streams (dbt blue/green) ----------------
 
@@ -85,8 +86,8 @@ streams:
     producers: [release-controller]
     consumers:
       - service: execution-controller
-        group: executor-validation-requested
-        const: ExecutorValidationRequested
+        group: execution-controller-validation-requested
+        const: ExecutionControllerValidationRequested
 
   - name: validation.result:v1
     const: ValidationResultV1
@@ -97,8 +98,8 @@ streams:
         group: release-controller-validation-result
         const: ReleaseControllerValidationResult
       - service: execution-controller
-        group: executor-validation-result-teardown
-        const: ExecutorValidationResultTeardown
+        group: execution-controller-validation-result-teardown
+        const: ExecutionControllerValidationResultTeardown
 
   - name: seed.build.requested:v1
     const: SeedBuildRequestedV1
@@ -106,8 +107,8 @@ streams:
     producers: [release-controller]
     consumers:
       - service: execution-controller
-        group: executor-seed-build-requested
-        const: ExecutorSeedBuildRequested
+        group: execution-controller-seed-build-requested
+        const: ExecutionControllerSeedBuildRequested
 
   - name: seed.build.completed:v1
     const: SeedBuildCompletedV1
@@ -124,8 +125,8 @@ streams:
     producers: [release-controller]
     consumers:
       - service: execution-controller
-        group: executor-compile-requested
-        const: ExecutorCompileRequested
+        group: execution-controller-compile-requested
+        const: ExecutionControllerCompileRequested
 
   - name: compile.completed:v1
     const: CompileCompletedV1
@@ -148,8 +149,8 @@ streams:
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions
       - service: execution-controller
-        group: executor-release-promoted
-        const: ExecutorReleasePromoted
+        group: execution-controller-release-promoted
+        const: ExecutionControllerReleasePromoted
       - service: state
         group: state-release-promoted
         const: StateReleasePromoted
@@ -163,8 +164,8 @@ streams:
         group: remediation-release-rejected
         const: RemediationReleaseRejected
       - service: execution-controller
-        group: executor-release-rejected
-        const: ExecutorReleaseRejected
+        group: execution-controller-release-rejected
+        const: ExecutionControllerReleaseRejected
 
   - name: pipeline.run.finished:v1
     const: PipelineRunFinishedV1
@@ -172,8 +173,8 @@ streams:
     producers: [release-controller]
     consumers:
       - service: execution-controller
-        group: executor-pipeline-run-finished
-        const: ExecutorPipelineRunFinished
+        group: execution-controller-pipeline-run-finished
+        const: ExecutionControllerPipelineRunFinished
 
   - name: remediation.retry_requested:v1
     const: RemediationRetryRequestedV1

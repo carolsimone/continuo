@@ -50,48 +50,48 @@ const (
 
 // Consumer groups.
 const (
-	// ExecutorTaskDispatch — execution-controller consumer group on task.dispatch:v1.
-	ExecutorTaskDispatch = "executor-task-dispatch"
+	// ExecutionControllerTaskDispatch — execution-controller consumer group on task.dispatch:v1.
+	ExecutionControllerTaskDispatch = "execution-controller-task-dispatch"
 	// StateTaskStatusUpdated — state consumer group on task.status.updated:v2.
 	StateTaskStatusUpdated = "state-task-status-updated"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
 	DeadLetterControllerConsumerDeadLetters = "dead-letter-controller-consumer-dead-letters"
-	// ExecutorRunCancelled — execution-controller consumer group on run.cancelled:v1.
-	ExecutorRunCancelled = "executor-run-cancelled"
+	// ExecutionControllerRunCancelled — execution-controller consumer group on run.cancelled:v1.
+	ExecutionControllerRunCancelled = "execution-controller-run-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v2.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
-	// ExecutorValidationRequested — execution-controller consumer group on validation.requested:v1.
-	ExecutorValidationRequested = "executor-validation-requested"
+	// ExecutionControllerValidationRequested — execution-controller consumer group on validation.requested:v1.
+	ExecutionControllerValidationRequested = "execution-controller-validation-requested"
 	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
 	ReleaseControllerValidationResult = "release-controller-validation-result"
-	// ExecutorValidationResultTeardown — execution-controller consumer group on validation.result:v1.
-	ExecutorValidationResultTeardown = "executor-validation-result-teardown"
-	// ExecutorSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
-	ExecutorSeedBuildRequested = "executor-seed-build-requested"
+	// ExecutionControllerValidationResultTeardown — execution-controller consumer group on validation.result:v1.
+	ExecutionControllerValidationResultTeardown = "execution-controller-validation-result-teardown"
+	// ExecutionControllerSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
+	ExecutionControllerSeedBuildRequested = "execution-controller-seed-build-requested"
 	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
-	// ExecutorCompileRequested — execution-controller consumer group on compile.requested:v1.
-	ExecutorCompileRequested = "executor-compile-requested"
+	// ExecutionControllerCompileRequested — execution-controller consumer group on compile.requested:v1.
+	ExecutionControllerCompileRequested = "execution-controller-compile-requested"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v2.
-	ExecutorReleasePromoted = "executor-release-promoted"
+	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v2.
+	ExecutionControllerReleasePromoted = "execution-controller-release-promoted"
 	// StateReleasePromoted — state consumer group on release.promoted:v2.
 	StateReleasePromoted = "state-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
-	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
-	ExecutorReleaseRejected = "executor-release-rejected"
-	// ExecutorPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
-	ExecutorPipelineRunFinished = "executor-pipeline-run-finished"
+	// ExecutionControllerReleaseRejected — execution-controller consumer group on release.rejected:v1.
+	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
+	// ExecutionControllerPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
+	ExecutionControllerPipelineRunFinished = "execution-controller-pipeline-run-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
 	RemediationRetryRequested = "remediation-retry-requested"
 	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v2.
@@ -134,22 +134,22 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
-	TaskDispatchV1:              {ExecutorTaskDispatch},
+	TaskDispatchV1:              {ExecutionControllerTaskDispatch},
 	TaskStatusUpdatedV2:         {StateTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
-	RunCancelledV1:              {ExecutorRunCancelled},
+	RunCancelledV1:              {ExecutionControllerRunCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
 	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
-	ValidationRequestedV1:       {ExecutorValidationRequested},
-	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutorValidationResultTeardown},
-	SeedBuildRequestedV1:        {ExecutorSeedBuildRequested},
+	ValidationRequestedV1:       {ExecutionControllerValidationRequested},
+	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutionControllerValidationResultTeardown},
+	SeedBuildRequestedV1:        {ExecutionControllerSeedBuildRequested},
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
-	CompileRequestedV1:          {ExecutorCompileRequested},
+	CompileRequestedV1:          {ExecutionControllerCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted, StateReleasePromoted},
-	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
-	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
+	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutionControllerReleasePromoted, StateReleasePromoted},
+	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
+	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
 	RemediationRequestedV2:      {AgentRemediationRemediationRequested, OrchestratorRemediationRequestedRejections},
 	RemediationProposedV1:       {},

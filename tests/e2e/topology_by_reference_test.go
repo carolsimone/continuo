@@ -188,7 +188,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.
-	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutorReleasePromoted} {
+	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutionControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, g, id)
 		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, g, id, "open"); other != nil {
 			cleanup = append(cleanup, other.GetId())

@@ -60,7 +60,7 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	want := map[string]bool{
 		"orchestrator-release-promoted":          false,
 		"orchestrator-release-promoted-versions": false,
-		"executor-release-promoted":              false,
+		"execution-controller-release-promoted":  false,
 		"state-release-promoted":                 false,
 	}
 	for _, g := range Groups[ReleasePromotedV2] {
