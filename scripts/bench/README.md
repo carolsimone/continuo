@@ -26,7 +26,7 @@ Environment knobs:
 | `BENCH_KIND_CLUSTER` | `continuo` | kind cluster that receives the images (`compose`) |
 | `BENCH_REDIS_POD` | — | Redis pod of the install (`k8s`, required) |
 | `BENCH_REDIS_CONTAINER_NAME` | `redis` | Container inside `BENCH_REDIS_POD` |
-| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's, state's and execution-controller's databases (`k8s`, required by the export, the release check and every rep's hand-off breakdown) |
+| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's, run-controller's and execution-controller's databases (`k8s`, required by the export, the release check and every rep's hand-off breakdown) |
 | `BENCH_SSH_HOST` | — | ssh destination on the k3s node; `build_image.sh` imports the images into its containerd (`k8s`, required) |
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
 | `BENCH_SCENARIOS` | all | Scenario names to run, comma- or space-separated (for example `cascade-2000,cancel-500`) |
@@ -54,7 +54,7 @@ If the machine running the harness dies mid-run, no exit handler runs. Recover b
 
 No scenario rep starts inside a quiet window around the install's own scheduled runs: `BENCH_QUIET_WINDOWS_UTC`, comma-separated `HHMM-HHMM` ranges in UTC (default `2215-2345`, around a 23:00 UTC daily run). The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
 
-A benchmark leaves these traces on a shared install: its runs stay in state's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
+A benchmark leaves these traces on a shared install: its runs stay in run-controller's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
 
 ## Prerequisites
 
@@ -62,7 +62,7 @@ The machine that runs the harness stays awake for the whole run: a sleeping host
 
 
 - Both targets: `python3` 3.9 or newer, `kubectl`, Docker with BuildKit.
-- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts state, orchestrator, release-controller and execution-controller itself through `start_local_services.sh` (release-controller's outbox publisher is what publishes the announcement `announce-topology` queues); execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
+- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts run-controller, orchestrator, release-controller and execution-controller itself through `start_local_services.sh` (release-controller's outbox publisher is what publishes the announcement `announce-topology` queues); execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
 - `k8s`: a kubeconfig for the install, ssh access to its k3s node for the image import, and `docker buildx` for the `linux/amd64` build. Obtaining cluster credentials is managed outside this repository.
 
 ## Usage
@@ -125,7 +125,7 @@ However a start failure ends, normally or on INT, TERM or HUP, `bench_start_fail
 | overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the capture is not counted (the capture holds no lifetime for it) |
 | observe | An upstream's last Job finishing to execution-controller recording its result (`deployments.outcome_at`) |
 | round trip | That result recorded to the node's first deployment queued (`deployments.created_at`), both on execution-controller's clock |
-| to dispatch, to queue | The round trip split at state's first dispatch of the node (`tasks.dispatched_at`) |
+| to dispatch, to queue | The round trip split at run-controller's first dispatch of the node (`tasks.dispatched_at`) |
 | admit | The node's first deployment queued to its Job created (`deployments.deployed_at`) |
 | CPU-seconds per 1,000 tasks | CPU integrated over the run (5 s samples) ÷ executed tasks × 1,000 |
 | peak memory | Highest per-service memory during the run, replicas summed per instant |
@@ -134,7 +134,7 @@ However a start failure ends, normally or on INT, TERM or HUP, `bench_start_fail
 
 A retried node counts from its first Job's creation to its last Job's finish. A failed Job ends at its `Failed` condition's transition time.
 
-The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty and keeps its error output beside them (`deployments-rep<N>.err`, `tasks-rep<N>.err`). Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
+The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and run-controller's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty and keeps its error output beside them (`deployments-rep<N>.err`, `tasks-rep<N>.err`). Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
 
 ## Run-lifecycle targets
 
@@ -150,7 +150,7 @@ The hand-off steps take, for each node, the upstream whose last Job finished las
 
 ## Run history
 
-`sql/run_history.sql` computes wall, busy, idle, first-start and finalize percentiles from state's database (`continuo_run_controller`), read-only:
+`sql/run_history.sql` computes wall, busy, idle, first-start and finalize percentiles from the run-controller database (`continuo_run_controller`), read-only:
 
 ```bash
 psql -v kinds=cron,trigger -v days=30 -f scripts/bench/sql/run_history.sql

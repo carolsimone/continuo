@@ -62,21 +62,21 @@ def test_service_of_normalises_pod_and_container_names():
     assert m.service_of("infra-redis-master-0") == "redis"
     assert m.service_of("data-postgresql-0") == "postgres"
     assert m.service_of("continuo-postgres-1") == "postgres"
-    assert m.service_of("state") == "state"
+    assert m.service_of("run-controller") == "run-controller"
     assert m.service_of("NODE") == "NODE"
 
 
 def test_usage_sums_replicas_at_one_instant_and_integrates_cpu():
     lines = [
-        f"{iso(0)}\tstate-aaaaaaaaaa-bbbbb\t10m\t10Mi\n",
-        f"{iso(0)}\tstate-cccccccccc-ddddd\t10m\t5Mi\n",
-        f"{iso(5)}\tstate-aaaaaaaaaa-bbbbb\t40m\t12Mi\n",
+        f"{iso(0)}\trun-controller-aaaaaaaaaa-bbbbb\t10m\t10Mi\n",
+        f"{iso(0)}\trun-controller-cccccccccc-ddddd\t10m\t5Mi\n",
+        f"{iso(5)}\trun-controller-aaaaaaaaaa-bbbbb\t40m\t12Mi\n",
         "garbage\n",
     ]
-    state = m.usage(m.read_samples(lines), at(0), at(5))["state"]
-    assert state["cpu_max_m"] == 40
-    assert state["mem_max_mib"] == 15
-    assert abs(state["cpu_seconds"] - 0.2) < 1e-9
+    usage = m.usage(m.read_samples(lines), at(0), at(5))["run-controller"]
+    assert usage["cpu_max_m"] == 40
+    assert usage["mem_max_mib"] == 15
+    assert abs(usage["cpu_seconds"] - 0.2) < 1e-9
 
 
 def test_messages_delta_counts_new_streams_from_zero():
@@ -85,7 +85,7 @@ def test_messages_delta_counts_new_streams_from_zero():
 
 def test_sampling_that_starts_late_or_stops_early_counts_as_a_gap():
     def samples(seconds):
-        return m.read_samples([f"{iso(s)}\tstate\t1m\t1Mi\n" for s in seconds])
+        return m.read_samples([f"{iso(s)}\trun-controller\t1m\t1Mi\n" for s in seconds])
     assert m.max_sample_gap(samples(range(0, 61, 5)), at(0), at(600)) == 540
     assert m.max_sample_gap(samples(range(100, 601, 5)), at(0), at(600)) == 100
     assert m.max_sample_gap([], at(0), at(600)) is None

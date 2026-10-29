@@ -3,12 +3,12 @@ import report
 
 def test_aggregate_reports_p50_p95_and_cost_per_thousand_tasks():
     reps = [{"wall_s": v, "nodes_executed": 1000,
-             "usage_run": {"state": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}}} for v in (10.0, 20.0, 30.0)]
+             "usage_run": {"run-controller": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}}} for v in (10.0, 20.0, 30.0)]
     agg = report.aggregate(reps)
     assert agg["wall_s"]["p50"] == 20
     assert agg["wall_s"]["n"] == 3
-    assert agg["usage"]["state"]["cpu_s_per_1k_tasks_p50"] == 2.0
-    assert agg["usage"]["state"]["mem_peak_mib_p50"] == 20.0
+    assert agg["usage"]["run-controller"]["cpu_s_per_1k_tasks_p50"] == 2.0
+    assert agg["usage"]["run-controller"]["mem_peak_mib_p50"] == 20.0
 
 
 def test_render_has_a_section_per_scenario():

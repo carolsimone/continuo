@@ -24,7 +24,7 @@ updates:
       - /release-controller
       - /remediation
       - /agent-remediation
-      - /state
+      - /run-controller
       - /tests/e2e
       - /tests/e2e/stub-github
       - /tests/e2e/stub-llm

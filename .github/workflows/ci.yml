@@ -226,7 +226,7 @@ jobs:
         # wait_for_container_running is defined in scripts/lib/common.sh.
         run: |
           source scripts/lib/common.sh
-          for c in state orchestrator execution-controller \
+          for c in run-controller orchestrator execution-controller \
                    topology-controller release-controller remediation agent-remediation agent-chat \
                    dead-letter-controller egress-proxy; do
             wait_for_container_running "$c"
@@ -314,8 +314,8 @@ jobs:
         run: bash scripts/ci-disk-usage.sh "before e2e"
 
       - name: Start ui + deploy + e2e
-        # Start the ui container, wait for it to become healthy, deploy k8s
-        # controllers, then run the full e2e suite inside the orchestrator
+        # Start the ui container, wait for it to become healthy, deploy
+        # execution-controller, then run the full e2e suite inside the orchestrator
         # container where the test code lives. Comfortably exceeds the go
         # test -timeout below (125m) plus the ui-wait/deploy steps that run
         # first in this same step.
@@ -342,7 +342,7 @@ jobs:
           bash tests/e2e/deploy-execution-controller.sh
           docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 125m /app/tests/e2e/...
 
-      - name: Cleanup k8s controllers
+      - name: Cleanup execution-controller
         if: always()
         run: bash tests/e2e/cleanup-execution-controller.sh
       # ────────────────────────────────────────────────────────────────────────

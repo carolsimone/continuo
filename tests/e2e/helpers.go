@@ -30,10 +30,10 @@ func verifyServicesHealthy(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 
-	// k8s controllers
-	k8sControllers := map[string]int{"execution-controller": 8084}
+	// execution-controller, the one service that runs in the kind cluster
+	kindDeployments := map[string]int{"execution-controller": 8084}
 
-	for deployment, port := range k8sControllers {
+	for deployment, port := range kindDeployments {
 		// `kubectl port-forward deployment/X` attaches to whatever pod the API
 		// server picks — which during/after a rolling restart can be a dying
 		// pod. If /health keeps failing on the same port-forward, the pod is
@@ -68,7 +68,7 @@ func portForwardHealthy(t *testing.T, deployment string, port int) {
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		pf := exec.Command("kubectl", "port-forward", //nolint:gosec // deployment/port come from the fixed k8sControllers map in verifyServicesHealthy, not external input
+		pf := exec.Command("kubectl", "port-forward", //nolint:gosec // deployment/port come from the fixed kindDeployments map in verifyServicesHealthy, not external input
 			fmt.Sprintf("deployment/%s", deployment),
 			fmt.Sprintf("%d:%d", port, port),
 			"-n", "default",

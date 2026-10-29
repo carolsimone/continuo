@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Maps a pull request title to the labels its Conventional Commit prefix names.
 #
-#   scripts/pr-title-type.sh "fix(state)!: stop double-dispatching a retried task"
+#   scripts/pr-title-type.sh "fix(run-controller)!: stop double-dispatching a retried task"
 #
 # A valid title is `<type>[(<scope>)][!]: <summary>` with <type> one of the
 # prefixes in label_for below. Stdout is machine-read by
@@ -46,9 +46,9 @@ fi
 {
   echo "The pull request title must be '<type>[(<scope>)][!]: <summary>'."
   echo "  <type> is one of: feat fix refactor docs perf ci test chore build security"
-  echo "  <scope> is optional and lowercase, e.g. (state) or (ui,cli)"
+  echo "  <scope> is optional and lowercase, e.g. (run-controller) or (ui,cli)"
   echo "  '!' before the colon marks a breaking change"
-  echo "Examples: 'fix(state): stop double-dispatching a retried task'"
+  echo "Examples: 'fix(run-controller): stop double-dispatching a retried task'"
   echo "          'feat(cli)!: rename node trigger to node run'"
   echo "Got: '${title}'"
 } >&2

@@ -179,7 +179,7 @@ def read_deployments(rows: list) -> list:
 
 
 def read_dispatches(rows: list) -> dict:
-    """When state first dispatched each table of one run, from run_rows.py's JSON."""
+    """When run-controller first dispatched each table of one run, from run_rows.py's JSON."""
     return {row["table"]: parse_ts(row["dispatched"]) for row in rows if row.get("table") and row.get("dispatched")}
 
 
@@ -193,8 +193,8 @@ def handoff_breakdown(topology: list, finishes: dict, deployments: list, dispatc
     upstream's last deployment and the node's first:
       observe      the upstream's Job finished -> execution-controller recorded its result
       round_trip   result recorded -> the node's deployment queued, both on execution-controller's clock
-      to_dispatch  result recorded -> state dispatched the node
-      to_queue     state dispatched the node -> its deployment queued
+      to_dispatch  result recorded -> run-controller dispatched the node
+      to_queue     run-controller dispatched the node -> its deployment queued
       admit        deployment queued -> its Job created
     """
     table_of = {node["unique_id"]: node["table_name"] for node in topology}

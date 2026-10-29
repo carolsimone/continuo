@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Starts the services of the local compose stack a benchmark depends on: state,
-# orchestrator, release-controller and execution-controller, each as a fresh
-# `go run` inside its container (any running instance is stopped first), logging
-# to /tmp/<service>.log in that container, which outage.sh reads.
+# Starts the services of the local compose stack a benchmark depends on:
+# run-controller, orchestrator, release-controller and execution-controller,
+# each as a fresh `go run` inside its container (any running instance is
+# stopped first), logging to /tmp/<service>.log in that container, which
+# outage.sh reads.
 # release-controller must be running because `announce-topology` (used by
 # inject.sh) only writes the topology artifact and queues the announcement in
 # release-controller's outbox; the service's outbox publisher is what puts it on
@@ -32,14 +33,14 @@ start() {
 bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
 [ -n "${bridge}" ] || { echo "start_local_services.sh: no Docker bridge gateway" >&2; exit 1; }
 
-for svc in state orchestrator release-controller execution-controller; do
+for svc in run-controller orchestrator release-controller execution-controller; do
   docker exec "${svc}" pkill -f 'go run \.' || true
   docker exec "${svc}" pkill -f "go-build.*/exe/${svc}\$" || true
 done
 sleep 3
 
-start state
-check_container_health state 8082
+start run-controller
+check_container_health run-controller 8082
 start orchestrator
 check_container_health orchestrator 8087
 start release-controller

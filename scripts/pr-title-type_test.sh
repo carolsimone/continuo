@@ -21,7 +21,7 @@ reject(){
 }
 
 expect 'feat: add a node list command' 'enhancement'
-expect 'fix(state): stop double-dispatching a retried task' 'bug'
+expect 'fix(run-controller): stop double-dispatching a retried task' 'bug'
 expect 'refactor(execution-controller): settle outcomes in-process' 'refactoring'
 expect 'docs: explain the lease wait' 'documentation'
 expect 'perf(execution-controller): raise the Kubernetes client rate limit' 'performance'
@@ -45,7 +45,7 @@ reject 'Feat: add a node list command'
 reject 'feature: add a node list command'
 reject 'wip: add a node list command'
 reject 'feat(): add a node list command'
-reject 'feat(State): add a node list command'
+reject 'feat(Run-controller): add a node list command'
 reject 'ui: draw dependency graphs in execution order'
 reject 'TEMPORARY: two-box concurrency test (do not merge)'
 

@@ -21,7 +21,7 @@ build-dev: build-base
 # Build single service for rapid iteration
 .PHONY: build-service
 build-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-service SERVICE=state" && exit 1)
+	@test -n "$(SERVICE)" || (echo "Usage: make build-service SERVICE=run-controller" && exit 1)
 	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build $(SERVICE)
 
 # Rebuild base from scratch (rarely needed)
@@ -81,7 +81,7 @@ security-scan:  ## Run the vulnerability and secret scanners (SCAN=vuln|secrets|
 
 .PHONY: e2e-setup
 e2e-setup:  ## Provision K8s test environment for E2E testing
-	@echo "Setting up K8s controllers..."
+	@echo "Setting up execution-controller..."
 	@bash tests/e2e/provision-k8s-test-env.sh
 
 .PHONY: e2e-test

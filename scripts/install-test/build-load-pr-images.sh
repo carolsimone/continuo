@@ -61,7 +61,7 @@ fi
 # needs-base=1 images build FROM continuo-base (Dockerfile.base); it is built
 # once up front when any such image is selected.
 IMAGES="\
-state|state/|state/Dockerfile.prod|.|1
+run-controller|run-controller/|run-controller/Dockerfile.prod|.|1
 orchestrator|orchestrator/|orchestrator/Dockerfile.prod|.|1
 execution-controller|execution-controller/|execution-controller/Dockerfile.prod|.|1
 ui|ui/|ui/Dockerfile|ui|0
