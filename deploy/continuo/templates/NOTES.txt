@@ -138,9 +138,13 @@ they override services[].name entries, name the entry of that service
 run-controller with POSTGRES_DB continuo_run_controller. The consumer groups
 follow their services' names (state-task-status-updated,
 state-release-promoted and the nine executor-* groups of execution-controller
-become run-controller-* and execution-controller-*): create each new group at
-its old group's last-delivered id before upgrading and destroy the old groups
-afterwards, as the CHANGELOG's entry for this version describes.
+become run-controller-* and execution-controller-*). In this order, as the
+CHANGELOG's entry for this version describes in full: redrive the open dead
+letters of those groups and let the consumers finish them (after the upgrade a
+dead letter of an old group cannot be redriven); take a pg_dump of
+continuo_state; scale state and execution-controller to 0 with an empty pending
+list on every old group, and only then create each new group at its old group's
+last-delivered id; rename the database; upgrade; destroy the old groups.
 {{- end }}
 
 {{- if eq (include "continuo.egress.enabled" .) "true" }}
