@@ -20,7 +20,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-log_info "Cleaning up K8s controller..."
+log_info "Cleaning up execution-controller..."
 
 # Delete deployment and service
 log_info "Deleting execution-controller deployment and service..."

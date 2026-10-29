@@ -32,7 +32,7 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) {
 	// Get scheduler ID first (needed for outbox cleanup)
 	var schedulerID string
-	_ = clients.stateDB.Get(&schedulerID, `
+	_ = clients.runControllerDB.Get(&schedulerID, `
 		SELECT run_id FROM runs WHERE schedule_name = $1
 	`, scheduleName)
 
@@ -44,18 +44,18 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	_, _ = clients.executionDB.Exec("DELETE FROM deployments")
 	_, _ = clients.executionDB.Exec("DELETE FROM validation_aggregates")
 	_, _ = clients.executionDB.Exec("DELETE FROM cancelled_runs")
-	for _, db := range []*sqlx.DB{clients.stateDB, clients.orchestratorDB, clients.executionDB} {
+	for _, db := range []*sqlx.DB{clients.runControllerDB, clients.orchestratorDB, clients.executionDB} {
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
 	// Clean the run's run_controller_outbox rows (its dispatches and cancellation)
 	if schedulerID != "" {
-		_, _ = clients.stateDB.Exec("DELETE FROM run_controller_outbox WHERE aggregate_id = $1", schedulerID)
+		_, _ = clients.runControllerDB.Exec("DELETE FROM run_controller_outbox WHERE aggregate_id = $1", schedulerID)
 	}
 
-	// Clean state tables (do last to preserve scheduler_id)
-	_, _ = clients.stateDB.Exec("DELETE FROM tasks WHERE run_id = $1", schedulerID)
-	_, _ = clients.stateDB.Exec("DELETE FROM runs WHERE schedule_name = $1", scheduleName)
+	// Clean run-controller tables (do last to preserve scheduler_id)
+	_, _ = clients.runControllerDB.Exec("DELETE FROM tasks WHERE run_id = $1", schedulerID)
+	_, _ = clients.runControllerDB.Exec("DELETE FROM runs WHERE schedule_name = $1", scheduleName)
 }
 
 // cleanupRedis removes test streams from Redis

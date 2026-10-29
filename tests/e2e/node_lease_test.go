@@ -21,11 +21,11 @@ const (
 	// seed_table_1.
 	leaseService = "service-1"
 	leaseTable   = "table_a"
-	// leaseNodeKey is that node's key in state's node_leases: "<schema>.<table>",
+	// leaseNodeKey is that node's key in run-controller's node_leases: "<schema>.<table>",
 	// lowercased.
 	leaseNodeKey = testSchemaName + "." + leaseTable
 
-	// nodeLeaseWait is the wait_reason state's reads carry for a pending task
+	// nodeLeaseWait is the wait_reason run-controller's reads carry for a pending task
 	// whose node another run's task holds.
 	nodeLeaseWait = "node_lease"
 )
@@ -70,7 +70,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+	waitForRunControllerLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 	waitForNodeUnleased(t, ctx, clients, leaseNodeKey)
 	repairedBefore := leasesRepaired(t)
 
@@ -98,7 +98,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	defer cleanupSingleNodeRun(t, ctx, clients, snID, snResp.ScheduleName)
 	t.Logf("single-node run %s of %s triggered", snID, leaseTable)
 
-	// state plans the run and makes its task wait in the transaction that
+	// run-controller plans the run and makes its task wait in the transaction that
 	// creates it, so the wait is readable once the trigger has returned. The
 	// run a task waits on is read from the node's lease when the task is read,
 	// so both reads are made at once, while the schedule run's table_a still runs.
@@ -179,7 +179,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	waitForAllTasksSucceeded(t, ctx, clients, scheduleRunID, allTables)
 	verifySchedulerSucceeded(t, ctx, clients, scheduleRunID)
 	var held int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &held,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &held,
 		`SELECT count(*) FROM node_leases WHERE tenant_id = $1 AND node_key = $2`, events.DefaultTenantID, leaseNodeKey))
 	require.Zero(t, held, "both tasks of %s released the node's lease when they ended", leaseTable)
 	require.Equal(t, repairedBefore, leasesRepaired(t),
@@ -187,17 +187,17 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	t.Logf("✅ both runs succeeded and no task holds %s's lease", leaseTable)
 }
 
-// leasesRepairedPattern captures the value of state's
+// leasesRepairedPattern captures the value of run-controller's
 // continuo_node_leases_repaired_total, with or without labels.
 var leasesRepairedPattern = regexp.MustCompile(`(?m)^continuo_node_leases_repaired_total(?:\{[^}]*\})? (\S+)$`)
 
-// leasesRepaired returns state's continuo_node_leases_repaired_total: how many
+// leasesRepaired returns run-controller's continuo_node_leases_repaired_total: how many
 // leases its lease waker has deleted because their task ended without
 // releasing them.
 func leasesRepaired(t *testing.T) float64 {
 	t.Helper()
-	m := leasesRepairedPattern.FindStringSubmatch(scrapeMetrics(t, getEnv("STATE_HOST", "state")))
-	require.NotNil(t, m, "state exposes no continuo_node_leases_repaired_total")
+	m := leasesRepairedPattern.FindStringSubmatch(scrapeMetrics(t, getEnv("RUN_CONTROLLER_HOST", "run-controller")))
+	require.NotNil(t, m, "run-controller exposes no continuo_node_leases_repaired_total")
 	v, err := strconv.ParseFloat(m[1], 64)
 	require.NoError(t, err, "parse continuo_node_leases_repaired_total %q", m[1])
 	return v
@@ -207,7 +207,7 @@ func leasesRepaired(t *testing.T) float64 {
 func requireNoLeaseOf(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, msg string) {
 	t.Helper()
 	var held int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &held, `SELECT count(*) FROM node_leases WHERE task_id = $1`, taskID))
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &held, `SELECT count(*) FROM node_leases WHERE task_id = $1`, taskID))
 	require.Zero(t, held, msg)
 }
 
@@ -219,7 +219,7 @@ func waitForNodeUnleased(t *testing.T, ctx context.Context, clients *testClients
 	holder := ""
 	pollUntilDescribed(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
 		var holders []string
-		if err := clients.stateDB.SelectContext(ctx, &holders, `
+		if err := clients.runControllerDB.SelectContext(ctx, &holders, `
 			SELECT 'task ' || task_id::text || ' of run ' || run_id::text
 			  FROM node_leases WHERE tenant_id = $1 AND node_key = $2`,
 			events.DefaultTenantID, nodeKey); err != nil {
@@ -235,7 +235,7 @@ func waitForNodeUnleased(t *testing.T, ctx context.Context, clients *testClients
 // taskStatus reads taskID's tasks status.
 func taskStatus(ctx context.Context, clients *testClients, taskID uuid.UUID) (string, error) {
 	var status string
-	err := clients.stateDB.GetContext(ctx, &status, `SELECT status FROM tasks WHERE task_id = $1`, taskID)
+	err := clients.runControllerDB.GetContext(ctx, &status, `SELECT status FROM tasks WHERE task_id = $1`, taskID)
 	return status, err
 }
 
@@ -253,7 +253,7 @@ func waitForLeaseHeldBy(t *testing.T, ctx context.Context, clients *testClients,
 			Status string `db:"status"`
 			Holder string `db:"holder"`
 		}
-		if err := clients.stateDB.GetContext(ctx, &row, `
+		if err := clients.runControllerDB.GetContext(ctx, &row, `
 			SELECT t.status, COALESCE(l.task_id::text, '') AS holder
 			  FROM tasks t
 			  LEFT JOIN node_leases l ON l.tenant_id = $2 AND l.node_key = $3
@@ -279,7 +279,7 @@ func waitForLeaseHeldBy(t *testing.T, ctx context.Context, clients *testClients,
 	return status
 }
 
-// readLeaseTask reads runID's task at leaseTable through state's ListTasks.
+// readLeaseTask reads runID's task at leaseTable through run-controller's ListTasks.
 func readLeaseTask(ctx context.Context, clients *testClients, runID uuid.UUID) (*runv1.Task, error) {
 	resp, err := clients.runClient.ListTasks(ctx, &runv1.ListTasksRequest{RunId: runID.String()})
 	if err != nil {

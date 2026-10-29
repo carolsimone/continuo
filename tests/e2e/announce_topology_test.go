@@ -86,36 +86,36 @@ func readLivePointer(ctx context.Context, clients *testClients) livePointer {
 	return p
 }
 
-// stateLiveRelease is state's live release of the default tenant: the release
+// runControllerLiveRelease is run-controller's live release of the default tenant: the release
 // it names, the promotion seq it was applied under, and how many of the
 // release's nodes carry each schedule name. The zero value is a tenant with no
 // live release.
-type stateLiveRelease struct {
+type runControllerLiveRelease struct {
 	releaseID    string
 	promotionSeq int64
 	models       map[string]int
 }
 
-// readStateLiveRelease reads state's live release and its node count per
+// readRunControllerLiveRelease reads run-controller's live release and its node count per
 // schedule name in one statement, so the counts are those of the release it
 // names.
-func readStateLiveRelease(ctx context.Context, clients *testClients) (stateLiveRelease, error) {
+func readRunControllerLiveRelease(ctx context.Context, clients *testClients) (runControllerLiveRelease, error) {
 	var rows []struct {
 		ReleaseID    string         `db:"release_id"`
 		PromotionSeq int64          `db:"promotion_seq"`
 		ScheduleName sql.NullString `db:"schedule_name"`
 		Models       int            `db:"models"`
 	}
-	if err := clients.stateDB.SelectContext(ctx, &rows, `
+	if err := clients.runControllerDB.SelectContext(ctx, &rows, `
 		SELECT live.release_id, live.promotion_seq, n.schedule_name, count(n.node_key)::int AS models
 		FROM live_release live
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id AND n.schedule_name <> ''
 		WHERE live.tenant_id = $1
 		GROUP BY live.release_id, live.promotion_seq, n.schedule_name`, events.DefaultTenantID); err != nil {
-		return stateLiveRelease{}, fmt.Errorf("read state's live release: %w", err)
+		return runControllerLiveRelease{}, fmt.Errorf("read run-controller's live release: %w", err)
 	}
-	live := stateLiveRelease{models: make(map[string]int, len(rows))}
+	live := runControllerLiveRelease{models: make(map[string]int, len(rows))}
 	for _, row := range rows {
 		live.releaseID, live.promotionSeq = row.ReleaseID, row.PromotionSeq
 		if row.ScheduleName.Valid {
@@ -126,7 +126,7 @@ func readStateLiveRelease(ctx context.Context, clients *testClients) (stateLiveR
 }
 
 // withoutModels returns the schedules no node of the live release carries.
-func (l stateLiveRelease) withoutModels(schedules []string) []string {
+func (l runControllerLiveRelease) withoutModels(schedules []string) []string {
 	var missing []string
 	for _, s := range schedules {
 		if l.models[s] == 0 {
@@ -138,31 +138,31 @@ func (l stateLiveRelease) withoutModels(schedules []string) []string {
 
 // waitForAnnouncedTopology waits until both readers of a promotion have
 // applied the announcement: the orchestrator's :Meta names its release, at its
-// seq or later, and state's live release is the announced release, with a
+// seq or later, and run-controller's live release is the announced release, with a
 // node of each of schedules, so a StartRun of any of them selects the
 // announced nodes. A timeout names what each of them last held.
 func waitForAnnouncedTopology(t *testing.T, ctx context.Context, clients *testClients, res announceResult, schedules []string) {
 	t.Helper()
 	var (
-		orchestrator livePointer
-		state        stateLiveRelease
-		stateErr     error
+		orchestrator     livePointer
+		runController    runControllerLiveRelease
+		runControllerErr error
 	)
 	pollUntilDescribed(t, ctx, 60*time.Second, time.Second, func() (bool, error) {
 		orchestrator = readLivePointer(ctx, clients)
-		state, stateErr = readStateLiveRelease(ctx, clients)
-		if stateErr != nil {
-			return false, stateErr
+		runController, runControllerErr = readRunControllerLiveRelease(ctx, clients)
+		if runControllerErr != nil {
+			return false, runControllerErr
 		}
 		return orchestrator.releaseID == res.ReleaseID && orchestrator.promotionSeq >= res.PromotionSeq &&
-			state.releaseID == res.ReleaseID && state.promotionSeq >= res.PromotionSeq &&
-			len(state.withoutModels(schedules)) == 0, nil
+			runController.releaseID == res.ReleaseID && runController.promotionSeq >= res.PromotionSeq &&
+			len(runController.withoutModels(schedules)) == 0, nil
 	}, func() string {
 		return fmt.Sprintf("timeout waiting for announced topology %s (promotion seq %d) to be applied: "+
-			"the orchestrator's live release is %q at seq %d; state's live release is %q at seq %d "+
+			"the orchestrator's live release is %q at seq %d; run-controller's live release is %q at seq %d "+
 			"(last read error: %v), and no node of it carries the schedules %v",
 			res.ReleaseID, res.PromotionSeq, orchestrator.releaseID, orchestrator.promotionSeq,
-			state.releaseID, state.promotionSeq, stateErr, state.withoutModels(schedules))
+			runController.releaseID, runController.promotionSeq, runControllerErr, runController.withoutModels(schedules))
 	})
 }
 

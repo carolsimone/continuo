@@ -19,7 +19,7 @@ import (
 // verifyServicesHealthy checks all service health endpoints
 func verifyServicesHealthy(t *testing.T) {
 	dockerComposeServices := []string{
-		"http://state:8082/health",
+		"http://run-controller:8082/health",
 		"http://orchestrator:8087/health",
 	}
 
@@ -178,7 +178,7 @@ func pollUntilDescribed(
 	}
 }
 
-// waitForParseCache polls state's task_attempts rows for the given
+// waitForParseCache polls run-controller's task_attempts rows for the given
 // schedule's most recently reported attempt until parse_cache equals want
 // ("hydrated" or "degraded"). task_attempts has no run_id column of its
 // own — it joins through tasks (task_attempts.task_id ->
@@ -306,7 +306,7 @@ type k8sJobList struct {
 
 // getK8sJobs retrieves jobs from k8s cluster
 func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they generate or read from state, not external input
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they generate or read from run-controller, not external input
 		"-n", "default",
 		"-l", labelSelector,
 		"-o", "json")
@@ -355,7 +355,7 @@ type k8sContainerStatus struct {
 // getK8sPods lists the pods matching labelSelector in the namespace the Jobs
 // run in, those being deleted included.
 func getK8sPods(ctx context.Context, labelSelector string) (*k8sPodList, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "pods", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they read from state, not external input
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "pods", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they read from run-controller, not external input
 		"-n", "default",
 		"-l", labelSelector,
 		"-o", "json")
@@ -455,7 +455,7 @@ func queryRunKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 func queryRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) string {
 	t.Helper()
 	var operation string
-	require.NoError(t, clients.stateDB.GetContext(context.Background(), &operation,
+	require.NoError(t, clients.runControllerDB.GetContext(context.Background(), &operation,
 		`SELECT operation FROM runs WHERE run_id = $1`, runID))
 	return operation
 }
@@ -465,7 +465,7 @@ func queryRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) stri
 func queryRunSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) string {
 	t.Helper()
 	var source *string
-	require.NoError(t, clients.stateDB.GetContext(context.Background(), &source,
+	require.NoError(t, clients.runControllerDB.GetContext(context.Background(), &source,
 		`SELECT source_run_id::text FROM runs WHERE run_id = $1`, runID))
 	if source == nil {
 		return ""
@@ -477,7 +477,7 @@ func queryRunSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) st
 func countRunsOfKind(t *testing.T, clients *testClients, kind string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, clients.stateDB.GetContext(context.Background(), &n,
+	require.NoError(t, clients.runControllerDB.GetContext(context.Background(), &n,
 		`SELECT count(*) FROM runs WHERE kind = $1`, kind))
 	return n
 }

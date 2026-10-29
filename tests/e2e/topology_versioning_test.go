@@ -47,7 +47,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 4: The live pointer carries G1.
 	require.Equal(t, g1, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G1")
 	t.Logf("G1 = %d", g1)
-	waitForStateLiveSeq(t, ctx, clients, g1)
+	waitForRunControllerLiveSeq(t, ctx, clients, g1)
 
 	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
 	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
@@ -57,7 +57,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	require.NoError(t, err, "run_id for Run 1 is not a valid UUID")
 
 	// Step 7: S1 carries G1.
-	t.Log("=== Step 7: verifying S1 promotion_seq in state == G1 ===")
+	t.Log("=== Step 7: verifying S1 promotion_seq in run-controller == G1 ===")
 	s1Seq := readRunPromotionSeq(t, ctx, clients, s1)
 	assert.Equal(t, g1, s1Seq, "Run 1's promotion_seq must equal G1=%d, got %d", g1, s1Seq)
 
@@ -70,12 +70,12 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	t.Logf("G2 = %d", g2)
 	require.Greater(t, g2, g1, "every announcement takes a larger promotion seq: G1=%d G2=%d", g1, g2)
 	require.Equal(t, g2, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G2")
-	waitForStateLiveSeq(t, ctx, clients, g2)
+	waitForRunControllerLiveSeq(t, ctx, clients, g2)
 
 	// Step 10: S1 still carries G1. This is the core isolation invariant: an
 	// in-flight run is not affected by a topology announced after its
 	// creation.
-	t.Log("=== Step 10: verifying S1 promotion_seq in state still == G1 ===")
+	t.Log("=== Step 10: verifying S1 promotion_seq in run-controller still == G1 ===")
 	assert.Equal(t, g1, readRunPromotionSeq(t, ctx, clients, s1),
 		"Run 1 must remain pinned to G1=%d after the mid-run announcement", g1)
 
@@ -97,7 +97,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	require.NoError(t, err, "run_id for Run 2 is not a valid UUID")
 
 	// Step 15: S2 carries G2.
-	t.Log("=== Step 15: verifying S2 promotion_seq in state == G2 ===")
+	t.Log("=== Step 15: verifying S2 promotion_seq in run-controller == G2 ===")
 	assert.Equal(t, g2, readRunPromotionSeq(t, ctx, clients, s2), "Run 2's promotion_seq must equal G2=%d", g2)
 
 	// Step 16: Wait for S2 to complete successfully.
@@ -107,27 +107,27 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
 }
 
-// waitForStateLiveSeq polls until state's live release reaches promotion seq
+// waitForRunControllerLiveSeq polls until run-controller's live release reaches promotion seq
 // seq. A promoted release carries the seq, so a run triggered after this
 // returns is stamped with it.
-func waitForStateLiveSeq(t *testing.T, ctx context.Context, clients *testClients, seq int64) {
+func waitForRunControllerLiveSeq(t *testing.T, ctx context.Context, clients *testClients, seq int64) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var live int64
-		err := clients.stateDB.GetContext(ctx, &live, `SELECT promotion_seq FROM live_release WHERE tenant_id = 'default'`)
+		err := clients.runControllerDB.GetContext(ctx, &live, `SELECT promotion_seq FROM live_release WHERE tenant_id = 'default'`)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return live >= seq, err
-	}, fmt.Sprintf("Timeout waiting for state's live release to reach promotion seq %d", seq))
+	}, fmt.Sprintf("Timeout waiting for run-controller's live release to reach promotion seq %d", seq))
 }
 
-// readRunPromotionSeq returns the promotion seq state stamped on the run that
+// readRunPromotionSeq returns the promotion seq run-controller stamped on the run that
 // scheduleID created.
 func readRunPromotionSeq(t *testing.T, ctx context.Context, clients *testClients, scheduleID uuid.UUID) int64 {
 	t.Helper()
 	var seq sql.NullInt64
-	require.NoError(t, clients.stateDB.GetContext(ctx, &seq,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &seq,
 		`SELECT promotion_seq FROM runs WHERE run_id = $1`, scheduleID),
 		"failed to read promotion_seq for run %s", scheduleID)
 	require.True(t, seq.Valid, "run %s names no release", scheduleID)

@@ -28,8 +28,8 @@ const (
 	startTimeoutTable = "ftable_a"
 
 	// noPodsQuota is the ResourceQuota the start-timeout test applies to the
-	// namespace the Jobs run in. deploy-k8s-controllers.sh,
-	// provision-k8s-test-env.sh and cleanup-k8s-controllers.sh delete it too,
+	// namespace the Jobs run in. deploy-execution-controller.sh,
+	// provision-k8s-test-env.sh and cleanup-execution-controller.sh delete it too,
 	// in case a killed test run left it behind.
 	noPodsQuota = "e2e-no-pods"
 )
@@ -39,11 +39,11 @@ const (
 // Job is created only once no pod of the attempt before it can run:
 //
 //	missing_image_probe's image tag names an image that does not exist
-//	→ TriggerSingleNodeRun → state dispatches attempt 0
+//	→ TriggerSingleNodeRun → run-controller dispatches attempt 0
 //	→ its pod cannot pull the image (ErrImagePull, ImagePullBackOff)
 //	→ execution-controller deletes the Job, waits for its pod to stop and
 //	  reports attempt 0 failed (start, image_pull)
-//	→ state dispatches attempt 1, and so on up to max_retries
+//	→ run-controller dispatches attempt 1, and so on up to max_retries
 //	→ the last failure fails the task and the run.
 //
 // While the run goes on, the test lists the task's Jobs and then its pods once
@@ -84,10 +84,10 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 	defer func() {
 		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer restoreCancel()
-		waitForStateLiveRelease(t, restoreCtx, clients, seedTopology(t, restoreCtx, clients))
+		waitForRunControllerLiveRelease(t, restoreCtx, clients, seedTopology(t, restoreCtx, clients))
 	}()
 	waitForAnnouncedTopology(t, ctx, clients, announced, append(schedules, missingImageSchedule))
-	waitForStateLiveRelease(t, ctx, clients, announced)
+	waitForRunControllerLiveRelease(t, ctx, clients, announced)
 
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
 		ServiceName:    "service-1",
@@ -172,7 +172,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 //	  no pod
 //	→ at the start timeout execution-controller deletes the Job and reports
 //	  attempt 0 failed (timeout, start_timeout)
-//	→ state fails the task without a retry and fails the run.
+//	→ run-controller fails the task without a retry and fails the run.
 //
 // The quota blocks the creation of every pod in the namespace while it stands,
 // so this test must never run in parallel with another; it removes the quota
@@ -195,7 +195,7 @@ func TestE2E_StartFailure_APodThatNeverStartsTimesOutWithoutARetry(t *testing.T)
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	startTimeout := jobStartTimeout(t, ctx)
 
-	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+	waitForRunControllerLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
 	blockPodCreation(t, ctx)
 

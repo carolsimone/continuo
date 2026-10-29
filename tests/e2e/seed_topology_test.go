@@ -125,9 +125,9 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 // announce-topology: release-controller writes the artifact, takes the next
 // promotion seq and queues release.promoted:v2, which both readers apply on the
 // path a promoted release takes — the orchestrator's Neo4j :Table/:DEPENDS_ON,
-// :Meta and :TopologyRoot, and state's topology_nodes and live_release, from
-// which state reads each schedule's models. It returns once both have applied
-// it and state's live release has a model of every schedule the DAG declares.
+// :Meta and :TopologyRoot, and run-controller's topology_nodes and live_release, from
+// which run-controller reads each schedule's models. It returns once both have applied
+// it and run-controller's live release has a model of every schedule the DAG declares.
 // It skips validation, so it can seed any topology, including the
 // intentionally failing ftable_* DAGs whose runs fail at execution time. It
 // returns the announcement, whose promotion seq new runs carry.

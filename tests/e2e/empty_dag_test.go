@@ -22,14 +22,14 @@ const emptyDAGTimezone = "Europe/Paris"
 
 // TestEmptyDAG_ManualStartIsRefused guards a manual start of a schedule the
 // live release has no node of, whatever its operation. With no cron either,
-// state does not know the name, and StartRun is NotFound. Once the name has a
+// run-controller does not know the name, and StartRun is NotFound. Once the name has a
 // cron, StartRun knows it, and refuses its empty selection with
 // FailedPrecondition: a test run of a schedule with no node is an empty
 // selection, not a skipped run. Neither creates a run.
 //
 // Fixture: a unique schedule name, whose cron is a paused schedules row the
 // test inserts by SQL, as UpsertSchedule refuses the first cron of a name the
-// live release has no model of. Paused, the row never fires. state selects a
+// live release has no model of. Paused, the row never fires. run-controller selects a
 // schedule's nodes from the live release by schedule_name, so the test needs
 // neither topology-controller nor a change to the dbt DAG.
 func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
@@ -64,9 +64,9 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 		}
 	}
 
-	startEach(codes.NotFound, "no model and no cron, so state does not know the name")
+	startEach(codes.NotFound, "no model and no cron, so run-controller does not know the name")
 
-	_, err := clients.stateDB.ExecContext(ctx, `
+	_, err := clients.runControllerDB.ExecContext(ctx, `
 		INSERT INTO schedules (tenant_id, name, cron, timezone, paused, updated_by)
 		VALUES ($1, $2, '0 3 * * *', $3, true, 'e2e')`,
 		events.DefaultTenantID, scheduleName, emptyDAGTimezone)
@@ -83,7 +83,7 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 // after the insert. The wait leaves headroom over that.
 const cronFireWait = 90 * time.Second
 
-// TestEmptyDAG_ACronFireRecordsAFailedRun drives one real fire of state's cron
+// TestEmptyDAG_ACronFireRecordsAFailedRun drives one real fire of run-controller's cron
 // loop for a schedule the live release has no node of. The test inserts the
 // schedule's row by SQL, as UpsertSchedule refuses the first cron of a name
 // with no model: its next fire is five seconds ahead on the database's clock,
@@ -112,7 +112,7 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 
 	cron := yearlyCronOnYesterday(t, ctx, clients, emptyDAGTimezone)
 	var slot time.Time
-	require.NoError(t, clients.stateDB.GetContext(ctx, &slot, `
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &slot, `
 		INSERT INTO schedules (tenant_id, name, cron, timezone, updated_by, next_fire_at)
 		VALUES ($1, $2, $3, $4, 'e2e', now() + interval '5 seconds')
 		RETURNING next_fire_at`,
@@ -147,7 +147,7 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 		NextFireAt   *time.Time `db:"next_fire_at"`
 		Version      int64      `db:"version"`
 	}
-	require.NoError(t, clients.stateDB.GetContext(ctx, &fired, `
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &fired, `
 		SELECT r.scheduled_for, s.next_fire_at, s.version
 		FROM runs r
 		JOIN schedules s ON s.tenant_id = r.tenant_id AND s.name = r.schedule_name
@@ -168,7 +168,7 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 func yearlyCronOnYesterday(t *testing.T, ctx context.Context, clients *testClients, tz string) string {
 	t.Helper()
 	var day, month int
-	require.NoError(t, clients.stateDB.QueryRowContext(ctx, `
+	require.NoError(t, clients.runControllerDB.QueryRowContext(ctx, `
 		SELECT extract(day FROM d)::int, extract(month FROM d)::int
 		FROM (SELECT (now() AT TIME ZONE $1::text) - interval '1 day' AS d) AS yesterday`, tz).Scan(&day, &month),
 		"read yesterday's date in %s", tz)
@@ -188,22 +188,22 @@ func deleteScheduleAndRuns(t *testing.T, clients *testClients, name string) {
 		errs = append(errs, err)
 	}
 	var runIDs []string
-	if err := clients.stateDB.SelectContext(bg, &runIDs,
+	if err := clients.runControllerDB.SelectContext(bg, &runIDs,
 		`SELECT run_id FROM runs WHERE tenant_id = $1 AND schedule_name = $2`, events.DefaultTenantID, name); err != nil {
 		errs = append(errs, fmt.Errorf("list the runs of %s: %w", name, err))
 	}
 	for _, runID := range runIDs {
-		if _, err := clients.stateDB.ExecContext(bg,
+		if _, err := clients.runControllerDB.ExecContext(bg,
 			`DELETE FROM run_controller_outbox WHERE aggregate_id = $1`, runID); err != nil {
 			errs = append(errs, fmt.Errorf("delete the run_controller_outbox rows of run %s: %w", runID, err))
 		}
 	}
-	if _, err := clients.stateDB.ExecContext(bg, `
+	if _, err := clients.runControllerDB.ExecContext(bg, `
 		DELETE FROM tasks WHERE tenant_id = $1 AND run_id IN (
 			SELECT run_id FROM runs WHERE tenant_id = $1 AND schedule_name = $2)`, events.DefaultTenantID, name); err != nil {
 		errs = append(errs, fmt.Errorf("delete the tasks of %s: %w", name, err))
 	}
-	if _, err := clients.stateDB.ExecContext(bg,
+	if _, err := clients.runControllerDB.ExecContext(bg,
 		`DELETE FROM runs WHERE tenant_id = $1 AND schedule_name = $2`, events.DefaultTenantID, name); err != nil {
 		errs = append(errs, fmt.Errorf("delete the runs of %s: %w", name, err))
 	}

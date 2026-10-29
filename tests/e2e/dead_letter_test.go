@@ -76,7 +76,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	// release.promoted:v2 has four consumer groups. Both orchestrator groups and
-	// state's reject an entry without an envelope as a permanent failure (their
+	// run-controller's reject an entry without an envelope as a permanent failure (their
 	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
 	// so each dead-letters the original; execution-controller's teardown is
 	// best-effort and acknowledges it. group is the one the redrive addresses;
@@ -92,8 +92,8 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
+	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 	require.True(t, dl.GetRedrivable(), "a dead letter whose fields are a message, of a stream and group the streams contract declares, is redrivable")
 
@@ -184,8 +184,8 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
+	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 
 	// dlq list consumer <stream>: exit 0 and a dead_letters array holding the

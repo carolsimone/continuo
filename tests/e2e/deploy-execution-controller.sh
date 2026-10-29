@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.s
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
-log_info "Starting K8s controller setup for E2E tests..."
+log_info "Deploying execution-controller for E2E tests..."
 
 # Step 1: Detect docker bridge IP
 log_info "Detecting docker bridge IP..."
@@ -81,4 +81,4 @@ log_info "Rollout complete (no terminating pods, all new pods Ready)"
 # rollout status passing implies the readinessProbe (which hits /ready, so
 # Postgres and Redis are reachable too) has succeeded for every new pod and
 # no old pods remain.
-log_info "Controller verified healthy via readinessProbe (kubectl rollout status passed)"
+log_info "execution-controller verified healthy via readinessProbe (kubectl rollout status passed)"

@@ -158,7 +158,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 	lastStatus := "(not read)"
 	pollUntilDescribed(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
-		err := clients.stateDB.Get(&status, `
+		err := clients.runControllerDB.Get(&status, `
 			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
@@ -180,7 +180,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()
 	var count int
-	err := clients.stateDB.QueryRowContext(ctx, `
+	err := clients.runControllerDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM tasks
 		WHERE run_id = $1 AND status = 'cancelled'
@@ -208,8 +208,8 @@ func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients,
 			}
 		}
 		return true, nil // cancelled run no longer active
-	}, "Timeout waiting for cancelled run to leave state active set")
-	t.Logf("✅ state no longer reports run %s as active", want)
+	}, "Timeout waiting for cancelled run to leave run-controller's active set")
+	t.Logf("✅ run-controller no longer reports run %s as active", want)
 }
 
 // verifyRunFenced polls execution-controller's database until it has a row in

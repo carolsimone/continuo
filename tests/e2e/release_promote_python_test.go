@@ -334,7 +334,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 
 		var runResultsURI string
 		pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-			err := clients.stateDB.QueryRowContext(ctx, `
+			err := clients.runControllerDB.QueryRowContext(ctx, `
 				SELECT COALESCE(a.run_results_uri, '')
 				FROM task_attempts a
 				JOIN tasks t ON t.task_id = a.task_id

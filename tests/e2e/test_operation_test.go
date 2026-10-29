@@ -64,7 +64,7 @@ func TestSingleNodeTestOperation(t *testing.T) {
 
 	// Exactly one task was dispatched (the tested node).
 	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
+	err = clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, runID).Scan(&taskCount)
 	require.NoError(t, err, "failed to count tasks rows")
 	assert.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node test run")
@@ -136,7 +136,7 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// Simulate a legacy node predating test_count capture: clear its count in
-	// the live release, so state reads it as unknown.
+	// the live release, so run-controller reads it as unknown.
 	unsetTestCount(t, ctx, clients, targetSchema+"."+targetTable)
 
 	requireTestOfNodeRefused(t, ctx, clients, targetService, targetSchema, targetTable)
@@ -203,7 +203,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 
 	// Flat fan-out: only the tested nodes get a task; seed_table_2 (no tests) is
 	// excluded. Assert the dispatched set is exactly {seed_table_1, seed_table_3}.
-	rows, err := clients.stateDB.QueryContext(ctx,
+	rows, err := clients.runControllerDB.QueryContext(ctx,
 		`SELECT table_name FROM tasks WHERE run_id = $1 ORDER BY table_name`, scheduleID)
 	require.NoError(t, err, "failed to query tasks rows")
 	defer rows.Close()
@@ -229,7 +229,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 // TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
 // whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
 // e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
-// StartRun with operation="test" selects no node, and state records the
+// StartRun with operation="test" selects no node, and run-controller records the
 // run 'skipped' — a benign non-failure — rather than 'failed'. No Job is
 // dispatched, so no tasks row exists.
 func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
@@ -267,7 +267,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 
 	// No node had tests, so no Job was dispatched — zero tasks rows.
 	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
+	err = clients.runControllerDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, scheduleID).Scan(&taskCount)
 	require.NoError(t, err, "failed to count tasks rows")
 	assert.Equal(t, 0, taskCount, "no tasks rows must exist for an all-gated whole-DAG test run")
@@ -276,7 +276,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 }
 
 // TestNodeCatalogOperationScoping verifies the UI-facing node catalog
-// (GET /api/nodes, ui's proxy of state.ListNodes) scopes stats per
+// (GET /api/nodes, ui's proxy of run-controller.ListNodes) scopes stats per
 // operation dimension end-to-end. A model run and a test run are triggered
 // against the SAME node (seed_table_1, test_count=2), each populating a
 // DISTINCT catalog slice under its own operation: operation=run reflects the
@@ -380,11 +380,11 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 }
 
 // unsetTestCount clears the test count of node key in the default tenant's live
-// release, simulating a node promoted before test_count capture existed: state
+// release, simulating a node promoted before test_count capture existed: run-controller
 // then reads its count as unknown.
 func unsetTestCount(t *testing.T, ctx context.Context, clients *testClients, key string) {
 	t.Helper()
-	res, err := clients.stateDB.ExecContext(ctx, `
+	res, err := clients.runControllerDB.ExecContext(ctx, `
 		UPDATE topology_nodes n SET test_count = NULL
 		FROM live_release l
 		WHERE l.tenant_id = 'default' AND n.tenant_id = l.tenant_id AND n.release_id = l.release_id

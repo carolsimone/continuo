@@ -21,15 +21,15 @@ const (
 	retryTable = "ftable_retry"
 )
 
-// TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt proves that state
+// TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt proves that run-controller
 // retries a task's own failure and that execution-controller runs each attempt
 // as a Job of its own that knows its attempt number:
 //
-//	StartRun(e2e-retry) → state dispatches attempt 0 of ftable_retry
+//	StartRun(e2e-retry) → run-controller dispatches attempt 0 of ftable_retry
 //	→ its Job runs with TASK_ATTEMPT=0, the model's cast fails ("invalid input
 //	  syntax for type integer"), dbt exits 1
 //	→ execution-controller reports attempt 0 failed (task, exit_code)
-//	→ state records it and, in the same transaction, dispatches attempt 1
+//	→ run-controller records it and, in the same transaction, dispatches attempt 1
 //	→ its Job, <attempt 0's name>-r1, runs with TASK_ATTEMPT=1 and succeeds
 //	→ the task and the run succeed.
 func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
@@ -49,7 +49,7 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, retryScheduleName)
 
-	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+	waitForRunControllerLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
 	resp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: retryScheduleName})
 	require.NoError(t, err, "StartRun(%s)", retryScheduleName)
@@ -64,7 +64,7 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 		"1:succeeded",
 	}, ended.attempts, "attempt 0 fails on the model's own error and attempt 1 succeeds")
 	var firstError string
-	require.NoError(t, clients.stateDB.GetContext(ctx, &firstError,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &firstError,
 		`SELECT COALESCE(error_message, '') FROM task_attempts WHERE task_id = $1 AND attempt = 0`, taskID))
 	require.Contains(t, firstError, "invalid input syntax for type integer",
 		"attempt 0 fails on the model's cast, which Postgres refuses once the row is produced")
@@ -75,7 +75,7 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 	// Each attempt ran as a Job of its own: attempt 1's is attempt 0's name with
 	// -r1, and each Job carries its attempt in its labels.
 	var jobNames []string
-	require.NoError(t, clients.stateDB.SelectContext(ctx, &jobNames,
+	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &jobNames,
 		`SELECT job_name FROM task_attempts WHERE task_id = $1 ORDER BY attempt`, taskID))
 	require.Len(t, jobNames, 2)
 	require.Equal(t, jobNames[0]+"-r1", jobNames[1], "attempt 1's Job is named after attempt 0's")

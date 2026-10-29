@@ -638,7 +638,7 @@ services:
         condition: service_started
     environment:
       - ORCHESTRATOR_HOST=orchestrator
-      - STATE_HOST=run-controller
+      - RUN_CONTROLLER_HOST=run-controller
       - REDIS_HOST=redis
       - NEO4J_HOST=neo4j
       - POSTGRES_HOST=postgres

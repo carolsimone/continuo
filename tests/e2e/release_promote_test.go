@@ -220,7 +220,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	firstRunID, firstScheduleName := triggerRelProbeRun(t, ctx, clients)
 	defer cleanupSingleNodeRun(t, ctx, clients, firstRunID, firstScheduleName)
 	verifySchedulerSucceeded(t, ctx, clients, firstRunID)
-	waitForParseCache(t, ctx, clients.stateDB, firstRunID, "hydrated", 3*time.Minute)
+	waitForParseCache(t, ctx, clients.runControllerDB, firstRunID, "hydrated", 3*time.Minute)
 	t.Log("✅ post-promote run hydrated from the parse cache")
 
 	// 10. Deleting the prod artifact must degrade gracefully: the hydrate
@@ -230,7 +230,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	secondRunID, secondScheduleName := triggerRelProbeRun(t, ctx, clients)
 	defer cleanupSingleNodeRun(t, ctx, clients, secondRunID, secondScheduleName)
 	verifySchedulerSucceeded(t, ctx, clients, secondRunID)
-	waitForParseCache(t, ctx, clients.stateDB, secondRunID, "degraded", 3*time.Minute)
+	waitForParseCache(t, ctx, clients.runControllerDB, secondRunID, "degraded", 3*time.Minute)
 	t.Log("✅ exit-0 degrade proven: rerun succeeded without the parse cache artifact")
 }
 

@@ -15,7 +15,7 @@ import (
 )
 
 // TestE2E_RunService_ARetriedStartRunReturnsTheSameRun proves that a run-starting
-// command runs once per request id, against the deployed state:
+// command runs once per request id, against the deployed run-controller:
 //
 //	StartRun(e2e-schedule, request id A) → a run
 //	→ StartRun with the same request id → the same run id, though the schedule
@@ -44,7 +44,7 @@ func TestE2E_RunService_ARetriedStartRunReturnsTheSameRun(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+	waitForRunControllerLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 
 	requestID := uuid.NewString()
 	first, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: testScheduleName})
@@ -85,11 +85,11 @@ func TestE2E_RunService_ARetriedStartRunReturnsTheSameRun(t *testing.T) {
 	verifySchedulerCancelled(t, ctx, clients, runID)
 }
 
-// runsOfSchedule counts the runs of one schedule in state's Postgres.
+// runsOfSchedule counts the runs of one schedule in run-controller's Postgres.
 func runsOfSchedule(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &n,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &n,
 		`SELECT count(*) FROM runs WHERE tenant_id = $1 AND schedule_name = $2`,
 		events.DefaultTenantID, scheduleName))
 	return n
@@ -99,7 +99,7 @@ func runsOfSchedule(t *testing.T, ctx context.Context, clients *testClients, sch
 func commandRecordsOf(t *testing.T, ctx context.Context, clients *testClients, requestID string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &n,
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &n,
 		`SELECT count(*) FROM command_requests WHERE tenant_id = $1 AND request_id = $2`,
 		events.DefaultTenantID, requestID))
 	return n

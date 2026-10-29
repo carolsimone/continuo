@@ -18,15 +18,15 @@ import (
 
 const maintenanceMessage = "continuo is in maintenance mode: new work is not accepted until it is turned off"
 
-// maintenanceServices are restarted with the flag flipped: state gates runs,
+// maintenanceServices are restarted with the flag flipped: run-controller gates runs,
 // release-controller gates releases. Each entry is the container, its Go
 // module directory under /app and its health URL.
 var maintenanceServices = []struct{ container, dir, health string }{
-	{"state", "run-controller", "http://state:8082/health"},
+	{"run-controller", "run-controller", "http://run-controller:8082/health"},
 	{"release-controller", "release-controller", "http://release-controller:8088/healthz"},
 }
 
-// setMaintenance restarts state and release-controller with MAINTENANCE_ENABLED
+// setMaintenance restarts run-controller and release-controller with MAINTENANCE_ENABLED
 // set to on, in parallel, and waits until both answer their health checks. The
 // restart stops the running `go run` process; the relaunch inherits the
 // container's compose environment except for the overridden flag. Each
@@ -93,7 +93,7 @@ func logServiceTails(t *testing.T) {
 // reconnecting reports whether a response is the UI's gRPC channel still
 // re-establishing to a backend that was just restarted: a 500 whose body names
 // an UNAVAILABLE / connection-refused error. `docker restart` drops the UI's
-// persistent channel to state (50051) and release-controller, and the client
+// persistent channel to run-controller (50051) and release-controller, and the client
 // reconnects with backoff a moment later, so the first request after a restart
 // can land in that window. Such a response is retried, never asserted on.
 func reconnecting(status int, body map[string]any) bool {
@@ -168,7 +168,7 @@ func TestMaintenanceMode(t *testing.T) {
 	// 2. Maintenance on.
 	setMaintenance(t, ctx, true)
 
-	// 3. A new run through ui is refused by state, and ui maps the refusal.
+	// 3. A new run through ui is refused by run-controller, and ui maps the refusal.
 	status, body := afterRestart(t, ctx, func() (int, map[string]any) {
 		return postJSON(t, nodeRunURL, map[string]string{"request_id": uuid.NewString(), "operation": "run"})
 	})

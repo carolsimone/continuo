@@ -56,7 +56,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 }
 
 // TestFullRefreshRejectedOnSchedule verifies a whole-schedule full refresh is
-// refused at the state API.
+// refused at the run-controller API.
 func TestFullRefreshRejectedOnSchedule(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")

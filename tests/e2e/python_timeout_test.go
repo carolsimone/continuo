@@ -50,8 +50,8 @@ cat "$work/contract.yaml"`
 //go:embed fixtures/py-timeout/contracts fixtures/py-timeout/scripts
 var pyTimeoutFixture embed.FS
 
-// TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI proves that a
-// Python node's timeout_minutes travels from its authored contract to state's
+// TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI proves that a
+// Python node's timeout_minutes travels from its authored contract to run-controller's
 // topology through the real runtime, not through a contract the test writes:
 //
 //	py_timeout.yml declares timeout_minutes: 90 on one of its two nodes
@@ -61,10 +61,10 @@ var pyTimeoutFixture embed.FS
 //	→ the contract is uploaded and a kind=python release posted, as a domain
 //	  repository's CI does
 //	→ topology-controller publishes timeout_seconds = 5400 on that node
-//	→ the release validates, promotes and state stores it: that node carries
+//	→ the release validates, promotes and run-controller stores it: that node carries
 //	  5400 and every other node NULL but service-1's ftable_deadline, which
 //	  declares its own 60 seconds.
-func TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI(t *testing.T) {
+func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -166,12 +166,12 @@ func requireWireEntryTimeout(t *testing.T, contract []byte, uniqueID string, wan
 	require.Failf(t, "node missing", "%s is not in the merged contract", uniqueID)
 }
 
-// requireNodeWithoutTimeout asserts that state's copy of releaseID holds nodeKey
+// requireNodeWithoutTimeout asserts that run-controller's copy of releaseID holds nodeKey
 // with no timeout, so the absence of a timeout elsewhere is not an absent node.
 func requireNodeWithoutTimeout(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string) {
 	t.Helper()
 	var timeout sql.NullInt64
-	require.NoError(t, clients.stateDB.GetContext(ctx, &timeout, `
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &timeout, `
 		SELECT n.timeout_seconds
 		  FROM live_release l
 		  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id

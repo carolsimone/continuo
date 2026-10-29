@@ -91,9 +91,9 @@ e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-s
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
-e2e-cleanup:  ## Cleanup K8s controllers
-	@echo "Cleaning up K8s controllers..."
-	@bash tests/e2e/cleanup-k8s-controllers.sh
+e2e-cleanup:  ## Cleanup the execution-controller
+	@echo "Cleaning up execution-controller..."
+	@bash tests/e2e/cleanup-execution-controller.sh
 
 .PHONY: e2e-start-services
 e2e-start-services:  ## Start Go services inside docker-compose containers and wait for health
@@ -374,9 +374,9 @@ e2e:
 	bash tests/e2e/start-services.sh
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
-	bash tests/e2e/deploy-k8s-controllers.sh
+	bash tests/e2e/deploy-execution-controller.sh
 	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
-	bash tests/e2e/cleanup-k8s-controllers.sh
+	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).
 .PHONY: ci
