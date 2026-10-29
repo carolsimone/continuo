@@ -41,10 +41,9 @@ type Config struct {
 	RunHistoryRetentionDays   int
 	RunSweeperIntervalMinutes int
 
-	// Retention sweeper — purges processed orchestrator_outbox rows older than
-	// RetentionDays and message_processing dedup rows, in any state, older than
-	// the longer of RetentionDays and the 30-day replay horizon. Both knobs have
-	// safe defaults so no configuration is required.
+	// Retention sweeper — purges message_processing dedup rows, in any state,
+	// older than the longer of RetentionDays and the 30-day replay horizon. Both
+	// knobs have safe defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
 

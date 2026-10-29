@@ -43,7 +43,6 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	defer func() {
 		cleanupTestData(t, ctx, clients, testScheduleName)

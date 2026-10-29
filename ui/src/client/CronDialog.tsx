@@ -316,27 +316,30 @@ export default function CronDialog({ schedule, mode, onClose }: Props) {
           </label>
         )}
 
-        {shown && (
-          <section className="preview-section" aria-live="polite">
-            <div className="section-header">
-              <div className="section-header__main">
-                <span className="section-header__title">Next runs</span>
-                {!(isEdit && paused) && <span className="section-header__count">{shown.next.length}</span>}
+        {/* The live region is in the dialog before a preview fills it: one inserted together with its content is not reliably announced. */}
+        <div className="dialog-live" aria-live="polite">
+          {shown && (
+            <section className="preview-section">
+              <div className="section-header">
+                <div className="section-header__main">
+                  <span className="section-header__title">Next runs</span>
+                  {!(isEdit && paused) && <span className="section-header__count">{shown.next.length}</span>}
+                </div>
+                {isEdit && paused && <div className="section-header__sub">None while paused</div>}
               </div>
-              {isEdit && paused && <div className="section-header__sub">None while paused</div>}
-            </div>
-            {!(isEdit && paused) && (
-              <ul className="preview-list">
-                {shown.next.map(at => (
-                  <li key={at} className="preview-row preview-row--line">
-                    <span>{formatFireDate(at, shown.timezone)}</span>
-                    <span className="preview-facts">{formatFireTime(at, shown.timezone)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
+              {!(isEdit && paused) && (
+                <ul className="preview-list">
+                  {shown.next.map(at => (
+                    <li key={at} className="preview-row preview-row--line">
+                      <span>{formatFireDate(at, shown.timezone)}</span>
+                      <span className="preview-facts">{formatFireTime(at, shown.timezone)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </div>
 
         {refusal && (
           <div className="info-strip info-strip--error" id={refusalId} role="alert">

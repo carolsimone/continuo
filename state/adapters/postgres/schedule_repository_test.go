@@ -84,7 +84,7 @@ func newLoggingScheduleRepo(db *sqlx.DB, tx *sqlx.Tx, parser ports.CronParser) (
 
 // scheduleUnitOfWork returns a unit of work that parses crons with parser.
 func scheduleUnitOfWork(db *sqlx.DB, parser ports.CronParser) *postgres.PostgresUnitOfWork {
-	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), postgres.WithCronParser(parser))
+	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), parser)
 }
 
 // holdScheduleScanLock takes the advisory lock of the test that commits due
@@ -112,7 +112,9 @@ func describedSchedule(t *testing.T, parser ports.CronParser, tenant, name, desc
 	t.Helper()
 	expr, err := parser.Parse("0 * * * *", "UTC")
 	require.NoError(t, err)
-	return schedule.New(tenant, name, "0 * * * *", "UTC", description, false, expr, "alice@example.com", created)
+	s, err := schedule.New(tenant, name, "0 * * * *", "UTC", description, false, expr, "alice@example.com", created)
+	require.NoError(t, err)
+	return s
 }
 
 // dueSchedule returns a stored hourly schedule whose next fire is nextFire.
@@ -662,34 +664,49 @@ func TestSchedules_ListDueInATransactionLocksOnlyTheRowsItReturns(t *testing.T) 
 	assert.Contains(t, err.Error(), "could not obtain lock")
 }
 
-// List, like ListDue, returns the schedules that parse and logs the ones that
-// do not.
-func TestSchedules_ListSkipsAStoredCronThatNoLongerParses(t *testing.T) {
+// ListWithUnreadable returns the schedules that parse and, apart from them, the
+// names of the rows whose stored cron or zone no longer parses, in one read, and
+// logs nothing for the rows it sets apart. Another tenant's rows are in neither.
+func TestSchedules_ListWithUnreadableSetsApartAStoredCronThatNoLongerParses(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
 	tx := scratchTx(t, db)
 	repo, logs := newLoggingScheduleRepo(db, tx, parser)
 	tenant := scheduleRepoTenant(t, db)
+	other := scheduleRepoTenant(t, db)
 	rawSchedule(t, tx, tenant, "b-good", "0 * * * *", "UTC", nil)
 	rawSchedule(t, tx, tenant, "a-broken-cron", "not a cron", "UTC", nil)
 	rawSchedule(t, tx, tenant, "c-broken-zone", "0 * * * *", "Mars/Olympus", nil)
 	rawSchedule(t, tx, tenant, "d-good", "30 2 * * *", "Europe/Paris", nil)
+	rawSchedule(t, tx, other, "theirs-broken", "not a cron", "UTC", nil)
 
-	got, err := repo.List(ctx, tenant)
+	got, unreadable, err := repo.ListWithUnreadable(ctx, tenant)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b-good", "d-good"}, namesOf(tenant, got))
-	logged := logs.String()
-	for _, want := range []string{"level=ERROR", tenant, "a-broken-cron", "not a cron", "c-broken-zone", "Mars/Olympus"} {
-		assert.Contains(t, logged, want)
-	}
+	assert.Equal(t, []string{"a-broken-cron", "c-broken-zone"}, unreadable)
+	assert.Empty(t, logs.String(), "setting the rows apart logs nothing per row")
+
+	theirs, theirsUnreadable, err := repo.ListWithUnreadable(ctx, other)
+	require.NoError(t, err)
+	assert.Empty(t, theirs)
+	assert.Equal(t, []string{"theirs-broken"}, theirsUnreadable)
+
+	none, noneUnreadable, err := repo.ListWithUnreadable(ctx, "sched-no-rows-"+uuid.NewString())
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	assert.NotNil(t, noneUnreadable, "a tenant with no rows has an empty list of unreadable names, not none")
+	assert.Empty(t, noneUnreadable)
+
+	_, _, err = newScheduleRepo(db, tx, nil).ListWithUnreadable(ctx, tenant)
+	require.Error(t, err, "a repository with no parser cannot tell which rows parse")
 }
 
-// List and ListStoredCronInvalid order names byte by byte, as Go compares
-// strings: an upper-case name comes before every lower-case one, whatever the
-// database's collation.
-func TestSchedules_ListsOrderNamesByteByByte(t *testing.T) {
+// ListWithUnreadable orders both lists byte by byte, as Go compares strings: an
+// upper-case name comes before every lower-case one, whatever the database's
+// collation.
+func TestSchedules_ListWithUnreadableOrdersNamesByteByByte(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	parser := scheduleParser(t)
@@ -701,48 +718,11 @@ func TestSchedules_ListsOrderNamesByteByByte(t *testing.T) {
 		rawSchedule(t, tx, tenant, name+"-broken", "not a cron", "UTC", nil)
 	}
 
-	listed, err := repo.List(ctx, tenant)
-	require.NoError(t, err)
-	broken, err := repo.ListStoredCronInvalid(ctx, tenant)
+	listed, broken, err := repo.ListWithUnreadable(ctx, tenant)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"Z-daily", "a-daily", "b-daily"}, namesOf(tenant, listed))
 	assert.Equal(t, []string{"Z-daily-broken", "a-daily-broken", "b-daily-broken"}, broken)
-}
-
-// ListStoredCronInvalid names, by name, the tenant's rows whose stored cron or
-// zone no longer parses, the rows List leaves out, and logs nothing for them.
-// Another tenant's rows are not named.
-func TestSchedules_ListStoredCronInvalidNamesTheRowsListLeavesOut(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	parser := scheduleParser(t)
-	tx := scratchTx(t, db)
-	repo, logs := newLoggingScheduleRepo(db, tx, parser)
-	tenant := scheduleRepoTenant(t, db)
-	other := scheduleRepoTenant(t, db)
-	rawSchedule(t, tx, tenant, "b-good", "0 * * * *", "UTC", nil)
-	rawSchedule(t, tx, tenant, "c-broken-zone", "0 * * * *", "Mars/Olympus", nil)
-	rawSchedule(t, tx, tenant, "a-broken-cron", "not a cron", "UTC", nil)
-	rawSchedule(t, tx, tenant, "d-good", "30 2 * * *", "Europe/Paris", nil)
-	rawSchedule(t, tx, other, "theirs-broken", "not a cron", "UTC", nil)
-
-	got, err := repo.ListStoredCronInvalid(ctx, tenant)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"a-broken-cron", "c-broken-zone"}, got)
-	assert.Empty(t, logs.String(), "naming the rows logs nothing per row")
-
-	theirs, err := repo.ListStoredCronInvalid(ctx, other)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"theirs-broken"}, theirs)
-
-	none, err := repo.ListStoredCronInvalid(ctx, "sched-no-rows-"+uuid.NewString())
-	require.NoError(t, err)
-	assert.Empty(t, none)
-
-	_, err = newScheduleRepo(db, tx, nil).ListStoredCronInvalid(ctx, tenant)
-	require.Error(t, err, "a repository with no parser cannot tell which rows parse")
 }
 
 // A lookup of one schedule is not skipped: Get fails with an error that wraps
@@ -882,7 +862,7 @@ func TestSchedules_WithoutACronParserALoadIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "cron parser")
 	assert.NotErrorIs(t, err, schedule.ErrStoredCronInvalid)
 
-	_, err = repo.List(ctx, tenant)
+	_, _, err = repo.ListWithUnreadable(ctx, tenant)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron parser")
 
@@ -910,12 +890,13 @@ func TestSchedules_GetAndListAreScopedToATenant(t *testing.T) {
 		require.NoError(t, repo.Save(ctx, s, 0))
 	}
 
-	listed, err := repo.List(ctx, tenant)
+	listed, unreadable, err := repo.ListWithUnreadable(ctx, tenant)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"daily", "weekly"}, namesOf(tenant, listed), "ordered by name")
 	assert.Len(t, listed, 2, "another tenant's schedules are not listed")
+	assert.Empty(t, unreadable)
 
-	none, err := repo.List(ctx, "sched-"+uuid.NewString())
+	none, _, err := repo.ListWithUnreadable(ctx, "sched-"+uuid.NewString())
 	require.NoError(t, err)
 	assert.Empty(t, none)
 
@@ -1067,10 +1048,12 @@ func TestSchedules_LoadForUpdateNeedsATransaction(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// Count counts the schedules of every tenant by state: those not paused are
-// scheduled. The rows are inserted in a transaction that is rolled back, and
-// both counts are read in its snapshot, so what other tests commit meanwhile
-// does not change the difference.
+// Count counts the schedules of every tenant by state: a schedule whose stored
+// cron or timezone no longer parses is unparsable, whether or not it is paused;
+// of the others, those not paused are scheduled and the rest paused. The rows
+// are inserted in a transaction that is rolled back, and the counts are read in
+// its snapshot, so what other tests commit meanwhile does not change the
+// difference.
 func TestSchedules_CountSpansTenantsByState(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -1080,19 +1063,25 @@ func TestSchedules_CountSpansTenantsByState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	repo := newScheduleRepo(db, tx, parser)
-	scheduledBefore, pausedBefore, err := repo.Count(ctx)
+	scheduledBefore, pausedBefore, unparsableBefore, err := repo.Count(ctx)
 	require.NoError(t, err)
 
 	next := farFuture
 	rawSchedule(t, tx, tenant, "daily", "0 * * * *", "UTC", &next)
 	rawSchedule(t, tx, other, "daily", "0 * * * *", "UTC", &next)
 	rawSchedule(t, tx, other, "broken", "not a cron", "UTC", &next)
+	rawSchedule(t, tx, other, "broken-zone", "0 * * * *", "Mars/Olympus", &next)
 	_, err = tx.Exec(`INSERT INTO schedules (tenant_id, name, cron, timezone, paused, updated_by)
-		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, 'repository-test')`, tenant)
+		VALUES ($1, 'paused', '0 * * * *', 'UTC', true, 'repository-test'),
+		       ($1, 'paused-broken', 'not a cron', 'UTC', true, 'repository-test')`, tenant)
 	require.NoError(t, err)
 
-	scheduled, paused, err := repo.Count(ctx)
+	scheduled, paused, unparsable, err := repo.Count(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 3, scheduled-scheduledBefore, "every schedule not paused, whether or not its cron still parses")
-	assert.Equal(t, 1, paused-pausedBefore)
+	assert.Equal(t, 2, scheduled-scheduledBefore, "every schedule not paused whose cron and timezone parse")
+	assert.Equal(t, 1, paused-pausedBefore, "a paused schedule whose cron and timezone parse")
+	assert.Equal(t, 3, unparsable-unparsableBefore, "every schedule whose cron or timezone no longer parses, paused or not")
+
+	_, _, _, err = newScheduleRepo(db, tx, nil).Count(ctx)
+	require.Error(t, err, "a repository with no parser cannot tell which rows parse")
 }

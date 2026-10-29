@@ -31,6 +31,31 @@ func queryNeo4jRecords(t *testing.T, ctx context.Context, clients *testClients, 
 	return records
 }
 
+// deleteSeededTableNodes removes the :Table nodes with the given unique ids,
+// with their relationships, and fails the test when it cannot: a node left
+// behind leaks into the topology the tests after it read. It runs on a context
+// of its own, so a test whose context has ended still cleans up. Register it
+// with t.Cleanup right after the clients are set up, and the close of the
+// clients (also a t.Cleanup, registered first) runs after it.
+func deleteSeededTableNodes(t *testing.T, clients *testClients, ids ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite,
+	})
+	defer func() { _ = session.Close(ctx) }()
+
+	result, err := session.Run(ctx, `MATCH (t:Table) WHERE t.unique_id IN $ids DETACH DELETE t`,
+		map[string]any{"ids": ids})
+	if err == nil {
+		_, err = result.Consume(ctx)
+	}
+	if err != nil {
+		t.Errorf("remove the seeded :Table nodes %v from Neo4j: %v", ids, err)
+	}
+}
+
 // queryNeo4jRows runs cypher and returns every record as a column-name-keyed
 // map, for assertions that read more than one column or more than one row —
 // e.g. one row per (target :Table, amended) pair off an EDITED fan-out.

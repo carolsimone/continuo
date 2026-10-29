@@ -152,15 +152,14 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
 	// The relation a correct fix reads from has to exist before the
-	// verification run bind-checks it. Both cleanups are deferred after
-	// clients.close(ctx) above, so LIFO runs them while the pools are open.
+	// verification run bind-checks it. Both cleanups are deferred, so
+	// they run when the test function returns, while the pools are open.
 	dropRelation := ensureBindingRelation(t, ctx, clients)
 	defer dropRelation()
 
@@ -290,7 +289,6 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -469,11 +467,9 @@ func pyRemediationContractYAML(t *testing.T, service, contractPath, scriptPath s
 // Job's bind check resolves it against the real warehouse — which is exactly
 // why it has to exist for a verification run to pass.
 //
-// The cleanup is returned rather than registered with t.Cleanup because it
-// needs the warehouse pool, and t.Cleanup functions run after every deferred
-// call — including the one that closes every pool. A caller that registers it
-// with defer after `defer clients.close(ctx)` gets it run first, while the
-// pool is still open.
+// The cleanup is returned for the caller to defer, so it runs when the test
+// function returns, while the warehouse pool is open: the cleanup setupClients
+// registered closes the pools only after every deferred call.
 func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClients) func() {
 	t.Helper()
 	// The relation name is interpolated because a table name cannot be bound as
@@ -783,7 +779,6 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)

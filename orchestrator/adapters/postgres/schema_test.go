@@ -48,12 +48,28 @@ func relation(t *testing.T, db *sqlx.DB, name string) sql.NullString {
 	return reg
 }
 
-// orchestrator keeps no cancellation guard, so V16 drops cancelled_schedules;
-// the outbox the relay publishes from stays.
+// functionExists reports whether the public schema has a function called name.
+func functionExists(t *testing.T, db *sqlx.DB, name string) bool {
+	t.Helper()
+	var n int
+	require.NoError(t, db.Get(&n, `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		WHERE n.nspname = 'public' AND p.proname = $1`, name))
+	return n > 0
+}
+
+// orchestrator keeps no cancellation guard, so V16 drops cancelled_schedules.
 func TestOrchestratorSchema_HasNoCancelledSchedulesTable(t *testing.T) {
 	db := newTestDB(t)
-	require.True(t, relation(t, db, "orchestrator_outbox").Valid,
-		"orchestrator_outbox is missing: run the orchestrator migrations (flyway-orchestrator)")
 	assert.False(t, relation(t, db, "cancelled_schedules").Valid,
 		"cancelled_schedules still exists: run the orchestrator migrations through V16 (flyway-orchestrator)")
+}
+
+// orchestrator writes no event, so V17 drops its outbox and the function that
+// woke the relay.
+func TestOrchestratorSchema_HasNoOutbox(t *testing.T) {
+	db := newTestDB(t)
+	assert.False(t, relation(t, db, "orchestrator_outbox").Valid,
+		"orchestrator_outbox still exists: run the orchestrator migrations through V17 (flyway-orchestrator)")
+	assert.False(t, functionExists(t, db, "continuo_outbox_notify"),
+		"continuo_outbox_notify still exists: run the orchestrator migrations through V17 (flyway-orchestrator)")
 }

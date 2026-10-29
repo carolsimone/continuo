@@ -45,7 +45,7 @@ func TestRunRepository_ACronRunStoresItsSlot(t *testing.T) {
 	db := newTestDB(t)
 	tenant := slotTenant(t, db)
 	slot := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
-	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), nil)
 	cronRun := cronRunOf(t, tenant, slot)
 	trigger, err := run.NewPendingRun(tenant, uuid.New(), "adhoc", run.KindTrigger, nil, "okta|alice",
 		model.OperationRun, run.ReleaseStamp{}, slot)
@@ -76,11 +76,11 @@ func TestRunRepository_ASecondRunOfASlotIsSlotTakenAndTheTransactionGoesOn(t *te
 	tenant := slotTenant(t, db)
 	slot := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	first := cronRunOf(t, tenant, slot)
-	saveRuns(t, postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger()), first)
+	saveRuns(t, postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), nil), first)
 	_, err := db.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE tenant_id = $1 AND run_id = $2`, tenant, first.RunID())
 	require.NoError(t, err)
 
-	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger())
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, discardLogger(), nil)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
 	second := cronRunOf(t, tenant, slot)

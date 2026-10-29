@@ -70,7 +70,6 @@ func TestE2E_DAGLatestSnapshot(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		clients := setupClients(t, ctx)
-		defer clients.close(ctx)
 		assert.Equal(t, float64(readLivePointer(ctx, clients).promotionSeq), seq,
 			"the schedule graph's promotion_seq is the live promotion seq")
 	})

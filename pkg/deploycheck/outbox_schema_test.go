@@ -12,13 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every outbox table must carry the indexes pkg/outbox's queries rely on (the
-// claim, the per-aggregate order check, the dead-letter count) and the trigger
-// that wakes its relay on commit.
+// Every outbox table a database still has must carry the indexes pkg/outbox's
+// queries rely on (the claim, the per-aggregate order check, the dead-letter
+// count) and the trigger that wakes its relay on commit. A table a later
+// migration drops is not checked.
 func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 	dirs, err := filepath.Glob(filepath.Join(repoRoot(t), "db", "migration", "*"))
 	require.NoError(t, err)
 	createTable := regexp.MustCompile(`(?i)CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+_outbox)\b`)
+	dropTable := regexp.MustCompile(`(?i)DROP TABLE (?:IF EXISTS )?([a-z_]+_outbox)\b`)
 	tables := 0
 	for _, dir := range dirs {
 		files, err := filepath.Glob(filepath.Join(dir, "V*.sql"))
@@ -31,8 +33,15 @@ func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 			all.WriteString("\n")
 		}
 		sqlText := strings.Join(strings.Fields(all.String()), " ")
+		dropped := map[string]bool{}
+		for _, m := range dropTable.FindAllStringSubmatch(sqlText, -1) {
+			dropped[m[1]] = true
+		}
 		for _, m := range createTable.FindAllStringSubmatch(sqlText, -1) {
 			table := m[1]
+			if dropped[table] {
+				continue
+			}
 			tables++
 			for _, want := range []string{
 				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%[1]s_claimable ON %[1]s (created_at, id) WHERE status IN ('pending', 'scheduled');", table),
@@ -44,5 +53,5 @@ func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, 7, tables, "outbox tables found under db/migration")
+	assert.Equal(t, 6, tables, "outbox tables found under db/migration")
 }

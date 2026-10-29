@@ -43,7 +43,6 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 	clients := setupClients(t, ctx)
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the deletions registered below.
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 
@@ -105,7 +104,6 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	clients := setupClients(t, ctx)
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the deletions registered below.
-	t.Cleanup(func() { clients.close(ctx) })
 
 	verifyServicesHealthy(t)
 

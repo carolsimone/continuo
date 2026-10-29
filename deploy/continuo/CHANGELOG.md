@@ -12,6 +12,19 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+
+- `continuo_schedules` gains `state="unparsable"`: the schedules whose stored cron or timezone no longer parses, paused or not (a zone the timezone database dropped, or a row written by hand). Such a schedule never fires until an operator saves a new cron over it or removes it, and the loop only logged it; a value above 0 is worth an alert. A row is in one state, `unparsable` first, so a row that does not parse no longer counts as `scheduled`. No values change. MINOR.
+
+### Changed
+
+- State's cron loop leaves a schedule whose fire failed alone for a minute after the failed fire ends, doubles the wait with each further failure up to fifteen minutes, and ends it when an operator edits the schedule or a fire succeeds. A schedule whose fire fails every time (a hand-written name longer than 50 characters, for one) was tried at every pass, took one of the pass's 100 places and logged an error each time; it now takes none of the places while it waits, and `continuo_cron_fires_total{outcome="failed"}` rises by a few a hour for it. The backoffs are held in memory, one set per `state` replica. No values change. PATCH.
+- State migration V57 moves a schedule stored at version 0 or below, such as a row written by hand, to version 1 and adds `CHECK (version >= 1)` to `schedules`: a row at version 0 or below matched no edit, could only be deleted and could not save its fire. The migration applies before the new pods roll; the previous pods never write such a version. No values change. PATCH.
+
+### Removed
+
+- The orchestrator's outbox. Orchestrator migration V17 drops `orchestrator_outbox` and `continuo_outbox_notify()`, and the orchestrator no longer runs an outbox relay: it holds one `LISTEN` connection fewer per pod (nine outside the pools with the defaults, 161 connections in all) and no longer exposes `continuo_outbox_*` series with `table="orchestrator_outbox"`. Since 0.17.0 the orchestrator writes no row, so the table holds only rows an earlier version wrote, and they go with it, including one never published. Upgrade through 0.17.0 and let its rollout finish first: the migration applies before the new pods roll, and until the previous pods are replaced their relay keeps polling the missing table and logging the error. No values change. PATCH.
+
 ## [0.17.0] - 2026-10-28
 
 Schedules are data: an operator sets a schedule's cron in the ui (Edit cron) or with `continuo schedule set-cron`, state fires it from its own database (one run per slot; after a downtime only the latest missed slot fires), and the chart carries no schedules file, so **every cron stops until it is set again**. `helm upgrade` deletes the `<fullname>-schedules` ConfigMap, so copy the crons out of it first. The same release moves every run command to `run.v1.RunService` (each command that starts a run requires a `request_id` and runs once), names state's tables for runs, keys them by tenant, and adds the `continuo run` command group. State migrations V52 to V56 run on upgrade and state replicas of the previous release fail while it rolls out: deploy with no run in flight, cancel every pending or running run once the new release has deployed, and roll back only together with a database restore. The changes are breaking, and while continuo is in beta they ship as a 0.x MINOR. **MINOR.**

@@ -180,15 +180,21 @@ func (s *Service) edit(ctx context.Context, tenantID string, in UpsertInput, cro
 	}
 
 	now := s.clock.Now()
-	var saved *schedule.Schedule
+	var (
+		saved    *schedule.Schedule
+		buildErr error
+	)
 	switch {
 	case !found:
-		saved = schedule.New(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+		saved, buildErr = schedule.New(tenantID, in.Name, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	case unreadable != nil:
-		saved = schedule.ReplaceUnreadable(tenantID, in.Name, storedVersion, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+		saved, buildErr = schedule.ReplaceUnreadable(tenantID, in.Name, storedVersion, cron, in.Timezone, in.Description, in.Paused, expr, by, now)
 	default:
 		saved = stored
 		saved.Replace(cron, in.Timezone, in.Description, in.Paused, expr, by, now)
+	}
+	if buildErr != nil {
+		return nil, fmt.Errorf("build schedule %q: %w", in.Name, buildErr)
 	}
 	if err := s.schedules.Save(ctx, saved, storedVersion); err != nil {
 		return nil, fmt.Errorf("save schedule %q: %w", in.Name, err)
@@ -231,13 +237,9 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Summary, error) 
 	if err != nil {
 		return nil, fmt.Errorf("count the live release's models per schedule: %w", err)
 	}
-	rows, err := s.schedules.List(ctx, tenantID)
+	rows, unreadable, err := s.schedules.ListWithUnreadable(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list schedules: %w", err)
-	}
-	unreadable, err := s.schedules.ListStoredCronInvalid(ctx, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("list the schedules whose stored cron no longer parses: %w", err)
 	}
 	lastRuns, err := s.lastRuns.GetLastRunPerSchedule(ctx, tenantID)
 	if err != nil {

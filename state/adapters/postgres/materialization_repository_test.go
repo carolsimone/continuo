@@ -261,7 +261,7 @@ func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *t
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
-	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
+	u := postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger, nil)
 
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.Materializations().RecordAttempt(ctx, tenant, "raw.orders", "h1", uuid.New(), materializedAt))

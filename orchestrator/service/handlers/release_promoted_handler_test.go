@@ -143,16 +143,16 @@ func TestReleasePromoted_EmptyTopology_PromotesNoNodes(t *testing.T) {
 
 	require.Len(t, promRepo.promoteReleaseCalls, 1)
 	assert.Empty(t, promRepo.promoteReleaseCalls[0].Nodes)
-	assert.Empty(t, uow.outboxRepo.CreatedEntries)
 	assert.True(t, uow.CommittedTx)
 }
 
 // ── no event ──────────────────────────────────────────────────────────────────
 
-// A promotion writes no outbox row, whether it applied, was redelivered or was
-// stale: state reads the schedule names from its own copy of the release, and
-// plans seed loads from it, whatever seeds the promotion changed.
-func TestReleasePromoted_WritesNoSchedulesLoadedRow(t *testing.T) {
+// A promotion commits whether it applied, was redelivered or was stale: it
+// publishes nothing, because state reads the schedule names from its own copy
+// of the release and plans seed loads from it, whatever seeds the promotion
+// changed.
+func TestReleasePromoted_CommitsForEveryOutcome(t *testing.T) {
 	for _, outcome := range []topology.PromotionOutcome{
 		topology.PromotionApplied, topology.PromotionRedelivered, topology.PromotionStale,
 	} {
@@ -164,7 +164,6 @@ func TestReleasePromoted_WritesNoSchedulesLoadedRow(t *testing.T) {
 			require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{outcome: outcome}).
 				Handle(context.Background(), "msg-none-"+string(outcome), nil, in))
 
-			assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox row is written")
 			assert.True(t, uow.CommittedTx)
 		})
 	}
@@ -267,12 +266,10 @@ func TestReleasePromoted_DedupHit_ShortCircuits(t *testing.T) {
 	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, in))
 	promRepo.promoteReleaseCalls = nil
 	reader.calls = nil
-	uow.outboxRepo.CreatedEntries = nil
 
 	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, in))
 	assert.Empty(t, reader.calls, "a duplicate does not read the artifact")
 	assert.Empty(t, promRepo.promoteReleaseCalls)
-	assert.Empty(t, uow.outboxRepo.CreatedEntries)
 }
 
 func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
@@ -285,7 +282,6 @@ func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 	assert.False(t, errors.Is(err, events.ErrPermanent))
 	assert.False(t, uow.CommittedTx)
 	assert.True(t, uow.RolledBackTx)
-	assert.Empty(t, uow.outboxRepo.CreatedEntries)
 }
 
 func TestReleasePromoted_OutboxEntryIDPassedThrough(t *testing.T) {

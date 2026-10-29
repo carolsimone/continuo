@@ -64,7 +64,6 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 	defer cleanupTestData(t, ctx, clients, testScheduleName)
 
 	verifyServicesHealthy(t)

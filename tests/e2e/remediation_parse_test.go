@@ -77,13 +77,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	// The fix-verification run clones its four unchanged upstream models from
 	// production (only ftable_e differs from current_prod in that run, see
 	// ensureParseFixClonedProdRelations), so those models must already exist in the
-	// warehouse before the release is posted. Deferred after
-	// clients.close(ctx) above, so LIFO runs it while the pool is open.
+	// warehouse before the release is posted. Deferred, so it runs when
+	// the test function returns, while the pool is open.
 	dropParseFixClonedProdRelations := ensureParseFixClonedProdRelations(t, ctx, clients)
 	defer dropParseFixClonedProdRelations()
 
@@ -158,8 +157,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenService, brokenReleaseID), body)
 	pinServiceProd(t, ctx, clients, parseFixBrokenService, brokenReleaseID, broken.imageTag)
-	// Put the pointer back so no later test parses the broken manifest. Deferred
-	// after clients.close(ctx) above, so LIFO runs it while the pool is open.
+	// Put the pointer back so no later test parses the broken manifest. Deferred, so it
+	// runs when the test function returns, while the pool is open.
 	defer pinServiceProd(t, context.Background(), clients,
 		parseFixBrokenService, e2eBaselineReleaseID, broken.imageTag)
 

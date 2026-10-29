@@ -2,6 +2,8 @@
 # matched against "path: symbol" (line numbers stripped). Keep each entry narrow.
 # Test doubles that live in non-_test files.
 ^state/service/uow/fake\.go: 
+^state/service/uow/fake_schedules\.go: (NewFakeScheduleRepository|FakeScheduleRepository\.[A-Za-z]+|copyRow)$
+^state/domain/repository/repositorytest/schedule_contract\.go: RunScheduleContract$
 # Accessors and constructors kept only for tests.
 ^agent-chat/service/chat/session\.go: Session\.ThreadID$
 ^agent-remediation/service/proposals/reconciler\.go: Reconciler\.Degraded$

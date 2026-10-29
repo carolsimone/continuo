@@ -47,11 +47,12 @@ var _ Repository = (*postgresRepository)(nil)
 
 type postgresRepository struct {
 	exec executor
-	// outboxTable is the caller's outbox table name (e.g. "orchestrator_outbox",
+	// outboxTable is the caller's outbox table name (e.g. "execution_outbox",
 	// "state_outbox"), used only by DeleteOlderThan to exclude rows a live
-	// outbox entry still references. Empty for repositories built via
-	// NewPostgresRepository, which never call DeleteOlderThan (that method is
-	// reached only through the Pruner interface, built via NewPruner).
+	// outbox entry still references. Empty when the database has no outbox
+	// table: repositories built via NewPostgresRepository never call
+	// DeleteOlderThan (that method is reached only through the Pruner
+	// interface), and NewPrunerWithoutOutbox prunes on age alone.
 	outboxTable string
 	logger      *slog.Logger
 }
@@ -169,7 +170,7 @@ func (r *postgresRepository) DeleteOlderThan(
 ) (int64, error) {
 	// Bounded delete of aged dedup rows. A subquery picks up to limit ids
 	// (updated_at older than NOW()-retention, whatever the state, and no row
-	// in the caller's outbox table still referencing it via
+	// in the caller's outbox table, when it has one, still referencing it via
 	// message_processing_id) and the outer DELETE removes exactly those,
 	// keeping each statement's lock footprint small. The outbox exclusion is
 	// unconditional on the outbox row's status: a 'pending'/'scheduled' row
@@ -182,18 +183,22 @@ func (r *postgresRepository) DeleteOlderThan(
 	// ON DELETE SET NULL, so the delete clears the reference there. The cutoff
 	// uses the DB clock (NOW()) to avoid host/DB skew; make_interval takes
 	// whole seconds.
+	notReferenced := ""
+	if r.outboxTable != "" {
+		notReferenced = fmt.Sprintf(`
+			  AND NOT EXISTS (
+			      SELECT 1 FROM %s o WHERE o.message_processing_id = message_processing.id
+			  )`, r.outboxTable)
+	}
 	query := fmt.Sprintf(`
 		DELETE FROM message_processing
 		WHERE id IN (
 			SELECT id FROM message_processing
-			WHERE updated_at < NOW() - make_interval(secs => $1)
-			  AND NOT EXISTS (
-			      SELECT 1 FROM %s o WHERE o.message_processing_id = message_processing.id
-			  )
+			WHERE updated_at < NOW() - make_interval(secs => $1)%s
 			ORDER BY updated_at ASC
 			LIMIT $2
 		)
-	`, r.outboxTable)
+	`, notReferenced)
 	result, err := r.exec.ExecContext(ctx, query, retention.Seconds(), limit)
 	if err != nil {
 		return 0, fmt.Errorf("delete message_processing older than: %w", err)

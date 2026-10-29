@@ -71,12 +71,14 @@ next fire counts from now.
 Only a schedule's first cron needs a model of the live release with its tag; a
 schedule that has a cron can be changed whatever the live release holds.
 
-set-cron sends the version it read, so a concurrent pause is never overwritten;
-a description you pass replaces the stored one. When another edit saved the
-schedule since, set-cron reads it again, saves once more with the pause that
-edit left (and its description, unless you passed one), and exits 4 if the
-schedule changed again. The cron itself is last-write-wins: a cron another
-editor saved a moment ago is replaced.
+For a schedule that has a cron, set-cron sends the version it read, so a
+concurrent pause is not overwritten; a description you pass replaces the stored
+one. When another edit saved the schedule since, set-cron reads it again, saves
+once more with the pause that edit left (and its description, unless you passed
+one), and exits 4 if the schedule changed again. A first cron is saved with no
+version: it overwrites an edit saved between the read and the save, the last
+write winning. The cron itself is last-write-wins: a cron another editor saved a
+moment ago is replaced.
 
 Output (stdout, JSON):
   {"schedule_name":string,"cron":string,"cron_words":string,"timezone":string,

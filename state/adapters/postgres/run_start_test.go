@@ -28,7 +28,7 @@ import (
 // newPlanningUoW returns a unit of work over db.
 func newPlanningUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
-	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger)
+	return postgres.NewPostgresUnitOfWork(db, ports.SystemClock{}, logger, nil)
 }
 
 // failureGraph is e2e-schedule-failure: ftable_a and ftable_b feed ftable_c,

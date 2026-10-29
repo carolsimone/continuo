@@ -181,7 +181,7 @@ func (noRunMetrics) LeaseRepaired()                {}
 func (noRunMetrics) CommandRequest(string, string) {}
 func (noRunMetrics) CronFire(string)               {}
 func (noRunMetrics) CronFires(string, int)         {}
-func (noRunMetrics) Schedules(int, int)            {}
+func (noRunMetrics) Schedules(int, int, int)       {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)

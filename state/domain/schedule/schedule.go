@@ -6,11 +6,11 @@ package schedule
 
 import "time"
 
-// maxCountedSkips bounds how many missed slots Due counts, and how many it
+// MaxCountedSkips bounds how many missed slots Due counts, and how many it
 // walks one by one for an expression that is not an Interval. Past it the walk
 // gives way to a search that costs a few dozen calls of Expression.Next however
 // many slots were missed.
-const maxCountedSkips = 1000
+const MaxCountedSkips = 1000
 
 // Expression is a cron read in a timezone: the instants it fires at. Unless it
 // is an Interval, those instants are the same whatever instant Next is asked
@@ -52,11 +52,30 @@ type Schedule struct {
 
 // New returns the schedule an operator creates at `now`: version 1, edited by
 // `by`, with its next fire counted from `now`, and none while it is paused.
-// expr is the parsed form of cron in timezone.
-func New(tenantID, name, cron, timezone, description string, paused bool, expr Expression, by string, now time.Time) *Schedule {
+// expr is the parsed form of cron in timezone. A schedule with no tenant, no
+// name or no expr is refused with ErrTenantRequired, ErrNameRequired or
+// ErrExpressionRequired.
+func New(tenantID, name, cron, timezone, description string, paused bool, expr Expression, by string, now time.Time) (*Schedule, error) {
+	if err := validateIdentity(tenantID, name, expr); err != nil {
+		return nil, err
+	}
 	s := &Schedule{tenantID: tenantID, name: name}
 	s.edit(cron, timezone, description, paused, expr, by, now)
-	return s
+	return s, nil
+}
+
+// validateIdentity refuses a schedule that has no tenant, no name or no
+// expression.
+func validateIdentity(tenantID, name string, expr Expression) error {
+	switch {
+	case tenantID == "":
+		return ErrTenantRequired
+	case name == "":
+		return ErrNameRequired
+	case expr == nil:
+		return ErrExpressionRequired
+	}
+	return nil
 }
 
 // ReplaceUnreadable returns the schedule an operator's edit at `now` by `by`
@@ -64,7 +83,8 @@ func New(tenantID, name, cron, timezone, description string, paused bool, expr E
 // rebuilt: the edit's cron, timezone, description and paused flag, with expr
 // the parsed form of cron in timezone, at the version after storedVersion, the
 // row's. Of the stored row only the identity and the version are kept. The
-// next fire counts from now, and there is none while the schedule is paused.
+// next fire counts from now, and there is none while the schedule is paused. A
+// schedule with no tenant, no name or no expr is refused as New refuses it.
 func ReplaceUnreadable(
 	tenantID, name string,
 	storedVersion int64,
@@ -73,10 +93,13 @@ func ReplaceUnreadable(
 	expr Expression,
 	by string,
 	now time.Time,
-) *Schedule {
+) (*Schedule, error) {
+	if err := validateIdentity(tenantID, name, expr); err != nil {
+		return nil, err
+	}
 	s := &Schedule{tenantID: tenantID, name: name, version: storedVersion}
 	s.edit(cron, timezone, description, paused, expr, by, now)
-	return s
+	return s, nil
 }
 
 // Rehydrate restores a schedule from its stored fields. nextFireAt is nil when
@@ -169,7 +192,7 @@ func (s *Schedule) Due(now time.Time) (slot time.Time, skipped int, ok bool) {
 		return slot, skipped, true
 	}
 	slot = *s.nextFireAt
-	for skipped < maxCountedSkips {
+	for skipped < MaxCountedSkips {
 		next := s.expr.Next(slot)
 		if !next.After(slot) || next.After(now) {
 			return slot, skipped, true
@@ -182,7 +205,7 @@ func (s *Schedule) Due(now time.Time) (slot time.Time, skipped int, ok bool) {
 
 // latestIntervalSlot returns the latest slot at or before `now` of every, whose
 // slots start at first, a slot at or before now, and how many slots come before
-// it, up to maxCountedSkips. After first come the second slot, Next(first), and
+// it, up to MaxCountedSkips. After first come the second slot, Next(first), and
 // the instants a whole number of periods after the second. A span longer than a
 // time.Duration holds, about 292 years, saturates; the slot it reaches is still
 // one of the slots, and the loop steps on from there.
@@ -196,7 +219,7 @@ func latestIntervalSlot(every Interval, first, now time.Time) (time.Time, int) {
 	for {
 		steps := int64(now.Sub(slot) / period)
 		if steps <= 0 {
-			return slot, int(min(skipped, maxCountedSkips))
+			return slot, int(min(skipped, MaxCountedSkips))
 		}
 		slot = slot.Add(time.Duration(steps) * period)
 		skipped += steps

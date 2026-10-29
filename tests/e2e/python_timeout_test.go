@@ -72,7 +72,6 @@ func TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)

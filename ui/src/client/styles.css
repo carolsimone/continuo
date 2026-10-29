@@ -976,6 +976,9 @@ a.release-author:hover { text-decoration: underline; }
   color: #111827;
 }
 
+/* The live region the next runs fill is in the dialog before a preview fills it;
+   empty, it takes none of the dialog's 16px gap. */
+.dialog-live:empty { margin-top: -16px; }
 /* A preview section groups a section header with its summary line or list. */
 .preview-section {
   display: flex;

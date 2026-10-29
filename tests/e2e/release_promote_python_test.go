@@ -163,7 +163,6 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -225,12 +224,11 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // waits for swapNode to appear in the swapped topology. It returns the release
 // id and a cleanup the caller MUST defer.
 //
-// The cleanup is returned rather than deferred here because it must run while
-// releaseDB is still open: the caller registers it after `defer
-// clients.close(ctx)`, and defers run LIFO, so it fires first. A t.Cleanup
-// would instead run after every deferred call, against a closed pool. A
-// leftover service_prod pointer would drag this service's contract into every
-// later test's assembled manifest set.
+// The cleanup is returned for the caller to defer, so it runs when the test
+// function returns, while releaseDB is still open: the cleanup setupClients
+// registered closes the pools only after every deferred call. A leftover
+// service_prod pointer would drag this service's contract into every later
+// test's assembled manifest set.
 func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
 	contractYAML string, validationNodes []string, swapNode string) (string, func()) {
 	t.Helper()
@@ -294,7 +292,6 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)

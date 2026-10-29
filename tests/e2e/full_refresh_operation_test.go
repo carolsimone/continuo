@@ -25,7 +25,6 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -65,7 +64,6 @@ func TestFullRefreshRejectedOnSchedule(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	_, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: "e2e-schedule", Operation: "full_refresh",

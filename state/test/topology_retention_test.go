@@ -30,7 +30,7 @@ func TestTopologyRetention_PrunesOnlyOldUnreferencedReleases(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger, nil)
 	}
 	const tenant = "t-retention"
 

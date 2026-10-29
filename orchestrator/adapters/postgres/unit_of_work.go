@@ -9,7 +9,6 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -30,21 +29,6 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) uow.UnitOfWork {
 }
 
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)
-
-// OutboxTable is the outbox table this service writes its events to and its
-// relay publishes from. Its insert trigger notifies the Postgres channel of the
-// same name, on which the relay's waker listens.
-const OutboxTable = "orchestrator_outbox"
-
-// OutboxRepo returns a shared outbox repository bound to orchestrator_outbox.
-// When a transaction is active the repository operates inside it, so outbox
-// writes are atomic with the rest of the handler's changes.
-func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
-	if u.tx != nil {
-		return pkgoutbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)
-	}
-	return pkgoutbox.NewPostgresRepository(u.db, OutboxTable, u.logger)
-}
 
 // MessageProcessingRepo returns the message processing repository.
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {

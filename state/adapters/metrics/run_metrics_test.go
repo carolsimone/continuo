@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/state/domain/schedule"
+	"github.com/carolsimone/continuo/state/service/cronloop"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -103,8 +106,8 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 	m.CronFire("invalid_node_type")
 	m.CronFire("failed")
 	m.CronFire("failed")
-	m.Schedules(4, 2)
-	m.Schedules(3, 1)
+	m.Schedules(4, 2, 1)
+	m.Schedules(3, 1, 2)
 
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -118,9 +121,31 @@ func TestRunMetrics_CronFiresAndSchedules(t *testing.T) {
 		"or failed (a fire that returned an error or did not end within 30 seconds",
 		`continuo_schedules{service="state",state="scheduled"} 3`,
 		`continuo_schedules{service="state",state="paused"} 1`,
+		`continuo_schedules{service="state",state="unparsable"} 2`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}
+
+// The cron fire counter's help states two tuning values, the fire timeout and
+// the cap on the missed slots counted per fire; it names them as the code
+// holds them, so changing either constant fails here until the help follows.
+func TestRunMetrics_CronFiresHelpStatesTheTuningConstants(t *testing.T) {
+	reg := pkgmetrics.New("state")
+	NewRunMetrics(reg).CronFire("started") // a counter vector exposes its help once it has a series
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		fmt.Sprintf("did not end within %d seconds", int(cronloop.FireTimeout/time.Second)),
+		fmt.Sprintf("at most %d per fire", schedule.MaxCountedSkips),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the continuo_cron_fires_total help lacks %q", want)
 		}
 	}
 }

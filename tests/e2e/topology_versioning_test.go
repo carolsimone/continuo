@@ -26,7 +26,6 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const scheduleName = "seed"
 	tables := []string{"seed_table_1", "seed_table_2", "seed_table_3"}

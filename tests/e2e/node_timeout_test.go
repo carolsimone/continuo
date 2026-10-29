@@ -66,7 +66,6 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
@@ -113,8 +112,8 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 	baselineKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringService, e2eBaselineReleaseID)
 	putS3Object(t, ctx, clients, stagedKey, manifestDeclaringTimeout(t, getS3Object(t, ctx, clients, baselineKey)))
 	// Put the pointer back and drop the staged manifest so no later test reads
-	// the declared timeout. Deferred after clients.close(ctx) above, so LIFO
-	// runs them while the pools are open.
+	// the declared timeout. Deferred, so it runs when the test function returns,
+	// before the cleanup setupClients registered closes the pools.
 	defer func() {
 		_, err := clients.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(e2eS3Bucket),
@@ -264,7 +263,6 @@ func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 	defer cleanupTestData(t, ctx, clients, deadlineScheduleName)
 	// Kubernetes kills the pod at the deadline, but the warehouse runs a query
 	// whose client is gone until the query ends: end the sleep with the test.

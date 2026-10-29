@@ -111,7 +111,7 @@ func (*countingMetrics) LeaseRepaired()                {}
 func (*countingMetrics) CommandRequest(string, string) {}
 func (*countingMetrics) CronFire(string)               {}
 func (*countingMetrics) CronFires(string, int)         {}
-func (*countingMetrics) Schedules(int, int)            {}
+func (*countingMetrics) Schedules(int, int, int)       {}
 
 // runs serves the runs it holds for update, each only under its own tenant,
 // and records every load and save.

@@ -32,35 +32,25 @@ type PostgresUnitOfWork struct {
 	afterCommit []func()
 }
 
-// UnitOfWorkOption configures a PostgresUnitOfWork.
-type UnitOfWorkOption func(*PostgresUnitOfWork)
-
-// WithCronParser sets the parser Schedules() uses to rebuild the expression of
-// each schedule it loads from its stored cron and timezone. A unit of work
-// built without it refuses to load a schedule.
-func WithCronParser(parser ports.CronParser) UnitOfWorkOption {
-	return func(u *PostgresUnitOfWork) { u.cronParser = parser }
-}
-
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db.
 // Run(), Outbox() and TaskCollection(tenantID) each return a repository bound
 // to the current transaction; TaskCollection's reads and writes the tasks,
-// attempts and node leases of tenantID.
+// attempts and node leases of tenantID. cronParser rebuilds the expression of
+// each schedule Schedules() loads from its stored cron and timezone; a unit of
+// work built with a nil one refuses to load a schedule, which only a caller
+// that reads no schedule may accept.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	clock ports.Clock,
 	logger *slog.Logger,
-	opts ...UnitOfWorkOption,
+	cronParser ports.CronParser,
 ) *PostgresUnitOfWork {
-	u := &PostgresUnitOfWork{
-		db:     db,
-		clock:  clock,
-		logger: logger,
+	return &PostgresUnitOfWork{
+		db:         db,
+		clock:      clock,
+		logger:     logger,
+		cronParser: cronParser,
 	}
-	for _, opt := range opts {
-		opt(u)
-	}
-	return u
 }
 
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {

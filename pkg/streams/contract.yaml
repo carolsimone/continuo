@@ -32,8 +32,8 @@ streams:
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
-    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
-    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
+    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each service that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
+    producers: [state, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-outbox-dead-letters

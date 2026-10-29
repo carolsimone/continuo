@@ -28,15 +28,12 @@ type ScheduleRepository interface {
 	// that transaction left it. A call outside a transaction is an error.
 	LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error)
 
-	// List returns the tenant's schedules, ordered by name. A schedule whose
-	// stored cron or timezone no longer parses is left out and logged, not
-	// returned.
-	List(ctx context.Context, tenantID string) ([]*schedule.Schedule, error)
-
-	// ListStoredCronInvalid returns, ordered by name, the names of the
-	// tenant's schedules whose stored cron or timezone no longer parses: the
-	// ones List leaves out. It logs nothing per schedule.
-	ListStoredCronInvalid(ctx context.Context, tenantID string) ([]string, error)
+	// ListWithUnreadable returns, in one read, the tenant's schedules ordered by
+	// name, and apart from them, ordered by name, the names of those whose
+	// stored cron or timezone no longer parses, which are not among the
+	// schedules. The unreadable names are an empty list, not nil, when there are
+	// none. It logs nothing for the schedules it sets apart.
+	ListWithUnreadable(ctx context.Context, tenantID string) (schedules []*schedule.Schedule, unreadable []string, err error)
 
 	// Save stores s exactly as it stands, its version, author and edit time
 	// included: the aggregate counts its own versions, and a save of a fire
@@ -80,7 +77,10 @@ type ScheduleRepository interface {
 	// next fire at or before `after` does not.
 	EarliestFireAfter(ctx context.Context, after time.Time) (time.Time, bool, error)
 
-	// Count returns how many schedules of every tenant are scheduled, which
-	// is every schedule not paused, and how many are paused.
-	Count(ctx context.Context) (scheduled, paused int, err error)
+	// Count returns how many schedules of every tenant are unparsable, a
+	// schedule whose stored cron or timezone no longer parses, paused or not;
+	// of the others, how many are scheduled, which is every one not paused, and
+	// how many are paused. Each schedule is counted once. A repository with no
+	// cron parser cannot tell, so it is an error.
+	Count(ctx context.Context) (scheduled, paused, unparsable int, err error)
 }

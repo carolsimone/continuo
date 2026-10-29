@@ -31,7 +31,6 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const seedSchedule = "seed"
 
@@ -72,7 +71,6 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"

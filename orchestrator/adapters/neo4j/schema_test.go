@@ -187,6 +187,53 @@ func TestDataMigration_RemovesTableLastStamps(t *testing.T) {
 	assertStampsGone("after second InitSchema")
 }
 
+// TestDataMigration_RemovesTopologyRootServiceMetadata verifies the data
+// migration strips the retired service_metadata property from a :TopologyRoot
+// while leaving its other properties untouched, and that re-running InitSchema
+// against an already-clean node stays a no-op.
+func TestDataMigration_RemovesTopologyRootServiceMetadata(t *testing.T) {
+	client := newTestClient(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+
+	marker := t.Name()
+	cleanup := func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id: $id}) DETACH DELETE r", map[string]any{"id": marker})
+	}
+	cleanup()
+	defer cleanup()
+
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+		CREATE (:TopologyRoot {id: $id, promotion_seq: 7, service_metadata: '{"daily":{"cron":"0 3 * * *"}}'})
+	`, map[string]any{"id": marker})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	assertMetadataGone := func(label string) {
+		read := client.NewSession(ctx, neo4j.AccessModeRead)
+		defer read.Close(ctx)
+		res, err := read.Run(ctx, `
+			MATCH (r:TopologyRoot {id: $id})
+			RETURN r.service_metadata AS metadata, r.promotion_seq AS seq
+		`, map[string]any{"id": marker})
+		require.NoError(t, err)
+		require.True(t, res.Next(ctx))
+		metadata, _ := res.Record().Get("metadata")
+		seq, _ := res.Record().Get("seq")
+		require.Nilf(t, metadata, "%s: service_metadata must be gone", label)
+		require.Equal(t, int64(7), seq, "%s: promotion_seq must survive the migration", label)
+	}
+
+	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
+	assertMetadataGone("after first InitSchema")
+
+	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
+	assertMetadataGone("after second InitSchema")
+}
+
 // TestInitSchema_DeletesLegacyPreviousChainEdges verifies the data migration
 // removes the retired :PREVIOUS chain (both node and unit versions) while
 // leaving the version nodes themselves untouched.

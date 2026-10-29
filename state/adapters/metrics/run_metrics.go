@@ -14,7 +14,7 @@ import (
 // the node write leases state grants: the tasks waiting, how long each
 // granted task waited, the leases the lease waker repaired, and how each call
 // of a command that creates or cancels a run ended. It counts the outcomes of
-// the cron loop's fires and gauges the schedules scheduled and paused.
+// the cron loop's fires and gauges the schedules scheduled, paused and unparsable.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -77,7 +77,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}, []string{"outcome"}),
 		schedules: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "continuo_schedules",
-			Help: "Schedules with a cron, of every tenant, by state: scheduled or paused.",
+			Help: "Schedules with a cron, of every tenant, by state: scheduled, paused, or unparsable (the stored cron or timezone no longer parses, paused or not, so the schedule never fires until an operator saves a new cron over it or removes it).",
 		}, []string{"state"}),
 	}
 	reg.Register(m.stalled, m.cancelling, m.cancellingOverdue, m.cancelSeconds, m.leaseWaiters, m.leaseWaitSeconds, m.leasesRepaired,
@@ -119,8 +119,10 @@ func (m *RunMetrics) CronFires(outcome string, n int) {
 	m.cronFires.WithLabelValues(outcome).Add(float64(n))
 }
 
-// Schedules sets the gauges of the scheduled and the paused schedules.
-func (m *RunMetrics) Schedules(scheduled, paused int) {
+// Schedules sets the gauges of the scheduled, the paused and the unparsable
+// schedules.
+func (m *RunMetrics) Schedules(scheduled, paused, unparsable int) {
 	m.schedules.WithLabelValues("scheduled").Set(float64(scheduled))
 	m.schedules.WithLabelValues("paused").Set(float64(paused))
+	m.schedules.WithLabelValues("unparsable").Set(float64(unparsable))
 }

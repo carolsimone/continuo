@@ -31,7 +31,6 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	// Use a well-known seed node that is always present after setup.sh.
 	const (
@@ -162,7 +161,6 @@ func TestSingleNodeRunStale(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	const (
 		targetService = "service-1"
@@ -258,7 +256,6 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	defer cancel()
 
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
 
 	verifyServicesHealthy(t)
 

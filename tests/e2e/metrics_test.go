@@ -19,12 +19,14 @@ import (
 // the chart lint covers its metrics port.
 func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 	withConsumersAndOutbox := []string{"continuo_consumer_pending{", "continuo_outbox_backlog{", "go_sql_open_connections{"}
+	// orchestrator keeps no outbox, so it exposes consumer and pool series only.
+	withConsumers := []string{"continuo_consumer_pending{", "go_sql_open_connections{"}
 	cases := []struct {
 		host string
 		want []string
 	}{
 		{getEnv("STATE_HOST", "state"), withConsumersAndOutbox},
-		{getEnv("ORCHESTRATOR_HOST", "orchestrator"), withConsumersAndOutbox},
+		{getEnv("ORCHESTRATOR_HOST", "orchestrator"), withConsumers},
 		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), withConsumersAndOutbox},
 		{getEnv("REMEDIATION_HOST", "remediation"), withConsumersAndOutbox},
 		{getEnv("AGENT_REMEDIATION_HOST", "agent-remediation"), withConsumersAndOutbox},

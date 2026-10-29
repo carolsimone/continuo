@@ -478,8 +478,11 @@ Rules:
   the confirming verb is disabled; a failed preview is an
   `.info-strip--error` and the confirming verb stays disabled until a
   preview arrives. A preview that follows a field the operator types has
-  no loading strip (see "Dialog fields"), and its `.preview-section` is a
-  polite live region (`aria-live="polite"`). A reload (an option changed)
+  no loading strip (see "Dialog fields"), and the region that holds its
+  `.preview-section` (`.dialog-live`, `aria-live="polite"`) is in the dialog
+  from the start, empty and taking none of the dialog's gap (`:empty` takes
+  it back), because a live region inserted together with its content is not
+  reliably announced. A reload (an option changed)
   keeps the last preview on screen until the next one replaces it, so the
   option the user just clicked does not move. When the confirmation is
   refused because what was previewed is no longer true, the modal previews
@@ -600,11 +603,13 @@ Rules:
   confirming verb is disabled. The control's `aria-describedby` names the
   hint, the words line and, while it is shown, that strip, so a screen
   reader reads the refusal with the field.
-- A dialog's other failure strips (a refused save, a change made by someone
-  else) are `role="alert"` too. When a request ends and the dialog stays
-  open, focus goes back to the first field if it was inside the dialog when
-  the request started and a disabled control dropped it; focus that moved
-  elsewhere stays there.
+- In a dialog that previews a field the operator types (the cron dialog),
+  the other failure strips (a refused save, a change made by someone else)
+  are `role="alert"` too. When a request ends and the dialog stays open,
+  focus goes back to the first field if it was inside the dialog when the
+  request started and a disabled control dropped it; focus that moved
+  elsewhere stays there. The dialogs that confirm an action (cancelling a
+  run, opening a fix PR) keep their error strips as they are.
 
 ### Remove row
 

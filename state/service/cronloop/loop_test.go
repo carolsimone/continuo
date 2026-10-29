@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/state/adapters/cron"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/schedule"
@@ -81,46 +81,35 @@ func (c *fixedClock) set(now time.Time) {
 
 func key(tenantID, name string) string { return tenantID + "/" + name }
 
-// storedSchedule is one row of scheduleRows: the fields the schedules table
-// stores. broken marks a row whose stored cron no longer parses, which ListDue
-// leaves out, taking none of the limit's places, and EarliestFireAfter still
-// counts, as the Postgres adapter does; a paused row is neither due nor a next
-// fire, as there.
-type storedSchedule struct {
-	tenantID, name, cron, timezone, description string
-	paused                                      bool
-	next                                        *time.Time
-	version                                     int64
-	updatedBy                                   string
-	updatedAt                                   time.Time
-	expr                                        schedule.Expression
-	broken                                      bool
-}
-
-// scheduleRows is an in-memory ScheduleRepository over the rows a test stores.
-// Every read rebuilds the aggregate from the row, so what a caller changes on
-// an aggregate stays its own until it saves it.
+// scheduleRows is the shared uow.FakeScheduleRepository with two hooks on
+// LoadForUpdate: failGet fails the load of one schedule, and a schedule in
+// stuck waits for the load's context to end, as a fire waiting on a lock does.
+// It counts the loads of each schedule (gets) and keeps the deadline of the
+// context each was last loaded with. A schedule is added with an expression of
+// its own, so the tests drive it with the daily and hourly expressions above; a
+// broken one is added with a cron the parser refuses.
 type scheduleRows struct {
-	repository.ScheduleRepository
+	*uow.FakeScheduleRepository
 	mu      sync.Mutex
-	rows    map[string]*storedSchedule
-	listDue int
 	gets    map[string]int
-	saves   int
 	failGet map[string]error
 	// deadlines holds the deadline of the context each schedule's row was
-	// last loaded with; a row in stuck waits for that context to end, as a
-	// fire waiting on a lock does.
+	// last loaded with.
 	deadlines map[string]time.Time
 	stuck     map[string]bool
-	// changed, when set, is signalled by every save, as the schedules
-	// table's trigger notifies its channel when a change commits.
-	changed chan struct{}
+	// loadHook, when set, runs at the start of every load for update: a test
+	// uses it to let time pass during a fire.
+	loadHook func(tenantID, name string)
 }
 
-func newScheduleRows() *scheduleRows {
+func newScheduleRows(inTx func() bool) *scheduleRows {
+	parser, err := cron.NewParser()
+	if err != nil {
+		panic(err)
+	}
 	return &scheduleRows{
-		rows: map[string]*storedSchedule{}, gets: map[string]int{}, failGet: map[string]error{},
+		FakeScheduleRepository: uow.NewFakeScheduleRepository(parser, inTx),
+		gets:                   map[string]int{}, failGet: map[string]error{},
 		deadlines: map[string]time.Time{}, stuck: map[string]bool{},
 	}
 }
@@ -138,84 +127,55 @@ func (r *scheduleRows) setStuck(tenantID, name string, stuck bool) {
 	r.stuck[key(tenantID, name)] = stuck
 }
 
+// getsOf is how many times tenantID's schedule name was loaded for update.
+func (r *scheduleRows) getsOf(tenantID, name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.gets[key(tenantID, name)]
+}
+
 // add stores a schedule last edited by alice@example.com at version 3 whose next
 // fire is next.
 func (r *scheduleRows) add(tenantID, name, cron string, expr schedule.Expression, next time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	n := next
-	r.rows[key(tenantID, name)] = &storedSchedule{
-		tenantID: tenantID, name: name, cron: cron, timezone: "Europe/Paris", next: &n,
-		version: 3, updatedBy: "alice@example.com", updatedAt: nov(1, 9, 0), expr: expr,
-	}
+	r.Put(uow.StoredSchedule{
+		TenantID: tenantID, Name: name, Cron: cron, Timezone: "Europe/Paris", NextFireAt: &n,
+		Version: 3, UpdatedBy: "alice@example.com", UpdatedAt: nov(1, 9, 0), Expression: expr,
+	})
 }
 
-func (r *scheduleRows) row(tenantID, name string) storedSchedule {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return *r.rows[key(tenantID, name)]
+// addBroken stores a schedule whose cron no longer parses and whose next fire
+// is next.
+func (r *scheduleRows) addBroken(tenantID, name string, next time.Time) {
+	n := next
+	r.Put(uow.StoredSchedule{
+		TenantID: tenantID, Name: name, Cron: "not a cron", Timezone: "Europe/Paris", NextFireAt: &n,
+		Version: 3, UpdatedBy: "alice@example.com", UpdatedAt: nov(1, 9, 0),
+	})
+}
+
+// pause pauses the schedule, which has no next fire then.
+func (r *scheduleRows) pause(tenantID, name string) {
+	r.Update(tenantID, name, func(row *uow.StoredSchedule) {
+		row.Paused = true
+		row.NextFireAt = nil
+	})
 }
 
 func (r *scheduleRows) setNext(tenantID, name string, next time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	n := next
-	r.rows[key(tenantID, name)].next = &n
+	r.Update(tenantID, name, func(row *uow.StoredSchedule) { row.NextFireAt = &n })
 }
 
-func (r *scheduleRows) listDueCalls() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.listDue
-}
-
-func (s *storedSchedule) aggregate() *schedule.Schedule {
-	return schedule.Rehydrate(s.tenantID, s.name, s.cron, s.timezone, s.description, s.paused, s.next,
-		s.version, s.updatedBy, s.updatedAt, s.expr)
-}
-
-func (r *scheduleRows) ListDue(_ context.Context, now time.Time, limit int) ([]*schedule.Schedule, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.listDue++
-	var due []*storedSchedule
-	for _, s := range r.rows {
-		if s.next != nil && !s.next.After(now) && !s.paused && !s.broken {
-			due = append(due, s)
-		}
-	}
-	sort.Slice(due, func(i, j int) bool {
-		if !due[i].next.Equal(*due[j].next) {
-			return due[i].next.Before(*due[j].next)
-		}
-		return key(due[i].tenantID, due[i].name) < key(due[j].tenantID, due[j].name)
-	})
-	if len(due) > limit {
-		due = due[:limit]
-	}
-	out := []*schedule.Schedule{}
-	for _, s := range due {
-		out = append(out, s.aggregate())
-	}
-	return out, nil
-}
-
-func (r *scheduleRows) EarliestFireAfter(_ context.Context, after time.Time) (time.Time, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var earliest *time.Time
-	for _, s := range r.rows {
-		if s.next != nil && !s.paused && s.next.After(after) && (earliest == nil || s.next.Before(*earliest)) {
-			earliest = s.next
-		}
-	}
-	if earliest == nil {
-		return time.Time{}, false, nil
-	}
-	return *earliest, true, nil
+// edit makes an operator's edit of the schedule, which raises its version.
+func (r *scheduleRows) edit(tenantID, name string) {
+	r.Update(tenantID, name, func(row *uow.StoredSchedule) { row.Version++ })
 }
 
 func (r *scheduleRows) LoadForUpdate(ctx context.Context, tenantID, name string) (*schedule.Schedule, bool, error) {
+	if r.loadHook != nil {
+		r.loadHook(tenantID, name)
+	}
 	k := key(tenantID, name)
 	r.mu.Lock()
 	r.gets[k]++
@@ -223,59 +183,16 @@ func (r *scheduleRows) LoadForUpdate(ctx context.Context, tenantID, name string)
 		r.deadlines[k] = d
 	}
 	stuck := r.stuck[k]
+	failure := r.failGet[k]
 	r.mu.Unlock()
 	if stuck {
 		<-ctx.Done()
 		return nil, false, ctx.Err()
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := r.failGet[k]; err != nil {
-		return nil, false, err
+	if failure != nil {
+		return nil, false, failure
 	}
-	s, ok := r.rows[k]
-	if !ok {
-		return nil, false, nil
-	}
-	return s.aggregate(), true, nil
-}
-
-// Save writes s while its row is at expectedVersion, as the adapter does; 0
-// names no row, and every row of these tests exists.
-func (r *scheduleRows) Save(_ context.Context, s *schedule.Schedule, expectedVersion int64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.saves++
-	row, ok := r.rows[key(s.TenantID(), s.Name())]
-	if !ok || row.version != expectedVersion {
-		return schedule.ErrStaleVersion
-	}
-	row.cron, row.timezone, row.description, row.paused = s.Cron(), s.Timezone(), s.Description(), s.Paused()
-	row.version, row.updatedBy, row.updatedAt = s.Version(), s.UpdatedBy(), s.UpdatedAt()
-	row.next = nil
-	if next, ok := s.NextFireAt(); ok {
-		row.next = &next
-	}
-	if r.changed != nil {
-		select {
-		case r.changed <- struct{}{}:
-		default:
-		}
-	}
-	return nil
-}
-
-func (r *scheduleRows) Count(context.Context) (scheduled, paused int, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, s := range r.rows {
-		if s.paused {
-			paused++
-		} else {
-			scheduled++
-		}
-	}
-	return scheduled, paused, nil
+	return r.FakeScheduleRepository.LoadForUpdate(ctx, tenantID, name)
 }
 
 // cronRuns stores the runs the loop creates. active names the schedules whose
@@ -451,10 +368,10 @@ func (m *unaskedModels) CountOf(context.Context, string, string) (int, error) {
 // firesCounted records the cron fires counted by outcome, the calls that
 // counted them, and the last schedules gauge.
 type firesCounted struct {
-	mu                sync.Mutex
-	fires             map[string]int
-	calls             map[string]int
-	scheduled, paused int
+	mu                            sync.Mutex
+	fires                         map[string]int
+	calls                         map[string]int
+	scheduled, paused, unparsable int
 }
 
 func (m *firesCounted) CronFire(outcome string) { m.CronFires(outcome, 1) }
@@ -473,10 +390,10 @@ func (m *firesCounted) callsOf(outcome string) int {
 	return m.calls[outcome]
 }
 
-func (m *firesCounted) Schedules(scheduled, paused int) {
+func (m *firesCounted) Schedules(scheduled, paused, unparsable int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.scheduled, m.paused = scheduled, paused
+	m.scheduled, m.paused, m.unparsable = scheduled, paused, unparsable
 }
 
 func (m *firesCounted) counted() map[string]int {
@@ -535,16 +452,17 @@ type world struct {
 const tenant = "acme"
 
 func newWorld(now time.Time) *world {
+	u := &uow.FakeUnitOfWork{}
 	w := &world{
 		clock:     &fixedClock{now: now},
-		schedules: newScheduleRows(),
+		schedules: newScheduleRows(u.InTransaction),
 		runs:      &cronRuns{active: map[string]bool{}, taken: map[string]bool{}, raceOnce: map[string]bool{}},
 		tasks:     &dispatchedTasks{},
 		outbox:    &recordedEvents{},
 		models:    &unaskedModels{},
 		metrics:   &firesCounted{fires: map[string]int{}, calls: map[string]int{}},
 		logs:      &lockedBuffer{},
-		u:         &uow.FakeUnitOfWork{},
+		u:         u,
 	}
 	w.u.ScheduleRepo = w.schedules
 	w.u.TopologyRepo = &liveGraphs{
@@ -570,11 +488,11 @@ func (w *world) loop(maintenance bool) *cronloop.Loop {
 }
 
 func (w *world) nextFire(name string) time.Time {
-	row := w.schedules.row(tenant, name)
-	if row.next == nil {
+	row, _ := w.schedules.Row(tenant, name)
+	if row.NextFireAt == nil {
 		return time.Time{}
 	}
-	return *row.next
+	return *row.NextFireAt
 }
 
 // pass runs one pass of l at the world's now and requires it to succeed.
@@ -609,10 +527,10 @@ func TestCronLoop_FiresTheDueSlotOnceAndMovesTheNextFire(t *testing.T) {
 	assert.Equal(t, []string{"raw.orders"}, w.outbox.dispatched(), "the ready task is dispatched in the fire")
 	assert.Zero(t, w.models.reads, "a fire does not ask whether a model carries the name")
 
-	row := w.schedules.row(tenant, "daily")
-	assert.True(t, nov(3, 1, 0).Equal(*row.next), "next fire: got %s", row.next)
-	assert.Equal(t, int64(3), row.version, "a fire leaves the version")
-	assert.Equal(t, "alice@example.com", row.updatedBy)
+	row, _ := w.schedules.Row(tenant, "daily")
+	assert.True(t, nov(3, 1, 0).Equal(*row.NextFireAt), "next fire: got %s", row.NextFireAt)
+	assert.Equal(t, int64(3), row.Version, "a fire leaves the version")
+	assert.Equal(t, "alice@example.com", row.UpdatedBy)
 	assert.Equal(t, map[string]int{"started": 1}, w.metrics.counted())
 	assert.Contains(t, w.logs.String(), "schedule_name=daily")
 	assert.Contains(t, w.logs.String(), "tenant_id="+tenant)
@@ -631,7 +549,7 @@ func TestCronLoop_TwoPassesOnOneSlotMakeOneRun(t *testing.T) {
 	w.pass(t, ctx, w.loop(false))
 
 	assert.Len(t, w.runs.of(tenant, "daily"), 1)
-	assert.Equal(t, 1, w.schedules.saves, "the passes after the fire write nothing")
+	assert.Equal(t, 1, w.schedules.SaveCalls(), "the passes after the fire write nothing")
 	assert.Equal(t, map[string]int{"started": 1}, w.metrics.counted())
 }
 
@@ -796,7 +714,7 @@ func TestCronLoop_ARunStartedDuringTheFireIsSkippedOnTheNextPass(t *testing.T) {
 	w.pass(t, ctx, w.loop(false))
 
 	assert.Empty(t, w.runs.of(tenant, "daily"))
-	assert.Zero(t, w.schedules.saves, "the fire wrote nothing")
+	assert.Zero(t, w.schedules.SaveCalls(), "the fire wrote nothing")
 	assert.True(t, slot.Equal(w.nextFire("daily")))
 	assert.Equal(t, 1, w.u.RollbackCalled)
 
@@ -821,14 +739,15 @@ func TestCronLoop_ARowThatFailsDoesNotStopTheOthers(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connection reset")
 	assert.Contains(t, err.Error(), "daily")
-	assert.Equal(t, 1, w.schedules.gets[key(tenant, "daily")], "the failed row is tried once")
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, "daily"), "the failed row is tried once")
 	assert.Len(t, w.runs.of(tenant, "hourly"), 1, "the other due row fires")
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the failed row keeps its slot for the next pass")
 	assert.Equal(t, map[string]int{"failed": 1, "started": 1}, w.metrics.counted())
 }
 
 // A fire that fails is counted as failed once in each pass that tries it: the
-// row keeps its slot, so every pass tries it again and counts it again.
+// row keeps its slot, so a pass after its backoff tries it again and counts it
+// again.
 func TestCronLoop_AFailedFireIsCountedOncePerPass(t *testing.T) {
 	ctx := context.Background()
 	slot := nov(2, 1, 0)
@@ -840,10 +759,176 @@ func TestCronLoop_AFailedFireIsCountedOncePerPass(t *testing.T) {
 	require.Error(t, loop.Pass(ctx, w.clock.Now()))
 	assert.Equal(t, map[string]int{"failed": 1}, w.metrics.counted(), "the first pass counts its failed fire once")
 
-	require.Error(t, loop.Pass(ctx, w.clock.Now()))
-	assert.Equal(t, map[string]int{"failed": 2}, w.metrics.counted(), "the second pass tries the row again and counts it again")
+	require.Error(t, loop.Pass(ctx, w.clock.Now().Add(cronloop.FailureBackoffBase)))
+	assert.Equal(t, map[string]int{"failed": 2}, w.metrics.counted(), "the pass after the backoff tries the row again and counts it again")
 	assert.Equal(t, 2, w.metrics.callsOf("failed"))
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the failed row keeps its slot")
+}
+
+// A row whose fire fails is not tried again until its backoff has passed: the
+// first retry waits FailureBackoffBase, each failure doubles the wait, and a
+// pass that skips the row counts nothing and fails nothing.
+func TestCronLoop_AFailingRowWaitsForItsBackoffBeforeItIsTriedAgain(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	gets := func() int { return w.schedules.getsOf(tenant, "daily") }
+	base := cronloop.FailureBackoffBase
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, 1, gets())
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(base-time.Second)), "a pass inside the backoff skips the row")
+	assert.Equal(t, 1, gets(), "the row is not tried inside its backoff")
+	assert.Equal(t, map[string]int{"failed": 1}, w.metrics.counted(), "a skipped row is not a failed fire")
+
+	require.Error(t, loop.Pass(ctx, slot.Add(base)), "the pass at the end of the backoff tries the row")
+	assert.Equal(t, 2, gets())
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(3*base-time.Second)), "each failure doubles the wait: 2 bases after the second")
+	assert.Equal(t, 2, gets())
+	require.Error(t, loop.Pass(ctx, slot.Add(3*base)))
+	assert.Equal(t, 3, gets())
+	assert.Equal(t, map[string]int{"failed": 3}, w.metrics.counted())
+}
+
+// The wait between tries never exceeds FailureBackoffMax, however many fires of
+// the row have failed.
+func TestCronLoop_TheBackoffOfAFailingRowIsCapped(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+
+	for i := range 12 {
+		now := slot.Add(time.Duration(i) * cronloop.FailureBackoffMax)
+		require.Error(t, loop.Pass(ctx, now), "try %d, a whole FailureBackoffMax after the one before", i+1)
+	}
+	assert.Equal(t, 12, w.schedules.getsOf(tenant, "daily"))
+}
+
+// A row in its backoff takes none of a pass's DueLimit places: the pass reads
+// the due rows with the places of the rows it will skip added to its limit, so
+// DueLimit rows that can fire do fire.
+func TestCronLoop_AFailingRowInItsBackoffTakesNoneOfTheDueLimit(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "aaa-failing", "0 1 * * *", daily{1, 0, paris}, slot.Add(-time.Hour))
+	w.schedules.failGet[key(tenant, "aaa-failing")] = errors.New("connection reset")
+	for i := range 2*cronloop.DueLimit + 50 {
+		w.schedules.add(tenant, fmt.Sprintf("s%03d", i), "0 1 * * *", daily{1, 0, paris}, slot)
+	}
+	loop := w.loop(false)
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, cronloop.DueLimit-1, w.runs.count(), "the failing row, oldest, took a place of the first pass")
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(time.Second)))
+	assert.Equal(t, 2*cronloop.DueLimit-1, w.runs.count(), "in its backoff it takes none of the second pass's places")
+}
+
+// An operator's edit raises the schedule's version and ends its backoff: the
+// next pass tries the row at once.
+func TestCronLoop_AnEditEndsTheBackoffOfAFailingRow(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	require.Error(t, loop.Pass(ctx, slot))
+
+	delete(w.schedules.failGet, key(tenant, "daily"))
+	w.schedules.edit(tenant, "daily")
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(time.Second)))
+	assert.Len(t, w.runs.of(tenant, "daily"), 1, "the edited row fires inside the old backoff")
+}
+
+// A fire that succeeds ends the row's backoff: a later failure of the row waits
+// the base again, not the doubled wait it had reached.
+func TestCronLoop_ASuccessfulFireEndsTheBackoffOfAFailingRow(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+	require.Error(t, loop.Pass(ctx, slot))
+	require.Error(t, loop.Pass(ctx, slot.Add(base)))
+
+	delete(w.schedules.failGet, key(tenant, "daily"))
+	require.NoError(t, loop.Pass(ctx, slot.Add(3*base)))
+	require.Len(t, w.runs.of(tenant, "daily"), 1)
+
+	nextSlot := nov(3, 1, 0)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	before := w.schedules.getsOf(tenant, "daily")
+	require.Error(t, loop.Pass(ctx, nextSlot))
+	require.Error(t, loop.Pass(ctx, nextSlot.Add(base)), "the wait after a recovery starts from the base again")
+	assert.Equal(t, before+2, w.schedules.getsOf(tenant, "daily"))
+}
+
+// A schedule's backoff is counted from the moment its failed fire ended, not
+// from the start of the pass: a fire that took 30 seconds to fail leaves the
+// whole base wait after that, whatever instant the pass began at.
+func TestCronLoop_TheBackoffStartsWhenTheFailedFireEnds(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
+	w.schedules.failGet[key(tenant, "daily")] = errors.New("connection reset")
+	w.schedules.loadHook = func(string, string) { w.clock.set(slot.Add(30 * time.Second)) }
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+
+	require.Error(t, loop.Pass(ctx, slot))
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, "daily"))
+
+	require.NoError(t, loop.Pass(ctx, slot.Add(base+10*time.Second)),
+		"the fire failed at +30 s, so the base wait runs to +90 s, not to +60 s")
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, "daily"), "not tried inside the wait counted from the failure's end")
+
+	w.schedules.loadHook = nil
+	require.Error(t, loop.Pass(ctx, slot.Add(30*time.Second+base)))
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, "daily"), "tried once the wait from the failure's end has passed")
+}
+
+// A schedule the pass did not read keeps its failure history: past DueLimit the
+// read leaves the later schedules out, and absence from a read says nothing of
+// whether a schedule recovered, so the delay it earned is not forgotten.
+func TestCronLoop_AScheduleOutsideTheDuePageKeepsItsFailureHistory(t *testing.T) {
+	ctx := context.Background()
+	slot := nov(2, 1, 0)
+	w := newWorld(slot)
+	rows := cronloop.DueLimit + 1
+	for i := range rows {
+		name := fmt.Sprintf("s%03d", i)
+		w.schedules.add(tenant, name, "0 1 * * *", daily{1, 0, paris}, slot)
+		w.schedules.failGet[key(tenant, name)] = errors.New("connection reset")
+	}
+	last := fmt.Sprintf("s%03d", rows-1)
+	loop := w.loop(false)
+	base := cronloop.FailureBackoffBase
+
+	_ = loop.Pass(ctx, slot)                          // the first DueLimit rows fail; the last is not read
+	_ = loop.Pass(ctx, slot.Add(10*time.Second))      // the rows in backoff are skipped; the last is tried and fails once
+	_ = loop.Pass(ctx, slot.Add(base+10*time.Second)) // every backoff has ended: the read holds the first DueLimit rows, not the last
+	assert.Equal(t, 1, w.schedules.getsOf(tenant, last), "the last row was tried once so far")
+
+	_ = loop.Pass(ctx, slot.Add(base+20*time.Second)) // the last row is tried a second time and fails
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, last))
+
+	_ = loop.Pass(ctx, slot.Add(2*base+20*time.Second))
+	assert.Equal(t, 2, w.schedules.getsOf(tenant, last),
+		"a second failure earns two bases: a history forgotten while it sat outside the read would start again at one")
 }
 
 // A fire that ends because the loop's context ended, as at shutdown, is not a
@@ -875,21 +960,23 @@ func TestCronLoop_AFireEndedByShutdownIsNotCounted(t *testing.T) {
 	assert.True(t, slot.Equal(w.nextFire("daily")), "the fire keeps its slot")
 }
 
-// Each pass sets the schedules gauge: the schedules that are scheduled and the
-// ones that are paused, across tenants.
-func TestCronLoop_GaugesTheScheduledAndPausedSchedules(t *testing.T) {
+// Each pass sets the schedules gauge: the schedules that are scheduled, the ones
+// that are paused and the ones whose stored cron no longer parses, across
+// tenants.
+func TestCronLoop_GaugesTheScheduledPausedAndUnparsableSchedules(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(nov(2, 0, 0))
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, nov(2, 1, 0))
 	w.schedules.add("globex", "daily", "0 1 * * *", daily{1, 0, paris}, nov(2, 1, 0))
 	w.schedules.add(tenant, "hourly", "0 * * * *", hourly{}, nov(2, 1, 0))
-	w.schedules.rows[key(tenant, "hourly")].paused = true
-	w.schedules.rows[key(tenant, "hourly")].next = nil
+	w.schedules.pause(tenant, "hourly")
+	w.schedules.addBroken(tenant, "garbled", nov(2, 1, 0))
 
 	w.pass(t, ctx, w.loop(false))
 
 	assert.Equal(t, 2, w.metrics.scheduled)
 	assert.Equal(t, 1, w.metrics.paused)
+	assert.Equal(t, 1, w.metrics.unparsable)
 }
 
 // Run sleeps until the earliest next fire or the tick; a wake signal, which
@@ -907,7 +994,7 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 		defer close(done)
 		w.loop(false).Run(ctx, wake, time.Hour)
 	}()
-	require.Eventually(t, func() bool { return w.schedules.listDueCalls() >= 1 }, 5*time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return w.schedules.ListDueCalls() >= 1 }, 5*time.Second, 10*time.Millisecond,
 		"the loop passes when it starts")
 
 	// An edit makes the schedule due now and notifies.
@@ -980,8 +1067,7 @@ func TestCronLoop_ABrokenDueRowDoesNotDelayTheOthers(t *testing.T) {
 	slot := start.Add(50 * time.Millisecond)
 	w := newWorld(start)
 	w.u.SetClock(wallClock{})
-	w.schedules.add(tenant, "broken", "not a cron", hourly{}, start.Add(-time.Hour))
-	w.schedules.rows[key(tenant, "broken")].broken = true
+	w.schedules.addBroken(tenant, "broken", start.Add(-time.Hour))
 	farHour := (slot.In(paris).Hour() + 12) % 24
 	w.schedules.add(tenant, "daily", fmt.Sprintf("0 %d * * *", farHour), daily{farHour, 0, paris}, slot)
 	w.runs.created = make(chan *run.Run, 1)
@@ -1005,7 +1091,7 @@ func TestCronLoop_ABrokenDueRowDoesNotDelayTheOthers(t *testing.T) {
 	// pass at the slot fires the good one (two calls). A loop that passed
 	// again and again on the broken row would make hundreds of calls in the
 	// 300 ms; a broken row that delayed the good one fails the wait above.
-	assert.LessOrEqual(t, w.schedules.listDueCalls(), 2, "at most a pass at the start and one for the good row; the broken row adds none")
+	assert.LessOrEqual(t, w.schedules.ListDueCalls(), 2, "at most a pass at the start and one for the good row; the broken row adds none")
 	assert.Empty(t, w.runs.of(tenant, "broken"))
 	cancel()
 	<-done
@@ -1105,7 +1191,7 @@ func TestCronLoop_AFireThatRunsOutOfTimeRollsBackAndLeavesTheOthers(t *testing.T
 	assert.Equal(t, map[string]int{"failed": 1, "started": 1}, w.metrics.counted(), "a fire that runs out of time is a failed fire")
 
 	w.schedules.setStuck(tenant, "daily", false)
-	w.pass(t, ctx, loop)
+	require.NoError(t, loop.Pass(ctx, slot.Add(cronloop.FailureBackoffBase)))
 	runs := w.runs.of(tenant, "daily")
 	require.Len(t, runs, 1)
 	assert.True(t, slot.Equal(*runs[0].ScheduledFor()))
@@ -1123,19 +1209,20 @@ func TestCronLoop_TheSchedulesPastDueLimitFireOnTheWakeOfThePassBefore(t *testin
 	for i := range cronloop.DueLimit + 1 {
 		w.schedules.add(tenant, fmt.Sprintf("s%03d", i), "0 1 * * *", daily{1, 0, paris}, slot)
 	}
-	w.schedules.changed = make(chan struct{}, 1)
+	changed := make(chan struct{}, 1)
+	w.schedules.NotifyOnChange(changed)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.loop(false).Run(ctx, w.schedules.changed, time.Hour)
+		w.loop(false).Run(ctx, changed, time.Hour)
 	}()
 
 	require.Eventually(t, func() bool { return w.runs.count() == cronloop.DueLimit+1 }, 5*time.Second, 20*time.Millisecond,
 		"every due row fires")
-	require.Eventually(t, func() bool { return w.schedules.listDueCalls() == 3 }, 5*time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return w.schedules.ListDueCalls() == 3 }, 5*time.Second, 10*time.Millisecond,
 		"the last fire's change wakes one more pass")
 	time.Sleep(300 * time.Millisecond)
-	assert.Equal(t, 3, w.schedules.listDueCalls(), "a pass of DueLimit, one for the rest, one that finds nothing, then sleep")
+	assert.Equal(t, 3, w.schedules.ListDueCalls(), "a pass of DueLimit, one for the rest, one that finds nothing, then sleep")
 	cancel()
 	<-done
 }
@@ -1149,8 +1236,7 @@ func TestCronLoop_UnparseableRowsPastDueLimitDoNotStarveTheOthers(t *testing.T) 
 	w := newWorld(slot)
 	for i := range cronloop.DueLimit + 1 {
 		name := fmt.Sprintf("broken-%03d", i)
-		w.schedules.add(tenant, name, "not a cron", hourly{}, slot.Add(-time.Duration(cronloop.DueLimit+1-i)*time.Minute))
-		w.schedules.rows[key(tenant, name)].broken = true
+		w.schedules.addBroken(tenant, name, slot.Add(-time.Duration(cronloop.DueLimit+1-i)*time.Minute))
 	}
 	w.schedules.add(tenant, "daily", "0 1 * * *", daily{1, 0, paris}, slot)
 
@@ -1172,8 +1258,7 @@ func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	defer cancel()
 	now := nov(2, 1, 0)
 	w := newWorld(now)
-	w.schedules.add(tenant, "broken", "not a cron", hourly{}, now.Add(-time.Hour))
-	w.schedules.rows[key(tenant, "broken")].broken = true
+	w.schedules.addBroken(tenant, "broken", now.Add(-time.Hour))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -1184,7 +1269,7 @@ func TestCronLoop_AnUnparseableDueRowDoesNotMakeTheLoopSpin(t *testing.T) {
 	cancel()
 	<-done
 
-	assert.Equal(t, 1, w.schedules.listDueCalls(), "the pass at the start, then nothing until the tick")
+	assert.Equal(t, 1, w.schedules.ListDueCalls(), "the pass at the start, then nothing until the tick")
 	assert.Empty(t, w.runs.of(tenant, "broken"))
 	assert.True(t, strings.Count(w.logs.String(), "level=ERROR") == 0, "a row the pass cannot fire is not a pass failure")
 }

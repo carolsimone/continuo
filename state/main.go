@@ -288,7 +288,7 @@ func main() {
 	// The UoW builds tx-bound aggregate adapters (Run, Outbox, TaskCollection,
 	// Schedules, LiveScheduleModels) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, clk, logger, postgres.WithCronParser(cronParser))
+		return postgres.NewPostgresUnitOfWork(db, clk, logger, cronParser)
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update

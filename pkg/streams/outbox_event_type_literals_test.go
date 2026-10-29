@@ -24,8 +24,6 @@ var forbiddenEventTypeLiterals = map[string]bool{
 // a literal. The constant declarations themselves live in the services' domain/
 // packages, which are deliberately not scanned here.
 var eventTypeScanDirs = []string{
-	"orchestrator/adapters/publisher",
-	"orchestrator/service/handlers",
 	"execution-controller/adapters/publisher",
 	"execution-controller/service/deployer",
 	"execution-controller/service/handlers",
