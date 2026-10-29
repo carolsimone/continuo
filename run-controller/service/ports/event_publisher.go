@@ -7,9 +7,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// OutboxPublisher writes domain events to run_controller_outbox inside the publisher's
-// bound transaction. The implementation switches on each event's concrete type
-// to derive stream_name, event_type, payload, aggregate_type, and retry budget.
+// OutboxPublisher records domain events for publication to their streams inside
+// the publisher's bound transaction, so an event is recorded if and only if the
+// transaction that raised it commits. The implementation switches on each
+// event's concrete type to derive stream_name, event_type, payload,
+// aggregate_type, and retry budget.
 //
 // msgProcID is the message_processing.id that originated the mutation;
 // nil-equivalent (uuid.Nil) is acceptable for events not triggered by an

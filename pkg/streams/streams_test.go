@@ -58,10 +58,10 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 		t.Fatalf("ReleasePromotedV2 = %q", ReleasePromotedV2)
 	}
 	want := map[string]bool{
-		"orchestrator-release-promoted":          false,
-		"orchestrator-release-promoted-versions": false,
-		"execution-controller-release-promoted":  false,
-		"run-controller-release-promoted":        false,
+		OrchestratorReleasePromoted:         false,
+		OrchestratorReleasePromotedVersions: false,
+		ExecutionControllerReleasePromoted:  false,
+		RunControllerReleasePromoted:        false,
 	}
 	for _, g := range Groups[ReleasePromotedV2] {
 		if _, ok := want[g]; !ok {

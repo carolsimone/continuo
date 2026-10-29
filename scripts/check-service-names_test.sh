@@ -17,12 +17,15 @@ mkfix(){
   git -C "$1" add -A
 }
 
-# expect_fail NAME SAMPLE: a tracked file holding SAMPLE makes the guard fail.
+# expect_fail NAME SAMPLE: a tracked file holding SAMPLE makes the guard fail
+# with exit status 1 (a crash would exit otherwise) and name that file.
 expect_fail(){
   n=$((n+1)); local d="$tmp/fix$n"
   mkfix "$d" "src/sample.txt" "$2"
-  bash "$G" "$d" >/dev/null 2>&1; local rc=$?
-  assert "$1 fails the guard" "[ $rc -ne 0 ]"
+  local out rc
+  out="$(bash "$G" "$d" 2>&1)"; rc=$?
+  assert "$1 fails the guard with status 1" "[ $rc -eq 1 ]"
+  assert "$1 names the offending file" "grep -q '^src/sample.txt:' <<<\"\$out\""
 }
 
 # expect_pass NAME PATH SAMPLE: a tracked file PATH holding SAMPLE passes.

@@ -12,6 +12,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/run-controller/config"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,6 +186,25 @@ func goldenInput(t *testing.T, name string) (uuid.UUID, time.Time, json.RawMessa
 	}
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	return uuid.MustParse(fixture.Input.EventID), fixture.Input.OccurredAt, fixture.Input.Payload
+}
+
+// The envelope of every enveloped stream run-controller publishes names the
+// producer config.ServiceName, the name its consumers' dead letters carry.
+func TestRender_EnvelopeProducerIsTheServiceName(t *testing.T) {
+	for _, tc := range []struct{ stream, fixture string }{
+		{streams.TaskDispatchV1, "task_dispatch_v1.json"},
+		{streams.RunCancelledV1, "run_cancelled_v1.json"},
+	} {
+		t.Run(tc.stream, func(t *testing.T) {
+			id, at, payload := goldenInput(t, tc.fixture)
+
+			rendered, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: id, CreatedAt: at,
+				EventType: tc.stream, StreamName: tc.stream, Payload: wrapped(t, "acme", payload)})
+			require.NoError(t, err)
+
+			assert.Equal(t, config.ServiceName, rendered["producer"])
+		})
+	}
 }
 
 // The envelope of a task.dispatch:v1 row names the tenant the row stores, and

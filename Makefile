@@ -244,6 +244,14 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # pytest suite and shellcheck in containers, so it needs Docker.
 #
 # The check scripts:
+# - check-service-names: no tracked file outside immutable history (Flyway
+#   migrations, the chart changelog, the release notes, the superpowers docs and
+#   the NOTES.txt upgrade warnings) may name a retired service in a form that is
+#   not an ordinary word: its database, outbox table, environment variables,
+#   address, image, compose service, consumer groups or test identifiers. Its
+#   _test.sh runs the guard against throwaway fixture repositories: every
+#   retired form fails it (status 1, naming the file), history and ordinary
+#   prose pass, and so does this repository.
 # - check-dead-go: no Go function may be unreachable from every service main
 #   (deadcode, see scripts/check-dead-go.sh). golangci-lint's `unused` skips
 #   exported names and counts test callers, so it cannot see these.
