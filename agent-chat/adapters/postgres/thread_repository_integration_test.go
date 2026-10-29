@@ -5,103 +5,63 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/adapters/postgres"
 	"github.com/carolsimone/continuo/agent-chat/domain"
 	"github.com/carolsimone/continuo/agent-chat/domain/repository"
-	artest "github.com/carolsimone/continuo/agent-chat/test"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// sharedDB is the single Postgres connection shared across all tests in this
-// package. Initialised once in TestMain.
-var sharedDB *sqlx.DB
-
-// TestMain starts ONE postgres container, applies migrations once, and shares
-// the connection across all tests. Each test truncates the tables for isolation.
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2).WithStartupTimeout(60 * time.Second),
-	}
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req, Started: true,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start postgres container: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() { _ = c.Terminate(ctx) }()
-
-	host, err := c.Host(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get postgres host: %v\n", err)
-		os.Exit(1)
-	}
-	// colima/macOS: testcontainers may return "localhost" which resolves to ::1
-	// (IPv6), but the Docker-mapped port only listens on 127.0.0.1 (IPv4).
-	if host == "localhost" {
-		host = "127.0.0.1"
-	}
-	port, err := c.MappedPort(ctx, "5432")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get postgres port: %v\n", err)
-		os.Exit(1)
-	}
-
-	dsn := "host=" + host + " port=" + port.Port() + " user=testuser password=testpass dbname=testdb sslmode=disable"
-	var db *sqlx.DB
-	for i := 0; i < 10; i++ {
-		db, err = sqlx.Connect("postgres", dsn)
-		if err == nil {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to postgres: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	if err := artest.ApplyMigrations(db.DB); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to apply migrations: %v\n", err)
-		os.Exit(1)
-	}
-	sharedDB = db
-
-	os.Exit(m.Run())
-}
-
-// truncateTables removes all rows from every table so each test starts clean.
-func truncateTables(t *testing.T) {
+// newTestDB connects to the agent-chat database that the Flyway migrations
+// built (`make test-deps-up`); a test never creates or migrates a schema. The
+// database must be dedicated to the tests and have no other writer: a table
+// that already holds rows is refused, so every row a test sees is one it wrote.
+// The cleanup deletes the threads, and with them their messages and pending
+// actions, which carry a cascading foreign key to their thread.
+func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	_, err := sharedDB.ExecContext(context.Background(), `TRUNCATE threads, messages, pending_actions CASCADE`)
-	require.NoError(t, err)
+	v := &pkgconfig.Validator{}
+	cfg := pkgconfig.LoadPostgres(v)
+	if len(v.Missing()) > 0 {
+		testdeps.Unavailable(t, "POSTGRES_* not set; run `make test-go SERVICE=agent-chat`")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := sqlx.ConnectContext(ctx, "postgres", cfg.DSN())
+	if err != nil {
+		testdeps.Unavailable(t, "agent-chat postgres unreachable: %v", err)
+	}
+	t.Cleanup(func() { assert.NoError(t, db.Close()) })
+
+	for _, table := range []string{"threads", "messages", "pending_actions"} {
+		var present bool
+		require.NoError(t, db.GetContext(ctx, &present, `SELECT to_regclass($1) IS NOT NULL`, table))
+		require.True(t, present, "%s missing: run the Flyway migrations from db/migration/agent_chat before testing", table)
+		var count int
+		require.NoError(t, db.GetContext(ctx, &count, `SELECT count(*) FROM `+table))
+		require.Zero(t, count, "%s contains rows: use an empty, dedicated agent-chat test database without a running agent-chat", table)
+	}
+
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, err := db.ExecContext(cleanupCtx, `DELETE FROM threads`)
+		assert.NoError(t, err, "delete the test-owned threads")
+	})
+	return db
 }
 
 func TestThreadRepository_RoundTrip(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
@@ -146,8 +106,8 @@ func TestThreadRepository_RoundTrip(t *testing.T) {
 // against a lossy encode/decode; the exact stored byte shape of each variant is
 // pinned separately by the serialization package's golden tests.
 func TestThreadRepository_ContentRoundTripAllVariants(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
@@ -177,8 +137,8 @@ func TestThreadRepository_ContentRoundTripAllVariants(t *testing.T) {
 // write path refuses a role/content pairing that would round-trip as the wrong
 // variant, and persists nothing when it does.
 func TestThreadRepository_AppendMessage_RejectsRoleContentMismatch(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
@@ -193,8 +153,8 @@ func TestThreadRepository_AppendMessage_RejectsRoleContentMismatch(t *testing.T)
 }
 
 func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
@@ -225,8 +185,8 @@ func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
 }
 
 func TestThreadRepository_GetPendingAction(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
@@ -266,8 +226,8 @@ func TestThreadRepository_GetPendingAction(t *testing.T) {
 }
 
 func TestThreadRepository_DeleteThreadIfIdle(t *testing.T) {
-	truncateTables(t)
-	repo := postgres.NewThreadRepository(sharedDB)
+	db := newTestDB(t)
+	repo := postgres.NewThreadRepository(db)
 	ctx := context.Background()
 
 	th, err := repo.CreateThread(ctx, "alice")
