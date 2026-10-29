@@ -334,7 +334,7 @@ describe('routes/runs: GET /:id/attempts', () => {
     );
   });
 
-  it('clamps limit to the state-side max of 200', async () => {
+  it("clamps limit to run-controller's max of 200", async () => {
     mockListRunAttempts.mockImplementation((_req: any, cb: any) => cb(null, { attempts: [], total_count: 0 }));
     await request(app).get('/api/runs/abc-123/attempts?limit=500');
     expect(mockListRunAttempts).toHaveBeenLastCalledWith(
