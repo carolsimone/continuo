@@ -890,7 +890,7 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 	}
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
-		AggregateType: "remediation_agent",
+		AggregateType: event.AggregateType,
 		AggregateID:   event.AggregateIDForRelease(p.ReleaseID),
 		EventType:     event.EventType,
 		Payload:       body,

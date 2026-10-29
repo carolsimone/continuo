@@ -2232,6 +2232,7 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 	require.Len(t, u.ob.entries, 1)
 	var got serialization.RemediationProposedDTO
 	require.NoError(t, json.Unmarshal(u.ob.entries[0].Payload, &got))
+	require.Equal(t, event.AggregateType, u.ob.entries[0].AggregateType, "the service's events share one outbox aggregate type")
 	require.Equal(t, event.RemediationEventID("r1", 2).String(), got.EventID)
 	require.Equal(t, "s.a", got.NodeID)
 	require.Equal(t, []string{"s.a", "s.b"}, got.ResolvedNodeIDs)

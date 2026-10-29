@@ -6,6 +6,12 @@ import "github.com/google/uuid"
 
 const EventType = "remediation_proposed"
 
+// AggregateType is the outbox aggregate type of every event this service
+// emits. The relay withholds a row while an older open row shares its aggregate
+// (type and id), so all of a release's events (see AggregateIDForRelease) share
+// one lane.
+const AggregateType = "agent_remediation"
+
 var remediationProposedNamespace = uuid.MustParse("d2a7f3c1-8e94-4b6a-9c2d-3f5b7a1e0d8c")
 
 // RemediationEventID maps (releaseID, attempt) to a stable UUID so a

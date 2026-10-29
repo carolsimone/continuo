@@ -332,7 +332,7 @@ func main() {
 	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
 
-	// Retention sweeper — prunes processed remediation_agent_outbox rows older
+	// Retention sweeper — prunes processed agent_remediation_outbox rows older
 	// than RETENTION_DAYS and message_processing dedup rows, whatever their
 	// state, older than the longer of RETENTION_DAYS and the 30-day replay
 	// horizon, on one timer using DB-clock cutoffs.

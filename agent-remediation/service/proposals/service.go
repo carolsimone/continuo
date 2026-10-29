@@ -325,7 +325,7 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 	}
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
-		AggregateType: "remediation_agent",
+		AggregateType: event.AggregateType,
 		AggregateID:   event.AggregateIDForRelease(v.ReleaseID),
 		EventType:     event.PRClosedEventType,
 		Payload:       body,
@@ -374,7 +374,7 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 	}
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
-		AggregateType: "remediation_agent",
+		AggregateType: event.AggregateType,
 		AggregateID:   event.AggregateIDForRelease(v.ReleaseID),
 		EventType:     event.PROpenedEventType,
 		Payload:       body,

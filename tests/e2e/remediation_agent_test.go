@@ -750,7 +750,7 @@ func latestPRClosedPayload(t *testing.T, ctx context.Context, clients *testClien
 	t.Helper()
 	var raw []byte
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &raw,
-		`SELECT payload FROM remediation_agent_outbox
+		`SELECT payload FROM agent_remediation_outbox
 		  WHERE event_type = 'remediation_pr_closed'
 		    AND payload->>'proposal_id' = $1
 		    AND payload->>'service' = $2

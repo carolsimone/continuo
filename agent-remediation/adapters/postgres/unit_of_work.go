@@ -66,9 +66,9 @@ func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
 // OutboxTable is the outbox table this service writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.
-const OutboxTable = "remediation_agent_outbox"
+const OutboxTable = "agent_remediation_outbox"
 
-// OutboxRepo returns the pkg/outbox repository bound to remediation_agent_outbox
+// OutboxRepo returns the pkg/outbox repository bound to agent_remediation_outbox
 // on the current transaction.
 func (u *UnitOfWork) OutboxRepo() outbox.Repository {
 	return outbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)
