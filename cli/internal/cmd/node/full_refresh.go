@@ -44,7 +44,7 @@ Arguments:
 ` + sourceRunArgDoc + `
 
 The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the state service records its own
+environment variable when set, otherwise the run-controller service records its own
 system identity.
 
 This command reports acceptance, not completion. On success the new run is
@@ -67,7 +67,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple
 ` + sourceRunErrorsDoc + `
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node full-refresh finance analytics orders
@@ -83,7 +83,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

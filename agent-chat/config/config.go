@@ -18,7 +18,7 @@ type Config struct {
 	LLMBaseURL  string // server root without /v1; empty: the provider's public address
 
 	CLIPath            string
-	StateAddr          string
+	RunControllerAddr  string
 	OrchestratorAddr   string
 	DeadLetterAddr     string // optional: empty leaves the CLI's own default address
 	SystemPrompt       string
@@ -67,7 +67,7 @@ func Load(v *pkgconfig.Validator) Config {
 		LLMModel:              v.Require("LLM_MODEL"),
 		LLMBaseURL:            llm.BaseURL,
 		CLIPath:               pkgconfig.EnvOrDefault("CONTINUO_CLI_PATH", "continuo"),
-		StateAddr:             pkgconfig.EnvOrDefault("CONTINUO_STATE_ADDR", "state:50051"),
+		RunControllerAddr:     pkgconfig.EnvOrDefault("CONTINUO_RUN_CONTROLLER_ADDR", "run-controller:50051"),
 		OrchestratorAddr:      pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		DeadLetterAddr:        pkgconfig.EnvOrDefault("CONTINUO_DEAD_LETTER_ADDR", ""),
 		SystemPrompt:          pkgconfig.EnvOrDefault("CHAT_SYSTEM_PROMPT", defaultSystemPrompt),

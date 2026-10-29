@@ -114,14 +114,14 @@ PROXY_EDGES = [
 ]
 
 CLOSED_EDGES = [
-    ("orchestrator", "state", 50051,
-     "orchestrator calls no state RPC: state fails a stalled run itself"),
+    ("orchestrator", "run-controller", 50051,
+     "orchestrator calls no run-controller RPC: run-controller fails a stalled run itself"),
 ]
 
 # While the render holds egress-proxy, no service but the two agents may use it.
 PROXY_CLOSED_EDGES = [
     (source, PROXY, PROXY_PORT, "only agent-chat and agent-remediation use the proxy")
-    for source in ("ui", "state", "orchestrator", "execution-controller", "release-controller",
+    for source in ("ui", "run-controller", "orchestrator", "execution-controller", "release-controller",
                    "remediation", "dead-letter-controller", "topology-controller")
 ] + [
     ("agent-chat", PROXY, 8093, "the agents reach the proxy on its proxy port only"),
@@ -130,7 +130,7 @@ PROXY_CLOSED_EDGES = [
 # Pods of the release the agents reach directly. Only the agent's egress is
 # checked here: the destination's ingress rules are other policies' concern.
 REQUIRED_AGENT_EGRESS = [
-    ("agent-chat", "state", 50051, "the continuo CLI reads run state"),
+    ("agent-chat", "run-controller", 50051, "the continuo CLI reads run state"),
     ("agent-chat", "orchestrator", 50052, "the continuo CLI reads the topology"),
     ("agent-chat", "postgresql", 5432, "chat threads"),
     ("agent-chat", "redis", 6379, "the shared rate limiter"),

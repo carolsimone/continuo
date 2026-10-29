@@ -11,13 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// liveReleaseMoved is the part of the state service's FAILED_PRECONDITION
+// liveReleaseMoved is the part of the run-controller service's FAILED_PRECONDITION
 // message that says the live release is no longer the one the caller previewed.
 const liveReleaseMoved = "live release changed"
 
 // NewRebaseCommand builds
 // `continuo run rebase <run-id> <release-id> [with-changed-upstream]`. It asks
-// the state service for a run that restarts the source run from its failure on
+// the run-controller service for a run that restarts the source run from its failure on
 // the live release, provided the live release is still <release-id>, the one
 // "run rebase-preview" reported.
 func NewRebaseCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
@@ -55,7 +55,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, a blank run id or release id, [with-changed-upstream] not true or false, or the run id is not a UUID
   not_found  (exit 3)  no run with that id
   conflict   (exit 4)  the live release is not <release-id> (not retryable: the message says to run "continuo run rebase-preview" again and use its new release_id), the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run rebase 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a rel-2026-10-27-3 true",
@@ -85,7 +85,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

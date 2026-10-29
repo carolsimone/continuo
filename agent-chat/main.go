@@ -141,7 +141,7 @@ func main() {
 	// who approved it (empty → run-controller's system sentinel).
 	cliEnv := append(
 		os.Environ(),
-		"CONTINUO_STATE_ADDR="+cfg.StateAddr,
+		"CONTINUO_RUN_CONTROLLER_ADDR="+cfg.RunControllerAddr,
 		"CONTINUO_ORCHESTRATOR_ADDR="+cfg.OrchestratorAddr,
 	)
 	// An unset dead-letter address is not forwarded, so the CLI falls back to

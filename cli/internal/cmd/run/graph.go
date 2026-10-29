@@ -20,7 +20,7 @@ type graphNode struct {
 	Status       string `json:"status"`
 	TaskID       string `json:"task_id"`
 	// WaitReason, WaitingOnRunID and WaitingSince say why a pending task waits
-	// besides its upstreams; each is omitted when the state service leaves it empty.
+	// besides its upstreams; each is omitted when the run-controller service leaves it empty.
 	WaitReason     string `json:"wait_reason,omitempty"`
 	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
 	WaitingSince   string `json:"waiting_since,omitempty"`
@@ -71,7 +71,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or the run id is not a UUID
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run graph 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a",
 		Annotations: map[string]string{
@@ -85,7 +85,7 @@ Errors:
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := factory(cmd.Context(), cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

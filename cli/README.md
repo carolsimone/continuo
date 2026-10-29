@@ -1,7 +1,7 @@
 # continuo
 
 LLM-friendly command-line client for the Continuo platform. Calls the
-`state` service over gRPC and emits machine-readable JSON by default.
+`run-controller` service over gRPC and emits machine-readable JSON by default.
 
 ## Status
 
@@ -53,7 +53,7 @@ continuo [global-flags] <command> [args...]
 
 | Flag         | Env                    | Default           | Purpose                                            |
 |--------------|------------------------|-------------------|----------------------------------------------------|
-| `--endpoint` | `CONTINUO_STATE_ADDR`  | `localhost:50051` | gRPC address of the state service                  |
+| `--endpoint` | `CONTINUO_RUN_CONTROLLER_ADDR` | `localhost:50051` | gRPC address of the run-controller service |
 | `--orchestrator-endpoint` | `CONTINUO_ORCHESTRATOR_ADDR` | `localhost:50052` | gRPC address of the orchestrator service |
 | `--dead-letter-endpoint` | `CONTINUO_DEAD_LETTER_ADDR` | `localhost:50055` | gRPC address of dead-letter-controller |
 | `--timeout`  | `CONTINUO_TIMEOUT`     | `10s`             | Per-call deadline (any `time.ParseDuration` value) |
@@ -73,15 +73,15 @@ single JSON object to stdout:
 ```
 
 `triggered_at` is the CLI's clock at the moment the request returned;
-the state service does not echo a server timestamp today.
+the run-controller service does not echo a server timestamp today.
 
 Every command that starts a run or cancels a schedule's active run
 (`schedule trigger|test|build|cancel`, `node trigger|test|build|full-refresh`,
 `run rerun` and `run rebase`) sends one request id per invocation:
-`CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
+`CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The run-controller service
 answers a repeat of the same id and arguments with the run the first call made
 and writes nothing. The client retries such a command, with the same id, up to
-three tries in all (100 ms, then 400 ms apart) when the state service answers
+three tries in all (100 ms, then 400 ms apart) when the run-controller service answers
 UNAVAILABLE, or ABORTED because concurrent calls of the same id kept rolling
 back. It does not retry a refusal for maintenance mode, and it never retries a
 read. A schedule edit (`set-cron`, `remove-cron`, `pause`, `resume`) sends no
@@ -192,7 +192,7 @@ install default (`runs.taskTimeoutHours`).
 | `--offset`    | `0`     | Rows to skip; `total_count` tells the caller when another page exists   |
 
 `success_rate_pct`, `avg_duration_sec` and `p95_duration_sec` are omitted
-when the state service has nothing to measure for that node; `last_run_at`
+when the run-controller service has nothing to measure for that node; `last_run_at`
 is omitted for a node that never ran. With `--human`, stderr gets one line
 per node and a trailing `showing <first>-<last> of <total>` line.
 
@@ -238,7 +238,7 @@ $ continuo schedule trigger daily_ingest
 $ echo $?
 4
 
-# State service unreachable
+# run-controller service unreachable
 $ continuo --endpoint localhost:1 schedule trigger daily_ingest
 {"error":{"code":"unavailable","message":"…connection refused","retryable":true}}
 $ echo $?
@@ -256,7 +256,7 @@ Triggered run cd4423ae-9161-4773-aa43-3ec087f24a0a for schedule 'daily_ingest'
   opt-in human text goes to stderr — a pipeline that always reads stdout
   never has to care which mode the caller picked.
 - **Thin client, server owns the rules.** Pre-conditions (schedule
-  exists, no concurrent run, …) are enforced by the state service. The
+  exists, no concurrent run, …) are enforced by the run-controller service. The
   CLI only translates gRPC status codes into exit codes and JSON shapes.
 - **Bounded retries, the caller owns the rest.** The client repeats only
   what is safe to repeat: a command that starts a run or cancels a

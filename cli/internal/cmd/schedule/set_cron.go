@@ -91,7 +91,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments (a cron whose fields were not passed as one argument arrives as several), a blank argument, a name longer than 50 characters, or a cron or timezone the parser refuses; the message says why (for a cron or timezone, it is the parser's)
   not_found  (exit 3)  the schedule has no cron yet and no model of the live release has its tag; a listed name that differs only by case is offered as "did you mean"
   conflict   (exit 4)  another edit saved the schedule twice while this ran ("changed by <who> while this ran; run it again"); nothing was changed by this command, so run it again
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; edits are refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo schedule set-cron daily "0 1 * * *" Europe/Paris  # the five fields are ONE argument; in a shell, quote them
@@ -123,7 +123,7 @@ Errors:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			c, err := factory(cmd.Context(), cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

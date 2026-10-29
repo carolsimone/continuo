@@ -19,7 +19,7 @@ import { loadCiAuthConfig } from './auth/ci-config';
 import { loadMaintenance } from './maintenance';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
-const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
+const RUN_CONTROLLER_GRPC_ADDR = process.env.RUN_CONTROLLER_GRPC_ADDR || 'localhost:50051';
 const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
 const AGENT_CHAT_GRPC_ADDR = process.env.AGENT_CHAT_GRPC_ADDR || 'localhost:50053';
 const REMEDIATION_GRPC_ADDR = process.env.REMEDIATION_GRPC_ADDR || 'localhost:50054';
@@ -51,7 +51,7 @@ async function main() {
   // would fail mid-request instead of the misconfiguration surfacing at boot.
   assertS3Config();
 
-  const client = createGrpcClient(STATE_GRPC_ADDR);
+  const client = createGrpcClient(RUN_CONTROLLER_GRPC_ADDR);
   const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
   const remediationClient = createRemediationClient(REMEDIATION_GRPC_ADDR);
 

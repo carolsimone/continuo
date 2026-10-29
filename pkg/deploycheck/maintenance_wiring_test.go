@@ -15,19 +15,6 @@ import (
 // and refuse to start without MAINTENANCE_ENABLED.
 var enforcingServices = []string{"run-controller", "release-controller", "agent-remediation", "dead-letter-controller"}
 
-// composeServiceNames maps a service directory to the name docker-compose.yml
-// gives its service when the two differ.
-var composeServiceNames = map[string]string{"run-controller": "state"}
-
-// composeServiceName is the name docker-compose.yml gives the service built
-// from the directory dir.
-func composeServiceName(dir string) string {
-	if name, ok := composeServiceNames[dir]; ok {
-		return name
-	}
-	return dir
-}
-
 func readRepoFile(t *testing.T, rel ...string) string {
 	t.Helper()
 	p := filepath.Join(append([]string{repoRoot(t)}, rel...)...)
@@ -45,8 +32,7 @@ func TestMaintenanceFlagReachesEveryDeploymentPath(t *testing.T) {
 		t.Errorf("templates/configmap.yaml does not set %s", pkgconfig.MaintenanceEnvKey)
 	}
 	compose := readRepoFile(t, "docker-compose.yml")
-	for _, dir := range append([]string{"ui", "ui-auth"}, enforcingServices...) {
-		svc := composeServiceName(dir)
+	for _, svc := range append([]string{"ui", "ui-auth"}, enforcingServices...) {
 		block := regexp.MustCompile(`(?ms)^  ` + regexp.QuoteMeta(svc) + `:\n(.*?)(?:^  \S|\z)`).FindStringSubmatch(compose)
 		if block == nil || !strings.Contains(block[1], pkgconfig.MaintenanceEnvKey+"=false") {
 			t.Errorf("docker-compose.yml service %q does not set %s=false", svc, pkgconfig.MaintenanceEnvKey)

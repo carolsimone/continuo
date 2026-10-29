@@ -11,8 +11,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// nodeRun is the JSON-serialisable representation of one run. Fields the state
-// service leaves empty while a run is in flight or on success are omitted.
+// nodeRun is the JSON-serialisable representation of one run. Fields the
+// run-controller service leaves empty while a run is in flight or on success
+// are omitted.
 type nodeRun struct {
 	RunID        string `json:"run_id"`
 	ScheduleName string `json:"schedule_name"`
@@ -35,11 +36,11 @@ type nodeRun struct {
 	RunResultsURI string `json:"run_results_uri,omitempty"`
 	Operation     string `json:"operation"`
 	// ContentHash is the node's content hash in the release the run ran on, as
-	// the state service records it. Empty for runs that name no release.
+	// the run-controller service records it. Empty for runs that name no release.
 	ContentHash string `json:"content_hash,omitempty"`
 	// WaitReason, WaitingOnRunID and WaitingSince say why the run's pending
 	// task waits besides its upstreams, on which run and since when; each is
-	// omitted when the state service leaves it empty.
+	// omitted when the run-controller service leaves it empty.
 	WaitReason     string `json:"wait_reason,omitempty"`
 	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
 	WaitingSince   string `json:"waiting_since,omitempty"`
@@ -49,7 +50,7 @@ type historyPayload struct {
 	Runs []nodeRun `json:"runs"`
 }
 
-// nodeHistoryLimit is the fixed page size. The state service clamps to (0,50];
+// nodeHistoryLimit is the fixed page size. The run-controller service clamps to (0,50];
 // the CLI always requests the full window.
 const nodeHistoryLimit int32 = 50
 
@@ -99,7 +100,7 @@ Output (stdout, JSON): up to 50 runs, newest first.
   python-csv, python-api) always emit one, dbt nodes never do. An unknown node returns {"runs":[]}, not an error.
 
 content_hash is the node's content hash in the release the run ran on, as
-the state service records it; it is omitted for runs that name no release.
+the run-controller service records it; it is omitted for runs that name no release.
 
 wait_reason is node_lease while the task waits for another run to release its node:
 another run's task is writing this node, and this run's pending task starts
@@ -114,7 +115,7 @@ it is unavailable).
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node history finance analytics orders --operation test",
 		Annotations: map[string]string{
@@ -137,7 +138,7 @@ Errors:
 
 			operation, _ := cmd.Flags().GetString("operation")
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

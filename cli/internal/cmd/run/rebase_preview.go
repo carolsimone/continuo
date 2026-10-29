@@ -118,7 +118,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, a blank run id, [with-changed-upstream] not true or false, or the run id is not a UUID
   not_found  (exit 3)  no run with that id
   conflict   (exit 4)  the run is not failed or cancelled, has no task that did not succeed, names no release, is a test run, or leaves nothing to re-execute
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run rebase-preview 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a true",
 		Annotations: map[string]string{
@@ -142,7 +142,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

@@ -45,7 +45,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [state, orchestrator, execution-controller,
+                values: [run-controller, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller, db-init-migrate]
         - podSelector:
@@ -83,7 +83,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [state, orchestrator, execution-controller,
+                values: [run-controller, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller,
                          topology-controller, ui]
@@ -139,7 +139,7 @@ spec:
                 operator: In
                 values: [execution-controller, release-controller,
                          remediation, agent-remediation, ui,
-                         topology-controller, orchestrator, state,
+                         topology-controller, orchestrator, run-controller,
                          minio-bucket-init]
         - podSelector:
             matchLabels:
@@ -159,7 +159,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/instance: {{ $instance }}
-      app.kubernetes.io/name: state
+      app.kubernetes.io/name: run-controller
   policyTypes: ["Ingress"]
   ingress:
     - from:

@@ -168,8 +168,8 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "task", r["failure_class"])
 	assert.Equal(t, "exit_code", r["failure_reason"])
 	// The structured result key must reach the CLI payload: it is vendored
-	// through this module.s own proto copy, so a state-side addition is invisible
-	// here until that copy is regenerated.
+	// through this module.s own proto copy, so a run-controller-side addition is
+	// invisible here until that copy is regenerated.
 	assert.Equal(t, "run-results/task-executions/finance/analytics/orders/e1.json", r["run_results_uri"])
 }
 

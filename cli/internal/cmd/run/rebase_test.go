@@ -92,7 +92,7 @@ func TestRunRebase_OtherConflictsKeepTheServersMessage(t *testing.T) {
 	assert.True(t, env.Error.Retryable, "an active run may have ended by the next try")
 }
 
-// The hint is keyed on the message the state service documents for a moved
+// The hint is keyed on the message the run-controller service documents for a moved
 // release in run.proto; this fails if the two drift apart.
 func TestLiveReleaseMoved_IsTheMessageRunProtoDocuments(t *testing.T) {
 	proto, err := os.ReadFile("../../../proto/run/v1/run.proto")

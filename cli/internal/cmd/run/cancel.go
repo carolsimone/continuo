@@ -11,8 +11,8 @@ import (
 )
 
 // NewCancelCommand builds `continuo run cancel <run-id> <reason>`. It asks the
-// state service to cancel one run by id. The cancelling identity is not an
-// argument: it comes from cfg.Actor (CONTINUO_ACTOR), and the state service
+// run-controller service to cancel one run by id. The cancelling identity is not an
+// argument: it comes from cfg.Actor (CONTINUO_ACTOR), and the run-controller service
 // records its own system identity when that is empty. CancelRun takes no
 // request id, because a cancel of a cancelling or cancelled run changes
 // nothing, so repeating it is safe without one.
@@ -27,7 +27,7 @@ run found with "run show" or "schedule runs". To cancel whatever run a schedule
 has active now, use "schedule cancel".
 
 A successful cancel means the run is now cancelling, not that it has stopped:
-the state service stops handing out work, and the run ends cancelled once
+the run-controller service stops handing out work, and the run ends cancelled once
 execution-controller has stopped every Job of it. Until then the run's status is
 cancelling and its tasks that were running show as stopping; read "run show
 <run-id>" to see when the run has ended. A run with nothing in flight ends
@@ -42,7 +42,7 @@ Arguments:
             must be non-empty.
 
 The cancelling identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the state service records its own
+environment variable when set, otherwise the run-controller service records its own
 system identity. This command sends no request id.
 
 Output (stdout, JSON):
@@ -60,7 +60,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, a blank run id or reason, or the run id is not a UUID
   not_found  (exit 3)  no run with that id
   conflict   (exit 4)  the run already ended succeeded, failed or skipped, so there is nothing to cancel
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run cancel 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a \"bad upstream data\"",
 		Annotations: map[string]string{
@@ -84,7 +84,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.StateEndpoint)
+			c, err := factory(ctx, cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

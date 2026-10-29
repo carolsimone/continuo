@@ -63,7 +63,7 @@ Output (stdout, JSON):
 Errors:
   not_found  (exit 3)  no schedule with that name
   usage      (exit 2)  wrong number of arguments
-  unavailable(exit 5)  the state service is unreachable
+  unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{
@@ -79,7 +79,7 @@ Errors:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scheduleName := args[0]
 
-			c, err := factory(cmd.Context(), cfg.StateEndpoint)
+			c, err := factory(cmd.Context(), cfg.RunControllerEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
