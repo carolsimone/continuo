@@ -3,7 +3,6 @@ package neo4jinfra
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
@@ -16,10 +15,7 @@ func TestTx_PlaceholderRepositoriesRefuseEveryCall(t *testing.T) {
 	ctx := context.Background()
 	tx := &transaction{}
 
-	_, err := tx.Topology().PromoteRelease(ctx, "r1", 1, nil, time.Now())
-	assert.ErrorIs(t, err, errRepositoryNotTransactional)
-
-	_, err = tx.CodeVersions().WriteVersions(ctx, codeversion.WriteInput{})
+	_, err := tx.CodeVersions().WriteVersions(ctx, codeversion.WriteInput{})
 	assert.ErrorIs(t, err, errRepositoryNotTransactional)
 
 	assert.ErrorIs(t, tx.CaseBase().RecordRejection(ctx, casebase.Rejection{}), errRepositoryNotTransactional)

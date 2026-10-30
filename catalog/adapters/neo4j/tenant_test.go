@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -63,4 +64,28 @@ func TestTenantRunner_BindsTenantAndRefusesAnOverride(t *testing.T) {
 	assert.True(t, errors.Is(err, errTenantParamOverride))
 	assert.Equal(t, 2, rec.calls, "a refused statement is never sent")
 	assert.Equal(t, map[string]any{"tenant_id": "tenant-b"}, override, "the refused map is not mutated")
+}
+
+func TestTenantRunner_RequireTenantAcceptsOnlyItsOwn(t *testing.T) {
+	run, err := NewTenantRunner("tenant-a", &recordingRunner{})
+	require.NoError(t, err)
+
+	require.NoError(t, run.requireTenant("tenant-a"))
+	assert.ErrorIs(t, run.requireTenant("tenant-b"), errTenantMismatch)
+	assert.ErrorIs(t, run.requireTenant(""), errEmptyTenant)
+	var zero TenantRunner
+	assert.ErrorIs(t, zero.requireTenant("tenant-a"), errEmptyTenant, "the zero TenantRunner carries no tenant")
+}
+
+// A repository on a transaction bound to one tenant never acts for another:
+// the swap refuses the call before it sends a statement.
+func TestPromoteRelease_RefusesAnotherTenantsCall(t *testing.T) {
+	rec := &recordingRunner{}
+	run, err := NewTenantRunner("tenant-a", rec)
+	require.NoError(t, err)
+	tx := &transaction{run: run, logger: quietLogger()}
+
+	_, err = tx.Topology().PromoteRelease(context.Background(), "tenant-b", "r1", 1, nil, time.Now().UTC())
+	assert.ErrorIs(t, err, errTenantMismatch)
+	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
 }

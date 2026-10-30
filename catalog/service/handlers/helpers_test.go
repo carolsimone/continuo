@@ -3,19 +3,16 @@ package handlers_test
 import (
 	"context"
 	"fmt"
-	"github.com/carolsimone/continuo/pkg/testdeps"
 	"log/slog"
 	"os"
-	"testing"
 	"time"
 
-	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
+	"github.com/carolsimone/continuo/catalog/domain/repository"
 	"github.com/carolsimone/continuo/catalog/service/ports"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 )
 
 // fakeMessageProcessingRepository is an in-memory message_processing store
@@ -141,65 +138,92 @@ func (f *fakeArtifactReader) artifactFor(doc topologyartifact.Document) string {
 	return uri
 }
 
-// ── integration test infrastructure ──────────────────────────────────────────
+// ── fakes: uow.UnitOfWork ─────────────────────────────────────────────────────
 
-func commandTestNeo4jURI() string {
-	if u := os.Getenv("NEO4J_URI"); u != "" {
-		return u
-	}
-	return "bolt://neo4j:7687"
+// fakeGraphUnitOfWork is an in-memory uow.UnitOfWork. Write runs fn on tx
+// unless the message's marker is recorded, and records the marker when the
+// write is final and fn succeeds, as the Neo4j unit of work does in one
+// transaction. processedErr and writeErr, when set, are what Processed and
+// Write return before they do anything else.
+type fakeGraphUnitOfWork struct {
+	tx           *fakeGraphTx
+	recorded     map[string]bool
+	processedErr error
+	writeErr     error
+	processed    []uow.Marker
+	writes       []fakeGraphWrite
 }
 
-func commandTestNeo4jUser() string {
-	if u := os.Getenv("NEO4J_USER"); u != "" {
-		return u
-	}
-	return "neo4j"
+// fakeGraphWrite is one Write call.
+type fakeGraphWrite struct {
+	Marker uow.Marker
+	Final  bool
 }
 
-func commandTestNeo4jPassword() string {
-	if p := os.Getenv("NEO4J_PASSWORD"); p != "" {
-		return p
-	}
-	return "atlas_password"
+func newFakeGraphUnitOfWork(topology repository.ReleasePromotionRepository) *fakeGraphUnitOfWork {
+	return &fakeGraphUnitOfWork{tx: &fakeGraphTx{topology: topology}, recorded: map[string]bool{}}
 }
 
-// newCommandTestNeo4jClient creates a Neo4j client for integration tests,
-// skipping if Neo4j is unavailable.
-func newCommandTestNeo4jClient(t *testing.T) neo4jinfra.Neo4jClient {
-	t.Helper()
-	client, err := neo4jinfra.NewNeo4jClient(
-		commandTestNeo4jURI(),
-		commandTestNeo4jUser(),
-		commandTestNeo4jPassword(),
-		newTestLogger(),
-	)
-	if err != nil {
-		testdeps.Unavailable(t, "Neo4j unavailable, skipping integration test: %v", err)
+// markerKeys are the identities a marker is found by: its message id and,
+// when it carries one, its outbox entry id, each within its tenant and group.
+func markerKeys(m uow.Marker) []string {
+	keys := []string{m.TenantID + "|" + m.Group + "|message|" + m.MessageID}
+	if m.OutboxEntryID != nil {
+		keys = append(keys, m.TenantID+"|"+m.Group+"|outbox|"+m.OutboxEntryID.String())
 	}
-	t.Cleanup(func() { _ = client.Close(context.Background()) })
-	return client
+	return keys
 }
 
-// newCommandTestDB creates a Postgres connection for integration tests,
-// skipping if Postgres is unavailable.
-func newCommandTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-	host := os.Getenv("POSTGRES_HOST")
-	if host == "" {
-		host = "postgres"
+// record stores m as processed.
+func (f *fakeGraphUnitOfWork) record(m uow.Marker) {
+	for _, k := range markerKeys(m) {
+		f.recorded[k] = true
 	}
-	port := os.Getenv("POSTGRES_PORT")
-	if port == "" {
-		port = "5432"
-	}
-	db, err := sqlx.Connect("postgres", fmt.Sprintf(
-		"host=%s port=%s dbname=continuo_orchestrator user=continuo_svc password=continuo sslmode=disable",
-		host, port,
-	))
-	if err != nil {
-		testdeps.Unavailable(t, "Postgres unavailable: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
 }
+
+func (f *fakeGraphUnitOfWork) isRecorded(m uow.Marker) bool {
+	for _, k := range markerKeys(m) {
+		if f.recorded[k] {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fakeGraphUnitOfWork) Processed(_ context.Context, m uow.Marker) (bool, error) {
+	f.processed = append(f.processed, m)
+	if f.processedErr != nil {
+		return false, f.processedErr
+	}
+	return f.isRecorded(m), nil
+}
+
+func (f *fakeGraphUnitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn func(ctx context.Context, tx uow.Tx) error) error {
+	f.writes = append(f.writes, fakeGraphWrite{Marker: m, Final: final})
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	if f.isRecorded(m) {
+		return nil
+	}
+	if err := fn(ctx, f.tx); err != nil {
+		return err
+	}
+	if final {
+		f.record(m)
+	}
+	return nil
+}
+
+var _ uow.UnitOfWork = (*fakeGraphUnitOfWork)(nil)
+
+// fakeGraphTx hands out the fake repositories a test wires in.
+type fakeGraphTx struct {
+	topology repository.ReleasePromotionRepository
+}
+
+func (t *fakeGraphTx) Topology() repository.ReleasePromotionRepository { return t.topology }
+func (t *fakeGraphTx) CodeVersions() repository.CodeVersionRepository  { return nil }
+func (t *fakeGraphTx) CaseBase() repository.CaseBaseRepository         { return nil }
+
+var _ uow.Tx = (*fakeGraphTx)(nil)

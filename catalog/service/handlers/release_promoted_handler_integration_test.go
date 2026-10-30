@@ -1,66 +1,103 @@
+//go:build integration
+
 package handlers_test
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
-	pginfra "github.com/carolsimone/continuo/catalog/adapters/postgres"
+	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// wipeReleasePromotedFixtures removes the :Table nodes and the :Meta and
-// :TopologyRoot singletons so each test starts clean.
-func wipeReleasePromotedFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// releasePromotedFixture is a handler wired to the test Neo4j through the
+// unit of work, with the artifact read from memory, for a tenant of its own.
+// The cleanup DETACH DELETEs every node of that tenant.
+type releasePromotedFixture struct {
+	t       *testing.T
+	handler *handlers.ReleasePromotedHandler
+	reader  *fakeArtifactReader
+	client  neo4jinfra.Neo4jClient
+	tenant  string
+}
+
+func newReleasePromotedFixture(t *testing.T) *releasePromotedFixture {
 	t.Helper()
 	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	for _, q := range []string{
-		`MATCH (n:Table) DETACH DELETE n`,
-		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
-		`MATCH (root:TopologyRoot {id:'singleton'}) DELETE root`,
-	} {
-		_, err := s.Run(ctx, q, nil)
-		require.NoError(t, err)
-	}
-}
-
-// releasePromotedFixture wipes the graph and the rows these tests write, before
-// and after the test, and returns a handler wired to real Neo4j and Postgres with
-// the artifact read from memory.
-func releasePromotedFixture(t *testing.T) (*handlers.ReleasePromotedHandler, *fakeArtifactReader, neo4jinfra.Neo4jClient, *sqlx.DB) {
-	t.Helper()
-	client := newCommandTestNeo4jClient(t)
-	pgDB := newCommandTestDB(t)
-	cleanup := func() {
-		wipeReleasePromotedFixtures(t, client)
-		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM message_processing WHERE stream_name = $1`, streams.CatalogReleaseTopology)
-	}
-	cleanup()
-	t.Cleanup(cleanup)
-	reader := &fakeArtifactReader{}
-	h := handlers.NewReleasePromotedHandler(
-		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
-		reader,
-		neo4jinfra.NewReleasePromotionRepository(client, newTestLogger()),
+	client, err := neo4jinfra.NewNeo4jClient(
+		envOr("NEO4J_URI", "bolt://neo4j:7687"),
+		envOr("NEO4J_USER", "neo4j"),
+		envOr("NEO4J_PASSWORD", "atlas_password"),
 		newTestLogger(),
 	)
-	return h, reader, client, pgDB
+	if err != nil {
+		testdeps.Unavailable(t, "Neo4j unavailable, skipping integration test: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close(ctx) })
+	require.NoError(t, neo4jinfra.InitSchema(ctx, client, newTestLogger()))
+
+	f := &releasePromotedFixture{t: t, reader: &fakeArtifactReader{}, client: client, tenant: "handler-test-" + uuid.NewString()}
+	f.handler = handlers.NewReleasePromotedHandler(neo4jinfra.NewUnitOfWork(client, newTestLogger()), f.reader, newTestLogger())
+	t.Cleanup(func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer func() { _ = s.Close(ctx) }()
+		for _, label := range graphschema.Labels() {
+			stmt := fmt.Sprintf("MATCH (n:%s {tenant_id: $tenant_id}) DETACH DELETE n", label)
+			res, err := s.Run(ctx, stmt, map[string]any{"tenant_id": f.tenant})
+			if err == nil {
+				_, err = res.Consume(ctx)
+			}
+			if err != nil {
+				t.Errorf("cleanup %q: %v", stmt, err)
+			}
+		}
+	})
+	return f
 }
 
-func artifactOf(releaseID string, nodes ...topologyartifact.Node) topologyartifact.Document {
-	return topologyartifact.Document{
-		SchemaVersion: topologyartifact.SchemaVersion, TenantID: "default", ReleaseID: releaseID, Nodes: nodes,
+// promotion builds promotion seq of the tenant's release releaseID carrying
+// nodes, registering its artifact with the reader.
+func (f *releasePromotedFixture) promotion(releaseID string, seq int64, nodes ...topologyartifact.Node) domainModel.PromoteReleaseInput {
+	in := promotionOf(f.reader, topologyartifact.Document{
+		SchemaVersion: topologyartifact.SchemaVersion, TenantID: f.tenant, ReleaseID: releaseID, Nodes: nodes,
+	}, seq)
+	in.TenantID = f.tenant
+	return in
+}
+
+// scalar runs a statement with $tenant_id bound to the fixture's tenant and
+// returns column v of its first row, or nil when it returns none.
+func (f *releasePromotedFixture) scalar(cypher string) any {
+	f.t.Helper()
+	ctx := context.Background()
+	s := f.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = s.Close(ctx) }()
+	res, err := s.Run(ctx, cypher, map[string]any{"tenant_id": f.tenant})
+	require.NoError(f.t, err)
+	if !res.Next(ctx) {
+		require.NoError(f.t, res.Err())
+		return nil
 	}
+	v, _ := res.Record().Get("v")
+	return v
 }
 
 func modelNode(uid, table, service, image, schedule string, upstreams ...string) topologyartifact.Node {
@@ -82,99 +119,83 @@ func seedNode(uid, image, hash string) topologyartifact.Node {
 	}
 }
 
-func graphScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string) any {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, cypher, nil)
-	require.NoError(t, err)
-	if !res.Next(ctx) {
-		require.NoError(t, res.Err())
-		return nil
-	}
-	v, _ := res.Record().Get("v")
-	return v
-}
-
 func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, pgDB := releasePromotedFixture(t)
-	releaseID := "rA-" + uuid.New().String()[:8]
-	in := promotionOf(reader, artifactOf(releaseID,
+	f := newReleasePromotedFixture(t)
+	in := f.promotion("rA", 1,
 		modelNode("service-a.public.table_a", "table_a", "service-a", "tag-a", "daily"),
 		modelNode("service-b.public.table_b", "table_b", "service-b", "tag-b", "daily", "service-a.public.table_a"),
-	), 1)
-	msgID := "msg-int-happy-" + uuid.New().String()[:8]
+	)
 
-	require.NoError(t, h.Handle(ctx, msgID, nil, in))
+	require.NoError(t, f.handler.Handle(ctx, "msg-int-happy", nil, in))
 
-	assert.Equal(t, int64(2), graphScalar(t, client, `MATCH (t:Table) RETURN count(t) AS v`))
-	assert.Equal(t, "service-a.public.table_a", graphScalar(t, client,
-		`MATCH (:Table {unique_id:'service-b.public.table_b'})-[:DEPENDS_ON]->(a:Table) RETURN a.unique_id AS v`))
-	assert.Equal(t, releaseID, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
-	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.promotion_seq AS v`))
-	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (r:TopologyRoot {id:'singleton'}) RETURN r.promotion_seq AS v`))
-
-	assert.Equal(t, "daily", graphScalar(t, client,
-		`MATCH (t:Table {unique_id:'service-a.public.table_a'}) RETURN t.schedule_name AS v`))
-
-	var dedupCount int
-	require.NoError(t, pgDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		msgID, streams.CatalogReleaseTopology).Scan(&dedupCount))
-	assert.Equal(t, 1, dedupCount)
+	assert.Equal(t, int64(2), f.scalar(`MATCH (n:Node {tenant_id: $tenant_id}) RETURN count(n) AS v`))
+	assert.Equal(t, "service-a.public.table_a", f.scalar(`
+		MATCH (:Node {tenant_id: $tenant_id, unique_id: 'service-b.public.table_b'})-[:DEPENDS_ON]->(a:Node {tenant_id: $tenant_id})
+		RETURN a.unique_id AS v`))
+	assert.Equal(t, "rA", f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.release_id AS v`))
+	assert.Equal(t, int64(1), f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.promotion_seq AS v`))
+	assert.Equal(t, "daily", f.scalar(`
+		MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'service-a.public.table_a'}) RETURN n.schedule_name AS v`))
+	assert.Equal(t, streams.CatalogReleaseTopology, f.scalar(`
+		MATCH (p:ProcessedMessage {tenant_id: $tenant_id, message_id: 'msg-int-happy'}) RETURN p.group AS v`),
+		"the marker commits with the swap")
 }
 
-// The same promotion delivered under two message ids swaps once.
+// The same promotion delivered again under the same message id is skipped by
+// its marker; under a second message id it is a redelivery that writes only
+// its own marker.
 func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, _ := releasePromotedFixture(t)
-	releaseID := "rA-idem-" + uuid.New().String()[:8]
-	in := promotionOf(reader, artifactOf(releaseID, modelNode("svc.public.t", "t", "svc", "tag-1", "hourly")), 1)
+	f := newReleasePromotedFixture(t)
+	in := f.promotion("rA-idem", 1, modelNode("svc.public.t", "t", "svc", "tag-1", "hourly"))
 
-	require.NoError(t, h.Handle(ctx, "msg-idem-1-"+uuid.New().String()[:8], nil, in))
-	require.NoError(t, h.Handle(ctx, "msg-idem-2-"+uuid.New().String()[:8], nil, in))
+	require.NoError(t, f.handler.Handle(ctx, "msg-idem-1", nil, in))
+	f.reader.calls = nil
+	require.NoError(t, f.handler.Handle(ctx, "msg-idem-1", nil, in))
+	assert.Empty(t, f.reader.calls, "a processed message is acknowledged without reading the artifact")
+	require.NoError(t, f.handler.Handle(ctx, "msg-idem-2", nil, in))
 
-	assert.Equal(t, int64(1), graphScalar(t, client, `MATCH (t:Table) RETURN count(t) AS v`))
+	assert.Equal(t, int64(1), f.scalar(`MATCH (n:Node {tenant_id: $tenant_id}) RETURN count(n) AS v`))
+	assert.Equal(t, int64(2), f.scalar(`MATCH (p:ProcessedMessage {tenant_id: $tenant_id}) RETURN count(p) AS v`))
 }
 
+// A second release retires the node it drops and keeps it.
 func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, _ := releasePromotedFixture(t)
-	relA := "rA-twor-" + uuid.New().String()[:8]
-	relB := "rB-twor-" + uuid.New().String()[:8]
+	f := newReleasePromotedFixture(t)
 
-	require.NoError(t, h.Handle(ctx, "msg-twor-A-"+uuid.New().String()[:8], nil,
-		promotionOf(reader, artifactOf(relA, modelNode("svc.public.node_a", "node_a", "svc", "tag-a", "daily")), 1)))
-	require.NoError(t, h.Handle(ctx, "msg-twor-B-"+uuid.New().String()[:8], nil,
-		promotionOf(reader, artifactOf(relB, modelNode("svc.public.node_c", "node_c", "svc", "tag-c", "hourly")), 2)))
+	require.NoError(t, f.handler.Handle(ctx, "msg-twor-A", nil,
+		f.promotion("rA-twor", 1, modelNode("svc.public.node_a", "node_a", "svc", "tag-a", "daily"))))
+	require.NoError(t, f.handler.Handle(ctx, "msg-twor-B", nil,
+		f.promotion("rB-twor", 2, modelNode("svc.public.node_c", "node_c", "svc", "tag-c", "hourly"))))
 
-	assert.Equal(t, "svc.public.node_c", graphScalar(t, client, `MATCH (t:Table) RETURN t.unique_id AS v`))
-	assert.Equal(t, relB, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
+	assert.Equal(t, "svc.public.node_c", f.scalar(`MATCH (n:Node {tenant_id: $tenant_id}) WHERE n.active RETURN n.unique_id AS v`))
+	assert.Equal(t, false, f.scalar(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'svc.public.node_a'}) RETURN n.active AS v`),
+		"the dropped node is retired and kept")
+	assert.Equal(t, "rB-twor", f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.release_id AS v`))
 }
 
 // A promotion older than the live one arrives after it: the topology stays on
 // the newer release.
 func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	ctx := context.Background()
-	h, reader, client, _ := releasePromotedFixture(t)
-	relNew := "rNew-" + uuid.New().String()[:8]
-	relOld := "rOld-" + uuid.New().String()[:8]
+	f := newReleasePromotedFixture(t)
 
-	require.NoError(t, h.Handle(ctx, "msg-late-new-"+uuid.New().String()[:8], nil,
-		promotionOf(reader, artifactOf(relNew,
-			seedNode("seeds.same", "img-new", "sha256:h1"),
-			seedNode("seeds.changed_again", "img-new", "sha256:h2-new"),
-		), 2)))
+	require.NoError(t, f.handler.Handle(ctx, "msg-late-new", nil, f.promotion("rNew", 2,
+		seedNode("seeds.same", "img-new", "sha256:h1"),
+		seedNode("seeds.changed_again", "img-new", "sha256:h2-new"),
+	)))
+	require.NoError(t, f.handler.Handle(ctx, "msg-late-old", nil, f.promotion("rOld", 1,
+		seedNode("seeds.same", "img-old", "sha256:h1"),
+		seedNode("seeds.changed_again", "img-old", "sha256:h2-old"),
+		seedNode("seeds.removed", "img-old", "sha256:h3"),
+	)))
 
-	require.NoError(t, h.Handle(ctx, "msg-late-old-"+uuid.New().String()[:8], nil,
-		promotionOf(reader, artifactOf(relOld,
-			seedNode("seeds.same", "img-old", "sha256:h1"),
-			seedNode("seeds.changed_again", "img-old", "sha256:h2-old"),
-			seedNode("seeds.removed", "img-old", "sha256:h3"),
-		), 1, "seeds.changed_again", "seeds.removed", "seeds.same")))
-
-	assert.Equal(t, relNew, graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS v`))
-	assert.Equal(t, int64(2), graphScalar(t, client, `MATCH (m:Meta {key:'current_release'}) RETURN m.promotion_seq AS v`))
+	assert.Equal(t, "rNew", f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.release_id AS v`))
+	assert.Equal(t, int64(2), f.scalar(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN m.promotion_seq AS v`))
+	assert.Equal(t, "img-new", f.scalar(`
+		MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'seeds.changed_again'}) RETURN n.image_tag AS v`))
+	assert.Nil(t, f.scalar(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'seeds.removed'}) RETURN n.unique_id AS v`),
+		"the stale promotion writes no node")
 }

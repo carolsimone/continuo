@@ -9,20 +9,25 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/topology"
 )
 
-// ReleasePromotionRepository swaps the live Neo4j topology when a promotion is
-// newer than the one the graph holds. Implementations MUST run the whole swap in
-// one Neo4j transaction that first write-locks the :Meta {key:'current_release'}
-// singleton and only then reads its promotion_seq, so concurrent promotions
-// serialise and an older one can never revert a newer one.
+// ReleasePromotionRepository swaps a tenant's live Neo4j topology when a
+// promotion is newer than the one the graph holds. Implementations MUST run the
+// whole swap in one Neo4j transaction that first write-locks the tenant's
+// :Meta {key:'current_release'} node and only then reads its promotion_seq, so
+// concurrent promotions of a tenant serialise and an older one can never revert
+// a newer one.
 type ReleasePromotionRepository interface {
-	// PromoteRelease applies the release's topology when promotionSeq is greater
-	// than the live promotion's, recording release_id and promotionSeq on :Meta
-	// and promotionSeq on :TopologyRoot in the same transaction. It returns PromotionApplied when it swapped,
-	// PromotionRedelivered when the same promotion is already live, and
-	// PromotionStale when a newer promotion is live; in the last two cases the
-	// graph is untouched.
+	// PromoteRelease applies the release's topology to tenantID's graph when
+	// promotionSeq is greater than the tenant's live promotion's: every node the
+	// release carries is live, every other node of the tenant is a retired node,
+	// and release_id and promotionSeq are recorded on the tenant's :Meta. A
+	// retired node stays in the graph with its versions, failures and fix PRs,
+	// and loses only its outgoing dependencies. It returns PromotionApplied when
+	// it swapped, PromotionRedelivered when the same promotion is already live,
+	// and PromotionStale when a newer promotion is live; in the last two cases
+	// the graph is untouched.
 	PromoteRelease(
 		ctx context.Context,
+		tenantID string,
 		releaseID string,
 		promotionSeq int64,
 		nodes []topology.ReleasePromotedTopologyNode,

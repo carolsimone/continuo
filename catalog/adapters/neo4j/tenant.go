@@ -16,6 +16,7 @@ const tenantParam = "tenant_id"
 var (
 	errEmptyTenant         = errors.New("neo4j: a catalog statement needs a tenant")
 	errTenantParamOverride = errors.New("neo4j: a statement's parameters must not set tenant_id; the tenant runner binds it")
+	errTenantMismatch      = errors.New("neo4j: a repository call names another tenant than its transaction's")
 )
 
 // TenantRunner runs Cypher statements for one tenant. It binds $tenant_id to
@@ -57,6 +58,18 @@ func (t TenantRunner) Run(ctx context.Context, cypher string, params map[string]
 	maps.Copy(bound, params)
 	bound[tenantParam] = t.tenantID
 	return t.runner.Run(ctx, cypher, bound)
+}
+
+// requireTenant refuses tenantID unless it is the runner's tenant, so a
+// repository on a transaction bound to one tenant never acts for another.
+func (t TenantRunner) requireTenant(tenantID string) error {
+	if tenantID == "" || t.tenantID == "" {
+		return errEmptyTenant
+	}
+	if tenantID != t.tenantID {
+		return fmt.Errorf("%w: called for %q on a transaction of %q", errTenantMismatch, tenantID, t.tenantID)
+	}
+	return nil
 }
 
 // execCypher runs a statement that returns nothing the caller reads, and

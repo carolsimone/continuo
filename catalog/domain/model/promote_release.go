@@ -3,9 +3,13 @@ package model
 import "time"
 
 // PromoteReleaseInput is the handler input for a release.promoted:v2 message:
-// the promotion's identity and seq, the location and checksum of its topology
-// artifact, the nodes it changed, and the provenance the versions group stamps.
+// the promotion's tenant, identity and seq, the location and checksum of its
+// topology artifact, the nodes it changed, and the provenance the versions
+// group stamps.
 type PromoteReleaseInput struct {
+	// TenantID is the tenant the message's envelope names; every write the
+	// message makes is under it.
+	TenantID  string
 	ReleaseID string
 	// PromotionSeq orders promotions: release-controller allocates one per
 	// announcement, strictly increasing, and the topology swap applies a

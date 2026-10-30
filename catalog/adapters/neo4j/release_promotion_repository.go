@@ -2,134 +2,227 @@ package neo4jinfra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// ReleasePromotionRepository implements repository.ReleasePromotionRepository
-// against Neo4j. The swap runs in a single explicit transaction: lock the :Meta
-// singleton, compare the promotion seq with the live one, and only for a newer
-// promotion apply the retire-then-orphan-cleanup pattern and record the
-// promotion on :Meta and :TopologyRoot.
-type ReleasePromotionRepository struct {
-	client Neo4jClient
+// currentReleaseLockCypher locks the tenant's (:Meta {key:'current_release'})
+// node, creating it on the tenant's first promotion, and reads the live
+// promotion. SET takes the node's exclusive lock before RETURN reads it, so a
+// concurrent promotion of the tenant blocks on this statement until the first
+// one commits and then reads the seq it wrote.
+const currentReleaseLockCypher = `
+MERGE (m:Meta {tenant_id: $tenant_id, key: 'current_release'})
+SET m._lock = true
+RETURN m.release_id AS release_id, coalesce(m.promotion_seq, 0) AS promotion_seq`
+
+// currentReleaseUnlockCypher removes the lock property of a promotion that
+// leaves the topology alone, so the property never persists.
+const currentReleaseUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) REMOVE m._lock`
+
+// retireDroppedNodesCypher retires every :Node of the tenant the release does
+// not carry, a node with no unique_id included, and deletes the retired nodes'
+// outgoing :DEPENDS_ON, which describe the live topology only. retired_at is
+// stamped when the node goes from live to retired and kept on every later
+// promotion that leaves it retired. Nothing else of a retired node changes: it
+// keeps its properties, its :CURRENT version, its :FAILED rejections and the
+// :EDITED edges of its fixes.
+const retireDroppedNodesCypher = `
+MATCH (n:Node {tenant_id: $tenant_id})
+WHERE n.unique_id IS NULL OR NOT n.unique_id IN $unique_ids
+SET n.retired_at = CASE WHEN coalesce(n.active, true) THEN $now ELSE n.retired_at END,
+    n.active = false
+WITH n
+MATCH (n)-[d:DEPENDS_ON]->()
+DELETE d`
+
+// upsertReleaseNodesCypher MERGEs every node of the release by its identity
+// and refreshes its properties, so a node that a release carries again comes
+// back live. The graph names the node's schedule schedule_name, the artifact
+// names it schedule.
+const upsertReleaseNodesCypher = `
+UNWIND $topology AS t
+MERGE (n:Node {tenant_id: $tenant_id, unique_id: t.unique_id})
+SET n.schema_name        = t.schema_name,
+    n.table_name         = t.table_name,
+    n.service_name       = t.service_name,
+    n.node_type          = t.node_type,
+    n.content_hash       = t.content_hash,
+    n.test_count         = t.test_count,
+    n.image_tag          = t.image_tag,
+    n.secret_ref         = CASE WHEN t.secret_ref = '' THEN null ELSE t.secret_ref END,
+    n.schedule_name      = t.schedule,
+    n.original_file_path = t.original_file_path,
+    n.release_id         = $release_id,
+    n.active             = true,
+    n.retired_at         = null`
+
+// clearReleaseEdgesCypher deletes the outgoing :DEPENDS_ON of the release's
+// nodes, so the next statement rebuilds them without keeping a dependency the
+// release dropped.
+const clearReleaseEdgesCypher = `
+UNWIND $topology AS t
+MATCH (n:Node {tenant_id: $tenant_id, unique_id: t.unique_id})-[d:DEPENDS_ON]->()
+DELETE d`
+
+// drawReleaseEdgesCypher draws each node's :DEPENDS_ON to its upstreams among
+// the release's nodes. By this statement the release's nodes are exactly the
+// tenant's live ones, so an upstream that is retired, or that the graph does
+// not hold (a dependency outside this topology), draws no edge.
+const drawReleaseEdgesCypher = `
+UNWIND $topology AS t
+UNWIND t.upstream_unique_ids AS up
+MATCH (a:Node {tenant_id: $tenant_id, unique_id: t.unique_id}), (b:Node {tenant_id: $tenant_id, unique_id: up})
+WHERE b.active = true
+CREATE (a)-[:DEPENDS_ON]->(b)`
+
+// recordPromotionCypher makes the promotion the tenant's live one and removes
+// the lock property.
+const recordPromotionCypher = `
+MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'})
+SET m.release_id    = $release_id,
+    m.promotion_seq = $promotion_seq,
+    m.updated_at    = $now
+REMOVE m._lock`
+
+// releasePromotionRepository is the topology swap of one tenant, run on the
+// open transaction of a unit-of-work Write. The Write has already locked the
+// tenant's export gate, so the swap's lock on current_release is the second
+// lock its transaction takes.
+type releasePromotionRepository struct {
+	run    TenantRunner
 	logger *slog.Logger
 }
 
-// Compile-time assertion that the adapter satisfies the domain port.
-var _ repository.ReleasePromotionRepository = (*ReleasePromotionRepository)(nil)
+var _ repository.ReleasePromotionRepository = (*releasePromotionRepository)(nil)
 
-// NewReleasePromotionRepository constructs a ReleasePromotionRepository backed
-// by the given Neo4j client.
-func NewReleasePromotionRepository(client Neo4jClient, logger *slog.Logger) *ReleasePromotionRepository {
-	return &ReleasePromotionRepository{client: client, logger: logger}
-}
-
-// PromoteRelease executes the topology swap as a single explicit transaction:
+// PromoteRelease swaps tenantID's live topology on the open transaction:
 //
-//  1. Write-lock :Meta {key:'current_release'}, then read its release_id and
-//     promotion_seq. Setting a property takes the node's exclusive lock before
-//     the RETURN reads it, so a concurrent promotion blocks on this statement
-//     until the first transaction commits and then reads the seq it wrote.
+//  1. Lock the tenant's current_release node and read the live promotion.
 //  2. Decide with topology.DecidePromotion. A redelivered or stale promotion
-//     releases the lock property and commits without touching the graph.
-//  3. Retire :Table nodes NOT in the new topology by setting active=false,
-//     retired_at — preserving :Run-[:EXECUTES]->:Table edges so run history
-//     is not destroyed.
-//  4. MERGE :Table nodes from the new topology by unique_id and refresh all
-//     properties, re-activating nodes that may have been previously retired.
-//  5. Clear outgoing :DEPENDS_ON edges on upserted nodes and rebuild them
-//     between nodes in the new topology; references to unique_ids outside the
-//     set are silently skipped.
-//  6. Delete :Table nodes that are inactive AND have no incoming
-//     :Run-[:EXECUTES] reference.
-//  7. Record release_id, promotion_seq and updated_at on :Meta and release the
-//     lock property; record promotion_seq on :TopologyRoot.
-func (r *ReleasePromotionRepository) PromoteRelease(
+//     removes the lock property and writes nothing.
+//  3. Retire every :Node of the tenant the release does not carry, and delete
+//     the retired nodes' outgoing :DEPENDS_ON.
+//  4. MERGE every node of the release by (tenant_id, unique_id), refresh its
+//     properties and make it live.
+//  5. Rebuild the :DEPENDS_ON among the release's nodes.
+//  6. Record release_id, promotion_seq and updated_at on current_release and
+//     remove the lock property.
+//
+// It refuses a tenantID other than the transaction's. Nothing is deleted: a
+// retired node stays with its history.
+func (r *releasePromotionRepository) PromoteRelease(
 	ctx context.Context,
+	tenantID string,
 	releaseID string,
 	promotionSeq int64,
 	nodes []topology.ReleasePromotedTopologyNode,
 	now time.Time,
 ) (topology.PromotionOutcome, error) {
+	if err := r.run.requireTenant(tenantID); err != nil {
+		return "", err
+	}
 	if releaseID == "" {
-		return "", fmt.Errorf("release id is empty")
+		return "", errors.New("neo4j: a promotion needs a release id")
 	}
 
-	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer func() { _ = session.Close(ctx) }()
-
-	tx, err := session.BeginTransaction(ctx)
+	liveReleaseID, liveSeq, err := r.lockCurrentRelease(ctx)
 	if err != nil {
-		return "", fmt.Errorf("begin release-promotion tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	// Step A — lock :Meta, then read the live promotion. The _lock property is
-	// removed again before this transaction commits, so it never persists.
-	lockRes, err := tx.Run(ctx, `
-		MERGE (m:Meta {key: 'current_release'})
-		SET m._lock = true
-		RETURN m.release_id AS release_id, COALESCE(m.promotion_seq, 0) AS promotion_seq
-	`, nil)
-	if err != nil {
-		return "", fmt.Errorf("lock current release meta: %w", err)
-	}
-	var liveReleaseID string
-	var liveSeq int64
-	if lockRes.Next(ctx) {
-		rec := lockRes.Record()
-		if v, ok := rec.Get("release_id"); ok && v != nil {
-			liveReleaseID, _ = v.(string)
-		}
-		if v, ok := rec.Get("promotion_seq"); ok && v != nil {
-			liveSeq, _ = v.(int64)
-		}
-	}
-	if err := lockRes.Err(); err != nil {
-		return "", fmt.Errorf("read current release meta: %w", err)
+		return "", err
 	}
 
 	outcome := topology.DecidePromotion(liveSeq, liveReleaseID, promotionSeq, releaseID)
 	if outcome != topology.PromotionApplied {
 		if promotionSeq == liveSeq && releaseID != liveReleaseID {
-			r.logger.Error("release.promoted: promotion seq is already live under another release — topology left unchanged",
-				"release_id", releaseID, "promotion_seq", promotionSeq, "live_release_id", liveReleaseID)
+			r.logger.Error("release.promoted: promotion seq is already live under another release; topology left unchanged",
+				"tenant_id", tenantID, "release_id", releaseID, "promotion_seq", promotionSeq, "live_release_id", liveReleaseID)
 		} else {
 			r.logger.Info("release.promoted: topology left unchanged",
-				"outcome", string(outcome),
+				"tenant_id", tenantID, "outcome", string(outcome),
 				"release_id", releaseID, "promotion_seq", promotionSeq,
 				"live_release_id", liveReleaseID, "live_promotion_seq", liveSeq)
 		}
-		unlockRes, err := tx.Run(ctx, `MATCH (m:Meta {key: 'current_release'}) REMOVE m._lock`, nil)
-		if err != nil {
-			return "", fmt.Errorf("release :Meta lock: %w", err)
-		}
-		if _, err := unlockRes.Consume(ctx); err != nil {
-			return "", fmt.Errorf("consume :Meta unlock result: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return "", fmt.Errorf("commit unchanged release-promotion tx: %w", err)
+		if err := execCypher(ctx, r.run, currentReleaseUnlockCypher, nil); err != nil {
+			return "", fmt.Errorf("unlock current release: %w", err)
 		}
 		return outcome, nil
 	}
 
-	// Build the topology parameter list shared by steps C–D. The
-	// upstream_unique_ids slice is included so that Step D can resolve edges
-	// without a second parameter binding.
-	payload := make([]map[string]interface{}, 0, len(nodes))
-	newUniqueIDs := make([]string, 0, len(nodes))
+	// The Neo4j Go driver names a time.Time's zone by its Location().String(),
+	// and Neo4j rejects time.Local's "Local", so every time is sent in UTC.
+	topo, uniqueIDs := topologyParams(nodes)
+	if err := execCypher(ctx, r.run, retireDroppedNodesCypher, map[string]any{
+		"unique_ids": uniqueIDs,
+		"now":        now.UTC(),
+	}); err != nil {
+		return "", fmt.Errorf("retire the nodes the release drops: %w", err)
+	}
+	if len(nodes) > 0 {
+		if err := execCypher(ctx, r.run, upsertReleaseNodesCypher, map[string]any{
+			"topology":   topo,
+			"release_id": releaseID,
+		}); err != nil {
+			return "", fmt.Errorf("upsert the release's nodes: %w", err)
+		}
+		if err := execCypher(ctx, r.run, clearReleaseEdgesCypher, map[string]any{"topology": topo}); err != nil {
+			return "", fmt.Errorf("clear the release's :DEPENDS_ON: %w", err)
+		}
+		if err := execCypher(ctx, r.run, drawReleaseEdgesCypher, map[string]any{"topology": topo}); err != nil {
+			return "", fmt.Errorf("draw the release's :DEPENDS_ON: %w", err)
+		}
+	}
+	if err := execCypher(ctx, r.run, recordPromotionCypher, map[string]any{
+		"release_id":    releaseID,
+		"promotion_seq": promotionSeq,
+		"now":           now.UTC(),
+	}); err != nil {
+		return "", fmt.Errorf("record the promotion on current release: %w", err)
+	}
+
+	r.logger.Info("release.promoted: applied topology swap",
+		"tenant_id", tenantID, "release_id", releaseID, "promotion_seq", promotionSeq, "node_count", len(nodes))
+	return topology.PromotionApplied, nil
+}
+
+// lockCurrentRelease locks the tenant's current_release node and returns the
+// live release and promotion seq; both are zero on the tenant's first
+// promotion.
+func (r *releasePromotionRepository) lockCurrentRelease(ctx context.Context) (string, int64, error) {
+	res, err := r.run.Run(ctx, currentReleaseLockCypher, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("lock current release: %w", err)
+	}
+	rec, err := res.Single(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("read current release: %w", err)
+	}
+	var releaseID string
+	if v, ok := rec.Get("release_id"); ok && v != nil {
+		releaseID, _ = v.(string)
+	}
+	var seq int64
+	if v, ok := rec.Get("promotion_seq"); ok && v != nil {
+		seq, _ = v.(int64)
+	}
+	return releaseID, seq, nil
+}
+
+// topologyParams renders the release's nodes as the $topology parameter of the
+// swap's statements, and lists their unique ids.
+func topologyParams(nodes []topology.ReleasePromotedTopologyNode) ([]map[string]any, []string) {
+	topo := make([]map[string]any, 0, len(nodes))
+	uniqueIDs := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		upstreams := n.UpstreamUniqueIDs
 		if upstreams == nil {
 			upstreams = []string{}
 		}
-		payload = append(payload, map[string]interface{}{
+		topo = append(topo, map[string]any{
 			"unique_id":           n.UniqueID,
 			"schema_name":         n.SchemaName,
 			"table_name":          n.TableName,
@@ -143,167 +236,7 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 			"upstream_unique_ids": upstreams,
 			"original_file_path":  n.OriginalFilePath,
 		})
-		newUniqueIDs = append(newUniqueIDs, n.UniqueID)
+		uniqueIDs = append(uniqueIDs, n.UniqueID)
 	}
-
-	// Step B — Retire :Table nodes that are not in the new topology. Setting
-	// active=false and retired_at preserves the nodes (and their incoming
-	// :Run-[:EXECUTES] edges) so that run history is not destroyed. The
-	// `unique_id IS NULL` clause also retires any :Table node that carries no
-	// unique_id; without it such a node (whose `unique_id IN $list` evaluates to
-	// NULL, never matching the negation) would linger active beside the
-	// unique_id-keyed nodes this release creates.
-	retireRes, err := tx.Run(ctx, `
-		MATCH (t:Table)
-		WHERE t.unique_id IS NULL OR NOT t.unique_id IN $new_unique_ids
-		SET t.retired_at = CASE WHEN COALESCE(t.active, true) THEN $now ELSE t.retired_at END,
-		    t.active = false
-	`, map[string]interface{}{
-		"new_unique_ids": newUniqueIDs,
-		"now":            now.UTC(),
-	})
-	if err != nil {
-		return "", fmt.Errorf("retire stale :Table nodes: %w", err)
-	}
-	if _, err := retireRes.Consume(ctx); err != nil {
-		return "", fmt.Errorf("consume retire result: %w", err)
-	}
-
-	// Steps C, C.5, D — Only execute if the new topology is non-empty.
-	if len(nodes) > 0 {
-		// Step C — MERGE :Table nodes from the new topology, keyed on unique_id.
-		// Properties are set (not created) so that nodes surviving across releases
-		// are refreshed in place. active=true and retired_at=NULL re-activate any
-		// previously retired node that is back in the topology. The Neo4j property
-		// name is schedule_name (matching every existing reader query) while the
-		// node field stays Schedule (matching the topology artifact's shape).
-		upsertRes, err := tx.Run(ctx, `
-			UNWIND $topology AS t
-			MERGE (existing:Table {unique_id: t.unique_id})
-			SET existing.schema_name  = t.schema_name,
-			    existing.table_name   = t.table_name,
-			    existing.service_name = t.service_name,
-			    existing.node_type    = t.node_type,
-			    existing.content_hash = t.content_hash,
-			    existing.test_count   = t.test_count,
-			    existing.image_tag    = t.image_tag,
-			    existing.secret_ref   = CASE WHEN t.secret_ref = '' THEN null ELSE t.secret_ref END,
-			    existing.schedule_name = t.schedule,
-			    existing.original_file_path = t.original_file_path,
-			    existing.release_id   = $release_id,
-			    existing.active       = true,
-			    existing.retired_at   = null
-		`, map[string]interface{}{
-			"topology":   payload,
-			"release_id": releaseID,
-		})
-		if err != nil {
-			return "", fmt.Errorf("upsert :Table nodes: %w", err)
-		}
-		if _, err := upsertRes.Consume(ctx); err != nil {
-			return "", fmt.Errorf("consume :Table upsert result: %w", err)
-		}
-
-		// Step C.5 — Clear existing :DEPENDS_ON edges on the upserted nodes so
-		// they can be rebuilt from scratch without leaving stale edges when a
-		// dependency is removed between releases.
-		clearEdgeRes, err := tx.Run(ctx, `
-			UNWIND $topology AS t
-			MATCH (a:Table {unique_id: t.unique_id})-[r:DEPENDS_ON]->()
-			DELETE r
-		`, map[string]interface{}{
-			"topology": payload,
-		})
-		if err != nil {
-			return "", fmt.Errorf("clear :DEPENDS_ON edges: %w", err)
-		}
-		if _, err := clearEdgeRes.Consume(ctx); err != nil {
-			return "", fmt.Errorf("consume clear edges result: %w", err)
-		}
-
-		// Step D — Rebuild :DEPENDS_ON edges between :Table nodes present in the
-		// new topology. The MATCH silently skips upstream unique_ids that do not
-		// correspond to a :Table node in the candidate set (e.g. cross-service
-		// dependencies outside this topology slice).
-		edgeRes, err := tx.Run(ctx, `
-			UNWIND $topology AS t
-			UNWIND t.upstream_unique_ids AS up
-			MATCH (a:Table {unique_id: t.unique_id}), (b:Table {unique_id: up})
-			CREATE (a)-[:DEPENDS_ON]->(b)
-		`, map[string]interface{}{
-			"topology": payload,
-		})
-		if err != nil {
-			return "", fmt.Errorf("create :DEPENDS_ON edges: %w", err)
-		}
-		if _, err := edgeRes.Consume(ctx); err != nil {
-			return "", fmt.Errorf("consume :DEPENDS_ON edge result: %w", err)
-		}
-	}
-
-	// Step D.5 — Delete inactive :Table nodes that have no incoming
-	// :Run-[:EXECUTES] reference. Nodes that are still referenced by a Run
-	// remain in the graph (retired) so that run history stays intact.
-	orphanRes, err := tx.Run(ctx, `
-		MATCH (t:Table)
-		WHERE COALESCE(t.active, true) = false
-		  AND NOT EXISTS { MATCH (:Run)-[:EXECUTES]->(t) }
-		DETACH DELETE t
-	`, nil)
-	if err != nil {
-		return "", fmt.Errorf("delete inactive orphan :Table nodes: %w", err)
-	}
-	if _, err := orphanRes.Consume(ctx); err != nil {
-		return "", fmt.Errorf("consume orphan delete result: %w", err)
-	}
-
-	// Step E — Record the promotion on :Meta and release the lock. Neo4j's Go
-	// driver serialises time.Time using its Location().String() as a timezone
-	// identifier; time.Local serialises to "Local", which Neo4j rejects
-	// ("Illegal zone identifier"). Convert to UTC so the identifier is a valid
-	// IANA zone regardless of the caller's locale.
-	metaRes, err := tx.Run(ctx, `
-		MATCH (m:Meta {key: 'current_release'})
-		SET m.release_id    = $release_id,
-		    m.promotion_seq = $promotion_seq,
-		    m.updated_at    = $now
-		REMOVE m._lock
-	`, map[string]interface{}{
-		"release_id":    releaseID,
-		"promotion_seq": promotionSeq,
-		"now":           now.UTC(),
-	})
-	if err != nil {
-		return "", fmt.Errorf("record promotion on :Meta: %w", err)
-	}
-	if _, err := metaRes.Consume(ctx); err != nil {
-		return "", fmt.Errorf("consume :Meta update result: %w", err)
-	}
-
-	// Step F — Record the live promotion's seq on :TopologyRoot.
-	rootRes, err := tx.Run(ctx, `
-		MERGE (root:TopologyRoot {id: 'singleton'})
-		SET root.promotion_seq = $promotion_seq,
-		    root.updated_at    = datetime()
-		REMOVE root.topology_generation
-	`, map[string]interface{}{
-		"promotion_seq": promotionSeq,
-	})
-	if err != nil {
-		return "", fmt.Errorf("record promotion on :TopologyRoot: %w", err)
-	}
-	if _, err := rootRes.Consume(ctx); err != nil {
-		return "", fmt.Errorf("consume :TopologyRoot update result: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("commit release-promotion tx: %w", err)
-	}
-
-	r.logger.Info("release.promoted: applied topology swap",
-		"release_id", releaseID,
-		"promotion_seq", promotionSeq,
-		"node_count", len(nodes),
-	)
-	return topology.PromotionApplied, nil
+	return topo, uniqueIDs
 }

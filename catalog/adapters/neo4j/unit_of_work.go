@@ -82,7 +82,7 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
 			return false, nil
 		}
-		if err := fn(ctx, &transaction{run: run}); err != nil {
+		if err := fn(ctx, &transaction{run: run, logger: u.logger}); err != nil {
 			return false, err
 		}
 		if final {
@@ -100,14 +100,15 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 // transaction is the uow.Tx of one Write: its open Neo4j transaction, bound to
 // the marker's tenant.
 type transaction struct {
-	run TenantRunner
+	run    TenantRunner
+	logger *slog.Logger
 }
 
 var _ uow.Tx = (*transaction)(nil)
 
-// Topology returns the topology repository on this transaction.
+// Topology returns the topology swap on this transaction.
 func (t *transaction) Topology() repository.ReleasePromotionRepository {
-	return topologyTxPlaceholder{}
+	return &releasePromotionRepository{run: t.run, logger: t.logger}
 }
 
 // CodeVersions returns the code-version repository on this transaction.

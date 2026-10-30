@@ -1,646 +1,482 @@
-package neo4jinfra_test
+//go:build integration
+
+package neo4jinfra
 
 import (
 	"context"
-	"log/slog"
-	"os"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
-	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
+	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
+	"github.com/carolsimone/continuo/catalog/service/uow"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// wipeReleaseFixtures removes all :Table and :Run nodes and the :Meta and
-// :TopologyRoot singletons so each test starts from a clean slate.
-func wipeReleaseFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
+// swapFixture gives one test its own tenant on the test Neo4j, and promotes
+// releases for it through the unit of work, as the topology group does. Every
+// node the swap writes carries the tenant, and so does every node a test
+// seeds; the cleanup DETACH DELETEs the tenant's nodes of every label.
+type swapFixture struct {
+	t      *testing.T
+	client Neo4jClient
+	uow    uow.UnitOfWork
+	tenant string
+	seq    int64
+}
+
+func newSwapFixture(t *testing.T) *swapFixture {
+	t.Helper()
+	client := integrationClient(t)
+	return newSwapFixtureOn(t, client, NewUnitOfWork(client, quietLogger()))
+}
+
+func newSwapFixtureOn(t *testing.T, client Neo4jClient, u uow.UnitOfWork) *swapFixture {
+	t.Helper()
+	f := &swapFixture{t: t, client: client, uow: u, tenant: "swap-test-" + uuid.NewString()}
+	t.Cleanup(func() { deleteTenantNodes(t, client, f.tenant) })
+	return f
+}
+
+// another returns a fixture for a second tenant on the same graph.
+func (f *swapFixture) another() *swapFixture {
+	return newSwapFixtureOn(f.t, f.client, f.uow)
+}
+
+// deleteTenantNodes DETACH DELETEs every node of tenant, whatever its label.
+func deleteTenantNodes(t *testing.T, client Neo4jClient, tenant string) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	for _, q := range []string{
-		`MATCH (n:Table) DETACH DELETE n`,
-		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
-		`MATCH (root:TopologyRoot {id:'singleton'}) DELETE root`,
-		`MATCH (n:Run) DETACH DELETE n`,
-	} {
-		res, err := s.Run(ctx, q, nil)
-		require.NoError(t, err)
-		_, err = res.Consume(ctx)
-		require.NoError(t, err)
-	}
-}
-
-func newReleaseRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.ReleasePromotionRepository {
-	return neo4jinfra.NewReleasePromotionRepository(
-		client,
-		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
-	)
-}
-
-// TestReleasePromotionRepository_FirstPromotionCreatesNodesEdgesAndMeta tests
-// the happy path: an empty graph receives 3 nodes with edges, and the :Meta
-// singleton is created.
-func TestReleasePromotionRepository_FirstPromotionCreatesNodesEdgesAndMeta(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j is unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{"a"}},
-		{UniqueID: "c", SchemaName: "public", TableName: "items", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{"a"}},
-	}
-	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-
-	// Assert exactly 3 :Table nodes with the expected unique_ids, release_id,
-	// and schedule_name (the Neo4j property name; wire DTO field stays "schedule").
-	res, err := s.Run(ctx, `MATCH (t:Table) RETURN t.unique_id AS uid, t.release_id AS rid, t.schedule_name AS sname ORDER BY uid`, nil)
-	require.NoError(t, err)
-	var uids []string
-	for res.Next(ctx) {
-		uid, _ := res.Record().Get("uid")
-		rid, _ := res.Record().Get("rid")
-		sname, _ := res.Record().Get("sname")
-		uids = append(uids, uid.(string))
-		assert.Equal(t, "rel-1", rid)
-		assert.Equal(t, "daily", sname)
-	}
-	require.NoError(t, res.Err())
-	assert.Equal(t, []string{"a", "b", "c"}, uids)
-
-	// Assert 2 :DEPENDS_ON edges: b→a and c→a.
-	edgeRes, err := s.Run(ctx,
-		`MATCH (a:Table)-[:DEPENDS_ON]->(b:Table) RETURN a.unique_id AS from_uid, b.unique_id AS to_uid ORDER BY from_uid`,
-		nil,
-	)
-	require.NoError(t, err)
-	type edge struct{ from, to string }
-	var edges []edge
-	for edgeRes.Next(ctx) {
-		f, _ := edgeRes.Record().Get("from_uid")
-		to, _ := edgeRes.Record().Get("to_uid")
-		edges = append(edges, edge{f.(string), to.(string)})
-	}
-	require.NoError(t, edgeRes.Err())
-	assert.Equal(t, []edge{{"b", "a"}, {"c", "a"}}, edges)
-
-	// Assert :Meta singleton has the correct release_id.
-	metaRes, err := s.Run(ctx, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS rid`, nil)
-	require.NoError(t, err)
-	require.True(t, metaRes.Next(ctx))
-	rid, _ := metaRes.Record().Get("rid")
-	assert.Equal(t, "rel-1", rid)
-}
-
-// TestReleasePromotionRepository_RetiresTablesWithoutUniqueID verifies that a
-// promotion retires any :Table node carrying no unique_id, rather than leaving
-// it active beside the unique_id-keyed nodes the release creates. A node with no
-// incoming :Run reference is orphan-deleted; one referenced by a :Run is kept
-// (retired) so run history survives. This guards the retire query's
-// `unique_id IS NULL` clause: a node whose `unique_id IN $list` evaluates to NULL
-// would otherwise never match the negation and would stay active.
-func TestReleasePromotionRepository_RetiresTablesWithoutUniqueID(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j is unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	// Seed two active :Table nodes that carry no unique_id property (keyed only
-	// by schema/table). One is referenced by a :Run-[:EXECUTES] edge; the other
-	// is unreferenced.
-	wSession := client.NewSession(ctx, neo4j.AccessModeWrite)
-	seedRes, err := wSession.Run(ctx, `
-		CREATE (:Table {schema_name:'public', table_name:'noid_orphan', service_name:'svc', schedule_name:'daily', active:true})
-		CREATE (referenced:Table {schema_name:'public', table_name:'noid_referenced', service_name:'svc', schedule_name:'daily', active:true})
-		CREATE (r:Run {run_id:'legacy-run'})
-		CREATE (r)-[:EXECUTES]->(referenced)
-	`, nil)
-	require.NoError(t, err)
-	_, err = seedRes.Consume(ctx)
-	require.NoError(t, err)
-	wSession.Close(ctx)
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "public.new_tbl", SchemaName: "public", TableName: "new_tbl", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-	}
-	changed, err := promote(ctx, repo, "rel-upgrade", nodes, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-
-	// No unique_id-less :Table may remain active after the promotion.
-	activeNoID, err := s.Run(ctx,
-		`MATCH (t:Table) WHERE t.unique_id IS NULL AND COALESCE(t.active, true) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, activeNoID.Next(ctx))
-	n, _ := activeNoID.Record().Get("n")
-	assert.Equal(t, int64(0), n, "no unique_id-less :Table may remain active after promotion")
-
-	// The unreferenced node is orphan-deleted.
-	orphanRes, err := s.Run(ctx, `MATCH (t:Table {table_name:'noid_orphan'}) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, orphanRes.Next(ctx))
-	on, _ := orphanRes.Record().Get("n")
-	assert.Equal(t, int64(0), on, "unreferenced unique_id-less node must be orphan-deleted")
-
-	// The run-referenced node survives as retired so run history is preserved.
-	refRes, err := s.Run(ctx,
-		`MATCH (:Run {run_id:'legacy-run'})-[:EXECUTES]->(t:Table {table_name:'noid_referenced'}) RETURN t.active AS active`, nil)
-	require.NoError(t, err)
-	require.True(t, refRes.Next(ctx), "run-referenced unique_id-less node must survive (retired)")
-	active, _ := refRes.Record().Get("active")
-	assert.Equal(t, false, active, "run-referenced node must be retired, not active")
-
-	// The new unique_id-keyed node is active.
-	newRes, err := s.Run(ctx, `MATCH (t:Table {unique_id:'public.new_tbl'}) RETURN t.active AS active`, nil)
-	require.NoError(t, err)
-	require.True(t, newRes.Next(ctx))
-	na, _ := newRes.Record().Get("active")
-	assert.Equal(t, true, na)
-}
-
-// TestReleasePromotionRepository_NewReleaseTruncatesOldTopology tests that a
-// second PromoteRelease call with a different release_id retires unreferenced
-// old :Table nodes and replaces them with the new topology. Nodes that carry no
-// :Run-[:EXECUTES] reference are deleted by the orphan-cleanup step.
-func TestReleasePromotionRepository_NewReleaseTruncatesOldTopology(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	first := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d"},
-		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "x", Schedule: "d"},
-	}
-	_, err := promote(ctx, repo, "rel-1", first, time.Now().UTC())
-	require.NoError(t, err)
-
-	second := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "c", SchemaName: "p", TableName: "tc", ServiceName: "s", ImageTag: "y", Schedule: "d"},
-	}
-	changed, err := promote(ctx, repo, "rel-2", second, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-
-	// Old nodes (a, b) had no Run references so the orphan-cleanup step deletes
-	// them. Only c should remain.
-	res, err := s.Run(ctx, `MATCH (t:Table) RETURN t.unique_id AS uid ORDER BY uid`, nil)
-	require.NoError(t, err)
-	var uids []string
-	for res.Next(ctx) {
-		uid, _ := res.Record().Get("uid")
-		uids = append(uids, uid.(string))
-	}
-	require.NoError(t, res.Err())
-	assert.Equal(t, []string{"c"}, uids)
-
-	// :Meta must reflect the new release_id.
-	metaRes, err := s.Run(ctx, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS rid`, nil)
-	require.NoError(t, err)
-	require.True(t, metaRes.Next(ctx))
-	rid, _ := metaRes.Record().Get("rid")
-	assert.Equal(t, "rel-2", rid)
-}
-
-// TestReleasePromotionRepository_EmptyTopologyStillUpdatesMeta tests that
-// PromoteRelease with an empty nodes slice returns (true, nil), writes no :Table
-// nodes, and still creates/updates the :Meta singleton.
-func TestReleasePromotionRepository_EmptyTopologyStillUpdatesMeta(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	changed, err := promote(ctx, repo, "rel-empty", nil, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-
-	// Zero :Table nodes.
-	res, err := s.Run(ctx, `MATCH (t:Table) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	n, _ := res.Record().Get("n")
-	assert.Equal(t, int64(0), n)
-
-	// :Meta singleton holds the new release_id.
-	metaRes, err := s.Run(ctx, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS rid`, nil)
-	require.NoError(t, err)
-	require.True(t, metaRes.Next(ctx))
-	rid, _ := metaRes.Record().Get("rid")
-	assert.Equal(t, "rel-empty", rid)
-}
-
-// TestReleasePromotionRepository_UnknownUpstreamSkipsEdgeButCreatesNode tests
-// the spec §6.4 behaviour: a node referencing an upstream unique_id that is not
-// in the topology slice produces no :DEPENDS_ON edge and no error. The node
-// itself is created normally.
-func TestReleasePromotionRepository_UnknownUpstreamSkipsEdgeButCreatesNode(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "t", ServiceName: "s", ImageTag: "x", Schedule: "d", UpstreamUniqueIDs: []string{"dangling"}},
-	}
-	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-
-	// The node itself must exist.
-	nodeRes, err := s.Run(ctx, `MATCH (t:Table) RETURN t.unique_id AS uid`, nil)
-	require.NoError(t, err)
-	var uids []string
-	for nodeRes.Next(ctx) {
-		uid, _ := nodeRes.Record().Get("uid")
-		uids = append(uids, uid.(string))
-	}
-	require.NoError(t, nodeRes.Err())
-	assert.Equal(t, []string{"a"}, uids)
-
-	// No :DEPENDS_ON edges because 'dangling' was not created.
-	edgeRes, err := s.Run(ctx, `MATCH (a:Table)-[:DEPENDS_ON]->(b:Table) RETURN count(*) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, edgeRes.Next(ctx))
-	n, _ := edgeRes.Record().Get("n")
-	assert.Equal(t, int64(0), n, "dangling upstream must not produce an edge")
-}
-
-// TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables
-// verifies that a :Table removed from the new topology is NOT deleted when a
-// :Run-[:EXECUTES] edge still points at it. The node is retired (active=false)
-// but remains in the graph so that run history is intact.
-func TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	// Promote release rA with a single :Table node "a".
-	repo := newReleaseRepo(client)
-	nodesA := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-	}
-	_, err := promote(ctx, repo, "rA", nodesA, time.Now().UTC())
-	require.NoError(t, err)
-
-	// Manually create a :Run node and a :Run-[:EXECUTES]->:Table{unique_id:"a"} edge,
-	// simulating a run that was launched against the rA topology.
-	wSession := client.NewSession(ctx, neo4j.AccessModeWrite)
-	_, err = wSession.Run(ctx, `
-		MATCH (t:Table {unique_id: 'a'})
-		CREATE (r:Run {run_id: 'test-run'})-[:EXECUTES]->(t)
-	`, nil)
-	require.NoError(t, err)
-	wSession.Close(ctx)
-
-	// Promote release rB with a different :Table node "b" (no "a").
-	nodesB := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-	}
-	changed, err := promote(ctx, repo, "rB", nodesB, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	rSession := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer rSession.Close(ctx)
-
-	// :Table "a" must still exist (referenced by the Run) but be retired.
-	tableRes, err := rSession.Run(ctx, `
-		MATCH (t:Table {unique_id: 'a'})
-		RETURN t.active AS active, t.retired_at AS retired_at
-	`, nil)
-	require.NoError(t, err)
-	require.True(t, tableRes.Next(ctx), ":Table{unique_id:'a'} must still exist after rB promotion")
-	active, _ := tableRes.Record().Get("active")
-	retiredAt, _ := tableRes.Record().Get("retired_at")
-	assert.Equal(t, false, active, ":Table 'a' must be inactive (retired)")
-	assert.NotNil(t, retiredAt, ":Table 'a' must have a non-null retired_at")
-
-	// The :Run-[:EXECUTES]->:Table edge must still resolve.
-	edgeRes, err := rSession.Run(ctx, `
-		MATCH (:Run {run_id: 'test-run'})-[:EXECUTES]->(t:Table {unique_id: 'a'})
-		RETURN count(*) AS n
-	`, nil)
-	require.NoError(t, err)
-	require.True(t, edgeRes.Next(ctx))
-	edgeCount, _ := edgeRes.Record().Get("n")
-	assert.Equal(t, int64(1), edgeCount, ":Run-[:EXECUTES]->:Table edge must survive the swap")
-
-	// :Table "b" must exist and be active.
-	bRes, err := rSession.Run(ctx, `MATCH (t:Table {unique_id: 'b'}) RETURN t.active AS active`, nil)
-	require.NoError(t, err)
-	require.True(t, bRes.Next(ctx), ":Table{unique_id:'b'} must exist after rB promotion")
-	bActive, _ := bRes.Record().Get("active")
-	assert.Equal(t, true, bActive, ":Table 'b' must be active")
-
-	// :Meta must reflect the new release_id.
-	metaRes, err := rSession.Run(ctx, `MATCH (m:Meta {key:'current_release'}) RETURN m.release_id AS rid`, nil)
-	require.NoError(t, err)
-	require.True(t, metaRes.Next(ctx))
-	rid, _ := metaRes.Record().Get("rid")
-	assert.Equal(t, "rB", rid)
-}
-
-// TestPromotion_DoesNotStampLastProvenance verifies that PromoteRelease does
-// not write last_commit_sha/last_repo/last_changed_at/last_release_id onto a
-// promoted node — code-version provenance lives on :NodeVersion, and the
-// :Table last_* stamp is retired.
-func TestPromotion_DoesNotStampLastProvenance(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j is unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			UpstreamUniqueIDs: []string{}},
-	}
-	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `
-		MATCH (t:Table {unique_id: 'a'})
-		RETURN t.last_commit_sha AS c, t.last_repo AS r, t.last_changed_at AS at, t.last_release_id AS rel
-	`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	rec := res.Record()
-	for _, k := range []string{"c", "r", "at", "rel"} {
-		v, _ := rec.Get(k)
-		assert.Nilf(t, v, "promotion stamped %s = %v; last_* is retired", k, v)
-	}
-}
-
-// TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences
-// verifies that a :Table removed from the new topology IS deleted when no
-// :Run-[:EXECUTES] edge points at it. The orphan-cleanup step removes it.
-func TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	// Promote release rA with a single :Table node "a". No Run is created.
-	repo := newReleaseRepo(client)
-	nodesA := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-	}
-	_, err := promote(ctx, repo, "rA", nodesA, time.Now().UTC())
-	require.NoError(t, err)
-
-	// Promote release rB without "a" in the topology. Since no Run references "a",
-	// the orphan-cleanup step must delete it.
-	nodesB := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-	}
-	changed, err := promote(ctx, repo, "rB", nodesB, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	rSession := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer rSession.Close(ctx)
-
-	// :Table "a" must be gone (no Run referenced it).
-	aRes, err := rSession.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, aRes.Next(ctx))
-	aCount, _ := aRes.Record().Get("n")
-	assert.Equal(t, int64(0), aCount, ":Table 'a' must be deleted by orphan-cleanup (no Run references it)")
-
-	// :Table "b" must exist.
-	bRes, err := rSession.Run(ctx, `MATCH (t:Table {unique_id: 'b'}) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, bRes.Next(ctx))
-	bCount, _ := bRes.Record().Get("n")
-	assert.Equal(t, int64(1), bCount, ":Table 'b' must exist after rB promotion")
-}
-
-// TestPromotion_PersistsTestCount verifies that PromoteRelease writes
-// test_count onto the resulting :Table node, so that later readers (and
-// eventually single-node-run gating) can see how many dbt tests a node
-// carries.
-func TestPromotion_PersistsTestCount(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j is unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			TestCount: 2, UpstreamUniqueIDs: []string{}},
-	}
-	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (t:Table {unique_id:'a'}) RETURN t.test_count AS test_count`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	tc, _ := res.Record().Get("test_count")
-	assert.Equal(t, int64(2), tc)
-}
-
-func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			OriginalFilePath: "models/a.sql"},
-	}
-	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (t:Table {unique_id:'a'}) RETURN t.original_file_path AS fp`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	fp, _ := res.Record().Get("fp")
-	assert.Equal(t, "models/a.sql", fp)
-}
-
-// TestReleasePromotionRepository_SetsAndClearsSecretRef pins :Table.secret_ref:
-// a node promoted with a secret_ref stores it, and a later release that drops
-// it clears the property to null rather than storing an empty string or keeping
-// the stale ref.
-func TestReleasePromotionRepository_SetsAndClearsSecretRef(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t) // skips if Neo4j unreachable
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	readSecretRef := func() any {
-		t.Helper()
-		s := client.NewSession(ctx, neo4j.AccessModeRead)
-		defer s.Close(ctx)
-		res, err := s.Run(ctx, `MATCH (t:Table {unique_id: 'analytics.fx'}) RETURN t.secret_ref AS s`, nil)
-		require.NoError(t, err)
-		require.True(t, res.Next(ctx))
-		v, _ := res.Record().Get("s")
-		return v
-	}
-
-	repo := newReleaseRepo(client)
-	withRef := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: "continuo-api-fx"},
-	}
-	_, err := promote(ctx, repo, "rel-1", withRef, time.Now().UTC())
-	require.NoError(t, err)
-	assert.Equal(t, "continuo-api-fx", readSecretRef())
-
-	withoutRef := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc",
-			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: ""},
-	}
-	_, err = promote(ctx, repo, "rel-2", withoutRef, time.Now().UTC())
-	require.NoError(t, err)
-	assert.Nil(t, readSecretRef(), "an empty secret_ref must clear the property to null")
-}
-
-// TestReleasePromotionRepository_StoresContentHashOnTable pins the property the
-// version-ingestion path reads: :Table.content_hash must equal the hash the
-// promoted event carried, on every node, changed or not.
-func TestReleasePromotionRepository_StoresContentHashOnTable(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
-			ContentHash: "sha256:aaa", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc",
-			ContentHash: "sha256:bbb", UpstreamUniqueIDs: []string{}},
-	}
-	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (t:Table) RETURN t.unique_id AS uid, t.content_hash AS ch ORDER BY uid`, nil)
-	require.NoError(t, err)
-	got := map[string]string{}
-	for res.Next(ctx) {
-		uid, _ := res.Record().Get("uid")
-		ch, _ := res.Record().Get("ch")
-		got[uid.(string)] = ch.(string)
-	}
-	require.NoError(t, res.Err())
-	assert.Equal(t, map[string]string{"a": "sha256:aaa", "b": "sha256:bbb"}, got)
-}
-
-// TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode proves the
-// hash is refreshed in place across releases (SET, not ON CREATE). Version
-// ingestion compares against it every release, so a stale value would report a
-// permanent false gap.
-func TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	base := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
-			ContentHash: "sha256:v1", UpstreamUniqueIDs: []string{}},
-	}
-	_, err := promote(ctx, repo, "rel-1", base, time.Now().UTC())
-	require.NoError(t, err)
-
-	next := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
-			ContentHash: "sha256:v2", UpstreamUniqueIDs: []string{}},
-	}
-	_, err = promote(ctx, repo, "rel-2", next, time.Now().UTC())
-	require.NoError(t, err)
-
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) RETURN t.content_hash AS ch`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	ch, _ := res.Record().Get("ch")
-	assert.Equal(t, "sha256:v2", ch)
-}
-
-// A retired :Table keeps the retired_at of the release that retired it; later
-// promotions must not re-stamp it, or GetNode cannot tell which of several
-// retired rows for one identity was retired last.
-func TestReleasePromotionRepository_KeepsRetiredAtOfAlreadyRetiredTables(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	node := func(id string) []topology.ReleasePromotedTopologyNode {
-		return []topology.ReleasePromotedTopologyNode{
-			{UniqueID: id, SchemaName: "p", TableName: "t" + id, ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
+	defer func() { _ = s.Close(ctx) }()
+	for _, label := range graphschema.Labels() {
+		stmt := fmt.Sprintf("MATCH (n:%s {tenant_id: $tenant_id}) DETACH DELETE n", label)
+		res, err := s.Run(ctx, stmt, map[string]any{"tenant_id": tenant})
+		if err == nil {
+			_, err = res.Consume(ctx)
+		}
+		if err != nil {
+			t.Errorf("cleanup %q: %v", stmt, err)
 		}
 	}
-	base := time.Now().UTC().Truncate(time.Second)
-	_, err := promote(ctx, repo, "r1", node("a"), base)
-	require.NoError(t, err)
+}
 
-	// A run reference keeps the retired node from being deleted as an orphan.
-	w := client.NewSession(ctx, neo4j.AccessModeWrite)
-	_, err = w.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) CREATE (:Run {run_id: 'keep'})-[:EXECUTES]->(t)`, nil)
-	require.NoError(t, err)
-	w.Close(ctx)
+// promote applies a promotion of releaseID under the next seq, so each
+// promotion of a test is newer than the one before it, as release-controller
+// numbers them.
+func (f *swapFixture) promote(releaseID string, nodes []topology.ReleasePromotedTopologyNode, now time.Time) topology.PromotionOutcome {
+	f.t.Helper()
+	f.seq++
+	return f.promoteAt(releaseID, f.seq, nodes, now)
+}
 
-	retiredAt := base.Add(time.Hour)
-	_, err = promote(ctx, repo, "r2", node("b"), retiredAt)
-	require.NoError(t, err)
-	_, err = promote(ctx, repo, "r3", node("c"), retiredAt.Add(time.Hour))
-	require.NoError(t, err)
+// promoteAt applies a promotion of releaseID at seq in one Write under a fresh
+// message id, and returns what the swap did.
+func (f *swapFixture) promoteAt(releaseID string, seq int64, nodes []topology.ReleasePromotedTopologyNode, now time.Time) topology.PromotionOutcome {
+	f.t.Helper()
+	outcome, err := f.tryPromoteAt(f.marker(), releaseID, seq, nodes, now)
+	require.NoError(f.t, err)
+	return outcome
+}
 
-	r := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer r.Close(ctx)
-	res, err := r.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) RETURN t.retired_at AS r`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	got, _ := res.Record().Get("r")
-	gotTime, ok := got.(time.Time)
-	require.True(t, ok, "retired_at must be a datetime, got %T", got)
-	assert.True(t, retiredAt.Equal(gotTime), "retired_at must stay at first retirement %v, got %v", retiredAt, gotTime)
+func (f *swapFixture) tryPromoteAt(m uow.Marker, releaseID string, seq int64, nodes []topology.ReleasePromotedTopologyNode, now time.Time) (topology.PromotionOutcome, error) {
+	var outcome topology.PromotionOutcome
+	err := f.uow.Write(context.Background(), m, true, func(ctx context.Context, tx uow.Tx) error {
+		var err error
+		outcome, err = tx.Topology().PromoteRelease(ctx, f.tenant, releaseID, seq, nodes, now)
+		return err
+	})
+	return outcome, err
+}
+
+// marker names a fresh message of the topology group for the tenant.
+func (f *swapFixture) marker() uow.Marker {
+	return uow.Marker{TenantID: f.tenant, Group: streams.CatalogReleaseTopology, MessageID: uuid.NewString()}
+}
+
+// exec runs one write statement with $tenant_id bound to the fixture's tenant.
+func (f *swapFixture) exec(cypher string, params map[string]any) {
+	f.t.Helper()
+	ctx := context.Background()
+	s := f.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer func() { _ = s.Close(ctx) }()
+	res, err := s.Run(ctx, cypher, f.params(params))
+	require.NoError(f.t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(f.t, err)
+}
+
+// rows runs one read statement with $tenant_id bound to the fixture's tenant
+// and returns its records.
+func (f *swapFixture) rows(cypher string, params map[string]any) []*neo4j.Record {
+	f.t.Helper()
+	ctx := context.Background()
+	s := f.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = s.Close(ctx) }()
+	res, err := s.Run(ctx, cypher, f.params(params))
+	require.NoError(f.t, err)
+	recs, err := res.Collect(ctx)
+	require.NoError(f.t, err)
+	return recs
+}
+
+func (f *swapFixture) params(params map[string]any) map[string]any {
+	bound := map[string]any{"tenant_id": f.tenant}
+	for k, v := range params {
+		bound[k] = v
+	}
+	return bound
+}
+
+// count runs a statement that returns one integer column n.
+func (f *swapFixture) count(cypher string, params map[string]any) int64 {
+	f.t.Helper()
+	recs := f.rows(cypher, params)
+	require.Len(f.t, recs, 1)
+	n, _ := recs[0].Get("n")
+	return n.(int64)
+}
+
+// column runs a statement that returns one string column v, in its order.
+func (f *swapFixture) column(cypher string, params map[string]any) []string {
+	f.t.Helper()
+	out := []string{}
+	for _, rec := range f.rows(cypher, params) {
+		v, _ := rec.Get("v")
+		out = append(out, v.(string))
+	}
+	return out
+}
+
+// node returns the properties of the tenant's :Node uniqueID, or nil when the
+// tenant has none.
+func (f *swapFixture) node(uniqueID string) map[string]any {
+	f.t.Helper()
+	recs := f.rows(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN properties(n) AS p`, map[string]any{"uid": uniqueID})
+	require.LessOrEqual(f.t, len(recs), 1, "one :Node per tenant and unique_id")
+	if len(recs) == 0 {
+		return nil
+	}
+	p, _ := recs[0].Get("p")
+	return p.(map[string]any)
+}
+
+// nodeIDs lists the unique_ids of the tenant's :Node, sorted.
+func (f *swapFixture) nodeIDs() []string {
+	return f.column(`MATCH (n:Node {tenant_id: $tenant_id}) RETURN n.unique_id AS v ORDER BY v`, nil)
+}
+
+// activeIDs lists the unique_ids of the tenant's live :Node, sorted.
+func (f *swapFixture) activeIDs() []string {
+	return f.column(`MATCH (n:Node {tenant_id: $tenant_id}) WHERE coalesce(n.active, true) RETURN n.unique_id AS v ORDER BY v`, nil)
+}
+
+// edges lists the tenant's :DEPENDS_ON as "downstream->upstream", sorted.
+func (f *swapFixture) edges() []string {
+	return f.column(`
+		MATCH (a:Node {tenant_id: $tenant_id})-[:DEPENDS_ON]->(b:Node {tenant_id: $tenant_id})
+		RETURN a.unique_id + '->' + b.unique_id AS v ORDER BY v`, nil)
+}
+
+// liveMeta returns the tenant's live release and promotion seq, and checks the
+// tenant has one current_release node whose lock property never outlives the
+// swap's transaction.
+func (f *swapFixture) liveMeta() (string, int64) {
+	f.t.Helper()
+	recs := f.rows(`MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) RETURN properties(m) AS p`, nil)
+	require.Len(f.t, recs, 1, "one current_release node per tenant")
+	v, _ := recs[0].Get("p")
+	p := v.(map[string]any)
+	assert.NotContains(f.t, p, "_lock", "the lock property never outlives the swap's transaction")
+	rid, _ := p["release_id"].(string)
+	seq, _ := p["promotion_seq"].(int64)
+	return rid, seq
+}
+
+// snapshot renders every node of the tenant but its processed-message markers,
+// and every relationship from one, as sorted lines, so two snapshots compare
+// equal exactly when the promotion between them wrote nothing else.
+func (f *swapFixture) snapshot() []string {
+	f.t.Helper()
+	var lines []string
+	for _, rec := range f.rows(`
+		MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage
+		RETURN labels(n) AS l, properties(n) AS p`, nil) {
+		l, _ := rec.Get("l")
+		p, _ := rec.Get("p")
+		lines = append(lines, fmt.Sprint("node ", l, p))
+	}
+	for _, rec := range f.rows(`
+		MATCH (a {tenant_id: $tenant_id})-[r]->(b)
+		RETURN properties(a) AS a, type(r) AS t, properties(r) AS p, properties(b) AS b`, nil) {
+		a, _ := rec.Get("a")
+		typ, _ := rec.Get("t")
+		p, _ := rec.Get("p")
+		b, _ := rec.Get("b")
+		lines = append(lines, fmt.Sprint("rel ", a, " -", typ, p, "-> ", b))
+	}
+	slices.Sort(lines)
+	return lines
+}
+
+// processed reports whether the topology group's marker of m is recorded.
+func (f *swapFixture) processed(m uow.Marker) bool {
+	f.t.Helper()
+	ok, err := f.uow.Processed(context.Background(), m)
+	require.NoError(f.t, err)
+	return ok
+}
+
+func modelNode(uniqueID string, upstreams ...string) topology.ReleasePromotedTopologyNode {
+	if upstreams == nil {
+		upstreams = []string{}
+	}
+	return topology.ReleasePromotedTopologyNode{
+		UniqueID: uniqueID, SchemaName: "analytics", TableName: uniqueID, ServiceName: "svc",
+		NodeType: "dbt-model", ContentHash: "sha256:" + uniqueID, ImageTag: "img", Schedule: "daily",
+		UpstreamUniqueIDs: upstreams,
+	}
+}
+
+func releaseOf(nodes ...topology.ReleasePromotedTopologyNode) []topology.ReleasePromotedTopologyNode {
+	return nodes
+}
+
+func TestPromoteRelease_FirstPromotionCreatesNodesEdgesAndMeta(t *testing.T) {
+	f := newSwapFixture(t)
+
+	outcome := f.promote("rel-1", releaseOf(
+		modelNode("a"),
+		modelNode("b", "a"),
+		modelNode("c", "a"),
+	), time.Now().UTC())
+	assert.Equal(t, topology.PromotionApplied, outcome)
+
+	assert.Equal(t, []string{"a", "b", "c"}, f.activeIDs())
+	for _, id := range []string{"a", "b", "c"} {
+		n := f.node(id)
+		assert.Equal(t, "rel-1", n["release_id"], "node %s", id)
+		assert.Equal(t, "daily", n["schedule_name"], "the graph names the schedule schedule_name")
+		assert.Equal(t, true, n["active"])
+		assert.NotContains(t, n, "retired_at")
+	}
+	assert.Equal(t, []string{"b->a", "c->a"}, f.edges())
+	rid, seq := f.liveMeta()
+	assert.Equal(t, "rel-1", rid)
+	assert.Equal(t, int64(1), seq)
+}
+
+// TestPromoteRelease_KeepsDroppedNode is design §2.2's example: r7 carries
+// table_d, r8 drops it. table_d stays, retired once, with its last version,
+// its failure and its fix PR's edit; only its outgoing :DEPENDS_ON goes, and
+// nothing is deleted.
+func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
+	f := newSwapFixture(t)
+	const (
+		a = "analytics.table_a"
+		b = "analytics.table_b"
+		d = "analytics.table_d"
+	)
+	r7At := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	require.Equal(t, topology.PromotionApplied, f.promoteAt("r7", 7, releaseOf(modelNode(a), modelNode(b, a), modelNode(d, a)), r7At))
+
+	// table_d's history: its current version, a failure, and the fix PR that
+	// edited it.
+	f.exec(`
+		MATCH (d:Node {tenant_id: $tenant_id, unique_id: $d})
+		CREATE (v:NodeVersion {tenant_id: $tenant_id, unique_id: $d, content_hash: 'd4e1', version_seq: 1})
+		CREATE (d)-[:CURRENT {release_id: 'r7'}]->(v)
+		CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: $d, category: 'compile', reason: 'syntax'})
+		CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
+		CREATE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop-d'})
+		CREATE (rej)-[:PROPOSED {service: 'svc'}]->(p)
+		CREATE (p)-[:EDITED {path: 'models/table_d.sql'}]->(d)`, map[string]any{"d": d})
+	nodesBefore := f.count(`MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage RETURN count(n) AS n`, nil)
+	propsBefore := f.node(d)
+
+	r8At := r7At.Add(13 * 24 * time.Hour)
+	require.Equal(t, topology.PromotionApplied, f.promoteAt("r8", 8, releaseOf(modelNode(a), modelNode(b, a)), r8At))
+
+	dropped := f.node(d)
+	require.NotNil(t, dropped, "a dropped node stays in the graph")
+	assert.Equal(t, false, dropped["active"])
+	retiredAt, ok := dropped["retired_at"].(time.Time)
+	require.True(t, ok, "retired_at is a datetime, got %T", dropped["retired_at"])
+	assert.True(t, r8At.Equal(retiredAt), "retired_at is the time of the release that dropped it: %v", retiredAt)
+	for _, prop := range []string{"release_id", "schema_name", "table_name", "content_hash", "schedule_name"} {
+		assert.Equal(t, propsBefore[prop], dropped[prop], "a retired node keeps its %s", prop)
+	}
+	edgeOf := func(cypher string) int64 { return f.count(cypher, map[string]any{"d": d}) }
+	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:CURRENT]->(:NodeVersion {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":CURRENT kept")
+	assert.Equal(t, int64(1), edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:FAILED]->(:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS n`), ":FAILED kept")
+	assert.Equal(t, int64(1), edgeOf(`MATCH (:Proposal {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: $d}) RETURN count(r) AS n`), ":EDITED kept")
+	assert.Zero(t, edgeOf(`MATCH (:Node {tenant_id: $tenant_id, unique_id: $d})-[r:DEPENDS_ON]->() RETURN count(r) AS n`), "a retired node loses its outgoing :DEPENDS_ON")
+	assert.Equal(t, []string{"analytics.table_b->analytics.table_a"}, f.edges())
+	assert.Equal(t, nodesBefore, f.count(`MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage RETURN count(n) AS n`, nil), "nothing is deleted")
+	assert.Equal(t, []string{a, b}, f.activeIDs())
+
+	// A later release that still leaves table_d out does not move retired_at.
+	require.Equal(t, topology.PromotionApplied, f.promoteAt("r9", 9, releaseOf(modelNode(a), modelNode(b, a)), r8At.Add(24*time.Hour)))
+	again, _ := f.node(d)["retired_at"].(time.Time)
+	assert.True(t, r8At.Equal(again), "retired_at is set once, at the retirement: %v", again)
+}
+
+// A node a release carries again comes back live; dropped again later, it is
+// stamped with the new retirement.
+func TestPromoteRelease_ReturningNodeIsLiveAgain(t *testing.T) {
+	f := newSwapFixture(t)
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	f.promote("r1", releaseOf(modelNode("a"), modelNode("b", "a")), base)
+	f.promote("r2", releaseOf(modelNode("a")), base.Add(time.Hour))
+	require.Equal(t, false, f.node("b")["active"])
+
+	f.promote("r3", releaseOf(modelNode("a"), modelNode("b", "a")), base.Add(2*time.Hour))
+	back := f.node("b")
+	assert.Equal(t, true, back["active"])
+	assert.NotContains(t, back, "retired_at", "a live node has no retired_at")
+	assert.Equal(t, "r3", back["release_id"])
+	assert.Equal(t, []string{"b->a"}, f.edges())
+
+	droppedAgain := base.Add(3 * time.Hour)
+	f.promote("r4", releaseOf(modelNode("a")), droppedAgain)
+	got, _ := f.node("b")["retired_at"].(time.Time)
+	assert.True(t, droppedAgain.Equal(got), "a second retirement is stamped with its own time: %v", got)
+}
+
+// A retired node stays in the graph, so an upstream the release names that is
+// only a retired node must draw no edge: :DEPENDS_ON joins live nodes only.
+func TestPromoteRelease_UpstreamOnARetiredNodeDrawsNoEdge(t *testing.T) {
+	f := newSwapFixture(t)
+	now := time.Now().UTC()
+	f.promote("r1", releaseOf(modelNode("gone"), modelNode("a")), now)
+	f.promote("r2", releaseOf(modelNode("a")), now)
+	require.Equal(t, false, f.node("gone")["active"])
+
+	f.promote("r3", releaseOf(modelNode("a"), modelNode("b", "a", "gone")), now)
+	assert.Equal(t, []string{"b->a"}, f.edges(), "no edge to the retired node")
+	assert.Equal(t, false, f.node("gone")["active"], "naming a retired node as an upstream does not revive it")
+}
+
+// A :Node with no unique_id cannot be one the release carries: the swap
+// retires it rather than leave it live beside the release's nodes.
+func TestPromoteRelease_RetiresNodesWithoutUniqueID(t *testing.T) {
+	f := newSwapFixture(t)
+	f.exec(`CREATE (:Node {tenant_id: $tenant_id, schema_name: 'public', table_name: 'no_id', active: true})`, nil)
+
+	require.Equal(t, topology.PromotionApplied, f.promote("rel-1", releaseOf(modelNode("public.new_tbl")), time.Now().UTC()))
+
+	assert.Zero(t, f.count(`MATCH (n:Node {tenant_id: $tenant_id}) WHERE n.unique_id IS NULL AND coalesce(n.active, true) RETURN count(n) AS n`, nil),
+		"no :Node without a unique_id stays live")
+	assert.Equal(t, int64(1), f.count(`MATCH (n:Node {tenant_id: $tenant_id, table_name: 'no_id'}) RETURN count(n) AS n`, nil),
+		"the node is retired, not deleted")
+	assert.Equal(t, []string{"public.new_tbl"}, f.activeIDs())
+}
+
+// An empty release retires every node of the tenant and still becomes the
+// live promotion.
+func TestPromoteRelease_EmptyReleaseRetiresEveryNodeAndRecordsTheMeta(t *testing.T) {
+	f := newSwapFixture(t)
+	f.promote("rel-1", releaseOf(modelNode("a"), modelNode("b", "a")), time.Now().UTC())
+
+	assert.Equal(t, topology.PromotionApplied, f.promote("rel-empty", nil, time.Now().UTC()))
+
+	assert.Empty(t, f.activeIDs())
+	assert.Equal(t, []string{"a", "b"}, f.nodeIDs(), "retired, not deleted")
+	assert.Empty(t, f.edges())
+	rid, seq := f.liveMeta()
+	assert.Equal(t, "rel-empty", rid)
+	assert.Equal(t, int64(2), seq)
+}
+
+// An upstream the graph does not hold (a dependency outside this topology)
+// draws no edge and fails nothing.
+func TestPromoteRelease_UnknownUpstreamSkipsEdgeButCreatesNode(t *testing.T) {
+	f := newSwapFixture(t)
+	assert.Equal(t, topology.PromotionApplied, f.promote("rel-1", releaseOf(modelNode("a", "dangling")), time.Now().UTC()))
+	assert.Equal(t, []string{"a"}, f.nodeIDs())
+	assert.Empty(t, f.edges())
+}
+
+// A promotion of one tenant neither reads nor changes another tenant's nodes,
+// even under the same unique_ids.
+func TestPromoteRelease_LeavesOtherTenantsAlone(t *testing.T) {
+	a := newSwapFixture(t)
+	b := a.another()
+	now := time.Now().UTC()
+	b.promote("b-1", releaseOf(modelNode("x"), modelNode("y", "x")), now)
+	before := b.snapshot()
+
+	a.promote("a-1", releaseOf(modelNode("x"), modelNode("z", "x")), now)
+	a.promote("a-2", releaseOf(modelNode("z")), now)
+
+	assert.Equal(t, before, b.snapshot(), "tenant b's graph is untouched")
+	assert.Equal(t, []string{"z"}, a.activeIDs())
+	assert.Equal(t, []string{"x", "z"}, a.nodeIDs())
+	rid, seq := b.liveMeta()
+	assert.Equal(t, "b-1", rid)
+	assert.Equal(t, int64(1), seq)
+}
+
+// Code-version provenance lives on :NodeVersion; the swap stamps no last_*
+// properties on a node.
+func TestPromoteRelease_DoesNotStampLastProvenance(t *testing.T) {
+	f := newSwapFixture(t)
+	f.promote("rel-1", releaseOf(modelNode("a")), time.Now().UTC())
+	n := f.node("a")
+	for _, k := range []string{"last_commit_sha", "last_repo", "last_changed_at", "last_release_id"} {
+		assert.NotContains(t, n, k)
+	}
+}
+
+func TestPromoteRelease_PersistsTestCountAndOriginalFilePath(t *testing.T) {
+	f := newSwapFixture(t)
+	node := modelNode("a")
+	node.TestCount = 2
+	node.OriginalFilePath = "models/a.sql"
+	f.promote("rel-1", releaseOf(node), time.Now().UTC())
+
+	n := f.node("a")
+	assert.Equal(t, int64(2), n["test_count"])
+	assert.Equal(t, "models/a.sql", n["original_file_path"])
+}
+
+// A node promoted with a secret_ref stores it, and a later release that drops
+// it clears the property rather than storing an empty string or keeping the
+// stale ref.
+func TestPromoteRelease_SetsAndClearsSecretRef(t *testing.T) {
+	f := newSwapFixture(t)
+	withRef := modelNode("analytics.fx")
+	withRef.NodeType = "python-api"
+	withRef.SecretRef = "continuo-api-fx"
+	f.promote("rel-1", releaseOf(withRef), time.Now().UTC())
+	assert.Equal(t, "continuo-api-fx", f.node("analytics.fx")["secret_ref"])
+
+	withoutRef := withRef
+	withoutRef.SecretRef = ""
+	f.promote("rel-2", releaseOf(withoutRef), time.Now().UTC())
+	assert.NotContains(t, f.node("analytics.fx"), "secret_ref", "an empty secret_ref clears the property")
+}
+
+// :Node.content_hash is the hash the promotion carried, refreshed in place on
+// every release, changed or not: version ingestion compares against it.
+func TestPromoteRelease_RefreshesContentHash(t *testing.T) {
+	f := newSwapFixture(t)
+	a := modelNode("a")
+	a.ContentHash = "sha256:v1"
+	b := modelNode("b")
+	b.ContentHash = "sha256:bbb"
+	f.promote("rel-1", releaseOf(a, b), time.Now().UTC())
+	assert.Equal(t, "sha256:v1", f.node("a")["content_hash"])
+	assert.Equal(t, "sha256:bbb", f.node("b")["content_hash"])
+
+	a.ContentHash = "sha256:v2"
+	f.promote("rel-2", releaseOf(a, b), time.Now().UTC())
+	assert.Equal(t, "sha256:v2", f.node("a")["content_hash"])
+	assert.Equal(t, "sha256:bbb", f.node("b")["content_hash"])
 }

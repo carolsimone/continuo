@@ -12,15 +12,32 @@ import (
 
 func releasePromotedV2Message(t *testing.T, p events.ReleasePromoted) goredis.XMessage {
 	t.Helper()
-	fields, err := events.ReleasePromotedFields("default", "release-controller", time.Now().UTC(), p)
+	return releasePromotedV2MessageOf(t, "default", p)
+}
+
+// releasePromotedV2MessageOf builds the entry release-controller publishes for
+// tenantID.
+func releasePromotedV2MessageOf(t *testing.T, tenantID string, p events.ReleasePromoted) goredis.XMessage {
+	t.Helper()
+	fields, err := events.ReleasePromotedFields(tenantID, "release-controller", time.Now().UTC(), p)
 	require.NoError(t, err)
 	fields["outbox_entry_id"] = "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10"
 	return goredis.XMessage{ID: "1-0", Values: fields}
 }
 
+// A promotion whose envelope names no tenant has nowhere to be written: it is
+// dead-lettered, never written under no tenant.
+func TestParseReleasePromotedV2_NoTenantIsPermanent(t *testing.T) {
+	_, err := ParseReleasePromotedV2(releasePromotedV2MessageOf(t, "", events.ReleasePromoted{
+		ReleaseID: "rel-7", PromotionSeq: 7, TopologyURI: "s3://b/k", TopologySHA256: "ab",
+	}))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
+}
+
 func TestParseReleasePromotedV2_MapsThePayload(t *testing.T) {
 	promotedAt := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
-	in, err := ParseReleasePromotedV2(releasePromotedV2Message(t, events.ReleasePromoted{
+	in, err := ParseReleasePromotedV2(releasePromotedV2MessageOf(t, "tenant-7", events.ReleasePromoted{
 		ReleaseID: "rel-7", PromotedAt: promotedAt, PromotionSeq: 7,
 		TopologyURI:    "s3://continuo/tenants/default/topologies/rel-7/topology.json.gz",
 		TopologySHA256: "ab12", ChangedNodeIDs: []string{"analytics.orders"},
@@ -28,6 +45,7 @@ func TestParseReleasePromotedV2_MapsThePayload(t *testing.T) {
 		Repo: "org/svc", CommitSHA: "deadbeef", Bootstrap: true,
 	}))
 	require.NoError(t, err)
+	assert.Equal(t, "tenant-7", in.TenantID, "the tenant is the envelope's")
 	assert.Equal(t, "rel-7", in.ReleaseID)
 	assert.Equal(t, int64(7), in.PromotionSeq)
 	assert.Equal(t, "s3://continuo/tenants/default/topologies/rel-7/topology.json.gz", in.TopologyURI)

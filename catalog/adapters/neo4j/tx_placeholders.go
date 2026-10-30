@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/repository"
-	"github.com/carolsimone/continuo/catalog/domain/topology"
 )
 
 // The repositories in this file are what a uow.Tx returns for a repository
@@ -19,17 +17,6 @@ import (
 
 // errRepositoryNotTransactional is the error of every placeholder method.
 var errRepositoryNotTransactional = errors.New("neo4j: this repository cannot run on the unit of work's transaction")
-
-// topologyTxPlaceholder stands in for the topology repository on a uow.Tx.
-type topologyTxPlaceholder struct{}
-
-var _ repository.ReleasePromotionRepository = topologyTxPlaceholder{}
-
-func (topologyTxPlaceholder) PromoteRelease(
-	context.Context, string, int64, []topology.ReleasePromotedTopologyNode, time.Time,
-) (topology.PromotionOutcome, error) {
-	return "", fmt.Errorf("ReleasePromotionRepository.PromoteRelease: %w", errRepositoryNotTransactional)
-}
 
 // codeVersionsTxPlaceholder stands in for the code-version repository on a
 // uow.Tx.

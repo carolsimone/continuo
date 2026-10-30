@@ -259,11 +259,12 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// Each handler gets its own PostgresUnitOfWork instance. It holds a stateful
-	// Postgres transaction (inTx flag + *sqlx.Tx). Sharing one instance across
-	// consumers would cause "transaction already in progress" errors when two
-	// consumers process messages concurrently — the second Begin() sees inTx=true
-	// and the message is never ACKed, getting stuck in the PEL forever.
+	// Each handler that records its messages in Postgres gets its own
+	// PostgresUnitOfWork instance. It holds a stateful Postgres transaction
+	// (inTx flag + *sqlx.Tx). Sharing one instance across consumers would cause
+	// "transaction already in progress" errors when two consumers process
+	// messages concurrently — the second Begin() sees inTx=true and the message
+	// is never ACKed, getting stuck in the PEL forever.
 	//
 	// One object-storage client, passed to each reader as its
 	// objectstore.Reader role: the topology artifact reader of both promotion
@@ -275,13 +276,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// release.promoted:v2 swaps the live Neo4j topology when release-controller
-	// promotes a release, reading the topology from the release's artifact in
-	// object storage. The swap decides by promotion seq, so a late or redriven
-	// older promotion never reverts the live topology.
+	// The Neo4j unit of work writes a message's data and its processed-message
+	// marker in one transaction. It holds no per-message state, so one
+	// instance serves every consumer that uses it.
+	graphUnitOfWork := neo4jinfra.NewUnitOfWork(neo4jClient, logger)
+
+	// release.promoted:v2 swaps the tenant's live Neo4j topology when
+	// release-controller promotes a release, reading the topology from the
+	// release's artifact in object storage. The swap decides by promotion seq,
+	// so a late or redriven older promotion never reverts the live topology.
 	topologyArtifactReader := s3infra.NewTopologyArtifactReader(objectStore)
-	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
-	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
+	releasePromotedHandler := handlers.NewReleasePromotedHandler(graphUnitOfWork, topologyArtifactReader, logger)
 
 	// release.promoted:v2 (versions) — an independent consumer group. It reads
 	// the release's code-bundle document and topology artifact from object
