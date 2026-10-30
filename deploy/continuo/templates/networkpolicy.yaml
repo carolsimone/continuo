@@ -45,7 +45,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [run-controller, catalog, execution-controller,
+                values: [run-controller, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller, db-init-migrate]
         - podSelector:

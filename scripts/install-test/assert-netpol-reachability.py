@@ -116,6 +116,7 @@ PROXY_EDGES = [
 CLOSED_EDGES = [
     ("catalog", "run-controller", 50051,
      "catalog calls no run-controller RPC: run-controller fails a stalled run itself"),
+    ("catalog", "postgresql", 5432, "catalog keeps no Postgres"),
 ]
 
 # While the render holds egress-proxy, no service but the two agents may use it.

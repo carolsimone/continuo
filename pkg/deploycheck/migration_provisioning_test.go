@@ -225,3 +225,114 @@ func dbInitLoopDatabases(t *testing.T, content, where string) []string {
 	}
 	return tokens
 }
+
+// postgresDatabases are the services that own a Postgres database, named as
+// their db/migration directory and as the suffix of `continuo_<name>`. catalog
+// is absent on purpose: it keeps its graph and its processed-message markers in
+// Neo4j and has no database to create, migrate or reach.
+var postgresDatabases = []string{
+	"agent_chat", "agent_remediation", "dead_letter", "execution", "release",
+	"remediation", "run_controller",
+}
+
+// warehouseDatabase is provisioned beside the service databases but holds the
+// dbt warehouse, so it has no migration directory and no Flyway job.
+const warehouseDatabase = "dbt"
+
+// assertSameSet fails when got and want differ, naming what each side lacks.
+func assertSameSet(t *testing.T, where string, got, want []string) {
+	t.Helper()
+	gotSet, wantSet := toSet(got), toSet(want)
+	var extra, missing []string
+	for _, g := range got {
+		if !wantSet[g] {
+			extra = append(extra, g)
+		}
+	}
+	for _, w := range want {
+		if !gotSet[w] {
+			missing = append(missing, w)
+		}
+	}
+	sort.Strings(extra)
+	sort.Strings(missing)
+	if len(extra) > 0 || len(missing) > 0 {
+		t.Errorf("%s provisions the wrong databases: extra %v, missing %v (want exactly %v)",
+			where, extra, missing, want)
+	}
+}
+
+// withoutPrefix returns each token with prefix removed and drops the tokens
+// that do not carry it.
+func withoutPrefix(tokens []string, prefix string) []string {
+	var out []string
+	for _, tok := range tokens {
+		if rest, ok := strings.CutPrefix(tok, prefix); ok {
+			out = append(out, rest)
+		}
+	}
+	return out
+}
+
+// TestProvisioning_ListsExactlyTheServicesThatKeepPostgres pins every place a
+// database is provisioned to one list: the migration job's DATABASES, the
+// migration image's COPY lines, the migration directories, the Postgres
+// initdb script, the chart's db-init loop and the compose Flyway jobs. A
+// service that keeps no Postgres appears in none of them, so no install creates
+// a database nothing connects to.
+func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
+	root := repoRoot(t)
+	read := func(rel string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) //nolint:gosec // G304: root is discovered by walking up for go.work and rel is a fixed literal at every call site, not external input
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(raw)
+	}
+	want := append([]string(nil), postgresDatabases...)
+
+	assertSameSet(t, "db/migrate-all.sh DATABASES",
+		databasesAssignment(t, read("db/migrate-all.sh"), "db/migrate-all.sh"), want)
+
+	var copied []string
+	for _, m := range regexp.MustCompile(`(?m)^COPY\s+migration/(\S+)\s+/flyway/sql/\S+`).
+		FindAllStringSubmatch(read("db/Dockerfile.migrate"), -1) {
+		copied = append(copied, m[1])
+	}
+	assertSameSet(t, "db/Dockerfile.migrate COPY lines", copied, want)
+
+	entries, err := os.ReadDir(filepath.Join(root, "db", "migration"))
+	if err != nil {
+		t.Fatalf("read db/migration: %v", err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	assertSameSet(t, "db/migration directories", dirs, want)
+
+	withWarehouse := append([]string{warehouseDatabase}, want...)
+
+	var created []string
+	for _, m := range regexp.MustCompile(`CREATE DATABASE (continuo_\w+);`).
+		FindAllStringSubmatch(read("db/init-databases.sh"), -1) {
+		created = append(created, m[1])
+	}
+	assertSameSet(t, "db/init-databases.sh CREATE DATABASE",
+		withoutPrefix(created, "continuo_"), withWarehouse)
+
+	jobDBs := dbInitLoopDatabases(t, read("deploy/continuo/templates/db-init-migrate-job.yaml"),
+		"deploy/continuo/templates/db-init-migrate-job.yaml")
+	assertSameSet(t, "deploy/continuo/templates/db-init-migrate-job.yaml db-init loop",
+		withoutPrefix(jobDBs, "continuo_"), withWarehouse)
+
+	var flyway []string
+	for _, m := range regexp.MustCompile(`-url=jdbc:postgresql://postgres:5432/continuo_(\w+)`).
+		FindAllStringSubmatch(read("docker-compose.yml"), -1) {
+		flyway = append(flyway, m[1])
+	}
+	assertSameSet(t, "docker-compose.yml Flyway jobs", flyway, want)
+}

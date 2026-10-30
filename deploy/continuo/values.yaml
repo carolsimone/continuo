@@ -677,13 +677,12 @@ services:
     grpcPort: 50052
     # Readiness and liveness point at DIFFERENT paths with different semantics
     # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
-    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # probes (a Redis/Neo4j outage stops traffic); /livez = workers +
     # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
     # are already retrying, but a dead/wedged consumer must).
     readinessPath: /ready
     livenessPath: /livez
     secretEnv:
-      - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: NEO4J_PASSWORD, ref: neo4j}
       - {name: REDIS_PASSWORD, ref: redis}
       # S3 credentials are NOT listed here. catalog reads each release's
@@ -692,7 +691,6 @@ services:
       # _helpers.tpl) so they survive an upgrade that carries an older copy of
       # this list. Endpoint, bucket and region arrive via the shared ConfigMap.
     env:
-      POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
 

@@ -352,7 +352,7 @@ colima start --disk 100  # 100GB
 - Re-run provisioning: `bash tests/e2e/provision-k8s-test-env.sh`
 
 **Test fails with "table does not exist":**
-- Verify flyway migrations completed: `docker compose logs flyway-orchestrator`
+- Verify flyway migrations completed: `docker compose logs flyway-execution`
 - Check the execution outbox table exists: `docker compose exec postgres psql -U continuo_svc -d continuo_execution -c '\dt execution_outbox'`
 
 **Services not starting:**

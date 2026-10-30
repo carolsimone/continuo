@@ -125,7 +125,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-run-controller flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
+	@for svc in flyway-run-controller flyway-execution flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -142,7 +142,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := run-controller catalog execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-orchestrator flyway-release \
+FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
 
@@ -174,8 +174,9 @@ test-deps-down:
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
 # Task-1 baseline proved POSTGRES_HOST alone is NOT enough — pkgconfig.LoadPostgres
-# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service uses its
-# own database continuo_<svc>. Creds (continuo_svc/continuo) come from docker-compose.yml.
+# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service that keeps
+# Postgres uses its own database continuo_<svc> (catalog and egress-proxy keep none, so
+# their db is empty). Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
 # release-controller pins GOFLAGS=-p=1: its adapters/postgres and
@@ -198,7 +199,7 @@ test-go: test-deps-up
 	  extra=; pkgs=./...; \
 	  case $$s in \
 	    run-controller) db=continuo_run_controller;; \
-	    catalog) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
+	    catalog) db=; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \

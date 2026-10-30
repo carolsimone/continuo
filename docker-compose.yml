@@ -34,15 +34,6 @@ services:
       - postgres
     tty: true
 
-  flyway-orchestrator:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_orchestrator -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/orchestrator:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
   flyway-release:
     image: flyway/flyway
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_release -user=continuo_svc -password=continuo -connectRetries=30
@@ -101,7 +92,7 @@ services:
       timeout: 5s
 
   neo4j:
-    image: neo4j:5.15.0-community
+    image: neo4j:5.26.28-community
     ports:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
@@ -258,11 +249,7 @@ services:
       dockerfile: catalog/Dockerfile.dev
     container_name: catalog
     depends_on:
-      postgres:
-        condition: service_started
       redis:
-        condition: service_started
-      flyway-orchestrator:
         condition: service_started
       neo4j:
         condition: service_started
@@ -278,12 +265,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      # PostgreSQL
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_orchestrator
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
       # Object storage — the version-ingestion consumer reads each release's
       # code-bundle document
       - S3_ENDPOINT_URL=http://minio:9000

@@ -33,7 +33,6 @@ type testClients struct {
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
 	executionDB            *sqlx.DB
-	orchestratorDB         *sqlx.DB
 	runControllerDB        *sqlx.DB
 	releaseDB              *sqlx.DB
 	dbtDB                  *sqlx.DB
@@ -108,7 +107,6 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	// Setup PostgreSQL connections for each database
 	executionDB := connectPostgres(t, pgHost, "continuo_execution")
-	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
 	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
@@ -124,7 +122,6 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
 		executionDB:            executionDB,
-		orchestratorDB:         orchestratorDB,
 		runControllerDB:        runControllerDB,
 		releaseDB:              releaseDB,
 		dbtDB:                  dbtDB,
@@ -184,7 +181,6 @@ func (c *testClients) close(ctx context.Context) {
 	_ = c.redisClient.Close()
 	_ = c.neo4jDriver.Close(closeCtx)
 	_ = c.executionDB.Close()
-	_ = c.orchestratorDB.Close()
 	_ = c.runControllerDB.Close()
 	_ = c.releaseDB.Close()
 	_ = c.dbtDB.Close()

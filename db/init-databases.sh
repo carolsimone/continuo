@@ -4,7 +4,6 @@ set -e
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
     CREATE DATABASE continuo_run_controller;
     CREATE DATABASE continuo_execution;
-    CREATE DATABASE continuo_orchestrator;
     CREATE DATABASE continuo_dbt;
     CREATE DATABASE continuo_release;
     CREATE DATABASE continuo_agent_chat;
@@ -14,7 +13,6 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
 
     GRANT ALL PRIVILEGES ON DATABASE continuo_run_controller TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_execution TO $POSTGRES_USER;
-    GRANT ALL PRIVILEGES ON DATABASE continuo_orchestrator TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_dbt TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_release TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_agent_chat TO $POSTGRES_USER;
