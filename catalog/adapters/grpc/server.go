@@ -7,6 +7,7 @@ import (
 	"net"
 
 	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -30,7 +31,10 @@ func NewServer(port int, queryHandler *QueryHandler, logger *slog.Logger) (*Serv
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
-	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(loggingInterceptor(logger)))
+	// The identity interceptor runs first, so it places the initiating user
+	// and the tenant on the context before the logging interceptor or any
+	// handler observes the request.
+	grpcServer := grpc.NewServer(grpc.ChainUnaryInterceptor(identity.UnaryServerInterceptor(), loggingInterceptor(logger)))
 
 	server := &Server{
 		grpcServer: grpcServer,

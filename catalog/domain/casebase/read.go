@@ -17,7 +17,7 @@ type ProposalView struct {
 }
 
 // EditedView is one provenance edit a merged fix PR made to a node, read from
-// the (:Proposal)-[:EDITED]->(:Table) edge. NodeID is the edited node — which
+// the (:Proposal)-[:EDITED]->(:Node) edge. NodeID is the edited node — which
 // may be an upstream ancestor of the rejection rather than the rejected node
 // itself. Diff is the edge's stored proposal-time diff. When the edit was
 // Amended and a :NodeVersion was promoted after the PR closed, MergedPrior and

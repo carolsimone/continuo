@@ -10,41 +10,43 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// NodeReader returns node metadata and node source locations. Reads
-// go straight to Neo4j and return raw domain types. Satisfied by
+// NodeReader returns a tenant's node metadata and node source locations.
+// Reads go straight to Neo4j and return raw domain types. Satisfied by
 // adapters/neo4j.NodeQueryRepository.
 type NodeReader interface {
-	GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
-	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
+	GetNode(ctx context.Context, tenantID, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
+	GetNodeLocation(ctx context.Context, tenantID, uniqueID string) (*domain.NodeLocation, error)
 }
 
-// CodeVersionHistoryReader returns the code-version history views served by
-// the code-version RPCs: node version chains, rendered diffs, upstream
-// changes, and shared-code unit chains. Cap policy (upstream ancestor count,
-// diff byte size) and limit defaulting/clamping live here, not in the handler.
-// Satisfied by service/queries.CodeVersionQueryService.
+// CodeVersionHistoryReader returns a tenant's code-version history views
+// served by the code-version RPCs: node version chains, rendered diffs,
+// upstream changes, and shared-code unit chains. Cap policy (upstream ancestor
+// count, diff byte size) and limit defaulting/clamping live here, not in the
+// handler. Satisfied by service/queries.CodeVersionQueryService.
 type CodeVersionHistoryReader interface {
-	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
+	GetNodeVersions(ctx context.Context, tenantID, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
 	// GetCurrentNodeVersion returns only the version the node runs now — a
 	// 0-or-1 slice, revert-safe where GetNodeVersions' newest-first is not.
-	GetCurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error)
-	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
-	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
-	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
+	GetCurrentNodeVersion(ctx context.Context, tenantID, uniqueID string, includeCode bool) ([]codeversion.VersionView, error)
+	GetNodeVersionDiff(ctx context.Context, tenantID, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
+	GetUpstreamChanges(ctx context.Context, tenantID, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
+	GetCodeUnitVersions(ctx context.Context, tenantID, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
 }
 
-// PrecedentHistoryReader serves the failure-precedent RPC. Satisfied by
-// service/queries.PrecedentQueryService.
+// PrecedentHistoryReader serves the failure-precedent RPC for a tenant.
+// Satisfied by service/queries.PrecedentQueryService.
 type PrecedentHistoryReader interface {
-	GetPrecedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error)
+	GetPrecedents(ctx context.Context, tenantID, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error)
 }
 
-// QueryHandler implements the CatalogQuery gRPC service.
+// QueryHandler implements the CatalogQuery gRPC service. Every RPC reads for
+// the tenant the identity interceptor placed on the request.
 type QueryHandler struct {
 	catalogv1.UnimplementedCatalogQueryServer
 	nodes        NodeReader
@@ -57,7 +59,25 @@ func NewQueryHandler(nodes NodeReader, codeVersions CodeVersionHistoryReader, pr
 	return &QueryHandler{nodes: nodes, codeVersions: codeVersions, precedents: precedents, logger: logger}
 }
 
+// requestTenant returns the tenant the request acts for, which the identity
+// interceptor at the gRPC edge placed on ctx. A context that carries no tenant
+// is refused with Internal before anything is read: the server serving it was
+// built without the interceptor, and no handler acts for a tenant it guessed.
+func requestTenant(ctx context.Context) (string, error) {
+	tenantID := identity.TenantFromContext(ctx)
+	if tenantID == "" {
+		return "", status.Error(codes.Internal, "the request carries no tenant")
+	}
+	return tenantID, nil
+}
+
+// GetNode returns the metadata of one of the tenant's nodes; a retired node
+// is found only when the request sets include_inactive.
 func (h *QueryHandler) GetNode(ctx context.Context, req *catalogv1.GetNodeRequest) (*catalogv1.GetNodeResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
 	}
@@ -65,7 +85,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *catalogv1.GetNodeReques
 	if req.GetIncludeInactive() {
 		scope = domain.IncludeInactiveNodes
 	}
-	meta, err := h.nodes.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
+	meta, err := h.nodes.GetNode(ctx, tenantID, req.ServiceName, req.SchemaName, req.TableName, scope)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)
@@ -81,10 +101,14 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *catalogv1.GetNodeReques
 	}, nil
 }
 
-// GetNodeLocation returns where a node's source lives. An unknown unique_id
-// maps to NOT_FOUND per the entity-lookup convention.
+// GetNodeLocation returns where a node's source lives. An unknown or retired
+// unique_id maps to NOT_FOUND per the entity-lookup convention.
 func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *catalogv1.GetNodeLocationRequest) (*catalogv1.GetNodeLocationResponse, error) {
-	loc, err := h.nodes.GetNodeLocation(ctx, req.UniqueId)
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	loc, err := h.nodes.GetNodeLocation(ctx, tenantID, req.UniqueId)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -99,12 +123,19 @@ func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *catalogv1.GetNo
 // documents this as the maximum and rejects anything above it.
 const maxUpstreamDepth = 10
 
+// GetNodeVersions lists a node's versions, or with current_only the one it
+// runs now. No version of a retired node is current, so current_only returns
+// an empty list for one.
 func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *catalogv1.GetNodeVersionsRequest) (*catalogv1.GetNodeVersionsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
 	if req.CurrentOnly {
-		versions, err := h.codeVersions.GetCurrentNodeVersion(ctx, req.UniqueId, req.IncludeCode)
+		versions, err := h.codeVersions.GetCurrentNodeVersion(ctx, tenantID, req.UniqueId, req.IncludeCode)
 		if err != nil {
 			if errors.Is(err, domain.ErrNodeNotFound) {
 				return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -118,7 +149,7 @@ func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *catalogv1.GetNo
 		}
 		return &catalogv1.GetNodeVersionsResponse{Versions: out}, nil
 	}
-	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit, req.IncludeCode)
+	versions, err := h.codeVersions.GetNodeVersions(ctx, tenantID, req.UniqueId, req.Limit, req.IncludeCode)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -136,13 +167,17 @@ func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *catalogv1.GetNo
 }
 
 func (h *QueryHandler) GetNodeVersionDiff(ctx context.Context, req *catalogv1.GetNodeVersionDiffRequest) (*catalogv1.GetNodeVersionDiffResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
 	if req.FromSeq == req.ToSeq {
 		return nil, status.Error(codes.InvalidArgument, "from_seq and to_seq must differ")
 	}
-	diff, err := h.codeVersions.GetNodeVersionDiff(ctx, req.UniqueId, req.FromSeq, req.ToSeq)
+	diff, err := h.codeVersions.GetNodeVersionDiff(ctx, tenantID, req.UniqueId, req.FromSeq, req.ToSeq)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q version %d or %d not found", req.UniqueId, req.FromSeq, req.ToSeq)
@@ -154,6 +189,10 @@ func (h *QueryHandler) GetNodeVersionDiff(ctx context.Context, req *catalogv1.Ge
 }
 
 func (h *QueryHandler) GetUpstreamChanges(ctx context.Context, req *catalogv1.GetUpstreamChangesRequest) (*catalogv1.GetUpstreamChangesResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
@@ -168,7 +207,7 @@ func (h *QueryHandler) GetUpstreamChanges(ctx context.Context, req *catalogv1.Ge
 		}
 		since = parsed
 	}
-	changes, err := h.codeVersions.GetUpstreamChanges(ctx, req.UniqueId, req.Depth, since)
+	changes, err := h.codeVersions.GetUpstreamChanges(ctx, tenantID, req.UniqueId, req.Depth, since)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -186,10 +225,14 @@ func (h *QueryHandler) GetUpstreamChanges(ctx context.Context, req *catalogv1.Ge
 }
 
 func (h *QueryHandler) GetCodeUnitVersions(ctx context.Context, req *catalogv1.GetCodeUnitVersionsRequest) (*catalogv1.GetCodeUnitVersionsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if (req.UnitId == "") == (req.UniqueId == "") {
 		return nil, status.Error(codes.InvalidArgument, "exactly one of unit_id or unique_id is required")
 	}
-	versions, err := h.codeVersions.GetCodeUnitVersions(ctx, req.UnitId, req.UniqueId, req.Limit)
+	versions, err := h.codeVersions.GetCodeUnitVersions(ctx, tenantID, req.UnitId, req.UniqueId, req.Limit)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) || errors.Is(err, domain.ErrUnitNotFound) {
 			id := req.UnitId
@@ -211,10 +254,14 @@ func (h *QueryHandler) GetCodeUnitVersions(ctx context.Context, req *catalogv1.G
 }
 
 func (h *QueryHandler) GetPrecedents(ctx context.Context, req *catalogv1.GetPrecedentsRequest) (*catalogv1.GetPrecedentsResponse, error) {
+	tenantID, err := requestTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.Signature == "" && (req.Category == "" || req.Reason == "") {
 		return nil, status.Error(codes.InvalidArgument, "either signature, or both category and reason, are required")
 	}
-	precedents, err := h.precedents.GetPrecedents(ctx, req.Signature, req.Category, req.Reason, req.Limit, req.IncludeCode)
+	precedents, err := h.precedents.GetPrecedents(ctx, tenantID, req.Signature, req.Category, req.Reason, req.Limit, req.IncludeCode)
 	if err != nil {
 		h.logger.Error("GetPrecedents failed", "signature", req.Signature, "category", req.Category, "reason", req.Reason, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetPrecedents: %v", err)

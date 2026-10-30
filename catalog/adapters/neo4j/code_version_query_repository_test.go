@@ -25,16 +25,18 @@ func newCodeVersionQueryRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.CodeVers
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
-// seedDependsOn creates a :DEPENDS_ON edge between two already-seeded :Table
-// nodes, addressed by unique_id.
+// seedDependsOn creates a :DEPENDS_ON edge between two already-seeded :Node
+// nodes of versionFixtureTenant, addressed by unique_id.
 func seedDependsOn(t *testing.T, client neo4jinfra.Neo4jClient, from, to string) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
-	res, err := s.Run(ctx,
-		`MATCH (a:Table {unique_id:$from}) MATCH (b:Table {unique_id:$to}) MERGE (a)-[:DEPENDS_ON]->(b)`,
-		map[string]any{"from": from, "to": to})
+	res, err := s.Run(ctx, `
+		MATCH (a:Node {tenant_id: $tenant_id, unique_id: $from})
+		MATCH (b:Node {tenant_id: $tenant_id, unique_id: $to})
+		MERGE (a)-[:DEPENDS_ON]->(b)`,
+		map[string]any{"tenant_id": versionFixtureTenant, "from": from, "to": to})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
 	require.NoError(t, err)
@@ -47,7 +49,7 @@ func TestCodeVersionQueryRepository_NodeVersions_NewestFirstIsCurrentOnce(t *tes
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -59,7 +61,7 @@ func TestCodeVersionQueryRepository_NodeVersions_NewestFirstIsCurrentOnce(t *tes
 	}
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.NodeVersions(ctx, "analytics.revenue", 10, true)
+	versions, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 10, true)
 	require.NoError(t, err)
 	require.Len(t, versions, 3)
 
@@ -82,7 +84,7 @@ func TestCodeVersionQueryRepository_NodeVersions_RespectsLimit(t *testing.T) {
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -94,7 +96,7 @@ func TestCodeVersionQueryRepository_NodeVersions_RespectsLimit(t *testing.T) {
 	}
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.NodeVersions(ctx, "analytics.revenue", 2, true)
+	versions, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 2, true)
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
 	assert.Equal(t, "sha256:v3", versions[0].ContentHash)
@@ -108,7 +110,7 @@ func TestCodeVersionQueryRepository_NodeVersions_UnknownNodeReturnsErrNodeNotFou
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.NodeVersions(ctx, "analytics.ghost", 10, true)
+	versions, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.ghost", 10, true)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 	assert.Nil(t, versions)
@@ -119,23 +121,23 @@ func TestCodeVersionQueryRepository_NodeVersions_KnownNodeNoVersionsReturnsEmpty
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.NodeVersions(ctx, "analytics.revenue", 10, true)
+	versions, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 10, true)
 	require.NoError(t, err)
 	assert.Empty(t, versions)
 }
 
-// A retired node's :Table is gone but its versions survive as free-standing
-// :NodeVersion nodes; the chain walk must still find them by unique_id, with
-// is_current false everywhere since there is no :CURRENT pointer left.
-func TestCodeVersionQueryRepository_NodeVersions_RetiredNodeReturnsHistoryIsCurrentFalse(t *testing.T) {
+// Versions can outlive their node in the graph, as free-standing :NodeVersion
+// nodes with no :Node; the read still finds them by unique_id, with
+// is_current false everywhere since no :CURRENT pointer is left.
+func TestCodeVersionQueryRepository_NodeVersions_VersionsWithoutANodeAreListedNoneCurrent(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -147,19 +149,20 @@ func TestCodeVersionQueryRepository_NodeVersions_RetiredNodeReturnsHistoryIsCurr
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	res, err := s.Run(ctx, `MATCH (t:Table {unique_id:'analytics.revenue'}) DETACH DELETE t`, nil)
+	res, err := s.Run(ctx, `MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.revenue'}) DETACH DELETE n`,
+		map[string]any{"tenant_id": versionFixtureTenant})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.NodeVersions(ctx, "analytics.revenue", 10, true)
+	versions, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 10, true)
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
 	assert.Equal(t, "sha256:v2", versions[0].ContentHash, "still newest first by promoted_at")
 	for _, v := range versions {
-		assert.False(t, v.IsCurrent, "no :Table means no :CURRENT pointer")
+		assert.False(t, v.IsCurrent, "no :Node means no :CURRENT pointer")
 	}
 }
 
@@ -175,7 +178,7 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurren
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.rev_node", "sha256:h1")
+	seedVersionNode(t, client, "analytics.rev_node", "sha256:h1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -193,7 +196,7 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurren
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	got, err := repo.CurrentNodeVersion(ctx, "analytics.rev_node", true)
+	got, err := repo.CurrentNodeVersion(ctx, versionFixtureTenant, "analytics.rev_node", true)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "sha256:h1", got[0].ContentHash, "the reverted-to version is current")
@@ -201,7 +204,7 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurren
 	assert.True(t, got[0].IsCurrent)
 
 	// Contrast: newest-first would have led the fixer astray.
-	newest, err := repo.NodeVersions(ctx, "analytics.rev_node", 20, false)
+	newest, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.rev_node", 20, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, newest)
 	assert.Equal(t, "sha256:h2", newest[0].ContentHash, "newest-first still surfaces the superseded version")
@@ -212,10 +215,10 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_KnownNodeNoCurrentReturns
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.no_cur", "sha256:v1")
+	seedVersionNode(t, client, "analytics.no_cur", "sha256:v1")
 
 	repo := newCodeVersionQueryRepo(client)
-	got, err := repo.CurrentNodeVersion(ctx, "analytics.no_cur", true)
+	got, err := repo.CurrentNodeVersion(ctx, versionFixtureTenant, "analytics.no_cur", true)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -227,47 +230,45 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_UnknownNodeReturnsErrNode
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	repo := newCodeVersionQueryRepo(client)
-	got, err := repo.CurrentNodeVersion(ctx, "analytics.ghost", true)
+	got, err := repo.CurrentNodeVersion(ctx, versionFixtureTenant, "analytics.ghost", true)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 	assert.Nil(t, got)
 }
 
-// TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty
-// proves a soft-retired node is excluded from CurrentNodeVersion rather than
-// reported as running its obsolete code. release_promotion_repository.go's
-// Step B retires a table a newer release dropped by setting active=false
-// without removing its :CURRENT edge — it is kept, inactive, solely so a
-// :Run-[:EXECUTES] edge from run history is not destroyed — so the :CURRENT
-// match here still finds a version unless the read filters on t.active.
-func TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty(t *testing.T) {
+// TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredNodeReturnsEmpty
+// proves a retired node is excluded from CurrentNodeVersion rather than
+// reported as running its obsolete code. The swap retires a node a newer
+// release dropped by setting active=false and keeps its :CURRENT edge as the
+// record of its last version, so the :CURRENT match here still finds a
+// version unless the read filters on the node being live.
+func TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredNodeReturnsEmpty(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.retired_node", "sha256:v1")
+	seedVersionNode(t, client, "analytics.retired_node", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.retired_node", "sha256:v1")}, nil))
 	require.NoError(t, err)
 
-	// Soft-retire: active=false, :CURRENT edge left untouched — exactly what
-	// Step B does, and distinct from the hard-orphan case above (DETACH DELETE
-	// of the :Table itself), which NodeVersions' retired-node test already
-	// covers.
+	// Retire: active=false, :CURRENT edge left untouched — exactly what the
+	// swap does.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	res, err := s.Run(ctx,
-		`MATCH (t:Table {unique_id:'analytics.retired_node'}) SET t.active = false, t.retired_at = datetime()`, nil)
+		`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.retired_node'}) SET n.active = false, n.retired_at = datetime()`,
+		map[string]any{"tenant_id": versionFixtureTenant})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
 	repo := newCodeVersionQueryRepo(client)
-	got, err := repo.CurrentNodeVersion(ctx, "analytics.retired_node", true)
+	got, err := repo.CurrentNodeVersion(ctx, versionFixtureTenant, "analytics.retired_node", true)
 	require.NoError(t, err)
-	assert.Empty(t, got, "a retired table's obsolete :CURRENT version must not be reported as running now")
+	assert.Empty(t, got, "a retired node's obsolete :CURRENT version must not be reported as running now")
 }
 
 // ---- VersionsBySeq ----
@@ -277,7 +278,7 @@ func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T)
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -289,7 +290,7 @@ func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T)
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	from, to, err := repo.VersionsBySeq(ctx, "analytics.revenue", 1, 2)
+	from, to, err := repo.VersionsBySeq(ctx, versionFixtureTenant, "analytics.revenue", 1, 2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), from.VersionSeq)
 	assert.Equal(t, "sha256:v1", from.ContentHash)
@@ -304,7 +305,7 @@ func TestCodeVersionQueryRepository_VersionsBySeq_MissingSeqReturnsErrNodeNotFou
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
@@ -312,7 +313,7 @@ func TestCodeVersionQueryRepository_VersionsBySeq_MissingSeqReturnsErrNodeNotFou
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	_, _, err = repo.VersionsBySeq(ctx, "analytics.revenue", 1, 99)
+	_, _, err = repo.VersionsBySeq(ctx, versionFixtureTenant, "analytics.revenue", 1, 99)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 	assert.Contains(t, err.Error(), "99", "the error names the missing seq")
@@ -327,7 +328,7 @@ func TestCodeVersionQueryRepository_Ancestors_OrderedMostRecentlyChangedFirstBou
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	for _, uid := range []string{"n", "a", "b", "c"} {
-		seedVersionTable(t, client, uid, "sha256:seed")
+		seedVersionNode(t, client, uid, "sha256:seed")
 	}
 	seedDependsOn(t, client, "n", "a")
 	seedDependsOn(t, client, "a", "b")
@@ -346,7 +347,7 @@ func TestCodeVersionQueryRepository_Ancestors_OrderedMostRecentlyChangedFirstBou
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	ancestors, err := repo.Ancestors(ctx, "n", 2, time.Time{}, 5)
+	ancestors, err := repo.Ancestors(ctx, versionFixtureTenant, "n", 2, time.Time{}, 5)
 	require.NoError(t, err)
 	require.Len(t, ancestors, 2, "c sits at depth 3, beyond the depth-2 cap")
 	assert.Equal(t, "b", ancestors[0].UniqueID, "b changed most recently")
@@ -364,7 +365,7 @@ func TestCodeVersionQueryRepository_Ancestors_RespectsSinceFilter(t *testing.T) 
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	for _, uid := range []string{"n", "a", "b"} {
-		seedVersionTable(t, client, uid, "sha256:seed")
+		seedVersionNode(t, client, uid, "sha256:seed")
 	}
 	seedDependsOn(t, client, "n", "a")
 	seedDependsOn(t, client, "n", "b")
@@ -380,7 +381,7 @@ func TestCodeVersionQueryRepository_Ancestors_RespectsSinceFilter(t *testing.T) 
 
 	repo := newCodeVersionQueryRepo(client)
 	since := base.Add(time.Hour)
-	ancestors, err := repo.Ancestors(ctx, "n", 1, since, 5)
+	ancestors, err := repo.Ancestors(ctx, versionFixtureTenant, "n", 1, since, 5)
 	require.NoError(t, err)
 	require.Len(t, ancestors, 1, "a's only version predates since")
 	assert.Equal(t, "b", ancestors[0].UniqueID)
@@ -393,7 +394,7 @@ func TestCodeVersionQueryRepository_UnitsForNode_ReturnsCurrentVersionUnits(t *t
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
@@ -407,7 +408,7 @@ func TestCodeVersionQueryRepository_UnitsForNode_ReturnsCurrentVersionUnits(t *t
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	units, err := repo.UnitsForNode(ctx, "analytics.revenue")
+	units, err := repo.UnitsForNode(ctx, versionFixtureTenant, "analytics.revenue")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"svc:m1", "svc:m2"}, units)
 }
@@ -417,10 +418,10 @@ func TestCodeVersionQueryRepository_UnitsForNode_NoCurrentVersionReturnsEmpty(t 
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	repo := newCodeVersionQueryRepo(client)
-	units, err := repo.UnitsForNode(ctx, "analytics.revenue")
+	units, err := repo.UnitsForNode(ctx, versionFixtureTenant, "analytics.revenue")
 	require.NoError(t, err)
 	assert.Empty(t, units)
 }
@@ -432,7 +433,7 @@ func TestCodeVersionQueryRepository_UnitVersions_NewestFirstIsCurrent(t *testing
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -448,7 +449,7 @@ func TestCodeVersionQueryRepository_UnitVersions_NewestFirstIsCurrent(t *testing
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.UnitVersions(ctx, "svc:m1", 10)
+	versions, err := repo.UnitVersions(ctx, versionFixtureTenant, "svc:m1", 10)
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
 	assert.Equal(t, "u2", versions[0].Checksum, "newest first")
@@ -464,7 +465,7 @@ func TestCodeVersionQueryRepository_NodeVersions_IncludeCodeFalseOmitsCodeBodies
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
@@ -472,7 +473,7 @@ func TestCodeVersionQueryRepository_NodeVersions_IncludeCodeFalseOmitsCodeBodies
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	light, err := repo.NodeVersions(ctx, "analytics.revenue", 10, false)
+	light, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 10, false)
 	require.NoError(t, err)
 	require.Len(t, light, 1)
 	assert.Empty(t, light[0].RawCode)
@@ -480,7 +481,7 @@ func TestCodeVersionQueryRepository_NodeVersions_IncludeCodeFalseOmitsCodeBodies
 	assert.Equal(t, "sha256:v1", light[0].ContentHash, "hashes are unaffected")
 	assert.NotEmpty(t, light[0].ConfigJSON, "config_json is unaffected")
 
-	full, err := repo.NodeVersions(ctx, "analytics.revenue", 10, true)
+	full, err := repo.NodeVersions(ctx, versionFixtureTenant, "analytics.revenue", 10, true)
 	require.NoError(t, err)
 	require.Len(t, full, 1)
 	assert.Equal(t, "select 1", full[0].RawCode)
@@ -496,7 +497,7 @@ func TestCodeVersionQueryRepository_UnitVersions_UnknownUnitReturnsErrUnitNotFou
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.UnitVersions(ctx, "svc:ghost", 10)
+	versions, err := repo.UnitVersions(ctx, versionFixtureTenant, "svc:ghost", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrUnitNotFound))
 	assert.Nil(t, versions)
@@ -512,14 +513,15 @@ func TestCodeVersionQueryRepository_UnitVersions_KnownUnitNoVersionsReturnsEmpty
 	// today, but the port contract still promises OK+empty for a known
 	// anchor with no history, so seed the edge case directly.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	res, err := s.Run(ctx, `MERGE (cu:CodeUnit {unit_id: 'svc:known-empty'})`, nil)
+	res, err := s.Run(ctx, `MERGE (cu:CodeUnit {tenant_id: $tenant_id, unit_id: 'svc:known-empty'})`,
+		map[string]any{"tenant_id": versionFixtureTenant})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
 	repo := newCodeVersionQueryRepo(client)
-	versions, err := repo.UnitVersions(ctx, "svc:known-empty", 10)
+	versions, err := repo.UnitVersions(ctx, versionFixtureTenant, "svc:known-empty", 10)
 	require.NoError(t, err)
 	assert.Empty(t, versions)
 }
@@ -531,7 +533,7 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_ReturnsAllChainsCappedPerU
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
@@ -557,7 +559,7 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_ReturnsAllChainsCappedPerU
 	require.NoError(t, err)
 
 	repo := newCodeVersionQueryRepo(client)
-	byUnit, err := repo.UnitVersionsBatch(ctx, []string{"svc:m1", "svc:m2", "svc:m3"}, 1)
+	byUnit, err := repo.UnitVersionsBatch(ctx, versionFixtureTenant, []string{"svc:m1", "svc:m2", "svc:m3"}, 1)
 	require.NoError(t, err)
 	require.Len(t, byUnit, 3, "one round trip returns all three units' chains")
 	require.Len(t, byUnit["svc:m1"], 1, "capped per-unit at limit=1")
@@ -576,7 +578,7 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_UnitWithNoVersionsIsAbsent
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	repo := newCodeVersionQueryRepo(client)
-	byUnit, err := repo.UnitVersionsBatch(ctx, []string{"svc:ghost"}, 10)
+	byUnit, err := repo.UnitVersionsBatch(ctx, versionFixtureTenant, []string{"svc:ghost"}, 10)
 	require.NoError(t, err)
 	_, ok := byUnit["svc:ghost"]
 	assert.False(t, ok, "an id with no recorded version is simply absent, not an error")
@@ -591,8 +593,8 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_UnitWithNoVersionsIsAbsent
 // promoted_at moves to the revert time.
 func seedRevertScenario(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, base time.Time) {
 	t.Helper()
-	seedVersionTable(t, client, "n", "sha256:seed")
-	seedVersionTable(t, client, "a", "sha256:seed")
+	seedVersionNode(t, client, "n", "sha256:seed")
+	seedVersionNode(t, client, "a", "sha256:seed")
 	seedDependsOn(t, client, "n", "a")
 
 	writer := newVersionRepo(client)
@@ -615,7 +617,7 @@ func TestCodeVersionQueryRepository_Ancestors_RevertReportsCurrentThenNewestOthe
 	seedRevertScenario(t, ctx, client, time.Now().UTC())
 
 	repo := newCodeVersionQueryRepo(client)
-	ancestors, err := repo.Ancestors(ctx, "n", 1, time.Time{}, 5)
+	ancestors, err := repo.Ancestors(ctx, versionFixtureTenant, "n", 1, time.Time{}, 5)
 	require.NoError(t, err)
 	require.Len(t, ancestors, 1)
 	require.Len(t, ancestors[0].Versions, 2)
@@ -646,14 +648,14 @@ func TestCodeVersionQueryRepository_Ancestors_SinceFilterUsesEffectiveRecencyAcr
 	// creation (base+1h) and A's own creation (base). A's or B's own
 	// promoted_at would both wrongly predate this window.
 	since := base.Add(90 * time.Minute)
-	ancestors, err := repo.Ancestors(ctx, "n", 1, since, 5)
+	ancestors, err := repo.Ancestors(ctx, versionFixtureTenant, "n", 1, since, 5)
 	require.NoError(t, err)
 	require.Len(t, ancestors, 1, "the revert happened after `since`, so effective recency must include it")
 	assert.Equal(t, "a", ancestors[0].UniqueID)
 
 	// A window strictly after the revert excludes it.
 	sinceAfter := base.Add(3 * time.Hour)
-	ancestors, err = repo.Ancestors(ctx, "n", 1, sinceAfter, 5)
+	ancestors, err = repo.Ancestors(ctx, versionFixtureTenant, "n", 1, sinceAfter, 5)
 	require.NoError(t, err)
 	assert.Empty(t, ancestors)
 }
@@ -668,7 +670,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_RevertReportsActualTransitio
 	repo := newCodeVersionQueryRepo(client)
 	svc := queries.NewCodeVersionQueryService(repo)
 
-	changes, err := svc.GetUpstreamChanges(ctx, "n", 1, time.Time{})
+	changes, err := svc.GetUpstreamChanges(ctx, versionFixtureTenant, "n", 1, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	assert.Equal(t, "a", changes[0].UniqueID)
@@ -685,10 +687,10 @@ func TestCodeVersionQueryRepository_Ancestors_CapAppliesToTheMostRecentlyChanged
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
-	seedVersionTable(t, client, "n", "sha256:seed")
+	seedVersionNode(t, client, "n", "sha256:seed")
 	uids := []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7"}
 	for _, uid := range uids {
-		seedVersionTable(t, client, uid, "sha256:seed")
+		seedVersionNode(t, client, uid, "sha256:seed")
 		seedDependsOn(t, client, "n", uid)
 	}
 	writer := newVersionRepo(client)
@@ -700,7 +702,7 @@ func TestCodeVersionQueryRepository_Ancestors_CapAppliesToTheMostRecentlyChanged
 	}
 
 	repo := newCodeVersionQueryRepo(client)
-	ancestors, err := repo.Ancestors(ctx, "n", 1, time.Time{}, 5)
+	ancestors, err := repo.Ancestors(ctx, versionFixtureTenant, "n", 1, time.Time{}, 5)
 	require.NoError(t, err)
 	require.Len(t, ancestors, 5, "cap must apply even though 7 ancestors changed")
 
@@ -719,7 +721,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueID_BatchesAllUnits_
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
@@ -737,7 +739,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueID_BatchesAllUnits_
 	repo := newCodeVersionQueryRepo(client)
 	svc := queries.NewCodeVersionQueryService(repo)
 
-	got, err := svc.GetCodeUnitVersions(ctx, "", "analytics.revenue", 10)
+	got, err := svc.GetCodeUnitVersions(ctx, versionFixtureTenant, "", "analytics.revenue", 10)
 	require.NoError(t, err)
 	require.Len(t, got, 3, "all three units' chains come back from the node-selector path")
 	ids := []string{got[0].UnitID, got[1].UnitID, got[2].UnitID}
@@ -755,7 +757,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_UnknownUnitID_Integration(t
 	repo := newCodeVersionQueryRepo(client)
 	svc := queries.NewCodeVersionQueryService(repo)
 
-	_, err := svc.GetCodeUnitVersions(ctx, "svc:ghost", "", 10)
+	_, err := svc.GetCodeUnitVersions(ctx, versionFixtureTenant, "svc:ghost", "", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrUnitNotFound))
 }
@@ -769,7 +771,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_UnknownNodeUniqueID_Integra
 	repo := newCodeVersionQueryRepo(client)
 	svc := queries.NewCodeVersionQueryService(repo)
 
-	_, err := svc.GetCodeUnitVersions(ctx, "", "analytics.ghost", 10)
+	_, err := svc.GetCodeUnitVersions(ctx, versionFixtureTenant, "", "analytics.ghost", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -779,7 +781,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_KnownNodeNoUnits_Integratio
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	seedVersionNode(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
 	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
@@ -789,7 +791,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_KnownNodeNoUnits_Integratio
 	repo := newCodeVersionQueryRepo(client)
 	svc := queries.NewCodeVersionQueryService(repo)
 
-	got, err := svc.GetCodeUnitVersions(ctx, "", "analytics.revenue", 10)
+	got, err := svc.GetCodeUnitVersions(ctx, versionFixtureTenant, "", "analytics.revenue", 10)
 	require.NoError(t, err, "a known node whose current version uses no shared code is OK+empty, not NOT_FOUND")
 	assert.Empty(t, got)
 }

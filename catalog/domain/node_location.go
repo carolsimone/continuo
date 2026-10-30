@@ -3,11 +3,11 @@ package domain
 import "errors"
 
 // ErrNodeNotFound is returned by node reads (GetNode, GetNodeLocation,
-// GetNodeVersions, and the other code-version queries) when no node matches the
-// requested identity. GetNodeLocation, and GetNode unless the caller includes
-// inactive nodes, match only nodes in the current topology; the code-version
-// reads also match a node a later release removed, as long as its version
-// history survives.
+// GetNodeVersions, and the other code-version queries) when the tenant holds
+// no node matching the requested identity. GetNodeLocation, and GetNode unless
+// the caller includes inactive nodes, match only nodes in the current
+// topology; the code-version reads also match a retired node, and a unique_id
+// whose versions outlived its node.
 var ErrNodeNotFound = errors.New("node not found")
 
 // ErrUnitNotFound is returned by shared-code-unit reads when the requested

@@ -17,49 +17,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The code-version query tests read the graph through
-// CodeVersionQueryRepository, which finds a node by its :Table label. Their
-// fixtures write versions with the versions group's repository, which writes
-// a node's versions under its :Node of one tenant, so each node they seed
-// carries both labels and versionFixtureTenant.
+// The code-version query tests read the graph of versionFixtureTenant through
+// CodeVersionQueryRepository. Their fixtures write versions with the versions
+// group's repository and seed the nodes those versions hang off, every node
+// under that tenant.
 
 // versionFixtureTenant is the tenant the query tests' nodes and versions are
 // written under.
 const versionFixtureTenant = "version-query-test"
 
-// wipeVersionFixtures clears the version graph and the nodes it hangs off, so
-// each test starts from a known-empty slate.
+// wipeVersionFixtures deletes every node of versionFixtureTenant, whatever
+// its label, so each test starts from a known-empty slate. No other tenant's
+// node is touched.
 func wipeVersionFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
-	for _, q := range []string{
-		`MATCH (n:NodeVersion) DETACH DELETE n`,
-		`MATCH (n:CodeUnitVersion) DETACH DELETE n`,
-		`MATCH (n:CodeUnit) DETACH DELETE n`,
-		`MATCH (n:Table) DETACH DELETE n`,
-		`MATCH (n:Rejection) DETACH DELETE n`,
-		`MATCH (n:Node {tenant_id: $tenant_id}) DETACH DELETE n`,
-		`MATCH (n:Meta {tenant_id: $tenant_id}) DETACH DELETE n`,
-		`MATCH (n:ProcessedMessage {tenant_id: $tenant_id}) DETACH DELETE n`,
-	} {
-		res, err := s.Run(ctx, q, map[string]any{"tenant_id": versionFixtureTenant})
-		require.NoError(t, err)
-		_, err = res.Consume(ctx)
-		require.NoError(t, err)
-	}
+	res, err := s.Run(ctx, `MATCH (n {tenant_id: $tenant_id}) DETACH DELETE n`,
+		map[string]any{"tenant_id": versionFixtureTenant})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
 }
 
-// seedVersionTable creates the node a version write attaches to, carrying the
-// content_hash a topology swap would have stamped on it.
-func seedVersionTable(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, contentHash string) {
+// seedVersionNode creates the live node a version write attaches to, carrying
+// the content_hash a topology swap would have stamped on it.
+func seedVersionNode(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, contentHash string) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx,
-		`MERGE (t:Node:Table {tenant_id: $tenant_id, unique_id: $uid}) SET t.content_hash = $ch, t.active = true`,
+		`MERGE (n:Node {tenant_id: $tenant_id, unique_id: $uid}) SET n.content_hash = $ch, n.active = true`,
 		map[string]any{"tenant_id": versionFixtureTenant, "uid": uniqueID, "ch": contentHash})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)

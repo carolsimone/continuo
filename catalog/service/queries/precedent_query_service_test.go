@@ -23,9 +23,11 @@ type fakePrecedentReader struct {
 	gotReason      string
 	gotLimit       int32
 	gotIncludeCode bool
+	gotTenant      string
 }
 
-func (f *fakePrecedentReader) Precedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.PrecedentView, error) {
+func (f *fakePrecedentReader) Precedents(ctx context.Context, tenantID, signature, category, reason string, limit int32, includeCode bool) ([]casebase.PrecedentView, error) {
+	f.gotTenant = tenantID
 	f.gotSignature = signature
 	f.gotCategory = category
 	f.gotReason = reason
@@ -51,7 +53,7 @@ func TestPrecedentService_RendersResolutionDiff(t *testing.T) {
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -72,7 +74,7 @@ func TestPrecedentService_IncludeCodeFalseStripsBodies(t *testing.T) {
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, false)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, false)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -99,7 +101,7 @@ func TestPrecedentService_ResolvedByEditedProvenanceWithoutOwnTimeline(t *testin
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -128,7 +130,7 @@ func TestPrecedentService_AmendedFallbackDiffIsNotShipped(t *testing.T) {
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -153,7 +155,7 @@ func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -181,7 +183,7 @@ func TestPrecedentService_ProposalResolvedWithoutDrawnEditsIsResolved(t *testing
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -201,7 +203,7 @@ func TestPrecedentService_UnresolvedHasNoDiff(t *testing.T) {
 	}}
 	svc := newPrecedentSvc(r)
 
-	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	out, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
@@ -228,9 +230,17 @@ func TestPrecedentService_LimitClamped(t *testing.T) {
 			r := &fakePrecedentReader{}
 			svc := newPrecedentSvc(r)
 
-			_, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", tc.reqLimit, false)
+			_, err := svc.GetPrecedents(context.Background(), testTenant, "sig-1", "", "", tc.reqLimit, false)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantLimit, r.gotLimit)
 		})
 	}
+}
+
+// The service reads the precedents of the tenant it was called for.
+func TestPrecedentService_ReadsForItsTenant(t *testing.T) {
+	r := &fakePrecedentReader{}
+	_, err := newPrecedentSvc(r).GetPrecedents(context.Background(), testTenant, "sig-1", "", "", 5, true)
+	require.NoError(t, err)
+	assert.Equal(t, testTenant, r.gotTenant)
 }

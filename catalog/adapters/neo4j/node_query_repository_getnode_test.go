@@ -14,46 +14,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedGetNodeFixture creates a single active :Table row for GetNode
-// integration coverage. Omitting testCount (pass nil) mirrors a node that
+// seedGetNodeFixture creates a single live :Node of nodeQueryTenant for
+// GetNode integration coverage. Omitting testCount (pass nil) mirrors a node that
 // predates test_count capture, so the property is unset rather than zero.
 func seedGetNodeFixture(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, nodeType string, testCount *int) {
 	t.Helper()
-	seedGetNodeTable(t, ctx, client, service, schema, table, nodeType, testCount, true)
+	seedGetNode(t, ctx, client, service, schema, table, nodeType, testCount, true)
 }
 
-// seedGetNodeTable creates a single :Table row with an explicit active flag,
-// so a node a later release deactivated (active: false) can be seeded.
-func seedGetNodeTable(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, nodeType string, testCount *int, active bool) {
+// seedGetNode creates a single :Node of nodeQueryTenant with an explicit
+// active flag, so a node a later release retired (active: false) can be
+// seeded.
+func seedGetNode(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, nodeType string, testCount *int, active bool) {
 	t.Helper()
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
 	params := map[string]any{
-		"service":  service,
-		"schema":   schema,
-		"table":    table,
-		"nodeType": nodeType,
-		"active":   active,
+		"tenant_id": nodeQueryTenant,
+		"service":   service,
+		"schema":    schema,
+		"table":     table,
+		"nodeType":  nodeType,
+		"active":    active,
 	}
-	query := `CREATE (:Table {service_name: $service, schema_name: $schema, table_name: $table, active: $active, node_type: $nodeType})`
+	query := `CREATE (:Node {tenant_id: $tenant_id, service_name: $service, schema_name: $schema, table_name: $table, active: $active, node_type: $nodeType})`
 	if testCount != nil {
-		query = `CREATE (:Table {service_name: $service, schema_name: $schema, table_name: $table, active: $active, node_type: $nodeType, test_count: $testCount})`
+		query = `CREATE (:Node {tenant_id: $tenant_id, service_name: $service, schema_name: $schema, table_name: $table, active: $active, node_type: $nodeType, test_count: $testCount})`
 		params["testCount"] = *testCount
 	}
 	_, err := session.Run(ctx, query, params)
 	require.NoError(t, err)
-}
-
-// cleanupGetNodeTables removes every :Table row seeded under the identity.
-func cleanupGetNodeTables(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table string) {
-	t.Helper()
-	t.Cleanup(func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, `MATCH (t:Table {service_name: $service, schema_name: $schema, table_name: $table}) DETACH DELETE t`,
-			map[string]any{"service": service, "schema": schema, "table": table})
-	})
 }
 
 func TestNodeQueryRepository_GetNode_KnownTestCount(t *testing.T) {
@@ -68,14 +59,8 @@ func TestNodeQueryRepository_GetNode_KnownTestCount(t *testing.T) {
 	schema, table := "an", "fct_known"
 	tc := 3
 	seedGetNodeFixture(t, ctx, client, service, schema, table, "dbt-model", &tc)
-	t.Cleanup(func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, `MATCH (t:Table {service_name: $service, schema_name: $schema, table_name: $table}) DETACH DELETE t`,
-			map[string]any{"service": service, "schema": schema, "table": table})
-	})
 
-	got, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
+	got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.ActiveNodesOnly)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType)
 	assert.Equal(t, 3, got.TestCount)
@@ -94,14 +79,8 @@ func TestNodeQueryRepository_GetNode_UnknownTestCount(t *testing.T) {
 	service := fmt.Sprintf("svc-%s-unknown", t.Name())
 	schema, table := "an", "fct_unknown"
 	seedGetNodeFixture(t, ctx, client, service, schema, table, "dbt-model", nil)
-	t.Cleanup(func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, `MATCH (t:Table {service_name: $service, schema_name: $schema, table_name: $table}) DETACH DELETE t`,
-			map[string]any{"service": service, "schema": schema, "table": table})
-	})
 
-	got, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
+	got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.ActiveNodesOnly)
 	require.NoError(t, err)
 	assert.Equal(t, 0, got.TestCount)
 	assert.False(t, got.TestCountKnown, "test_count property unset must report TestCountKnown=false, not a misleading zero")
@@ -115,7 +94,7 @@ func TestNodeQueryRepository_GetNode_NotFound(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_, err := repo.GetNode(ctx, fmt.Sprintf("svc-%s-absent", t.Name()), "an", "does_not_exist", domain.IncludeInactiveNodes)
+	_, err := repo.GetNode(ctx, nodeQueryTenant, fmt.Sprintf("svc-%s-absent", t.Name()), "an", "does_not_exist", domain.IncludeInactiveNodes)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -130,10 +109,9 @@ func TestNodeQueryRepository_GetNode_InactiveIsNotFoundByDefault(t *testing.T) {
 
 	service := fmt.Sprintf("svc-%s-inactive", t.Name())
 	schema, table := "an", "fct_retired"
-	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-model", nil, false)
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
+	seedGetNode(t, ctx, client, service, schema, table, "dbt-model", nil, false)
 
-	_, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
+	_, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.ActiveNodesOnly)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound), "an inactive node must not match with ActiveNodesOnly")
 }
@@ -149,10 +127,9 @@ func TestNodeQueryRepository_GetNode_IncludeInactiveReturnsInactiveNode(t *testi
 	service := fmt.Sprintf("svc-%s-inactive", t.Name())
 	schema, table := "an", "seed_retired"
 	tc := 2
-	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-seed", &tc, false)
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
+	seedGetNode(t, ctx, client, service, schema, table, "dbt-seed", &tc, false)
 
-	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+	got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-seed", got.NodeType)
 	assert.True(t, got.Inactive)
@@ -171,9 +148,8 @@ func TestNodeQueryRepository_GetNode_IncludeInactiveReportsActiveNodeAsActive(t 
 	service := fmt.Sprintf("svc-%s-active", t.Name())
 	schema, table := "an", "fct_live"
 	seedGetNodeFixture(t, ctx, client, service, schema, table, "dbt-model", nil)
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 
-	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+	got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType)
 	assert.False(t, got.Inactive)
@@ -189,25 +165,25 @@ func TestNodeQueryRepository_GetNode_IncludeInactivePrefersActiveMatch(t *testin
 
 	service := fmt.Sprintf("svc-%s-both", t.Name())
 	schema, table := "an", "fct_both"
-	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-seed", nil, false)
-	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-model", nil, true)
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
+	seedGetNode(t, ctx, client, service, schema, table, "dbt-seed", nil, false)
+	seedGetNode(t, ctx, client, service, schema, table, "dbt-model", nil, true)
 
-	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+	got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
-	assert.Equal(t, "dbt-model", got.NodeType, "the active :Table must win over an inactive one with the same identity")
+	assert.Equal(t, "dbt-model", got.NodeType, "the live :Node must win over a retired one with the same identity")
 	assert.False(t, got.Inactive)
 }
 
-// seedRetiredGetNodeTable creates an inactive :Table row with an explicit
-// unique_id and retired_at, so several retired rows can share one identity.
-func seedRetiredGetNodeTable(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, uniqueID, nodeType string, retiredAt time.Time) {
+// seedRetiredGetNode creates a retired :Node of nodeQueryTenant with an
+// explicit unique_id and retired_at, so several retired nodes can share one
+// identity.
+func seedRetiredGetNode(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, uniqueID, nodeType string, retiredAt time.Time) {
 	t.Helper()
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
-	_, err := session.Run(ctx, `CREATE (:Table {service_name: $service, schema_name: $schema, table_name: $table,
+	_, err := session.Run(ctx, `CREATE (:Node {tenant_id: $tenant_id, service_name: $service, schema_name: $schema, table_name: $table,
 		unique_id: $uid, active: false, node_type: $nodeType, retired_at: $retiredAt})`,
-		map[string]any{"service": service, "schema": schema, "table": table, "uid": uniqueID, "nodeType": nodeType, "retiredAt": retiredAt.UTC()})
+		map[string]any{"tenant_id": nodeQueryTenant, "service": service, "schema": schema, "table": table, "uid": uniqueID, "nodeType": nodeType, "retiredAt": retiredAt.UTC()})
 	require.NoError(t, err)
 }
 
@@ -221,16 +197,15 @@ func TestNodeQueryRepository_GetNode_MostRecentlyRetiredWinsAmongInactive(t *tes
 
 	service := fmt.Sprintf("svc-%s", t.Name())
 	schema, table := "an", "fct_moved"
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 	now := time.Now()
 	// The older row is created last and has the smaller unique_id, so neither
 	// creation order nor unique_id order alone can pick the newer row.
-	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "seed.a", "dbt-seed", now.Add(-time.Hour))
-	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "model.z", "dbt-model", now)
-	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "seed.b", "dbt-seed", now.Add(-2*time.Hour))
+	seedRetiredGetNode(t, ctx, client, service, schema, table, "seed.a", "dbt-seed", now.Add(-time.Hour))
+	seedRetiredGetNode(t, ctx, client, service, schema, table, "model.z", "dbt-model", now)
+	seedRetiredGetNode(t, ctx, client, service, schema, table, "seed.b", "dbt-seed", now.Add(-2*time.Hour))
 
 	for i := 0; i < 5; i++ {
-		got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+		got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.IncludeInactiveNodes)
 		require.NoError(t, err)
 		assert.Equal(t, "dbt-model", got.NodeType, "call %d: the most recently retired row must win", i)
 		assert.True(t, got.Inactive)
@@ -247,13 +222,12 @@ func TestNodeQueryRepository_GetNode_EqualRetirementFallsBackToUniqueID(t *testi
 
 	service := fmt.Sprintf("svc-%s", t.Name())
 	schema, table := "an", "fct_tie"
-	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 	at := time.Now()
-	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "b.model", "dbt-model", at)
-	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "a.seed", "dbt-seed", at)
+	seedRetiredGetNode(t, ctx, client, service, schema, table, "b.model", "dbt-model", at)
+	seedRetiredGetNode(t, ctx, client, service, schema, table, "a.seed", "dbt-seed", at)
 
 	for i := 0; i < 5; i++ {
-		got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+		got, err := repo.GetNode(ctx, nodeQueryTenant, service, schema, table, domain.IncludeInactiveNodes)
 		require.NoError(t, err)
 		assert.Equal(t, "dbt-seed", got.NodeType, "call %d: ties break on the smallest unique_id", i)
 	}

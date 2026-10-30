@@ -14,20 +14,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestQueryRepo builds a NodeQueryRepository against the live Neo4j and returns
-// it together with a cleanup function that wipes any nodes created by the test.
-// It intentionally re-uses the env conventions already in use by run_repository_test.go
-// (NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD with the docker-compose defaults).
+// nodeQueryTenant is the tenant the node query tests seed and read under.
+const nodeQueryTenant = "node-query-test"
+
+// newTestQueryRepo builds a NodeQueryRepository against the live Neo4j and
+// returns it together with a cleanup function that deletes every node of
+// nodeQueryTenant, and no other tenant's.
 func newTestQueryRepo(t *testing.T) (*neo4jinfra.NodeQueryRepository, neo4jinfra.Neo4jClient, func()) {
 	t.Helper()
-	client := newTestClient(t) // already defined in run_repository_test.go
+	client := newTestClient(t)
 	repo := neo4jinfra.NewNodeQueryRepository(client, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	cleanup := func() {
 		ctx := context.Background()
 		session := client.NewSession(ctx, neo4j.AccessModeWrite)
 		defer session.Close(ctx)
-		_, _ = session.Run(ctx, "MATCH (r:Run {test_marker: $m}) DETACH DELETE r", map[string]any{"m": t.Name()})
+		res, err := session.Run(ctx, "MATCH (n {tenant_id: $tenant_id}) DETACH DELETE n", map[string]any{"tenant_id": nodeQueryTenant})
+		require.NoError(t, err)
+		_, err = res.Consume(ctx)
+		require.NoError(t, err)
 	}
+	cleanup()
 	return repo, client, cleanup
 }
 
@@ -38,25 +44,17 @@ func TestGetNodeLocation_ReturnsPathAndService(t *testing.T) {
 	repo, client, cleanup := newTestQueryRepo(t)
 	defer cleanup()
 	ctx := context.Background()
-	marker := t.Name()
 
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	_, err := s.Run(ctx, `
-        CREATE (:Table {unique_id:'analytics.loc_target', service_name:'service-1',
-                        schema_name:'analytics', table_name:'loc_target',
-                        original_file_path:'models/loc_target.sql', active:true,
-                        test_marker:$m})
-    `, map[string]any{"m": marker})
+        CREATE (:Node {tenant_id: $tenant_id, unique_id:'analytics.loc_target', service_name:'service-1',
+                       schema_name:'analytics', table_name:'loc_target',
+                       original_file_path:'models/loc_target.sql', active:true})
+    `, map[string]any{"tenant_id": nodeQueryTenant})
 	require.NoError(t, err)
 	s.Close(ctx)
-	t.Cleanup(func() {
-		ws := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer ws.Close(ctx)
-		_, _ = ws.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
-			map[string]any{"m": marker})
-	})
 
-	loc, err := repo.GetNodeLocation(ctx, "analytics.loc_target")
+	loc, err := repo.GetNodeLocation(ctx, nodeQueryTenant, "analytics.loc_target")
 	require.NoError(t, err)
 	assert.Equal(t, "models/loc_target.sql", loc.FilePath)
 	assert.Equal(t, "service-1", loc.ServiceName)
@@ -69,6 +67,6 @@ func TestGetNodeLocation_UnknownNode_ErrNodeNotFound(t *testing.T) {
 	repo, _, cleanup := newTestQueryRepo(t)
 	defer cleanup()
 
-	_, err := repo.GetNodeLocation(context.Background(), "analytics.absent")
+	_, err := repo.GetNodeLocation(context.Background(), nodeQueryTenant, "analytics.absent")
 	require.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }

@@ -12,23 +12,37 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
+// testTenant is the tenant every test request acts for.
+const testTenant = "tenant-a"
+
+// tenantCtx is the context of a request the identity interceptor placed
+// testTenant on.
+func tenantCtx() context.Context {
+	return identity.WithTenant(context.Background(), testTenant)
+}
+
 // fakeNodeReader satisfies grpcadapter.NodeReader for the GetNodeLocation and
-// node-metadata RPCs. It returns a fixed location for GetNodeLocation.
+// node-metadata RPCs. It returns a fixed location for GetNodeLocation and
+// records the tenant of every call.
 type fakeNodeReader struct {
 	location    *domain.NodeLocation
 	locationErr error
+	tenants     []string
 }
 
-func (fakeNodeReader) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
-	return nil, nil
+func (f *fakeNodeReader) GetNode(_ context.Context, tenantID, _, _, _ string, _ domain.NodeScope) (*domain.NodeMeta, error) {
+	f.tenants = append(f.tenants, tenantID)
+	return &domain.NodeMeta{}, nil
 }
-func (f *fakeNodeReader) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+func (f *fakeNodeReader) GetNodeLocation(_ context.Context, tenantID, _ string) (*domain.NodeLocation, error) {
+	f.tenants = append(f.tenants, tenantID)
 	if f.locationErr != nil {
 		return nil, f.locationErr
 	}
@@ -72,9 +86,12 @@ type fakeCodeVersionHistoryReader struct {
 	unitVersionsErr error
 	gotUnitID       string
 	gotNodeUniqueID string
+
+	tenants []string
 }
 
-func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, _ string, _ int32, includeCode bool) ([]codeversion.VersionView, error) {
+func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, tenantID, _ string, _ int32, includeCode bool) ([]codeversion.VersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotIncludeCode = includeCode
 	if f.nodeVersionsErr != nil {
 		return nil, f.nodeVersionsErr
@@ -82,7 +99,8 @@ func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, _ stri
 	return f.nodeVersions, nil
 }
 
-func (f *fakeCodeVersionHistoryReader) GetCurrentNodeVersion(_ context.Context, _ string, includeCode bool) ([]codeversion.VersionView, error) {
+func (f *fakeCodeVersionHistoryReader) GetCurrentNodeVersion(_ context.Context, tenantID, _ string, includeCode bool) ([]codeversion.VersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotCurrentIncludeCode = includeCode
 	if f.currentNodeVersionErr != nil {
 		return nil, f.currentNodeVersionErr
@@ -90,14 +108,16 @@ func (f *fakeCodeVersionHistoryReader) GetCurrentNodeVersion(_ context.Context, 
 	return f.currentNodeVersion, nil
 }
 
-func (f *fakeCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
+func (f *fakeCodeVersionHistoryReader) GetNodeVersionDiff(_ context.Context, tenantID, _ string, _, _ int64) (*codeversion.VersionDiff, error) {
+	f.tenants = append(f.tenants, tenantID)
 	if f.diffErr != nil {
 		return nil, f.diffErr
 	}
 	return f.diff, nil
 }
 
-func (f *fakeCodeVersionHistoryReader) GetUpstreamChanges(_ context.Context, _ string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error) {
+func (f *fakeCodeVersionHistoryReader) GetUpstreamChanges(_ context.Context, tenantID, _ string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotDepth = depth
 	f.gotSince = since
 	if f.upstreamChangesErr != nil {
@@ -106,7 +126,8 @@ func (f *fakeCodeVersionHistoryReader) GetUpstreamChanges(_ context.Context, _ s
 	return f.upstreamChanges, nil
 }
 
-func (f *fakeCodeVersionHistoryReader) GetCodeUnitVersions(_ context.Context, unitID, uniqueID string, _ int32) ([]codeversion.UnitVersionView, error) {
+func (f *fakeCodeVersionHistoryReader) GetCodeUnitVersions(_ context.Context, tenantID, unitID, uniqueID string, _ int32) ([]codeversion.UnitVersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotUnitID = unitID
 	f.gotNodeUniqueID = uniqueID
 	if f.unitVersionsErr != nil {
@@ -132,7 +153,7 @@ func TestQueryHandler_GetNodeVersions_MapsAllFields(t *testing.T) {
 		},
 	}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "svc.schema.tbl", Limit: 10})
+	resp, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "svc.schema.tbl", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, resp.Versions, 2)
 
@@ -162,21 +183,21 @@ func TestQueryHandler_GetNodeVersions_MapsAllFields(t *testing.T) {
 func TestQueryHandler_GetNodeVersions_UnknownNode_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{nodeVersionsErr: domain.ErrNodeNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "ghost"})
+	_, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "ghost"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestQueryHandler_GetNodeVersions_EmptyHistory_OK(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{nodeVersions: []codeversion.VersionView{}}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "known"})
+	resp, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "known"})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Versions)
 }
 
 func TestQueryHandler_GetNodeVersions_EmptyUniqueID_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: ""})
+	_, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: ""})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
@@ -184,11 +205,11 @@ func TestQueryHandler_GetNodeVersions_IncludeCodePassesThrough(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{}
 	h := newHandlerWithCodeVersions(cv)
 
-	_, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: true})
+	_, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: true})
 	require.NoError(t, err)
 	assert.True(t, cv.gotIncludeCode)
 
-	_, err = h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: false})
+	_, err = h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: false})
 	require.NoError(t, err)
 	assert.False(t, cv.gotIncludeCode)
 }
@@ -200,7 +221,7 @@ func TestQueryHandler_GetNodeVersions_CurrentOnly_CallsGetCurrentNodeVersion(t *
 		},
 	}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{
+	resp, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{
 		UniqueId: "svc.schema.tbl", CurrentOnly: true, IncludeCode: true,
 	})
 	require.NoError(t, err)
@@ -213,14 +234,14 @@ func TestQueryHandler_GetNodeVersions_CurrentOnly_CallsGetCurrentNodeVersion(t *
 func TestQueryHandler_GetNodeVersions_CurrentOnly_UnknownNode_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{currentNodeVersionErr: domain.ErrNodeNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "ghost", CurrentOnly: true})
+	_, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "ghost", CurrentOnly: true})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestQueryHandler_GetNodeVersions_CurrentOnly_KnownNodeNoCurrent_Empty(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{currentNodeVersion: []codeversion.VersionView{}}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetNodeVersions(context.Background(), &catalogv1.GetNodeVersionsRequest{UniqueId: "known", CurrentOnly: true})
+	resp, err := h.GetNodeVersions(tenantCtx(), &catalogv1.GetNodeVersionsRequest{UniqueId: "known", CurrentOnly: true})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Versions)
 }
@@ -237,7 +258,7 @@ func TestQueryHandler_GetNodeVersionDiff_MapsFields(t *testing.T) {
 	}
 	cv := &fakeCodeVersionHistoryReader{diff: diff}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetNodeVersionDiff(context.Background(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 1, ToSeq: 2})
+	resp, err := h.GetNodeVersionDiff(tenantCtx(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 1, ToSeq: 2})
 	require.NoError(t, err)
 	require.NotNil(t, resp.Diff)
 	assert.Equal(t, "n1", resp.Diff.UniqueId)
@@ -256,19 +277,19 @@ func TestQueryHandler_GetNodeVersionDiff_MapsFields(t *testing.T) {
 func TestQueryHandler_GetNodeVersionDiff_UnknownNode_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{diffErr: domain.ErrNodeNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetNodeVersionDiff(context.Background(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 1, ToSeq: 2})
+	_, err := h.GetNodeVersionDiff(tenantCtx(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 1, ToSeq: 2})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestQueryHandler_GetNodeVersionDiff_EmptyUniqueID_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetNodeVersionDiff(context.Background(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "", FromSeq: 1, ToSeq: 2})
+	_, err := h.GetNodeVersionDiff(tenantCtx(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "", FromSeq: 1, ToSeq: 2})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetNodeVersionDiff_SameSeq_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetNodeVersionDiff(context.Background(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 5, ToSeq: 5})
+	_, err := h.GetNodeVersionDiff(tenantCtx(), &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 5, ToSeq: 5})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
@@ -281,7 +302,7 @@ func TestQueryHandler_GetUpstreamChanges_MapsFields(t *testing.T) {
 		},
 	}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 4, Since: "2026-01-01T00:00:00Z"})
+	resp, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 4, Since: "2026-01-01T00:00:00Z"})
 	require.NoError(t, err)
 	require.Len(t, resp.Changes, 1)
 	assert.Equal(t, "up-1", resp.Changes[0].UniqueId)
@@ -298,34 +319,34 @@ func TestQueryHandler_GetUpstreamChanges_MapsFields(t *testing.T) {
 func TestQueryHandler_GetUpstreamChanges_UnknownNode_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{upstreamChangesErr: domain.ErrNodeNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "ghost"})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "ghost"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestQueryHandler_GetUpstreamChanges_EmptyChanges_OK(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{upstreamChanges: []codeversion.UpstreamChange{}}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1"})
+	resp, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1"})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Changes)
 }
 
 func TestQueryHandler_GetUpstreamChanges_EmptyUniqueID_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: ""})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: ""})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetUpstreamChanges_DepthOver10_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 11})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 11})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetUpstreamChanges_DepthExactly10_Allowed(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 10})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 10})
 	require.NoError(t, err)
 	assert.Equal(t, int32(10), cv.gotDepth)
 }
@@ -333,21 +354,21 @@ func TestQueryHandler_GetUpstreamChanges_DepthExactly10_Allowed(t *testing.T) {
 func TestQueryHandler_GetUpstreamChanges_NonPositiveDepthPassesThrough(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 0})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Depth: 0})
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), cv.gotDepth, "the service, not the handler, defaults a non-positive depth")
 }
 
 func TestQueryHandler_GetUpstreamChanges_MalformedSince_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Since: "not-a-date"})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Since: "not-a-date"})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetUpstreamChanges_EmptySince_NoTimeFilter(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetUpstreamChanges(context.Background(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Since: ""})
+	_, err := h.GetUpstreamChanges(tenantCtx(), &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1", Since: ""})
 	require.NoError(t, err)
 	assert.True(t, cv.gotSince.IsZero())
 }
@@ -362,7 +383,7 @@ func TestQueryHandler_GetCodeUnitVersions_MapsFields(t *testing.T) {
 		},
 	}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a", Limit: 5})
+	resp, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, resp.Versions, 1)
 	v := resp.Versions[0]
@@ -380,7 +401,7 @@ func TestQueryHandler_GetCodeUnitVersions_MapsFields(t *testing.T) {
 func TestQueryHandler_GetCodeUnitVersions_UnknownUnit_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{unitVersionsErr: domain.ErrNodeNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "ghost"})
+	_, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "ghost"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
@@ -389,34 +410,34 @@ func TestQueryHandler_GetCodeUnitVersions_UnknownUnit_NotFound(t *testing.T) {
 func TestQueryHandler_GetCodeUnitVersions_UnknownUnitID_ErrUnitNotFound_NotFound(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{unitVersionsErr: domain.ErrUnitNotFound}
 	h := newHandlerWithCodeVersions(cv)
-	_, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "ghost"})
+	_, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "ghost"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestQueryHandler_GetCodeUnitVersions_EmptyHistory_OK(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{unitVersions: []codeversion.UnitVersionView{}}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a"})
+	resp, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a"})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Versions)
 }
 
 func TestQueryHandler_GetCodeUnitVersions_BothSet_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a", UniqueId: "n1"})
+	_, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UnitId: "macro-a", UniqueId: "n1"})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetCodeUnitVersions_NeitherSet_InvalidArgument(t *testing.T) {
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
-	_, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{})
+	_, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestQueryHandler_GetCodeUnitVersions_ByUniqueID(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{unitVersions: []codeversion.UnitVersionView{{UnitID: "macro-b"}}}
 	h := newHandlerWithCodeVersions(cv)
-	resp, err := h.GetCodeUnitVersions(context.Background(), &catalogv1.GetCodeUnitVersionsRequest{UniqueId: "n1"})
+	resp, err := h.GetCodeUnitVersions(tenantCtx(), &catalogv1.GetCodeUnitVersionsRequest{UniqueId: "n1"})
 	require.NoError(t, err)
 	require.Len(t, resp.Versions, 1)
 	assert.Equal(t, "n1", cv.gotNodeUniqueID)
@@ -430,7 +451,7 @@ func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
 		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ServiceName: "service-1"},
 	}
 	h := newHandlerWithNodes(lists)
-	resp, err := h.GetNodeLocation(context.Background(), &catalogv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
+	resp, err := h.GetNodeLocation(tenantCtx(), &catalogv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
 	require.NoError(t, err)
 	assert.Equal(t, "models/loc_target.sql", resp.FilePath)
 	assert.Equal(t, "service-1", resp.ServiceName)
@@ -439,7 +460,7 @@ func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
 func TestQueryHandler_GetNodeLocation_UnknownNode_NotFound(t *testing.T) {
 	lists := &fakeNodeReader{locationErr: domain.ErrNodeNotFound}
 	h := newHandlerWithNodes(lists)
-	_, err := h.GetNodeLocation(context.Background(), &catalogv1.GetNodeLocationRequest{UniqueId: "analytics.absent"})
+	_, err := h.GetNodeLocation(tenantCtx(), &catalogv1.GetNodeLocationRequest{UniqueId: "analytics.absent"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
@@ -455,9 +476,12 @@ type fakePrecedentHistoryReader struct {
 	gotReason      string
 	gotLimit       int32
 	gotIncludeCode bool
+
+	tenants []string
 }
 
-func (f *fakePrecedentHistoryReader) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error) {
+func (f *fakePrecedentHistoryReader) GetPrecedents(_ context.Context, tenantID, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotSignature, f.gotCategory, f.gotReason, f.gotLimit, f.gotIncludeCode = signature, category, reason, limit, includeCode
 	if f.err != nil {
 		return nil, f.err
@@ -477,7 +501,7 @@ func TestGetPrecedents_RequiresSelector(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHandlerWithPrecedents(&fakePrecedentHistoryReader{})
-			_, err := h.GetPrecedents(context.Background(), tc.req)
+			_, err := h.GetPrecedents(tenantCtx(), tc.req)
 			require.Equal(t, codes.InvalidArgument, status.Code(err))
 		})
 	}
@@ -506,7 +530,7 @@ func TestGetPrecedents_MapsEntries(t *testing.T) {
 		},
 	}
 	h := newHandlerWithPrecedents(pr)
-	resp, err := h.GetPrecedents(context.Background(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1", Limit: 5})
+	resp, err := h.GetPrecedents(tenantCtx(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, resp.Precedents, 1)
 
@@ -549,7 +573,7 @@ func TestGetPrecedents_MapsEditedProvenance(t *testing.T) {
 		},
 	}
 	h := newHandlerWithPrecedents(pr)
-	resp, err := h.GetPrecedents(context.Background(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
+	resp, err := h.GetPrecedents(tenantCtx(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
 	require.NoError(t, err)
 	require.Len(t, resp.Precedents, 1)
 
@@ -581,7 +605,7 @@ func TestGetPrecedents_MapsDiffIsShipped(t *testing.T) {
 		},
 	}
 	h := newHandlerWithPrecedents(pr)
-	resp, err := h.GetPrecedents(context.Background(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
+	resp, err := h.GetPrecedents(tenantCtx(), &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
 	require.NoError(t, err)
 	require.Len(t, resp.Precedents, 1)
 
@@ -599,7 +623,88 @@ func TestGetPrecedents_MapsDiffIsShipped(t *testing.T) {
 
 func TestGetPrecedents_EmptyIsOKNotNotFound(t *testing.T) {
 	h := newHandlerWithPrecedents(&fakePrecedentHistoryReader{precedents: []casebase.Precedent{}})
-	resp, err := h.GetPrecedents(context.Background(), &catalogv1.GetPrecedentsRequest{Signature: "sig-unknown"})
+	resp, err := h.GetPrecedents(tenantCtx(), &catalogv1.GetPrecedentsRequest{Signature: "sig-unknown"})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Precedents)
+}
+
+// ---- tenant ----
+
+// queryHandlerCalls invokes every CatalogQuery RPC with a valid request under
+// ctx, so a test can check what each returns and what reached the readers.
+func queryHandlerCalls(h *grpcadapter.QueryHandler, ctx context.Context) map[string]func() error {
+	return map[string]func() error{
+		"GetNode": func() error {
+			_, err := h.GetNode(ctx, &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct"})
+			return err
+		},
+		"GetNodeLocation": func() error {
+			_, err := h.GetNodeLocation(ctx, &catalogv1.GetNodeLocationRequest{UniqueId: "n1"})
+			return err
+		},
+		"GetNodeVersions": func() error {
+			_, err := h.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{UniqueId: "n1"})
+			return err
+		},
+		"GetNodeVersions current_only": func() error {
+			_, err := h.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{UniqueId: "n1", CurrentOnly: true})
+			return err
+		},
+		"GetNodeVersionDiff": func() error {
+			_, err := h.GetNodeVersionDiff(ctx, &catalogv1.GetNodeVersionDiffRequest{UniqueId: "n1", FromSeq: 1, ToSeq: 2})
+			return err
+		},
+		"GetUpstreamChanges": func() error {
+			_, err := h.GetUpstreamChanges(ctx, &catalogv1.GetUpstreamChangesRequest{UniqueId: "n1"})
+			return err
+		},
+		"GetCodeUnitVersions": func() error {
+			_, err := h.GetCodeUnitVersions(ctx, &catalogv1.GetCodeUnitVersionsRequest{UnitId: "u1"})
+			return err
+		},
+		"GetPrecedents": func() error {
+			_, err := h.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
+			return err
+		},
+	}
+}
+
+// A request whose context carries no tenant comes from a server built without
+// the identity interceptor: every RPC refuses it with Internal before it
+// reads anything, rather than act for a tenant it guessed.
+func TestQueryHandler_NoTenantIsInternal(t *testing.T) {
+	nodes := &fakeNodeReader{location: &domain.NodeLocation{}}
+	cv := &fakeCodeVersionHistoryReader{diff: &codeversion.VersionDiff{}}
+	pr := &fakePrecedentHistoryReader{}
+	h := grpcadapter.NewQueryHandler(nodes, cv, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	for name, call := range queryHandlerCalls(h, context.Background()) {
+		err := call()
+		assert.Equal(t, codes.Internal, status.Code(err), name)
+		assert.Equal(t, "the request carries no tenant", status.Convert(err).Message(), name)
+	}
+	assert.Empty(t, nodes.tenants, "no node read ran")
+	assert.Empty(t, cv.tenants, "no code-version read ran")
+	assert.Empty(t, pr.tenants, "no precedent read ran")
+}
+
+// Every RPC reads for the tenant the interceptor placed on the request.
+func TestQueryHandler_ReadsForTheRequestTenant(t *testing.T) {
+	nodes := &fakeNodeReader{location: &domain.NodeLocation{}}
+	cv := &fakeCodeVersionHistoryReader{diff: &codeversion.VersionDiff{}}
+	pr := &fakePrecedentHistoryReader{}
+	h := grpcadapter.NewQueryHandler(nodes, cv, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	calls := queryHandlerCalls(h, tenantCtx())
+	for name, call := range calls {
+		require.NoError(t, call(), name)
+	}
+	var tenants []string
+	tenants = append(tenants, nodes.tenants...)
+	tenants = append(tenants, cv.tenants...)
+	tenants = append(tenants, pr.tenants...)
+	require.Len(t, tenants, len(calls), "one read per RPC")
+	for _, got := range tenants {
+		assert.Equal(t, testTenant, got)
+	}
 }

@@ -17,12 +17,12 @@ const (
 
 // PrecedentReader is the read surface over the failure-precedent case base.
 type PrecedentReader interface {
-	// Precedents returns rejections matching the signature — or, when
-	// signature is empty, the (category, reason) pair — resolved-first then
-	// newest, capped at limit BEFORE code bodies are fetched. includeCode
+	// Precedents returns the tenant's rejections matching the signature — or,
+	// when signature is empty, the (category, reason) pair — resolved-first
+	// then newest, capped at limit BEFORE code bodies are fetched. includeCode
 	// governs the failing raw_code only; resolving/prior version bodies are
 	// always fetched because the diff is rendered from them.
-	Precedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.PrecedentView, error)
+	Precedents(ctx context.Context, tenantID, signature, category, reason string, limit int32, includeCode bool) ([]casebase.PrecedentView, error)
 }
 
 // PrecedentQueryService renders precedent rows into the capped, diff-rendered
@@ -40,12 +40,12 @@ func NewPrecedentQueryService(reader PrecedentReader) *PrecedentQueryService {
 // an error: a signature is a search key and "no precedent" is a valid answer.
 func (s *PrecedentQueryService) GetPrecedents(
 	ctx context.Context,
-	signature, category, reason string,
+	tenantID, signature, category, reason string,
 	limit int32,
 	includeCode bool,
 ) ([]casebase.Precedent, error) {
 	limit = clampPrecedentLimit(limit)
-	views, err := s.reader.Precedents(ctx, signature, category, reason, limit, includeCode)
+	views, err := s.reader.Precedents(ctx, tenantID, signature, category, reason, limit, includeCode)
 	if err != nil {
 		return nil, fmt.Errorf("PrecedentQueryService.GetPrecedents: %w", err)
 	}

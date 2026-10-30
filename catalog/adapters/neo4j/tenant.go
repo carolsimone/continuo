@@ -72,6 +72,29 @@ func (t TenantRunner) requireTenant(tenantID string) error {
 	return nil
 }
 
+// inReadTx runs body in one read transaction whose statements are bound to
+// tenantID, and returns what body returns. body reads every record it needs
+// before it returns, since the records go with the transaction, and builds
+// its result afresh on every call: the driver runs it again when the
+// transaction fails in a way a retry can fix. An empty tenant opens no
+// session.
+func inReadTx[T any](ctx context.Context, client Neo4jClient, tenantID string, body func(run TenantRunner) (T, error)) (T, error) {
+	if tenantID == "" {
+		var zero T
+		return zero, errEmptyTenant
+	}
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+	return neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (T, error) {
+		run, err := NewTenantRunner(tenantID, tx)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		return body(run)
+	})
+}
+
 // execCypher runs a statement that returns nothing the caller reads, and
 // consumes its result so a failure the server reports only when the result is
 // pulled is not lost.

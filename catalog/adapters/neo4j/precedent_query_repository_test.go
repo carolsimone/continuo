@@ -68,7 +68,7 @@ func seedPrecedentVersion(
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
 		CREATE (:NodeVersion {
-			unique_id: $uid, content_hash: $hash, promoted_at: $at, test_marker: $m,
+			tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash, promoted_at: $at, test_marker: $m,
 			source_hash: $hash, shared_code_hash: '', config_hash: '',
 			runtime: 'sql', raw_code: $raw_code, compiled_code: '',
 			compiled_truncated: false, config_json: '{}', repo: 'org/repo',
@@ -76,7 +76,8 @@ func seedPrecedentVersion(
 			healed: false, backfilled: false
 		})
 	`, map[string]any{
-		"uid": uniqueID, "hash": contentHash, "at": promotedAt.UTC(),
+		"tenant_id": precedentFixtureTenant,
+		"uid":       uniqueID, "hash": contentHash, "at": promotedAt.UTC(),
 		"m": marker, "raw_code": rawCode,
 	})
 	require.NoError(t, err)
@@ -95,10 +96,11 @@ func linkPrecedentResolvedBy(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		MATCH (v:NodeVersion {unique_id: $uid, content_hash: $hash})
+		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash})
 		MERGE (rej)-[:RESOLVED_BY]->(v)
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": releaseID, "node_id": nodeID,
 		"uid": versionUniqueID, "hash": versionContentHash,
 	})
@@ -119,9 +121,11 @@ func setPrecedentResolvedByPromotedAt(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:NodeVersion {unique_id: $uid, content_hash: $hash})
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		      -[rb:RESOLVED_BY]->(:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash})
 		SET rb.promoted_at = $at
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": releaseID, "node_id": nodeID,
 		"uid": versionUniqueID, "hash": versionContentHash, "at": at.UTC(),
 	})
@@ -130,24 +134,26 @@ func setPrecedentResolvedByPromotedAt(
 	require.NoError(t, err)
 }
 
-// seedPrecedentCurrentPointer MERGEs a :Table and points its [:CURRENT] edge
-// at the version addressed by (unique_id, content_hash) — the same shape the
-// detail query's res_is_current comparison reads.
+// seedPrecedentCurrentPointer MERGEs a live :Node and points its [:CURRENT]
+// edge at the version addressed by (unique_id, content_hash) — the same shape
+// the detail query's res_is_current comparison reads.
 func seedPrecedentCurrentPointer(
 	t *testing.T, client neo4jinfra.Neo4jClient,
-	tableUniqueID, versionUniqueID, versionContentHash string,
+	nodeUniqueID, versionUniqueID, versionContentHash string,
 ) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MERGE (t:Table {unique_id: $table_uid})
-		WITH t
-		MATCH (v:NodeVersion {unique_id: $version_uid, content_hash: $hash})
-		MERGE (t)-[:CURRENT]->(v)
+		MERGE (n:Node {tenant_id: $tenant_id, unique_id: $node_uid})
+		SET n.active = true
+		WITH n
+		MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: $version_uid, content_hash: $hash})
+		MERGE (n)-[:CURRENT]->(v)
 	`, map[string]any{
-		"table_uid": tableUniqueID, "version_uid": versionUniqueID, "hash": versionContentHash,
+		"tenant_id": precedentFixtureTenant,
+		"node_uid":  nodeUniqueID, "version_uid": versionUniqueID, "hash": versionContentHash,
 	})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
@@ -166,13 +172,14 @@ func seedPrecedentProposal(
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 		CREATE (p:Proposal {
-			proposal_id: $proposal_id, pr_url: $pr_url, pr_number: $pr_number,
+			tenant_id: $tenant_id, proposal_id: $proposal_id, pr_url: $pr_url, pr_number: $pr_number,
 			pr_state: $pr_state, opened_by: $opened_by, opened_at: $opened_at
 		})
 		MERGE (rej)-[:PROPOSED]->(p)
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID,
 		"pr_url": prURL, "pr_number": prNumber, "pr_state": prState,
 		"opened_by": openedBy, "opened_at": openedAt.UTC(),
@@ -221,7 +228,7 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 		"https://github.com/org/repo/pull/7", 7, "open", "agent-remediation", t0.Add(30*time.Minute))
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, sigS, "", "", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sigS, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "only signature S's two rejections match")
 
@@ -274,7 +281,7 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 		t0, "select b", "hash-b")
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, "", "logic", "logic:missing_object", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, "", "logic", "logic:missing_object", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both signatures sharing the (category, reason) pair must match")
 
@@ -332,7 +339,7 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 	seedPrecedentCurrentPointer(t, client, node4, node4, "v4-hash")
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, sig, "", "", 2, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sig, "", "", 2, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "limit caps the identity query before any body is fetched")
 
@@ -381,7 +388,7 @@ func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
 	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-a")
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1, "two RESOLVED_BY edges on one rejection must still yield exactly one row")
 	assert.Equal(t, node, precedents[0].Rejection.NodeID)
@@ -425,7 +432,7 @@ func TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason(t *testin
 	}))
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, "", "logic", "reason-b", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, "", "logic", "reason-b", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1, "must find the rejection under its OWN reason, not the hub's first-seen one")
 	assert.Equal(t, nodeB, precedents[0].Rejection.NodeID)
@@ -465,7 +472,7 @@ func TestPrecedentReader_DiffBaselineUsesEdgePromotedAt(t *testing.T) {
 	setPrecedentResolvedByPromotedAt(t, client, rel, node, node, "hash-v0", t0.Add(3*time.Hour))
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
@@ -498,7 +505,7 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-resolving")
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, sig, "", "", 10, false)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, false)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
@@ -534,7 +541,7 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	relA, nodeA := marker+"-rel-a", marker+"-node-a"
 	relOpen, nodeOpen := marker+"-rel-open", marker+"-node-open"
-	nu := marker + "-nu" // the edited upstream :Table, distinct from nodeA
+	nu := marker + "-nu" // the edited upstream :Node, distinct from nodeA
 	proposalID := marker + "-proposal"
 	closedAt := t0.Add(2 * time.Hour)
 
@@ -546,8 +553,8 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	seedPrecedentRejection(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
 		t0.Add(30*time.Minute), "select open", "hash-open")
 
-	// The edit's target :Table must already exist; the writer never mints one.
-	seedEditTargetTable(t, client, nu, marker)
+	// The edit's target :Node must already exist; the writer never mints one.
+	seedEditTargetNode(t, client, nu, marker)
 
 	repo := newCaseBaseRepo(client)
 	require.NoError(t, repo.RecordProposal(ctx,
@@ -567,7 +574,7 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	}))
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both rejections on the signature match")
 
@@ -598,7 +605,7 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 
 // TestPrecedentReader_AmendedEditSelectsStraddlingVersions verifies the new
 // per-key edited query's straddling-version selection: for an AMENDED edit
-// whose target :Table has :NodeVersions promoted both before and after the PR
+// whose target :Node has :NodeVersions promoted both before and after the PR
 // closed, MergedVersion is the FIRST version promoted after closed_at
 // (ascending) and MergedPrior is the NEWEST version promoted before it — the
 // two versions that bracket the human's merged truth.
@@ -619,7 +626,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 
 	seedPrecedentRejection(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
-	seedEditTargetTable(t, client, nu, marker)
+	seedEditTargetNode(t, client, nu, marker)
 
 	// Four versions on the edited node straddling closed_at. The selection must
 	// pick "hash-after" (first after closed_at) as merged and "hash-before"
@@ -647,7 +654,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	}))
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
@@ -666,7 +673,7 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 // TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal
 // verifies the detail query surfaces the proposal-resolved signal even when the
 // merged PR drew NO [:EDITED] edges — every edit target was absent from the
-// graph, so RecordPullRequestOutcome skipped them (it never mints a :Table).
+// graph, so RecordPullRequestOutcome skipped them (it never mints a :Node).
 // The rejection is genuinely fixed and the identity query already counts it
 // resolved-first; ResolvedByProposal must be true so the service's Resolved
 // boolean agrees, with no Edited rows and no own-timeline version.
@@ -696,7 +703,7 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 			PrURL: "https://github.com/org/repo/pull/13", PrNumber: 13,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
-	// Merged: resolves nodeA, but the sole edit's target :Table is absent, so no
+	// Merged: resolves nodeA, but the sole edit's target :Node is absent, so no
 	// [:EDITED] edge is drawn.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
 		ProposalID: proposalID, ReleaseID: relA, Service: "core",
@@ -708,7 +715,7 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 	}))
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
@@ -738,7 +745,7 @@ func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T
 		t0, "select failing", "hash-failing")
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
@@ -772,8 +779,8 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 
 	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
 	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
-	coreTable := marker + "-core-edited"
-	finTable := marker + "-fin-edited"
+	coreEdited := marker + "-core-edited"
+	finEdited := marker + "-fin-edited"
 
 	coreClosed := t0.Add(2 * time.Hour) // Tc — earlier close
 	finClosed := t0.Add(5 * time.Hour)  // Tf — later close
@@ -785,15 +792,15 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
 		t0.Add(time.Minute), "select fin", "hash-fin")
 
-	seedEditTargetTable(t, client, coreTable, marker)
-	seedEditTargetTable(t, client, finTable, marker)
+	seedEditTargetNode(t, client, coreEdited, marker)
+	seedEditTargetNode(t, client, finEdited, marker)
 
 	// Versions on the finance-edited node straddling the two closes. Scoped to
 	// finance's closed_at (Tf), only "hash-after-tf" qualifies as the merged
 	// version; were the read to leak core's earlier closed_at (Tc), the
 	// "hash-between" version (promoted after Tc but before Tf) would wrongly win.
-	seedPrecedentVersion(t, client, finTable, marker, "hash-between", "select between", t0.Add(3*time.Hour))
-	seedPrecedentVersion(t, client, finTable, marker, "hash-after-tf", "select after tf", t0.Add(6*time.Hour))
+	seedPrecedentVersion(t, client, finEdited, marker, "hash-between", "select between", t0.Add(3*time.Hour))
+	seedPrecedentVersion(t, client, finEdited, marker, "hash-after-tf", "select after tf", t0.Add(6*time.Hour))
 
 	repo := newCaseBaseRepo(client)
 
@@ -820,7 +827,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 		PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{coreNode},
 		Edits: []casebase.EditOutcome{
-			{Path: "models/core.sql", TargetNodeID: coreTable, Amended: false, Diff: "D-core"},
+			{Path: "models/core.sql", TargetNodeID: coreEdited, Amended: false, Diff: "D-core"},
 		},
 	}))
 	// finance PR merges: edits the finance node, amended.
@@ -830,12 +837,12 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 		PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{finNode},
 		Edits: []casebase.EditOutcome{
-			{Path: "models/finance.sql", TargetNodeID: finTable, Amended: true, Diff: "D-fin"},
+			{Path: "models/finance.sql", TargetNodeID: finEdited, Amended: true, Diff: "D-fin"},
 		},
 	}))
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both rejections on the signature match")
 
@@ -850,7 +857,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 
 	// The core rejection surfaces ONLY the core edit — never finance's.
 	require.Len(t, coreP.Edited, 1, "core rejection surfaces exactly its own service's edit")
-	assert.Equal(t, coreTable, coreP.Edited[0].NodeID, "core must not surface finance's edited node")
+	assert.Equal(t, coreEdited, coreP.Edited[0].NodeID, "core must not surface finance's edited node")
 	assert.Equal(t, "D-core", coreP.Edited[0].Diff)
 	assert.False(t, coreP.Edited[0].Amended)
 	assert.Nil(t, coreP.Edited[0].MergedVersion, "a non-amended edit selects no straddling version")
@@ -859,7 +866,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	// straddling merged version against finance's own PR closed_at.
 	require.Len(t, finP.Edited, 1, "finance rejection surfaces exactly its own service's edit")
 	fe := finP.Edited[0]
-	assert.Equal(t, finTable, fe.NodeID, "finance must not surface core's edited node")
+	assert.Equal(t, finEdited, fe.NodeID, "finance must not surface core's edited node")
 	assert.Equal(t, "D-fin", fe.Diff)
 	assert.True(t, fe.Amended)
 	require.NotNil(t, fe.MergedVersion, "an amended edit selects the merged-truth version")
@@ -869,12 +876,11 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	assert.Equal(t, "hash-between", fe.MergedPrior.ContentHash)
 }
 
-// TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit pins the
-// backward-compatible fallback: a [:RESOLVED_BY]->(:Proposal) edge written
-// before the per-service stamp existed carries no service. The scoped walk must
-// not exclude such an edge — with a null rb.service it falls back to the
-// whole-proposal walk, so the single-service legacy edit still renders.
-func TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit(t *testing.T) {
+// TestPrecedentReader_ResolvedByWithoutServiceRendersEdit pins the fallback for
+// a [:RESOLVED_BY]->(:Proposal) edge that carries no service: the scoped walk
+// does not exclude it — with a null rb.service it falls back to the
+// whole-proposal walk, so its single-service edit still renders.
+func TestPrecedentReader_ResolvedByWithoutServiceRendersEdit(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -890,21 +896,22 @@ func TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit(t *testing.T)
 
 	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
-	seedEditTargetTable(t, client, edited, marker)
+	seedEditTargetNode(t, client, edited, marker)
 
-	// A legacy RESOLVED_BY edge with NO service property, plus its EDITED edge
-	// (whose own service predates this change). The read must still render it.
+	// A RESOLVED_BY edge with NO service property, plus its EDITED edge. The
+	// read must still render it.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		MATCH (t:Table {unique_id: $edited})
-		MERGE (p:Proposal {proposal_id: $proposal_id})
+		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MATCH (n:Node {tenant_id: $tenant_id, unique_id: $edited})
+		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
 		MERGE (rej)-[:RESOLVED_BY]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {proposal_id: $proposal_id, service: 'core'})
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: 'core'})
 		SET pl.pr_state = 'merged', pl.closed_at = $closed_at
-		MERGE (p)-[ed:EDITED {path: 'models/legacy.sql'}]->(t)
+		MERGE (p)-[ed:EDITED {path: 'models/legacy.sql'}]->(n)
 		SET ed.amended = false, ed.diff = 'D-legacy', ed.service = 'core'
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": rel, "node_id": node, "proposal_id": proposalID,
 		"edited": edited, "closed_at": t0.Add(time.Hour).UTC(),
 	})
@@ -914,12 +921,12 @@ func TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit(t *testing.T)
 	s.Close(ctx)
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
 	require.Len(t, precedents[0].Edited, 1,
-		"a legacy RESOLVED_BY edge with no service still renders its edit via the null fallback")
+		"a RESOLVED_BY edge with no service still renders its edit via the null fallback")
 	assert.Equal(t, edited, precedents[0].Edited[0].NodeID)
 	assert.Equal(t, "D-legacy", precedents[0].Edited[0].Diff)
 }
@@ -977,7 +984,7 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 		}))
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 2, "both rejections on the signature match")
 
@@ -1006,12 +1013,11 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 	assert.Equal(t, 7, finP.Proposals[0].PrNumber)
 }
 
-// TestPrecedentReader_LegacyProposedWithoutServiceRendersPR pins the
-// backward-compatible fallback: a [:PROPOSED] edge written before the
-// per-service stamp existed carries no service. The scoped PR join must not
-// exclude such an edge — with a null prop.service it falls back to matching any
-// of the proposal's PRs, so the single-service legacy PR still renders.
-func TestPrecedentReader_LegacyProposedWithoutServiceRendersPR(t *testing.T) {
+// TestPrecedentReader_ProposedWithoutServiceRendersPR pins the fallback for a
+// [:PROPOSED] edge that carries no service: the scoped PR join does not exclude
+// it — with a null prop.service it falls back to matching any of the
+// proposal's PRs, so its single-service PR still renders.
+func TestPrecedentReader_ProposedWithoutServiceRendersPR(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -1027,16 +1033,17 @@ func TestPrecedentReader_LegacyProposedWithoutServiceRendersPR(t *testing.T) {
 	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 
-	// A legacy [:PROPOSED] edge with NO service property, plus a :PullRequest on
-	// the proposal. The read must still render the PR via the null fallback.
+	// A [:PROPOSED] edge with NO service property, plus a :PullRequest on the
+	// proposal. The read must still render the PR via the null fallback.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		MERGE (p:Proposal {proposal_id: $proposal_id})
+		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
 		MERGE (rej)-[:PROPOSED]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {proposal_id: $proposal_id, service: 'core'})
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: 'core'})
 		SET pl.pr_url = $pr_url, pl.pr_number = 5, pl.pr_state = 'merged'
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": rel, "node_id": node, "proposal_id": proposalID,
 		"pr_url": "https://github.com/org/legacy/pull/5",
 	})
@@ -1046,12 +1053,12 @@ func TestPrecedentReader_LegacyProposedWithoutServiceRendersPR(t *testing.T) {
 	s.Close(ctx)
 
 	reader := newPrecedentReader(client)
-	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	precedents, err := reader.Precedents(ctx, precedentFixtureTenant, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1)
 
 	require.Len(t, precedents[0].Proposals, 1,
-		"a legacy PROPOSED edge with no service still renders its PR via the null fallback")
+		"a PROPOSED edge with no service still renders its PR via the null fallback")
 	assert.Equal(t, "https://github.com/org/legacy/pull/5", precedents[0].Proposals[0].PrURL)
 	assert.Equal(t, 5, precedents[0].Proposals[0].PrNumber)
 	assert.Equal(t, "merged", precedents[0].Proposals[0].PrState)
@@ -1069,7 +1076,7 @@ func TestPrecedentReader_NoMatchIsEmptyNotError(t *testing.T) {
 	defer cleanup()
 
 	repo := newPrecedentReader(client)
-	precedents, err := repo.Precedents(ctx, marker+"-unknown-signature", "", "", 10, true)
+	precedents, err := repo.Precedents(ctx, precedentFixtureTenant, marker+"-unknown-signature", "", "", 10, true)
 	require.NoError(t, err)
 	assert.Empty(t, precedents)
 }

@@ -15,22 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The precedent query tests read the case base through
-// PrecedentQueryRepository, which finds an edited node by its :Table label.
-// Their fixtures write the case base with the case-base groups' repository,
-// which writes one tenant's nodes and links a fix PR's edit to that tenant's
-// :Node, so each rejection and edited node they seed carries
-// precedentFixtureTenant, and an edited node carries both labels.
+// The precedent query tests read the case base of precedentFixtureTenant
+// through PrecedentQueryRepository. Their fixtures write it with the case-base
+// groups' repository and seed the rest, every node under that tenant.
 
 // precedentFixtureTenant is the tenant the precedent tests' case base is
 // written under.
 const precedentFixtureTenant = "precedent-query-test"
 
-// caseBaseCleanup returns a closure that removes every node a precedent test
-// could have touched: the nodes it seeds and writes carry the test's marker
-// in test_marker or in an identity value (release_id, node_id, unique_id,
-// signature, proposal_id), and the unit of work leaves the tenant's export
-// lease node and processed-message markers.
+// caseBaseCleanup returns a closure that removes every node of
+// precedentFixtureTenant a precedent test could have touched: the nodes it
+// seeds and writes carry the test's marker in test_marker or in an identity
+// value (release_id, node_id, unique_id, signature, proposal_id), and the unit
+// of work leaves the tenant's export lease node and processed-message markers.
+// No other tenant's node is touched.
 func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string) func() {
 	t.Helper()
 	ctx := context.Background()
@@ -38,7 +36,7 @@ func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string)
 		s := client.NewSession(ctx, neo4j.AccessModeWrite)
 		defer s.Close(ctx)
 		for _, q := range []string{`
-			MATCH (n)
+			MATCH (n {tenant_id: $tenant_id})
 			WHERE n.test_marker = $m
 			   OR n.release_id CONTAINS $m
 			   OR n.node_id CONTAINS $m
@@ -57,14 +55,14 @@ func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string)
 	}
 }
 
-// seedEditTargetTable creates the node a fix PR's edit links [:EDITED] to;
-// the case base never creates one itself.
-func seedEditTargetTable(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, marker string) {
+// seedEditTargetNode creates the live node a fix PR's edit links [:EDITED]
+// to; the case base never creates one itself.
+func seedEditTargetNode(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, marker string) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
-	res, err := s.Run(ctx, `CREATE (:Node:Table {tenant_id: $tenant_id, unique_id: $uid, test_marker: $m})`,
+	res, err := s.Run(ctx, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $uid, active: true, test_marker: $m})`,
 		map[string]any{"tenant_id": precedentFixtureTenant, "uid": uniqueID, "m": marker})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)

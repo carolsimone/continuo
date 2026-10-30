@@ -28,7 +28,7 @@ type VersionView struct {
 	Healed            bool
 	Backfilled        bool
 	// IsCurrent marks the version the node runs now: exactly one of a node's
-	// versions carries it; a node whose :Table was retired has none.
+	// versions carries it; a retired node has none.
 	IsCurrent bool
 }
 

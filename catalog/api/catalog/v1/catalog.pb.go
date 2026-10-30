@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// GetNode returns per-node topology metadata for a single :Table, addressed by
+// GetNode returns per-node topology metadata for a single node, addressed by
 // its (service, schema, table) identity. Used by the UI to decide which
 // single-node operations are meaningful before submitting them. By default only
 // an active node matches and an inactive one is NOT_FOUND.
@@ -30,7 +30,7 @@ type GetNodeRequest struct {
 	ServiceName string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
 	SchemaName  string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName   string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	// include_inactive, when true, also returns a node whose :Table is no longer
+	// include_inactive, when true, also returns a retired node, one no longer
 	// active in the topology; an active match is preferred over an inactive one.
 	// When false (the default), only an active node matches and an inactive one
 	// is NOT_FOUND.
@@ -97,7 +97,7 @@ func (x *GetNodeRequest) GetIncludeInactive() bool {
 	return false
 }
 
-// test_count_known is false when the :Table predates test_count capture (the
+// test_count_known is false when the node predates test_count capture (the
 // property is unset). Consumers MUST treat unknown as "don't gate", not "zero".
 type GetNodeResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -292,7 +292,7 @@ type VersionView struct {
 	Healed            bool   `protobuf:"varint,16,opt,name=healed,proto3" json:"healed,omitempty"`
 	Backfilled        bool   `protobuf:"varint,17,opt,name=backfilled,proto3" json:"backfilled,omitempty"`
 	// is_current marks the version the node runs now: exactly one of a node's
-	// versions carries it; a node whose :Table was retired has none.
+	// versions carries it; a retired node has none.
 	IsCurrent     bool `protobuf:"varint,18,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -749,7 +749,8 @@ type GetNodeVersionsRequest struct {
 	IncludeCode bool `protobuf:"varint,3,opt,name=include_code,json=includeCode,proto3" json:"include_code,omitempty"`
 	// current_only, when true, returns only the version marked is_current —
 	// the code the node runs now — and ignores limit. include_code is honored.
-	// A known node with no recorded current version returns an empty list.
+	// A known node with no recorded current version, a retired node included,
+	// returns an empty list.
 	CurrentOnly   bool `protobuf:"varint,4,opt,name=current_only,json=currentOnly,proto3" json:"current_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

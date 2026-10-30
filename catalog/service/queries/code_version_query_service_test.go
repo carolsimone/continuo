@@ -50,9 +50,14 @@ type fakeCodeVersionReader struct {
 	gotUnitVersionsLimit             map[string]int32
 	gotUnitVersionsBatchIDs          []string
 	gotUnitVersionsBatchLimit        int32
+	tenants                          []string // the tenant of every call, in call order
 }
 
-func (f *fakeCodeVersionReader) NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
+// testTenant is the tenant every service call in these tests reads for.
+const testTenant = "tenant-a"
+
+func (f *fakeCodeVersionReader) NodeVersions(ctx context.Context, tenantID, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotNodeVersionsLimit = limit
 	f.gotNodeVersionsIncludeCode = append(f.gotNodeVersionsIncludeCode, includeCode)
 	if f.nodeVersionsErr != nil {
@@ -61,7 +66,8 @@ func (f *fakeCodeVersionReader) NodeVersions(ctx context.Context, uniqueID strin
 	return f.nodeVersions, nil
 }
 
-func (f *fakeCodeVersionReader) CurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
+func (f *fakeCodeVersionReader) CurrentNodeVersion(ctx context.Context, tenantID, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotCurrentNodeVersionIncludeCode = append(f.gotCurrentNodeVersionIncludeCode, includeCode)
 	if f.currentNodeVersionErr != nil {
 		return nil, f.currentNodeVersionErr
@@ -69,14 +75,16 @@ func (f *fakeCodeVersionReader) CurrentNodeVersion(ctx context.Context, uniqueID
 	return f.currentNodeVersion, nil
 }
 
-func (f *fakeCodeVersionReader) VersionsBySeq(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (codeversion.VersionView, codeversion.VersionView, error) {
+func (f *fakeCodeVersionReader) VersionsBySeq(ctx context.Context, tenantID, uniqueID string, fromSeq, toSeq int64) (codeversion.VersionView, codeversion.VersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	if f.versionsBySeqErr != nil {
 		return codeversion.VersionView{}, codeversion.VersionView{}, f.versionsBySeqErr
 	}
 	return f.versionsBySeqFrom, f.versionsBySeqTo, nil
 }
 
-func (f *fakeCodeVersionReader) Ancestors(ctx context.Context, uniqueID string, depth int32, since time.Time, cap int32) ([]codeversion.AncestorVersions, error) {
+func (f *fakeCodeVersionReader) Ancestors(ctx context.Context, tenantID, uniqueID string, depth int32, since time.Time, cap int32) ([]codeversion.AncestorVersions, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotAncestorsDepth = depth
 	f.gotAncestorsSince = since
 	f.gotAncestorsCap = cap
@@ -86,7 +94,8 @@ func (f *fakeCodeVersionReader) Ancestors(ctx context.Context, uniqueID string, 
 	return f.ancestors, nil
 }
 
-func (f *fakeCodeVersionReader) UnitVersions(ctx context.Context, unitID string, limit int32) ([]codeversion.UnitVersionView, error) {
+func (f *fakeCodeVersionReader) UnitVersions(ctx context.Context, tenantID, unitID string, limit int32) ([]codeversion.UnitVersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	if f.gotUnitVersionsLimit == nil {
 		f.gotUnitVersionsLimit = map[string]int32{}
 	}
@@ -97,7 +106,8 @@ func (f *fakeCodeVersionReader) UnitVersions(ctx context.Context, unitID string,
 	return f.unitVersions[unitID], nil
 }
 
-func (f *fakeCodeVersionReader) UnitVersionsBatch(ctx context.Context, unitIDs []string, limit int32) (map[string][]codeversion.UnitVersionView, error) {
+func (f *fakeCodeVersionReader) UnitVersionsBatch(ctx context.Context, tenantID string, unitIDs []string, limit int32) (map[string][]codeversion.UnitVersionView, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.gotUnitVersionsBatchIDs = unitIDs
 	f.gotUnitVersionsBatchLimit = limit
 	if f.unitVersionsBatchErr != nil {
@@ -106,7 +116,8 @@ func (f *fakeCodeVersionReader) UnitVersionsBatch(ctx context.Context, unitIDs [
 	return f.unitVersionsBatch, nil
 }
 
-func (f *fakeCodeVersionReader) UnitsForNode(ctx context.Context, uniqueID string) ([]string, error) {
+func (f *fakeCodeVersionReader) UnitsForNode(ctx context.Context, tenantID, uniqueID string) ([]string, error) {
+	f.tenants = append(f.tenants, tenantID)
 	if f.unitsForNodeErr != nil {
 		return nil, f.unitsForNodeErr
 	}
@@ -136,7 +147,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_CapsAtFiveMostRecentlyChange
 	r := &fakeCodeVersionReader{ancestors: ancestors}
 	svc := newCodeVersionSvc(r)
 
-	changes, err := svc.GetUpstreamChanges(context.Background(), "node-1", 3, time.Time{})
+	changes, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 3, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, changes, 5)
 	for i, c := range changes {
@@ -148,7 +159,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_DefaultsDepthWhenNonPositive
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetUpstreamChanges(context.Background(), "node-1", 0, time.Time{})
+	_, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 0, time.Time{})
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), r.gotAncestorsDepth)
 }
@@ -160,7 +171,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_PassesUpstreamCapToReader(t 
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetUpstreamChanges(context.Background(), "node-1", 2, time.Time{})
+	_, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 2, time.Time{})
 	require.NoError(t, err)
 	assert.Equal(t, int32(5), r.gotAncestorsCap)
 }
@@ -169,12 +180,12 @@ func TestCodeVersionQueryService_GetUpstreamChanges_SincePassesThroughUnmodified
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetUpstreamChanges(context.Background(), "node-1", 2, time.Time{})
+	_, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 2, time.Time{})
 	require.NoError(t, err)
 	assert.True(t, r.gotAncestorsSince.IsZero(), "zero-value since means no time filter")
 
 	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = svc.GetUpstreamChanges(context.Background(), "node-1", 2, since)
+	_, err = svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 2, since)
 	require.NoError(t, err)
 	assert.Equal(t, since, r.gotAncestorsSince)
 }
@@ -188,7 +199,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_SkipsZeroVersionAncestor(t *
 	}
 	svc := newCodeVersionSvc(r)
 
-	changes, err := svc.GetUpstreamChanges(context.Background(), "node-1", 3, time.Time{})
+	changes, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 3, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	assert.Equal(t, "has-versions", changes[0].UniqueID)
@@ -208,7 +219,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_SingleVersionDiffsFromEmpty(
 	}
 	svc := newCodeVersionSvc(r)
 
-	changes, err := svc.GetUpstreamChanges(context.Background(), "node-1", 3, time.Time{})
+	changes, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 3, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, changes, 1)
 	assert.Equal(t, codeversion.VersionView{}, changes[0].Diff.From, "single version diffs from an empty VersionView")
@@ -221,7 +232,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_ReaderError(t *testing.T) {
 	r := &fakeCodeVersionReader{ancestorsErr: errors.New("neo4j down")}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetUpstreamChanges(context.Background(), "node-1", 3, time.Time{})
+	_, err := svc.GetUpstreamChanges(context.Background(), testTenant, "node-1", 3, time.Time{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "neo4j down")
 }
@@ -235,7 +246,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_EmptyAncestors_UnknownNodeRe
 	r := &fakeCodeVersionReader{nodeVersionsErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetUpstreamChanges(context.Background(), "ghost-node", 3, time.Time{})
+	_, err := svc.GetUpstreamChanges(context.Background(), testTenant, "ghost-node", 3, time.Time{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -244,7 +255,7 @@ func TestCodeVersionQueryService_GetUpstreamChanges_EmptyAncestors_KnownNodeRetu
 	r := &fakeCodeVersionReader{} // ancestors empty (zero value); NodeVersions succeeds
 	svc := newCodeVersionSvc(r)
 
-	changes, err := svc.GetUpstreamChanges(context.Background(), "known-node", 3, time.Time{})
+	changes, err := svc.GetUpstreamChanges(context.Background(), testTenant, "known-node", 3, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, changes)
 }
@@ -262,7 +273,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_OverCapSetsTruncatedAndValid
 	}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 3, 5)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 3, 5)
 	require.NoError(t, err)
 	assert.True(t, diff.Truncated)
 	assert.LessOrEqual(t, len(diff.RawCodeDiff), 8*1024)
@@ -279,7 +290,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_IdenticalVersionsEmptyDiffsA
 	r := &fakeCodeVersionReader{versionsBySeqFrom: v, versionsBySeqTo: v}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 4, 4)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 4, 4)
 	require.NoError(t, err)
 	assert.Empty(t, diff.RawCodeDiff)
 	assert.Empty(t, diff.ConfigDiff)
@@ -303,7 +314,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_ConfigOnlyChangeSetsConfigCh
 	r := &fakeCodeVersionReader{versionsBySeqFrom: from, versionsBySeqTo: to}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 1, 2)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 1, 2)
 	require.NoError(t, err)
 	assert.False(t, diff.SourceChanged)
 	assert.False(t, diff.SharedCodeChanged)
@@ -322,7 +333,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_KeyOrderAloneProducesNoConfi
 	r := &fakeCodeVersionReader{versionsBySeqFrom: from, versionsBySeqTo: to}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 1, 2)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 1, 2)
 	require.NoError(t, err)
 	assert.Empty(t, diff.ConfigDiff, "key order alone must not manufacture a diff")
 }
@@ -333,7 +344,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_EmptyConfigJSONTreatedAsEmpt
 	r := &fakeCodeVersionReader{versionsBySeqFrom: from, versionsBySeqTo: to}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 1, 2)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 1, 2)
 	require.NoError(t, err)
 	assert.Empty(t, diff.ConfigDiff)
 }
@@ -344,7 +355,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_MalformedJSONDegradesToRawDi
 	r := &fakeCodeVersionReader{versionsBySeqFrom: from, versionsBySeqTo: to}
 	svc := newCodeVersionSvc(r)
 
-	diff, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 1, 2)
+	diff, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 1, 2)
 	require.NoError(t, err, "canonicalization failure must degrade, never fail the request")
 	assert.NotEmpty(t, diff.ConfigDiff, "falls back to diffing the raw strings")
 }
@@ -353,7 +364,7 @@ func TestCodeVersionQueryService_GetNodeVersionDiff_SeqNotFoundReturnsError(t *t
 	r := &fakeCodeVersionReader{versionsBySeqErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersionDiff(context.Background(), "node-1", 1, 99)
+	_, err := svc.GetNodeVersionDiff(context.Background(), testTenant, "node-1", 1, 99)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -364,7 +375,7 @@ func TestCodeVersionQueryService_GetNodeVersions_EmptyHistoryReturnsEmptySlice(t
 	r := &fakeCodeVersionReader{nodeVersions: []codeversion.VersionView{}}
 	svc := newCodeVersionSvc(r)
 
-	versions, err := svc.GetNodeVersions(context.Background(), "known-node", 10, false)
+	versions, err := svc.GetNodeVersions(context.Background(), testTenant, "known-node", 10, false)
 	require.NoError(t, err)
 	assert.Empty(t, versions)
 	assert.NotNil(t, versions)
@@ -374,7 +385,7 @@ func TestCodeVersionQueryService_GetNodeVersions_UnknownNodeReturnsError(t *test
 	r := &fakeCodeVersionReader{nodeVersionsErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersions(context.Background(), "ghost-node", 10, false)
+	_, err := svc.GetNodeVersions(context.Background(), testTenant, "ghost-node", 10, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -383,7 +394,7 @@ func TestCodeVersionQueryService_GetNodeVersions_LimitPassesThrough(t *testing.T
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersions(context.Background(), "node-1", 7, false)
+	_, err := svc.GetNodeVersions(context.Background(), testTenant, "node-1", 7, false)
 	require.NoError(t, err)
 	assert.Equal(t, int32(7), r.gotNodeVersionsLimit)
 }
@@ -395,7 +406,7 @@ func TestCodeVersionQueryService_GetNodeVersions_ZeroLimitDefaultsTo20(t *testin
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersions(context.Background(), "node-1", 0, false)
+	_, err := svc.GetNodeVersions(context.Background(), testTenant, "node-1", 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, int32(20), r.gotNodeVersionsLimit)
 }
@@ -404,7 +415,7 @@ func TestCodeVersionQueryService_GetNodeVersions_OversizedLimitClampsTo200(t *te
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersions(context.Background(), "node-1", 1000, false)
+	_, err := svc.GetNodeVersions(context.Background(), testTenant, "node-1", 1000, false)
 	require.NoError(t, err)
 	assert.Equal(t, int32(200), r.gotNodeVersionsLimit)
 }
@@ -413,12 +424,12 @@ func TestCodeVersionQueryService_GetNodeVersions_IncludeCodePassesThrough(t *tes
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetNodeVersions(context.Background(), "node-1", 10, true)
+	_, err := svc.GetNodeVersions(context.Background(), testTenant, "node-1", 10, true)
 	require.NoError(t, err)
 	require.Len(t, r.gotNodeVersionsIncludeCode, 1)
 	assert.True(t, r.gotNodeVersionsIncludeCode[0])
 
-	_, err = svc.GetNodeVersions(context.Background(), "node-1", 10, false)
+	_, err = svc.GetNodeVersions(context.Background(), testTenant, "node-1", 10, false)
 	require.NoError(t, err)
 	require.Len(t, r.gotNodeVersionsIncludeCode, 2)
 	assert.False(t, r.gotNodeVersionsIncludeCode[1])
@@ -430,7 +441,7 @@ func TestCodeVersionQueryService_GetCurrentNodeVersion_EmptyReturnsEmptySlice(t 
 	r := &fakeCodeVersionReader{currentNodeVersion: []codeversion.VersionView{}}
 	svc := newCodeVersionSvc(r)
 
-	versions, err := svc.GetCurrentNodeVersion(context.Background(), "known-node", false)
+	versions, err := svc.GetCurrentNodeVersion(context.Background(), testTenant, "known-node", false)
 	require.NoError(t, err)
 	assert.Empty(t, versions)
 	assert.NotNil(t, versions)
@@ -440,7 +451,7 @@ func TestCodeVersionQueryService_GetCurrentNodeVersion_UnknownNodeReturnsError(t
 	r := &fakeCodeVersionReader{currentNodeVersionErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCurrentNodeVersion(context.Background(), "ghost-node", false)
+	_, err := svc.GetCurrentNodeVersion(context.Background(), testTenant, "ghost-node", false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -449,12 +460,12 @@ func TestCodeVersionQueryService_GetCurrentNodeVersion_IncludeCodePassesThrough(
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCurrentNodeVersion(context.Background(), "node-1", true)
+	_, err := svc.GetCurrentNodeVersion(context.Background(), testTenant, "node-1", true)
 	require.NoError(t, err)
 	require.Len(t, r.gotCurrentNodeVersionIncludeCode, 1)
 	assert.True(t, r.gotCurrentNodeVersionIncludeCode[0])
 
-	_, err = svc.GetCurrentNodeVersion(context.Background(), "node-1", false)
+	_, err = svc.GetCurrentNodeVersion(context.Background(), testTenant, "node-1", false)
 	require.NoError(t, err)
 	require.Len(t, r.gotCurrentNodeVersionIncludeCode, 2)
 	assert.False(t, r.gotCurrentNodeVersionIncludeCode[1])
@@ -465,7 +476,7 @@ func TestCodeVersionQueryService_GetCurrentNodeVersion_ReturnsReaderResult(t *te
 	r := &fakeCodeVersionReader{currentNodeVersion: want}
 	svc := newCodeVersionSvc(r)
 
-	got, err := svc.GetCurrentNodeVersion(context.Background(), "node-1", true)
+	got, err := svc.GetCurrentNodeVersion(context.Background(), testTenant, "node-1", true)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -477,7 +488,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUnitIDDirect(t *testing.T
 	r := &fakeCodeVersionReader{unitVersions: map[string][]codeversion.UnitVersionView{"macro-a": want}}
 	svc := newCodeVersionSvc(r)
 
-	got, err := svc.GetCodeUnitVersions(context.Background(), "macro-a", "", 10)
+	got, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "macro-a", "", 10)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -492,7 +503,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueIDResolvesUnitsInOn
 	}
 	svc := newCodeVersionSvc(r)
 
-	got, err := svc.GetCodeUnitVersions(context.Background(), "", "node-1", 10)
+	got, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "", "node-1", 10)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	assert.Equal(t, "macro-a", got[0].UnitID, "resolution order, not batch-call order, decides output order")
@@ -506,7 +517,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_UnknownNodeError(t *testing
 	r := &fakeCodeVersionReader{unitsForNodeErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCodeUnitVersions(context.Background(), "", "ghost-node", 10)
+	_, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "", "ghost-node", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -519,7 +530,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_EmptyUnits_UnknownNodeRetur
 	r := &fakeCodeVersionReader{nodeVersionsErr: domain.ErrNodeNotFound}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCodeUnitVersions(context.Background(), "", "ghost-node", 10)
+	_, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "", "ghost-node", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -528,7 +539,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_EmptyUnits_KnownNodeReturns
 	r := &fakeCodeVersionReader{} // unitsForNode empty (zero value); NodeVersions succeeds
 	svc := newCodeVersionSvc(r)
 
-	got, err := svc.GetCodeUnitVersions(context.Background(), "", "known-node", 10)
+	got, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "", "known-node", 10)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -537,7 +548,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ZeroLimitDefaultsTo20(t *te
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCodeUnitVersions(context.Background(), "macro-a", "", 0)
+	_, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "macro-a", "", 0)
 	require.NoError(t, err)
 	assert.Equal(t, int32(20), r.gotUnitVersionsLimit["macro-a"])
 }
@@ -546,7 +557,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_OversizedLimitClampsTo200(t
 	r := &fakeCodeVersionReader{}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCodeUnitVersions(context.Background(), "macro-a", "", 1000)
+	_, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "macro-a", "", 1000)
 	require.NoError(t, err)
 	assert.Equal(t, int32(200), r.gotUnitVersionsLimit["macro-a"])
 }
@@ -555,7 +566,37 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueID_ZeroLimitDefault
 	r := &fakeCodeVersionReader{unitsForNode: []string{"macro-a", "macro-b"}}
 	svc := newCodeVersionSvc(r)
 
-	_, err := svc.GetCodeUnitVersions(context.Background(), "", "node-1", 0)
+	_, err := svc.GetCodeUnitVersions(context.Background(), testTenant, "", "node-1", 0)
 	require.NoError(t, err)
 	assert.Equal(t, int32(20), r.gotUnitVersionsBatchLimit)
+}
+
+// Every read the service makes, existence probes included, is for the tenant
+// it was called for.
+func TestCodeVersionQueryService_ReadsOnlyForItsTenant(t *testing.T) {
+	r := &fakeCodeVersionReader{
+		ancestors:         []codeversion.AncestorVersions{},
+		unitsForNode:      []string{"macro-a"},
+		unitVersionsBatch: map[string][]codeversion.UnitVersionView{},
+	}
+	svc := queries.NewCodeVersionQueryService(r)
+	ctx := context.Background()
+
+	_, err := svc.GetNodeVersions(ctx, testTenant, "node-1", 10, false)
+	require.NoError(t, err)
+	_, err = svc.GetCurrentNodeVersion(ctx, testTenant, "node-1", false)
+	require.NoError(t, err)
+	_, err = svc.GetNodeVersionDiff(ctx, testTenant, "node-1", 1, 2)
+	require.NoError(t, err)
+	_, err = svc.GetUpstreamChanges(ctx, testTenant, "node-1", 2, time.Time{}) // no ancestors: probes NodeVersions
+	require.NoError(t, err)
+	_, err = svc.GetCodeUnitVersions(ctx, testTenant, "macro-a", "", 10)
+	require.NoError(t, err)
+	_, err = svc.GetCodeUnitVersions(ctx, testTenant, "", "node-1", 10) // UnitsForNode, then UnitVersionsBatch
+	require.NoError(t, err)
+
+	require.Len(t, r.tenants, 8)
+	for _, got := range r.tenants {
+		assert.Equal(t, testTenant, got)
+	}
 }
