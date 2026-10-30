@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +26,7 @@ type versionDiffPayload struct {
 }
 
 // NewDiffCommand builds `continuo node diff <service> <schema> <table> --from <seq> --to <seq>`.
-func NewDiffCommand(factory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewDiffCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff <service> <schema> <table>",
 		Short: "Render the diff between two recorded versions of one model node",
@@ -64,7 +64,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, missing --from/--to, or --from equals --to
   not_found  (exit 3)  the node's unique_id, or one of the two seqs, is not recorded
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node diff finance analytics orders --from 1 --to 3",
 		Annotations: map[string]string{
@@ -89,7 +89,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.CatalogEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -113,7 +113,7 @@ Errors:
 	return cmd
 }
 
-func toVersionDiffPayload(d *orchestratorv1.VersionDiff) versionDiffPayload {
+func toVersionDiffPayload(d *catalogv1.VersionDiff) versionDiffPayload {
 	return versionDiffPayload{
 		UniqueID:          d.GetUniqueId(),
 		From:              toVersionEntry(d.GetFrom()),
@@ -130,7 +130,7 @@ func toVersionDiffPayload(d *orchestratorv1.VersionDiff) versionDiffPayload {
 // humanDiff writes a one-line summary to stderr:
 //
 //	<unique_id>: source=<bool> shared_code=<bool> config=<bool> truncated=<bool>
-func humanDiff(stderr io.Writer, d *orchestratorv1.VersionDiff) error {
+func humanDiff(stderr io.Writer, d *catalogv1.VersionDiff) error {
 	_, err := fmt.Fprintf(stderr, "%s: source=%t shared_code=%t config=%t truncated=%t\n",
 		d.GetUniqueId(), d.GetSourceChanged(), d.GetSharedCodeChanged(), d.GetConfigChanged(), d.GetTruncated())
 	return err

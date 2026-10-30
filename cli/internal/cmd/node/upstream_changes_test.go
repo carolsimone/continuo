@@ -11,18 +11,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runUpstreamChanges(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runUpstreamChanges(t *testing.T, fake client.CatalogClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewUpstreamChangesCommand(func(context.Context, string) (client.OrchestratorClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewUpstreamChangesCommand(func(context.Context, string) (client.CatalogClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -40,13 +40,13 @@ func runUpstreamChanges(t *testing.T, fake client.OrchestratorClient, args []str
 }
 
 func TestUpstreamChanges_SuccessMapsAllFieldsWithDefaults(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamResp: &orchestratorv1.GetUpstreamChangesResponse{Changes: []*orchestratorv1.UpstreamChange{{
+	fake := &fakeNodeCatalog{upstreamResp: &catalogv1.GetUpstreamChangesResponse{Changes: []*catalogv1.UpstreamChange{{
 		UniqueId: "analytics.customers",
 		Depth:    2,
-		Diff: &orchestratorv1.VersionDiff{
+		Diff: &catalogv1.VersionDiff{
 			UniqueId:      "analytics.customers",
-			From:          &orchestratorv1.VersionView{VersionSeq: 1},
-			To:            &orchestratorv1.VersionView{VersionSeq: 2},
+			From:          &catalogv1.VersionView{VersionSeq: 1},
+			To:            &catalogv1.VersionView{VersionSeq: 2},
 			SourceChanged: true,
 			Truncated:     true,
 		},
@@ -74,7 +74,7 @@ func TestUpstreamChanges_SuccessMapsAllFieldsWithDefaults(t *testing.T) {
 }
 
 func TestUpstreamChanges_DepthAndSinceFlagsAreForwarded(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamResp: &orchestratorv1.GetUpstreamChangesResponse{}}
+	fake := &fakeNodeCatalog{upstreamResp: &catalogv1.GetUpstreamChangesResponse{}}
 	_, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders", "--depth", "5", "--since", "2026-01-01T00:00:00Z"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, int32(5), fake.gotUpstreamDepth)
@@ -82,14 +82,14 @@ func TestUpstreamChanges_DepthAndSinceFlagsAreForwarded(t *testing.T) {
 }
 
 func TestUpstreamChanges_EmptyResultIsEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamResp: &orchestratorv1.GetUpstreamChangesResponse{Changes: nil}}
+	fake := &fakeNodeCatalog{upstreamResp: &catalogv1.GetUpstreamChangesResponse{Changes: nil}}
 	stdout, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, `"changes":[]`)
 }
 
 func TestUpstreamChanges_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -98,20 +98,20 @@ func TestUpstreamChanges_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestUpstreamChanges_NotFoundExits3(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamErr: status.Error(codes.NotFound, "node not found")}
+	fake := &fakeNodeCatalog{upstreamErr: status.Error(codes.NotFound, "node not found")}
 	_, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 3, exit)
 }
 
 func TestUpstreamChanges_DepthOverServerCapExits2(t *testing.T) {
 	// The server rejects depth > 10 as InvalidArgument; FromGRPC maps that to usage/exit 2.
-	fake := &fakeNodeOrchestrator{upstreamErr: status.Error(codes.InvalidArgument, "depth must be <= 10")}
+	fake := &fakeNodeCatalog{upstreamErr: status.Error(codes.InvalidArgument, "depth must be <= 10")}
 	_, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders", "--depth", "20"}, false)
 	assert.Equal(t, 2, exit)
 }
 
 func TestUpstreamChanges_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeCatalog{upstreamErr: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 5, exit)
 }
@@ -119,7 +119,7 @@ func TestUpstreamChanges_UnavailableExits5(t *testing.T) {
 func TestUpstreamChanges_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
-	cmd := NewUpstreamChangesCommand(func(context.Context, string) (client.OrchestratorClient, error) {
+	cmd := NewUpstreamChangesCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, cfg, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"finance", "analytics", "orders"})
@@ -132,8 +132,8 @@ func TestUpstreamChanges_FactoryErrorExits5(t *testing.T) {
 }
 
 func TestUpstreamChanges_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeOrchestrator{upstreamResp: &orchestratorv1.GetUpstreamChangesResponse{Changes: []*orchestratorv1.UpstreamChange{
-		{UniqueId: "analytics.customers", Depth: 1, Diff: &orchestratorv1.VersionDiff{}},
+	fake := &fakeNodeCatalog{upstreamResp: &catalogv1.GetUpstreamChangesResponse{Changes: []*catalogv1.UpstreamChange{
+		{UniqueId: "analytics.customers", Depth: 1, Diff: &catalogv1.VersionDiff{}},
 	}}}
 	stdout, stderr, exit := runUpstreamChanges(t, fake, []string{"finance", "analytics", "orders"}, true)
 	assert.Equal(t, 0, exit)

@@ -17,7 +17,7 @@ import (
 // topology-controller is Python and holds no Go files, so it is not listed.
 var domainModules = []string{
 	"run-controller",
-	"orchestrator",
+	"catalog",
 	"execution-controller",
 	"release-controller",
 	"remediation",

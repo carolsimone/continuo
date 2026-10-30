@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +46,7 @@ type versionsPayload struct {
 const defaultVersionsLimit int32 = 20
 
 // NewVersionsCommand builds `continuo node versions <service> <schema> <table>`.
-func NewVersionsCommand(factory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewVersionsCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "versions <service> <schema> <table>",
 		Short: "List a model node's recorded code-version history",
@@ -69,7 +69,7 @@ Arguments:
 
 The node is addressed by its unique_id, "<schema>.<table>"; <service> is
 accepted for consistency with the other node subcommands but does not appear
-in the unique_id, matching how the orchestrator tracks version history.
+in the unique_id, matching how the catalog service tracks version history.
 
 Flags:
   --limit         Maximum number of versions returned, newest first. Default
@@ -97,7 +97,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments
   not_found  (exit 3)  the node's unique_id is not recorded
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node versions finance analytics orders --limit 5 --include-code",
 		Annotations: map[string]string{
@@ -119,7 +119,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.CatalogEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -143,7 +143,7 @@ Errors:
 	return cmd
 }
 
-func toVersionEntry(v *orchestratorv1.VersionView) versionEntry {
+func toVersionEntry(v *catalogv1.VersionView) versionEntry {
 	return versionEntry{
 		UniqueID:          v.GetUniqueId(),
 		VersionSeq:        v.GetVersionSeq(),
@@ -166,7 +166,7 @@ func toVersionEntry(v *orchestratorv1.VersionView) versionEntry {
 	}
 }
 
-func toVersionsPayload(versions []*orchestratorv1.VersionView) versionsPayload {
+func toVersionsPayload(versions []*catalogv1.VersionView) versionsPayload {
 	out := make([]versionEntry, 0, len(versions))
 	for _, v := range versions {
 		out = append(out, toVersionEntry(v))
@@ -177,7 +177,7 @@ func toVersionsPayload(versions []*orchestratorv1.VersionView) versionsPayload {
 // humanVersions writes one line per version to stderr:
 //
 //	<version_seq>  <content_hash>  <promoted_at>  [current]
-func humanVersions(stderr io.Writer, versions []*orchestratorv1.VersionView) error {
+func humanVersions(stderr io.Writer, versions []*catalogv1.VersionView) error {
 	for _, v := range versions {
 		current := ""
 		if v.GetIsCurrent() {

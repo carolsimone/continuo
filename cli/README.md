@@ -54,7 +54,7 @@ continuo [global-flags] <command> [args...]
 | Flag         | Env                    | Default           | Purpose                                            |
 |--------------|------------------------|-------------------|----------------------------------------------------|
 | `--endpoint` | `CONTINUO_RUN_CONTROLLER_ADDR` | `localhost:50051` | gRPC address of the run-controller service |
-| `--orchestrator-endpoint` | `CONTINUO_ORCHESTRATOR_ADDR` | `localhost:50052` | gRPC address of the orchestrator service |
+| `--catalog-endpoint` | `CONTINUO_CATALOG_ADDR` | `localhost:50052` | gRPC address of the catalog service |
 | `--dead-letter-endpoint` | `CONTINUO_DEAD_LETTER_ADDR` | `localhost:50055` | gRPC address of dead-letter-controller |
 | `--timeout`  | `CONTINUO_TIMEOUT`     | `10s`             | Per-call deadline (any `time.ParseDuration` value) |
 | `--human`    | —                      | `false`           | Emit a human one-liner on **stderr** instead of JSON on stdout |

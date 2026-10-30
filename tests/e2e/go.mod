@@ -3,7 +3,7 @@ module github.com/carolsimone/continuo/e2e
 go 1.26.10
 
 replace (
-	github.com/carolsimone/continuo/orchestrator => ../../orchestrator
+	github.com/carolsimone/continuo/catalog => ../../catalog
 	github.com/carolsimone/continuo/pkg => ../../pkg
 	github.com/carolsimone/continuo/run-controller => ../../run-controller
 )
@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.4
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.10
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
-	github.com/carolsimone/continuo/orchestrator v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/catalog v0.0.0-00010101000000-000000000000
 	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/carolsimone/continuo/run-controller v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0

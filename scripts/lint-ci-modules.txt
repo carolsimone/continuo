@@ -9,7 +9,7 @@ execution-controller
 agent-chat
 agent-remediation
 pkg
-orchestrator
+catalog
 tests/e2e
 run-controller
 dead-letter-controller

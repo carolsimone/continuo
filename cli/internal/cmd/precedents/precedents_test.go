@@ -11,18 +11,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// fakePrecedentsOrchestrator is the client.OrchestratorClient fake for this
+// fakePrecedentsCatalog is the client.CatalogClient fake for this
 // package's tests. Only GetPrecedents returns data; every other method
 // panics, since no precedents command path calls them.
-type fakePrecedentsOrchestrator struct {
-	resp *orchestratorv1.GetPrecedentsResponse
+type fakePrecedentsCatalog struct {
+	resp *catalogv1.GetPrecedentsResponse
 	err  error
 
 	called         bool
@@ -33,38 +33,38 @@ type fakePrecedentsOrchestrator struct {
 	gotIncludeCode bool
 }
 
-func (f *fakePrecedentsOrchestrator) GetNodeVersions(context.Context, string, int32, bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
+func (f *fakePrecedentsCatalog) GetNodeVersions(context.Context, string, int32, bool) (*catalogv1.GetNodeVersionsResponse, error) {
 	panic("GetNodeVersions should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsOrchestrator) GetNodeVersionDiff(context.Context, string, int64, int64) (*orchestratorv1.GetNodeVersionDiffResponse, error) {
+func (f *fakePrecedentsCatalog) GetNodeVersionDiff(context.Context, string, int64, int64) (*catalogv1.GetNodeVersionDiffResponse, error) {
 	panic("GetNodeVersionDiff should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsOrchestrator) GetUpstreamChanges(context.Context, string, int32, string) (*orchestratorv1.GetUpstreamChangesResponse, error) {
+func (f *fakePrecedentsCatalog) GetUpstreamChanges(context.Context, string, int32, string) (*catalogv1.GetUpstreamChangesResponse, error) {
 	panic("GetUpstreamChanges should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsOrchestrator) GetCodeUnitVersions(context.Context, string, string, int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
+func (f *fakePrecedentsCatalog) GetCodeUnitVersions(context.Context, string, string, int32) (*catalogv1.GetCodeUnitVersionsResponse, error) {
 	panic("GetCodeUnitVersions should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsOrchestrator) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error) {
+func (f *fakePrecedentsCatalog) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*catalogv1.GetPrecedentsResponse, error) {
 	f.called = true
 	f.gotSignature, f.gotCategory, f.gotReason = signature, category, reason
 	f.gotLimit, f.gotIncludeCode = limit, includeCode
 	return f.resp, f.err
 }
 
-func (f *fakePrecedentsOrchestrator) Close() error { return nil }
+func (f *fakePrecedentsCatalog) Close() error { return nil }
 
 // runPrecedents invokes the precedents command end-to-end with the provided
 // fake client. It captures stdout/stderr and returns the exit code.
-func runPrecedents(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runPrecedents(t *testing.T, fake client.CatalogClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := newPrecedentsCommand(func(context.Context, string) (client.OrchestratorClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := newPrecedentsCommand(func(context.Context, string) (client.CatalogClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -82,8 +82,8 @@ func runPrecedents(t *testing.T, fake client.OrchestratorClient, args []string, 
 }
 
 func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{
-		Precedents: []*orchestratorv1.Precedent{
+	fake := &fakePrecedentsCatalog{resp: &catalogv1.GetPrecedentsResponse{
+		Precedents: []*catalogv1.Precedent{
 			{
 				ReleaseId:    "rel-1",
 				NodeId:       "analytics.orders",
@@ -93,7 +93,7 @@ func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
 				ErrorExcerpt: `relation "orders_stg" does not exist`,
 				RejectedAt:   "2026-08-01T00:00:00Z",
 				Resolved:     true,
-				ResolvingVersion: &orchestratorv1.VersionView{
+				ResolvingVersion: &catalogv1.VersionView{
 					VersionSeq:  4,
 					ContentHash: "c4",
 					ReleaseId:   "rel-2",
@@ -103,7 +103,7 @@ func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
 				},
 				ResolutionDiff:          "--- a\n+++ b\n",
 				ResolutionDiffTruncated: false,
-				Proposals: []*orchestratorv1.PrecedentProposal{
+				Proposals: []*catalogv1.PrecedentProposal{
 					{ProposalId: "p1", PrUrl: "https://github.com/org/repo/pull/1", PrNumber: 1, PrState: "merged"},
 				},
 			},
@@ -155,7 +155,7 @@ func TestPrecedents_EmitsMatchesAsJSON(t *testing.T) {
 }
 
 func TestPrecedents_RequiresSelector(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{}
+	fake := &fakePrecedentsCatalog{}
 	stdout, _, exit := runPrecedents(t, fake, []string{}, false)
 	assert.Equal(t, 2, exit)
 	assert.False(t, fake.called, "no RPC call should happen when the selector is missing")
@@ -163,7 +163,7 @@ func TestPrecedents_RequiresSelector(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
 
-	fakeCategoryOnly := &fakePrecedentsOrchestrator{}
+	fakeCategoryOnly := &fakePrecedentsCatalog{}
 	stdout2, _, exit2 := runPrecedents(t, fakeCategoryOnly, []string{"--category", "logic"}, false)
 	assert.Equal(t, 2, exit2)
 	assert.False(t, fakeCategoryOnly.called, "--category alone must not dial the RPC")
@@ -173,7 +173,7 @@ func TestPrecedents_RequiresSelector(t *testing.T) {
 }
 
 func TestPrecedents_CategoryReasonSelector(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{}}
+	fake := &fakePrecedentsCatalog{resp: &catalogv1.GetPrecedentsResponse{}}
 	_, _, exit := runPrecedents(t, fake, []string{"--category", "logic", "--reason", "logic:missing_object"}, false)
 	assert.Equal(t, 0, exit)
 	require.True(t, fake.called)
@@ -183,7 +183,7 @@ func TestPrecedents_CategoryReasonSelector(t *testing.T) {
 }
 
 func TestPrecedents_PositionalSignatureIsUsed(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{}}
+	fake := &fakePrecedentsCatalog{resp: &catalogv1.GetPrecedentsResponse{}}
 	_, _, exit := runPrecedents(t, fake, []string{"s1"}, false)
 	assert.Equal(t, 0, exit)
 	require.True(t, fake.called)
@@ -193,7 +193,7 @@ func TestPrecedents_PositionalSignatureIsUsed(t *testing.T) {
 }
 
 func TestPrecedents_PositionalPlusSignatureFlagPrefersFlag(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{}}
+	fake := &fakePrecedentsCatalog{resp: &catalogv1.GetPrecedentsResponse{}}
 	_, _, exit := runPrecedents(t, fake, []string{"positional-sig", "--signature", "flag-sig"}, false)
 	assert.Equal(t, 0, exit)
 	require.True(t, fake.called)
@@ -201,7 +201,7 @@ func TestPrecedents_PositionalPlusSignatureFlagPrefersFlag(t *testing.T) {
 }
 
 func TestPrecedents_TwoPositionalsExit2(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{}
+	fake := &fakePrecedentsCatalog{}
 	stdout, _, exit := runPrecedents(t, fake, []string{"s1", "s2"}, false)
 	assert.Equal(t, 2, exit)
 	assert.False(t, fake.called, "no RPC call should happen when there are two positional arguments")
@@ -211,7 +211,7 @@ func TestPrecedents_TwoPositionalsExit2(t *testing.T) {
 }
 
 func TestPrecedents_NoPositionalNoSelectorExit2(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{}
+	fake := &fakePrecedentsCatalog{}
 	stdout, _, exit := runPrecedents(t, fake, []string{}, false)
 	assert.Equal(t, 2, exit)
 	assert.False(t, fake.called, "no RPC call should happen when neither a positional signature nor a selector is given")
@@ -221,19 +221,19 @@ func TestPrecedents_NoPositionalNoSelectorExit2(t *testing.T) {
 }
 
 func TestPrecedents_UnavailableExit5(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{err: status.Error(codes.Unavailable, "server down")}
+	fake := &fakePrecedentsCatalog{err: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runPrecedents(t, fake, []string{"--signature", "s1"}, false)
 	assert.Equal(t, 5, exit)
 }
 
 func TestPrecedents_HumanModeWritesStderrOnly(t *testing.T) {
-	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{
-		Precedents: []*orchestratorv1.Precedent{
+	fake := &fakePrecedentsCatalog{resp: &catalogv1.GetPrecedentsResponse{
+		Precedents: []*catalogv1.Precedent{
 			{
 				NodeId:   "analytics.orders",
 				Reason:   "logic:missing_object",
 				Resolved: true,
-				Proposals: []*orchestratorv1.PrecedentProposal{
+				Proposals: []*catalogv1.PrecedentProposal{
 					{PrUrl: "https://github.com/org/repo/pull/1"},
 				},
 			},

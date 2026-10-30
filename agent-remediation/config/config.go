@@ -54,10 +54,10 @@ type Config struct {
 	// a Go duration at all fails start-up.
 	PROpeningGracePeriod time.Duration
 
-	HTTPPort         string
-	GRPCPort         string
-	MaxAttempts      int
-	OrchestratorAddr string
+	HTTPPort    string
+	GRPCPort    string
+	MaxAttempts int
+	CatalogAddr string
 
 	// ServiceRepoMapPath is the path to the service→repo YAML file. When empty
 	// or missing, ServiceRepoPaths is an empty map and Step-2 source resolution
@@ -210,7 +210,7 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_HTTP_PORT", "8092"),
 		GRPCPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_GRPC_PORT", "50054"),
 		MaxAttempts:          pkgconfig.EnvIntOrDefault("AGENT_REMEDIATION_MAX_ATTEMPTS", 3),
-		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
+		CatalogAddr:          pkgconfig.EnvOrDefault("CONTINUO_CATALOG_ADDR", "catalog:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
 		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),

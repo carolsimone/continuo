@@ -24,17 +24,17 @@ func Execute() int {
 func executeWith(args []string, stdout, stderr io.Writer) int {
 	in := config.Inputs{
 		EnvRunControllerAddr: os.Getenv("CONTINUO_RUN_CONTROLLER_ADDR"),
-		EnvOrchestratorAddr:  os.Getenv("CONTINUO_ORCHESTRATOR_ADDR"),
+		EnvCatalogAddr:       os.Getenv("CONTINUO_CATALOG_ADDR"),
 		EnvDeadLetterAddr:    os.Getenv("CONTINUO_DEAD_LETTER_ADDR"),
 		EnvTimeout:           os.Getenv("CONTINUO_TIMEOUT"),
 		EnvActor:             os.Getenv("CONTINUO_ACTOR"),
 	}
 	var (
-		flagEndpoint             string
-		flagOrchestratorEndpoint string
-		flagDeadLetterEndpoint   string
-		flagTimeout              string
-		flagHuman                bool
+		flagEndpoint           string
+		flagCatalogEndpoint    string
+		flagDeadLetterEndpoint string
+		flagTimeout            string
+		flagHuman              bool
 	)
 
 	// Shared config pointer. The schedule, node and run subcommands and their children capture
@@ -49,7 +49,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		SilenceUsage:  true,
 	}
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the run-controller service (env: CONTINUO_RUN_CONTROLLER_ADDR)")
-	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)")
+	root.PersistentFlags().StringVar(&flagCatalogEndpoint, "catalog-endpoint", "", "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)")
 	root.PersistentFlags().StringVar(&flagDeadLetterEndpoint, "dead-letter-endpoint", "", "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
 	root.PersistentFlags().BoolVar(&flagHuman, "human", false, "emit human text on stderr instead of JSON on stdout")
@@ -57,7 +57,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
 		in.FlagEndpoint = flagEndpoint
-		in.FlagOrchestratorEndpoint = flagOrchestratorEndpoint
+		in.FlagCatalogEndpoint = flagCatalogEndpoint
 		in.FlagDeadLetterEndpoint = flagDeadLetterEndpoint
 		in.FlagTimeout = flagTimeout
 		in.FlagHuman = flagHuman

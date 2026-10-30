@@ -19,7 +19,7 @@ import (
 // stream names or consumer groups.
 var servicesWithMainGo = []string{
 	"run-controller/main.go",
-	"orchestrator/main.go",
+	"catalog/main.go",
 	"execution-controller/main.go",
 	"release-controller/main.go",
 	"remediation/main.go",
@@ -189,8 +189,8 @@ var streamLiteralScanDirs = []string{
 	"run-controller/service/handlers",
 	"run-controller/service/runreads",
 	"run-controller/internal/grpc/runservice",
-	"orchestrator/adapters/redis",
-	"orchestrator/service/handlers",
+	"catalog/adapters/redis",
+	"catalog/service/handlers",
 	"execution-controller/adapters/redis",
 	"execution-controller/service/handlers",
 	"release-controller/adapters/redis",

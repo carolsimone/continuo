@@ -11,18 +11,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runCodeUnits(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runCodeUnits(t *testing.T, fake client.CatalogClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewCodeUnitsCommand(func(context.Context, string) (client.OrchestratorClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewCodeUnitsCommand(func(context.Context, string) (client.CatalogClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -40,7 +40,7 @@ func runCodeUnits(t *testing.T, fake client.OrchestratorClient, args []string, h
 }
 
 func TestCodeUnits_UnitIDSelector_Success(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsResp: &orchestratorv1.GetCodeUnitVersionsResponse{Versions: []*orchestratorv1.UnitVersionView{{
+	fake := &fakeNodeCatalog{unitsResp: &catalogv1.GetCodeUnitVersionsResponse{Versions: []*catalogv1.UnitVersionView{{
 		UnitId: "unit_abc", Checksum: "chk1", Source: "{% macro x() %}...{% endmacro %}",
 		Repo: "org/repo", CommitSha: "sha1", ReleaseId: "rel_1", PromotedAt: "2026-07-01T00:00:00Z", IsCurrent: true,
 	}}}}
@@ -70,7 +70,7 @@ func TestCodeUnits_UnitIDSelector_Success(t *testing.T) {
 }
 
 func TestCodeUnits_NodeSelector_Success(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsResp: &orchestratorv1.GetCodeUnitVersionsResponse{}}
+	fake := &fakeNodeCatalog{unitsResp: &catalogv1.GetCodeUnitVersionsResponse{}}
 	stdout, _, exit := runCodeUnits(t, fake, []string{"--service", "finance", "--schema", "analytics", "--table", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "", fake.gotUnitsUnitID)
@@ -79,14 +79,14 @@ func TestCodeUnits_NodeSelector_Success(t *testing.T) {
 }
 
 func TestCodeUnits_LimitFlagIsForwarded(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsResp: &orchestratorv1.GetCodeUnitVersionsResponse{}}
+	fake := &fakeNodeCatalog{unitsResp: &catalogv1.GetCodeUnitVersionsResponse{}}
 	_, _, exit := runCodeUnits(t, fake, []string{"unit_abc", "--limit", "5"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, int32(5), fake.gotUnitsLimit)
 }
 
 func TestCodeUnits_BothSelectorsGivenExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runCodeUnits(t, fake, []string{"unit_abc", "--service", "finance", "--schema", "analytics", "--table", "orders"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -95,7 +95,7 @@ func TestCodeUnits_BothSelectorsGivenExits2(t *testing.T) {
 }
 
 func TestCodeUnits_NeitherSelectorGivenExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runCodeUnits(t, fake, []string{}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -104,7 +104,7 @@ func TestCodeUnits_NeitherSelectorGivenExits2(t *testing.T) {
 }
 
 func TestCodeUnits_PartialNodeSelectorExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runCodeUnits(t, fake, []string{"--service", "finance"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -113,7 +113,7 @@ func TestCodeUnits_PartialNodeSelectorExits2(t *testing.T) {
 }
 
 func TestCodeUnits_TooManyPositionalArgsExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runCodeUnits(t, fake, []string{"unit_abc", "extra"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -122,13 +122,13 @@ func TestCodeUnits_TooManyPositionalArgsExits2(t *testing.T) {
 }
 
 func TestCodeUnits_NotFoundExits3(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsErr: status.Error(codes.NotFound, "unit not found")}
+	fake := &fakeNodeCatalog{unitsErr: status.Error(codes.NotFound, "unit not found")}
 	_, _, exit := runCodeUnits(t, fake, []string{"unit_missing"}, false)
 	assert.Equal(t, 3, exit)
 }
 
 func TestCodeUnits_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeCatalog{unitsErr: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runCodeUnits(t, fake, []string{"unit_abc"}, false)
 	assert.Equal(t, 5, exit)
 }
@@ -136,7 +136,7 @@ func TestCodeUnits_UnavailableExits5(t *testing.T) {
 func TestCodeUnits_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
-	cmd := NewCodeUnitsCommand(func(context.Context, string) (client.OrchestratorClient, error) {
+	cmd := NewCodeUnitsCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, cfg, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"unit_abc"})
@@ -149,7 +149,7 @@ func TestCodeUnits_FactoryErrorExits5(t *testing.T) {
 }
 
 func TestCodeUnits_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeOrchestrator{unitsResp: &orchestratorv1.GetCodeUnitVersionsResponse{Versions: []*orchestratorv1.UnitVersionView{
+	fake := &fakeNodeCatalog{unitsResp: &catalogv1.GetCodeUnitVersionsResponse{Versions: []*catalogv1.UnitVersionView{
 		{UnitId: "unit_abc", Checksum: "chk1"},
 	}}}
 	stdout, stderr, exit := runCodeUnits(t, fake, []string{"unit_abc"}, true)

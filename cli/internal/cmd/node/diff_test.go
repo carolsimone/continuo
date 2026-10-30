@@ -11,18 +11,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runDiff(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runDiff(t *testing.T, fake client.CatalogClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewDiffCommand(func(context.Context, string) (client.OrchestratorClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewDiffCommand(func(context.Context, string) (client.CatalogClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -40,10 +40,10 @@ func runDiff(t *testing.T, fake client.OrchestratorClient, args []string, human 
 }
 
 func TestDiff_SuccessMapsAllFields(t *testing.T) {
-	fake := &fakeNodeOrchestrator{diffResp: &orchestratorv1.GetNodeVersionDiffResponse{Diff: &orchestratorv1.VersionDiff{
+	fake := &fakeNodeCatalog{diffResp: &catalogv1.GetNodeVersionDiffResponse{Diff: &catalogv1.VersionDiff{
 		UniqueId:          "analytics.orders",
-		From:              &orchestratorv1.VersionView{VersionSeq: 1, ContentHash: "c1"},
-		To:                &orchestratorv1.VersionView{VersionSeq: 3, ContentHash: "c3"},
+		From:              &catalogv1.VersionView{VersionSeq: 1, ContentHash: "c1"},
+		To:                &catalogv1.VersionView{VersionSeq: 3, ContentHash: "c3"},
 		RawCodeDiff:       "--- a\n+++ b\n",
 		ConfigDiff:        "",
 		SourceChanged:     true,
@@ -75,7 +75,7 @@ func TestDiff_SuccessMapsAllFields(t *testing.T) {
 }
 
 func TestDiff_MissingFromOrToFlagExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runDiff(t, fake, []string{"finance", "analytics", "orders", "--to", "3"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -84,7 +84,7 @@ func TestDiff_MissingFromOrToFlagExits2(t *testing.T) {
 }
 
 func TestDiff_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runDiff(t, fake, []string{"finance", "analytics", "--from", "1", "--to", "2"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -93,13 +93,13 @@ func TestDiff_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestDiff_NotFoundExits3(t *testing.T) {
-	fake := &fakeNodeOrchestrator{diffErr: status.Error(codes.NotFound, "version not found")}
+	fake := &fakeNodeCatalog{diffErr: status.Error(codes.NotFound, "version not found")}
 	_, _, exit := runDiff(t, fake, []string{"finance", "analytics", "orders", "--from", "1", "--to", "2"}, false)
 	assert.Equal(t, 3, exit)
 }
 
 func TestDiff_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeOrchestrator{diffErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeCatalog{diffErr: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runDiff(t, fake, []string{"finance", "analytics", "orders", "--from", "1", "--to", "2"}, false)
 	assert.Equal(t, 5, exit)
 }
@@ -107,7 +107,7 @@ func TestDiff_UnavailableExits5(t *testing.T) {
 func TestDiff_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
-	cmd := NewDiffCommand(func(context.Context, string) (client.OrchestratorClient, error) {
+	cmd := NewDiffCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, cfg, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"finance", "analytics", "orders", "--from", "1", "--to", "2"})
@@ -120,10 +120,10 @@ func TestDiff_FactoryErrorExits5(t *testing.T) {
 }
 
 func TestDiff_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeOrchestrator{diffResp: &orchestratorv1.GetNodeVersionDiffResponse{Diff: &orchestratorv1.VersionDiff{
+	fake := &fakeNodeCatalog{diffResp: &catalogv1.GetNodeVersionDiffResponse{Diff: &catalogv1.VersionDiff{
 		UniqueId:      "analytics.orders",
-		From:          &orchestratorv1.VersionView{VersionSeq: 1},
-		To:            &orchestratorv1.VersionView{VersionSeq: 3},
+		From:          &catalogv1.VersionView{VersionSeq: 1},
+		To:            &catalogv1.VersionView{VersionSeq: 3},
 		SourceChanged: true,
 	}}}
 	stdout, stderr, exit := runDiff(t, fake, []string{"finance", "analytics", "orders", "--from", "1", "--to", "3"}, true)

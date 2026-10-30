@@ -1,0 +1,205 @@
+package handlers_test
+
+import (
+	"context"
+	"fmt"
+	"github.com/carolsimone/continuo/pkg/testdeps"
+	"log/slog"
+	"os"
+	"testing"
+	"time"
+
+	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
+	"github.com/carolsimone/continuo/catalog/service/ports"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+)
+
+// fakeMessageProcessingRepository is an in-memory message_processing store
+// keyed by messageID.
+type fakeMessageProcessingRepository struct {
+	messages map[string]*messageprocessing.MessageProcessing
+}
+
+func newFakeMessageProcessingRepository() *fakeMessageProcessingRepository {
+	return &fakeMessageProcessingRepository{
+		messages: make(map[string]*messageprocessing.MessageProcessing),
+	}
+}
+
+func fakeMsgProcKey(messageID, streamName string) string {
+	return messageID + "|" + streamName
+}
+
+func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+	k := fakeMsgProcKey(msgProc.MessageID, msgProc.StreamName)
+	if existing, ok := f.messages[k]; ok {
+		return existing.ID, false, nil
+	}
+	msgProc.ID = uuid.New()
+	f.messages[k] = msgProc
+	return msgProc.ID, true, nil
+}
+
+func (f *fakeMessageProcessingRepository) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
+	msg, ok := f.messages[fakeMsgProcKey(messageID, streamName)]
+	if !ok {
+		return nil, nil
+	}
+	return msg, nil
+}
+
+func (f *fakeMessageProcessingRepository) GetByID(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
+	for _, msg := range f.messages {
+		if msg.ID == id {
+			return msg, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uuid.UUID, state string) error {
+	for _, msg := range f.messages {
+		if msg.ID == id {
+			msg.State = state
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeMessageProcessingRepository) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	return 0, nil
+}
+
+// fakeUnitOfWork is a no-op UnitOfWork backed by the in-memory
+// message-processing repo.
+type fakeUnitOfWork struct {
+	msgProcRepo  *fakeMessageProcessingRepository
+	BegunTx      bool
+	CommittedTx  bool
+	RolledBackTx bool
+}
+
+func newFakeUnitOfWork() *fakeUnitOfWork {
+	return &fakeUnitOfWork{
+		msgProcRepo: newFakeMessageProcessingRepository(),
+	}
+}
+
+func (f *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
+	return f.msgProcRepo
+}
+func (f *fakeUnitOfWork) Begin(ctx context.Context) error { f.BegunTx = true; return nil }
+func (f *fakeUnitOfWork) Commit() error                   { f.CommittedTx = true; return nil }
+func (f *fakeUnitOfWork) Rollback() error                 { f.RolledBackTx = true; return nil }
+
+// newTestLogger returns a debug-level text logger writing to stdout.
+func newTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// ── fakes: ports.TopologyArtifactReader ──────────────────────────────────────
+
+// fakeArtifactReader serves topology artifacts from memory, keyed by URI. err,
+// when set, is returned for every read.
+type fakeArtifactReader struct {
+	docs  map[string]topologyartifact.Document
+	err   error
+	calls []string
+}
+
+func (f *fakeArtifactReader) Load(_ context.Context, uri, _ string) (topologyartifact.Document, error) {
+	f.calls = append(f.calls, uri)
+	if f.err != nil {
+		return topologyartifact.Document{}, f.err
+	}
+	doc, ok := f.docs[uri]
+	if !ok {
+		return topologyartifact.Document{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactNotFound, uri)
+	}
+	return doc, nil
+}
+
+var _ ports.TopologyArtifactReader = (*fakeArtifactReader)(nil)
+
+// artifactFor registers doc under the URI its release's artifact has and
+// returns that URI, so a test can build a promotion that names it.
+func (f *fakeArtifactReader) artifactFor(doc topologyartifact.Document) string {
+	if f.docs == nil {
+		f.docs = map[string]topologyartifact.Document{}
+	}
+	uri := "s3://continuo/" + topologyartifact.Key(doc.TenantID, doc.ReleaseID)
+	f.docs[uri] = doc
+	return uri
+}
+
+// ── integration test infrastructure ──────────────────────────────────────────
+
+func commandTestNeo4jURI() string {
+	if u := os.Getenv("NEO4J_URI"); u != "" {
+		return u
+	}
+	return "bolt://neo4j:7687"
+}
+
+func commandTestNeo4jUser() string {
+	if u := os.Getenv("NEO4J_USER"); u != "" {
+		return u
+	}
+	return "neo4j"
+}
+
+func commandTestNeo4jPassword() string {
+	if p := os.Getenv("NEO4J_PASSWORD"); p != "" {
+		return p
+	}
+	return "atlas_password"
+}
+
+// newCommandTestNeo4jClient creates a Neo4j client for integration tests,
+// skipping if Neo4j is unavailable.
+func newCommandTestNeo4jClient(t *testing.T) neo4jinfra.Neo4jClient {
+	t.Helper()
+	client, err := neo4jinfra.NewNeo4jClient(
+		commandTestNeo4jURI(),
+		commandTestNeo4jUser(),
+		commandTestNeo4jPassword(),
+		newTestLogger(),
+	)
+	if err != nil {
+		testdeps.Unavailable(t, "Neo4j unavailable, skipping integration test: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	return client
+}
+
+// newCommandTestDB creates a Postgres connection for integration tests,
+// skipping if Postgres is unavailable.
+func newCommandTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	host := os.Getenv("POSTGRES_HOST")
+	if host == "" {
+		host = "postgres"
+	}
+	port := os.Getenv("POSTGRES_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	db, err := sqlx.Connect("postgres", fmt.Sprintf(
+		"host=%s port=%s dbname=continuo_orchestrator user=continuo_svc password=continuo sslmode=disable",
+		host, port,
+	))
+	if err != nil {
+		testdeps.Unavailable(t, "Postgres unavailable: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}

@@ -15,7 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
@@ -189,7 +189,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 7c. The read-side RPC must surface the same history the write path just
 	//     recorded: GetNodeVersions(probeUniqueID) includes a version whose
 	//     content_hash matches what the topology swap stamped on :Table.
-	versionsResp, err := clients.orchestratorClient.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{
+	versionsResp, err := clients.orchestratorClient.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{
 		UniqueId: probeUniqueID,
 	})
 	require.NoError(t, err, "GetNodeVersions(%s) failed", probeUniqueID)

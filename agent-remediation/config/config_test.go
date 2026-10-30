@@ -40,7 +40,7 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "8092", cfg.HTTPPort)
 	assert.Equal(t, 3, cfg.MaxAttempts)
-	assert.Equal(t, "orchestrator:50052", cfg.OrchestratorAddr)
+	assert.Equal(t, "catalog:50052", cfg.CatalogAddr)
 	assert.Equal(t, time.Hour, cfg.LLMCacheTTL, "LLM_CACHE_TTL must default to 1h so no new required env var is introduced")
 }
 

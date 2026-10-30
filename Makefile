@@ -332,7 +332,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #
 # The proto diffs pin the vendored copies to the canonical contracts. ui's
 # @grpc/proto-loader reads its copies at boot, so drift silently drops fields
-# on the wire instead of failing any build; cli generates its orchestrator
+# on the wire instead of failing any build; cli generates its catalog
 # stubs from its own copy, so drift there ships a client built from another
 # contract. cli generates its run stubs from its own copy of run.proto, so
 # drift there ships a client built from another contract.
@@ -367,8 +367,8 @@ guards: bench-test
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
-	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
-	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
+	diff catalog/proto/catalog/v1/catalog.proto ui/proto/catalog/v1/catalog.proto
+	diff catalog/proto/catalog/v1/catalog.proto cli/proto/catalog/v1/catalog.proto
 	diff run-controller/proto/run/v1/run.proto ui/proto/run.proto
 	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
 	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go

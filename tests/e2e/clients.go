@@ -12,8 +12,8 @@ import (
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
+	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -26,7 +26,7 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	orchestratorClient     orchestratorv1.OrchestratorQueryClient
+	orchestratorClient     catalogv1.CatalogQueryClient
 	runClient              runv1.RunServiceClient
 	agentRemediationClient remediationv1.RemediationProposalsClient
 	deadLetterClient       deadletterv1.DeadLetterServiceClient
@@ -117,7 +117,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
 
 	clients := &testClients{
-		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
+		orchestratorClient:     catalogv1.NewCatalogQueryClient(orchestratorConn),
 		runClient:              runv1.NewRunServiceClient(runControllerConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),

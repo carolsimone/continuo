@@ -3,10 +3,10 @@ go 1.26.10
 use (
 	./agent-chat
 	./agent-remediation
+	./catalog
 	./dead-letter-controller
 	./egress-proxy
 	./execution-controller
-	./orchestrator
 	./pkg
 	./release-controller
 	./remediation

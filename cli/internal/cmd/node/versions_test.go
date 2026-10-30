@@ -11,18 +11,18 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runVersions(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runVersions(t *testing.T, fake client.CatalogClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
-	cmd := NewVersionsCommand(func(context.Context, string) (client.OrchestratorClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewVersionsCommand(func(context.Context, string) (client.CatalogClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -40,7 +40,7 @@ func runVersions(t *testing.T, fake client.OrchestratorClient, args []string, hu
 }
 
 func TestVersions_SuccessMapsAllFieldsAndDefaultsLimitTo20(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{Versions: []*orchestratorv1.VersionView{{
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{Versions: []*catalogv1.VersionView{{
 		UniqueId: "analytics.orders", VersionSeq: 3, ContentHash: "c1", SourceHash: "s1",
 		SharedCodeHash: "sc1", ConfigHash: "cfg1", Runtime: "dbt", RawCode: "select 1",
 		CompiledCode: "select 1 from x", CompiledTruncated: false, ConfigJson: `{"materialized":"table"}`,
@@ -79,35 +79,35 @@ func TestVersions_SuccessMapsAllFieldsAndDefaultsLimitTo20(t *testing.T) {
 }
 
 func TestVersions_LimitFlagIsForwarded(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{}}
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{}}
 	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders", "--limit", "50"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, int32(50), fake.gotVersionsLimit)
 }
 
 func TestVersions_IncludeCodeDefaultsFalse(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{}}
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{}}
 	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.False(t, fake.gotVersionsIncludeCode)
 }
 
 func TestVersions_IncludeCodeFlagIsForwarded(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{}}
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{}}
 	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders", "--include-code"}, false)
 	assert.Equal(t, 0, exit)
 	assert.True(t, fake.gotVersionsIncludeCode)
 }
 
 func TestVersions_EmptyResultIsEmptyArrayNotNull(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{Versions: nil}}
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{Versions: nil}}
 	stdout, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, `"versions":[]`)
 }
 
 func TestVersions_WrongArgCountExits2(t *testing.T) {
-	fake := &fakeNodeOrchestrator{}
+	fake := &fakeNodeCatalog{}
 	stdout, _, exit := runVersions(t, fake, []string{"finance", "analytics"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
@@ -116,13 +116,13 @@ func TestVersions_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestVersions_NotFoundExits3(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsErr: status.Error(codes.NotFound, "node not found")}
+	fake := &fakeNodeCatalog{versionsErr: status.Error(codes.NotFound, "node not found")}
 	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 3, exit)
 }
 
 func TestVersions_UnavailableExits5(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsErr: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeNodeCatalog{versionsErr: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)
 	assert.Equal(t, 5, exit)
 }
@@ -130,7 +130,7 @@ func TestVersions_UnavailableExits5(t *testing.T) {
 func TestVersions_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
-	cmd := NewVersionsCommand(func(context.Context, string) (client.OrchestratorClient, error) {
+	cmd := NewVersionsCommand(func(context.Context, string) (client.CatalogClient, error) {
 		return nil, status.Error(codes.Unavailable, "dial failed")
 	}, cfg, &outBuf, &errBuf)
 	cmd.SetArgs([]string{"finance", "analytics", "orders"})
@@ -143,7 +143,7 @@ func TestVersions_FactoryErrorExits5(t *testing.T) {
 }
 
 func TestVersions_HumanModeUsesStderr(t *testing.T) {
-	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{Versions: []*orchestratorv1.VersionView{{
+	fake := &fakeNodeCatalog{versionsResp: &catalogv1.GetNodeVersionsResponse{Versions: []*catalogv1.VersionView{{
 		VersionSeq: 3, ContentHash: "c1", IsCurrent: true,
 	}}}}
 	stdout, stderr, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, true)

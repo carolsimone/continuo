@@ -213,7 +213,7 @@ func main() {
 	artifactWriter := s3.NewArtifactWriter(objectStore, cfg.S3.Bucket)
 	bundleReader := s3.NewCandidateSourceReader(objectStore)
 
-	graphClient, err := grpcadapter.NewGraphClient(cfg.OrchestratorAddr)
+	graphClient, err := grpcadapter.NewGraphClient(cfg.CatalogAddr)
 	if err != nil {
 		logger.Error("grpc graph client dial", "error", err)
 		os.Exit(1)
