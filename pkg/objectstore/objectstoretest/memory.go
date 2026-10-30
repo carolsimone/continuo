@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/objectstore"
 )
@@ -19,7 +22,8 @@ type Read struct {
 	MaxBytes int64
 }
 
-// Write is one object a Memory stored through Put, with its Ref resolved.
+// Write is one object a Memory stored through Put or a completed writer, with
+// its Ref resolved.
 type Write struct {
 	Ref         objectstore.Ref
 	Body        []byte
@@ -31,12 +35,13 @@ type Write struct {
 // default bucket. A Ref that names no object is objectstore.ErrInvalidRef and
 // an unusable read limit is an error, both before the store is touched. A
 // missing object is objectstore.ErrNotFound and one over the read limit
-// objectstore.ErrTooLarge. Bodies are copied in and out. It is safe for
-// concurrent use.
+// objectstore.ErrTooLarge. Bodies are copied in and out. A writer opened with
+// OpenWriter stores its object when it is closed, and not before; one that is
+// aborted stores nothing. It is safe for concurrent use.
 type Memory struct {
 	mu            sync.Mutex
 	defaultBucket string
-	objects       map[objectstore.Ref][]byte
+	objects       map[objectstore.Ref]stored
 	failGet       map[objectstore.Ref]error
 	failPut       map[objectstore.Ref]error
 	failDelete    map[string]error
@@ -44,17 +49,27 @@ type Memory struct {
 	puts          []Write
 }
 
+// stored is an object in a Memory: its bytes and when it was stored.
+type stored struct {
+	body     []byte
+	modified time.Time
+}
+
 var (
 	_ objectstore.Reader        = (*Memory)(nil)
 	_ objectstore.Writer        = (*Memory)(nil)
 	_ objectstore.PrefixDeleter = (*Memory)(nil)
+	_ objectstore.StreamWriter  = (*Memory)(nil)
+	_ objectstore.StreamReader  = (*Memory)(nil)
+	_ objectstore.Lister        = (*Memory)(nil)
+	_ objectstore.Deleter       = (*Memory)(nil)
 )
 
 // NewMemory returns an empty Memory whose default bucket is defaultBucket.
 func NewMemory(defaultBucket string) *Memory {
 	return &Memory{
 		defaultBucket: defaultBucket,
-		objects:       map[objectstore.Ref][]byte{},
+		objects:       map[objectstore.Ref]stored{},
 		failGet:       map[objectstore.Ref]error{},
 		failPut:       map[objectstore.Ref]error{},
 		failDelete:    map[string]error{},
@@ -84,10 +99,11 @@ func (m *Memory) Get(_ context.Context, ref objectstore.Ref, maxBytes int64) ([]
 	if err := m.failGet[ref]; err != nil {
 		return nil, err
 	}
-	body, ok := m.objects[ref]
+	obj, ok := m.objects[ref]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", objectstore.ErrNotFound, ref)
 	}
+	body := obj.body
 	if int64(len(body)) > maxBytes {
 		return nil, fmt.Errorf("%w: %s is %d bytes, over the %d-byte limit",
 			objectstore.ErrTooLarge, ref, len(body), maxBytes)
@@ -107,9 +123,143 @@ func (m *Memory) Put(_ context.Context, ref objectstore.Ref, body []byte, conten
 	if err := m.failPut[ref]; err != nil {
 		return err
 	}
-	m.objects[ref] = bytes.Clone(body)
-	m.puts = append(m.puts, Write{Ref: ref, Body: bytes.Clone(body), ContentType: contentType})
+	m.store(ref, bytes.Clone(body), contentType)
 	return nil
+}
+
+// store keeps body, which it owns, at ref and records the write. The caller
+// holds m.mu.
+func (m *Memory) store(ref objectstore.Ref, body []byte, contentType string) {
+	m.objects[ref] = stored{body: body, modified: time.Now()}
+	m.puts = append(m.puts, Write{Ref: ref, Body: bytes.Clone(body), ContentType: contentType})
+}
+
+// GetStream implements objectstore.StreamReader. The stream reads a copy of the
+// object taken when GetStream is called. A FailGet error applies to it; it is
+// not recorded in Reads, which hold reads with a limit.
+func (m *Memory) GetStream(_ context.Context, ref objectstore.Ref) (io.ReadCloser, error) {
+	if err := ref.Validate(); err != nil {
+		return nil, err
+	}
+	ref = m.resolve(ref)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.failGet[ref]; err != nil {
+		return nil, err
+	}
+	obj, ok := m.objects[ref]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", objectstore.ErrNotFound, ref)
+	}
+	return io.NopCloser(bytes.NewReader(bytes.Clone(obj.body))), nil
+}
+
+// List implements objectstore.Lister over the default bucket, in key order.
+// Each object's LastModified is the time it was stored.
+func (m *Memory) List(_ context.Context, prefix string) ([]objectstore.Object, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var objects []objectstore.Object
+	for _, ref := range slices.SortedFunc(maps.Keys(m.objects), func(a, b objectstore.Ref) int {
+		return strings.Compare(a.Key, b.Key)
+	}) {
+		if ref.Bucket != m.defaultBucket || !strings.HasPrefix(ref.Key, prefix) {
+			continue
+		}
+		obj := m.objects[ref]
+		objects = append(objects, objectstore.Object{Key: ref.Key, Size: int64(len(obj.body)), LastModified: obj.modified})
+	}
+	return objects, nil
+}
+
+// Delete implements objectstore.Deleter. An object that does not exist is not
+// an error.
+func (m *Memory) Delete(_ context.Context, ref objectstore.Ref) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	ref = m.resolve(ref)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.objects, ref)
+	return nil
+}
+
+// OpenWriter implements objectstore.StreamWriter. A write FailPut refuses fails
+// here, as a store refuses the multipart upload an object is written through.
+func (m *Memory) OpenWriter(_ context.Context, ref objectstore.Ref, contentType string) (objectstore.ObjectWriter, error) {
+	if err := ref.Validate(); err != nil {
+		return nil, err
+	}
+	ref = m.resolve(ref)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.failPut[ref]; err != nil {
+		return nil, err
+	}
+	return &memoryWriter{mem: m, ref: ref, contentType: contentType}, nil
+}
+
+// memoryWriter is the ObjectWriter of a Memory: it buffers what is written and
+// stores it when it is closed. It is not safe for concurrent use.
+type memoryWriter struct {
+	mem         *Memory
+	ref         objectstore.Ref // resolved
+	contentType string
+	buf         bytes.Buffer
+	state       writerState
+	err         error // a failed Close; every later Write and Close returns it
+}
+
+type writerState int
+
+const (
+	writerOpen writerState = iota
+	writerCompleted
+	writerAborted
+)
+
+func (w *memoryWriter) Write(p []byte) (int, error) {
+	if err := w.usable(); err != nil {
+		return 0, err
+	}
+	return w.buf.Write(p)
+}
+
+// Close stores the object. A write FailPut refuses after the writer was opened
+// fails here and stores nothing; the writer can still be aborted.
+func (w *memoryWriter) Close() error {
+	if err := w.usable(); err != nil {
+		return err
+	}
+	w.mem.mu.Lock()
+	defer w.mem.mu.Unlock()
+	if err := w.mem.failPut[w.ref]; err != nil {
+		w.err = err
+		return err
+	}
+	w.mem.store(w.ref, w.buf.Bytes(), w.contentType)
+	w.state = writerCompleted
+	w.buf = bytes.Buffer{}
+	return nil
+}
+
+// Abort discards what was written. After Close or a second Abort it does
+// nothing.
+func (w *memoryWriter) Abort() error {
+	if w.state == writerOpen {
+		w.state = writerAborted
+		w.buf = bytes.Buffer{}
+	}
+	return nil
+}
+
+// usable reports why the writer cannot take a Write or a Close, or nil.
+func (w *memoryWriter) usable() error {
+	if w.state != writerOpen {
+		return fmt.Errorf("%w: %s", objectstore.ErrWriterClosed, w.ref)
+	}
+	return w.err
 }
 
 // DeletePrefix implements objectstore.PrefixDeleter over the default bucket.

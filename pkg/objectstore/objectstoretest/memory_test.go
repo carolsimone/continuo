@@ -3,6 +3,7 @@ package objectstoretest_test
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,4 +81,79 @@ func TestMemory_CopiesBodiesInAndOut(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("body"), again)
 	assert.Equal(t, []byte("body"), mem.Puts()[0].Body)
+}
+
+// A writer that completes is recorded in Puts like a Put, with its content
+// type; one that is aborted records nothing.
+func TestMemory_CompletedWritersAreRecordedInPutsAndAbortedOnesAreNot(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory("continuo")
+
+	w, err := mem.OpenWriter(ctx, objectstore.Ref{Key: "streamed"}, "application/x-ndjson")
+	require.NoError(t, err)
+	chunk := []byte("ab")
+	_, err = w.Write(chunk)
+	require.NoError(t, err)
+	chunk[0] = 'X' // the writer copied what it was given
+	_, err = w.Write([]byte("cd"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	aborted, err := mem.OpenWriter(ctx, objectstore.Ref{Key: "aborted"}, "text/plain")
+	require.NoError(t, err)
+	_, err = aborted.Write([]byte("zz"))
+	require.NoError(t, err)
+	require.NoError(t, aborted.Abort())
+
+	assert.Equal(t, []objectstoretest.Write{{
+		Ref:         objectstore.Ref{Bucket: "continuo", Key: "streamed"},
+		Body:        []byte("abcd"),
+		ContentType: "application/x-ndjson",
+	}}, mem.Puts())
+	assert.Empty(t, mem.Reads(), "a stream read is not a Get")
+}
+
+// FailPut refuses a writer where a store refuses a multipart upload, at open,
+// and refuses a write that was already open when the failure was injected, at
+// Close; in both cases nothing is stored.
+func TestMemory_FailPutRefusesAWriterAtOpenAndAtClose(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory("continuo")
+	boom := errors.New("boom")
+
+	open, err := mem.OpenWriter(ctx, objectstore.Ref{Key: "late"}, "text/plain")
+	require.NoError(t, err)
+	_, err = open.Write([]byte("x"))
+	require.NoError(t, err)
+	mem.FailPut(objectstore.Ref{Key: "late"}, boom)
+	mem.FailPut(objectstore.Ref{Key: "early"}, boom)
+
+	w, err := mem.OpenWriter(ctx, objectstore.Ref{Bucket: "continuo", Key: "early"}, "text/plain")
+	assert.ErrorIs(t, err, boom)
+	assert.Nil(t, w)
+	assert.ErrorIs(t, open.Close(), boom)
+	require.NoError(t, open.Abort(), "a writer whose Close failed can still be aborted")
+
+	for _, key := range []string{"early", "late"} {
+		_, err := mem.GetStream(ctx, objectstore.Ref{Key: key})
+		assert.ErrorIs(t, err, objectstore.ErrNotFound, key)
+	}
+	assert.Empty(t, mem.Puts())
+}
+
+func TestMemory_FailGetAppliesToGetStream(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory("continuo")
+	boom := errors.New("boom")
+	require.NoError(t, mem.Put(ctx, objectstore.Ref{Key: "a"}, []byte("x"), ""))
+	require.NoError(t, mem.Put(ctx, objectstore.Ref{Key: "b"}, []byte("y"), ""))
+	mem.FailGet(objectstore.Ref{Key: "a"}, boom)
+
+	_, err := mem.GetStream(ctx, objectstore.Ref{Key: "a"})
+	assert.ErrorIs(t, err, boom)
+	rc, err := mem.GetStream(ctx, objectstore.Ref{Key: "b"})
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("y"), got)
 }

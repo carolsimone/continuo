@@ -18,6 +18,7 @@ type Request struct {
 	Query         url.Values
 	Authorization string
 	ContentType   string
+	Header        http.Header
 	Body          []byte
 }
 
@@ -43,6 +44,7 @@ func NewServer(t testing.TB, handler http.HandlerFunc) *Server {
 			Query:         r.URL.Query(),
 			Authorization: r.Header.Get("Authorization"),
 			ContentType:   r.Header.Get("Content-Type"),
+			Header:        r.Header.Clone(),
 			Body:          body,
 		})
 		s.mu.Unlock()
