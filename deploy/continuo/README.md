@@ -310,13 +310,22 @@ environment and needs nothing else of catalog's configuration.
 kubectl -n continuo exec deploy/catalog -- catalog-backup export
 kubectl -n continuo exec deploy/catalog -- catalog-backup export --tenant default
 
-# list the stored exports, newest first
-kubectl -n continuo exec deploy/catalog -- catalog-backup list [--tenant default]
+# list the stored exports, newest first; after a Neo4j loss name the tenant,
+# because a bare list covers only the tenants the graph still holds
+kubectl -n continuo exec deploy/catalog -- catalog-backup list --tenant default
 
 # return a tenant's graph to an export; the tenant is the one the key names
 kubectl -n continuo exec deploy/catalog -- catalog-backup restore \
   tenants/default/backups/catalog/20261030T020000Z.jsonl.gz --yes
 ```
+
+`--tenant` takes a tenant id and does not check it against the graph. A bare
+`export` or `list` covers the tenants the graph holds, and prints a warning on
+stderr when it holds none (the case after a Neo4j loss, while the bucket still
+holds the exports): name the tenant then. `export --tenant <id>` of a tenant the
+graph does not list stores an empty export, with a warning on stderr. So do not
+run `export` on a lost graph before `restore`: the empty export counts toward
+`catalog.backup.keep` and can displace a good one.
 
 On the compose stack the source is bind-mounted over the image's
 `/app/catalog`, which hides the prebuilt binary, so run
@@ -381,11 +390,13 @@ Topology written after the export comes back with the re-announce in step 3.
 
 ### Alerts
 
-catalog exports these on its `/metrics` (`metrics.port`):
+catalog exports these on its `/metrics` (`metrics.port`), and only while
+`catalog.backup.enabled` is true: with the backup disabled none of the five
+exists, whatever `catalog-backup export` has stored.
 
 | Series | Answers |
 |---|---|
-| `continuo_catalog_export_last_success_timestamp_seconds` | When was the newest good export? The oldest tenant's newest export, read from the bucket when Prometheus scrapes (at most once a minute), so an export taken with `catalog-backup` counts and the value survives a restart. 0 for a tenant with no export. It has no sample until a read from the bucket succeeds |
+| `continuo_catalog_export_last_success_timestamp_seconds` | When was the newest good export? The oldest tenant's newest export, read from the bucket when Prometheus scrapes (at most once a minute), so an export taken with `catalog-backup` counts (while the backup is enabled) and the value survives a restart. 0 for a tenant with no export. It has no sample until a read from the bucket succeeds |
 | `continuo_catalog_exports_total{outcome}` | Scheduled exports this pod ran: `success`, `failure` or `skipped` |
 | `continuo_catalog_export_duration_seconds` | How long a scheduled export paused the tenant's writes |
 | `continuo_catalog_export_bytes`, `continuo_catalog_export_records{kind}` | Size and record counts of the last scheduled export |
@@ -415,8 +426,9 @@ that cannot read the bucket would otherwise raise nothing:
 
 The rules need cAdvisor and kube-state-metrics. Without them, compare
 `process_resident_memory_bytes{service="catalog"}` with the memory limit set in
-`services[].resources`. With `catalog.backup.enabled: false` and no other
-exports, leave the first alert out.
+`services[].resources`. With `catalog.backup.enabled: false` the gauge does not
+exist, so the first alert, which pairs `absent()`, would fire at once: drop it
+for such installs.
 
 ### S3 access
 

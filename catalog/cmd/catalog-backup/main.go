@@ -344,7 +344,8 @@ type listLine struct {
 
 // runList prints the stored exports of the named tenant, or of every tenant
 // the catalog holds, newest first. A failure prints nothing, so a partial list
-// is never taken for the whole one.
+// is never taken for the whole one. A list with no --tenant that finds no
+// tenant warns on stderr, since the bucket may still hold exports.
 func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps, opts options) int {
 	tenants := []string{opts.tenant}
 	if !opts.tenantSet {
@@ -352,6 +353,12 @@ func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps,
 		if tenants, err = d.tenants.Tenants(ctx); err != nil {
 			logger.Error("list the catalog's tenants", "error", err)
 			return exitError
+		}
+		if len(tenants) == 0 {
+			// The tenants come from the graph, which a Neo4j loss empties
+			// while the bucket still holds the exports.
+			logger.Warn("the catalog holds no tenant, so nothing was listed; " +
+				"name one with --tenant <tenant> to list its exports")
 		}
 	}
 	type stored struct {

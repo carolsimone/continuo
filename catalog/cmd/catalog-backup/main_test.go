@@ -594,6 +594,41 @@ func TestList_NothingStoredPrintsAnEmptyArray(t *testing.T) {
 	assert.JSONEq(t, `[]`, stdout)
 }
 
+// A bare list takes its tenants from the graph, which a Neo4j loss empties
+// while the bucket still holds the exports. With no tenant listed it still
+// prints an empty array and exits 0, and stderr says to name a tenant.
+func TestList_BareListWithNoTenantWarnsToNameOne(t *testing.T) {
+	h := newHarness()
+
+	code, stdout, stderr := h.run(t, "list")
+
+	require.Equal(t, exitOK, code, stderr)
+	assert.JSONEq(t, `[]`, stdout)
+	assert.Empty(t, h.store.listed, "no tenant, so nothing was listed")
+	assert.Contains(t, stderr, "no tenant")
+	assert.Contains(t, stderr, "--tenant <tenant>")
+}
+
+// The warning is for a bare list that found no tenant: a tenant that is named
+// or listed has none, whether or not it holds an export.
+func TestList_NoWarningWhenATenantIsNamedOrListed(t *testing.T) {
+	for name, args := range map[string][]string{
+		"named, nothing stored":  {"list", "--tenant", "acme"},
+		"listed, nothing stored": {"list"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+			h.tenants.tenants = []string{"acme"}
+
+			code, stdout, stderr := h.run(t, args...)
+
+			require.Equal(t, exitOK, code, stderr)
+			assert.JSONEq(t, `[]`, stdout)
+			assert.NotContains(t, stderr, "no tenant")
+		})
+	}
+}
+
 // A tenant the catalog does not list simply has no exports.
 func TestList_UnknownTenantHasNoExports(t *testing.T) {
 	h := newHarness()
