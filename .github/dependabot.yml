@@ -15,11 +15,11 @@ updates:
   - package-ecosystem: gomod
     directories:
       - /agent-chat
+      - /catalog
       - /cli
       - /dead-letter-controller
       - /egress-proxy
       - /execution-controller
-      - /orchestrator
       - /pkg
       - /release-controller
       - /remediation

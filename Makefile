@@ -38,7 +38,7 @@ build: build-dev
 build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-run-controller:prod -f run-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-catalog:prod -f catalog/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
@@ -87,7 +87,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -136,11 +136,11 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
 	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := run-controller orchestrator execution-controller release-controller \
+GO_SERVICES := run-controller catalog execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
 FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
@@ -182,7 +182,7 @@ test-deps-down:
 # integration_test packages both TRUNCATE the same shared live-DB tables, so
 # running them as parallel package binaries (the default `go test ./...`
 # behaviour) races between one package's TRUNCATE and another's assertions.
-# orchestrator pins the same flag for the same reason: adapters/neo4j and
+# catalog pins the same flag for the same reason: adapters/neo4j and
 # service/handlers both wipe and rebuild the one shared Neo4j graph.
 # pkg runs its Redis- and Postgres-backed tests against the compose Redis and
 # the Flyway-built continuo_execution database, one package at a time (-p=1).
@@ -198,7 +198,7 @@ test-go: test-deps-up
 	  extra=; pkgs=./...; \
 	  case $$s in \
 	    run-controller) db=continuo_run_controller;; \
-	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
+	    catalog) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
@@ -384,7 +384,7 @@ e2e:
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-execution-controller.sh
-	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).

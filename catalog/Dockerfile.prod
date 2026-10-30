@@ -12,7 +12,7 @@ WORKDIR /app
 COPY go.work go.work.sum* ./
 COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
-COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY catalog/go.mod catalog/go.sum ./catalog/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
@@ -29,24 +29,24 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 RUN go mod download
 
 # Copy source code
-COPY orchestrator/ ./orchestrator/
+COPY catalog/ ./catalog/
 COPY pkg/ ./pkg/
 
 # Build static binary
-WORKDIR /app/orchestrator
+WORKDIR /app/catalog
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/orchestrator .
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/catalog .
 
 # Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
-COPY --from=builder /app/bin/orchestrator /usr/local/bin/orchestrator
+COPY --from=builder /app/bin/catalog /usr/local/bin/catalog
 
 EXPOSE 8087 50052
 
 # Static binary; no filesystem writes at runtime — run unprivileged.
 USER 65532:65532
 
-CMD ["orchestrator"]
+CMD ["catalog"]

@@ -29,10 +29,10 @@ area/run-controller:
           - '!**/streams_contract.py'
           - '!**/contract_vocabulary.py'
 
-area/orchestrator:
+area/catalog:
   - changed-files:
       - all-globs-to-any-file:
-          - 'orchestrator/**'
+          - 'catalog/**'
           - '!**/*_test.go'
           - '!**/test_*.py'
           - '!**/tests/**'

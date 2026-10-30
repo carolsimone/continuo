@@ -1,6 +1,6 @@
 FROM continuo-base:latest
 
-# Install kubectl for e2e test port-forwarding (orchestrator is the
+# Install kubectl for e2e test port-forwarding (catalog is the
 # in-cluster container the CI uses to drive e2e tests).
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/${ARCH}/kubectl" && \
@@ -9,15 +9,15 @@ RUN ARCH=$(dpkg --print-architecture) && \
 WORKDIR /app
 
 # Layer 1: Workspace stub. go.work and the go.mod / go.sum files of pkg,
-# orchestrator and the other workspace modules listed below are copied;
-# Layer 2 drops every module but pkg and orchestrator from the workspace, so
+# catalog and the other workspace modules listed below are copied;
+# Layer 2 drops every module but pkg and catalog from the workspace, so
 # only those two are built against and get their source trees later.
 # Limiting the source-copy layers to the dirs this service actually
 # touches means a change to execution-controller does not invalidate
 # this image's cache.
 COPY go.work go.work.sum* ./
 COPY pkg/go.mod pkg/go.sum ./pkg/
-COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY catalog/go.mod catalog/go.sum ./catalog/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
@@ -42,13 +42,13 @@ RUN go work edit -dropuse=./run-controller \
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# Layer 4: Source. pkg/ is a lower-churn dependency of orchestrator;
-# orchestrator/ comes last so changes here do not invalidate the earlier
+# Layer 4: Source. pkg/ is a lower-churn dependency of catalog;
+# catalog/ comes last so changes here do not invalidate the earlier
 # layers.
 COPY pkg/ ./pkg/
-COPY orchestrator/ ./orchestrator/
+COPY catalog/ ./catalog/
 
-WORKDIR /app/orchestrator
+WORKDIR /app/catalog
 
 EXPOSE 8087 50052
 

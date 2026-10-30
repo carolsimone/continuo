@@ -62,7 +62,7 @@ fi
 # once up front when any such image is selected.
 IMAGES="\
 run-controller|run-controller/|run-controller/Dockerfile.prod|.|1
-orchestrator|orchestrator/|orchestrator/Dockerfile.prod|.|1
+catalog|catalog/|catalog/Dockerfile.prod|.|1
 execution-controller|execution-controller/|execution-controller/Dockerfile.prod|.|1
 ui|ui/|ui/Dockerfile|ui|0
 topology-controller|topology-controller/|topology-controller/Dockerfile.prod|topology-controller|0

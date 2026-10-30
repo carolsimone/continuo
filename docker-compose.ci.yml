@@ -16,12 +16,12 @@ services:
       cache_to:
         - "type=gha,scope=execution-controller,mode=max"
 
-  orchestrator:
+  catalog:
     build:
       cache_from:
-        - "type=gha,scope=orchestrator"
+        - "type=gha,scope=catalog"
       cache_to:
-        - "type=gha,scope=orchestrator,mode=max"
+        - "type=gha,scope=catalog,mode=max"
 
   ui:
     build:
