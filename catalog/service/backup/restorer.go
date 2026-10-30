@@ -50,8 +50,10 @@ func NewRestorer(lease ports.ExportLease, graph ports.GraphImporter, store ports
 // graph untouched. Then it takes the tenant's export lease (ErrSkipped while
 // another export or restore holds it), opens the object again and checks its
 // header against the first read's before it wipes the tenant's graph, loads
-// the export, confirms the lease is still held and releases it. A failure
-// after the wipe returns ErrPartialRestore.
+// the export, confirms the lease is still held and releases it. While it
+// holds the lease, a step that moves no record and no byte for stallLimit (a
+// database or store that never answers) stops it with ErrStalled and
+// releases the lease. A failure after the wipe returns ErrPartialRestore.
 func (r *Restorer) Restore(ctx context.Context, key string) (RestoreResult, error) {
 	tenantID, _, err := export.ParseObjectKey(key)
 	if err != nil {
@@ -98,16 +100,22 @@ func (r *Restorer) validate(ctx context.Context, key, tenantID string) (export.H
 }
 
 // load opens the object again, checks it is the one validate read, wipes the
-// tenant's graph and imports the object, while holder's lease is held.
+// tenant's graph and imports the object, while holder's lease is held,
+// renewed and watched. Every byte read from the object and every record
+// read is progress, and so is the start of the wipe and of the import, which
+// move neither while the database works.
 func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, validated export.Header) (RestoreResult, error) {
-	heldCtx, stop := r.keeper.hold(ctx, tenantID, holder)
+	workCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	work := &progress{}
+	stop := r.keeper.watch(workCtx, cancel, tenantID, holder, work)
 	defer stop()
-	rc, err := r.store.Read(heldCtx, key)
+	rc, err := r.store.Read(workCtx, key)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("the export %s cannot be read again, and the graph of tenant %q is untouched: %w", key, tenantID, err)
 	}
 	defer func() { _ = rc.Close() }()
-	in, err := openExport(rc)
+	in, err := openExport(&progressReader{r: rc, work: work})
 	if err == nil && !sameHeader(in.Header(), validated) {
 		err = errors.New("its header differs from the one validated: the object changed")
 	}
@@ -116,22 +124,24 @@ func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, valid
 	}
 
 	partial := func(step string, err error) error {
-		if lost := context.Cause(heldCtx); errors.Is(lost, ports.ErrLeaseLost) {
-			err = errors.Join(err, lost)
+		if cause := stopCause(workCtx); cause != nil {
+			err = errors.Join(err, cause)
 		}
 		return fmt.Errorf("restore of tenant %q from %s: %s: %w: %w", tenantID, key, step, ErrPartialRestore, err)
 	}
-	if err := r.graph.Wipe(heldCtx, tenantID); err != nil {
+	work.advance()
+	if err := r.graph.Wipe(workCtx, tenantID); err != nil {
 		return RestoreResult{}, partial("wipe the graph", err)
 	}
-	counted := &countingReader{RecordReader: in}
-	if err := r.graph.Import(heldCtx, tenantID, counted); err != nil {
+	work.advance()
+	counted := &countingReader{RecordReader: in, work: work}
+	if err := r.graph.Import(workCtx, tenantID, counted); err != nil {
 		return RestoreResult{}, partial("load the export", err)
 	}
-	if lost := context.Cause(heldCtx); errors.Is(lost, ports.ErrLeaseLost) {
-		return RestoreResult{}, partial("load the export", lost)
+	if cause := stopCause(workCtx); cause != nil {
+		return RestoreResult{}, partial("load the export", cause)
 	}
-	if err := r.keeper.confirm(ctx, tenantID, holder); err != nil {
+	if err := r.keeper.confirm(workCtx, tenantID, holder); err != nil {
 		return RestoreResult{}, fmt.Errorf("restore of tenant %q from %s: the lease may have lapsed while the export loaded, "+
 			"so writes may have landed in the graph during the restore; run the restore again: %w", tenantID, key, err)
 	}
@@ -153,11 +163,26 @@ func sameHeader(a, b export.Header) bool {
 		a.CatalogVersion == b.CatalogVersion && maps.Equal(a.Nodes, b.Nodes) && maps.Equal(a.Relationships, b.Relationships)
 }
 
-// countingReader counts the node and relationship records read through it;
-// an export lease node in the export, which a restore does not load, is not
-// counted.
+// progressReader reads through r, each read that moves bytes being progress.
+type progressReader struct {
+	r    io.Reader
+	work *progress
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.work.advance()
+	}
+	return n, err
+}
+
+// countingReader counts the node and relationship records read through it,
+// each record being progress; an export lease node in the export, which a
+// restore does not load, is not counted.
 type countingReader struct {
 	ports.RecordReader
+	work        *progress
 	nodes, rels int64
 }
 
@@ -166,6 +191,7 @@ func (c *countingReader) Next() (any, error) {
 	if err != nil {
 		return rec, err
 	}
+	c.work.advance()
 	switch x := rec.(type) {
 	case export.NodeRecord:
 		if !x.IsLease() {

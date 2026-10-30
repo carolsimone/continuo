@@ -27,13 +27,17 @@ type fakeImporter struct {
 	importErr error
 	// onImport, when set, runs before Import reads the records.
 	onImport func(ctx context.Context) error
-	read     []any
+	// wipeTakes is how long Wipe runs; perRecord how long Import spends on
+	// each record it reads.
+	wipeTakes, perRecord time.Duration
+	read                 []any
 }
 
 func (g *fakeImporter) Wipe(_ context.Context, tenantID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.ops = append(g.ops, "Wipe "+tenantID)
+	time.Sleep(g.wipeTakes)
 	return g.wipeErr
 }
 
@@ -60,6 +64,7 @@ func (g *fakeImporter) Import(ctx context.Context, tenantID string, in ports.Rec
 		g.mu.Lock()
 		g.read = append(g.read, rec)
 		g.mu.Unlock()
+		time.Sleep(g.perRecord)
 	}
 	return g.importErr
 }
@@ -286,4 +291,53 @@ func TestRestorer_ConfirmsTheLeaseAfterTheLoad(t *testing.T) {
 	_, err := f.r.Restore(context.Background(), f.key)
 	require.ErrorIs(t, err, ports.ErrLeaseLost)
 	assert.ErrorContains(t, err, "run the restore again")
+}
+
+// A restore that moves no record and no byte for the stall limit (an import
+// against a database that never answers) is stopped: it fails with
+// ErrStalled, reports the graph partial and releases the lease.
+func TestRestorer_AStalledRestoreFailsWithinTheBound(t *testing.T) {
+	f := newRestorerFixture(t)
+	f.store.put(f.key, exportObject(t, tenant, 2, exportAt))
+	f.r.keeper.renewEvery = 5 * time.Millisecond
+	f.r.keeper.stallAfter = 50 * time.Millisecond
+	f.graph.onImport = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := f.r.Restore(ctx, f.key)
+	require.ErrorIs(t, err, ErrStalled)
+	require.ErrorIs(t, err, ErrPartialRestore)
+	assert.NotErrorIs(t, err, context.DeadlineExceeded, "the restore ended on its own, not at the test's deadline")
+	assert.Less(t, time.Since(start), time.Second)
+	assert.False(t, f.lease.isHeld(tenant), "the lease is released")
+	assert.NoError(t, f.lease.releaseCtxErrs[len(f.lease.releaseCtxErrs)-1])
+}
+
+// Each step of a restore starts the stall limit afresh: the wipe and the
+// start of the import move no record, and neither stalls the restore while
+// it stays within the limit; records read keep the import going.
+func TestRestorer_EachStepStartsTheStallLimitAfresh(t *testing.T) {
+	f := newRestorerFixture(t)
+	f.store.put(f.key, exportObject(t, tenant, 5, exportAt))
+	f.r.keeper.renewEvery = 5 * time.Millisecond
+	f.r.keeper.stallAfter = 100 * time.Millisecond
+	f.graph.wipeTakes = 60 * time.Millisecond
+	f.graph.onImport = func(context.Context) error {
+		time.Sleep(60 * time.Millisecond)
+		return nil
+	}
+	f.graph.perRecord = 40 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := f.r.Restore(ctx, f.key)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreResult{Nodes: 5, Relationships: 4}, res)
+	assert.Greater(t, time.Since(start), 3*f.r.keeper.stallAfter, "the restore ran longer than the stall limit")
 }

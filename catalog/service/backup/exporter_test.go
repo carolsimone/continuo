@@ -83,9 +83,15 @@ func TestExporter_ExportsTheGraphAsGzippedJSONLines(t *testing.T) {
 func TestExporter_LeaseConstants(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, leaseTTL)
 	assert.Equal(t, 30*time.Second, leaseRenewEvery)
+	assert.Equal(t, leaseTTL, stallLimit, "a stuck holder pauses writes no longer than a crashed one")
+	assert.Less(t, renewTimeout, leaseRenewEvery)
 	ex := NewExporter(newFakeLease(), smallGraph(1), newFakeStore(), &fakeMetrics{}, 7, time.Now, quietLogger())
 	assert.Equal(t, leaseTTL, ex.keeper.ttl)
 	assert.Equal(t, leaseRenewEvery, ex.keeper.renewEvery)
+	assert.Equal(t, stallLimit, ex.keeper.stallAfter)
+	assert.Equal(t, renewTimeout, ex.keeper.renewTimeout)
+	r := NewRestorer(newFakeLease(), &fakeImporter{}, newFakeStore(), quietLogger())
+	assert.Equal(t, ex.keeper.stallAfter, r.keeper.stallAfter)
 }
 
 // Each export takes the lease under a holder of its own, so a renewal of one
@@ -413,5 +419,119 @@ func TestExporter_RetentionListFailureKeepsTheExport(t *testing.T) {
 	res, err := f.ex.ExportTenant(context.Background(), tenant)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{res.ObjectKey, past}, f.store.keys())
+	assert.Equal(t, []string{ports.ExportSuccess}, f.metrics.outcomes())
+}
+
+// stallFixture is an exporterFixture whose lease is renewed every 5 ms and
+// whose export stalls after stallAfter without progress, so a test of the
+// stall bound runs in milliseconds.
+func stallFixture(graph ports.GraphExporter, stallAfter time.Duration) *exporterFixture {
+	f := newExporterFixture(graph, 7)
+	f.ex.keeper.renewEvery = 5 * time.Millisecond
+	f.ex.keeper.stallAfter = stallAfter
+	return f
+}
+
+// exportWithin runs ExportTenant under a deadline far past the stall bound,
+// and returns its error and how long it ran.
+func exportWithin(t *testing.T, ex *Exporter, deadline time.Duration) (error, time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	start := time.Now()
+	_, err := ex.ExportTenant(ctx, tenant)
+	return err, time.Since(start)
+}
+
+// assertStalledAndCleanedUp checks that a stalled export failed with
+// ErrStalled well before the test's deadline, stored nothing, aborted its
+// upload and released its lease on a context that is not cancelled.
+func assertStalledAndCleanedUp(t *testing.T, f *exporterFixture, err error, took time.Duration) {
+	t.Helper()
+	require.ErrorIs(t, err, ErrStalled, "the stall is the error's cause")
+	assert.NotErrorIs(t, err, context.DeadlineExceeded, "the export ended on its own, not at the test's deadline")
+	assert.Less(t, took, time.Second, "the export ends soon after the stall limit")
+	assert.True(t, f.store.lastWriter().aborted, "the upload is aborted")
+	assert.Empty(t, f.store.keys(), "nothing is stored")
+	assert.False(t, f.lease.isHeld(tenant), "the lease is released")
+	require.NotEmpty(t, f.lease.releaseCtxErrs)
+	assert.NoError(t, f.lease.releaseCtxErrs[len(f.lease.releaseCtxErrs)-1], "the lease is released on a context that is not cancelled")
+	assert.Equal(t, []string{ports.ExportFailure}, f.metrics.outcomes())
+}
+
+// A graph read that never answers (a database that holds the connection
+// open) would keep renewing the lease, and so pause the tenant's writes, for
+// as long as it hangs. An export that moves no record and no byte for the
+// stall limit is stopped: it fails with ErrStalled, aborts and releases.
+func TestExporter_AStalledExportFailsWithinTheBound(t *testing.T) {
+	for name, graph := range map[string]fakeGraph{
+		// Before the header: the counting queries hang.
+		"before the header": {export: func(ctx context.Context, _ string, _ ports.RecordWriter) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		// After some records: the stream hangs.
+		"mid-stream": {export: func(ctx context.Context, tenantID string, out ports.RecordWriter) error {
+			if err := out.WriteHeader(header(tenantID, 3, 0)); err != nil {
+				return err
+			}
+			if err := out.WriteNode(node(tenantID, 0)); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := stallFixture(graph, 50*time.Millisecond)
+			err, took := exportWithin(t, f.ex, 3*time.Second)
+			assertStalledAndCleanedUp(t, f, err, took)
+		})
+	}
+}
+
+// An upload the store never answers is stopped too: the stall cancels the
+// context the object was opened with, which ends the hung write.
+func TestExporter_AStalledUploadFailsWithinTheBound(t *testing.T) {
+	f := stallFixture(smallGraph(3), 50*time.Millisecond)
+	f.store.writer = func(w *fakeWriter) { w.blockWrites = true }
+	err, took := exportWithin(t, f.ex, 3*time.Second)
+	assertStalledAndCleanedUp(t, f, err, took)
+}
+
+// A renewal that never answers does not keep the stall from being noticed:
+// each renewal is bounded.
+func TestExporter_AHungRenewalDoesNotHideAStall(t *testing.T) {
+	f := stallFixture(fakeGraph{export: func(ctx context.Context, _ string, _ ports.RecordWriter) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}, 50*time.Millisecond)
+	f.ex.keeper.renewTimeout = 10 * time.Millisecond
+	f.lease.renewBlocks = true
+	err, took := exportWithin(t, f.ex, 3*time.Second)
+	assertStalledAndCleanedUp(t, f, err, took)
+}
+
+// An export that keeps moving records is never stopped, however long it
+// runs: the stall limit counts from the last record or byte.
+func TestExporter_AnExportThatMovesIsNotStalled(t *testing.T) {
+	graph := fakeGraph{export: func(_ context.Context, tenantID string, out ports.RecordWriter) error {
+		time.Sleep(60 * time.Millisecond) // the counting step, within the limit
+		if err := out.WriteHeader(header(tenantID, 8, 0)); err != nil {
+			return err
+		}
+		for i := range 8 {
+			time.Sleep(40 * time.Millisecond)
+			if err := out.WriteNode(node(tenantID, i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}
+	f := stallFixture(graph, 120*time.Millisecond)
+	err, took := exportWithin(t, f.ex, 3*time.Second)
+	require.NoError(t, err)
+	assert.Greater(t, took, 2*f.ex.keeper.stallAfter, "the export ran longer than the stall limit")
+	assert.Len(t, f.store.keys(), 1)
 	assert.Equal(t, []string{ports.ExportSuccess}, f.metrics.outcomes())
 }

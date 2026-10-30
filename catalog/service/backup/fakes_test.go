@@ -60,6 +60,9 @@ type fakeLease struct {
 	renews     int
 	// onAcquire, when set, runs as Acquire is called.
 	onAcquire func()
+	// renewBlocks makes every Renew wait until its context ends, as a
+	// renewal against a database that never answers does.
+	renewBlocks bool
 	// releaseCtxErrs records the error of each Release's context.
 	releaseCtxErrs []error
 }
@@ -83,7 +86,11 @@ func (l *fakeLease) Acquire(_ context.Context, tenantID string, kind ports.Lease
 	return nil
 }
 
-func (l *fakeLease) Renew(_ context.Context, tenantID, holder string, ttl time.Duration) error {
+func (l *fakeLease) Renew(ctx context.Context, tenantID, holder string, ttl time.Duration) error {
+	if l.renewBlocks {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.renews++
@@ -225,7 +232,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{objects: map[string][]byte{}, deleteErr: map[string]error{}}
 }
 
-func (s *fakeStore) Open(_ context.Context, tenantID string, at time.Time) (ports.BackupWriter, string, error) {
+func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.BackupWriter, string, error) {
 	key, err := export.ObjectKey(tenantID, at)
 	if err != nil {
 		return nil, "", err
@@ -235,7 +242,7 @@ func (s *fakeStore) Open(_ context.Context, tenantID string, at time.Time) (port
 	if s.openErr != nil {
 		return nil, "", s.openErr
 	}
-	w := &fakeWriter{store: s, key: key}
+	w := &fakeWriter{store: s, key: key, ctx: ctx}
 	if s.writer != nil {
 		s.writer(w)
 	}
@@ -321,23 +328,31 @@ func (s *fakeStore) lastWriter() *fakeWriter {
 
 // fakeWriter is the BackupWriter of a fakeStore: it stores its bytes at Close.
 // writeErr, closeErr and abortErr, when set, are what those calls return;
-// onWrite, when set, runs before each Write.
+// onWrite, when set, runs before each Write; blockWrites makes every Write
+// wait until the context the writer was opened with ends, as an upload to a
+// store that never answers does.
 type fakeWriter struct {
-	store    *fakeStore
-	key      string
-	buf      bytes.Buffer
-	closed   bool
-	aborted  bool
-	aborts   int
-	writeErr error
-	closeErr error
-	abortErr error
-	onWrite  func()
+	store       *fakeStore
+	key         string
+	ctx         context.Context
+	blockWrites bool
+	buf         bytes.Buffer
+	closed      bool
+	aborted     bool
+	aborts      int
+	writeErr    error
+	closeErr    error
+	abortErr    error
+	onWrite     func()
 }
 
 func (w *fakeWriter) Write(p []byte) (int, error) {
 	if w.onWrite != nil {
 		w.onWrite()
+	}
+	if w.blockWrites {
+		<-w.ctx.Done()
+		return 0, w.ctx.Err()
 	}
 	if w.closed || w.aborted {
 		return 0, errors.New("fakeWriter: write after Close or Abort")

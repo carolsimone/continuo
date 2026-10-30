@@ -1,8 +1,11 @@
 // Package backup exports each tenant's catalog graph to object storage on a
 // schedule, keeps the newest exports, and restores an export. An export or a
 // restore holds the tenant's export lease while it reads or writes the graph,
-// so no catalog write lands meanwhile; the lease is renewed while the work
-// runs and expires by itself if the process dies.
+// so no catalog write lands meanwhile. The lease is renewed while the work
+// makes progress: it expires by itself if the process dies, and work that
+// moves nothing for stallLimit is stopped and releases it, so neither a
+// crashed nor a stuck holder pauses the tenant's writes for longer than
+// about a lease's ttl.
 package backup
 
 import (
@@ -12,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
@@ -31,7 +35,20 @@ const (
 	// releaseTimeout bounds the release of a lease, which runs even when the
 	// work's context was cancelled.
 	releaseTimeout = 10 * time.Second
+	// stallLimit is how long an export or a restore may move no record and
+	// no byte, counted afresh at the start of each of its steps, before it is
+	// stopped: a holder that is stuck pauses the tenant's writes no longer
+	// than one that crashed.
+	stallLimit = leaseTTL
+	// renewTimeout bounds one renewal, so a database that never answers does
+	// not keep the stall from being noticed.
+	renewTimeout = 10 * time.Second
 )
+
+// ErrStalled means an export or a restore moved no record and no byte for
+// stallLimit and was stopped, so its lease does not keep pausing the
+// tenant's writes.
+var ErrStalled = errors.New("no record or byte moved for the stall limit")
 
 // ErrSkipped means the export or restore did not start: another export or a
 // restore holds the tenant's lease.
@@ -102,12 +119,16 @@ func (e *Exporter) ExportTenant(ctx context.Context, tenantID string) (Result, e
 }
 
 func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) {
-	w, key, err := e.store.Open(ctx, tenantID, e.clock())
+	// The object is opened with the work's context, so a stall or a lost
+	// lease that cancels it also ends an upload the store never answers.
+	workCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	w, key, err := e.store.Open(workCtx, tenantID, e.clock())
 	if err != nil {
 		return Result{}, fmt.Errorf("open the export of tenant %q: %w", tenantID, err)
 	}
 	holder := newHolder(ports.LeaseExport)
-	if err := e.keeper.lease.Acquire(ctx, tenantID, ports.LeaseExport, holder, e.keeper.ttl); err != nil {
+	if err := e.keeper.lease.Acquire(workCtx, tenantID, ports.LeaseExport, holder, e.keeper.ttl); err != nil {
 		if errors.Is(err, ports.ErrLeaseHeld) {
 			err = fmt.Errorf("export of tenant %q: %w", tenantID, ErrSkipped)
 		} else {
@@ -116,7 +137,7 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 		return Result{}, errors.Join(err, e.abort(w, key))
 	}
 	held := e.clock()
-	res, err := e.stream(ctx, tenantID, holder, w)
+	res, err := e.stream(workCtx, cancel, tenantID, holder, w)
 	// The lease is released before a failed upload is aborted, so the
 	// tenant's writes resume without waiting on the store.
 	releaseErr := e.keeper.release(ctx, tenantID, holder)
@@ -133,30 +154,40 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 }
 
 // stream writes the tenant's graph to w and completes it, while holder's
-// lease is held and renewed. It completes w only once the lease is confirmed
-// held after the read: no write can have changed the graph under it.
-func (e *Exporter) stream(ctx context.Context, tenantID, holder string, w ports.BackupWriter) (Result, error) {
-	heldCtx, stop := e.keeper.hold(ctx, tenantID, holder)
-	sink := &countingWriter{w: w}
+// lease is held, renewed and watched; ctx is the work's context and cancel
+// ends it. Every record written and every byte sent to w is progress, and so
+// is the start of completing w; the counting the graph does before its
+// header has the stall limit from the start. It completes w only once the
+// lease is confirmed held after the read: no write can have changed the
+// graph under it.
+func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.BackupWriter) (Result, error) {
+	work := &progress{}
+	stop := e.keeper.watch(ctx, cancel, tenantID, holder, work)
+	defer stop()
+	fail := func(err error) error {
+		if cause := stopCause(ctx); cause != nil {
+			return fmt.Errorf("export of tenant %q stopped: %w", tenantID, cause)
+		}
+		return err
+	}
+	sink := &countingWriter{w: w, work: work}
 	zw := gzip.NewWriter(sink)
-	records := &countingRecords{RecordWriter: exportfile.NewWriter(zw)}
-	err := e.graph.Export(heldCtx, tenantID, records)
-	lost := context.Cause(heldCtx)
-	stop()
-	switch {
-	case errors.Is(lost, ports.ErrLeaseLost):
-		return Result{}, fmt.Errorf("export of tenant %q stopped: %w", tenantID, lost)
-	case err != nil:
-		return Result{}, fmt.Errorf("export the graph of tenant %q: %w", tenantID, err)
+	records := &countingRecords{RecordWriter: exportfile.NewWriter(zw), work: work}
+	if err := e.graph.Export(ctx, tenantID, records); err != nil {
+		return Result{}, fail(fmt.Errorf("export the graph of tenant %q: %w", tenantID, err))
+	}
+	if cause := stopCause(ctx); cause != nil {
+		return Result{}, fail(cause)
 	}
 	if err := zw.Close(); err != nil {
-		return Result{}, fmt.Errorf("compress the export of tenant %q: %w", tenantID, err)
+		return Result{}, fail(fmt.Errorf("compress the export of tenant %q: %w", tenantID, err))
 	}
 	if err := e.keeper.confirm(ctx, tenantID, holder); err != nil {
-		return Result{}, err
+		return Result{}, fail(err)
 	}
+	work.advance()
 	if err := w.Close(); err != nil {
-		return Result{}, fmt.Errorf("complete the export of tenant %q: %w", tenantID, err)
+		return Result{}, fail(fmt.Errorf("complete the export of tenant %q: %w", tenantID, err))
 	}
 	return Result{Bytes: sink.n, Nodes: records.nodes, Relationships: records.rels}, nil
 }
@@ -172,22 +203,37 @@ func (e *Exporter) abort(w ports.BackupWriter, key string) error {
 	return nil
 }
 
-// countingWriter counts the bytes written through it.
+// countingWriter counts the bytes written through it, each write that moves
+// bytes being progress.
 type countingWriter struct {
-	w ports.BackupWriter
-	n int64
+	w    ports.BackupWriter
+	work *progress
+	n    int64
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
+	if n > 0 {
+		c.work.advance()
+	}
 	return n, err
 }
 
-// countingRecords counts the nodes and relationships written through it.
+// countingRecords counts the nodes and relationships written through it,
+// each record written being progress.
 type countingRecords struct {
 	ports.RecordWriter
+	work        *progress
 	nodes, rels int64
+}
+
+func (c *countingRecords) WriteHeader(h export.Header) error {
+	if err := c.RecordWriter.WriteHeader(h); err != nil {
+		return err
+	}
+	c.work.advance()
+	return nil
 }
 
 func (c *countingRecords) WriteNode(n export.NodeRecord) error {
@@ -195,6 +241,7 @@ func (c *countingRecords) WriteNode(n export.NodeRecord) error {
 		return err
 	}
 	c.nodes++
+	c.work.advance()
 	return nil
 }
 
@@ -203,8 +250,20 @@ func (c *countingRecords) WriteRel(r export.RelRecord) error {
 		return err
 	}
 	c.rels++
+	c.work.advance()
 	return nil
 }
+
+// progress counts what an export or a restore has done; the watch reads it
+// to tell work that moves from work that is stuck. It is safe for concurrent
+// use.
+type progress struct{ n atomic.Int64 }
+
+// advance records one step of progress: a record or bytes moved, or the
+// start of a step that moves neither for a while.
+func (p *progress) advance() { p.n.Add(1) }
+
+func (p *progress) load() int64 { return p.n.Load() }
 
 // hostname names this process in a lease's holder.
 var hostname = func() string {
@@ -221,57 +280,84 @@ func newHolder(kind ports.LeaseKind) string {
 }
 
 // leaseKeeper holds a tenant's export lease while an export or a restore
-// runs.
+// runs, and stops the work when the lease is lost or the work stalls.
 type leaseKeeper struct {
-	lease      ports.ExportLease
-	ttl        time.Duration
-	renewEvery time.Duration
-	logger     *slog.Logger
+	lease        ports.ExportLease
+	ttl          time.Duration
+	renewEvery   time.Duration
+	stallAfter   time.Duration
+	renewTimeout time.Duration
+	logger       *slog.Logger
 }
 
 func newLeaseKeeper(lease ports.ExportLease, logger *slog.Logger) leaseKeeper {
-	return leaseKeeper{lease: lease, ttl: leaseTTL, renewEvery: leaseRenewEvery, logger: logger}
+	return leaseKeeper{
+		lease: lease, ttl: leaseTTL, renewEvery: leaseRenewEvery,
+		stallAfter: stallLimit, renewTimeout: renewTimeout, logger: logger,
+	}
 }
 
-// hold renews holder's lease of tenantID every renewEvery until stop is
-// called, and returns a context for the work the lease covers. A renewal
-// that reports ErrLeaseLost cancels that context with it as the cause; any
-// other failure is logged and retried at the next tick, since the lease
-// lasts ttl past its last renewal. stop waits for the renewals to end and
-// cancels the context.
-func (k leaseKeeper) hold(ctx context.Context, tenantID, holder string) (context.Context, func()) {
-	heldCtx, cancel := context.WithCancelCause(ctx)
+// watch renews holder's lease of tenantID every renewEvery while the work
+// whose context is ctx runs, each renewal bounded by renewTimeout, until
+// stop is called. It ends the work by calling cancel with the cause when a
+// renewal reports the lease lost (ports.ErrLeaseLost), or when work has not
+// advanced for stallAfter (ErrStalled), counted from the start of the watch
+// or the last advance; it then renews no more, so the caller's release is the
+// last word on the lease. Any other renewal failure is logged and retried at
+// the next tick, since the lease lasts ttl past its last renewal. stop waits
+// for the renewals to end.
+func (k leaseKeeper) watch(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, work *progress) func() {
 	quit := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		tick := time.NewTicker(k.renewEvery)
 		defer tick.Stop()
+		seen, movedAt := work.load(), time.Now()
 		for {
 			select {
 			case <-quit:
 				return
-			case <-heldCtx.Done():
+			case <-ctx.Done():
 				return
 			case <-tick.C:
 			}
-			err := k.lease.Renew(heldCtx, tenantID, holder, k.ttl)
+			if n := work.load(); n != seen {
+				seen, movedAt = n, time.Now()
+			} else if idle := time.Since(movedAt); idle >= k.stallAfter {
+				err := fmt.Errorf("%w: nothing moved for %s", ErrStalled, idle.Round(time.Millisecond))
+				k.logger.Error("export or restore stalled: stopping it so its lease no longer pauses the tenant's writes",
+					"tenant_id", tenantID, "holder", holder, "stall_limit", k.stallAfter.String())
+				cancel(err)
+				return
+			}
+			renewCtx, cancelRenew := context.WithTimeout(ctx, k.renewTimeout)
+			err := k.lease.Renew(renewCtx, tenantID, holder, k.ttl)
+			cancelRenew()
 			switch {
 			case err == nil:
 			case errors.Is(err, ports.ErrLeaseLost):
 				k.logger.Error("export lease lost: stopping the work it covered", "tenant_id", tenantID, "holder", holder, "error", err)
 				cancel(err)
 				return
-			case heldCtx.Err() == nil:
+			case ctx.Err() == nil:
 				k.logger.Warn("export lease renewal failed; retrying at the next tick", "tenant_id", tenantID, "holder", holder, "error", err)
 			}
 		}
 	}()
-	return heldCtx, func() {
+	return func() {
 		close(quit)
 		<-done
-		cancel(nil)
 	}
+}
+
+// stopCause returns the cause watch ended the work of ctx with (a lost lease
+// or a stall), or nil.
+func stopCause(ctx context.Context) error {
+	if cause := context.Cause(ctx); errors.Is(cause, ports.ErrLeaseLost) || errors.Is(cause, ErrStalled) {
+		return cause
+	}
+	return nil
 }
 
 // confirm renews holder's lease once more. Every renewal requires a live
