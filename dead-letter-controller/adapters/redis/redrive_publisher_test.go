@@ -26,6 +26,30 @@ func TestRedrivePublisher_RenderAddsRedriveFields(t *testing.T) {
 	}
 }
 
+// TestRedrive_KeepsTheTenantOfTheStoredFields holds that a redrive republishes
+// the tenant_id its dead letter stored, whichever source the dead letter came
+// from, so a redriven message reaches its consumer under the tenant it entered
+// with.
+func TestRedrive_KeepsTheTenantOfTheStoredFields(t *testing.T) {
+	for _, source := range []deadletter.Source{deadletter.SourceConsumer, deadletter.SourceOutbox, deadletter.SourceQuarantine} {
+		t.Run(string(source), func(t *testing.T) {
+			dl := deadletter.DeadLetter{ID: uuid.New(), Source: source, Group: "g",
+				Fields: map[string]string{"payload": "{}", "tenant_id": "acme", "outbox_entry_id": "original"}}
+			body, err := serialization.EncodeRedrive(dl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := NewRedrivePublisher(nil).Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: serialization.EventTypeRedrive, Payload: body})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["tenant_id"] != "acme" {
+				t.Fatalf("tenant_id = %v, want the stored acme; values = %v", values["tenant_id"], values)
+			}
+		})
+	}
+}
+
 func TestRedrivePublisher_OutboxRedriveHasNoGroup(t *testing.T) {
 	dl := deadletter.DeadLetter{ID: uuid.New(), Source: deadletter.SourceOutbox, Fields: map[string]string{"k": "v"}}
 	body, _ := serialization.EncodeRedrive(dl)

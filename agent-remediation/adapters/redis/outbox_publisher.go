@@ -25,9 +25,9 @@ type agentRemediationOutboxPublisher struct {
 
 var _ pkgoutbox.Publisher = (*agentRemediationOutboxPublisher)(nil)
 
-// Publish writes the outbox entry payload to its designated Redis stream.
-// The wire format uses a single "payload" field containing the JSON body,
-// consistent with how other service event consumers decode messages.
+// Publish writes the outbox entry to its designated Redis stream. The wire
+// format is a "payload" field containing the JSON body, a "tenant_id" field and
+// the entry's "outbox_entry_id".
 func (p *agentRemediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) error {
 	values, err := p.Render(entry)
 	if err != nil {
@@ -54,7 +54,10 @@ var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
-// the single "payload" field. Every call returns a fresh map.
+// the "payload" field beside the default tenant as "tenant_id". The tenant is
+// stamped here, not in xaddArgs, because the fields an outbox dead letter stores
+// come from Render, so a redrive republishes the tenant too. Every call returns
+// a fresh map.
 func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	if entry.EventType == pkgoutbox.DeadLetterEventType {
 		values, err := pkgoutbox.DeadLetterValues(entry)
@@ -65,7 +68,7 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 		delete(values, "outbox_entry_id")
 		return values, nil
 	}
-	return map[string]any{"payload": string(entry.Payload)}, nil
+	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
