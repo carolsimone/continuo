@@ -1,10 +1,7 @@
 // Package serialization holds the wire-facing DTOs for catalog's
 // json-tagged domain types, keeping the domain packages (domain/event) free of
-// struct tags. It sits outside adapters/ so the application layer
-// (service/handlers, which re-marshals consumed events as dedup fingerprints)
-// may map through it without importing an adapter, and outside domain/ so the
-// tags live away from the domain types. The redis parsers map consumed
-// messages through these DTOs, fixing the byte shapes here.
+// struct tags. The redis parsers decode consumed messages through these DTOs
+// and map each to its domain event, fixing the byte shapes here.
 package serialization
 
 import (
@@ -29,25 +26,6 @@ type RemediationRequestedDTO struct {
 	CodeBundleURI string                        `json:"code_bundle_uri"`
 	ClassifiedAt  string                        `json:"classified_at"`
 	Nodes         []RemediationRequestedNodeDTO `json:"nodes"`
-}
-
-// RemediationRequestedFromDomain maps a domain event to its DTO.
-func RemediationRequestedFromDomain(e event.RemediationRequested) RemediationRequestedDTO {
-	var nodes []RemediationRequestedNodeDTO
-	if e.Nodes != nil {
-		nodes = make([]RemediationRequestedNodeDTO, len(e.Nodes))
-		for i, n := range e.Nodes {
-			nodes[i] = RemediationRequestedNodeDTO(n)
-		}
-	}
-	return RemediationRequestedDTO{
-		EventID:       e.EventID,
-		Source:        e.Source,
-		ReleaseID:     e.ReleaseID,
-		CodeBundleURI: e.CodeBundleURI,
-		ClassifiedAt:  e.ClassifiedAt,
-		Nodes:         nodes,
-	}
 }
 
 // ToDomain maps a decoded DTO back to the domain event.
@@ -80,21 +58,6 @@ type PROpenedDTO struct {
 	OpenedBy        string   `json:"opened_by"`
 	OpenedAt        string   `json:"opened_at"`
 	Service         string   `json:"service"`
-}
-
-// PROpenedFromDomain maps a domain event to its DTO.
-func PROpenedFromDomain(e event.PROpened) PROpenedDTO {
-	return PROpenedDTO{
-		ProposalID:      e.ProposalID,
-		ReleaseID:       e.ReleaseID,
-		NodeID:          e.NodeID,
-		ResolvedNodeIDs: e.ResolvedNodeIDs,
-		PrURL:           e.PrURL,
-		PrNumber:        e.PrNumber,
-		OpenedBy:        e.OpenedBy,
-		OpenedAt:        e.OpenedAt,
-		Service:         e.Service,
-	}
 }
 
 // ToDomain maps a decoded DTO back to the domain event.
@@ -132,29 +95,6 @@ type PRClosedDTO struct {
 	Outcome         string            `json:"outcome"`
 	ClosedAt        string            `json:"closed_at"`
 	Edits           []PRClosedEditDTO `json:"edits,omitempty"`
-}
-
-// PRClosedFromDomain maps a domain event to its DTO.
-func PRClosedFromDomain(e event.PRClosed) PRClosedDTO {
-	var edits []PRClosedEditDTO
-	if e.Edits != nil {
-		edits = make([]PRClosedEditDTO, len(e.Edits))
-		for i, ed := range e.Edits {
-			edits[i] = PRClosedEditDTO(ed)
-		}
-	}
-	return PRClosedDTO{
-		ProposalID:      e.ProposalID,
-		ReleaseID:       e.ReleaseID,
-		NodeID:          e.NodeID,
-		ResolvedNodeIDs: e.ResolvedNodeIDs,
-		Service:         e.Service,
-		PrURL:           e.PrURL,
-		PrNumber:        e.PrNumber,
-		Outcome:         e.Outcome,
-		ClosedAt:        e.ClosedAt,
-		Edits:           edits,
-	}
 }
 
 // ToDomain maps a decoded DTO back to the domain event.

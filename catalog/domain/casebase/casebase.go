@@ -60,7 +60,7 @@ type PullRequest struct {
 // Amended reports whether a human changed this edit before merge; Diff is the
 // proposal-time unified diff of the edit (the precedent read renders the
 // merged-truth diff instead when the edit is amended). TargetNodeID is the node
-// the edit fixes — the :Table the [:EDITED] edge points at.
+// the edit fixes — the :Node the [:EDITED] edge points at.
 type EditOutcome struct {
 	Path         string
 	TargetNodeID string
@@ -72,7 +72,7 @@ type EditOutcome struct {
 // service. Outcome is "merged" or "rejected". On a merged outcome the case
 // base draws provenance edges: [:RESOLVED_BY] from each resolved rejection to
 // the shared :Proposal, and [:EDITED] from that :Proposal to each edit's
-// :Table. A rejected outcome only stamps the :PullRequest's terminal state and
+// :Node. A rejected outcome only stamps the :PullRequest's terminal state and
 // draws no edges; ResolvedNodeIDs and Edits are empty for it.
 //
 // PrURL and PrNumber are the PR's identifying facts, carried on the close event

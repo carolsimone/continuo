@@ -21,9 +21,9 @@ func newPrecedentReader(client neo4jinfra.Neo4jClient) *neo4jinfra.PrecedentQuer
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
-// seedPrecedentRejection creates one :Rejection fixture and MERGEs its
-// :ErrorSignature hub, matching the shape CaseBaseRepository.RecordRejection
-// writes.
+// seedPrecedentRejection creates one :Rejection fixture of
+// precedentFixtureTenant and MERGEs its :ErrorSignature hub, matching the
+// shape CaseBaseRepository.RecordRejection writes.
 func seedPrecedentRejection(
 	t *testing.T, client neo4jinfra.Neo4jClient,
 	releaseID, nodeID, signature, category, reason string,
@@ -35,15 +35,17 @@ func seedPrecedentRejection(
 	defer s.Close(ctx)
 	res, err := s.Run(ctx, `
 		CREATE (rej:Rejection {
+			tenant_id: $tenant_id,
 			release_id: $release_id, node_id: $node_id, stage: 'validation',
 			category: $category, reason: $reason, error_excerpt: 'excerpt',
 			dbt_log_uri: 'uri', at: $at, raw_code: $raw_code,
 			content_hash: $content_hash, stub: false
 		})
-		MERGE (sig:ErrorSignature {signature: $signature})
+		MERGE (sig:ErrorSignature {tenant_id: $tenant_id, signature: $signature})
 		ON CREATE SET sig.category = $category, sig.reason = $reason
 		MERGE (rej)-[:HAS_SIGNATURE]->(sig)
 	`, map[string]any{
+		"tenant_id":  precedentFixtureTenant,
 		"release_id": releaseID, "node_id": nodeID, "signature": signature,
 		"category": category, "reason": reason, "at": at.UTC(),
 		"raw_code": rawCode, "content_hash": contentHash,

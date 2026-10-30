@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -103,5 +104,22 @@ func TestWriteBatch_RefusesAnotherTenantsCall(t *testing.T) {
 		Nodes: []codeversion.NodeVersion{{UniqueID: "a", ContentHash: "h"}},
 	})
 	assert.ErrorIs(t, err, errTenantMismatch)
+	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
+}
+
+// The case base refuses every write for another tenant the same way.
+func TestCaseBase_RefusesAnotherTenantsCall(t *testing.T) {
+	rec := &recordingRunner{}
+	run, err := NewTenantRunner("tenant-a", rec)
+	require.NoError(t, err)
+	tx := &transaction{run: run, logger: quietLogger()}
+	ctx := context.Background()
+
+	assert.ErrorIs(t, tx.CaseBase().RecordRejection(ctx, "tenant-b",
+		casebase.Rejection{ReleaseID: "r1", NodeID: "a", Signature: "sig"}), errTenantMismatch)
+	assert.ErrorIs(t, tx.CaseBase().RecordProposal(ctx, "tenant-b",
+		casebase.Proposal{ProposalID: "p", ReleaseID: "r1", NodeID: "a"}, casebase.PullRequest{ProposalID: "p"}), errTenantMismatch)
+	assert.ErrorIs(t, tx.CaseBase().RecordPullRequestOutcome(ctx, "tenant-b",
+		casebase.PullRequestOutcome{ProposalID: "p", ReleaseID: "r1", Outcome: "merged"}), errTenantMismatch)
 	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
 }

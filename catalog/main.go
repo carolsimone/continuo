@@ -11,7 +11,6 @@ import (
 	grpcinfra "github.com/carolsimone/continuo/catalog/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/catalog/adapters/http"
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
-	"github.com/carolsimone/continuo/catalog/adapters/postgres"
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
@@ -259,13 +258,6 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// Each handler that records its messages in Postgres gets its own
-	// PostgresUnitOfWork instance. It holds a stateful Postgres transaction
-	// (inTx flag + *sqlx.Tx). Sharing one instance across consumers would cause
-	// "transaction already in progress" errors when two consumers process
-	// messages concurrently — the second Begin() sees inTx=true and the message
-	// is never ACKed, getting stuck in the PEL forever.
-	//
 	// One object-storage client, passed to each reader as its
 	// objectstore.Reader role: the topology artifact reader of both promotion
 	// groups, and the code-bundle reader of the versions and rejections
@@ -278,7 +270,7 @@ func main() {
 
 	// The Neo4j unit of work writes a message's data and its processed-message
 	// marker in one transaction. It holds no per-message state, so one
-	// instance serves every consumer that uses it.
+	// instance serves every consumer.
 	graphUnitOfWork := neo4jinfra.NewUnitOfWork(neo4jClient, logger)
 
 	// release.promoted:v2 swaps the tenant's live Neo4j topology when
@@ -300,18 +292,15 @@ func main() {
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
-	// failure-precedent case base. The rejections handler reuses the versions
-	// path's bundle reader to fetch the failing code; the proposals and
-	// provenance handlers need no bundle. The provenance handler draws the
+	// failure-precedent case base, written under the tenant each message names
+	// through the Neo4j unit of work. The rejections handler reuses the
+	// versions path's bundle reader to fetch the failing code; the proposals
+	// and provenance handlers need no bundle. The provenance handler draws the
 	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
 	// terminal state. The catalog service remains the sole Neo4j writer.
-	caseBaseRepo := neo4jinfra.NewCaseBaseRepository(neo4jClient, logger)
-	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, caseBaseRepo, logger)
-	proposalsHandler := handlers.NewPrOpenedProposalsHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), caseBaseRepo, logger)
-	provenanceHandler := handlers.NewPrClosedProvenanceHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), caseBaseRepo, logger)
+	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(graphUnitOfWork, codeBundleReader, logger)
+	proposalsHandler := handlers.NewPrOpenedProposalsHandler(graphUnitOfWork, logger)
+	provenanceHandler := handlers.NewPrClosedProvenanceHandler(graphUnitOfWork, logger)
 
 	// Every catalog consumer is the same shape: a domain handler wrapped
 	// by a redis binding, driven by a StreamConsumer on its (stream, group).

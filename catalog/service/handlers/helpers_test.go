@@ -5,98 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
-	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
-	"github.com/google/uuid"
 )
-
-// fakeMessageProcessingRepository is an in-memory message_processing store
-// keyed by messageID.
-type fakeMessageProcessingRepository struct {
-	messages map[string]*messageprocessing.MessageProcessing
-}
-
-func newFakeMessageProcessingRepository() *fakeMessageProcessingRepository {
-	return &fakeMessageProcessingRepository{
-		messages: make(map[string]*messageprocessing.MessageProcessing),
-	}
-}
-
-func fakeMsgProcKey(messageID, streamName string) string {
-	return messageID + "|" + streamName
-}
-
-func (f *fakeMessageProcessingRepository) InsertIfNotExists(ctx context.Context, msgProc *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
-	k := fakeMsgProcKey(msgProc.MessageID, msgProc.StreamName)
-	if existing, ok := f.messages[k]; ok {
-		return existing.ID, false, nil
-	}
-	msgProc.ID = uuid.New()
-	f.messages[k] = msgProc
-	return msgProc.ID, true, nil
-}
-
-func (f *fakeMessageProcessingRepository) AlreadyProcessed(_ context.Context, _, _ string, _ *uuid.UUID) (bool, error) {
-	return false, nil
-}
-
-func (f *fakeMessageProcessingRepository) GetByMessageIDAndStream(ctx context.Context, messageID, streamName string) (*messageprocessing.MessageProcessing, error) {
-	msg, ok := f.messages[fakeMsgProcKey(messageID, streamName)]
-	if !ok {
-		return nil, nil
-	}
-	return msg, nil
-}
-
-func (f *fakeMessageProcessingRepository) GetByID(ctx context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
-	for _, msg := range f.messages {
-		if msg.ID == id {
-			return msg, nil
-		}
-	}
-	return nil, nil
-}
-
-func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uuid.UUID, state string) error {
-	for _, msg := range f.messages {
-		if msg.ID == id {
-			msg.State = state
-			return nil
-		}
-	}
-	return nil
-}
-
-func (f *fakeMessageProcessingRepository) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
-	return 0, nil
-}
-
-// fakeUnitOfWork is a no-op PostgresUnitOfWork backed by the in-memory
-// message-processing repo.
-type fakeUnitOfWork struct {
-	msgProcRepo  *fakeMessageProcessingRepository
-	BegunTx      bool
-	CommittedTx  bool
-	RolledBackTx bool
-}
-
-func newFakeUnitOfWork() *fakeUnitOfWork {
-	return &fakeUnitOfWork{
-		msgProcRepo: newFakeMessageProcessingRepository(),
-	}
-}
-
-func (f *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
-	return f.msgProcRepo
-}
-func (f *fakeUnitOfWork) Begin(ctx context.Context) error { f.BegunTx = true; return nil }
-func (f *fakeUnitOfWork) Commit() error                   { f.CommittedTx = true; return nil }
-func (f *fakeUnitOfWork) Rollback() error                 { f.RolledBackTx = true; return nil }
 
 // newTestLogger returns a debug-level text logger writing to stdout.
 func newTestLogger() *slog.Logger {
@@ -221,10 +135,11 @@ var _ uow.UnitOfWork = (*fakeGraphUnitOfWork)(nil)
 type fakeGraphTx struct {
 	topology     repository.ReleasePromotionRepository
 	codeVersions repository.CodeVersionRepository
+	caseBase     repository.CaseBaseRepository
 }
 
 func (t *fakeGraphTx) Topology() repository.ReleasePromotionRepository { return t.topology }
 func (t *fakeGraphTx) CodeVersions() repository.CodeVersionRepository  { return t.codeVersions }
-func (t *fakeGraphTx) CaseBase() repository.CaseBaseRepository         { return nil }
+func (t *fakeGraphTx) CaseBase() repository.CaseBaseRepository         { return t.caseBase }
 
 var _ uow.Tx = (*fakeGraphTx)(nil)

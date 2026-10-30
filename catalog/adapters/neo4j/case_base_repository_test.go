@@ -1,640 +1,382 @@
-package neo4jinfra_test
+//go:build integration
+
+package neo4jinfra
 
 import (
 	"context"
-	"log/slog"
-	"os"
+	"strconv"
 	"testing"
 	"time"
 
-	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/carolsimone/continuo/catalog/domain/repository"
+	"github.com/carolsimone/continuo/catalog/service/uow"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// newCaseBaseRepo constructs a CaseBaseRepository against the given client for
-// use in these integration tests.
-func newCaseBaseRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.CaseBaseRepository {
-	return neo4jinfra.NewCaseBaseRepository(client,
-		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+// The tests of this file write the case base for the swap fixture's tenant
+// through the unit of work, one message per Write, as the case-base groups do.
+
+// writeCaseBase runs fn on the case base of one final Write for the fixture's
+// tenant, under a fresh message of group.
+func (f *swapFixture) writeCaseBase(group string, fn func(ctx context.Context, cb repository.CaseBaseRepository) error) {
+	f.t.Helper()
+	m := uow.Marker{TenantID: f.tenant, Group: group, MessageID: uuid.NewString()}
+	require.NoError(f.t, f.uow.Write(context.Background(), m, true, func(ctx context.Context, tx uow.Tx) error {
+		return fn(ctx, tx.CaseBase())
+	}))
 }
 
-// caseBaseCleanup returns a closure that removes every node a case-base test
-// could have touched. Fixture nodes created directly by the test carry
-// test_marker; nodes the repository itself writes (:Rejection, :ErrorSignature,
-// :Proposal) carry no such property, so they are caught instead by the marker
-// embedded in their identity values (release_id, node_id, unique_id, signature,
-// proposal_id).
-func caseBaseCleanup(t *testing.T, client neo4jinfra.Neo4jClient, marker string) func() {
-	t.Helper()
-	ctx := context.Background()
-	return func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, `
-			MATCH (n)
-			WHERE n.test_marker = $m
-			   OR n.release_id CONTAINS $m
-			   OR n.node_id CONTAINS $m
-			   OR n.unique_id CONTAINS $m
-			   OR n.signature CONTAINS $m
-			   OR n.proposal_id CONTAINS $m
-			DETACH DELETE n
-		`, map[string]any{"m": marker})
+// recordRejection records rej for the fixture's tenant, as the rejections
+// group does.
+func (f *swapFixture) recordRejection(rej casebase.Rejection) {
+	f.t.Helper()
+	f.writeCaseBase(streams.CatalogRemediationRequestedRejections, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+		return cb.RecordRejection(ctx, f.tenant, rej)
+	})
+}
+
+// recordProposal records p and its PR for the fixture's tenant, as the
+// proposals group does.
+func (f *swapFixture) recordProposal(p casebase.Proposal, pr casebase.PullRequest) {
+	f.t.Helper()
+	f.writeCaseBase(streams.CatalogRemediationPrOpenedProposals, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+		return cb.RecordProposal(ctx, f.tenant, p, pr)
+	})
+}
+
+// recordOutcome records a fix PR's outcome for the fixture's tenant, as the
+// provenance group does.
+func (f *swapFixture) recordOutcome(o casebase.PullRequestOutcome) {
+	f.t.Helper()
+	f.writeCaseBase(streams.CatalogRemediationPrClosedProvenance, func(ctx context.Context, cb repository.CaseBaseRepository) error {
+		return cb.RecordPullRequestOutcome(ctx, f.tenant, o)
+	})
+}
+
+// scalar runs a statement that returns at most one row and returns its column
+// v, or nil when it returns none.
+func (f *swapFixture) scalar(cypher string, params map[string]any) any {
+	f.t.Helper()
+	recs := f.rows(cypher, params)
+	require.LessOrEqual(f.t, len(recs), 1)
+	if len(recs) == 0 {
+		return nil
 	}
-}
-
-// runScalar runs a single aggregate-only read query (e.g. `RETURN count(x) AS
-// c`) and returns the value bound to alias. Cypher aggregation with no
-// grouping keys always yields exactly one row, so this never needs to handle a
-// missing result.
-func runScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string, params map[string]any, alias string) any {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, cypher, params)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	v, _ := res.Record().Get(alias)
-	require.NoError(t, res.Err())
+	v, _ := recs[0].Get("v")
 	return v
 }
 
-// seedNodeVersion creates one :NodeVersion fixture row. contentHash must be
-// distinct per uniqueID across a test (node_version_unique is keyed on the
-// pair), which is why every caller passes its own literal.
-func seedNodeVersion(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, marker, contentHash string, promotedAt time.Time) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx,
-		`CREATE (:NodeVersion {unique_id: $uid, content_hash: $hash, promoted_at: $at, test_marker: $m})`,
-		map[string]any{"uid": uniqueID, "hash": contentHash, "at": promotedAt, "m": marker})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
+// seedVersion creates one :NodeVersion of the tenant, promoted at promotedAt.
+func (f *swapFixture) seedVersion(uniqueID, contentHash string, promotedAt time.Time) {
+	f.t.Helper()
+	f.exec(`CREATE (:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash, promoted_at: $at})`,
+		map[string]any{"uid": uniqueID, "hash": contentHash, "at": promotedAt.UTC()})
 }
 
-// TestCaseBaseRepository_RecordRejectionWritesRejectionAndSignature verifies
-// that RecordRejection writes one :Rejection with all its properties, MERGEs
-// one globally-shared :ErrorSignature hub node keyed on signature, and links
-// them with one [:HAS_SIGNATURE] edge — and that calling it twice with
-// identical input converges rather than duplicating any of that.
-func TestCaseBaseRepository_RecordRejectionWritesRejectionAndSignature(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
+// seedCurrentAt points the tenant's :Node uniqueID at its version
+// contentHash with a [:CURRENT] stamped promotedAt, creating the node when it
+// is absent.
+func (f *swapFixture) seedCurrentAt(uniqueID, contentHash string, promotedAt time.Time) {
+	f.t.Helper()
+	f.exec(`
+		MERGE (n:Node {tenant_id: $tenant_id, unique_id: $uid})
+		WITH n
+		MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: $uid, content_hash: $hash})
+		MERGE (n)-[cur:CURRENT]->(v)
+		SET cur.promoted_at = $at`,
+		map[string]any{"uid": uniqueID, "hash": contentHash, "at": promotedAt.UTC()})
+}
 
-	repo := newCaseBaseRepo(client)
+// resolvedByVersion returns the content_hash of every :NodeVersion the
+// rejection (releaseID, nodeID) is [:RESOLVED_BY], sorted.
+func (f *swapFixture) resolvedByVersion(releaseID, nodeID string) []string {
+	f.t.Helper()
+	return f.column(`
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		      -[:RESOLVED_BY]->(v:NodeVersion {tenant_id: $tenant_id})
+		RETURN v.content_hash AS v ORDER BY v`, map[string]any{"release_id": releaseID, "node_id": nodeID})
+}
 
+// failedEdges counts the [:FAILED] edges into the rejection (releaseID,
+// nodeID) from the tenant's :Node nodeID.
+func (f *swapFixture) failedEdges(releaseID, nodeID string) int64 {
+	f.t.Helper()
+	return f.count(`
+		MATCH (:Node {tenant_id: $tenant_id, unique_id: $node_id})-[r:FAILED {release_id: $release_id}]->
+		      (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
+		RETURN count(r) AS n`, map[string]any{"release_id": releaseID, "node_id": nodeID})
+}
+
+func rejectionOf(releaseID, nodeID, signature string, at time.Time) casebase.Rejection {
+	return casebase.Rejection{
+		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: signature,
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: at,
+	}
+}
+
+func openPullRequest(proposalID, service string, number int, openedAt time.Time) casebase.PullRequest {
+	return casebase.PullRequest{
+		ProposalID: proposalID, Service: service,
+		PrURL: "https://github.com/org/repo/pull/" + strconv.Itoa(number), PrNumber: number,
+		State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+	}
+}
+
+// ── RecordRejection ─────────────────────────────────────────────────────────
+
+// RecordRejection writes one :Rejection with all its properties, MERGEs the
+// tenant's :ErrorSignature hub keyed on the signature, and links them with one
+// [:HAS_SIGNATURE]; recording it twice converges.
+func TestRecordRejection_WritesRejectionAndSignature(t *testing.T) {
+	f := newSwapFixture(t)
 	rej := casebase.Rejection{
-		ReleaseID:    marker + "-rel-1",
-		NodeID:       marker + "-node-1",
+		ReleaseID:    "rel-1",
+		NodeID:       "node-1",
 		Stage:        "validation",
 		Category:     "null_constraint",
 		Reason:       "not-null violation on column x",
-		Signature:    marker + "-sig-1",
+		Signature:    "sig-1",
 		ErrorExcerpt: "ERROR: null value in column \"x\" violates not-null constraint",
-		DBTLogURI:    "s3://bucket/logs/" + marker + ".log",
+		DBTLogURI:    "s3://bucket/logs/node-1.log",
 		At:           time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC),
 		RawCode:      "select 1 as x",
 		ContentHash:  "hash-1",
 	}
 
-	require.NoError(t, repo.RecordRejection(ctx, rej))
-	require.NoError(t, repo.RecordRejection(ctx, rej), "second call with identical input must converge")
+	f.recordRejection(rej)
+	f.recordRejection(rej)
 
-	session := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
+	recs := f.rows(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel-1', node_id: 'node-1'}) RETURN properties(rej) AS p`, nil)
+	require.Len(t, recs, 1, "exactly one :Rejection")
+	v, _ := recs[0].Get("p")
+	p := v.(map[string]any)
+	assert.Equal(t, rej.Stage, p["stage"])
+	assert.Equal(t, rej.Category, p["category"])
+	assert.Equal(t, rej.Reason, p["reason"])
+	assert.Equal(t, rej.ErrorExcerpt, p["error_excerpt"])
+	assert.Equal(t, rej.DBTLogURI, p["dbt_log_uri"])
+	at, ok := p["at"].(time.Time)
+	require.True(t, ok, "at must round-trip as a time.Time, got %T", p["at"])
+	assert.True(t, rej.At.Equal(at), "at round-trips; want %v got %v", rej.At, at)
+	assert.Equal(t, rej.RawCode, p["raw_code"])
+	assert.Equal(t, rej.ContentHash, p["content_hash"])
+	assert.Equal(t, false, p["stub"])
 
-	res, err := session.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		RETURN rej.stage AS stage, rej.category AS category, rej.reason AS reason,
-		       rej.error_excerpt AS error_excerpt, rej.dbt_log_uri AS dbt_log_uri,
-		       rej.at AS at, rej.raw_code AS raw_code, rej.content_hash AS content_hash
-	`, map[string]any{"release_id": rej.ReleaseID, "node_id": rej.NodeID})
-	require.NoError(t, err)
-	records, err := res.Collect(ctx)
-	require.NoError(t, err)
-	require.Len(t, records, 1, "exactly one :Rejection node")
-
-	rec := records[0]
-	stage, _ := rec.Get("stage")
-	category, _ := rec.Get("category")
-	reason, _ := rec.Get("reason")
-	errorExcerpt, _ := rec.Get("error_excerpt")
-	dbtLogURI, _ := rec.Get("dbt_log_uri")
-	at, _ := rec.Get("at")
-	rawCode, _ := rec.Get("raw_code")
-	contentHash, _ := rec.Get("content_hash")
-
-	assert.Equal(t, rej.Stage, stage)
+	sig := f.rows(`
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-1', node_id: 'node-1'})-[:HAS_SIGNATURE]->
+		      (sig:ErrorSignature {tenant_id: $tenant_id, signature: 'sig-1'})
+		RETURN sig.category AS category, sig.reason AS reason`, nil)
+	require.Len(t, sig, 1, "exactly one [:HAS_SIGNATURE] to the signature hub")
+	category, _ := sig[0].Get("category")
+	reason, _ := sig[0].Get("reason")
 	assert.Equal(t, rej.Category, category)
 	assert.Equal(t, rej.Reason, reason)
-	assert.Equal(t, rej.ErrorExcerpt, errorExcerpt)
-	assert.Equal(t, rej.DBTLogURI, dbtLogURI)
-	atGot, ok := at.(time.Time)
-	require.True(t, ok, "at must round-trip as a time.Time, got %T", at)
-	assert.True(t, rej.At.Equal(atGot), "at round-trips; want %v got %v", rej.At, atGot)
-	assert.Equal(t, rej.RawCode, rawCode)
-	assert.Equal(t, rej.ContentHash, contentHash)
-
-	sigRes, err := session.Run(ctx, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:HAS_SIGNATURE]->(sig:ErrorSignature {signature: $signature})
-		RETURN sig.category AS category, sig.reason AS reason
-	`, map[string]any{"release_id": rej.ReleaseID, "node_id": rej.NodeID, "signature": rej.Signature})
-	require.NoError(t, err)
-	sigRecords, err := sigRes.Collect(ctx)
-	require.NoError(t, err)
-	require.Len(t, sigRecords, 1, "exactly one [:HAS_SIGNATURE] edge to the signature hub")
-	sigCategory, _ := sigRecords[0].Get("category")
-	sigReason, _ := sigRecords[0].Get("reason")
-	assert.Equal(t, rej.Category, sigCategory)
-	assert.Equal(t, rej.Reason, sigReason)
-
-	// The signature hub is MERGEd on `signature` alone — confirm the two
-	// RecordRejection calls did not mint a second :ErrorSignature.
-	sigCount := runScalar(t, client,
-		`MATCH (s:ErrorSignature {signature: $signature}) RETURN count(s) AS c`,
-		map[string]any{"signature": rej.Signature}, "c")
-	assert.EqualValues(t, 1, sigCount)
+	assert.Equal(t, int64(1), f.count(`MATCH (s:ErrorSignature {tenant_id: $tenant_id, signature: 'sig-1'}) RETURN count(s) AS n`, nil),
+		"the two calls MERGE one hub")
 }
 
-// TestCaseBaseRepository_FailedEdgeOnlyWhenTableExists verifies the
-// FOREACH-guarded [:FAILED] anchor: when the node's :Table already exists in
-// the topology, RecordRejection links it; when it does not, RecordRejection
-// still records the rejection but must neither create the edge nor mint a
-// :Table — that lifecycle belongs solely to the topology handler.
-func TestCaseBaseRepository_FailedEdgeOnlyWhenTableExists(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
+// [:FAILED] anchors a rejection to its node's :Node when the tenant has one;
+// otherwise the rejection is recorded alone, and no :Node is created: the
+// topology group owns that lifecycle.
+func TestRecordRejection_FailedEdgeOnlyWhenNodeExists(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("node-a")
+	at := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 
-	repo := newCaseBaseRepo(client)
+	f.recordRejection(rejectionOf("rel-a", "node-a", "sig-a", at))
+	assert.Equal(t, int64(1), f.failedEdges("rel-a", "node-a"), "a node of the tenant gets its [:FAILED]")
 
-	// Case A: the node's :Table already exists in the topology.
-	releaseA := marker + "-rel-a"
-	nodeA := marker + "-node-a"
-	seed := client.NewSession(ctx, neo4j.AccessModeWrite)
-	seedRes, err := seed.Run(ctx,
-		`CREATE (:Table {unique_id: $uid, test_marker: $m})`,
-		map[string]any{"uid": nodeA, "m": marker})
-	require.NoError(t, err)
-	_, err = seedRes.Consume(ctx)
-	require.NoError(t, err)
-	seed.Close(ctx)
-
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
-		ReleaseID: releaseA, NodeID: nodeA, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig-a",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: time.Now().UTC(),
-	}))
-
-	edgesA := runScalar(t, client, `
-		MATCH (t:Table {unique_id: $uid})-[f:FAILED {release_id: $release_id}]->(rej:Rejection {release_id: $release_id, node_id: $uid})
-		RETURN count(f) AS c
-	`, map[string]any{"uid": nodeA, "release_id": releaseA}, "c")
-	assert.EqualValues(t, 1, edgesA, "Case A: [:FAILED] edge must exist when the :Table exists")
-
-	// Case B: no :Table exists for this node.
-	releaseB := marker + "-rel-b"
-	nodeB := marker + "-node-b"
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
-		ReleaseID: releaseB, NodeID: nodeB, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig-b",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: time.Now().UTC(),
-	}))
-
-	rejCountB := runScalar(t, client,
-		`MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id}) RETURN count(rej) AS c`,
-		map[string]any{"release_id": releaseB, "node_id": nodeB}, "c")
-	assert.EqualValues(t, 1, rejCountB, "Case B: :Rejection must still be recorded with no :Table present")
-
-	edgesB := runScalar(t, client,
-		`MATCH (:Rejection {release_id: $release_id, node_id: $node_id})<-[f:FAILED]-() RETURN count(f) AS c`,
-		map[string]any{"release_id": releaseB, "node_id": nodeB}, "c")
-	assert.EqualValues(t, 0, edgesB, "Case B: no [:FAILED] edge without a :Table")
-
-	tableCountB := runScalar(t, client,
-		`MATCH (t:Table {unique_id: $uid}) RETURN count(t) AS c`,
-		map[string]any{"uid": nodeB}, "c")
-	assert.EqualValues(t, 0, tableCountB, "Case B: RecordRejection must never create a :Table")
+	f.recordRejection(rejectionOf("rel-b", "node-b", "sig-b", at))
+	assert.Equal(t, int64(1), f.count(`MATCH (r:Rejection {tenant_id: $tenant_id, release_id: 'rel-b', node_id: 'node-b'}) RETURN count(r) AS n`, nil),
+		"the rejection is recorded with no :Node")
+	assert.Zero(t, f.count(`MATCH (:Rejection {tenant_id: $tenant_id, node_id: 'node-b'})<-[f:FAILED]-() RETURN count(f) AS n`, nil))
+	assert.Nil(t, f.node("node-b"), "the case base never creates a :Node")
 }
 
-// TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists verifies
-// the late-arrival back-link: when the fix has already been promoted by the
-// time RecordRejection runs, it links [:RESOLVED_BY] to the OLDEST
-// :NodeVersion promoted after the rejection's At — not the newest — and a
-// later call must not move an already-established link, even when a
-// still-later version arrives that would itself rank first by promoted_at.
-func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
+// A node a release dropped is retired, not deleted, so a rejection of it
+// still finds its :Node and links [:FAILED]; a node no release ever carried
+// still gets no link and no :Node.
+func TestRecordRejection_AttachesToRetiredNode(t *testing.T) {
+	f := newSwapFixture(t)
+	base := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	f.promoteAt("r1", 1, releaseOf(modelNode("analytics.table_a"), modelNode("analytics.table_d")), base)
+	f.promoteAt("r2", 2, releaseOf(modelNode("analytics.table_a")), base.Add(time.Hour))
+	require.Equal(t, false, f.node("analytics.table_d")["active"], "r2 retired table_d")
 
-	repo := newCaseBaseRepo(client)
+	f.recordRejection(rejectionOf("r2", "analytics.table_d", "sig-d", base.Add(2*time.Hour)))
+	assert.Equal(t, int64(1), f.failedEdges("r2", "analytics.table_d"), "the retired node's rejection links [:FAILED]")
+	assert.Equal(t, false, f.node("analytics.table_d")["active"], "recording a rejection does not revive the node")
 
-	nodeID := marker + "-node"
-	releaseID := marker + "-rel"
+	f.recordRejection(rejectionOf("r2", "analytics.never_promoted", "sig-n", base.Add(2*time.Hour)))
+	assert.Zero(t, f.count(`MATCH (:Rejection {tenant_id: $tenant_id, node_id: 'analytics.never_promoted'})<-[f:FAILED]-() RETURN count(f) AS n`, nil),
+		"a never-promoted node gets no [:FAILED]")
+	assert.Nil(t, f.node("analytics.never_promoted"), "the case base never creates a :Node")
+}
+
+// When the fix was promoted before the rejection lands, RecordRejection links
+// [:RESOLVED_BY] to the OLDEST version promoted after the rejection, and a
+// later call never moves an established link, not even to a later-arriving
+// version that would rank first.
+func TestRecordRejection_BackLinksResolvedByWhenNewerVersionExists(t *testing.T) {
+	f := newSwapFixture(t)
+	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	rej := rejectionOf("rel", "node", "sig", t0)
+
+	// Two versions newer than the rejection qualify at once, so only an
+	// ascending order picks the older one.
+	f.seedVersion("node", "hash-seq1", t0.Add(-time.Hour))
+	f.seedVersion("node", "hash-seq2", t0.Add(time.Hour))
+	f.seedVersion("node", "hash-seq3", t0.Add(2*time.Hour))
+
+	f.recordRejection(rej)
+	assert.Equal(t, []string{"hash-seq2"}, f.resolvedByVersion("rel", "node"), "the oldest qualifying version")
+
+	f.recordRejection(rej)
+	assert.Equal(t, []string{"hash-seq2"}, f.resolvedByVersion("rel", "node"), "a redelivery leaves the link")
+
+	f.seedVersion("node", "hash-seq4", t0.Add(30*time.Minute))
+	f.recordRejection(rej)
+	assert.Equal(t, []string{"hash-seq2"}, f.resolvedByVersion("rel", "node"),
+		"the existing link does not move to a later-arriving version that would rank first")
+}
+
+// The back-link's existing-edge guard looks only at [:RESOLVED_BY] edges to a
+// :NodeVersion: a merged fix PR's [:RESOLVED_BY] to its :Proposal, drawn
+// before the rejection landed, does not suppress the version back-link.
+func TestRecordRejection_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
+	f := newSwapFixture(t)
 	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 
-	rejection := casebase.Rejection{
-		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
-	}
-
-	// Seed seq1 (excluded — older than At) together with seq2 AND seq3 (both
-	// newer than At) *before* the first RecordRejection call, so two
-	// candidates qualify simultaneously at MERGE time. With only one
-	// qualifying candidate present, any LIMIT 1 picks it regardless of sort
-	// direction; with two present, only `ORDER BY promoted_at ASC` — not
-	// DESC — can pick the older one.
-	seedNodeVersion(t, client, nodeID, marker, "hash-seq1", t0.Add(-time.Hour))
-	seedNodeVersion(t, client, nodeID, marker, "hash-seq2", t0.Add(time.Hour))
-	seedNodeVersion(t, client, nodeID, marker, "hash-seq3", t0.Add(2*time.Hour))
-
-	require.NoError(t, repo.RecordRejection(ctx, rejection))
-
-	resolvedByQuery := `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS c
-	`
-	resolvedByParams := map[string]any{"release_id": releaseID, "node_id": nodeID}
-	edgeCountQuery := `MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c`
-
-	resolvedHash := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
-	assert.Equal(t, "hash-seq2", resolvedHash,
-		"with seq2 and seq3 both qualifying at once, must back-link to the OLDEST of the two")
-	edgeCount := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
-	assert.EqualValues(t, 1, edgeCount, "exactly one [:RESOLVED_BY] edge")
-
-	// A redelivery of the identical rejection, with no new version, must
-	// leave the established link untouched.
-	require.NoError(t, repo.RecordRejection(ctx, rejection))
-
-	resolvedHashAfter := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
-	assert.Equal(t, "hash-seq2", resolvedHashAfter, "a redelivery must not move the link once resolved")
-	edgeCountAfter := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
-	assert.EqualValues(t, 1, edgeCountAfter, "still exactly one [:RESOLVED_BY] edge after redelivery")
-
-	// A version older than the linked seq2 — the kind an orphan/backfill
-	// write in code_version_repository.go can mint with an arbitrary
-	// promoted_at — arrives after the link is already established. It would
-	// rank first under `ORDER BY promoted_at ASC` if the query re-evaluated
-	// candidates from scratch; the `existing IS NULL` guard must keep the
-	// already-set link from moving to it, and must not add a second edge.
-	seedNodeVersion(t, client, nodeID, marker, "hash-seq4", t0.Add(30*time.Minute))
-
-	require.NoError(t, repo.RecordRejection(ctx, rejection))
-
-	resolvedHashFinal := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
-	assert.Equal(t, "hash-seq2", resolvedHashFinal,
-		"the existing link must not move to a later-arriving version, even one that would rank first under ASC")
-	edgeCountFinal := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
-	assert.EqualValues(t, 1, edgeCountFinal,
-		"still exactly one [:RESOLVED_BY] edge — the existing IS NULL guard must block a second link")
-}
-
-// seedStubResolvedByProposal MERGEs a stub :Rejection (the shape
-// RecordProposal itself would create) and links it directly to a :Proposal —
-// the merged-PR provenance edge RecordPullRequestOutcome draws — so a
-// back-link test can prove its presence must not suppress RecordRejection's
-// own-timeline :NodeVersion back-link.
-func seedStubResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string, at time.Time) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `
-		MERGE (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		ON CREATE SET rej.at = $at, rej.stub = true
-		MERGE (prop:Proposal {proposal_id: $proposal_id})
-		MERGE (rej)-[:RESOLVED_BY]->(prop)
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID, "at": at})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
-}
-
-// TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily verifies the
-// back-link guard's existing-edge check is keyed on the RESOLVED_BY edge's
-// target-label family, not raw edge existence: a merged fix PR can draw its
-// own RESOLVED_BY->(:Proposal) provenance edge (via
-// RecordPullRequestOutcome) before the rejection itself lands through this
-// path, and that edge must not suppress the own-timeline
-// RESOLVED_BY->(:NodeVersion) link — while a rejection already linked to a
-// :NodeVersion is still left alone by a later call (existing skip behavior,
-// pinned here scoped to the same family).
-func TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
-
-	repo := newCaseBaseRepo(client)
-
-	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
-
-	// Node A: merged-PR provenance already landed (RESOLVED_BY -> :Proposal)
-	// before the rejection arrives through this path. A qualifying
-	// :NodeVersion exists too.
-	nodeA := marker + "-node-a"
-	releaseA := marker + "-rel-a"
-	seedNodeVersion(t, client, nodeA, marker, "hash-a1", t0.Add(time.Hour))
-	seedStubResolvedByProposal(t, client, releaseA, nodeA, marker+"-prop", t0)
-
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
-		ReleaseID: releaseA, NodeID: nodeA, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig-a",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
-	}))
-
-	assert.Equal(t, "hash-a1", runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS c
-	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
-		"the Proposal-linked rejection must still receive its own-timeline NodeVersion back-link")
-	assert.EqualValues(t, 1, runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(:Proposal)
-		RETURN count(*) AS c
-	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
-		"the pre-existing Proposal provenance edge is untouched")
-	assert.EqualValues(t, 2, runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
-		RETURN count(r) AS c
-	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
-		"the rejection now carries both the Proposal edge and the new NodeVersion edge")
-
-	// Node B: the ordinary case establishes a NodeVersion link on the first
-	// call; a later-arriving version, and a redelivery, must both leave it
-	// alone.
-	nodeB := marker + "-node-b"
-	releaseB := marker + "-rel-b"
-	seedNodeVersion(t, client, nodeB, marker, "hash-b1", t0.Add(time.Hour))
-
-	rejB := casebase.Rejection{
-		ReleaseID: releaseB, NodeID: nodeB, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig-b",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
-	}
-	require.NoError(t, repo.RecordRejection(ctx, rejB))
-
-	// A version older than the linked hash-b1 arrives after the link is
-	// established; the existing-edge guard must keep it from being moved.
-	seedNodeVersion(t, client, nodeB, marker, "hash-b2", t0.Add(30*time.Minute))
-	require.NoError(t, repo.RecordRejection(ctx, rejB))
-
-	assert.Equal(t, "hash-b1", runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS c
-	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
-		"a rejection already linked to a :NodeVersion must not be moved by a later call")
-	assert.EqualValues(t, 1, runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
-		RETURN count(r) AS c
-	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
-		"still exactly one RESOLVED_BY edge")
-}
-
-// seedCurrentPointerAt MERGEs a :Table's [:CURRENT] edge to the version
-// addressed by (unique_id, content_hash), stamped with promotedAt — the
-// property the revert branch of RecordRejection's back-link reads, which is
-// independent of the version node's own (immutable) promoted_at.
-func seedCurrentPointerAt(
-	t *testing.T, client neo4jinfra.Neo4jClient,
-	tableUniqueID, versionUniqueID, versionContentHash string, promotedAt time.Time,
-) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `
-		MERGE (t:Table {unique_id: $table_uid})
-		WITH t
-		MATCH (v:NodeVersion {unique_id: $version_uid, content_hash: $hash})
-		MERGE (t)-[cur:CURRENT]->(v)
-		SET cur.promoted_at = $at
-	`, map[string]any{
-		"table_uid": tableUniqueID, "version_uid": versionUniqueID, "hash": versionContentHash,
-		"at": promotedAt.UTC(),
+	f.seedVersion("node-a", "hash-a1", t0.Add(time.Hour))
+	f.recordOutcome(casebase.PullRequestOutcome{
+		ProposalID: "prop", ReleaseID: "rel-a", Service: "core", Outcome: "merged",
+		ClosedAt: t0, ResolvedNodeIDs: []string{"node-a"},
 	})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
+	f.recordRejection(rejectionOf("rel-a", "node-a", "sig-a", t0))
+	assert.Equal(t, []string{"hash-a1"}, f.resolvedByVersion("rel-a", "node-a"),
+		"the proposal-resolved rejection still gets its version back-link")
+	assert.Equal(t, int64(1), f.count(`
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-a', node_id: 'node-a'})-[r:RESOLVED_BY]->(:Proposal {tenant_id: $tenant_id})
+		RETURN count(r) AS n`, nil), "the proposal edge is untouched")
+
+	f.seedVersion("node-b", "hash-b1", t0.Add(time.Hour))
+	f.recordRejection(rejectionOf("rel-b", "node-b", "sig-b", t0))
+	f.seedVersion("node-b", "hash-b2", t0.Add(30*time.Minute))
+	f.recordRejection(rejectionOf("rel-b", "node-b", "sig-b", t0))
+	assert.Equal(t, []string{"hash-b1"}, f.resolvedByVersion("rel-b", "node-b"),
+		"a rejection already linked to a version is left alone")
 }
 
-// TestCaseBaseRepository_BackLinksResolvedByOnRevert verifies the revert
-// branch of the back-link. A revert reuses an existing :NodeVersion node
-// rather than writing a new one, so the version's own promoted_at stays at
-// its original, earlier value and the ordinary "oldest version promoted
-// after the rejection" branch finds no candidate. The [:CURRENT] edge is
-// what the version writer actually overwrites on every promotion, so its
-// promoted_at — newer than the rejection even though the version node's own
-// is not — is what proves the fix landed, and RecordRejection must link to
-// that current version.
-func TestCaseBaseRepository_BackLinksResolvedByOnRevert(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
-
-	repo := newCaseBaseRepo(client)
-
-	nodeID := marker + "-node"
-	releaseID := marker + "-rel"
+// A revert reuses an existing, older version, so the ordinary branch finds no
+// version promoted after the rejection; the node's [:CURRENT], stamped with
+// the promotion that put it there, shows the fix landed after it.
+func TestRecordRejection_BackLinksResolvedByOnRevert(t *testing.T) {
+	f := newSwapFixture(t)
 	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	f.seedVersion("node", "hash-v1", t0)
+	f.seedVersion("node", "hash-v2", t0.Add(10*time.Minute))
+	f.seedCurrentAt("node", "hash-v1", t0.Add(30*time.Minute))
 
-	// Both versions were promoted BEFORE the rejection, so neither qualifies
-	// under the ordinary branch (v.promoted_at > $at).
-	seedNodeVersion(t, client, nodeID, marker, "hash-v1", t0)
-	seedNodeVersion(t, client, nodeID, marker, "hash-v2", t0.Add(10*time.Minute))
+	f.recordRejection(rejectionOf("rel", "node", "sig", t0.Add(20*time.Minute)))
 
-	rejAt := t0.Add(20 * time.Minute)
-
-	// The revert: promoted well after the rejection, but the [:CURRENT] edge
-	// now points back at hash-v1, whose own promoted_at is t0 — before the
-	// rejection.
-	seedCurrentPointerAt(t, client, nodeID, nodeID, "hash-v1", t0.Add(30*time.Minute))
-
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
-		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: rejAt,
-	}))
-
-	resolvedHash := runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS c
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
-	assert.Equal(t, "hash-v1", resolvedHash,
-		"the revert must link to the CURRENT version, detected via the [:CURRENT] edge's promoted_at, "+
-			"not the version node's own (which the ordinary branch already checked and rejected)")
-
-	edgeCount := runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
-	assert.EqualValues(t, 1, edgeCount, "exactly one [:RESOLVED_BY] edge")
+	assert.Equal(t, []string{"hash-v1"}, f.resolvedByVersion("rel", "node"),
+		"the revert links to the current version, found through [:CURRENT]'s promoted_at")
 }
 
-// TestCaseBaseRepository_RecordProposalCreatesStubRejection verifies the
-// out-of-order half of the case base: a proposal arriving before its
-// rejection creates a stub :Rejection so the [:PROPOSED] edge has an anchor,
-// and the rejection landing later completes that same stub in place rather
-// than creating a second :Rejection. A replayed RecordProposal converges to
-// one :Proposal and one :PullRequest, and the PR facts land on the
-// :PullRequest node rather than inline on :Proposal.
-func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
-	client := newTestClient(t)
-	ctx := context.Background()
-	marker := t.Name()
-	cleanup := caseBaseCleanup(t, client, marker)
-	cleanup()
-	defer cleanup()
+// ── RecordProposal ──────────────────────────────────────────────────────────
 
-	repo := newCaseBaseRepo(client)
-
-	releaseID := marker + "-rel"
-	nodeID := marker + "-node"
-	proposalID := marker + "-proposal"
+// A proposal landing before its rejection creates a stub :Rejection to anchor
+// its [:PROPOSED]; the rejection completes that stub in place; a replayed
+// proposal converges on one :Proposal and one :PullRequest and leaves the
+// completed rejection alone.
+func TestRecordProposal_CreatesStubRejection(t *testing.T) {
+	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	p := casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "node"}
+	pr := openPullRequest("prop", "core", 42, openedAt)
 
-	proposal := casebase.Proposal{
-		ProposalID: proposalID, ReleaseID: releaseID, NodeID: nodeID,
+	f.recordProposal(p, pr)
+	stub := f.rows(`
+		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[:PROPOSED]->
+		      (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[:HAS_PR]->
+		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: 'prop', service: 'core'})
+		RETURN rej.stub AS stub, properties(pl) AS pl`, nil)
+	require.Len(t, stub, 1, "a stub :Rejection with a [:PROPOSED]->[:HAS_PR] chain")
+	isStub, _ := stub[0].Get("stub")
+	assert.Equal(t, true, isStub)
+	v, _ := stub[0].Get("pl")
+	pl := v.(map[string]any)
+	assert.Equal(t, pr.PrURL, pl["pr_url"])
+	assert.EqualValues(t, pr.PrNumber, pl["pr_number"])
+	assert.Equal(t, "open", pl["pr_state"])
+	assert.Equal(t, pr.OpenedBy, pl["opened_by"])
+	assert.Nil(t, f.scalar(`MATCH (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'}) RETURN p.pr_url AS v`, nil),
+		"the PR facts live on the :PullRequest, not the :Proposal")
+
+	rej := rejectionOf("rel", "node", "sig", time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC))
+	rej.RawCode, rej.ContentHash = "select 1", "hash-1"
+	f.recordRejection(rej)
+	filled := f.rows(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'}) RETURN properties(rej) AS p`, nil)
+	require.Len(t, filled, 1, "the rejection completes the stub in place")
+	v, _ = filled[0].Get("p")
+	props := v.(map[string]any)
+	assert.Equal(t, false, props["stub"])
+	assert.Equal(t, rej.Stage, props["stage"])
+	assert.Equal(t, rej.RawCode, props["raw_code"])
+	assert.Equal(t, int64(1), f.count(`
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[r:PROPOSED]->(:Proposal {tenant_id: $tenant_id})
+		RETURN count(r) AS n`, nil), "[:PROPOSED] survives the stub being completed")
+
+	f.recordProposal(p, pr)
+	assert.Equal(t, int64(1), f.count(`MATCH (p:Proposal {tenant_id: $tenant_id}) RETURN count(p) AS n`, nil))
+	assert.Equal(t, int64(1), f.count(`MATCH (p:PullRequest {tenant_id: $tenant_id}) RETURN count(p) AS n`, nil))
+	after := f.rows(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'}) RETURN rej.stub AS stub, rej.at AS at`, nil)
+	require.Len(t, after, 1)
+	stubAfter, _ := after[0].Get("stub")
+	assert.Equal(t, false, stubAfter, "a replayed proposal does not turn the rejection back into a stub")
+	atAfter, _ := after[0].Get("at")
+	assert.True(t, rej.At.Equal(atAfter.(time.Time)), "nor overwrite its classified-at with the proposal's opened_at")
+}
+
+// ── tenancy ─────────────────────────────────────────────────────────────────
+
+// Two tenants record the same rejection, proposal and outcome: each tenant
+// gets its own nodes, its own signature hub and its own links, and neither
+// write reaches the other tenant's nodes.
+func TestCaseBase_LeavesOtherTenantsAlone(t *testing.T) {
+	a := newSwapFixture(t)
+	b := a.another()
+	at := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	for _, f := range []*swapFixture{a, b} {
+		f.seedLiveNode("node")
+		f.seedLiveNode("edited")
 	}
-	pr := casebase.PullRequest{
-		ProposalID: proposalID, Service: "core",
-		PrURL: "https://github.com/org/repo/pull/42", PrNumber: 42,
-		State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+	beforeB := b.snapshot()
+
+	a.recordRejection(rejectionOf("rel", "node", "sig", at))
+	a.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "node"}, openPullRequest("prop", "core", 7, at))
+	a.recordOutcome(casebase.PullRequestOutcome{
+		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: at.Add(time.Hour),
+		ResolvedNodeIDs: []string{"node"}, Edits: []casebase.EditOutcome{{Path: "models/edited.sql", TargetNodeID: "edited"}},
+	})
+	assert.Equal(t, beforeB, b.snapshot(), "tenant a's case base writes nothing of tenant b")
+	assert.Equal(t, int64(1), a.failedEdges("rel", "node"))
+	assert.Equal(t, int64(1), a.count(`MATCH (:Proposal {tenant_id: $tenant_id})-[r:EDITED]->(:Node {tenant_id: $tenant_id, unique_id: 'edited'}) RETURN count(r) AS n`, nil))
+
+	b.recordRejection(rejectionOf("rel", "node", "sig", at))
+	for _, f := range []*swapFixture{a, b} {
+		assert.Equal(t, int64(1), f.count(`MATCH (s:ErrorSignature {tenant_id: $tenant_id, signature: 'sig'}) RETURN count(s) AS n`, nil),
+			"one signature hub per tenant")
+		assert.Equal(t, int64(1), f.count(`
+			MATCH (:Rejection {tenant_id: $tenant_id})-[r:HAS_SIGNATURE]->(:ErrorSignature {tenant_id: $tenant_id})
+			RETURN count(r) AS n`, nil), "a tenant's rejection links its own tenant's hub")
+		assert.Equal(t, int64(1), f.failedEdges("rel", "node"))
 	}
-	require.NoError(t, repo.RecordProposal(ctx, proposal, pr))
-
-	session := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
-
-	stubRes, err := session.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})-[:PROPOSED]->(p:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service})
-		RETURN rej.stub AS stub, pl.pr_url AS pr_url, pl.pr_number AS pr_number,
-		       pl.pr_state AS pr_state, pl.opened_by AS opened_by, pl.opened_at AS opened_at
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID, "service": "core"})
-	require.NoError(t, err)
-	stubRecords, err := stubRes.Collect(ctx)
-	require.NoError(t, err)
-	require.Len(t, stubRecords, 1, "a stub :Rejection with a [:PROPOSED]->[:HAS_PR] chain must exist")
-
-	stub, _ := stubRecords[0].Get("stub")
-	assert.Equal(t, true, stub, "a rejection created purely from a proposal must be a stub")
-	prURL, _ := stubRecords[0].Get("pr_url")
-	prNumber, _ := stubRecords[0].Get("pr_number")
-	prState, _ := stubRecords[0].Get("pr_state")
-	openedBy, _ := stubRecords[0].Get("opened_by")
-	openedAtGot, _ := stubRecords[0].Get("opened_at")
-	assert.Equal(t, pr.PrURL, prURL)
-	assert.EqualValues(t, pr.PrNumber, prNumber)
-	assert.Equal(t, "open", prState)
-	assert.Equal(t, pr.OpenedBy, openedBy)
-	openedAtTime, ok := openedAtGot.(time.Time)
-	require.True(t, ok, "opened_at must round-trip as a time.Time, got %T", openedAtGot)
-	assert.True(t, pr.OpenedAt.Equal(openedAtTime))
-
-	// The :Proposal node itself carries no PR facts — those live solely on the
-	// linked :PullRequest node now.
-	noPrURLOnProposal := runScalar(t, client, `
-		MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN p.pr_url AS v
-	`, map[string]any{"proposal_id": proposalID}, "v")
-	assert.Nil(t, noPrURLOnProposal, "the :Proposal node must carry no pr_url property")
-
-	// The rejection arrives later and must complete the stub in place.
-	rej := casebase.Rejection{
-		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: time.Now().UTC(),
-		RawCode: "select 1", ContentHash: "hash-1",
-	}
-	require.NoError(t, repo.RecordRejection(ctx, rej))
-
-	filledRes, err := session.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		RETURN rej.stub AS stub, rej.stage AS stage, rej.category AS category, rej.reason AS reason,
-		       rej.error_excerpt AS error_excerpt, rej.dbt_log_uri AS dbt_log_uri,
-		       rej.raw_code AS raw_code, rej.content_hash AS content_hash
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID})
-	require.NoError(t, err)
-	filledRecords, err := filledRes.Collect(ctx)
-	require.NoError(t, err)
-	require.Len(t, filledRecords, 1, "still exactly one :Rejection after the rejection completes the stub")
-
-	stub2, _ := filledRecords[0].Get("stub")
-	stage, _ := filledRecords[0].Get("stage")
-	category, _ := filledRecords[0].Get("category")
-	reason, _ := filledRecords[0].Get("reason")
-	errorExcerpt, _ := filledRecords[0].Get("error_excerpt")
-	dbtLogURI, _ := filledRecords[0].Get("dbt_log_uri")
-	rawCode, _ := filledRecords[0].Get("raw_code")
-	contentHash, _ := filledRecords[0].Get("content_hash")
-	assert.Equal(t, false, stub2, "RecordRejection must flip stub to false")
-	assert.Equal(t, rej.Stage, stage)
-	assert.Equal(t, rej.Category, category)
-	assert.Equal(t, rej.Reason, reason)
-	assert.Equal(t, rej.ErrorExcerpt, errorExcerpt)
-	assert.Equal(t, rej.DBTLogURI, dbtLogURI)
-	assert.Equal(t, rej.RawCode, rawCode)
-	assert.Equal(t, rej.ContentHash, contentHash)
-
-	proposedEdges := runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:PROPOSED]->(:Proposal {proposal_id: $proposal_id})
-		RETURN count(*) AS c
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID}, "c")
-	assert.EqualValues(t, 1, proposedEdges, "[:PROPOSED] edge must survive the stub being completed")
-
-	// A replayed RecordProposal must converge onto the same :Proposal and
-	// :PullRequest nodes and must not disturb the :Rejection it points at. The
-	// stub fields are only ever written with ON CREATE SET, so a redelivered
-	// pr_opened event — a routine Redis consumer-group occurrence — must not
-	// flip a completed rejection back to a stub or overwrite its
-	// classified-at with the proposal's opened_at.
-	require.NoError(t, repo.RecordProposal(ctx, proposal, pr))
-	proposalCount := runScalar(t, client,
-		`MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN count(p) AS c`,
-		map[string]any{"proposal_id": proposalID}, "c")
-	assert.EqualValues(t, 1, proposalCount, "RecordProposal replay converges to one :Proposal")
-	pullRequestCount := runScalar(t, client,
-		`MATCH (:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service}) RETURN count(pl) AS c`,
-		map[string]any{"proposal_id": proposalID, "service": "core"}, "c")
-	assert.EqualValues(t, 1, pullRequestCount, "RecordProposal replay converges to one :PullRequest")
-
-	afterReplayRes, err := session.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		RETURN rej.stub AS stub, rej.at AS at
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID})
-	require.NoError(t, err)
-	afterReplayRecords, err := afterReplayRes.Collect(ctx)
-	require.NoError(t, err)
-	require.Len(t, afterReplayRecords, 1)
-
-	stubAfterReplay, _ := afterReplayRecords[0].Get("stub")
-	assert.Equal(t, false, stubAfterReplay,
-		"a RecordProposal replay must not flip a completed rejection back to a stub")
-	atAfterReplay, _ := afterReplayRecords[0].Get("at")
-	atAfterReplayTime, ok := atAfterReplay.(time.Time)
-	require.True(t, ok, "at must round-trip as a time.Time, got %T", atAfterReplay)
-	assert.True(t, rej.At.Equal(atAfterReplayTime),
-		"a RecordProposal replay must not overwrite the rejection's classified-at with the proposal's opened_at")
+	assert.Zero(t, a.count(`MATCH (x {tenant_id: $tenant_id})-[r]-(y) WHERE y.tenant_id <> x.tenant_id RETURN count(r) AS n`, nil),
+		"no relationship joins nodes of two tenants")
 }

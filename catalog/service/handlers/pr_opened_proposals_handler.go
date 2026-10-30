@@ -2,42 +2,43 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/event"
-	"github.com/carolsimone/continuo/catalog/domain/repository"
-	"github.com/carolsimone/continuo/catalog/serialization"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
-// PrOpenedProposalsHandler consumes remediation.pr_opened:v1 on the case-base
-// group and records each opened fix PR as a :Proposal.
+// PrOpenedProposalsHandler consumes remediation.pr_opened:v1 on the proposals
+// group and records each opened fix PR as a :Proposal of the message's
+// tenant, in one write transaction with the message's processed-message
+// marker.
 type PrOpenedProposalsHandler struct {
-	uow      uow.PostgresUnitOfWork
-	caseBase repository.CaseBaseRepository
-	logger   *slog.Logger
+	uow    uow.UnitOfWork
+	logger *slog.Logger
 }
 
 // NewPrOpenedProposalsHandler creates the handler.
-func NewPrOpenedProposalsHandler(
-	u uow.PostgresUnitOfWork,
-	caseBase repository.CaseBaseRepository,
-	logger *slog.Logger,
-) *PrOpenedProposalsHandler {
-	return &PrOpenedProposalsHandler{uow: u, caseBase: caseBase, logger: logger}
+func NewPrOpenedProposalsHandler(u uow.UnitOfWork, logger *slog.Logger) *PrOpenedProposalsHandler {
+	return &PrOpenedProposalsHandler{uow: u, logger: logger}
 }
 
-// Handle processes one remediation.pr_opened:v1 message on the proposals group.
+// Handle processes one remediation.pr_opened:v1 message of tenantID on the
+// proposals group. Steps:
+//  1. Refuse as permanent a message lacking its proposal, release or node, or
+//     a parseable opened_at.
+//  2. Look the group's marker up, by messageID or by outboxEntryID; a
+//     processed message is acknowledged.
+//  3. In one write transaction, record the proposal of every node the PR
+//     resolves and the marker.
 func (h *PrOpenedProposalsHandler) Handle(
 	ctx context.Context,
+	tenantID string,
 	messageID string,
 	outboxEntryID *uuid.UUID,
 	in event.PROpened,
@@ -52,23 +53,19 @@ func (h *PrOpenedProposalsHandler) Handle(
 			pkgevents.ErrPermanent, messageID, in.OpenedAt, err)
 	}
 
-	payload, err := json.Marshal(serialization.PROpenedFromDomain(in))
+	marker := uow.Marker{
+		TenantID:      tenantID,
+		Group:         streams.CatalogRemediationPrOpenedProposals,
+		MessageID:     messageID,
+		OutboxEntryID: outboxEntryID,
+	}
+	processed, err := h.uow.Processed(ctx, marker)
 	if err != nil {
-		return fmt.Errorf("marshal input: %w", err)
+		return fmt.Errorf("look up the processed-message marker: %w", err)
 	}
-	if err := h.uow.Begin(ctx); err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer h.uow.Rollback() //nolint:errcheck
-
-	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
-		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.CatalogRemediationPrOpenedProposals, payload, outboxEntryID,
-	)
-	if err != nil {
-		return fmt.Errorf("dedup: %w", err)
-	}
-	if shouldSkip {
+	if processed {
+		h.logger.Info("remediation.pr_opened already processed by the proposals group; acknowledged",
+			"message_id", messageID, "tenant_id", tenantID, "proposal_id", in.ProposalID)
 		return nil
 	}
 
@@ -88,30 +85,31 @@ func (h *PrOpenedProposalsHandler) Handle(
 		OpenedAt:   openedAt,
 	}
 	resolved := in.ResolvedNodes()
-	for _, nodeID := range resolved {
-		p := casebase.Proposal{
-			ProposalID: in.ProposalID,
-			ReleaseID:  in.ReleaseID,
-			NodeID:     nodeID,
+	wrote := false
+	err = h.uow.Write(ctx, marker, true, func(ctx context.Context, tx uow.Tx) error {
+		wrote = true
+		caseBase := tx.CaseBase()
+		for _, nodeID := range resolved {
+			p := casebase.Proposal{ProposalID: in.ProposalID, ReleaseID: in.ReleaseID, NodeID: nodeID}
+			if err := caseBase.RecordProposal(ctx, tenantID, p, pr); err != nil {
+				return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, nodeID, err)
+			}
 		}
-		if err := h.caseBase.RecordProposal(ctx, p, pr); err != nil {
-			return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, nodeID, err)
-		}
+		return nil
+	})
+	if err != nil {
+		// The proposals and the marker roll back together, so the message
+		// replays.
+		return fmt.Errorf("record proposal %s: %w", in.ProposalID, err)
+	}
+	if !wrote {
+		h.logger.Info("remediation.pr_opened processed by another delivery of the proposals group meanwhile; acknowledged",
+			"message_id", messageID, "tenant_id", tenantID, "proposal_id", in.ProposalID)
+		return nil
 	}
 
 	h.logger.Info("proposal recorded in case base",
-		"release_id", in.ReleaseID, "node_ids", resolved,
+		"tenant_id", tenantID, "release_id", in.ReleaseID, "node_ids", resolved,
 		"proposal_id", in.ProposalID, "service", in.Service, "pr_url", in.PrURL)
-	return h.complete(ctx, msgProcessingID)
-}
-
-// complete marks the dedup row processed and commits.
-func (h *PrOpenedProposalsHandler) complete(ctx context.Context, msgProcessingID uuid.UUID) error {
-	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
-		return fmt.Errorf("mark completed: %w", err)
-	}
-	if err := h.uow.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
 	return nil
 }

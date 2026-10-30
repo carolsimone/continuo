@@ -116,9 +116,9 @@ func (t *transaction) CodeVersions() repository.CodeVersionRepository {
 	return &codeVersionRepository{run: t.run, logger: t.logger}
 }
 
-// CaseBase returns the case-base repository on this transaction.
+// CaseBase returns the case-base writes on this transaction.
 func (t *transaction) CaseBase() repository.CaseBaseRepository {
-	return caseBaseTxPlaceholder{}
+	return &caseBaseRepository{run: t.run}
 }
 
 // inWriteTx runs body in one explicit write transaction whose statements are
