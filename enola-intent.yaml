@@ -1,0 +1,73 @@
+# Architecture declared for enola: the layering each service follows, so a
+# change that crosses it is graded against the declaration instead of against
+# enola's directory-name guess.
+#
+# Rings, by directory (every service has the same three):
+#   domain       <service>/domain       entities, events, repository ports
+#   application  <service>/service      use-case handlers and their ports, and
+#                run-controller/internal/grpc/runservice (the gRPC edge)
+#   adapters     <service>/adapters     Redis, gRPC, HTTP, Postgres, S3, ...
+#
+# Dependencies point inward. An inbound adapter parses its input and calls a
+# handler, and an outbound adapter implements a port the application or domain
+# declares, so adapters name the application and never the reverse. On the Go
+# side pkg/streams enforces the application rule
+# (TestServiceHandlersDoNotImportAdapters).
+#
+# Each rule forbids an import (via: imports), the relation the Go guard checks.
+# A match pattern is an exact path, a prefix/** subtree or a **/name basename,
+# so each service is listed by prefix.
+components:
+  - name: domain
+    match:
+      - "agent-chat/domain/**"
+      - "agent-remediation/domain/**"
+      - "dead-letter-controller/domain/**"
+      - "egress-proxy/domain/**"
+      - "execution-controller/domain/**"
+      - "orchestrator/domain/**"
+      - "release-controller/domain/**"
+      - "remediation/domain/**"
+      - "run-controller/domain/**"
+      - "topology-controller/domain/**"
+  - name: application
+    match:
+      - "agent-chat/service/**"
+      - "agent-remediation/service/**"
+      - "dead-letter-controller/service/**"
+      - "egress-proxy/service/**"
+      - "execution-controller/service/**"
+      - "orchestrator/service/**"
+      - "release-controller/service/**"
+      - "remediation/service/**"
+      - "run-controller/service/**"
+      - "topology-controller/service/**"
+      - "run-controller/internal/grpc/runservice/**"
+  - name: adapters
+    match:
+      - "agent-chat/adapters/**"
+      - "agent-remediation/adapters/**"
+      - "dead-letter-controller/adapters/**"
+      - "egress-proxy/adapters/**"
+      - "execution-controller/adapters/**"
+      - "orchestrator/adapters/**"
+      - "release-controller/adapters/**"
+      - "remediation/adapters/**"
+      - "run-controller/adapters/**"
+      - "topology-controller/adapters/**"
+rules:
+  - id: application-names-no-adapter
+    forbid: application
+    to: adapters
+    via: imports
+    because: "A use case names what it needs as a port. An application package that imports an adapter ties the business rules to one implementation of Redis, Postgres, S3 or gRPC, and every test of it has to bring that implementation along."
+  - id: domain-names-no-application
+    forbid: domain
+    to: application
+    via: imports
+    because: "The domain is the innermost ring. A domain package that imports a handler or a service package has inverted the direction every layer above it relies on."
+  - id: domain-names-no-adapter
+    forbid: domain
+    to: adapters
+    via: imports
+    because: "The domain outlives the database, the queue and the HTTP client of today. A domain package that imports an adapter cannot be reasoned about, tested or ported without it."
