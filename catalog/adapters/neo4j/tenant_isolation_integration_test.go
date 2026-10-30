@@ -3,6 +3,7 @@
 package neo4jinfra
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
+	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -59,7 +61,8 @@ type isolationRow struct {
 
 // isolationRepositories are the repositories of this package: the readers
 // the gRPC server serves from, the three that write through uow.Tx, the
-// export lease and the unit of work. Each exported method of each has a row.
+// export lease, the unit of work, and the export and import of a tenant's
+// graph. Each exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
 	(*CodeVersionQueryRepository)(nil),
@@ -69,6 +72,8 @@ var isolationRepositories = []any{
 	(*caseBaseRepository)(nil),
 	(*exportLease)(nil),
 	(*unitOfWork)(nil),
+	(*graphExporter)(nil),
+	(*graphImporter)(nil),
 }
 
 type isolationFixture struct {
@@ -83,6 +88,9 @@ type isolationFixture struct {
 	sharedMessage string
 	// wroteA reports whether the unit of work ran A's write.
 	wroteA bool
+	// exportedA is A's export, and beforeWipe A's graph when it was taken.
+	exportedA                       []byte
+	beforeWipeNodes, beforeWipeRels []string
 }
 
 func TestRepositories_TenantIsolation(t *testing.T) {
@@ -417,6 +425,32 @@ func (f *isolationFixture) rows() []isolationRow {
 		{"exportLease.Release", func(t *testing.T) {
 			require.NoError(t, f.lease.Release(ctx, tenant(), isoHolder))
 			require.NoError(t, f.lease.Release(ctx, f.b.tenant, isoHolder), "releasing another holder's lease is a no-op")
+		}},
+		{"graphExporter.Export", func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, NewGraphExporter(f.a.client, "iso", quietLogger()).Export(ctx, tenant(), exportfile.NewWriter(&buf)))
+			f.exportedA = buf.Bytes()
+			_, err := exportfile.Validate(bytes.NewReader(f.exportedA), tenant())
+			require.NoError(t, err)
+			assert.Contains(t, string(f.exportedA), isoMarkA)
+			assert.NotContains(t, string(f.exportedA), isoMarkB, "the export holds tenant B's data")
+			assert.NotContains(t, string(f.exportedA), f.b.tenant, "the export names tenant B")
+		}},
+		{"graphImporter.Wipe", func(t *testing.T) {
+			g := &graphFixture{t: t, client: f.a.client}
+			f.beforeWipeNodes, f.beforeWipeRels = g.dump(tenant())
+			require.NoError(t, NewGraphImporter(f.a.client, quietLogger()).Wipe(ctx, tenant()))
+			nodes, rels := g.dump(tenant())
+			assert.Empty(t, nodes)
+			assert.Empty(t, rels)
+		}},
+		{"graphImporter.Import", func(t *testing.T) {
+			r, err := exportfile.NewReader(bytes.NewReader(f.exportedA))
+			require.NoError(t, err)
+			require.NoError(t, NewGraphImporter(f.a.client, quietLogger()).Import(ctx, tenant(), r))
+			nodes, rels := (&graphFixture{t: t, client: f.a.client}).dump(tenant())
+			assert.Equal(t, f.beforeWipeNodes, nodes, "the import returns tenant A's nodes as they were")
+			assert.Equal(t, f.beforeWipeRels, rels, "the import returns tenant A's relationships as they were")
 		}},
 	}
 }

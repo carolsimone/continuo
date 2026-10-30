@@ -12,7 +12,9 @@ import (
 )
 
 type Neo4jClient interface {
-	NewSession(ctx context.Context, mode neo4j.AccessMode) neo4j.SessionWithContext
+	// NewSession opens a session in mode; each configurer adjusts the
+	// session's configuration first, such as its fetch size.
+	NewSession(ctx context.Context, mode neo4j.AccessMode, configurers ...func(*neo4j.SessionConfig)) neo4j.SessionWithContext
 	Close(ctx context.Context) error
 	VerifyConnectivity(ctx context.Context) error
 }
@@ -173,8 +175,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (c *neo4jClient) NewSession(ctx context.Context, mode neo4j.AccessMode) neo4j.SessionWithContext {
-	return c.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: mode})
+func (c *neo4jClient) NewSession(ctx context.Context, mode neo4j.AccessMode, configurers ...func(*neo4j.SessionConfig)) neo4j.SessionWithContext {
+	cfg := neo4j.SessionConfig{AccessMode: mode}
+	for _, configure := range configurers {
+		configure(&cfg)
+	}
+	return c.driver.NewSession(ctx, cfg)
 }
 
 func (c *neo4jClient) Close(ctx context.Context) error {
