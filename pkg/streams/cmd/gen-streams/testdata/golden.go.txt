@@ -10,8 +10,8 @@ const (
 
 // Consumer groups.
 const (
-	// OrchestratorNodeUpdated — orchestrator consumer group on node.updated:v1.
-	OrchestratorNodeUpdated = "orchestrator-node-updated"
+	// RunControllerNodeUpdated — run-controller consumer group on node.updated:v1.
+	RunControllerNodeUpdated = "run-controller-node-updated"
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
@@ -24,7 +24,7 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
-	NodeUpdatedV1: {OrchestratorNodeUpdated},
+	NodeUpdatedV1: {RunControllerNodeUpdated},
 }
 
 // Retired lists the streams removed from the contract; their keys are deleted

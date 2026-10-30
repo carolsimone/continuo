@@ -319,11 +319,11 @@ func main() {
 		binding pkgredis.MessageHandler
 		timeout time.Duration
 	}{
-		{"release_promoted", streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
-		{"release_promoted_versions", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
-		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
-		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
-		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
+		{"release_promoted", streams.ReleasePromotedV2, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_versions", streams.ReleasePromotedV2, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
+		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
+		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,

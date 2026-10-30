@@ -11,8 +11,8 @@ func TestRemediationRequestedV2_ReplacesV1(t *testing.T) {
 	if AgentRemediationRemediationRequested != "agent-remediation-remediation-requested" {
 		t.Fatalf("consumer group renamed: %q", AgentRemediationRemediationRequested)
 	}
-	if OrchestratorRemediationRequestedRejections != "orchestrator-remediation-requested-rejections" {
-		t.Fatalf("consumer group renamed: %q", OrchestratorRemediationRequestedRejections)
+	if CatalogRemediationRequestedRejections != "catalog-remediation-requested-rejections" {
+		t.Fatalf("consumer group renamed: %q", CatalogRemediationRequestedRejections)
 	}
 }
 
@@ -58,10 +58,10 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 		t.Fatalf("ReleasePromotedV2 = %q", ReleasePromotedV2)
 	}
 	want := map[string]bool{
-		OrchestratorReleasePromoted:         false,
-		OrchestratorReleasePromotedVersions: false,
-		ExecutionControllerReleasePromoted:  false,
-		RunControllerReleasePromoted:        false,
+		CatalogReleaseTopology:             false,
+		CatalogReleaseVersions:             false,
+		ExecutionControllerReleasePromoted: false,
+		RunControllerReleasePromoted:       false,
 	}
 	for _, g := range Groups[ReleasePromotedV2] {
 		if _, ok := want[g]; !ok {

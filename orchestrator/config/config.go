@@ -8,7 +8,7 @@ import (
 
 // ServiceName names this service as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "orchestrator"
+const ServiceName = "catalog"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. It is a safe default so no required env

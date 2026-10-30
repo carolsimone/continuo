@@ -63,7 +63,7 @@ func (h *PrOpenedProposalsHandler) Handle(
 
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.OrchestratorRemediationPrOpenedProposals, payload, outboxEntryID,
+		messageID, streams.CatalogRemediationPrOpenedProposals, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)

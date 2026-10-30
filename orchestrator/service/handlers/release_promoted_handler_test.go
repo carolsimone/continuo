@@ -126,7 +126,7 @@ func TestReleasePromoted_HappyPath_PromotesTheArtifact(t *testing.T) {
 	assert.Equal(t, "hourly", call.Nodes[1].Schedule)
 
 	assert.True(t, uow.CommittedTx)
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.CatalogReleaseTopology)
 	require.NoError(t, err)
 	require.NotNil(t, mp)
 	assert.Equal(t, "completed", mp.State)

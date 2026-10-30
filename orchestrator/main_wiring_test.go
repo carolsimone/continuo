@@ -41,11 +41,11 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{
-		"OrchestratorReleasePromoted",
-		"OrchestratorReleasePromotedVersions",
-		"OrchestratorRemediationPrClosedProvenance",
-		"OrchestratorRemediationPrOpenedProposals",
-		"OrchestratorRemediationRequestedRejections",
+		"CatalogReleaseTopology",
+		"CatalogReleaseVersions",
+		"CatalogRemediationPrClosedProvenance",
+		"CatalogRemediationPrOpenedProposals",
+		"CatalogRemediationRequestedRejections",
 		"ReleasePromotedV2",
 		"RemediationPrClosedV1",
 		"RemediationPrOpenedV1",

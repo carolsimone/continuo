@@ -36,7 +36,7 @@ func code(h http.HandlerFunc) int {
 func TestRedriveContractIsTheStreamsContract(t *testing.T) {
 	c := redriveContract()
 	live := deadletter.DeadLetter{Source: deadletter.SourceConsumer, Stream: streams.ReleasePromotedV2,
-		Group: streams.OrchestratorReleasePromoted, Publishable: true}
+		Group: streams.CatalogReleaseTopology, Publishable: true}
 	if r := live.RedriveRefusal(c); r != "" {
 		t.Fatalf("live stream refused: %s", r)
 	}

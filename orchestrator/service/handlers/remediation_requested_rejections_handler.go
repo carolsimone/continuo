@@ -84,7 +84,7 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.OrchestratorRemediationRequestedRejections, payload, outboxEntryID,
+		messageID, streams.CatalogRemediationRequestedRejections, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)

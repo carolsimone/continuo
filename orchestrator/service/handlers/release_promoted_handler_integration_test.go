@@ -43,7 +43,7 @@ func releasePromotedFixture(t *testing.T) (*handlers.ReleasePromotedHandler, *fa
 	cleanup := func() {
 		wipeReleasePromotedFixtures(t, client)
 		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
+			`DELETE FROM message_processing WHERE stream_name = $1`, streams.CatalogReleaseTopology)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
@@ -122,7 +122,7 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	var dedupCount int
 	require.NoError(t, pgDB.QueryRowContext(ctx,
 		`SELECT count(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
-		msgID, streams.OrchestratorReleasePromoted).Scan(&dedupCount))
+		msgID, streams.CatalogReleaseTopology).Scan(&dedupCount))
 	assert.Equal(t, 1, dedupCount)
 }
 

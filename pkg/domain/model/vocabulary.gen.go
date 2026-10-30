@@ -252,7 +252,7 @@ const (
 	NodeTypePythonCsv NodeType = "python-csv"
 	// NodeTypePythonApi — a python script node with no declared reads; its script fetches its own data and may receive one continuo-api-* Secret as env vars.
 	NodeTypePythonApi NodeType = "python-api"
-	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
+	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
 )
 

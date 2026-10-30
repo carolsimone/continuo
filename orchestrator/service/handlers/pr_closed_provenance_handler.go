@@ -67,7 +67,7 @@ func (h *PrClosedProvenanceHandler) Handle(
 
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.OrchestratorRemediationPrClosedProvenance, payload, outboxEntryID,
+		messageID, streams.CatalogRemediationPrClosedProvenance, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
