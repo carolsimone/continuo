@@ -36,8 +36,10 @@ type Config struct {
 	GRPCPort int
 	HTTPPort int
 
-	// Retention window and sweep interval for the processed-message markers.
-	// Both knobs have safe defaults so no configuration is required.
+	// RETENTION_DAYS and RETENTION_SWEEP_INTERVAL_MINUTES: how long the marker
+	// sweeper keeps a processed-message marker, and how often it runs. A marker
+	// is kept at least the replay horizon, so a RetentionDays below it has no
+	// effect. Both knobs have safe defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
 

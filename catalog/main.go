@@ -17,10 +17,12 @@ import (
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/objectstore"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
@@ -189,6 +191,30 @@ func main() {
 	// ========================================================================
 
 	queryRepo := neo4jinfra.NewNodeQueryRepository(neo4jClient, logger)
+
+	// Marker sweeper — keeps the processed-message markers, one node per
+	// consumed message, from growing without bound. A marker is kept at least
+	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer, so a
+	// message the streams can still redeliver always finds its marker. The
+	// sweep uses database-clock cutoffs, deletes in batches, and skips a tenant
+	// whose export lease is held. It runs every RETENTION_SWEEP_INTERVAL_MINUTES
+	// as a tracked goroutine, so shutdown waits for a sweep in flight.
+	markerSweeper := neo4jinfra.NewMarkerSweeper(neo4jClient, logger)
+	retentionSweeper := pkgoutbox.NewRetentionSweeper(
+		[]pkgoutbox.RetentionTarget{
+			{
+				Name:         "processed_messages",
+				Prune:        markerSweeper.Prune,
+				MinRetention: model.ReplayHorizon,
+			},
+		},
+		pkgoutbox.RetentionConfig{
+			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+		},
+		logger,
+	)
+	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)

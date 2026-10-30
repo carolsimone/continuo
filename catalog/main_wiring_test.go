@@ -2,6 +2,7 @@ package main
 
 import (
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"slices"
@@ -92,15 +93,171 @@ func TestMain_ProbesRedisAndNeo4j(t *testing.T) {
 }
 
 // TestMain_ImportsNoSQLPackage pins that catalog keeps all of its state in
-// Neo4j: main.go imports no SQL connection, no message-processing dedup table
-// and no outbox.
+// Neo4j: main.go imports no SQL connection and no message-processing dedup
+// table, and it takes nothing from pkg/outbox but the retention sweeper's
+// runner (see TestMain_SweepsProcessedMessageMarkers).
 func TestMain_ImportsNoSQLPackage(t *testing.T) {
 	for _, imp := range parseMain(t).Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		for _, banned := range []string{"/pkg/db", "/pkg/messageprocessing", "/pkg/outbox"} {
+		for _, banned := range []string{"/pkg/db", "/pkg/messageprocessing"} {
 			if strings.HasSuffix(path, banned) {
 				t.Fatalf("main.go imports %s", path)
 			}
 		}
 	}
+
+	outboxNames := map[string]bool{}
+	ast.Inspect(parseMain(t), func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "pkgoutbox" {
+				outboxNames[sel.Sel.Name] = true
+			}
+		}
+		return true
+	})
+	got := make([]string, 0, len(outboxNames))
+	for name := range outboxNames {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	if want := []string{"NewRetentionSweeper", "RetentionConfig", "RetentionTarget"}; !slices.Equal(got, want) {
+		t.Fatalf("main.go uses pkg/outbox names %v, want only the retention sweeper %v", got, want)
+	}
+}
+
+// TestMain_SweepsProcessedMessageMarkers pins how main.go runs the marker
+// sweeper: through the shared retention sweeper, with one target named
+// processed_messages whose prune is the marker sweeper's and whose minimum
+// retention is the replay horizon, so a RETENTION_DAYS below 30 days is raised
+// to it; with the install's RETENTION_DAYS and RETENTION_SWEEP_INTERVAL_MINUTES
+// as its retention and interval; and as a goroutine the lifecycle manager
+// tracks, so shutdown waits for it.
+func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
+	file := parseMain(t)
+
+	// The call that builds the sweeper, and the variable that holds it.
+	var build *ast.CallExpr
+	var sweeper string
+	ast.Inspect(file, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return true
+		}
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		if !ok || !isSelector(call.Fun, "pkgoutbox", "NewRetentionSweeper") {
+			return true
+		}
+		build = call
+		if id, ok := assign.Lhs[0].(*ast.Ident); ok {
+			sweeper = id.Name
+		}
+		return false
+	})
+	if build == nil || sweeper == "" || len(build.Args) != 3 {
+		t.Fatal("main.go does not assign pkgoutbox.NewRetentionSweeper(targets, config, logger) to a variable")
+	}
+
+	targets, ok := build.Args[0].(*ast.CompositeLit)
+	if !ok || len(targets.Elts) != 1 {
+		t.Fatal("the retention sweeper must have exactly one target: the processed-message markers")
+	}
+	target := fields(targets.Elts[0])
+	if lit, ok := target["Name"].(*ast.BasicLit); !ok || lit.Value != `"processed_messages"` {
+		t.Errorf("the target's Name = %v, want \"processed_messages\"", exprText(target["Name"]))
+	}
+	if sel, ok := target["Prune"].(*ast.SelectorExpr); !ok || sel.Sel.Name != "Prune" {
+		t.Errorf("the target's Prune = %v, want the marker sweeper's Prune", exprText(target["Prune"]))
+	}
+	if !isSelector(target["MinRetention"], "model", "ReplayHorizon") {
+		t.Errorf("the target's MinRetention = %v, want model.ReplayHorizon", exprText(target["MinRetention"]))
+	}
+
+	config, ok := build.Args[1].(*ast.CompositeLit)
+	if !ok {
+		t.Fatal("the retention sweeper's config must be a pkgoutbox.RetentionConfig literal")
+	}
+	cfg := fields(config)
+	if !mentionsSelector(cfg["Retention"], "cfg", "RetentionDays") {
+		t.Errorf("the config's Retention = %v, want it computed from cfg.RetentionDays", exprText(cfg["Retention"]))
+	}
+	if !mentionsSelector(cfg["Interval"], "cfg", "RetentionSweepIntervalMin") {
+		t.Errorf("the config's Interval = %v, want it computed from cfg.RetentionSweepIntervalMin", exprText(cfg["Interval"]))
+	}
+
+	// The loop runs inside lifecycleManager.Go.
+	tracked := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isSelector(call.Fun, "lifecycleManager", "Go") || len(call.Args) != 1 {
+			return true
+		}
+		body, ok := call.Args[0].(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		ast.Inspect(body.Body, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok && isSelector(c.Fun, sweeper, "Run") {
+				tracked = true
+			}
+			return true
+		})
+		return true
+	})
+	if !tracked {
+		t.Errorf("main.go must start %s.Run inside lifecycleManager.Go, so shutdown waits for the sweep", sweeper)
+	}
+}
+
+// fields maps the keys of a keyed composite literal to their values.
+func fields(e ast.Expr) map[string]ast.Expr {
+	out := map[string]ast.Expr{}
+	lit, ok := e.(*ast.CompositeLit)
+	if !ok {
+		return out
+	}
+	for _, elt := range lit.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			if key, ok := kv.Key.(*ast.Ident); ok {
+				out[key.Name] = kv.Value
+			}
+		}
+	}
+	return out
+}
+
+// isSelector reports whether e is the selector expression pkg.name.
+func isSelector(e ast.Expr, pkg, name string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == pkg && sel.Sel.Name == name
+}
+
+// mentionsSelector reports whether the selector pkg.name occurs anywhere in e.
+func mentionsSelector(e ast.Expr, pkg, name string) bool {
+	found := false
+	if e != nil {
+		ast.Inspect(e, func(n ast.Node) bool {
+			if x, ok := n.(ast.Expr); ok && isSelector(x, pkg, name) {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
+// exprText renders e for a failure message; a missing expression reads as
+// "absent".
+func exprText(e ast.Expr) string {
+	if e == nil {
+		return "absent"
+	}
+	var b strings.Builder
+	if err := format.Node(&b, token.NewFileSet(), e); err != nil {
+		return "unprintable"
+	}
+	return b.String()
 }
