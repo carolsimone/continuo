@@ -2,7 +2,6 @@ package outbox_test
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -180,37 +179,4 @@ func TestDeleteOlderThan_PurgesRowOnceOutboxReferenceIsGone(t *testing.T) {
 	n := pruneUntilIdle(t, pruner)
 	assert.GreaterOrEqual(t, n, int64(1), "purged once the outbox reference is gone")
 	assert.False(t, dedupRowExists(t, db, id))
-}
-
-// recordingDB records the statements it executes, then runs them.
-type recordingDB struct {
-	*sqlx.DB
-	statements []string
-}
-
-func (r *recordingDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	r.statements = append(r.statements, query)
-	return r.DB.ExecContext(ctx, query, args...)
-}
-
-// TestPrunerWithoutOutbox_PurgesAgedRowsAndKeepsRecent proves a service with no
-// outbox table prunes its dedup rows on age alone: the delete names no outbox
-// table, so it runs against a schema that has none.
-func TestPrunerWithoutOutbox_PurgesAgedRowsAndKeepsRecent(t *testing.T) {
-	db := &recordingDB{DB: dbForTest(t)}
-	pruner := messageprocessing.NewPrunerWithoutOutbox(db, newTestLogger())
-
-	aged := seedDedupRow(t, db.DB, messageprocessing.StateCompleted, time.Now().Add(-10*24*time.Hour))
-	recent := seedDedupRow(t, db.DB, messageprocessing.StateCompleted, time.Now().Add(-time.Hour))
-	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM message_processing WHERE id = $1`, recent) })
-
-	n := pruneUntilIdle(t, pruner)
-
-	assert.GreaterOrEqual(t, n, int64(1), "the aged row is purged")
-	assert.False(t, dedupRowExists(t, db.DB, aged), "an aged row goes on age alone")
-	assert.True(t, dedupRowExists(t, db.DB, recent), "a recent row stays")
-	require.NotEmpty(t, db.statements)
-	for _, stmt := range db.statements {
-		assert.NotContains(t, stmt, "outbox", "the delete names no outbox table")
-	}
 }

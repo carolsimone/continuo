@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/catalog/domain/repository"
-	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
 
@@ -44,15 +43,4 @@ type Tx interface {
 	Topology() repository.ReleasePromotionRepository
 	CodeVersions() repository.CodeVersionRepository
 	CaseBase() repository.CaseBaseRepository
-}
-
-// PostgresUnitOfWork manages a single Postgres transaction and exposes the
-// transaction-scoped message-processing repository handlers record their
-// dedup rows in. Bindings own its lifecycle: Begin → (work) → Commit, with
-// Rollback on any failure.
-type PostgresUnitOfWork interface {
-	MessageProcessingRepo() messageprocessing.Repository
-	Begin(ctx context.Context) error
-	Commit() error
-	Rollback() error
 }

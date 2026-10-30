@@ -65,3 +65,42 @@ func TestMain_RunsNoRunReconciler(t *testing.T) {
 		}
 	}
 }
+
+// TestMain_ProbesRedisAndNeo4j pins the dependencies readiness checks: the two
+// stores catalog reads and writes. It keeps no SQL database, so it registers no
+// SQL probe.
+func TestMain_ProbesRedisAndNeo4j(t *testing.T) {
+	var got []string
+	ast.Inspect(parseMain(t), func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "AddProbe" {
+			return true
+		}
+		if lit, ok := call.Args[0].(*ast.BasicLit); ok {
+			got = append(got, strings.Trim(lit.Value, `"`))
+		}
+		return true
+	})
+	slices.Sort(got)
+	if want := []string{"neo4j", "redis"}; !slices.Equal(got, want) {
+		t.Fatalf("main.go registers readiness probes %v, want %v", got, want)
+	}
+}
+
+// TestMain_ImportsNoSQLPackage pins that catalog keeps all of its state in
+// Neo4j: main.go imports no SQL connection, no message-processing dedup table
+// and no outbox.
+func TestMain_ImportsNoSQLPackage(t *testing.T) {
+	for _, imp := range parseMain(t).Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		for _, banned := range []string{"/pkg/db", "/pkg/messageprocessing", "/pkg/outbox"} {
+			if strings.HasSuffix(path, banned) {
+				t.Fatalf("main.go imports %s", path)
+			}
+		}
+	}
+}

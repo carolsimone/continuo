@@ -48,17 +48,24 @@ func TestReadyReturns503WhenConsumerExited(t *testing.T) {
 	}
 }
 
-func TestReadyReturns503WhenDependencyProbeFails(t *testing.T) {
+// TestReadiness_ChecksNeo4j pins that readiness depends on the graph store: a
+// failing neo4j probe makes /ready answer 503 while /livez stays 200, so the
+// pod leaves the Service endpoints without being restarted.
+func TestReadiness_ChecksNeo4j(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.AddProbe("postgres", 0, func(ctx context.Context) error { return errors.New("down") })
+	reg.AddProbe("neo4j", 0, func(ctx context.Context) error { return errors.New("down") })
 	h := newTestServer(reg)
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-	h.server.Handler.ServeHTTP(rec, req)
+	ready := httptest.NewRecorder()
+	h.server.Handler.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if ready.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/ready with a failing neo4j probe = %d, want 503", ready.Code)
+	}
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when dependency probe fails, got %d", rec.Code)
+	live := httptest.NewRecorder()
+	h.server.Handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if live.Code != http.StatusOK {
+		t.Fatalf("/livez with a failing neo4j probe = %d, want 200", live.Code)
 	}
 }
 

@@ -5,11 +5,8 @@ go 1.26.10
 replace github.com/carolsimone/continuo/pkg => ../pkg
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
-	github.com/jmoiron/sqlx v1.4.0
-	github.com/lib/pq v1.12.3
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.6
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/redis/go-redis/v9 v9.23.0
@@ -39,6 +36,8 @@ require (
 	github.com/aws/smithy-go v1.28.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/jmoiron/sqlx v1.4.0 // indirect
+	github.com/lib/pq v1.12.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect

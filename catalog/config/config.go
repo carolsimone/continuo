@@ -24,9 +24,8 @@ type Neo4jConfig struct {
 
 // Config holds all configuration for the catalog service.
 type Config struct {
-	Redis    pkgconfig.RedisConfig
-	Postgres pkgconfig.PostgresConfig
-	Neo4j    Neo4jConfig
+	Redis pkgconfig.RedisConfig
+	Neo4j Neo4jConfig
 
 	// S3 — the version-ingestion consumer reads each release's code-bundle
 	// document from object storage. Required: a catalog that boots without
@@ -37,9 +36,8 @@ type Config struct {
 	GRPCPort int
 	HTTPPort int
 
-	// Retention sweeper — purges message_processing dedup rows, in any state,
-	// older than the longer of RetentionDays and the 30-day replay horizon. Both
-	// knobs have safe defaults so no configuration is required.
+	// Retention window and sweep interval for the processed-message markers.
+	// Both knobs have safe defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
 
@@ -54,8 +52,7 @@ type Config struct {
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
 	return Config{
-		Redis:    pkgconfig.LoadRedis(v),
-		Postgres: pkgconfig.LoadPostgres(v),
+		Redis: pkgconfig.LoadRedis(v),
 		Neo4j: Neo4jConfig{
 			URI:      v.Require("NEO4J_URI"),
 			User:     v.Require("NEO4J_USER"),

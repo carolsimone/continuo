@@ -15,7 +15,7 @@ import (
 //
 //   - /ready (readiness) returns 503 when any registered worker has exited
 //     with an error, any consumer's read-loop heartbeat has gone stale, OR any
-//     external dependency probe (Redis/Postgres) fails. A dependency outage
+//     external dependency probe (Redis/Neo4j) fails. A dependency outage
 //     pulls the pod out of Service endpoints so no traffic is routed to it.
 //   - /livez (liveness) returns 503 ONLY for worker/heartbeat failures — never
 //     for a dependency outage. Restarting a pod whose backing store is briefly

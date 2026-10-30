@@ -17,14 +17,10 @@ import (
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
-	pkgdb "github.com/carolsimone/continuo/pkg/db"
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
-	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/objectstore"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
@@ -33,11 +29,6 @@ import (
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
-
-// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
-// are unset: two connections per stream consumer (a handler's transaction and
-// a read outside it), plus background loops and request handlers.
-var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 35, MaxIdleConns: 5}
 
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
@@ -159,21 +150,7 @@ func main() {
 	}
 	logger.Info("Neo4j schema initialized")
 
-	// 2. PostgreSQL client (for message processing)
-	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
-	if err != nil {
-		logger.Error("Failed to connect to PostgreSQL", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("PostgreSQL client initialized")
-	metricsReg.WatchDB(pgDB.DB, cfg.Postgres.DB)
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing PostgreSQL connection")
-		return pgDB.Close()
-	})
-
-	// 3. Redis client
+	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     cfg.Redis.Addr(),
 		Password: cfg.Redis.Password,
@@ -205,41 +182,13 @@ func main() {
 	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
 		return redisClient.Ping(ctx).Err()
 	})
-	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
-		return pgDB.PingContext(ctx)
-	})
+	liveReg.AddProbe("neo4j", 5*time.Second, neo4jClient.VerifyConnectivity)
 
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
 
 	queryRepo := neo4jinfra.NewNodeQueryRepository(neo4jClient, logger)
-
-	// ========================================================================
-	// START RETENTION SWEEPER
-	// ========================================================================
-	//
-	// Keeps the message_processing dedup table, which retains a full payload per
-	// consumed message, from growing without bound. Dedup rows, whatever their
-	// state, are kept at least 30 days (the replay horizon), longer when
-	// RETENTION_DAYS is longer. The sweep uses DB-clock cutoffs.
-
-	mpPruner := pkgmessageprocessing.NewPrunerWithoutOutbox(pgDB, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
-			{
-				Name:         "message_processing",
-				Prune:        mpPruner.DeleteOlderThan,
-				MinRetention: model.ReplayHorizon,
-			},
-		},
-		pkgoutbox.RetentionConfig{
-			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
-			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
-		},
-		logger,
-	)
-	go retentionSweeper.Run(ctx)
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
