@@ -26,7 +26,7 @@ function csvSourceUri(rawCode: unknown): string {
 export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/nodes?search=&service=&limit=&offset= — node catalog (paged)
+  // GET /api/nodes?search=&service=&limit=&offset= — node list (paged)
   router.get('/', (req, res) => {
     const nullIfNeg = (n: any): number | null => {
       const v = Number(n ?? -1);
@@ -72,9 +72,9 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /api/nodes/services — distinct active service names, for the catalog
+  // GET /api/nodes/services — distinct active service names, for the node list
   // and Remediation-tab service filters. Backed by the ListNodeServices run-controller
-  // read (a single DISTINCT query), independent of the paginated catalog.
+  // read (a single DISTINCT query), independent of the paginated node list.
   router.get('/services', (_req, res) => {
     runClient.listNodeServices({}, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });

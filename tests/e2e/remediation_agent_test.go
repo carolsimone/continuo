@@ -428,7 +428,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 
 	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside
-	//    the orchestrator container, so stub-github is reached by its compose
+	//    the catalog container, so stub-github is reached by its compose
 	//    service name, same as the agent-remediation's own GITHUB_BASE_URL.
 	prBody, err := json.Marshal(map[string]string{
 		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
@@ -680,7 +680,7 @@ func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID 
 
 // mergePullRequestViaStub PUTs the stub-github merge endpoint for pull request
 // number n on repo, asserts it succeeds, and returns the merge commit sha the
-// stub reports. The e2e suite runs inside the orchestrator container, so
+// stub reports. The e2e suite runs inside the catalog container, so
 // stub-github is reached by its compose service name — the same base URL
 // agent-remediation and ui use.
 func mergePullRequestViaStub(t *testing.T, ctx context.Context, repo string, n int) string {

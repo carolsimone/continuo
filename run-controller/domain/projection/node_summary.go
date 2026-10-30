@@ -4,7 +4,7 @@ package projection
 
 import "time"
 
-// NodeSummary is one row of the node catalog: a node identity plus aggregate
+// NodeSummary is one row of the node list: a node identity plus aggregate
 // stats computed over that node's most recent runs (the stats window, capped at
 // 50). Returned by the ListNodes gRPC method.
 //
@@ -25,7 +25,7 @@ type NodeSummary struct {
 	FlakyRatePct int
 	LastStatus   string
 	LastRunAt    time.Time
-	// Operation is the run/test/build dimension this catalog row was scoped
+	// Operation is the run/test/build dimension this node-list row was scoped
 	// to when queried: "run" | "test" | "build".
 	Operation string
 	// TimeoutSeconds is the task timeout the live release declares for the

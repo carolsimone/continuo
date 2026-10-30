@@ -74,13 +74,13 @@ func queryNeo4jRows(t *testing.T, ctx context.Context, clients *testClients, cyp
 }
 
 // pollNeo4jPRState polls a (proposal, service) :PullRequest node's pr_state
-// until it reaches want. The orchestrator's pr_closed provenance handler
-// (orchestrator/adapters/neo4j/case_base_repository.go RecordPullRequestOutcome)
+// until it reaches want. Catalog's pr_closed provenance handler
+// (catalog/adapters/neo4j/case_base_repository.go RecordPullRequestOutcome)
 // writes this state change and every case-base provenance edge it draws
 // (RESOLVED_BY, EDITED) in ONE Cypher statement — so once this poll observes
 // want, the edges from that same write are visible too and a caller can read
 // them with a plain, unpolled query afterward, without a separate race
-// against the orchestrator's asynchronous consumption of
+// against catalog's asynchronous consumption of
 // remediation.pr_closed:v1.
 func pollNeo4jPRState(
 	t *testing.T, ctx context.Context, clients *testClients,

@@ -170,7 +170,7 @@ RunService.GetScheduleGraph. Success prints a JSON object to stdout:
 
 ### `node list`
 
-Lists the node catalog with per-node run statistics, one page at a time.
+Lists the nodes with per-node run statistics, one page at a time.
 Calls RunService.ListNodes. This is the command that turns a bare table
 name into the `<service> <schema> <table>` triple every other `node`
 subcommand takes. Success prints a JSON object to stdout:

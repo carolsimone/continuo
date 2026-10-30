@@ -33,7 +33,7 @@ function durationSec(r: NodeRun): number | null {
 }
 
 // Linear-interpolation percentile matching Postgres PERCENTILE_CONT, so the
-// node-detail header agrees with the catalog list (which computes p95 in SQL).
+// node-detail header agrees with the node list (which computes p95 in SQL).
 function percentileCont(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 1) return sortedAsc[0];
   const pos = p * (sortedAsc.length - 1);

@@ -39,7 +39,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 2: Clean any leftover data from previous runs.
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 3: Announce the topology and wait for the orchestrator to apply it,
+	// Step 3: Announce the topology and wait for catalog to apply it,
 	// establishing promotion seq G1.
 	t.Log("=== Step 3: seedTopology — establishing promotion seq G1 ===")
 	g1 := seedTopology(t, ctx, clients).PromotionSeq

@@ -226,7 +226,7 @@ type nodeSummaryRow struct {
 	TotalCount int `db:"total_count"`
 }
 
-// ListNodes returns the node catalog: one summary per node that has run, with
+// ListNodes returns the node list: one summary per node that has run, with
 // stats aggregated over each node's most recent 50 runs. Filters by exact
 // service (when non-empty), a case-insensitive exact match on the table name
 // (when non-empty), and the run/test/build operation dimension (run includes
@@ -259,7 +259,7 @@ func (r *nodeRunRepository) ListNodes(
 	// via $3 (an exact match on the stored value, always non-empty), and the
 	// tenant via $4. The run dimension includes
 	// full_refresh tasks and reports them as operation 'run', so a node keeps
-	// one catalog row per dimension. The window-function scan over tasks ⋈
+	// one node-list row per dimension. The window-function scan over tasks ⋈
 	// runs runs ONCE: the page query layers the per-node aggregation and a
 	// COUNT(*) OVER () total on top of this single scan, so the match count no
 	// longer requires a second pass.
@@ -316,7 +316,7 @@ func (r *nodeRunRepository) ListNodes(
 			GROUP BY w.service_name, w.schema_name, w.table_name, w.operation
 		),
 		-- the task timeout each node declares in the live release, one row per
-		-- service, schema and table so the join never multiplies catalog rows
+		-- service, schema and table so the join never multiplies node-list rows
 		live_timeouts AS (
 			SELECT n.service_name, n.schema_name, n.table_name,
 			       MAX(n.timeout_seconds) AS timeout_seconds

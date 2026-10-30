@@ -6,7 +6,7 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 
 The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every service:
 - `run-controller` - Plans and creates runs, dispatches ready tasks, owns the run/task lifecycle
-- `orchestrator` - Applies each promoted release to the Neo4j topology and serves topology reads and the node catalog (nodes, code versions, precedents)
+- `catalog` - Applies each promoted release to the Neo4j topology and serves the topology, code-version and failure-precedent reads (nodes, code versions, precedents)
 - `execution-controller` - Deploys k8s jobs and monitors their status
 - `topology-controller` - Parses dbt manifests (candidate + legacy paths)
 - `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
@@ -54,7 +54,7 @@ docker compose up -d ui
 bash tests/e2e/deploy-execution-controller.sh
 
 # 7. Run the tests
-docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
+docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
   go test -v -count=1 -timeout 125m /app/tests/e2e/...
 
 # 8. Clean up k8s resources
@@ -70,7 +70,7 @@ When the kind cluster and all Docker images already exist:
 ```bash
 # Tear down stale containers — including any left over from the main project directory
 # (the main project uses bare container names like /run-controller, /ui that conflict with this worktree)
-docker rm -f run-controller orchestrator execution-controller ui 2>/dev/null || true
+docker rm -f run-controller catalog execution-controller ui 2>/dev/null || true
 docker compose down
 
 # Start (or restart) all docker-compose services
@@ -91,7 +91,7 @@ bash tests/e2e/provision-k8s-test-env.sh
 # bash tests/e2e/deploy-execution-controller.sh
 
 # Run the tests
-docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
+docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
   go test -v -count=1 -timeout 125m /app/tests/e2e/...
 
 # Clean up k8s resources
@@ -114,11 +114,11 @@ against a Dex identity provider). It is skipped unless `UI_AUTH_HTTP_BASE` is
 set.
 
 ```bash
-# Requires the standard stack to be up (run-controller, orchestrator, redis, …).
+# Requires the standard stack to be up (run-controller, catalog, redis, …).
 docker compose build ui-auth
 docker compose --profile auth-e2e up -d dex ui-auth
 
-docker exec -e UI_AUTH_HTTP_BASE=http://ui-auth:8090 orchestrator \
+docker exec -e UI_AUTH_HTTP_BASE=http://ui-auth:8090 catalog \
   go test -v -run TestAuthOIDC /app/tests/e2e/...
 
 docker compose --profile auth-e2e down dex ui-auth
@@ -145,12 +145,12 @@ CI mirrors the blank-state flow above:
 
 1. `bash scripts/setup.sh` (with `CI=true` set automatically by GitHub Actions)
 2. Wait for containers to be running
-3. Build + start `run-controller` and `orchestrator` binaries (gRPC health check)
+3. Build + start `run-controller` and `catalog` binaries (gRPC health check)
 4. Run per-service unit tests
 5. Build + start `topology-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-execution-controller.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 125m /app/tests/e2e/...`
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 125m /app/tests/e2e/...`
 9. `bash tests/e2e/cleanup-execution-controller.sh`
 
 CI uses `deploy-execution-controller.sh` (not `provision-k8s-test-env.sh`) because
@@ -175,7 +175,7 @@ The E2E test uses a hybrid setup:
 
 **In docker-compose:**
 - PostgreSQL, Redis, Neo4j (data stores), MinIO (S3 — dbt manifests)
-- run-controller, orchestrator, topology-controller, release-controller (services)
+- run-controller, catalog, topology-controller, release-controller (services)
 - egress-proxy (forward proxy for the outbound HTTP of agent-chat and agent-remediation; they reach their LLM and GitHub only through it, and reach the stack's own services directly via `NO_PROXY`). `start-services.sh` starts it before agent-remediation: health `:8093/ready`, proxy port `:3128`. Its allowlist is `tests/e2e/config/egress-allowlist.yaml`, which admits `stub-llm`, `stub-github` and the public LLM and GitHub APIs
 
 **In kind cluster (Kubernetes):**
@@ -210,8 +210,8 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_VerifiedFix`, `TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt`, `TestE2E_PythonParseFailure_VerifiedFix` — a rejected python node is repaired in the contract yaml, verified by a real verification run that stops at `passed`, and proposed for review; the second test proves a failed verification run's error feeds the next attempt and reaches no classifier at all; the third drives the same lane from a parse-stage rejection (a read whose relation is not schema-qualified), where the rejection carries the parser's text inline and no log. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `dead_letter_test.go` | `TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped`, `TestDeadLetter_RedriveReachesOnlyItsGroup`, `TestDeadLetter_CLIListsAndRedrives`, `TestDeadLetter_BacklogMetricIsExposed` — a message no consumer can parse is stored by dead-letter-controller and served through `ListDeadLetters`; a redrive of it on `release.promoted:v2` is handled only by the group that failed it (the other groups acknowledge it without a handler) and a repeated redrive publishes nothing; the real `continuo dlq list`/`redrive` binary (built from the `./cli` mount with `GOWORK=off`) drives the same flow; the backlog gauge appears once a dead letter is open. dead-letter-controller is started by `start-services.sh` (health `:8096/ready`, gRPC `:50055`) |
 | `egress_test.go` | `TestEgress_ProxyRefusesHostNotOnAllowlist`, `TestEgress_ProxyAdmitsListedHost`, `TestEgress_ChatTrafficGoesThroughProxy` — a `CONNECT` to a host off the allowlist is answered 403 and one to `stub-llm:9100` is answered 200; one chat turn raises the proxy's `continuo_egress_requests_total{decision="allowed"}` count, which shows agent-chat reaches its LLM through egress-proxy. The remediation tests' LLM and GitHub calls go through the proxy as well |
-| `seed_topology_test.go` | `seedTopology` helper — announces the e2e DAG through release-controller's `announce-topology` (artifact in MinIO, next promotion seq, `release.promoted:v2`), which the orchestrator applies to Neo4j and run-controller stores as its live release on the promotion path. It returns once both have applied it (`waitForAnnouncedTopology` in `announce_topology_test.go`): the orchestrator's `:Meta` and run-controller's `live_release` name the announced release, and the release's `topology_nodes` in run-controller carry every schedule the DAG declares, which is what `StartRun` needs to know a schedule |
-| `topology_by_reference_test.go` | `TestTopologyByReference_LatePromotionMovesNothing` — announces A, with a model of schedule `e2e-stale-probe`, then B without it, and replays A's `release.promoted:v2` entry under a fresh event id: both the orchestrator's and run-controller's groups acknowledge it without a dead letter, the orchestrator's live pointer and run-controller's live release stay at B, and for 10 s no node of run-controller's live release carries `e2e-stale-probe` and `ListSchedules` does not list it. `TestTopologyByReference_CorruptArtifactIsDeadLettered` — a promotion whose artifact does not match its checksum is dead-lettered as permanent by the orchestrator's and run-controller's groups, and the orchestrator's live pointer does not move |
+| `seed_topology_test.go` | `seedTopology` helper — announces the e2e DAG through release-controller's `announce-topology` (artifact in MinIO, next promotion seq, `release.promoted:v2`), which catalog applies to Neo4j and run-controller stores as its live release on the promotion path. It returns once both have applied it (`waitForAnnouncedTopology` in `announce_topology_test.go`): catalog's `:Meta` and run-controller's `live_release` name the announced release, and the release's `topology_nodes` in run-controller carry every schedule the DAG declares, which is what `StartRun` needs to know a schedule |
+| `topology_by_reference_test.go` | `TestTopologyByReference_LatePromotionMovesNothing` — announces A, with a model of schedule `e2e-stale-probe`, then B without it, and replays A's `release.promoted:v2` entry under a fresh event id: both catalog's and run-controller's groups acknowledge it without a dead letter, catalog's live pointer and run-controller's live release stay at B, and for 10 s no node of run-controller's live release carries `e2e-stale-probe` and `ListSchedules` does not list it. `TestTopologyByReference_CorruptArtifactIsDeadLettered` — a promotion whose artifact does not match its checksum is dead-lettered as permanent by catalog's and run-controller's groups, and catalog's live pointer does not move |
 | `seed_reconcile_test.go` | `TestSeedReconcile_LoadsAChangedSeedOnce` — announces the e2e DAG with `seed_table_1` carrying a new `content_hash`: run-controller plans one `promote_seed` run and dispatches the seed in the promotion's transaction, the seed loads with service-1's image and run-controller records the hash in `node_materializations`; announcing the same content again under a new release loads nothing. Restores the default DAG (no seed hashes) at the end |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIHTTPAPI`) |
 | `public_api_test.go`, `ci_token.go` | `TestPublicAPI_Authorization` — the public `/api/v1` release API's refusals (unbound repository, bootstrap without `allowBootstrap`, body/token repository mismatch, garbage token) and a CI token reading `current-prod`. `ci_token.go` mints GitHub Actions-shaped tokens from `stub-github`, which the ui trusts as its CI issuer through `tests/e2e/ci-auth.json`; every release the suite submits goes through `/api/v1/releases` with such a token |
@@ -232,7 +232,7 @@ POST /api/v1/releases → release.requested:v1 → topology-controller candidate
 settling each terminal outcome in-process (the Job watch's observer → service/outcomes.Recorder,
 same transaction as the observation) → validation.result:v1 (kind=complete)
 → release-controller promotes → release.promoted:v2
-→ orchestrator loads the topology artifact and swaps the Neo4j topology
+→ catalog loads the topology artifact and swaps the Neo4j topology
 ```
 
 | Test | What it verifies |
@@ -248,7 +248,7 @@ These tests read the dbt manifests that `setup.sh` uploads to MinIO S3 and use t
 Run only the blue/green tests:
 
 ```bash
-docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
+docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
   go test -v -count=1 -timeout 125m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
 ```
 
@@ -278,7 +278,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 ### Trigger Run-and-Rerun (seed schedule)
 1. **Setup** - Initialize clients, verify services healthy, cleanup seed schedule data
-2. **Topology** - Announce the e2e DAG (`seedTopology`), which returns once the orchestrator and run-controller's live release hold it, with the seed schedule's models
+2. **Topology** - Announce the e2e DAG (`seedTopology`), which returns once catalog and run-controller's live release hold it, with the seed schedule's models
 3. **Run 1** - `POST /api/schedules/seed/trigger` → wait for 3 seed tasks to succeed → scheduler SUCCEEDED
 4. **Run 2** - `POST /api/schedules/seed/trigger` again → wait for second run to complete → scheduler SUCCEEDED
 5. **Cleanup** - Remove all seed schedule data
@@ -358,8 +358,8 @@ colima start --disk 100  # 100GB
 **Services not starting:**
 ```bash
 docker compose ps
-docker logs orchestrator --tail 50
-docker compose restart orchestrator run-controller
+docker logs catalog --tail 50
+docker compose restart catalog run-controller
 bash tests/e2e/start-services.sh
 ```
 

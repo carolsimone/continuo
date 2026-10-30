@@ -10,7 +10,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
 )
 
-// NodeCatalogEntry is one row of the node catalog with the task timeout the
+// NodeCatalogEntry is one row of the node list with the task timeout the
 // node's tasks get.
 type NodeCatalogEntry struct {
 	projection.NodeSummary
@@ -21,7 +21,7 @@ type NodeCatalogEntry struct {
 	TimeoutDeclared bool
 }
 
-// Nodes reads the history and catalog of the nodes of the tenant each read is
+// Nodes reads the history and node list of the nodes of the tenant each read is
 // given.
 type Nodes struct {
 	nodes          repository.NodeReader
@@ -40,7 +40,7 @@ func (n *Nodes) ListNodeTasks(ctx context.Context, tenantID, serviceName, schema
 	return n.nodes.ListNodeTasks(ctx, tenantID, serviceName, schemaName, tableName, operation, limit)
 }
 
-// ListNodes returns one page of tenantID's node catalog and how many nodes
+// ListNodes returns one page of tenantID's node list and how many nodes
 // match. A limit below 1 becomes DefaultPageSize, one above MaxPageSize
 // becomes MaxPageSize, and a negative offset becomes 0.
 func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]NodeCatalogEntry, int, error) {

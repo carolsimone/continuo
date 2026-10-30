@@ -23,7 +23,7 @@ import (
 // A then B, and then replays A's release.promoted:v2 entry under a fresh event
 // id and without its outbox entry id — a late delivery or a redrive that dedup
 // cannot recognise. A has a model of a schedule B drops, so applying the
-// replay would swap the orchestrator's live graph and run-controller's live release
+// replay would swap catalog's live graph and run-controller's live release
 // back to A, and give that schedule its model again: run-controller would list it and
 // start it. Neither may happen: A's promotion seq is below the live one.
 func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
@@ -76,7 +76,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
 	}
 	assert.Equal(t, livePointer{releaseID: b.ReleaseID, promotionSeq: b.PromotionSeq}, readLivePointer(ctx, clients),
-		"a late promotion must not move the orchestrator's live pointer")
+		"a late promotion must not move catalog's live pointer")
 	window := time.NewTimer(negativeWindow)
 	defer window.Stop()
 	tick := time.NewTicker(time.Second)

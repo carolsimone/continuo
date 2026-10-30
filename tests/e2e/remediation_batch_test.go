@@ -445,7 +445,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	t.Logf("✅ one pull request #%d fixes two nodes with one edit: %q", pr.Number, pr.Title)
 
 	// 10. Merging the pull request AS PROPOSED — no further human edit — must
-	//     draw the case-base provenance edges the orchestrator's pr_closed
+	//     draw the case-base provenance edges catalog's pr_closed
 	//     consumer maintains: one RESOLVED_BY per resolved descendant to the
 	//     shared :Proposal, and one EDITED edge from that :Proposal to the
 	//     changed ancestor's :Table, both carrying amended=false. The stub
@@ -470,7 +470,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	//     EDITED edge naming the changed ancestor — not either failing
 	//     descendant — also amended=false; and the :PullRequest node
 	//     reflecting the terminal 'merged' state. pollNeo4jPRState waits for
-	//     the orchestrator's asynchronous consumption of
+	//     catalog's asynchronous consumption of
 	//     remediation.pr_closed:v1 to land; RecordPullRequestOutcome draws the
 	//     pr_state change and every edge below in the SAME Cypher statement, so
 	//     once the poll observes 'merged' the edges are already committed and
@@ -713,7 +713,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 
 	// 9. Provenance: the merged PR's member gets RESOLVED_BY; the rejected
 	//    PR's member gets none; each :PullRequest carries its own terminal
-	//    pr_state. pollNeo4jPRState waits out the orchestrator's asynchronous
+	//    pr_state. pollNeo4jPRState waits out catalog's asynchronous
 	//    consumption of remediation.pr_closed:v1 for EACH service
 	//    independently — the two PRs close through two separate events.
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
@@ -741,7 +741,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 // human edit pushed to a remediation PR's branch before it merges is recorded
 // as such all the way into the case-base: the agent-remediation's merge-time
 // byte-compare (agent-remediation/service/proposals/amend.go) flags the edit
-// amended, and the orchestrator's pr_closed provenance handler carries that
+// amended, and catalog's pr_closed provenance handler carries that
 // flag onto both the RESOLVED_BY edge (from the fixed node's :Rejection) and
 // the EDITED edge (from the shared :Proposal).
 //
@@ -1151,7 +1151,7 @@ type stubPullRequest struct {
 // fetchStubPullRequest reads one pull request back from stub-github. The title
 // is only observable here — the create-PR route returns just a URL and a number
 // — so this is what proves the pull request a reviewer receives is named for
-// every node it fixes. The e2e suite runs inside the orchestrator container, so
+// every node it fixes. The e2e suite runs inside the catalog container, so
 // stub-github is reached by its compose service name, the same base URL
 // agent-remediation and ui use.
 func fetchStubPullRequest(t *testing.T, ctx context.Context, repo string, number int) stubPullRequest {

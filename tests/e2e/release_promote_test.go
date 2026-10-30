@@ -52,7 +52,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
 //	set → validation.requested:v1 → execution-controller runs a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
-//	→ release.promoted:v2 → orchestrator loads the artifact and swaps the Neo4j topology.
+//	→ release.promoted:v2 → catalog loads the artifact and swaps the Neo4j topology.
 //
 // The changed service is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
@@ -141,12 +141,12 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//     image tag the release was submitted with.
 	assertCandidateTopologyArtifact(t, ctx, clients, releaseID, probeUniqueID, changedImageTag)
 
-	// 7. The orchestrator must have swapped the Neo4j topology to this release.
+	// 7. Catalog must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
 	// 7a. Promotion moved current_prod by reference: it points at the release's
-	//     own artifact under the seq the promotion took, and the orchestrator's
+	//     own artifact under the seq the promotion took, and catalog's
 	//     live pointer carries that same seq.
 	assertCurrentProdByReference(t, ctx, clients, releaseID)
 
@@ -189,7 +189,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 7c. The read-side RPC must surface the same history the write path just
 	//     recorded: GetNodeVersions(probeUniqueID) includes a version whose
 	//     content_hash matches what the topology swap stamped on :Table.
-	versionsResp, err := clients.orchestratorClient.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{
+	versionsResp, err := clients.catalogClient.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{
 		UniqueId: probeUniqueID,
 	})
 	require.NoError(t, err, "GetNodeVersions(%s) failed", probeUniqueID)
@@ -565,7 +565,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 
 	// Collect the service-2 and service-3 node IDs we expect to survive in the
 	// Neo4j graph. dbt-test nodes are excluded: they are validation-only, are
-	// kept out of the graph by the orchestrator, and never
+	// kept out of the graph by catalog, and never
 	// become :Table nodes, so the graph-level anti-amputation check cannot look
 	// for them. current_prod retention of an unchanged test is covered by the
 	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
@@ -1004,7 +1004,7 @@ func waitForReleasePromoted(t *testing.T, ctx context.Context, clients *testClie
 	}, fmt.Sprintf("timeout waiting for release %s to reach promoted", releaseID))
 }
 
-// waitForTopologySwap polls Neo4j until the orchestrator has applied the
+// waitForTopologySwap polls Neo4j until catalog has applied the
 // release.promoted:v2 swap: the :Meta singleton points at releaseID and the
 // promoted node is active and stamped with the new release_id. The swap is
 // asynchronous relative to the release reaching "promoted", so this must poll.

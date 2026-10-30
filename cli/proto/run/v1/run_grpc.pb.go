@@ -270,25 +270,25 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node catalog: one summary row per node that has run,
+	// ListNodes returns the node list: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
-	// above 200 is 200; a negative offset is 0. The catalog of run (the empty
+	// above 200 is 200; a negative offset is 0. The node list of run (the empty
 	// default) includes full refreshes.
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated catalog).
+	// (the complete name list, independent of the paginated node list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
 	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the catalog and remediation service filters (the complete service
-	// list, independent of the paginated catalog).
+	// It powers the node list and remediation service filters (the complete service
+	// list, independent of the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
@@ -828,25 +828,25 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node catalog: one summary row per node that has run,
+	// ListNodes returns the node list: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
-	// above 200 is 200; a negative offset is 0. The catalog of run (the empty
+	// above 200 is 200; a negative offset is 0. The node list of run (the empty
 	// default) includes full refreshes.
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated catalog).
+	// (the complete name list, independent of the paginated node list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
 	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the catalog and remediation service filters (the complete service
-	// list, independent of the paginated catalog).
+	// It powers the node list and remediation service filters (the complete service
+	// list, independent of the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five

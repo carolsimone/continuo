@@ -26,7 +26,7 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	orchestratorClient     catalogv1.CatalogQueryClient
+	catalogClient          catalogv1.CatalogQueryClient
 	runClient              runv1.RunServiceClient
 	agentRemediationClient remediationv1.RemediationProposalsClient
 	deadLetterClient       deadletterv1.DeadLetterServiceClient
@@ -54,7 +54,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	}))
 
 	// Get hosts from environment (use service names for docker-compose)
-	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
+	catalogHost := getEnv("CATALOG_HOST", "catalog")
 	runControllerHost := getEnv("RUN_CONTROLLER_HOST", "run-controller")
 	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
 	deadLetterHost := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
@@ -63,12 +63,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
 	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
 
-	// Setup Orchestrator gRPC client
-	orchestratorConn, err := grpc.NewClient(
-		fmt.Sprintf("%s:50052", orchestratorHost),
+	// Setup catalog gRPC client (CatalogQuery, port 50052)
+	catalogConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50052", catalogHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to orchestrator service")
+	require.NoError(t, err, "Failed to connect to catalog service")
 
 	// Setup run-controller gRPC client (RunService, port 50051)
 	runControllerConn, err := grpc.NewClient(
@@ -117,7 +117,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
 
 	clients := &testClients{
-		orchestratorClient:     catalogv1.NewCatalogQueryClient(orchestratorConn),
+		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
 		runClient:              runv1.NewRunServiceClient(runControllerConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),

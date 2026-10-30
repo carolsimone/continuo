@@ -23,10 +23,10 @@ def test_outage_counts_only_the_drops_logged_after_its_trigger(tmp_path):
     env["FAKE_RUN_RESULT"] = "succeeded"
     fake = Path(env["FAKE_DIR"])
     (fake / "logs" / "run-controller.log").write_text(f"{DROP_POISON}\nstarted\n")
-    (fake / "logs" / "orchestrator.log").write_text("")
+    (fake / "logs" / "catalog.log").write_text("")
     (fake / "logs" / "execution-controller.log").write_text("")
     (fake / "on-trigger" / "run-controller.log").write_text(f"{DROP_POISON}\n{DROP_PERMANENT}\nother\n")
-    (fake / "on-trigger" / "orchestrator.log").write_text(f"{DROP_PERMANENT}\n")
+    (fake / "on-trigger" / "catalog.log").write_text(f"{DROP_PERMANENT}\n")
 
     result, out = run_outage(tmp_path, env)
 
@@ -51,7 +51,7 @@ def test_outage_cancels_a_run_that_outlives_its_timeout(tmp_path):
     env = fake_env.make(tmp_path, ["run-1"])
     env["BENCH_RUN_TIMEOUT_S"] = "1"
     fake = Path(env["FAKE_DIR"])
-    for service in ("run-controller", "orchestrator", "execution-controller"):
+    for service in ("run-controller", "catalog", "execution-controller"):
         (fake / "logs" / f"{service}.log").write_text("")
 
     result, out = run_outage(tmp_path, env)
@@ -68,7 +68,7 @@ def docker_calls(env):
 
 
 def with_service_logs(env):
-    for service in ("run-controller", "orchestrator", "execution-controller"):
+    for service in ("run-controller", "catalog", "execution-controller"):
         (Path(env["FAKE_DIR"]) / "logs" / f"{service}.log").write_text("")
     return env
 

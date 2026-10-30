@@ -58,11 +58,11 @@ def test_compare_takes_the_relative_change_against_a_negative_value_by_its_size(
 
 
 def test_compare_reports_each_services_cost_per_thousand_tasks_and_peak_memory():
-    before = {"dag-500": [rep(1, usage_run={"orchestrator": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}})]}
-    after = {"dag-500": [rep(1, usage_run={"orchestrator": {"cpu_seconds": 1.0, "mem_max_mib": 30.0},
+    before = {"dag-500": [rep(1, usage_run={"catalog": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}})]}
+    after = {"dag-500": [rep(1, usage_run={"catalog": {"cpu_seconds": 1.0, "mem_max_mib": 30.0},
                                            "run-controller": {"cpu_seconds": 4.0, "mem_max_mib": 40.0}})]}
     markdown = compare.compare(before, after, "A", "B")
-    assert "| orchestrator | 2.0 | 1.0 | -1.0 (-50%) | 20 | 30 | +10 (+50%) |" in markdown
+    assert "| catalog | 2.0 | 1.0 | -1.0 (-50%) | 20 | 30 | +10 (+50%) |" in markdown
     assert "| run-controller | — | 4.0 | — | — | 40 | — |" in markdown
 
 

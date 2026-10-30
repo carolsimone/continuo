@@ -10,7 +10,7 @@ import (
 
 var _ repository.NodeReader = (*NodeReadRepository)(nil)
 
-// NodeReadRepository reads the history and catalog of a tenant's nodes. Each
+// NodeReadRepository reads the history and node list of a tenant's nodes. Each
 // read goes through the node-run repository bound to the tenant it is given.
 type NodeReadRepository struct {
 	nodeRunsOf func(tenantID string) NodeRunRepository
@@ -27,7 +27,7 @@ func (r *NodeReadRepository) ListNodeTasks(ctx context.Context, tenantID, servic
 	return r.nodeRunsOf(tenantID).List(ctx, serviceName, schemaName, tableName, operation, limit)
 }
 
-// ListNodes returns one page of the node catalog and how many nodes match.
+// ListNodes returns one page of the node list and how many nodes match.
 func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error) {
 	return r.nodeRunsOf(tenantID).ListNodes(ctx, search, serviceName, operation, limit, offset)
 }

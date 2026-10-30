@@ -119,7 +119,7 @@ export default function NodeDetailPage() {
   const [inactive, setInactive] = useState(false);
   // The task timeout the node's tasks get and whether the live release
   // declares it (else it is the install default); null while unknown or when
-  // the node has no catalog row.
+  // the node has no node-list row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
   // The request id of the node run being asked for: a press that gets no
@@ -179,7 +179,7 @@ export default function NodeDetailPage() {
       });
   }, [service, schema, table]);
 
-  // The catalog search filters on the table name only (an exact match within
+  // The node-list search filters on the table name only (an exact match within
   // the service), so rows of other schemas sharing the table name can come
   // back: the schema is matched client-side.
   useEffect(() => {
@@ -217,7 +217,7 @@ export default function NodeDetailPage() {
   // backstop there. Only a KNOWN, positive test_count is runnable: a known zero
   // and an unset count (a node predating test_count capture, so test_count_known
   // is false) are both treated as "no tests" and gate the latest-mode trigger,
-  // matching catalog's single-node gate.
+  // matching run-controller's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
   // The newest run in the history that a press of this page could have made:

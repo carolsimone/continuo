@@ -132,9 +132,9 @@ func TestNodeReadRepository_ReadsTheTenantsNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, services, "service-1")
 
-	catalog, total, err := nodes.ListNodes(ctx, acmeTenant, table, "", "", 10, 0)
+	nodeList, total, err := nodes.ListNodes(ctx, acmeTenant, table, "", "", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
-	require.Len(t, catalog, 1)
-	assert.Equal(t, table, catalog[0].TableName)
+	require.Len(t, nodeList, 1)
+	assert.Equal(t, table, nodeList[0].TableName)
 }

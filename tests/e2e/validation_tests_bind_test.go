@@ -108,7 +108,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 // TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly proves that a dbt
 // test whose bind check passes is fully invisible downstream of validation:
 // tbind_ok and its test are new to production, both bind-check ok, the
-// release promotes, and the orchestrator's Neo4j graph gains the model but no
+// release promotes, and catalog's Neo4j graph gains the model but no
 // node for the test — while current_prod still records the test so it is not
 // re-checked as "changed" on the next release.
 func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
@@ -155,7 +155,7 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, batchRejectBudget)
-	// The orchestrator swaps the Neo4j topology asynchronously after the release
+	// Catalog swaps the Neo4j topology asynchronously after the release
 	// reports promoted; wait for tbind_ok to be current for this release before
 	// reading its :Table properties (test_count), or the read races the swap.
 	waitForTopologySwap(t, ctx, clients, releaseID, tbindOkUniqueID, 2*time.Minute)

@@ -397,7 +397,7 @@ export default function RemediationPanel() {
 
   useEffect(() => { loadProposals(); }, [loadProposals]);
 
-  // The Service filter's options come from the node catalog, fetched once on
+  // The Service filter's options come from the node list, fetched once on
   // mount. A failure leaves the list working with only the "All services"
   // option rather than surfacing as the panel error.
   useEffect(() => {

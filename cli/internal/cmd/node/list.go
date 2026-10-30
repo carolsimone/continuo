@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// nodeSummary is the JSON-serialisable representation of one catalog row.
+// nodeSummary is the JSON-serialisable representation of one row of the node list.
 // The three statistics the run-controller service reports as -1 when it has nothing
 // to measure (no terminal task, no timed task) are pointers so that sentinel
 // is omitted rather than emitted as a misleading negative number.
@@ -57,8 +57,8 @@ var validListOperations = map[string]bool{"run": true, "test": true, "build": tr
 func NewListCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List the node catalog with per-node run statistics",
-		Long: `List the node catalog with per-node run statistics, one page at a time.
+		Short: "List the nodes with per-node run statistics",
+		Long: `List the nodes with per-node run statistics, one page at a time.
 
 Use when the user names a model but not its service or schema, wants to know
 which nodes exist in a service, or asks how reliable or slow a model has been.

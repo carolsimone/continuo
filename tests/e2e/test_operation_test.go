@@ -275,11 +275,11 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	t.Log("TestWholeDAGTestOperationNoTestsFinalizesSkipped passed")
 }
 
-// TestNodeCatalogOperationScoping verifies the UI-facing node catalog
+// TestNodeCatalogOperationScoping verifies the UI-facing node list
 // (GET /api/nodes, ui's proxy of run-controller.ListNodes) scopes stats per
 // operation dimension end-to-end. A model run and a test run are triggered
 // against the SAME node (seed_table_1, test_count=2), each populating a
-// DISTINCT catalog slice under its own operation: operation=run reflects the
+// DISTINCT node-list slice under its own operation: operation=run reflects the
 // model run's terminal status, operation=test reflects the test run's. A
 // node with no tests (seed_table_2, test_count=0) never gets a tasks
 // row under operation=test — the no_tests gate rejects it before dispatch
