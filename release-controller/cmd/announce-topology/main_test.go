@@ -143,7 +143,7 @@ func TestReadTopology_KeepsTheTimeout(t *testing.T) {
 	assert.Zero(t, topo[1].TimeoutSeconds)
 }
 
-// A topology of only dbt-test nodes is refused: orchestrator strips every
+// A topology of only dbt-test nodes is refused: catalog strips every
 // dbt-test when it applies the promotion, so announcing one would leave an
 // empty swap set that retires every live node. One non-test node is enough.
 func TestReadTopology_RefusesAnAllDbtTestTopology(t *testing.T) {

@@ -22,7 +22,7 @@ const (
 	// CollisionIdentity marks two or more claimants that share a unique_id.
 	// unique_id is the identity key for every downstream consumer keyed on
 	// it — the code bundle, the candidate object key, NodeRegistry lookups,
-	// release-controller's own topology walks, the orchestrator's :Table
+	// release-controller's own topology walks, catalog's node
 	// MERGE — so sharing it silently erases one of the claimants wherever
 	// that key is used, independent of whether their resolved relations also
 	// collide. Under this kind, UniqueID is the shared identity.

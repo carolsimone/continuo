@@ -50,7 +50,7 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	if !releaseIDPattern.MatchString(releaseID) {
 		return AnnounceResult{}, fmt.Errorf("%w: %q", ErrInvalidReleaseID, releaseID)
 	}
-	// Orchestrator strips every dbt-test node before it applies a promotion, so a
+	// Catalog strips every dbt-test node before it applies a promotion, so a
 	// topology that is all dbt-test nodes swaps in nothing and retires every live
 	// node. Require at least one node that survives that filter.
 	if len(topo.WithoutTests()) == 0 {

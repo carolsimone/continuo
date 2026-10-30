@@ -65,6 +65,17 @@ for g in task-dispatch run-cancelled validation-requested validation-result-tear
   expect_fail "group executor-$g"                "group: executor-$g"
 done
 
+# The retired orchestrator service, matched case-insensitively wherever the
+# name appears: prose, identifiers, environment variables, compose services,
+# databases and the proto service.
+expect_fail "orchestrator in prose"             'the orchestrator applies a promotion'
+expect_fail "Orchestrator (any case)"            'Orchestrator keeps the graph'
+expect_fail "environment ORCHESTRATOR_GRPC_ADDR" 'ORCHESTRATOR_GRPC_ADDR=x:1'
+expect_fail "compose service flyway-orchestrator" 'depends_on: [flyway-orchestrator]'
+expect_fail "database continuo_orchestrator"     'POSTGRES_DB: continuo_orchestrator'
+expect_fail "service OrchestratorQuery"          'service OrchestratorQuery {}'
+expect_fail "module path orchestrator/"          'import "github.com/carolsimone/continuo/orchestrator/domain"'
+
 # Other retired names.
 expect_fail "directory k8s-controllers"          'bash tests/e2e/deploy-k8s-controllers.sh'
 expect_fail "aggregate remediation_agent"        'AggregateType: "remediation_agent"'
@@ -84,6 +95,9 @@ expect_pass "the chart changelog"                'deploy/continuo/CHANGELOG.md' 
 expect_pass "the release notes"                  'docs/release-notes.md' 'continuo-state image, STATE_GRPC_ADDR'
 expect_pass "the superpowers docs"               'docs/superpowers/plan.md' 'rename continuo_state'
 expect_pass "the NOTES.txt upgrade warnings"     'deploy/continuo/templates/NOTES.txt' 'set CONTINUO_STATE_ADDR'
+expect_pass "a migration naming continuo_orchestrator" 'db/migration/orchestrator/V1__x.sql' 'ALTER DATABASE continuo_orchestrator RENAME TO x;'
+expect_pass "the chart changelog naming orchestrator" 'deploy/continuo/CHANGELOG.md' 'The service orchestrator is now catalog.'
+expect_pass "the compose NO_PROXY test"          'pkg/deploycheck/compose_no_proxy_test.go' 'no compose service is named orchestrator'
 
 # Ordinary words and identifiers must not trip the guard.
 expect_pass "the word state in prose"            'docs/guide.md' 'the run state machine moves a task to the next state'
@@ -91,6 +105,8 @@ expect_pass "a Go variable named state"          'pkg/x/x.go' 'state := 1'
 expect_pass "React state"                        'ui/src/a.tsx' 'const [state, setState] = useState(0)'
 expect_pass "an Executor type"                   'agent-chat/adapters/cliexec/executor.go' 'type Executor struct{}'
 expect_pass "the executor word in prose"         'docs/guide.md' 'the executor runs each attempt as one Job'
+expect_pass "the orchestration word in prose"    'docs/guide.md' 'the orchestration layer'
+expect_pass "the verb orchestrates in prose"     'README.md' 'continuo orchestrates dbt and Python projects'
 expect_pass "a run-controller reference"         'deploy/values.yaml' 'addr: run-controller:50051 db: continuo_run_controller'
 expect_pass "the retired schedule-catalog group fixture" 'pkg/streams/streams_test.go' '"state-schedule-catalog"'
 

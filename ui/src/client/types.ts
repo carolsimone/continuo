@@ -289,7 +289,7 @@ export interface NodesResponse {
 }
 
 // The distinct active service names, from GET /api/nodes/services. Feeds the
-// catalog and Remediation-tab service filters.
+// node list and Remediation-tab service filters.
 export interface ServicesResponse {
   services: string[];
 }

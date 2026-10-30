@@ -1,5 +1,5 @@
 # config/service_repos.yaml
-# Maps a service name (orchestrator topology service_name; dbt or python) to
+# Maps a service name (catalog topology service_name; dbt or python) to
 # its project root within that service's own repository. The agent joins
 # <repo_path> with the offending file's path to read the model source from
 # GitHub, and routes the verification run that verifies a fix by the project

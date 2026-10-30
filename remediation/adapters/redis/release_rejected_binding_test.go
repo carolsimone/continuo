@@ -325,7 +325,7 @@ func TestEvidenceFromRejected_DropsLegacyShadowRejection(t *testing.T) {
 // TestEvidenceFromRejected_CarriesCodeBundleURI verifies that a top-level
 // code_bundle_uri on the release.rejected:v1 payload is threaded onto each
 // failed node's FailureEvidence, so the remediation trigger can point the
-// orchestrator's case base at the rejected release's code bundle.
+// catalog's case base at the rejected release's code bundle.
 func TestEvidenceFromRejected_CarriesCodeBundleURI(t *testing.T) {
 	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
 		"repo":"acme/dbt","commit_sha":"abc","code_bundle_uri":"s3://b/code-bundles/rel-1/bundle.json",

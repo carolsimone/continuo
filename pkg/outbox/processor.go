@@ -16,9 +16,10 @@ import (
 )
 
 // Publisher performs whatever side effects an outbox entry represents.
-// For event-only services (run-controller, orchestrator), implementations simply XADD
-// entry.Payload to entry.StreamName. For services with multi-step semantics
-// (execution-controller: K8s deploy + multiple XADDs), the implementation is service-aware.
+// For event-only services (release-controller, remediation, agent-remediation),
+// implementations simply XADD entry.Payload to entry.StreamName. For services
+// with multi-step semantics (execution-controller: K8s deploy + multiple
+// XADDs), the implementation is service-aware.
 type Publisher interface {
 	Publish(ctx context.Context, entry *Entry) error
 }

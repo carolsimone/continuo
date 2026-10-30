@@ -38,7 +38,7 @@ def _test(name, *, attached=None, targets):
 def test_candidate_topology_carries_test_count(tmp_path):
     """The node dict published into the candidate topology carries test_count,
     forwarding the count resolved by parse_manifest (task 1) so downstream
-    services (release-controller, orchestrator) can consume it. Each tracked
+    services (release-controller, catalog) can consume it. Each tracked
     test is itself published as a dbt-test node alongside the model it tests,
     so the topology holds three entries: the model plus its two tests."""
     manifest = {"macros": {}, "nodes": {

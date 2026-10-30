@@ -213,7 +213,7 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			TimeoutSeconds:     n.TimeoutSeconds,
 		})
 	}
-	// Orchestrator strips every dbt-test node before it applies a promotion, so
+	// Catalog strips every dbt-test node before it applies a promotion, so
 	// a topology that is all dbt-test nodes swaps in nothing and retires every
 	// live node. Require at least one node that survives that filter.
 	if len(topo.WithoutTests()) == 0 {

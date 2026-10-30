@@ -417,7 +417,7 @@ describe('NodeDetailPage — task timeout', () => {
     ...over,
   });
 
-  // Answers the catalog search like run-controller does: the search term is a
+  // Answers the node list search like run-controller does: the search term is a
   // case-insensitive exact match on the table name, and nothing else.
   function serveRows(rows: ReturnType<typeof mkSummary>[]) {
     serve(url => {
@@ -532,7 +532,7 @@ describe('NodeDetailPage back link', () => {
   });
 });
 
-describe('NodeDetailPage — operation carried from catalog navigation', () => {
+describe('NodeDetailPage — operation carried from node list navigation', () => {
   it('initializes the operation selector from location.state and fetches operation=test first', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();

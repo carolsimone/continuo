@@ -165,7 +165,7 @@ func TestDuplicateClaims_SameAliasDifferentNames_CollisionFound(t *testing.T) {
 // DIFFERENT relations must still collide — as an identity collision, not a
 // relation one. unique_id is the identity key for every downstream lookup
 // keyed on it (the code bundle, the candidate object key, NodeRegistry,
-// release-controller's own topology walks, the orchestrator's :Table MERGE);
+// release-controller's own topology walks, catalog's node MERGE);
 // sharing it means one of the two nodes is silently erased wherever that key
 // is used, independent of the fact that their resolved relations differ.
 // This is also the exact state the duplicate-table fixer's own rename

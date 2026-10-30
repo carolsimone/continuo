@@ -287,7 +287,7 @@ const maxPrecedentsFetch = 10
 // loadPrecedents fetches precedent for this failure: by exact signature
 // first, then — when removing this failure's own recorded rejection leaves
 // the exact-signature result empty — by the broader (category, reason) class.
-// The orchestrator records this same remediation.requested trigger into the
+// Catalog records this same remediation.requested trigger into the
 // case base this reads, so on a first occurrence of a signature the exact
 // match can consist of nothing but that self row; withoutSelf therefore runs
 // on each fetch BEFORE the fallback decision, not after, or a
@@ -322,7 +322,7 @@ func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Preced
 // remaining precedent's free-text fields — the one place every Fixer's
 // precedents pass through, same as loadDBTLog sanitizes the current failure's
 // own log. Both arrive already bounded (the excerpt is capped by the
-// classifier, the diff by the orchestrator's renderer), so no truncation is
+// classifier, the diff by catalog's renderer), so no truncation is
 // needed here. It allocates a fresh slice rather than filtering ps in place,
 // since ps is backed by whatever the PrecedentReader returned — a test fake's
 // fixture map today, potentially a caching adapter tomorrow — and reusing its

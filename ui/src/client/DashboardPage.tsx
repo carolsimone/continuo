@@ -70,7 +70,7 @@ export default function DashboardPage() {
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
 
   // Nodes-tab count badge: fetched on mount and whenever a tab is opened.
-  // No recurring poll — the full catalog aggregation must not run every 5s.
+  // No recurring poll — the full node-list aggregation must not run every 5s.
   useEffect(() => {
     fetch('/api/nodes?limit=1')
       .then(r => r.json())

@@ -39,7 +39,7 @@ func (c ErrorClass) String() string {
 }
 
 // InfraClassifier reports whether err means a service-specific dependency
-// (for orchestrator, Neo4j) is unreachable.
+// (for catalog, Neo4j) is unreachable.
 type InfraClassifier func(error) bool
 
 // Classify returns the class of a handler error. A permanent error wins over

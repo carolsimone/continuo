@@ -77,7 +77,7 @@ class UpstreamDep:
         """The upstream node's identity key: "<schema>.<table>", lowercased.
 
         Must match ManifestNode.unique_id exactly — the two are compared against
-        each other when building DEPENDS_ON edges in the orchestrator's Neo4j
+        each other when building DEPENDS_ON edges in catalog's Neo4j
         topology. Deriving this property the same way ensures the identities
         always agree, preventing silent divergence from mixed-case declarations.
         """

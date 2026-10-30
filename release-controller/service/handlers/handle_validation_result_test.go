@@ -830,8 +830,8 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 
 // TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd
 // verifies that a dbt-test node in the candidate topology is never announced
-// in release.promoted:v2's changed_node_ids — the orchestrator only ever draws
-// and schedules relations, never a test — while current_prod's own artifact
+// in release.promoted:v2's changed_node_ids — catalog only ever draws
+// relations, never a test — while current_prod's own artifact
 // still holds it, so an unchanged test is not re-checked by a future
 // release.
 func TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd(t *testing.T) {

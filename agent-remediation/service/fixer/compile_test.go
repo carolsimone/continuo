@@ -414,7 +414,7 @@ func TestCompile_SelfPrecedentFiltered(t *testing.T) {
 // TestCompile_SelfPrecedentFallsBackWhenExactSignatureIsOnlySelf proves that
 // when the exact-signature lookup returns only this failure's own recorded
 // rejection, the (category, reason) fallback still fires and its result
-// reaches the prompt. The orchestrator records this same remediation.requested
+// reaches the prompt. Catalog records this same remediation.requested
 // trigger into the case base under its own signature
 // (remediation_requested_rejections_handler.go), so a first-of-its-kind
 // signature must not let that self row suppress the fallback.

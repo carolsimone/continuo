@@ -10,7 +10,7 @@ import (
 )
 
 // seedFixer fixes a dbt seed (CSV) load failure. It reads the failing CSV
-// (path + service threaded from the candidate topology, the orchestrator
+// (path + service threaded from the candidate topology, the catalog
 // graph's NodeLocator as fallback) and asks for a corrected CSV, with an
 // honest low-confidence skip when the bad value cannot be inferred.
 type seedFixer struct{}

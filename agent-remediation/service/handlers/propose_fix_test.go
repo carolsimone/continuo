@@ -696,7 +696,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 // TestProposeFix_SeedSourceFallsBackToLocator verifies the NodeLocator
 // fallback path for seed_build: when FilePath is absent on the node (e.g.
 // an older rejection payload that predates the candidate-topology threading),
-// the handler falls back to the orchestrator graph's NodeLocator to resolve
+// the handler falls back to the catalog graph's NodeLocator to resolve
 // the source location.
 func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
 	u := newFakeUoW()

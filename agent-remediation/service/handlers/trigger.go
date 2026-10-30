@@ -67,7 +67,7 @@ type TriggerNode struct {
 	// failures it is extracted from the dbt log. For validation, seed_build,
 	// and duplicate_table failures it is threaded from the candidate topology
 	// (OriginalFilePath on release.Node). Empty on a validation or seed_build
-	// node falls back to the orchestrator graph's NodeLocator; a
+	// node falls back to the catalog graph's NodeLocator; a
 	// duplicate_table node has no such fallback.
 	FilePath string
 	// Service is the owning dbt service name for the failing node. Set for

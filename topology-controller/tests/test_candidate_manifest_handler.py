@@ -1272,7 +1272,7 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
     When an upstream is declared as "Analytics.Orders" and a downstream node
     references it, the downstream's upstream_unique_ids entry must be
     "analytics.orders" (lowercased), matching what the upstream node's own
-    unique_id property returns. This ensures the orchestrator's Neo4j DEPENDS_ON
+    unique_id property returns. This ensures catalog's Neo4j DEPENDS_ON
     edge matching succeeds.
     """
     manifest_mixed_case = tmp_path / "manifest_mixed_case.json"

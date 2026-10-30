@@ -6,7 +6,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 )
 
-// NodeLocator resolves a node's source location from the orchestrator graph.
+// NodeLocator resolves a node's source location from the catalog graph.
 type NodeLocator interface {
 	// Locate returns the node's project-relative source path and owning
 	// service. An unknown node degrades to ("", "", nil) — absence is a

@@ -284,7 +284,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 // node with no tests (seed_table_2, test_count=0) never gets a tasks
 // row under operation=test — the no_tests gate rejects it before dispatch
 // (see TestSingleNodeTestOperationNoTests) — so it must be entirely ABSENT
-// from the operation=test catalog rather than present with zero/null stats,
+// from the operation=test node list rather than present with zero/null stats,
 // since ListNodes inner-joins tasks filtered by operation and never
 // left-joins against the topology.
 func TestNodeCatalogOperationScoping(t *testing.T) {
@@ -350,23 +350,23 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	runBody := mustGetJSON(t, fmt.Sprintf("%s/api/nodes?search=%s&operation=run", clients.uiBase, targetTable))
 	runNodes, ok := runBody["nodes"].([]interface{})
 	require.True(t, ok, "GET /api/nodes?operation=run: 'nodes' field missing or wrong type")
-	require.Len(t, runNodes, 1, "operation=run catalog must contain exactly the model-run node")
+	require.Len(t, runNodes, 1, "operation=run node list must contain exactly the model-run node")
 	runNode, _ := runNodes[0].(map[string]interface{})
 	assert.Equal(t, targetTable, runNode["table_name"])
-	assert.Equal(t, "run", runNode["operation"], "catalog entry must be scoped operation=run")
+	assert.Equal(t, "run", runNode["operation"], "node list entry must be scoped operation=run")
 	assert.Equal(t, "succeeded", runNode["last_status"],
-		"operation=run catalog entry must reflect the model run's terminal status")
+		"operation=run node list entry must reflect the model run's terminal status")
 
 	// GET /api/nodes?search=seed_table_1&operation=test — the DISTINCT test-run slice.
 	testBody := mustGetJSON(t, fmt.Sprintf("%s/api/nodes?search=%s&operation=test", clients.uiBase, targetTable))
 	testNodes, ok := testBody["nodes"].([]interface{})
 	require.True(t, ok, "GET /api/nodes?operation=test: 'nodes' field missing or wrong type")
-	require.Len(t, testNodes, 1, "operation=test catalog must contain exactly the test-run node")
+	require.Len(t, testNodes, 1, "operation=test node list must contain exactly the test-run node")
 	testNode, _ := testNodes[0].(map[string]interface{})
 	assert.Equal(t, targetTable, testNode["table_name"])
-	assert.Equal(t, "test", testNode["operation"], "catalog entry must be scoped operation=test")
+	assert.Equal(t, "test", testNode["operation"], "node list entry must be scoped operation=test")
 	assert.Equal(t, "succeeded", testNode["last_status"],
-		"operation=test catalog entry must reflect the test run's terminal status")
+		"operation=test node list entry must reflect the test run's terminal status")
 
 	// GET /api/nodes?search=seed_table_2&operation=test — a node with no tests
 	// must be absent entirely, not present with empty stats.
@@ -374,7 +374,7 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	noTestsNodes, ok := noTestsBody["nodes"].([]interface{})
 	require.True(t, ok, "GET /api/nodes?operation=test: 'nodes' field missing or wrong type")
 	assert.Empty(t, noTestsNodes,
-		"a node with no tests must be absent from the operation=test catalog, not present with empty stats")
+		"a node with no tests must be absent from the operation=test node list, not present with empty stats")
 
 	t.Log("TestNodeCatalogOperationScoping passed")
 }
