@@ -124,9 +124,10 @@ scan_vuln() {
     # So it cannot replace the gating run above — using it alone would leave
     # this blocking gate permanently green while still appearing to work.
     # `|| true` keeps a reporting failure from turning the gate red on its own.
-    # govulncheck writes every path relative to the module it ran in, so the
-    # report is rebased onto the repository root before the per-module files
-    # are merged; otherwise every module's findings point at a root go.mod.
+    # govulncheck writes the paths of the module's own files (its go.mod and
+    # source files) relative to the module it ran in, so the report is rebased
+    # onto the repository root before the per-module files are merged;
+    # otherwise every module's findings point at a root go.mod.
     if [ -n "${sarif_out}" ]; then
       local safe
       safe="$(sarif_name "${m}")"

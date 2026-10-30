@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Rebase one Go module's govulncheck SARIF paths onto the repository root.
 
-govulncheck runs once per Go module and writes every path in its report relative
-to the module it ran in, under the base %SRCROOT%: a finding in the pkg module
-points at "go.mod", not "pkg/go.mod". Code scanning resolves %SRCROOT% to the
-repository root, so without this rewrite every module's findings land on one
-root go.mod that does not exist, and the modules cannot be told apart.
+govulncheck runs once per Go module and writes the paths of that module's own
+files (its go.mod and source files) relative to the module, under the base
+%SRCROOT%: a finding in the pkg module points at "go.mod", not "pkg/go.mod".
+Code scanning resolves %SRCROOT% to the repository root, so without this rewrite
+every module's findings land on one root go.mod that does not exist, and the
+modules cannot be told apart.
 
 This prefixes MODULE_DIR to every artifact location under %SRCROOT%, wherever it
 appears in the document (result locations and call-stack frames alike).
