@@ -291,6 +291,10 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
+      # Backup — the chart's catalog.backup.* values (deploy/continuo/values.yaml)
+      - CATALOG_BACKUP_ENABLED=true
+      - CATALOG_BACKUP_SCHEDULE=0 2 * * *
+      - CATALOG_BACKUP_KEEP=7
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087

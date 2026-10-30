@@ -77,6 +77,17 @@ UPGRADE NOTES
 Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.
 {{- end }}
 
+{{- if and .Release.IsUpgrade (eq (include "continuo.catalog.backup.enabled" .) "true") }}
+
+catalog exports each tenant's graph to tenants/<tenant>/backups/catalog/ in
+your bucket on catalog.backup.schedule ({{ include "continuo.catalog.backup.schedule" . }}, UTC) and keeps the
+newest {{ include "continuo.catalog.backup.keep" . }} (catalog.backup.keep). With an external bucket (s3.*),
+catalog needs the same access to tenants/ as release-controller (read, write
+and delete) plus s3:AbortMultipartUpload; an install with per-pod IAM roles
+grants it to catalog's role.
+To run no exports, set catalog.backup.enabled=false.
+{{- end }}
+
 {{- if .Release.IsUpgrade }}
 
 BREAKING: upgrade through continuo 0.10.0 first. This release drops

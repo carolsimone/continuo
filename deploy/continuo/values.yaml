@@ -421,6 +421,28 @@ runs:
   taskMaxRetries: 2
   taskTimeoutHours: 24
 
+# catalog's backup. On `schedule`, catalog exports each tenant's whole graph
+# (nodes and relationships, including the code-version history and the
+# remediation case base that nothing else holds) as one gzipped JSON-lines file
+# to tenants/<tenant>/backups/catalog/<UTC timestamp>.jsonl.gz in the S3
+# bucket, then deletes all but the newest `keep` exports of that tenant. While
+# a tenant's export runs, catalog's writes for that tenant wait and its reads
+# go on. With an external bucket (s3.*), catalog needs the access
+# release-controller has to tenants/ (read, write, delete) plus
+# s3:AbortMultipartUpload; an install with per-pod IAM roles grants it to
+# catalog's role. `enabled` is true or false (false runs no exports),
+# `schedule` is a five-field cron in UTC or an @ descriptor (@daily,
+# @every 6h), and `keep` is a whole number of at least 1. The three reach
+# catalog through the shared ConfigMap as CATALOG_BACKUP_ENABLED,
+# CATALOG_BACKUP_SCHEDULE and CATALOG_BACKUP_KEEP; a value outside these rules
+# fails the install, and catalog refuses to start on a schedule its cron parser
+# rejects or a keep below 1.
+catalog:
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    keep: 7
+
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
 # runs, triggers, releases, remediation retries, schedule edits and dead-letter

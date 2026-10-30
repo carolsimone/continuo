@@ -188,6 +188,23 @@ done
 if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
 fi
+# An upgrading operator with catalog's backup on is told once what S3 access
+# the exports need and how to turn them off; an installing one, and one who
+# turned the backup off, are told nothing.
+backup_note='To run no exports, set catalog.backup.enabled=false.'
+[ "$(grep -cF "$backup_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once what S3 access catalog's backup needs"; exit 1; }
+grep -qF 's3:AbortMultipartUpload' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the upgrade notes do not name s3:AbortMultipartUpload"; exit 1; }
+if grep -qF "$backup_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the catalog backup upgrade note"; exit 1
+fi
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade --set catalog.backup.enabled=false \
+  --show-only templates/probe.yaml > "${tmp}/notes-upgrade-backup-off.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade with the backup off failed"; exit 1; }
+if grep -qF "$backup_note" "${tmp}/notes-upgrade-backup-off.txt"; then
+  echo "FAIL: the upgrade notes carry the catalog backup note although the backup is off"; exit 1
+fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
 # start on a level it does not know, so the chart (continuo.logLevel in
@@ -405,6 +422,75 @@ for svc in run-controller execution-controller; do
     echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS:"; echo "$shadows"; exit 1
   fi
 done
+
+# catalog.backup.enabled, catalog.backup.schedule and catalog.backup.keep reach
+# catalog through the shared ConfigMap as CATALOG_BACKUP_ENABLED,
+# CATALOG_BACKUP_SCHEDULE and CATALOG_BACKUP_KEEP. A keep below 1, a schedule
+# that is neither five fields nor an @ descriptor and a non-boolean enabled
+# fail the render, in the helpers as well as in the schema (the helpers refuse
+# them with the schema check skipped), a key the schema does not name is
+# refused, and values without a catalog block (as `helm upgrade
+# --reuse-values` can produce) render the defaults.
+echo "--- catalog.backup reaches the ConfigMap; values catalog cannot honour are refused"
+grep -q 'CATALOG_BACKUP_ENABLED: "true"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CATALOG_BACKUP_ENABLED to true"; exit 1; }
+grep -qF 'CATALOG_BACKUP_SCHEDULE: "0 2 * * *"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CATALOG_BACKUP_SCHEDULE to 0 2 * * *"; exit 1; }
+grep -q 'CATALOG_BACKUP_KEEP: "7"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CATALOG_BACKUP_KEEP to 7"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set catalog.backup.enabled=false --set catalog.backup.keep=3 \
+  --set-string 'catalog.backup.schedule=30 3 * * 1' > "${tmp}/backup-set.yaml"
+grep -q 'CATALOG_BACKUP_ENABLED: "false"' "${tmp}/backup-set.yaml" \
+  || { echo "FAIL: catalog.backup.enabled=false does not reach the shared ConfigMap"; exit 1; }
+grep -q 'CATALOG_BACKUP_KEEP: "3"' "${tmp}/backup-set.yaml" \
+  || { echo "FAIL: catalog.backup.keep does not reach the shared ConfigMap"; exit 1; }
+grep -qF 'CATALOG_BACKUP_SCHEDULE: "30 3 * * 1"' "${tmp}/backup-set.yaml" \
+  || { echo "FAIL: catalog.backup.schedule does not reach the shared ConfigMap"; exit 1; }
+for descriptor in '@daily' '@every 6h'; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+    --set-string "catalog.backup.schedule=${descriptor}" > "${tmp}/backup-descriptor.yaml" \
+    || { echo "FAIL: catalog.backup.schedule=${descriptor} must render"; exit 1; }
+  grep -qF "CATALOG_BACKUP_SCHEDULE: \"${descriptor}\"" "${tmp}/backup-descriptor.yaml" \
+    || { echo "FAIL: catalog.backup.schedule=${descriptor} does not reach the shared ConfigMap"; exit 1; }
+done
+# expect_backup_refused FLAG SETTING: helm template with FLAG SETTING fails,
+# with the schema check and again without it.
+expect_backup_refused() {
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$1" "$2" > /dev/null 2>&1; then
+    echo "FAIL: ${2} must fail the render"; exit 1
+  fi
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation "$1" "$2" > /dev/null 2>&1; then
+    echo "FAIL: ${2} must fail the render even with the schema check skipped"; exit 1
+  fi
+}
+expect_backup_refused --set catalog.backup.keep=0
+expect_backup_refused --set catalog.backup.keep=-1
+expect_backup_refused --set-string catalog.backup.schedule=nightly
+expect_backup_refused --set-string catalog.backup.schedule=
+expect_backup_refused --set-string 'catalog.backup.schedule=* * * *'
+expect_backup_refused --set-string 'catalog.backup.schedule=* * * * * *'
+expect_backup_refused --set catalog.backup.schedule=5
+expect_backup_refused --set-string catalog.backup.enabled=yes
+expect_backup_refused --set-string catalog.backup.enabled=true
+for unknown in catalog.backup.bogus=1 catalog.bogus=1; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${unknown}" > /dev/null 2>&1; then
+    echo "FAIL: ${unknown} must fail the render; the schema names no such key"; exit 1
+  fi
+done
+for absent in catalog=null catalog.backup=null; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${absent}" > "${tmp}/backup-absent.yaml" \
+    || { echo "FAIL: rendering with ${absent} failed; values without a catalog.backup block must render"; exit 1; }
+  grep -q 'CATALOG_BACKUP_ENABLED: "true"' "${tmp}/backup-absent.yaml" \
+    && grep -qF 'CATALOG_BACKUP_SCHEDULE: "0 2 * * *"' "${tmp}/backup-absent.yaml" \
+    && grep -q 'CATALOG_BACKUP_KEEP: "7"' "${tmp}/backup-absent.yaml" \
+    || { echo "FAIL: a release with ${absent} must get the default backup settings"; exit 1; }
+done
+shadows="$(deployment_env_entries catalog "${tmp}/defaults.yaml" 'CATALOG_BACKUP_ENABLED|CATALOG_BACKUP_SCHEDULE|CATALOG_BACKUP_KEEP')" \
+  || { echo "FAIL: the default render has no Deployment named catalog"; exit 1; }
+if [ -n "$shadows" ]; then
+  echo "FAIL: catalog's own env must not shadow the ConfigMap's CATALOG_BACKUP_* keys:"; echo "$shadows"; exit 1
+fi
 
 # maintenance.enabled reaches every service through the shared ConfigMap as
 # exactly "true" or "false"; a non-boolean value fails the render, and values

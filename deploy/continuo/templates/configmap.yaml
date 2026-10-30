@@ -42,4 +42,7 @@ data:
   K8S_CLIENT_BURST: {{ include "continuo.execution.kubeClientBurst" . | quote }}
   TASK_MAX_RETRIES: {{ include "continuo.runs.taskMaxRetries" . | quote }}
   TASK_TIMEOUT_SECONDS: {{ include "continuo.runs.taskTimeoutSeconds" . | quote }}
+  CATALOG_BACKUP_ENABLED: {{ include "continuo.catalog.backup.enabled" . | quote }}
+  CATALOG_BACKUP_SCHEDULE: {{ include "continuo.catalog.backup.schedule" . | quote }}
+  CATALOG_BACKUP_KEEP: {{ include "continuo.catalog.backup.keep" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}
