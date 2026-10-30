@@ -61,8 +61,14 @@ type ObjectWriter interface {
 // Ref with an empty Bucket writes to the default bucket; a Ref that names no
 // object is ErrInvalidRef. Any other error keeps its cause.
 //
+// Every writer OpenWriter returns must end in Close or Abort, or the upload it
+// opened stays in the store; the idiom is defer w.Abort() right after
+// OpenWriter, since Abort after a successful Close does nothing. A writer is
+// not safe for concurrent use.
+//
 // The Client uploads the object as an S3 multipart upload of 8 MiB parts and
-// holds one part in memory, so an object is limited to 10,000 parts (80 GiB).
+// holds one part in memory, so an object is limited to 10,000 parts (about 78
+// GiB).
 type StreamWriter interface {
 	OpenWriter(ctx context.Context, ref Ref, contentType string) (ObjectWriter, error)
 }

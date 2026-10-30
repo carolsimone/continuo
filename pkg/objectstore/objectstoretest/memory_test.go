@@ -141,6 +141,47 @@ func TestMemory_FailPutRefusesAWriterAtOpenAndAtClose(t *testing.T) {
 	assert.Empty(t, mem.Puts())
 }
 
+// FailList refuses a List of exactly one prefix; a List of another prefix,
+// even one the failing prefix begins with, still answers.
+func TestMemory_FailListInjectsAnErrorForOnePrefix(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory("continuo")
+	boom := errors.New("boom")
+	require.NoError(t, mem.Put(ctx, objectstore.Ref{Key: "p/q/a"}, []byte("x"), ""))
+	mem.FailList("p/q/", boom)
+
+	_, err := mem.List(ctx, "p/q/")
+	assert.ErrorIs(t, err, boom)
+	listed, err := mem.List(ctx, "p/")
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, "p/q/a", listed[0].Key)
+}
+
+// FailDelete refuses a Delete of one object, named with or without its
+// default bucket, and keeps it; other objects are deleted as before, and
+// DeletePrefix is not affected.
+func TestMemory_FailDeleteInjectsAnErrorForOneObject(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory("continuo")
+	boom := errors.New("boom")
+	for _, key := range []string{"p/a", "p/b"} {
+		require.NoError(t, mem.Put(ctx, objectstore.Ref{Key: key}, []byte("x"), ""))
+	}
+	mem.FailDelete(objectstore.Ref{Key: "p/a"}, boom)
+
+	assert.ErrorIs(t, mem.Delete(ctx, objectstore.Ref{Bucket: "continuo", Key: "p/a"}), boom)
+	_, err := mem.Get(ctx, objectstore.Ref{Key: "p/a"}, 64)
+	require.NoError(t, err, "a refused Delete keeps the object")
+	require.NoError(t, mem.Delete(ctx, objectstore.Ref{Key: "p/b"}))
+	_, err = mem.Get(ctx, objectstore.Ref{Key: "p/b"}, 64)
+	assert.ErrorIs(t, err, objectstore.ErrNotFound)
+
+	require.NoError(t, mem.DeletePrefix(ctx, "p/"), "FailDelete does not refuse DeletePrefix")
+	_, err = mem.Get(ctx, objectstore.Ref{Key: "p/a"}, 64)
+	assert.ErrorIs(t, err, objectstore.ErrNotFound)
+}
+
 func TestMemory_FailGetAppliesToGetStream(t *testing.T) {
 	ctx := context.Background()
 	mem := objectstoretest.NewMemory("continuo")

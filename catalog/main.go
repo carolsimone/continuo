@@ -10,10 +10,12 @@ import (
 
 	grpcinfra "github.com/carolsimone/continuo/catalog/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/catalog/adapters/http"
+	metricsinfra "github.com/carolsimone/continuo/catalog/adapters/metrics"
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
+	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -224,10 +226,10 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// One object-storage client, passed to each reader as its
-	// objectstore.Reader role: the topology artifact reader of both promotion
-	// groups, and the code-bundle reader of the versions and rejections
-	// groups.
+	// One object-storage client, passed to each adapter as the roles it uses:
+	// the topology artifact reader of both promotion groups and the
+	// code-bundle reader of the versions and rejections groups read objects,
+	// and the backup store streams, lists and deletes each tenant's exports.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
 		logger.Error("Failed to build the object-storage client", "error", err)
@@ -290,6 +292,42 @@ func main() {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,
 			pkgredis.WithHandlerTimeout(c.timeout),
 			pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable)))
+	}
+
+	// ========================================================================
+	// START THE BACKUP
+	// ========================================================================
+
+	// With CATALOG_BACKUP_ENABLED, every tenant's graph is exported at each
+	// slot of CATALOG_BACKUP_SCHEDULE (UTC) to
+	// tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz, streamed so memory
+	// does not grow with the graph, and the newest CATALOG_BACKUP_KEEP exports
+	// of each tenant are kept. An export holds the tenant's export lease, so
+	// the tenant's writes back off on every pod while it runs. The scheduler
+	// is a tracked goroutine: shutdown cancels an export in flight, which
+	// aborts its upload and releases its lease. The export series are
+	// registered only here.
+	if cfg.Backup.Enabled {
+		backupStore := s3infra.NewBackupStore(objectStore)
+		graphTenants := neo4jinfra.NewGraphTenants(neo4jClient)
+		exporter := backup.NewExporter(
+			neo4jinfra.NewExportLease(neo4jClient, logger),
+			neo4jinfra.NewGraphExporter(neo4jClient, config.Version(), logger),
+			backupStore,
+			metricsinfra.NewBackupMetrics(metricsReg, backupStore, graphTenants, time.Now, logger),
+			cfg.Backup.Keep,
+			time.Now,
+			logger,
+		)
+		backupScheduler, err := backup.NewScheduler(cfg.Backup.Schedule, graphTenants, exporter, time.Now, logger)
+		if err != nil {
+			logger.Error("Failed to build the catalog backup scheduler", "error", err)
+			os.Exit(1)
+		}
+		lifecycleManager.Go(func() { backupScheduler.Run(ctx) })
+		logger.Info("Catalog backup scheduled", "schedule", cfg.Backup.Schedule, "keep", cfg.Backup.Keep)
+	} else {
+		logger.Info("Catalog backup disabled (CATALOG_BACKUP_ENABLED=false)")
 	}
 
 	// ========================================================================

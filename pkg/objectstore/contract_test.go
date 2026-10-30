@@ -415,6 +415,37 @@ func TestRoles_DeleteRemovesOnlyThatObject(t *testing.T) {
 	}
 }
 
+// A writer's Write and Close obey the context it was opened with: once that
+// context is cancelled they fail with context.Canceled and store nothing,
+// every later Write and Close fails the same way, and Abort still discards
+// what was written. OpenWriter on a cancelled context opens nothing.
+func TestRoles_OpenWriterHonoursItsContext(t *testing.T) {
+	for name, s := range subjects(t) {
+		t.Run(name, func(t *testing.T) {
+			ref := objectstore.Ref{Key: "exports/cancelled"}
+			ctx, cancel := context.WithCancel(context.Background())
+			w, err := s.store.OpenWriter(ctx, ref, "text/plain")
+			require.NoError(t, err)
+			writeAll(t, w, content(mib), mib)
+			cancel()
+
+			_, err = w.Write([]byte("x"))
+			require.ErrorIs(t, err, context.Canceled)
+			require.ErrorIs(t, w.Close(), context.Canceled)
+			_, err = w.Write([]byte("x"))
+			require.ErrorIs(t, err, context.Canceled, "the failure sticks")
+			require.NoError(t, w.Abort(), "a writer whose context is cancelled can still be aborted")
+
+			_, err = s.store.GetStream(context.Background(), ref)
+			assert.ErrorIs(t, err, objectstore.ErrNotFound, "a cancelled writer stores nothing")
+
+			opened, err := s.store.OpenWriter(ctx, objectstore.Ref{Key: "exports/never"}, "text/plain")
+			assert.ErrorIs(t, err, context.Canceled, "OpenWriter on a cancelled context")
+			assert.Nil(t, opened)
+		})
+	}
+}
+
 func TestRoles_OpenWriterRefusesAnInvalidRef(t *testing.T) {
 	for name, s := range subjects(t) {
 		t.Run(name, func(t *testing.T) {

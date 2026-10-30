@@ -37,16 +37,21 @@ type Write struct {
 // missing object is objectstore.ErrNotFound and one over the read limit
 // objectstore.ErrTooLarge. Bodies are copied in and out. A writer opened with
 // OpenWriter stores its object when it is closed, and not before; one that is
-// aborted stores nothing. It is safe for concurrent use.
+// aborted stores nothing. A writer obeys the context it was opened with, as
+// the Client's does: once that context is done, Write and Close fail with its
+// error and Abort still discards what was written. It is safe for concurrent
+// use.
 type Memory struct {
-	mu            sync.Mutex
-	defaultBucket string
-	objects       map[objectstore.Ref]stored
-	failGet       map[objectstore.Ref]error
-	failPut       map[objectstore.Ref]error
-	failDelete    map[string]error
-	reads         []Read
-	puts          []Write
+	mu               sync.Mutex
+	defaultBucket    string
+	objects          map[objectstore.Ref]stored
+	failGet          map[objectstore.Ref]error
+	failPut          map[objectstore.Ref]error
+	failDeleteObject map[objectstore.Ref]error
+	failDeletePrefix map[string]error
+	failList         map[string]error
+	reads            []Read
+	puts             []Write
 }
 
 // stored is an object in a Memory: its bytes and when it was stored.
@@ -68,11 +73,13 @@ var (
 // NewMemory returns an empty Memory whose default bucket is defaultBucket.
 func NewMemory(defaultBucket string) *Memory {
 	return &Memory{
-		defaultBucket: defaultBucket,
-		objects:       map[objectstore.Ref]stored{},
-		failGet:       map[objectstore.Ref]error{},
-		failPut:       map[objectstore.Ref]error{},
-		failDelete:    map[string]error{},
+		defaultBucket:    defaultBucket,
+		objects:          map[objectstore.Ref]stored{},
+		failGet:          map[objectstore.Ref]error{},
+		failPut:          map[objectstore.Ref]error{},
+		failDeleteObject: map[objectstore.Ref]error{},
+		failDeletePrefix: map[string]error{},
+		failList:         map[string]error{},
 	}
 }
 
@@ -155,10 +162,14 @@ func (m *Memory) GetStream(_ context.Context, ref objectstore.Ref) (io.ReadClose
 }
 
 // List implements objectstore.Lister over the default bucket, in key order.
-// Each object's LastModified is the time it was stored.
+// Each object's LastModified is the time it was stored. A List of a prefix
+// FailList names returns its error.
 func (m *Memory) List(_ context.Context, prefix string) ([]objectstore.Object, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.failList[prefix]; err != nil {
+		return nil, err
+	}
 	var objects []objectstore.Object
 	for _, ref := range slices.SortedFunc(maps.Keys(m.objects), func(a, b objectstore.Ref) int {
 		return strings.Compare(a.Key, b.Key)
@@ -173,7 +184,7 @@ func (m *Memory) List(_ context.Context, prefix string) ([]objectstore.Object, e
 }
 
 // Delete implements objectstore.Deleter. An object that does not exist is not
-// an error.
+// an error; a Delete FailDelete refuses deletes nothing.
 func (m *Memory) Delete(_ context.Context, ref objectstore.Ref) error {
 	if err := ref.Validate(); err != nil {
 		return err
@@ -181,34 +192,43 @@ func (m *Memory) Delete(_ context.Context, ref objectstore.Ref) error {
 	ref = m.resolve(ref)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.failDeleteObject[ref]; err != nil {
+		return err
+	}
 	delete(m.objects, ref)
 	return nil
 }
 
 // OpenWriter implements objectstore.StreamWriter. A write FailPut refuses fails
-// here, as a store refuses the multipart upload an object is written through.
-func (m *Memory) OpenWriter(_ context.Context, ref objectstore.Ref, contentType string) (objectstore.ObjectWriter, error) {
+// here, as a store refuses the multipart upload an object is written through,
+// and so does a ctx that is already done.
+func (m *Memory) OpenWriter(ctx context.Context, ref objectstore.Ref, contentType string) (objectstore.ObjectWriter, error) {
 	if err := ref.Validate(); err != nil {
 		return nil, err
 	}
 	ref = m.resolve(ref)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("open writer for %s: %w", ref, err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.failPut[ref]; err != nil {
 		return nil, err
 	}
-	return &memoryWriter{mem: m, ref: ref, contentType: contentType}, nil
+	return &memoryWriter{mem: m, ctx: ctx, ref: ref, contentType: contentType}, nil
 }
 
 // memoryWriter is the ObjectWriter of a Memory: it buffers what is written and
-// stores it when it is closed. It is not safe for concurrent use.
+// stores it when it is closed. Write and Close fail once ctx is done. It is not
+// safe for concurrent use.
 type memoryWriter struct {
 	mem         *Memory
+	ctx         context.Context
 	ref         objectstore.Ref // resolved
 	contentType string
 	buf         bytes.Buffer
 	state       writerState
-	err         error // a failed Close; every later Write and Close returns it
+	err         error // a failed Close or a done ctx; every later Write and Close returns it
 }
 
 type writerState int
@@ -259,7 +279,14 @@ func (w *memoryWriter) usable() error {
 	if w.state != writerOpen {
 		return fmt.Errorf("%w: %s", objectstore.ErrWriterClosed, w.ref)
 	}
-	return w.err
+	if w.err != nil {
+		return w.err
+	}
+	if err := w.ctx.Err(); err != nil {
+		w.err = fmt.Errorf("object writer for %s: %w", w.ref, err)
+		return w.err
+	}
+	return nil
 }
 
 // DeletePrefix implements objectstore.PrefixDeleter over the default bucket.
@@ -269,7 +296,7 @@ func (m *Memory) DeletePrefix(_ context.Context, prefix string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.failDelete[prefix]; err != nil {
+	if err := m.failDeletePrefix[prefix]; err != nil {
 		return err
 	}
 	for ref := range m.objects {
@@ -301,7 +328,22 @@ func (m *Memory) FailPut(ref objectstore.Ref, err error) {
 func (m *Memory) FailDeletePrefix(prefix string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.failDelete[prefix] = err
+	m.failDeletePrefix[prefix] = err
+}
+
+// FailDelete makes every later Delete of ref (resolved against the default
+// bucket) return err and delete nothing.
+func (m *Memory) FailDelete(ref objectstore.Ref, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failDeleteObject[m.resolve(ref)] = err
+}
+
+// FailList makes every later List of exactly prefix return err.
+func (m *Memory) FailList(prefix string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failList[prefix] = err
 }
 
 // Reads returns every Get that reached the store, in order.

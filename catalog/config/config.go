@@ -1,9 +1,14 @@
 package config
 
 import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/robfig/cron/v3"
 )
 
 // ServiceName names this service as the producer of the dead letters its
@@ -21,6 +26,31 @@ type Neo4jConfig struct {
 	User     string
 	Password string
 }
+
+// BackupConfig is the nightly export of each tenant's graph to object
+// storage, from the chart's catalog.backup.* values.
+type BackupConfig struct {
+	// Enabled runs the export on Schedule (CATALOG_BACKUP_ENABLED, default
+	// true).
+	Enabled bool
+	// Schedule is when the export runs, in UTC: five cron fields or an @
+	// descriptor robfig/cron's standard parser reads, with no timezone
+	// prefix (CATALOG_BACKUP_SCHEDULE, default "0 2 * * *").
+	Schedule string
+	// Keep is how many of each tenant's newest exports are kept, at least 1
+	// (CATALOG_BACKUP_KEEP, default 7).
+	Keep int
+}
+
+// The environment keys of the backup and their defaults, the chart's.
+const (
+	backupEnabledKey  = "CATALOG_BACKUP_ENABLED"
+	backupScheduleKey = "CATALOG_BACKUP_SCHEDULE"
+	backupKeepKey     = "CATALOG_BACKUP_KEEP"
+
+	defaultBackupSchedule = "0 2 * * *"
+	defaultBackupKeep     = 7
+)
 
 // Config holds all configuration for the catalog service.
 type Config struct {
@@ -48,6 +78,9 @@ type Config struct {
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
+
+	// Backup is the nightly export of each tenant's graph.
+	Backup BackupConfig
 }
 
 // Load reads configuration from environment variables.
@@ -71,7 +104,76 @@ func Load(v *pkgconfig.Validator) Config {
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
+
+		Backup: loadBackup(v),
 	}
+}
+
+// loadBackup reads the backup settings. A value catalog cannot honour is
+// recorded on v, so catalog refuses to start: an enabled flag that is not a
+// boolean, a schedule checkBackupSchedule refuses, or a keep that is not a
+// whole number of at least 1. The values are checked whether or not the
+// backup is enabled, as the chart checks them.
+func loadBackup(v *pkgconfig.Validator) BackupConfig {
+	b := BackupConfig{Enabled: true, Schedule: defaultBackupSchedule, Keep: defaultBackupKeep}
+	if raw := os.Getenv(backupEnabledKey); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			v.Add(fmt.Sprintf("%s (invalid value %q: expected true or false)", backupEnabledKey, raw))
+		} else {
+			b.Enabled = enabled
+		}
+	}
+	if raw := os.Getenv(backupScheduleKey); raw != "" {
+		if err := checkBackupSchedule(raw); err != nil {
+			v.Add(fmt.Sprintf("%s (invalid value %q: %v)", backupScheduleKey, raw, err))
+		} else {
+			b.Schedule = raw
+		}
+	}
+	if raw := os.Getenv(backupKeepKey); raw != "" {
+		keep, err := strconv.Atoi(raw)
+		if err != nil || keep < 1 {
+			v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number of at least 1)", backupKeepKey, raw))
+		} else {
+			b.Keep = keep
+		}
+	}
+	return b
+}
+
+// minBackupInterval is the shortest @every interval a backup schedule may
+// name: each export pauses the tenant's writes while it runs.
+const minBackupInterval = time.Minute
+
+// neverFiresProbe is the instant a schedule must fire after to be taken as
+// firing at all; the schedules that fail it name a date no calendar has.
+var neverFiresProbe = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// checkBackupSchedule reports why spec cannot be a backup schedule, or nil.
+// A schedule is five cron fields or an @ descriptor that robfig/cron's
+// standard parser reads, and runs in UTC: a CRON_TZ= or TZ= prefix is
+// refused, as are an @every under a minute and a schedule no date satisfies.
+// Blanks around spec are ignored.
+func checkBackupSchedule(spec string) error {
+	text := strings.TrimSpace(spec)
+	if text == "" {
+		return fmt.Errorf("the schedule is empty")
+	}
+	if strings.HasPrefix(text, "CRON_TZ=") || strings.HasPrefix(text, "TZ=") {
+		return fmt.Errorf("the schedule runs in UTC and must not start with CRON_TZ= or TZ=")
+	}
+	schedule, err := cron.ParseStandard(text)
+	if err != nil {
+		return err
+	}
+	if every, ok := schedule.(cron.ConstantDelaySchedule); ok && every.Delay < minBackupInterval {
+		return fmt.Errorf("an @every interval is at least %s", minBackupInterval)
+	}
+	if schedule.Next(neverFiresProbe).IsZero() {
+		return fmt.Errorf("no date satisfies the schedule")
+	}
+	return nil
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

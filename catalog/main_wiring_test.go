@@ -208,6 +208,103 @@ func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 	}
 }
 
+// TestMain_RunsTheBackupOnlyWhenEnabled pins how main.go runs the nightly
+// export: only inside `if cfg.Backup.Enabled`, where it registers the backup
+// series, builds the exporter with the install's keep and the scheduler with
+// the install's schedule, and starts the scheduler's Run inside
+// lifecycleManager.Go, so shutdown cancels an export in flight and waits for
+// it to abort its upload and release its lease.
+func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
+	file := parseMain(t)
+
+	var enabled *ast.IfStmt
+	ast.Inspect(file, func(n ast.Node) bool {
+		if s, ok := n.(*ast.IfStmt); ok && exprText(s.Cond) == "cfg.Backup.Enabled" {
+			enabled = s
+			return false
+		}
+		return true
+	})
+	if enabled == nil {
+		t.Fatal("main.go has no `if cfg.Backup.Enabled` block")
+	}
+
+	calls := map[string]*ast.CallExpr{}
+	var scheduler string
+	ast.Inspect(enabled.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if call, ok := x.Rhs[0].(*ast.CallExpr); ok && isSelector(call.Fun, "backup", "NewScheduler") {
+				if id, ok := x.Lhs[0].(*ast.Ident); ok {
+					scheduler = id.Name
+				}
+			}
+		case *ast.CallExpr:
+			for _, name := range []string{"backup.NewExporter", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
+				pkg, fn, _ := strings.Cut(name, ".")
+				if isSelector(x.Fun, pkg, fn) {
+					calls[name] = x
+				}
+			}
+		}
+		return true
+	})
+	for _, name := range []string{"backup.NewExporter", "backup.NewScheduler", "metricsinfra.NewBackupMetrics", "s3infra.NewBackupStore"} {
+		if calls[name] == nil {
+			t.Errorf("main.go does not call %s inside `if cfg.Backup.Enabled`", name)
+		}
+	}
+	if t.Failed() {
+		return
+	}
+	if args := calls["backup.NewExporter"].Args; len(args) != 7 || exprText(args[4]) != "cfg.Backup.Keep" {
+		t.Errorf("backup.NewExporter must take cfg.Backup.Keep as its keep, got %v", exprText(calls["backup.NewExporter"]))
+	}
+	if args := calls["backup.NewScheduler"].Args; len(args) != 5 || exprText(args[0]) != "cfg.Backup.Schedule" {
+		t.Errorf("backup.NewScheduler must take cfg.Backup.Schedule as its spec, got %v", exprText(calls["backup.NewScheduler"]))
+	}
+	if scheduler == "" {
+		t.Fatal("main.go does not assign backup.NewScheduler's scheduler to a variable")
+	}
+
+	tracked := false
+	ast.Inspect(enabled.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isSelector(call.Fun, "lifecycleManager", "Go") || len(call.Args) != 1 {
+			return true
+		}
+		if body, ok := call.Args[0].(*ast.FuncLit); ok {
+			ast.Inspect(body.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok && isSelector(c.Fun, scheduler, "Run") {
+					tracked = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	if !tracked {
+		t.Errorf("main.go must start %s.Run inside lifecycleManager.Go", scheduler)
+	}
+
+	// Nothing of the backup is built outside the block.
+	outside := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == enabled {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok {
+			if isSelector(call.Fun, "backup", "NewScheduler") || isSelector(call.Fun, "metricsinfra", "NewBackupMetrics") {
+				outside++
+			}
+		}
+		return true
+	})
+	if outside != 0 {
+		t.Errorf("main.go builds the backup scheduler or its series outside `if cfg.Backup.Enabled` (%d calls)", outside)
+	}
+}
+
 // fields maps the keys of a keyed composite literal to their values.
 func fields(e ast.Expr) map[string]ast.Expr {
 	out := map[string]ast.Expr{}

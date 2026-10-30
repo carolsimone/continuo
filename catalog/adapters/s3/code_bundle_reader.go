@@ -1,8 +1,10 @@
-// Package s3 implements catalog's object-storage ports, the code-bundle
-// reader and the topology-artifact reader. Each adapter depends on the
-// objectstore.Reader role, never on the concrete client, parses the URI it is
-// given once with objectstore.ParseRef, and translates the store's errors
-// into its port's.
+// Package s3 implements catalog's object-storage ports: the code-bundle
+// reader, the topology-artifact reader and the backup store. Each adapter
+// depends on the narrowest objectstore roles it uses, never on the concrete
+// client, and translates the store's errors into its port's. The readers
+// parse the URI they are given once with objectstore.ParseRef; the backup
+// store builds and checks its keys with export.ObjectKey and
+// export.ParseObjectKey.
 package s3
 
 import (
