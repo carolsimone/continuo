@@ -150,10 +150,11 @@ func main() {
 		return neo4jClient.Close(ctx)
 	})
 
-	// Apply Neo4j constraints and indexes before any consumer or gRPC server
-	// starts, so the first message never races a full label scan. Idempotent
-	// (IF NOT EXISTS) and fatal on failure — serving traffic against an
-	// unindexed/unconstrained graph is not acceptable.
+	// Migrate the graph to the catalog's shape and apply its constraints and
+	// indexes before any consumer or gRPC server starts, while readiness is
+	// still false, so the first message never meets an unmigrated graph or
+	// races a full label scan. Idempotent, resumable after a crash, and fatal
+	// on failure.
 	if err := neo4jinfra.InitSchema(ctx, neo4jClient, logger); err != nil {
 		logger.Error("Failed to initialize Neo4j schema", "error", err)
 		os.Exit(1)

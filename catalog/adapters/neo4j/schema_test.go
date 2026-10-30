@@ -1,331 +1,192 @@
-package neo4jinfra_test
+//go:build integration
+
+package neo4jinfra
 
 import (
 	"context"
-	"log/slog"
-	"os"
+	"slices"
+	"sort"
 	"testing"
 
-	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
+	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestInitSchema_Idempotent verifies the schema DDL applies cleanly and that a
-// second application is a no-op (no error), proving restart-safety.
+// schemaEntry is the label and properties of one constraint or index.
+type schemaEntry struct {
+	Label      string
+	Properties []string
+}
+
+// wantConstraints is the graph's uniqueness constraints, by name: each
+// label's identity within its tenant, and the marker's second key.
+var wantConstraints = map[string]schemaEntry{
+	"node_unique":                     {"Node", []string{"tenant_id", "unique_id"}},
+	"meta_key_unique":                 {"Meta", []string{"tenant_id", "key"}},
+	"node_version_unique":             {"NodeVersion", []string{"tenant_id", "unique_id", "content_hash"}},
+	"code_unit_unique":                {"CodeUnit", []string{"tenant_id", "unit_id"}},
+	"code_unit_version_unique":        {"CodeUnitVersion", []string{"tenant_id", "unit_id", "checksum"}},
+	"rejection_unique":                {"Rejection", []string{"tenant_id", "release_id", "node_id"}},
+	"error_signature_unique":          {"ErrorSignature", []string{"tenant_id", "signature"}},
+	"proposal_unique":                 {"Proposal", []string{"tenant_id", "proposal_id"}},
+	"pull_request_unique":             {"PullRequest", []string{"tenant_id", "proposal_id", "service"}},
+	"processed_message_unique":        {"ProcessedMessage", []string{"tenant_id", "group", "message_id"}},
+	"processed_message_outbox_unique": {"ProcessedMessage", []string{"tenant_id", "group", "outbox_entry_id"}},
+}
+
+// wantIndexes is the graph's range indexes that back no constraint, by name.
+var wantIndexes = map[string]schemaEntry{
+	"node_fqn":                        {"Node", []string{"tenant_id", "service_name", "schema_name", "table_name"}},
+	"node_version_uid":                {"NodeVersion", []string{"tenant_id", "unique_id"}},
+	"code_unit_version_unit_id":       {"CodeUnitVersion", []string{"tenant_id", "unit_id"}},
+	"rejection_node_id":               {"Rejection", []string{"tenant_id", "node_id"}},
+	"rejection_category_reason":       {"Rejection", []string{"tenant_id", "category", "reason"}},
+	"error_signature_category_reason": {"ErrorSignature", []string{"tenant_id", "category", "reason"}},
+}
+
+// graphSchemaState is what SHOW CONSTRAINTS and SHOW INDEXES report.
+type graphSchemaState struct {
+	constraints     map[string]schemaEntry // every constraint, whatever its type
+	constraintTypes map[string]string
+	ranges          map[string]schemaEntry // every RANGE index, a constraint's included
+	rangeOwners     map[string]string      // RANGE index name -> owning constraint ("" for none)
+	lookups         []string               // LOOKUP index names, sorted
+	others          []string               // every other index, as "name (TYPE)"
+	ids             map[string]int64       // constraint and index ids, keyed "constraint:name" or "index:name"
+}
+
+func stringList(v any) []string {
+	items, _ := v.([]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		s, _ := item.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+func readGraphSchema(t *testing.T, client Neo4jClient) graphSchemaState {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = s.Close(ctx) }()
+	state := graphSchemaState{
+		constraints:     map[string]schemaEntry{},
+		constraintTypes: map[string]string{},
+		ranges:          map[string]schemaEntry{},
+		rangeOwners:     map[string]string{},
+		ids:             map[string]int64{},
+	}
+
+	res, err := s.Run(ctx, `SHOW CONSTRAINTS YIELD id, name, type, labelsOrTypes, properties RETURN *`, nil)
+	require.NoError(t, err)
+	recs, err := res.Collect(ctx)
+	require.NoError(t, err)
+	for _, rec := range recs {
+		m := rec.AsMap()
+		name := m["name"].(string)
+		labels := stringList(m["labelsOrTypes"])
+		require.Len(t, labels, 1, "constraint %s", name)
+		state.constraints[name] = schemaEntry{labels[0], stringList(m["properties"])}
+		state.constraintTypes[name] = m["type"].(string)
+		state.ids["constraint:"+name] = m["id"].(int64)
+	}
+
+	res, err = s.Run(ctx, `SHOW INDEXES YIELD id, name, type, labelsOrTypes, properties, owningConstraint RETURN *`, nil)
+	require.NoError(t, err)
+	recs, err = res.Collect(ctx)
+	require.NoError(t, err)
+	for _, rec := range recs {
+		m := rec.AsMap()
+		name := m["name"].(string)
+		state.ids["index:"+name] = m["id"].(int64)
+		switch typ := m["type"].(string); typ {
+		case "RANGE":
+			labels := stringList(m["labelsOrTypes"])
+			require.Len(t, labels, 1, "index %s", name)
+			state.ranges[name] = schemaEntry{labels[0], stringList(m["properties"])}
+			owner, _ := m["owningConstraint"].(string)
+			state.rangeOwners[name] = owner
+		case "LOOKUP":
+			state.lookups = append(state.lookups, name)
+		default:
+			state.others = append(state.others, name+" ("+typ+")")
+		}
+	}
+	sort.Strings(state.lookups)
+	return state
+}
+
+// assertTargetSchema checks the graph's constraints and indexes are exactly
+// the catalog's: every uniqueness constraint and range index of
+// wantConstraints and wantIndexes, under its name and over its properties
+// with tenant_id first, nothing else, and the LOOKUP indexes the graph had
+// before.
+func assertTargetSchema(t *testing.T, client Neo4jClient, lookupsBefore []string) graphSchemaState {
+	t.Helper()
+	state := readGraphSchema(t, client)
+
+	assert.Equal(t, wantConstraints, state.constraints, "SHOW CONSTRAINTS")
+	for name, typ := range state.constraintTypes {
+		assert.Contains(t, typ, "UNIQUENESS", "constraint %s is a uniqueness constraint", name)
+	}
+
+	wantRanges := map[string]schemaEntry{}
+	wantOwners := map[string]string{}
+	for name, e := range wantConstraints {
+		wantRanges[name] = e
+		wantOwners[name] = name
+	}
+	for name, e := range wantIndexes {
+		wantRanges[name] = e
+		wantOwners[name] = ""
+	}
+	assert.Equal(t, wantRanges, state.ranges, "SHOW INDEXES, type RANGE")
+	assert.Equal(t, wantOwners, state.rangeOwners, "each constraint owns its own index; the plain indexes own none")
+	for name, e := range state.ranges {
+		if assert.NotEmpty(t, e.Properties, "index %s", name) {
+			assert.Equal(t, "tenant_id", e.Properties[0], "index %s leads with tenant_id", name)
+		}
+	}
+
+	assert.Empty(t, state.others, "no index other than RANGE and LOOKUP")
+	assert.Equal(t, lookupsBefore, state.lookups, "the LOOKUP indexes are left as they were")
+	return state
+}
+
+// TestInitSchema_Idempotent applies the schema to a graph with no old-shape
+// data and applies it again: the second run finds the exact target set and
+// drops and recreates nothing.
 func TestInitSchema_Idempotent(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx := context.Background()
+	client := integrationClient(t) // the first apply
+	lookups := readGraphSchema(t, client).lookups
+	require.NotEmpty(t, lookups, "Neo4j keeps its token LOOKUP indexes")
+	first := assertTargetSchema(t, client, lookups)
 
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
+	require.NoError(t, InitSchema(ctx, client, quietLogger()), "second apply")
+	second := assertTargetSchema(t, client, lookups)
+	assert.Equal(t, first.ids, second.ids, "a second apply drops and recreates no constraint or index")
+}
 
-	// The expected constraints and indexes must be present after init.
-	session := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer session.Close(ctx)
-
-	names := map[string]bool{}
-	res, err := session.Run(ctx, "SHOW CONSTRAINTS YIELD name RETURN name", nil)
-	require.NoError(t, err)
-	for res.Next(ctx) {
-		if v, ok := res.Record().Get("name"); ok {
-			if s, ok := v.(string); ok {
-				names[s] = true
+// TestCatalogSchema_EveryLabelHasItsIdentityConstraint pins the schema to
+// graphschema: every label of the graph has one uniqueness constraint over
+// tenant_id and the label's identity, and every object of the schema leads
+// with tenant_id and is created only when absent.
+func TestCatalogSchema_EveryLabelHasItsIdentityConstraint(t *testing.T) {
+	for _, label := range graphschema.Labels() {
+		found := 0
+		for _, o := range catalogSchema {
+			if o.unique && o.label == label && slices.Equal(o.properties, graphschema.Identity(label)) {
+				found++
 			}
 		}
+		assert.Equal(t, 1, found, "label %s has one identity constraint", label)
 	}
-	require.NoError(t, res.Err())
-
-	res, err = session.Run(ctx, "SHOW INDEXES YIELD name RETURN name", nil)
-	require.NoError(t, err)
-	for res.Next(ctx) {
-		if v, ok := res.Record().Get("name"); ok {
-			if s, ok := v.(string); ok {
-				names[s] = true
-			}
-		}
-	}
-	require.NoError(t, res.Err())
-
-	for _, want := range []string{
-		"run_id_unique",
-		"table_uid_unique",
-		"meta_key_unique",
-		"table_fqn",
-		"table_schedule",
-		"run_schedule",
-		"node_version_unique",
-		"node_version_uid",
-		"code_unit_unique",
-		"code_unit_version_unique",
-		"code_unit_version_unit_id",
-		"rejection_unique",
-		"rejection_node_id",
-		"rejection_category_reason",
-		"error_signature_unique",
-		"error_signature_category_reason",
-		"proposal_unique",
-	} {
-		require.Truef(t, names[want], "expected schema object %q to exist after InitSchema", want)
-	}
-}
-
-// TestInitSchema_NormalizesLegacyTerminalStatusCasing verifies the one-off data
-// migration folds legacy uppercase terminal_status values down to the canonical
-// lowercase form, and that already-lowercase values (and 'cancelled') are left
-// untouched. Re-running InitSchema must remain a no-op.
-func TestInitSchema_NormalizesLegacyTerminalStatusCasing(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx := context.Background()
-
-	marker := t.Name()
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	cleanup := func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, "MATCH (n) WHERE n.test_marker = $m DETACH DELETE n", map[string]any{"m": marker})
-	}
-	cleanup()
-	defer cleanup()
-
-	_, err := session.Run(ctx, `
-		CREATE (:Run {run_id: $u1, terminal_status: 'SUCCEEDED', test_marker: $m})
-		CREATE (:Run {run_id: $u2, terminal_status: 'FAILED',    test_marker: $m})
-		CREATE (:Run {run_id: $u3, terminal_status: 'succeeded', test_marker: $m})
-		CREATE (:Run {run_id: $u4, terminal_status: 'cancelled', test_marker: $m})
-	`, map[string]any{
-		"u1": marker + "-1", "u2": marker + "-2",
-		"u3": marker + "-3", "u4": marker + "-4", "m": marker,
-	})
-	require.NoError(t, err)
-	session.Close(ctx)
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
-
-	read := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer read.Close(ctx)
-	got := map[string]string{}
-	res, err := read.Run(ctx,
-		"MATCH (r:Run) WHERE r.test_marker = $m RETURN r.run_id AS id, r.terminal_status AS ts",
-		map[string]any{"m": marker})
-	require.NoError(t, err)
-	for res.Next(ctx) {
-		rec := res.Record()
-		id, _ := rec.Get("id")
-		ts, _ := rec.Get("ts")
-		got[id.(string)] = ts.(string)
-	}
-	require.NoError(t, res.Err())
-
-	require.Equal(t, "succeeded", got[marker+"-1"], "uppercase SUCCEEDED must be lowercased")
-	require.Equal(t, "failed", got[marker+"-2"], "uppercase FAILED must be lowercased")
-	require.Equal(t, "succeeded", got[marker+"-3"], "already-lowercase value unchanged")
-	require.Equal(t, "cancelled", got[marker+"-4"], "cancelled must be left untouched")
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
-}
-
-// TestDataMigration_RemovesTableLastStamps verifies the data migration strips
-// the retired last_commit_sha/last_repo/last_changed_at/last_release_id stamp
-// from a :Table while leaving the node's other properties untouched, and that
-// re-running InitSchema against an already-clean node stays a no-op.
-func TestDataMigration_RemovesTableLastStamps(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx := context.Background()
-
-	marker := t.Name()
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	cleanup := func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, "MATCH (t:Table {unique_id: $u}) DETACH DELETE t", map[string]any{"u": marker})
-	}
-	cleanup()
-	defer cleanup()
-
-	_, err := session.Run(ctx, `
-		CREATE (:Table {
-			unique_id: $u, schema_name: 'p', table_name: 't', service_name: 's',
-			last_commit_sha: 'a1', last_repo: 'acme/demo',
-			last_changed_at: datetime(), last_release_id: 'rel-1'
-		})
-	`, map[string]any{"u": marker})
-	require.NoError(t, err)
-	session.Close(ctx)
-
-	assertStampsGone := func(label string) {
-		read := client.NewSession(ctx, neo4j.AccessModeRead)
-		defer read.Close(ctx)
-		res, err := read.Run(ctx, `
-			MATCH (t:Table {unique_id: $u})
-			RETURN t.last_commit_sha AS c, t.last_repo AS r, t.last_changed_at AS at,
-			       t.last_release_id AS rel, t.schema_name AS schema_name,
-			       t.table_name AS table_name, t.service_name AS service_name
-		`, map[string]any{"u": marker})
-		require.NoError(t, err)
-		require.True(t, res.Next(ctx))
-		rec := res.Record()
-		for _, k := range []string{"c", "r", "at", "rel"} {
-			v, _ := rec.Get(k)
-			require.Nilf(t, v, "%s: last_* property %q must be gone", label, k)
-		}
-		schemaName, _ := rec.Get("schema_name")
-		tableName, _ := rec.Get("table_name")
-		serviceName, _ := rec.Get("service_name")
-		require.Equal(t, "p", schemaName, "%s: schema_name must survive the migration", label)
-		require.Equal(t, "t", tableName, "%s: table_name must survive the migration", label)
-		require.Equal(t, "s", serviceName, "%s: service_name must survive the migration", label)
-	}
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
-	assertStampsGone("after first InitSchema")
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
-	assertStampsGone("after second InitSchema")
-}
-
-// TestDataMigration_RemovesTopologyRootServiceMetadata verifies the data
-// migration strips the retired service_metadata property from a :TopologyRoot
-// while leaving its other properties untouched, and that re-running InitSchema
-// against an already-clean node stays a no-op.
-func TestDataMigration_RemovesTopologyRootServiceMetadata(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx := context.Background()
-
-	marker := t.Name()
-	cleanup := func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id: $id}) DETACH DELETE r", map[string]any{"id": marker})
-	}
-	cleanup()
-	defer cleanup()
-
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	_, err := session.Run(ctx, `
-		CREATE (:TopologyRoot {id: $id, promotion_seq: 7, service_metadata: '{"daily":{"cron":"0 3 * * *"}}'})
-	`, map[string]any{"id": marker})
-	require.NoError(t, err)
-	session.Close(ctx)
-
-	assertMetadataGone := func(label string) {
-		read := client.NewSession(ctx, neo4j.AccessModeRead)
-		defer read.Close(ctx)
-		res, err := read.Run(ctx, `
-			MATCH (r:TopologyRoot {id: $id})
-			RETURN r.service_metadata AS metadata, r.promotion_seq AS seq
-		`, map[string]any{"id": marker})
-		require.NoError(t, err)
-		require.True(t, res.Next(ctx))
-		metadata, _ := res.Record().Get("metadata")
-		seq, _ := res.Record().Get("seq")
-		require.Nilf(t, metadata, "%s: service_metadata must be gone", label)
-		require.Equal(t, int64(7), seq, "%s: promotion_seq must survive the migration", label)
-	}
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
-	assertMetadataGone("after first InitSchema")
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
-	assertMetadataGone("after second InitSchema")
-}
-
-// TestInitSchema_DeletesLegacyPreviousChainEdges verifies the data migration
-// removes the retired :PREVIOUS chain (both node and unit versions) while
-// leaving the version nodes themselves untouched.
-func TestInitSchema_DeletesLegacyPreviousChainEdges(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx := context.Background()
-
-	marker := t.Name()
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	cleanup := func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, "MATCH (n) WHERE n.test_marker = $m DETACH DELETE n", map[string]any{"m": marker})
-	}
-	cleanup()
-	defer cleanup()
-
-	_, err := session.Run(ctx, `
-		CREATE (a:NodeVersion {unique_id: $m, content_hash: $m + '-2', test_marker: $m})
-		CREATE (b:NodeVersion {unique_id: $m, content_hash: $m + '-1', test_marker: $m})
-		CREATE (a)-[:PREVIOUS]->(b)
-		CREATE (c:CodeUnitVersion {unit_id: $m, checksum: $m + '-2', test_marker: $m})
-		CREATE (d:CodeUnitVersion {unit_id: $m, checksum: $m + '-1', test_marker: $m})
-		CREATE (c)-[:PREVIOUS]->(d)
-	`, map[string]any{"m": marker})
-	require.NoError(t, err)
-	session.Close(ctx)
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger))
-
-	read := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer read.Close(ctx)
-	res, err := read.Run(ctx,
-		`MATCH (n)-[p:PREVIOUS]->() WHERE n.test_marker = $m RETURN count(p) AS edges`,
-		map[string]any{"m": marker})
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	edges, _ := res.Record().Get("edges")
-	require.EqualValues(t, 0, edges, ":PREVIOUS edges must be deleted")
-
-	res, err = read.Run(ctx,
-		`MATCH (n) WHERE n.test_marker = $m RETURN count(n) AS nodes`,
-		map[string]any{"m": marker})
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	nodes, _ := res.Record().Get("nodes")
-	require.EqualValues(t, 4, nodes, "version nodes themselves must survive")
-
-	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
-}
-
-// TestDataMigration_RenamesPythonModelNodeType verifies the data migration
-// rewrites a :Table's legacy node_type value 'python-model' to 'python-node',
-// leaves every other node_type untouched, and stays idempotent on a second
-// InitSchema application.
-func TestDataMigration_RenamesPythonModelNodeType(t *testing.T) {
-	client := newTestClient(t)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx := context.Background()
-
-	oldID, keepID := t.Name()+"-old", t.Name()+"-keep"
-	cleanup := func() {
-		s := client.NewSession(ctx, neo4j.AccessModeWrite)
-		defer s.Close(ctx)
-		_, _ = s.Run(ctx, "MATCH (t:Table) WHERE t.unique_id IN [$a, $b] DETACH DELETE t",
-			map[string]any{"a": oldID, "b": keepID})
-	}
-	cleanup()
-	defer cleanup()
-
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	_, err := session.Run(ctx, `
-		CREATE (:Table {unique_id: $old, node_type: 'python-model'})
-		CREATE (:Table {unique_id: $keep, node_type: 'python-csv'})`,
-		map[string]any{"old": oldID, "keep": keepID})
-	require.NoError(t, err)
-	session.Close(ctx)
-
-	nodeType := func(id string) string {
-		s := client.NewSession(ctx, neo4j.AccessModeRead)
-		defer s.Close(ctx)
-		res, err := s.Run(ctx, "MATCH (t:Table {unique_id: $u}) RETURN t.node_type AS nt", map[string]any{"u": id})
-		require.NoError(t, err)
-		require.True(t, res.Next(ctx))
-		v, _ := res.Record().Get("nt")
-		return v.(string)
-	}
-
-	for i := 0; i < 2; i++ {
-		require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger))
-		require.Equal(t, "python-node", nodeType(oldID))
-		require.Equal(t, "python-csv", nodeType(keepID))
+	for _, o := range catalogSchema {
+		assert.Contains(t, o.statement(), "(n.tenant_id, ", "%s leads with tenant_id", o.name)
+		assert.Contains(t, o.statement(), " IF NOT EXISTS ", "%s is created only when absent", o.name)
 	}
 }

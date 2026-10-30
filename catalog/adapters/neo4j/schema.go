@@ -3,174 +3,117 @@ package neo4jinfra
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"strings"
 
+	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-// schemaStatements are the idempotent Neo4j DDL statements that back the
-// catalog's hot lookup paths. Each uses IF NOT EXISTS so running them on
-// every startup is safe and order-independent.
-//
-//   - run_id_unique: guarantees a single :Run node per run_id in the run
-//     history the graph still holds, which the run sweeper deletes.
-//   - table_uid_unique: backs the `MERGE (:Table {unique_id: …})` upsert in the
-//     release-promotion swap and prevents concurrent promotions from minting
-//     duplicate :Table nodes for the same unique_id.
-//   - meta_key_unique: makes the :Meta {key} MERGE that opens every topology
-//     swap race-free, so two promotions arriving together on an empty graph
-//     cannot mint two current_release singletons.
-//   - table_fqn: backs the composite (service_name, schema_name, table_name)
-//     lookup of GetNode.
-//   - table_schedule: an index on :Table.schedule_name; no read path uses it.
-//   - run_schedule: an index on :Run.schedule_name; no read path uses it.
-//   - node_version_unique: makes (unique_id, content_hash) a code version's
-//     identity, so a redelivered release MERGEs onto the version it already
-//     wrote instead of minting a duplicate.
-//   - node_version_uid: backs chain and history lookups that start from a
-//     node's unique_id rather than from its :Table — the path that still works
-//     after a retired node's :Table is deleted.
-//   - code_unit_unique / code_unit_version_unique: the same identity guarantees
-//     for shared-code units (dbt macros today, Python modules later), whose ids
-//     are service-namespaced so two services' copies never collide.
-//   - code_unit_version_unit_id: backs the `unit_id`-only lookups the unit
-//     history RPCs issue (UnitVersions, and once per unit on the
-//     node-selector path) — code_unit_version_unique only covers the
-//     composite (unit_id, checksum), so without this index Neo4j plans a full
-//     :CodeUnitVersion label scan for every one of those reads.
-//   - rejection_unique: a rejection's identity is (release_id, node_id),
-//     matching the classifier's dedup, so redeliveries MERGE onto the row
-//     they already wrote.
-//   - rejection_node_id: backs `[:RESOLVED_BY]` linking from both the
-//     versions consumer and the late-arrival back-link.
-//   - rejection_category_reason: backs the category+reason precedent lookup,
-//     which filters on :Rejection's own (always-current) properties rather
-//     than the :ErrorSignature hub's first-seen ones.
-//   - error_signature_unique: the global precedent hub's MERGE key.
-//   - error_signature_category_reason: no longer backs a read path — the
-//     category+reason precedent lookup filters :Rejection now — but stays:
-//     :ErrorSignature nodes are few (one per distinct signature), so the
-//     write cost is negligible, and the hub's category/reason remain accurate
-//     first-seen metadata worth indexing for direct hub lookups.
-//   - proposal_unique: a proposal's identity.
-//   - pull_request_unique: one PR node per (proposal, service).
-var schemaStatements = []string{
-	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
-	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
-	"CREATE CONSTRAINT meta_key_unique IF NOT EXISTS FOR (m:Meta) REQUIRE m.key IS UNIQUE",
-	"CREATE INDEX table_fqn IF NOT EXISTS FOR (t:Table) ON (t.service_name, t.schema_name, t.table_name)",
-	"CREATE INDEX table_schedule IF NOT EXISTS FOR (t:Table) ON (t.schedule_name)",
-	"CREATE INDEX run_schedule IF NOT EXISTS FOR (r:Run) ON (r.schedule_name)",
-	"CREATE CONSTRAINT node_version_unique IF NOT EXISTS FOR (v:NodeVersion) REQUIRE (v.unique_id, v.content_hash) IS UNIQUE",
-	"CREATE INDEX node_version_uid IF NOT EXISTS FOR (v:NodeVersion) ON (v.unique_id)",
-	"CREATE CONSTRAINT code_unit_unique IF NOT EXISTS FOR (c:CodeUnit) REQUIRE c.unit_id IS UNIQUE",
-	"CREATE CONSTRAINT code_unit_version_unique IF NOT EXISTS FOR (v:CodeUnitVersion) REQUIRE (v.unit_id, v.checksum) IS UNIQUE",
-	"CREATE INDEX code_unit_version_unit_id IF NOT EXISTS FOR (v:CodeUnitVersion) ON (v.unit_id)",
-	"CREATE CONSTRAINT rejection_unique IF NOT EXISTS FOR (r:Rejection) REQUIRE (r.release_id, r.node_id) IS UNIQUE",
-	"CREATE INDEX rejection_node_id IF NOT EXISTS FOR (r:Rejection) ON (r.node_id)",
-	"CREATE INDEX rejection_category_reason IF NOT EXISTS FOR (r:Rejection) ON (r.category, r.reason)",
-	"CREATE CONSTRAINT error_signature_unique IF NOT EXISTS FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
-	"CREATE INDEX error_signature_category_reason IF NOT EXISTS FOR (s:ErrorSignature) ON (s.category, s.reason)",
-	"CREATE CONSTRAINT proposal_unique IF NOT EXISTS FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",
-	"CREATE CONSTRAINT pull_request_unique IF NOT EXISTS FOR (p:PullRequest) REQUIRE (p.proposal_id, p.service) IS UNIQUE",
+// tenantProperty is the property every node of the catalog graph carries its
+// tenant in. It leads every constraint and index of the schema.
+const tenantProperty = "tenant_id"
+
+// schemaObject is one uniqueness constraint or range index of the catalog
+// graph, over tenant_id followed by properties.
+type schemaObject struct {
+	name       string
+	unique     bool
+	label      graphschema.Label
+	properties []string
 }
 
-// dataMigrations are idempotent DML statements applied once startup DDL is in
-// place. Unlike schemaStatements they touch data, so they run after the indexes
-// are online (the migrations themselves benefit from those indexes).
-//
-//   - normalize_terminal_status: folds the legacy uppercase casing the run
-//     aggregate used to stamp ("SUCCEEDED"/"FAILED") down to the canonical
-//     lowercase form every writer now produces, so the UI never sees a mixed
-//     casing. Re-running it is a no-op once all rows are lowercase.
-//   - delete_previous_chain: removes the retired :PREVIOUS version chain (node
-//     and unit versions alike). Ordering is promoted_at; the chain could
-//     neither order nor enumerate correctly, and nothing writes it any more.
-//     Re-running finds no edges and is a no-op.
-//   - remove_table_last_stamps: strips the retired last_* provenance stamp
-//     from every :Table. Version provenance lives on :NodeVersion; nothing
-//     reads these properties, and leaving them would serve stale commits to
-//     any future reader. Idempotent: REMOVE on an absent property is a no-op.
-//   - python_node_type: stores the python script node kind as 'python-node',
-//     the value every reader parses; a :Table carrying 'python-model' would
-//     fail ParseNodeType on every scheduled run. Idempotent: once no :Table
-//     carries 'python-model' it matches nothing.
-//   - remove_topology_root_service_metadata: strips the retired
-//     service_metadata property from :TopologyRoot. Nothing writes or reads it,
-//     and a leftover value is dead weight on the singleton. Idempotent: REMOVE
-//     on an absent property is a no-op.
-var dataMigrations = []string{
-	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
-	"MATCH ()-[p:PREVIOUS]->() DELETE p",
-	`MATCH (t:Table)
-	 WHERE t.last_commit_sha IS NOT NULL OR t.last_repo IS NOT NULL
-	    OR t.last_changed_at IS NOT NULL OR t.last_release_id IS NOT NULL
-	 REMOVE t.last_commit_sha, t.last_repo, t.last_changed_at, t.last_release_id`,
-	"MATCH (t:Table {node_type: 'python-model'}) SET t.node_type = 'python-node'",
-	"MATCH (r:TopologyRoot) WHERE r.service_metadata IS NOT NULL REMOVE r.service_metadata",
+// identityConstraint makes the label's identity in graphschema unique within
+// a tenant.
+func identityConstraint(name string, label graphschema.Label) schemaObject {
+	return schemaObject{name: name, unique: true, label: label, properties: graphschema.Identity(label)}
 }
 
-// awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly
-// created indexes to come online. On a cold graph the indexes are populated
-// instantly; on a populated graph this is the ceiling before startup fails
-// loudly rather than serving queries against a still-building index.
+// uniqueConstraint makes properties unique within a tenant among the nodes of
+// label.
+func uniqueConstraint(name string, label graphschema.Label, properties ...string) schemaObject {
+	return schemaObject{name: name, unique: true, label: label, properties: properties}
+}
+
+// rangeIndex indexes the nodes of label by tenant and properties.
+func rangeIndex(name string, label graphschema.Label, properties ...string) schemaObject {
+	return schemaObject{name: name, label: label, properties: properties}
+}
+
+// statement is the object's CREATE statement, which does nothing when an
+// object of the same name exists.
+func (o schemaObject) statement() string {
+	props := make([]string, 0, len(o.properties)+1)
+	for _, p := range append([]string{tenantProperty}, o.properties...) {
+		props = append(props, "n."+p)
+	}
+	on := strings.Join(props, ", ")
+	if o.unique {
+		return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE (%s) IS UNIQUE", o.name, o.label, on)
+	}
+	return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR (n:%s) ON (%s)", o.name, o.label, on)
+}
+
+// catalogSchema is every constraint and index of the catalog graph. Each
+// label's identity is unique within its tenant, so two concurrent MERGEs of
+// one node cannot create two, and a redelivered message MERGEs onto what it
+// wrote before. A uniqueness constraint ignores a node that lacks one of its
+// properties, so the code that writes a node, not the schema, keeps tenant_id
+// present.
+//
+//   - node_fqn backs GetNode's lookup by service, schema and table name.
+//   - node_version_uid and code_unit_version_unit_id back the version-history
+//     reads that start from a node's unique_id or a code unit's unit_id; the
+//     identity constraints cover only the full (id, hash) pair.
+//   - rejection_node_id backs the [:RESOLVED_BY] links the versions group and
+//     a late rejection draw from a node's rejections.
+//   - rejection_category_reason backs the category and reason precedent
+//     lookup, which filters :Rejection's own properties.
+//   - error_signature_category_reason indexes the signature hub's first-seen
+//     category and reason for direct hub lookups; the hubs are few, so it
+//     costs little to keep.
+//   - processed_message_outbox_unique is the marker's second key: a producer's
+//     outbox row re-sent under a new stream message id is the same message.
+var catalogSchema = []schemaObject{
+	identityConstraint("node_unique", graphschema.Node),
+	rangeIndex("node_fqn", graphschema.Node, "service_name", "schema_name", "table_name"),
+	identityConstraint("meta_key_unique", graphschema.Meta),
+	identityConstraint("node_version_unique", graphschema.NodeVersion),
+	rangeIndex("node_version_uid", graphschema.NodeVersion, "unique_id"),
+	identityConstraint("code_unit_unique", graphschema.CodeUnit),
+	identityConstraint("code_unit_version_unique", graphschema.CodeUnitVersion),
+	rangeIndex("code_unit_version_unit_id", graphschema.CodeUnitVersion, "unit_id"),
+	identityConstraint("rejection_unique", graphschema.Rejection),
+	rangeIndex("rejection_node_id", graphschema.Rejection, "node_id"),
+	rangeIndex("rejection_category_reason", graphschema.Rejection, "category", "reason"),
+	identityConstraint("error_signature_unique", graphschema.ErrorSignature),
+	rangeIndex("error_signature_category_reason", graphschema.ErrorSignature, "category", "reason"),
+	identityConstraint("proposal_unique", graphschema.Proposal),
+	identityConstraint("pull_request_unique", graphschema.PullRequest),
+	identityConstraint("processed_message_unique", graphschema.ProcessedMessage),
+	uniqueConstraint("processed_message_outbox_unique", graphschema.ProcessedMessage, "group", "outbox_entry_id"),
+}
+
+// awaitIndexTimeoutSeconds bounds how long createSchema waits for the indexes
+// to come online. On an empty graph they are online at once; on a populated
+// one this is the ceiling before startup fails rather than serve queries
+// against an index still being built.
 const awaitIndexTimeoutSeconds = 300
 
-// InitSchema applies the catalog's Neo4j constraints and indexes. It is
-// idempotent (every statement uses IF NOT EXISTS) and must run at startup,
-// before any consumer or gRPC server begins serving, so the first message does
-// not race a full label scan. Any DDL failure is returned so main can fail
-// startup loudly rather than serve traffic against an unindexed graph.
-//
-// The table_uid_unique constraint refuses to create if duplicate
-// :Table {unique_id} nodes already exist. See the catalog storage-ownership
-// architecture doc for the one-off dedup query to run before first rollout.
-// meta_key_unique likewise refuses to create if two :Meta nodes share a key.
-func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) error {
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer func() { _ = session.Close(ctx) }()
-
-	// Bolt surfaces a DDL failure either from Run or only when the result
-	// summary is pulled, so every statement is consumed and checked — a
-	// discarded result could let a failed statement slip past this gate.
-	for _, stmt := range schemaStatements {
-		result, err := session.Run(ctx, stmt, nil)
-		if err != nil {
-			return fmt.Errorf("InitSchema: %q: %w", stmt, err)
-		}
-		if _, err := result.Consume(ctx); err != nil {
-			return fmt.Errorf("InitSchema: %q: %w", stmt, err)
+// createSchema creates every object of catalogSchema that does not exist yet
+// and waits until every index is online. Creating a uniqueness constraint
+// fails when existing nodes already break it.
+func createSchema(ctx context.Context, session neo4j.SessionWithContext, changes *migrationChanges) error {
+	for _, o := range catalogSchema {
+		if err := runCounted(ctx, session, o.statement(), nil, changes); err != nil {
+			return fmt.Errorf("create %s: %w", o.name, err)
 		}
 	}
-
-	// CREATE INDEX only registers the index; on a non-empty graph Neo4j
-	// populates it asynchronously. Block until every index is online so the
-	// first consumer query seeks an index instead of falling back to the full
-	// label scan this startup gate exists to prevent.
-	awaitResult, err := session.Run(ctx,
-		"CALL db.awaitIndexes($timeout)",
-		map[string]any{"timeout": awaitIndexTimeoutSeconds},
-	)
-	if err != nil {
-		return fmt.Errorf("InitSchema: await indexes online: %w", err)
+	// CREATE only registers an index; on a populated graph Neo4j fills it in
+	// the background. Waiting here means the first message never runs against
+	// a full label scan.
+	if err := runCounted(ctx, session, "CALL db.awaitIndexes($timeout)",
+		map[string]any{"timeout": awaitIndexTimeoutSeconds}, changes); err != nil {
+		return fmt.Errorf("await indexes online: %w", err)
 	}
-	if _, err := awaitResult.Consume(ctx); err != nil {
-		return fmt.Errorf("InitSchema: await indexes online: %w", err)
-	}
-
-	// Apply idempotent data migrations once the indexes backing them are online.
-	for _, stmt := range dataMigrations {
-		result, err := session.Run(ctx, stmt, nil)
-		if err != nil {
-			return fmt.Errorf("InitSchema: data migration %q: %w", stmt, err)
-		}
-		if _, err := result.Consume(ctx); err != nil {
-			return fmt.Errorf("InitSchema: data migration %q: %w", stmt, err)
-		}
-	}
-
-	logger.Info("Neo4j schema initialized",
-		"statements", len(schemaStatements),
-		"data_migrations", len(dataMigrations))
 	return nil
 }

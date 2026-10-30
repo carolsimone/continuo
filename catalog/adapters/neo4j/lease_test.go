@@ -71,6 +71,97 @@ func TestLease_ConcurrentAcquiresGrantOne(t *testing.T) {
 	assert.Equal(t, granted, f.leaseNode()["holder"])
 }
 
+// TestLease_TenantsHoldSeparateGatesAndLeases runs two tenants side by side.
+// Each tenant's gate and lease live on its own (:Meta {tenant_id, key:
+// 'export'}) node, so the tenants' first writes create their lease nodes at
+// the same moment, one tenant writes while the other's write holds its gate,
+// both take their leases at once, and a lease one tenant holds pauses only
+// that tenant's writes.
+func TestLease_TenantsHoldSeparateGatesAndLeases(t *testing.T) {
+	ctx := context.Background()
+	a, b := newUoWFixture(t), newUoWFixture(t)
+	u := NewUnitOfWork(a.client, quietLogger())
+	probe := func(f *uowFixture, name string) func(context.Context, uow.Tx) error {
+		return func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, name) }
+	}
+	require.Nil(t, a.leaseNode())
+	require.Nil(t, b.leaseNode())
+
+	// Tenant a's first write creates its lease node and holds the gate open.
+	inA := make(chan struct{})
+	proceed := make(chan struct{})
+	letAFinish := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(letAFinish)
+	aDone := make(chan error, 1)
+	go func() {
+		aDone <- u.Write(ctx, a.marker("1762077600000-0", nil), true, func(ctx context.Context, tx uow.Tx) error {
+			if err := a.writeProbe(ctx, tx, "a-in-flight"); err != nil {
+				return err
+			}
+			close(inA)
+			<-proceed
+			return nil
+		})
+	}()
+	select {
+	case <-inA:
+	case err := <-aDone:
+		t.Fatalf("tenant a's write ended before its fn ran: %v", err)
+	}
+
+	// Tenant b's first write creates b's lease node and commits meanwhile.
+	bDone := make(chan error, 1)
+	go func() { bDone <- u.Write(ctx, b.marker("1762077600000-0", nil), true, probe(b, "b-first")) }()
+	select {
+	case err := <-bDone:
+		require.NoError(t, err, "tenant b writes while tenant a's write holds a's gate")
+	case <-time.After(10 * time.Second):
+		t.Fatal("tenant b's write waited for tenant a's gate")
+	}
+	letAFinish()
+	require.NoError(t, <-aDone)
+
+	// Both tenants take their leases at the same moment.
+	holders := map[*uowFixture]string{a: "exporter-a", b: "exporter-b"}
+	errs := make(chan error, len(holders))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for f, holder := range holders {
+		lease := NewExportLease(integrationClient(t), quietLogger())
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, holder, time.Minute); err != nil {
+				errs <- fmt.Errorf("tenant %s: %w", f.tenant, err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err, "a tenant's lease is granted whatever another tenant holds")
+	}
+	assert.Equal(t, "exporter-a", a.leaseNode()["holder"])
+	assert.Equal(t, "exporter-b", b.leaseNode()["holder"])
+
+	// Tenant b's export ends; tenant a's lease pauses tenant a's writes only.
+	lease := NewExportLease(a.client, quietLogger())
+	require.NoError(t, lease.Release(ctx, b.tenant, "exporter-b"))
+	require.NoError(t, u.Write(ctx, b.marker("1762077700000-0", nil), true, probe(b, "b-second")),
+		"tenant a's lease does not pause tenant b's writes")
+	require.ErrorIs(t, u.Write(ctx, a.marker("1762077700000-0", nil), true, probe(a, "a-paused")), uow.ErrWritesPaused)
+
+	assert.Equal(t, int64(1), a.probes())
+	assert.Equal(t, int64(1), a.markers())
+	assert.Equal(t, int64(2), b.probes())
+	assert.Equal(t, int64(2), b.markers())
+	assert.Equal(t, "exporter-a", a.leaseNode()["holder"], "tenant b's release leaves tenant a's lease alone")
+	a.assertGateUnlocked()
+	b.assertGateUnlocked()
+}
+
 func TestLease_RefusesAnInvalidRequest(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
