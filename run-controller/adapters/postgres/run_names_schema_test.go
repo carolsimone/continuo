@@ -97,3 +97,24 @@ func TestRunNamesSchema_ObjectsTakeTheNewNames(t *testing.T) {
 		"idx_tasks_node_identity", "idx_tasks_run_id", "uq_tasks_run_node",
 	})
 }
+
+// Every NOT NULL constraint of the run tables is named <table>_<column>_not_null
+// after the table and the column it guards today. Postgres 18 records these
+// constraints in pg_constraint (contype 'n') and keeps their names across a table
+// or column rename; Postgres 16 records none, so the query finds no row there.
+func TestRunNamesSchema_NotNullConstraintsTakeTheCurrentNames(t *testing.T) {
+	db := newTestDB(t)
+
+	var misnamed []string
+	require.NoError(t, db.Select(&misnamed, `
+		SELECT c.relname || '.' || a.attname || ' is constraint ' || k.conname
+		  FROM pg_constraint k
+		  JOIN pg_class c ON c.oid = k.conrelid
+		  JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+		 WHERE k.contype = 'n'
+		   AND k.conrelid IN ('public.runs'::regclass, 'public.tasks'::regclass)
+		   AND k.conname <> c.relname || '_' || a.attname || '_not_null'
+		ORDER BY 1`))
+
+	assert.Empty(t, misnamed, "a NOT NULL constraint of runs or tasks is not named after its table and column")
+}

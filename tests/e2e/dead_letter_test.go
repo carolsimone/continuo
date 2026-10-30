@@ -161,9 +161,14 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	assert.Equal(t, first.GetRedrive().GetReason(), second.GetDeadLetters()[0].GetRedrive().GetReason())
 	assert.Equal(t, first.GetRedrive().GetAt(), second.GetDeadLetters()[0].GetRedrive().GetAt())
 
+	// Step 4 proved the first redrive published its entry. A repeated redrive
+	// must not publish a second one, so at most one entry remains: none is
+	// acceptable too, because dead-letter-controller's trim loop deletes the
+	// entries every group has acknowledged, and this one may be trimmed before
+	// the read.
 	time.Sleep(5 * time.Second)
-	assert.Len(t, redrivenEntries(ctx, clients.redisClient, stream, origID, dl.GetId()), 1,
-		"a repeated redrive must not publish a second entry")
+	assert.LessOrEqual(t, len(redrivenEntries(ctx, clients.redisClient, stream, origID, dl.GetId())), 1,
+		"a repeated redrive must not publish a second entry (none is fine: the trim loop removes acknowledged entries)")
 }
 
 // TestDeadLetter_CLIListsAndRedrives drives the stored dead letter through the
