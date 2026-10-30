@@ -14,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
-	"github.com/carolsimone/continuo/catalog/internal/sweeper"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -215,7 +214,6 @@ func main() {
 	// ========================================================================
 
 	queryRepo := neo4jinfra.NewNodeQueryRepository(neo4jClient, logger)
-	runHistoryRepo := neo4jinfra.NewRunHistoryRepository(neo4jClient, logger)
 
 	// ========================================================================
 	// START RETENTION SWEEPER
@@ -246,13 +244,6 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
 	})
-
-	// ========================================================================
-	// START RUN SWEEPER
-	// ========================================================================
-
-	runSweeper := sweeper.New(runHistoryRepo, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
-	go runSweeper.Start(ctx)
 
 	// ========================================================================
 	// INITIALIZE REDIS CONSUMERS

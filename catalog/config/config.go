@@ -37,10 +37,6 @@ type Config struct {
 	GRPCPort int
 	HTTPPort int
 
-	// Sweeper
-	RunHistoryRetentionDays   int
-	RunSweeperIntervalMinutes int
-
 	// Retention sweeper — purges message_processing dedup rows, in any state,
 	// older than the longer of RetentionDays and the 30-day replay horizon. Both
 	// knobs have safe defaults so no configuration is required.
@@ -69,9 +65,6 @@ func Load(v *pkgconfig.Validator) Config {
 
 		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort: envInt("HTTP_PORT", 8087),
-
-		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
-		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),
 
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
