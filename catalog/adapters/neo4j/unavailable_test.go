@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 )
@@ -23,6 +24,7 @@ func TestIsUnavailable(t *testing.T) {
 		{"deadlock is not an outage", deadlock, false},
 		{"retries ran out on deadlocks", &neo4j.TransactionExecutionLimit{Cause: "timeout", Errors: []error{deadlock}}, false},
 		{"constraint violation", &neo4j.Neo4jError{Code: "Neo.ClientError.Schema.ConstraintValidationFailed"}, false},
+		{"writes paused by the export lease", fmt.Errorf("tenant default: %w", uow.ErrWritesPaused), true},
 		{"plain", errors.New("boom"), false},
 		{"nil", nil, false},
 	}

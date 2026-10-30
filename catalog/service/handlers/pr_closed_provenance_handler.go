@@ -25,14 +25,14 @@ import (
 // The handler is deliberately outcome-agnostic — the repository decides which
 // edges a given outcome draws.
 type PrClosedProvenanceHandler struct {
-	uow      uow.UnitOfWork
+	uow      uow.PostgresUnitOfWork
 	caseBase repository.CaseBaseRepository
 	logger   *slog.Logger
 }
 
 // NewPrClosedProvenanceHandler creates the handler.
 func NewPrClosedProvenanceHandler(
-	u uow.UnitOfWork,
+	u uow.PostgresUnitOfWork,
 	caseBase repository.CaseBaseRepository,
 	logger *slog.Logger,
 ) *PrClosedProvenanceHandler {

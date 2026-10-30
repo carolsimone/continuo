@@ -33,7 +33,7 @@ const unmatchedSampleSize = 5
 // changed_node_ids — that is what lets any later release converge a graph that
 // missed a write. changed_node_ids only qualifies provenance.
 type ReleasePromotedVersionsHandler struct {
-	uow       uow.UnitOfWork
+	uow       uow.PostgresUnitOfWork
 	bundles   ports.CodeBundleReader
 	artifacts ports.TopologyArtifactReader
 	versions  repository.CodeVersionRepository
@@ -42,7 +42,7 @@ type ReleasePromotedVersionsHandler struct {
 
 // NewReleasePromotedVersionsHandler creates a ReleasePromotedVersionsHandler.
 func NewReleasePromotedVersionsHandler(
-	u uow.UnitOfWork,
+	u uow.PostgresUnitOfWork,
 	bundles ports.CodeBundleReader,
 	artifacts ports.TopologyArtifactReader,
 	versions repository.CodeVersionRepository,

@@ -21,14 +21,14 @@ import (
 // PrOpenedProposalsHandler consumes remediation.pr_opened:v1 on the case-base
 // group and records each opened fix PR as a :Proposal.
 type PrOpenedProposalsHandler struct {
-	uow      uow.UnitOfWork
+	uow      uow.PostgresUnitOfWork
 	caseBase repository.CaseBaseRepository
 	logger   *slog.Logger
 }
 
 // NewPrOpenedProposalsHandler creates the handler.
 func NewPrOpenedProposalsHandler(
-	u uow.UnitOfWork,
+	u uow.PostgresUnitOfWork,
 	caseBase repository.CaseBaseRepository,
 	logger *slog.Logger,
 ) *PrOpenedProposalsHandler {

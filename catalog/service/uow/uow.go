@@ -2,14 +2,55 @@ package uow
 
 import (
 	"context"
+	"errors"
 
+	"github.com/carolsimone/continuo/catalog/domain/repository"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/google/uuid"
 )
 
-// UnitOfWork manages a single database transaction and exposes the
-// transaction-scoped repositories handlers need. Bindings own its lifecycle:
-// Begin → (work) → Commit, with Rollback on any failure.
+// ErrWritesPaused means an export or a restore holds the tenant's export
+// lease, so the write did not run. The consumer backs off and retries, as for
+// an outage, and writes no dead letter.
+var ErrWritesPaused = errors.New("catalog writes are paused for an export or a restore")
+
+// Marker names one message of one consumer group of one tenant. Its group
+// processed the message once a write recorded the marker.
+type Marker struct {
+	TenantID      string
+	Group         string
+	MessageID     string
+	OutboxEntryID *uuid.UUID
+}
+
+// UnitOfWork runs a consumer group's writes for one message in Neo4j, with the
+// message's processed-message marker in the same transaction as its data.
 type UnitOfWork interface {
+	// Processed reports whether m's group already processed the message, by
+	// message id or, when m carries one, by outbox entry id. It opens no write
+	// transaction and takes no gate.
+	Processed(ctx context.Context, m Marker) (bool, error)
+	// Write runs fn in one Neo4j write transaction for m.TenantID: it locks the
+	// tenant's export lease node and returns ErrWritesPaused while a lease is
+	// held; re-checks the marker (a found marker skips fn and returns nil);
+	// runs fn; when final, CREATEs the marker; commits. An error from fn rolls
+	// the transaction back and is returned as it is.
+	Write(ctx context.Context, m Marker, final bool, fn func(ctx context.Context, tx Tx) error) error
+}
+
+// Tx is the open transaction of one Write. Each repository it returns runs
+// its statements on that transaction, under the marker's tenant.
+type Tx interface {
+	Topology() repository.ReleasePromotionRepository
+	CodeVersions() repository.CodeVersionRepository
+	CaseBase() repository.CaseBaseRepository
+}
+
+// PostgresUnitOfWork manages a single Postgres transaction and exposes the
+// transaction-scoped message-processing repository handlers record their
+// dedup rows in. Bindings own its lifecycle: Begin → (work) → Commit, with
+// Rollback on any failure.
+type PostgresUnitOfWork interface {
 	MessageProcessingRepo() messageprocessing.Repository
 	Begin(ctx context.Context) error
 	Commit() error

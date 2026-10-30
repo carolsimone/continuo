@@ -3,6 +3,7 @@ package neo4jinfra
 import (
 	"errors"
 
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -11,10 +12,14 @@ import (
 const databaseUnavailableCode = "Neo.TransientError.General.DatabaseUnavailable"
 
 // IsUnavailable reports whether err means Neo4j could not be reached or could
-// not serve: a connectivity failure, an unavailable database, or a transaction
-// whose driver retries ran out on either. The stream consumers treat these as
-// an outage and wait, instead of counting a failed delivery.
+// not serve: a connectivity failure, an unavailable database, a transaction
+// whose driver retries ran out on either, or a write the tenant's export lease
+// paused (uow.ErrWritesPaused). The stream consumers treat these as an outage
+// and wait, instead of counting a failed delivery.
 func IsUnavailable(err error) bool {
+	if errors.Is(err, uow.ErrWritesPaused) {
+		return true
+	}
 	var connErr *neo4j.ConnectivityError
 	if errors.As(err, &connErr) {
 		return true

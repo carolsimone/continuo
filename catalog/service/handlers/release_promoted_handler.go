@@ -31,7 +31,7 @@ import (
 // A promotion older than the live one arriving late leaves the live topology
 // alone.
 type ReleasePromotedHandler struct {
-	uow       uow.UnitOfWork
+	uow       uow.PostgresUnitOfWork
 	artifacts ports.TopologyArtifactReader
 	topology  repository.ReleasePromotionRepository
 	logger    *slog.Logger
@@ -39,7 +39,7 @@ type ReleasePromotedHandler struct {
 
 // NewReleasePromotedHandler creates a new ReleasePromotedHandler.
 func NewReleasePromotedHandler(
-	u uow.UnitOfWork,
+	u uow.PostgresUnitOfWork,
 	artifacts ports.TopologyArtifactReader,
 	topo repository.ReleasePromotionRepository,
 	logger *slog.Logger,

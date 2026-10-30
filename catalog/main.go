@@ -258,7 +258,7 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// Each handler gets its own UnitOfWork instance. UnitOfWork holds a stateful
+	// Each handler gets its own PostgresUnitOfWork instance. It holds a stateful
 	// Postgres transaction (inTx flag + *sqlx.Tx). Sharing one instance across
 	// consumers would cause "transaction already in progress" errors when two
 	// consumers process messages concurrently — the second Begin() sees inTx=true

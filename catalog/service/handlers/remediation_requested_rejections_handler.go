@@ -33,7 +33,7 @@ import (
 // rejected release; the bundle is fetched once and every node's :Rejection
 // is recorded inside the message's single dedup'd transaction.
 type RemediationRequestedRejectionsHandler struct {
-	uow      uow.UnitOfWork
+	uow      uow.PostgresUnitOfWork
 	bundles  ports.CodeBundleReader
 	caseBase repository.CaseBaseRepository
 	logger   *slog.Logger
@@ -41,7 +41,7 @@ type RemediationRequestedRejectionsHandler struct {
 
 // NewRemediationRequestedRejectionsHandler creates the handler.
 func NewRemediationRequestedRejectionsHandler(
-	u uow.UnitOfWork,
+	u uow.PostgresUnitOfWork,
 	bundles ports.CodeBundleReader,
 	caseBase repository.CaseBaseRepository,
 	logger *slog.Logger,

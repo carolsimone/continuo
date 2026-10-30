@@ -79,7 +79,7 @@ func (f *fakeMessageProcessingRepository) DeleteOlderThan(_ context.Context, _ t
 	return 0, nil
 }
 
-// fakeUnitOfWork is a no-op UnitOfWork backed by the in-memory
+// fakeUnitOfWork is a no-op PostgresUnitOfWork backed by the in-memory
 // message-processing repo.
 type fakeUnitOfWork struct {
 	msgProcRepo  *fakeMessageProcessingRepository

@@ -12,7 +12,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// PostgresUnitOfWork implements uow.UnitOfWork for PostgreSQL.
+// PostgresUnitOfWork implements uow.PostgresUnitOfWork for PostgreSQL.
 type PostgresUnitOfWork struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
@@ -20,15 +20,15 @@ type PostgresUnitOfWork struct {
 	inTx   bool
 }
 
-// NewPostgresUnitOfWork creates a new PostgreSQL-based uow.UnitOfWork.
-func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) uow.UnitOfWork {
+// NewPostgresUnitOfWork creates a new PostgreSQL-based uow.PostgresUnitOfWork.
+func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) uow.PostgresUnitOfWork {
 	return &PostgresUnitOfWork{
 		db:     db,
 		logger: logger,
 	}
 }
 
-var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)
+var _ uow.PostgresUnitOfWork = (*PostgresUnitOfWork)(nil)
 
 // MessageProcessingRepo returns the message processing repository.
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
