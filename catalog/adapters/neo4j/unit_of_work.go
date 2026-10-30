@@ -111,9 +111,9 @@ func (t *transaction) Topology() repository.ReleasePromotionRepository {
 	return &releasePromotionRepository{run: t.run, logger: t.logger}
 }
 
-// CodeVersions returns the code-version repository on this transaction.
+// CodeVersions returns the code-version writes on this transaction.
 func (t *transaction) CodeVersions() repository.CodeVersionRepository {
-	return codeVersionsTxPlaceholder{}
+	return &codeVersionRepository{run: t.run, logger: t.logger}
 }
 
 // CaseBase returns the case-base repository on this transaction.

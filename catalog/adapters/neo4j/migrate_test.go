@@ -322,3 +322,49 @@ func TestMigrate_ResumesAfterPartialRun(t *testing.T) {
 	f.assertMigrated("after the resumed run")
 	assertTargetSchema(t, f.client, f.lookups)
 }
+
+// TestMigrate_KeepsAnExistingWatermark runs InitSchema twice on a tenant
+// whose :Node and :CodeUnit watermarks are already promotion seqs above the
+// live one, alone or beside a stale code_version_promoted_at. Every start
+// runs the watermark step, so it must keep each seq a node has: only a node
+// with none takes the live promotion_seq, and code_version_promoted_at goes.
+func TestMigrate_KeepsAnExistingWatermark(t *testing.T) {
+	ctx := context.Background()
+	f := newSwapFixture(t)
+	f.exec(`
+		CREATE (:Meta {tenant_id: $tenant_id, key: 'current_release', release_id: 'r7', promotion_seq: 7})
+		CREATE (:Node {tenant_id: $tenant_id, unique_id: 'seq_alone', code_version_promotion_seq: 9})
+		CREATE (:Node {tenant_id: $tenant_id, unique_id: 'seq_and_time', code_version_promotion_seq: 8,
+		               code_version_promoted_at: datetime('2026-10-20T09:00:00Z')})
+		CREATE (:Node {tenant_id: $tenant_id, unique_id: 'time_only', code_version_promoted_at: datetime('2026-10-20T09:00:00Z')})
+		CREATE (:Node {tenant_id: $tenant_id, unique_id: 'none'})
+		CREATE (:CodeUnit {tenant_id: $tenant_id, unit_id: 'seq_alone', code_version_promotion_seq: 9})
+		CREATE (:CodeUnit {tenant_id: $tenant_id, unit_id: 'seq_and_time', code_version_promotion_seq: 8,
+		                   code_version_promoted_at: datetime('2026-10-20T09:00:00Z')})
+		CREATE (:CodeUnit {tenant_id: $tenant_id, unit_id: 'none'})`, nil)
+	want := map[string]int64{"seq_alone": 9, "seq_and_time": 8, "time_only": 7, "none": 7}
+
+	for run := 1; run <= 2; run++ {
+		require.NoError(t, InitSchema(ctx, f.client, quietLogger()), "run %d", run)
+		for _, label := range []string{"Node", "CodeUnit"} {
+			key := map[string]string{"Node": "unique_id", "CodeUnit": "unit_id"}[label]
+			got := map[string]int64{}
+			for _, rec := range f.rows(fmt.Sprintf(`MATCH (n:%s {tenant_id: $tenant_id})
+				RETURN n.%s AS id, n.code_version_promotion_seq AS seq, n.code_version_promoted_at IS NOT NULL AS has_time`, label, key), nil) {
+				id, _ := rec.Get("id")
+				seq, _ := rec.Get("seq")
+				hasTime, _ := rec.Get("has_time")
+				assert.Equal(t, false, hasTime, "run %d: :%s %v keeps no code_version_promoted_at", run, label, id)
+				got[id.(string)] = seq.(int64)
+			}
+			wantLabel := map[string]int64{}
+			for id, seq := range want {
+				if label == "CodeUnit" && id == "time_only" {
+					continue
+				}
+				wantLabel[id] = seq
+			}
+			assert.Equal(t, wantLabel, got, "run %d: the :%s watermarks", run, label)
+		}
+	}
+}

@@ -1,793 +1,546 @@
-package neo4jinfra_test
+//go:build integration
+
+package neo4jinfra
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"strconv"
 	"testing"
 	"time"
 
-	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/carolsimone/continuo/catalog/domain/topology"
+	"github.com/carolsimone/continuo/catalog/service/uow"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// wipeVersionFixtures clears the version graph and the topology it hangs off, so
-// each test starts from a known-empty slate.
-func wipeVersionFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	for _, q := range []string{
-		`MATCH (n:NodeVersion) DETACH DELETE n`,
-		`MATCH (n:CodeUnitVersion) DETACH DELETE n`,
-		`MATCH (n:CodeUnit) DETACH DELETE n`,
-		`MATCH (n:Table) DETACH DELETE n`,
-		`MATCH (n:Rejection) DETACH DELETE n`,
-		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
-	} {
-		res, err := s.Run(ctx, q, nil)
-		require.NoError(t, err)
-		_, err = res.Consume(ctx)
-		require.NoError(t, err)
-	}
+// The tests of this file write code versions for the swap fixture's tenant
+// through the unit of work, one batch per Write, as the versions group does.
+
+// writeBatch writes in for the fixture's tenant in one final Write under a
+// fresh message of the versions group, and returns what it wrote.
+func (f *swapFixture) writeBatch(in codeversion.WriteInput) codeversion.WriteResult {
+	f.t.Helper()
+	var res codeversion.WriteResult
+	m := uow.Marker{TenantID: f.tenant, Group: streams.CatalogReleaseVersions, MessageID: uuid.NewString()}
+	err := f.uow.Write(context.Background(), m, true, func(ctx context.Context, tx uow.Tx) error {
+		var err error
+		res, err = tx.CodeVersions().WriteBatch(ctx, f.tenant, in)
+		return err
+	})
+	require.NoError(f.t, err)
+	return res
 }
 
-// seedVersionTable creates the :Table a version write attaches to, carrying the
-// content_hash a topology swap would have stamped on it.
-func seedVersionTable(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, contentHash string) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx,
-		`MERGE (t:Table {unique_id: $uid}) SET t.content_hash = $ch, t.active = true`,
-		map[string]any{"uid": uniqueID, "ch": contentHash})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
+// seedLiveNode creates a live :Node of the tenant, as a swap would have.
+func (f *swapFixture) seedLiveNode(uniqueID string) {
+	f.t.Helper()
+	f.exec(`CREATE (:Node {tenant_id: $tenant_id, unique_id: $uid, schema_name: 'live', table_name: $uid,
+		service_name: 'svc', node_type: 'dbt-model', content_hash: 'sha256:live', release_id: 'r-live', active: true})`,
+		map[string]any{"uid": uniqueID})
 }
 
-// seedRejection creates a minimal open :Rejection fixture — no [:RESOLVED_BY]
-// edge — so it is eligible for a version write's rejection-linking query.
-func seedRejection(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID string, at time.Time) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx,
-		`CREATE (:Rejection {release_id: $release_id, node_id: $node_id, at: $at})`,
+// seedRejection records an open failure of nodeID: a :Rejection with no
+// [:RESOLVED_BY].
+func (f *swapFixture) seedRejection(releaseID, nodeID string, at time.Time) {
+	f.t.Helper()
+	f.exec(`CREATE (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id, at: $at})`,
 		map[string]any{"release_id": releaseID, "node_id": nodeID, "at": at})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
 }
 
-// seedResolvedByProposal links a :Rejection directly to a :Proposal — the
-// merged-PR provenance edge RecordPullRequestOutcome draws — so a
-// forward-link test can prove its presence must not suppress the
-// promotion-time :NodeVersion back-link this repository draws.
-func seedResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string) {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
-		MERGE (prop:Proposal {proposal_id: $proposal_id})
-		MERGE (rej)-[:RESOLVED_BY]->(prop)
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID})
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
+// current returns the content_hash of uniqueID's :CURRENT version, or "" when
+// it has none.
+func (f *swapFixture) current(uniqueID string) string {
+	f.t.Helper()
+	hashes := f.column(`
+		MATCH (:Node {tenant_id: $tenant_id, unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: $tenant_id})
+		RETURN v.content_hash AS v`, map[string]any{"uid": uniqueID})
+	require.LessOrEqual(f.t, len(hashes), 1, "a node has at most one :CURRENT")
+	if len(hashes) == 0 {
+		return ""
+	}
+	return hashes[0]
 }
 
-func newVersionRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.CodeVersionRepository {
-	return neo4jinfra.NewCodeVersionRepository(client,
-		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+// unitCurrent returns the checksum of unitID's :CURRENT version, or "".
+func (f *swapFixture) unitCurrent(unitID string) string {
+	f.t.Helper()
+	sums := f.column(`
+		MATCH (:CodeUnit {tenant_id: $tenant_id, unit_id: $unit_id})-[:CURRENT]->(v:CodeUnitVersion {tenant_id: $tenant_id})
+		RETURN v.checksum AS v`, map[string]any{"unit_id": unitID})
+	require.LessOrEqual(f.t, len(sums), 1, "a unit has at most one :CURRENT")
+	if len(sums) == 0 {
+		return ""
+	}
+	return sums[0]
 }
 
-func nodeInput(uniqueID, hash string, refs ...codeversion.UnitRef) codeversion.NodeVersion {
+// versionCount counts uniqueID's :NodeVersion nodes.
+func (f *swapFixture) versionCount(uniqueID string) int64 {
+	f.t.Helper()
+	return f.count(`MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(v) AS n`,
+		map[string]any{"uid": uniqueID})
+}
+
+// unitWatermark returns the code_version_promotion_seq of unitID's :CodeUnit.
+func (f *swapFixture) unitWatermark(unitID string) any {
+	f.t.Helper()
+	recs := f.rows(`MATCH (cu:CodeUnit {tenant_id: $tenant_id, unit_id: $unit_id}) RETURN properties(cu) AS p`,
+		map[string]any{"unit_id": unitID})
+	require.Len(f.t, recs, 1)
+	p, _ := recs[0].Get("p")
+	props := p.(map[string]any)
+	assert.NotContains(f.t, props, "code_version_promoted_at", "the watermark is the promotion seq, not a time")
+	return props["code_version_promotion_seq"]
+}
+
+// versionOf is one bundle node's code state.
+func versionOf(uniqueID, hash string, refs ...codeversion.UnitRef) codeversion.NodeVersion {
 	return codeversion.NodeVersion{
-		UniqueID: uniqueID, ContentHash: hash, SourceHash: "s", SharedCodeHash: "m",
-		ConfigHash: "c", Runtime: "dbt", RawCode: "select 1", CompiledCode: "select 1",
-		ConfigJSON: `{"materialized":"table"}`, UnitRefs: refs,
+		UniqueID: uniqueID, ContentHash: hash, SourceHash: "s", SharedCodeHash: "m", ConfigHash: "c",
+		Runtime: "dbt", RawCode: "select 1", CompiledCode: "select 1", ConfigJSON: `{"materialized":"table"}`,
+		UnitRefs: refs,
 	}
 }
 
-func versionWriteInput(releaseID string, at time.Time, nodes []codeversion.NodeVersion,
-	units []codeversion.CodeUnitVersion) codeversion.WriteInput {
+// promotedAtOf is the time promotion seq was promoted: later seqs are later.
+func promotedAtOf(seq int64) time.Time {
+	return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq) * time.Hour)
+}
+
+// batchOf is one batch of promotion seq of releaseID carrying nodes, with the
+// artifact's entry of each: a dbt model the swap writes.
+func batchOf(releaseID string, seq int64, nodes ...codeversion.NodeVersion) codeversion.WriteInput {
+	topo := make(map[string]topology.ReleasePromotedTopologyNode, len(nodes))
+	for _, n := range nodes {
+		topo[n.UniqueID] = modelNode(n.UniqueID)
+	}
 	return codeversion.WriteInput{
-		ReleaseID: releaseID, Repo: "org/svc", CommitSHA: "sha-" + releaseID,
-		PromotedAt: at, Nodes: nodes, Units: units,
+		ReleaseID: releaseID, PromotionSeq: seq, Repo: "org/svc", CommitSHA: "sha-" + releaseID,
+		PromotedAt: promotedAtOf(seq), Nodes: nodes, Topology: topo,
 	}
 }
 
-// versionScalar runs a single-value read query and returns the value under `v`,
-// or nil when the query matched nothing.
-func versionScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string, params map[string]any) any {
-	t.Helper()
-	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, cypher, params)
-	require.NoError(t, err)
-	if !res.Next(ctx) {
-		require.NoError(t, res.Err())
-		return nil
-	}
-	v, _ := res.Record().Get("v")
-	require.NoError(t, res.Err())
-	return v
+// withUnits adds the shared-code versions the batch's nodes reference.
+func withUnits(in codeversion.WriteInput, units ...codeversion.CodeUnitVersion) codeversion.WriteInput {
+	in.Units = units
+	return in
 }
 
-func TestCodeVersionRepository_FirstWriteCreatesCurrentVersion(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+// ── the watermark ────────────────────────────────────────────────────────────
 
-	repo := newVersionRepo(client)
-	now := time.Now().UTC()
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
+// :CURRENT moves when the node's watermark equals the promotion's seq: the
+// first promotion of a node, and each newer one.
+func TestWriteBatch_WatermarkEqualsSeqMovesCurrent(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+
+	res := f.writeBatch(batchOf("r7", 7, versionOf("analytics.revenue", "sha256:v7")))
 	assert.Equal(t, 1, res.NodeVersionsCreated)
 	assert.Equal(t, 1, res.CurrentPointersMoved)
-	assert.Empty(t, res.UnmatchedNodeIDs)
+	assert.Equal(t, "sha256:v7", f.current("analytics.revenue"))
+	assert.Equal(t, int64(7), f.node("analytics.revenue")["code_version_promotion_seq"])
 
-	assert.Equal(t, "sha256:v1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
-	assert.Equal(t, "rel-1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.release_id AS v`, nil))
-	assert.Equal(t, "sha-rel-1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.commit_sha AS v`, nil))
-	assert.Equal(t, `{"materialized":"table"}`, versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.config_json AS v`, nil))
-	assert.Equal(t, false, versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.backfilled AS v`, nil))
+	res = f.writeBatch(batchOf("r8", 8, versionOf("analytics.revenue", "sha256:v8")))
+	assert.Equal(t, 1, res.CurrentPointersMoved)
+	assert.Equal(t, "sha256:v8", f.current("analytics.revenue"))
+	node := f.node("analytics.revenue")
+	assert.Equal(t, int64(8), node["code_version_promotion_seq"])
+	assert.NotContains(t, node, "code_version_promoted_at", "the watermark is the promotion seq, not a time")
+
+	edge := f.rows(`MATCH (:Node {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})-[c:CURRENT]->() RETURN properties(c) AS p`, nil)
+	require.Len(t, edge, 1)
+	p, _ := edge[0].Get("p")
+	assert.Equal(t, "r8", p.(map[string]any)["release_id"])
+	assert.True(t, promotedAtOf(8).Equal(p.(map[string]any)["promoted_at"].(time.Time)))
 }
 
-// Versions grow with edits, not with releases.
-func TestCodeVersionRepository_UnchangedHashWritesNothing(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+// A promotion older than the watermark records its version and leaves the
+// pointer and the watermark alone (watermark 8, promotion 7).
+func TestWriteBatch_OlderSeqLeavesCurrent(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.writeBatch(batchOf("r8", 8, versionOf("analytics.revenue", "sha256:new")))
 
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 0, res.NodeVersionsCreated)
-	assert.Equal(t, 0, res.CurrentPointersMoved)
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
+	res := f.writeBatch(batchOf("r7", 7, versionOf("analytics.revenue", "sha256:old")))
+	assert.Equal(t, 1, res.NodeVersionsCreated, "the older promotion's version is recorded")
+	assert.Equal(t, 0, res.CurrentPointersMoved, "but it does not become current")
+	assert.Equal(t, "sha256:new", f.current("analytics.revenue"))
+	assert.Equal(t, int64(8), f.node("analytics.revenue")["code_version_promotion_seq"])
+	assert.Equal(t, int64(2), f.versionCount("analytics.revenue"))
+	assert.Zero(t, f.count(`MATCH (:NodeVersion {tenant_id: $tenant_id})-[p:PREVIOUS]->() RETURN count(p) AS n`, nil),
+		"no :PREVIOUS chain is written")
 }
 
-func TestCodeVersionRepository_ChangedHashWritesNoPreviousEdge(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+// A promotion that finds the node's code already current writes no version
+// but still advances the watermark, so an intermediate promotion arriving
+// later cannot drag :CURRENT back onto code a newer promotion superseded.
+func TestWriteBatch_MatchedNodeAdvancesWatermarkEvenWhenCodeUnchanged(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.writeBatch(batchOf("r1", 1, versionOf("analytics.revenue", "sha256:a")))
 
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
-	require.NoError(t, err)
+	res := f.writeBatch(batchOf("r3", 3, versionOf("analytics.revenue", "sha256:a")))
+	assert.Zero(t, res.NodeVersionsCreated)
+	assert.Equal(t, int64(3), f.node("analytics.revenue")["code_version_promotion_seq"], "the watermark advances on unchanged code")
 
-	assert.Equal(t, "sha256:v2", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, int64(2), versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
-	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
-		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
+	res = f.writeBatch(batchOf("r2", 2, versionOf("analytics.revenue", "sha256:b")))
+	assert.Equal(t, 1, res.NodeVersionsCreated, "the intermediate version is recorded")
+	assert.Zero(t, res.CurrentPointersMoved, "but it does not become current")
+	assert.Equal(t, "sha256:a", f.current("analytics.revenue"))
 }
 
-// A revert must reuse the version that already exists rather than duplicate it,
-// and must not write a :PREVIOUS edge for it.
-func TestCodeVersionRepository_RevertMovesCurrentWithoutWritingAPreviousEdge(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
-
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-	for i, h := range []string{"sha256:v1", "sha256:v2", "sha256:v1"} {
-		_, err := repo.WriteVersions(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
-			base.Add(time.Duration(i)*time.Minute),
-			[]codeversion.NodeVersion{nodeInput("analytics.revenue", h)}, nil))
-		require.NoError(t, err)
+// The shared-code unit has its own watermark, the promotion seq too: an older
+// promotion records the unit's version and leaves its :CURRENT.
+func TestWriteBatch_CodeUnitWatermarkUsesSeq(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	unit := func(checksum string) codeversion.CodeUnitVersion {
+		return codeversion.CodeUnitVersion{UnitID: "svc:macro.cents", Checksum: checksum, Source: "macro " + checksum}
+	}
+	ref := func(checksum string) codeversion.UnitRef {
+		return codeversion.UnitRef{UnitID: "svc:macro.cents", Checksum: checksum}
 	}
 
-	assert.Equal(t, int64(2), versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil),
-		"the reverted-to version is reused, not duplicated")
-	assert.Equal(t, "sha256:v1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
-		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN count(v) AS v`, nil),
-		"exactly one :CURRENT edge")
+	f.writeBatch(withUnits(batchOf("r5", 5, versionOf("analytics.revenue", "sha256:a5", ref("c5"))), unit("c5")))
+	assert.Equal(t, "c5", f.unitCurrent("svc:macro.cents"))
+	assert.Equal(t, int64(5), f.unitWatermark("svc:macro.cents"))
+
+	res := f.writeBatch(withUnits(batchOf("r4", 4, versionOf("analytics.revenue", "sha256:a4", ref("c4"))), unit("c4")))
+	assert.Equal(t, 1, res.UnitVersionsCreated, "the older promotion's unit version is recorded")
+	assert.Equal(t, "c5", f.unitCurrent("svc:macro.cents"), "an older promotion leaves the unit's :CURRENT")
+	assert.Equal(t, int64(5), f.unitWatermark("svc:macro.cents"))
+
+	f.writeBatch(withUnits(batchOf("r6", 6, versionOf("analytics.revenue", "sha256:a6", ref("c6"))), unit("c6")))
+	assert.Equal(t, "c6", f.unitCurrent("svc:macro.cents"))
+	assert.Equal(t, int64(6), f.unitWatermark("svc:macro.cents"))
+	assert.Equal(t, int64(1), f.count(`MATCH (cu:CodeUnit {tenant_id: $tenant_id}) RETURN count(cu) AS n`, nil), "one :CodeUnit per unit id")
 }
 
-// A stale redelivery may add history but must never yank the pointer backwards.
-func TestCodeVersionRepository_StalePromotedAtDoesNotMoveCurrent(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:new")
+// A promotion whose node is unchanged still advances the watermark of the
+// shared code that node uses. r3 carries a and its macro as r1 did; r2,
+// arriving late, changed the macro, and must not make its version current
+// while r3's is the one running.
+func TestWriteBatch_UnchangedNodeAdvancesItsUnitsWatermark(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	unit := func(checksum string) codeversion.CodeUnitVersion {
+		return codeversion.CodeUnitVersion{UnitID: "svc:macro.cents", Checksum: checksum, Source: "macro " + checksum}
+	}
+	ref := func(checksum string) codeversion.UnitRef {
+		return codeversion.UnitRef{UnitID: "svc:macro.cents", Checksum: checksum}
+	}
+	f.writeBatch(withUnits(batchOf("r1", 1, versionOf("analytics.revenue", "sha256:a1", ref("c1"))), unit("c1")))
 
-	repo := newVersionRepo(client)
-	now := time.Now().UTC()
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", now,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:new")}, nil))
-	require.NoError(t, err)
+	res := f.writeBatch(withUnits(batchOf("r3", 3, versionOf("analytics.revenue", "sha256:a1", ref("c1"))), unit("c1")))
+	assert.Equal(t, codeversion.WriteResult{}, res, "unchanged code writes nothing")
+	assert.Equal(t, int64(3), f.unitWatermark("svc:macro.cents"), "the unit's watermark advances with its unchanged node")
 
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now.Add(-time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:old")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 1, res.NodeVersionsCreated, "the historical version is still recorded")
-	assert.Equal(t, 0, res.CurrentPointersMoved)
-	assert.Equal(t, "sha256:new", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+	f.writeBatch(withUnits(batchOf("r2", 2, versionOf("analytics.revenue", "sha256:a2", ref("c2"))), unit("c2")))
+	assert.Equal(t, "c1", f.unitCurrent("svc:macro.cents"), "the late promotion does not take the unit's pointer")
+	assert.Equal(t, "sha256:a1", f.current("analytics.revenue"))
+	assert.Equal(t, int64(3), f.unitWatermark("svc:macro.cents"))
 }
 
-func TestCodeVersionRepository_WritesSharedCodeVersionsAndUsesCodeEdges(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+// The pointer guard is in the write statement, not in a read before it: an
+// older promotion replayed again and again never takes the pointer.
+func TestWriteBatch_PointerGuardIsEnforcedInTheWrite(t *testing.T) {
+	f := newSwapFixture(t)
+	f.writeBatch(batchOf("r2", 2, versionOf("analytics.revenue", "sha256:v2")))
 
-	repo := newVersionRepo(client)
-	now := time.Now().UTC()
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
-			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"},
-			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2"})},
-		[]codeversion.CodeUnitVersion{
-			{UnitID: "svc:m1", Checksum: "u1", Source: "macro one"},
-			{UnitID: "svc:m2", Checksum: "u2", Source: "macro two"},
-		}))
-	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		res := f.writeBatch(batchOf("r1", 1, versionOf("analytics.revenue", "sha256:v1")))
+		assert.Zero(t, res.CurrentPointersMoved, "attempt %d must not move the pointer", i)
+	}
+	assert.Equal(t, int64(1), f.count(`MATCH (:Node {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})-[c:CURRENT]->() RETURN count(c) AS n`, nil))
+	assert.Equal(t, "sha256:v2", f.current("analytics.revenue"))
+}
+
+// ── nodes the graph does not hold ────────────────────────────────────────────
+
+// A bundle node the tenant's graph does not hold yet is created inactive from
+// its artifact entry, with the release's id and no retired_at, before its
+// version is written. A node the graph holds keeps the properties the swap
+// gave it.
+func TestWriteBatch_MissingNodeIsCreatedInactiveFromTheArtifact(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.table_a")
+	in := batchOf("r8", 8, versionOf("analytics.table_a", "sha256:a8"), versionOf("analytics.table_e", "sha256:e8"))
+	in.Topology["analytics.table_e"] = topology.ReleasePromotedTopologyNode{
+		UniqueID: "analytics.table_e", SchemaName: "analytics", TableName: "table_e", ServiceName: "svc",
+		NodeType: "dbt-model", ContentHash: "sha256:e8", TestCount: 2, ImageTag: "img-8", Schedule: "daily",
+		UpstreamUniqueIDs: []string{"analytics.table_a"}, OriginalFilePath: "models/table_e.sql",
+	}
+	liveBefore := f.node("analytics.table_a")
+
+	res := f.writeBatch(in)
+	assert.Equal(t, 1, res.NodesCreated)
+	assert.Equal(t, 2, res.CurrentPointersMoved)
+
+	e := f.node("analytics.table_e")
+	require.NotNil(t, e)
+	for key, want := range map[string]any{
+		"active": false, "release_id": "r8", "schema_name": "analytics", "table_name": "table_e",
+		"service_name": "svc", "node_type": "dbt-model", "content_hash": "sha256:e8", "test_count": int64(2),
+		"image_tag": "img-8", "schedule_name": "daily", "original_file_path": "models/table_e.sql",
+		"code_version_promotion_seq": int64(8),
+	} {
+		assert.Equal(t, want, e[key], "table_e's %s", key)
+	}
+	assert.NotContains(t, e, "retired_at", "a node that was never live has no retired_at")
+	assert.NotContains(t, e, "secret_ref")
+	assert.Equal(t, "sha256:e8", f.current("analytics.table_e"))
+	assert.Empty(t, f.edges(), "an inactive node gets no :DEPENDS_ON")
+
+	a := f.node("analytics.table_a")
+	for _, key := range []string{"active", "release_id", "schema_name", "content_hash"} {
+		assert.Equal(t, liveBefore[key], a[key], "the live node keeps its %s", key)
+	}
+
+	again := f.writeBatch(in)
+	assert.Zero(t, again.NodesCreated, "a replay creates no node")
+	assert.Equal(t, []string{"analytics.table_a", "analytics.table_e"}, f.nodeIDs())
+}
+
+// A dbt-test is never a node of the graph: a bundle node the artifact names a
+// dbt-test creates no :Node and no version.
+func TestWriteBatch_DbtTestNodeInBundleCreatesNoNode(t *testing.T) {
+	f := newSwapFixture(t)
+	in := batchOf("r1", 1, versionOf("analytics.orders", "sha256:o1"), versionOf("test.not_null_orders_id", "sha256:t1"))
+	in.Topology["test.not_null_orders_id"] = topology.ReleasePromotedTopologyNode{
+		UniqueID: "test.not_null_orders_id", ServiceName: "svc", NodeType: "dbt-test",
+		UpstreamUniqueIDs: []string{"analytics.orders"},
+	}
+
+	res := f.writeBatch(in)
+	assert.Equal(t, 1, res.NodesCreated)
+	assert.Equal(t, 1, res.NodeVersionsCreated)
+	assert.Equal(t, []string{"analytics.orders"}, f.nodeIDs(), "the dbt-test creates no :Node")
+	assert.Zero(t, f.versionCount("test.not_null_orders_id"), "and no version")
+}
+
+// A bundle node the release's artifact does not carry is skipped: no node is
+// created for it, and a node the graph already holds gets no version and no
+// watermark from this release.
+func TestWriteBatch_BundleNodeAbsentFromArtifactIsSkipped(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.held")
+	in := batchOf("r1", 1, versionOf("analytics.orders", "sha256:o1"))
+	in.Nodes = append(in.Nodes, versionOf("analytics.unknown", "sha256:u1"), versionOf("analytics.held", "sha256:h1"))
+
+	res := f.writeBatch(in)
+	assert.Equal(t, 1, res.NodeVersionsCreated)
+	assert.Equal(t, []string{"analytics.held", "analytics.orders"}, f.nodeIDs(), "no node for the bundle node the artifact lacks")
+	assert.Zero(t, f.versionCount("analytics.unknown"))
+	assert.Zero(t, f.versionCount("analytics.held"))
+	assert.NotContains(t, f.node("analytics.held"), "code_version_promotion_seq")
+}
+
+// ── idempotence and isolation ────────────────────────────────────────────────
+
+// Every write MERGEs by identity, so a batch written again leaves the graph
+// as it was: a replay after a crash finds what the first run wrote.
+func TestWriteBatch_ReplayLeavesTheSameGraph(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.seedRejection("r0", "analytics.revenue", promotedAtOf(0))
+	ref := codeversion.UnitRef{UnitID: "svc:macro.cents", Checksum: "c1"}
+	in := withUnits(batchOf("r1", 1,
+		versionOf("analytics.revenue", "sha256:r1", ref),
+		versionOf("analytics.orders", "sha256:o1", ref)),
+		codeversion.CodeUnitVersion{UnitID: "svc:macro.cents", Checksum: "c1", Source: "macro"})
+
+	first := f.writeBatch(in)
+	require.Equal(t, 1, first.RejectionsResolved)
+	before := f.snapshot()
+
+	again := f.writeBatch(in)
+	assert.Equal(t, codeversion.WriteResult{}, again, "a replay writes nothing")
+	assert.Equal(t, before, f.snapshot())
+}
+
+// A write of one tenant neither reads nor changes another tenant's nodes,
+// even under the same unique_ids.
+func TestWriteBatch_LeavesOtherTenantsAlone(t *testing.T) {
+	a := newSwapFixture(t)
+	b := a.another()
+	b.writeBatch(batchOf("r1", 1, versionOf("analytics.revenue", "sha256:b1")))
+	before := b.snapshot()
+
+	a.writeBatch(batchOf("r1", 1, versionOf("analytics.revenue", "sha256:a1")))
+	a.writeBatch(batchOf("r2", 2, versionOf("analytics.revenue", "sha256:a2")))
+
+	assert.Equal(t, before, b.snapshot(), "tenant b's graph is untouched")
+	assert.Equal(t, "sha256:a2", a.current("analytics.revenue"))
+	assert.Equal(t, int64(2), a.versionCount("analytics.revenue"))
+}
+
+// ── the version ──────────────────────────────────────────────────────────────
+
+func TestWriteBatch_FirstWriteRecordsTheVersion(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+
+	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
+	assert.Equal(t, codeversion.WriteResult{NodeVersionsCreated: 1, CurrentPointersMoved: 1}, res)
+
+	recs := f.rows(`MATCH (:Node {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})-[:CURRENT]->(v:NodeVersion {tenant_id: $tenant_id})
+		RETURN properties(v) AS p`, nil)
+	require.Len(t, recs, 1)
+	p, _ := recs[0].Get("p")
+	v := p.(map[string]any)
+	for key, want := range map[string]any{
+		"tenant_id": f.tenant, "unique_id": "analytics.revenue", "content_hash": "sha256:v1", "version_seq": int64(1),
+		"release_id": "rel-1", "commit_sha": "sha-rel-1", "repo": "org/svc", "config_json": `{"materialized":"table"}`,
+		"raw_code": "select 1", "compiled_code": "select 1", "runtime": "dbt", "healed": false, "backfilled": false,
+	} {
+		assert.Equal(t, want, v[key], "version %s", key)
+	}
+	assert.True(t, promotedAtOf(1).Equal(v["promoted_at"].(time.Time)))
+}
+
+// Versions grow with edits, not with promotions.
+func TestWriteBatch_UnchangedHashWritesNothing(t *testing.T) {
+	f := newSwapFixture(t)
+	f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
+
+	res := f.writeBatch(batchOf("rel-2", 2, versionOf("analytics.revenue", "sha256:v1")))
+	assert.Zero(t, res.NodeVersionsCreated)
+	assert.Zero(t, res.CurrentPointersMoved)
+	assert.Equal(t, int64(1), f.versionCount("analytics.revenue"))
+}
+
+// A revert points the node back at the version that already exists rather
+// than duplicating it, and the version keeps its sequence number.
+func TestWriteBatch_RevertReusesTheExistingVersion(t *testing.T) {
+	f := newSwapFixture(t)
+	for i, h := range []string{"sha256:v1", "sha256:v2", "sha256:v1"} {
+		seq := int64(i + 1)
+		f.writeBatch(batchOf("rel-"+strconv.FormatInt(seq, 10), seq, versionOf("analytics.revenue", h)))
+	}
+
+	assert.Equal(t, int64(2), f.versionCount("analytics.revenue"), "the reverted-to version is reused, not duplicated")
+	assert.Equal(t, "sha256:v1", f.current("analytics.revenue"))
+	seqs := f.column(`MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})
+		RETURN v.content_hash + '=' + toString(v.version_seq) AS v ORDER BY v`, nil)
+	assert.Equal(t, []string{"sha256:v1=1", "sha256:v2=2"}, seqs)
+}
+
+func TestWriteBatch_WritesSharedCodeAndUsesCodeEdges(t *testing.T) {
+	f := newSwapFixture(t)
+	res := f.writeBatch(withUnits(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1",
+		codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"},
+		codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2"})),
+		codeversion.CodeUnitVersion{UnitID: "svc:m1", Checksum: "u1", Source: "macro one"},
+		codeversion.CodeUnitVersion{UnitID: "svc:m2", Checksum: "u2", Source: "macro two"}))
 	assert.Equal(t, 2, res.UnitVersionsCreated)
 
-	assert.Equal(t, int64(2), versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->()-[:USES_CODE]->(u)
-		 RETURN count(u) AS v`, nil))
-	assert.Equal(t, "u1", versionScalar(t, client,
-		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
-	assert.Equal(t, "macro one", versionScalar(t, client,
-		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.source AS v`, nil))
+	assert.Equal(t, int64(2), f.count(`
+		MATCH (:Node {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})-[:CURRENT]->(:NodeVersion {tenant_id: $tenant_id})
+		      -[:USES_CODE]->(u:CodeUnitVersion {tenant_id: $tenant_id})
+		RETURN count(u) AS n`, nil))
+	assert.Equal(t, "u1", f.unitCurrent("svc:m1"))
+	assert.Equal(t, []string{"macro one"}, f.column(`
+		MATCH (:CodeUnit {tenant_id: $tenant_id, unit_id: 'svc:m1'})-[:CURRENT]->(v:CodeUnitVersion {tenant_id: $tenant_id})
+		RETURN v.source AS v`, nil))
 }
 
-func TestCodeVersionRepository_SharedCodeUnitChangeWritesNoPreviousEdge(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+func TestWriteBatch_SharedCodeUnitChangeMovesItsCurrent(t *testing.T) {
+	f := newSwapFixture(t)
+	f.writeBatch(withUnits(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1",
+		codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"})),
+		codeversion.CodeUnitVersion{UnitID: "svc:m1", Checksum: "u1", Source: "one"}))
+	f.writeBatch(withUnits(batchOf("rel-2", 2, versionOf("analytics.revenue", "sha256:v2",
+		codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u2"})),
+		codeversion.CodeUnitVersion{UnitID: "svc:m1", Checksum: "u2", Source: "two"}))
 
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
-			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"})},
-		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u1", Source: "one"}}))
-	require.NoError(t, err)
-	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2",
-			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u2"})},
-		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u2", Source: "two"}}))
-	require.NoError(t, err)
-
-	assert.Equal(t, "u2", versionScalar(t, client,
-		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
-	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:CodeUnitVersion {unit_id:'svc:m1'})-[p:PREVIOUS]->()
-		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (c:CodeUnit {unit_id:'svc:m1'}) RETURN count(c) AS v`, nil),
+	assert.Equal(t, "u2", f.unitCurrent("svc:m1"))
+	assert.Equal(t, int64(2), f.count(`MATCH (v:CodeUnitVersion {tenant_id: $tenant_id, unit_id: 'svc:m1'}) RETURN count(v) AS n`, nil))
+	assert.Equal(t, int64(1), f.count(`MATCH (c:CodeUnit {tenant_id: $tenant_id, unit_id: 'svc:m1'}) RETURN count(c) AS n`, nil),
 		"one :CodeUnit per unit id")
 }
 
-// The topology-swap group and the version group read the same message; when the
-// version group wins the race the node has no :Table yet. That must be reported,
-// not silently lost.
-func TestCodeVersionRepository_ReportsNodesWithNoTable(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+// ── the case base ────────────────────────────────────────────────────────────
 
-	repo := newVersionRepo(client)
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
-		[]codeversion.NodeVersion{
-			nodeInput("analytics.revenue", "sha256:v1"),
-			nodeInput("analytics.missing", "sha256:v9"),
-		}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, []string{"analytics.missing"}, res.UnmatchedNodeIDs)
-	assert.Equal(t, 1, res.NodeVersionsCreated)
-}
-
-// A retired node's :Table is deleted by the topology swap's orphan cleanup. Its
-// versions survive as free-standing nodes, and when the node returns the pointer
-// reattaches to the version that already exists.
-func TestCodeVersionRepository_RetiredNodeReattachesWithoutDuplicating(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
-
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-
-	// The node leaves the topology: the swap deletes its :Table along with the
-	// pointer edge, leaving the version node behind.
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	res0, err := s.Run(ctx, `MATCH (t:Table {unique_id:'analytics.revenue'}) DETACH DELETE t`, nil)
-	require.NoError(t, err)
-	_, err = res0.Consume(ctx)
-	require.NoError(t, err)
-	require.NoError(t, s.Close(ctx))
-
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 0, res.NodeVersionsCreated, "the existing version is reused")
-	assert.Equal(t, 1, res.CurrentPointersMoved)
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN v.version_seq AS v`, nil),
-		"the version keeps the sequence number it was created with")
-}
-
-func TestCodeVersionRepository_ReturnsGraphReleaseAndPromotionSeq(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	r, err := s.Run(ctx, `MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-7', m.promotion_seq = 7`, nil)
-	require.NoError(t, err)
-	_, err = r.Consume(ctx)
-	require.NoError(t, err)
-	require.NoError(t, s.Close(ctx))
-
-	in := versionWriteInput("rel-7", time.Now().UTC(), nil, nil)
-	in.PromotionSeq = 7
-	res, err := newVersionRepo(client).WriteVersions(ctx, in)
-	require.NoError(t, err)
-	assert.Equal(t, "rel-7", res.GraphReleaseID)
-	assert.Equal(t, int64(7), res.GraphPromotionSeq)
-	assert.False(t, res.GraphAhead)
-}
-
-// More than one batch must behave exactly like one.
-func TestCodeVersionRepository_WritesAcrossBatches(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-
-	var nodes []codeversion.NodeVersion
-	for i := 0; i < 250; i++ {
-		uid := "analytics.n" + strconv.Itoa(i)
-		seedVersionTable(t, client, uid, "sha256:h")
-		nodes = append(nodes, nodeInput(uid, "sha256:h"))
+// A version that becomes current resolves every failure of its node recorded
+// before the promotion and still open; a failure recorded after it stays
+// open, and a resolved one keeps its fix.
+func TestWriteBatch_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.seedRejection("rel-early", "analytics.revenue", promotedAtOf(0))
+	f.seedRejection("rel-late", "analytics.revenue", promotedAtOf(2))
+	resolvedBy := func(releaseID string) []string {
+		return f.column(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: 'analytics.revenue'})
+			-[:RESOLVED_BY]->(v:NodeVersion {tenant_id: $tenant_id}) RETURN v.content_hash AS v`, map[string]any{"release_id": releaseID})
 	}
-	res, err := newVersionRepo(client).WriteVersions(ctx,
-		versionWriteInput("rel-1", time.Now().UTC(), nodes, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 250, res.NodeVersionsCreated)
-	assert.Equal(t, int64(250), versionScalar(t, client,
-		`MATCH (:Table)-[:CURRENT]->(v:NodeVersion) RETURN count(v) AS v`, nil))
-}
 
-// A same-hash promotion writes no version, but it must still advance the node's
-// watermark. Otherwise a transiently-delayed intermediate release, reclaimed
-// later, still looks newer than the stale watermark and drags :CURRENT back onto
-// code that a newer release already superseded.
-func TestCodeVersionRepository_SameHashPromotionAdvancesTheStaleGuard(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:a")
-
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-
-	// R1 records hash A.
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:a")}, nil))
-	require.NoError(t, err)
-
-	// R3 carries the same hash A and so writes no version — but must move the
-	// watermark forward to its own promotion time.
-	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-3", base.Add(2*time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:a")}, nil))
-	require.NoError(t, err)
-
-	// R2 was stuck in between and is reclaimed now. It is older than R3, so it
-	// may record its version but must not take the pointer.
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(1*time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:b")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 1, res.NodeVersionsCreated, "the intermediate version is still recorded")
-	assert.Equal(t, 0, res.CurrentPointersMoved, "but it must not become current")
-
-	assert.Equal(t, "sha256:a", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-}
-
-// A late delivery of an older release must still record its version without
-// disturbing :CURRENT, and must not write a :PREVIOUS edge for it.
-func TestCodeVersionRepository_OlderReleaseWritesNoPreviousEdge(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:new")
-
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:new")}, nil))
-	require.NoError(t, err)
-
-	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-1", base.Add(-time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:old")}, nil))
-	require.NoError(t, err)
-
-	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
-		 RETURN count(p) AS v`, nil),
-		"the retired :PREVIOUS chain must not be written")
-	assert.Equal(t, "sha256:new", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-}
-
-// The pointer guard lives in the write statement, not in a pre-write read, so a
-// second writer that decided from the same earlier state cannot install a stale
-// pointer over a newer one.
-func TestCodeVersionRepository_PointerGuardIsEnforcedInTheWrite(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v2")
-
-	repo := newVersionRepo(client)
-	base := time.Now().UTC()
-
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
-	require.NoError(t, err)
-
-	// Replay an older release repeatedly: each attempt re-reads the graph and
-	// each must lose to the newer watermark.
-	for i := 0; i < 3; i++ {
-		res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
-			[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-		require.NoError(t, err)
-		assert.Equal(t, 0, res.CurrentPointersMoved, "attempt %d must not move the pointer", i)
-	}
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->() RETURN count(*) AS v`, nil),
-		"exactly one :CURRENT edge survives")
-	assert.Equal(t, "sha256:v2", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-}
-
-// When the topology has already applied a newer promotion, a node from this
-// older release is gone for good. Its history must still be recorded — just with
-// nothing to attach it to — rather than retried until the message is dropped.
-func TestCodeVersionRepository_GraphAheadRecordsUnattachedHistory(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-
-	base := time.Now().UTC()
-
-	// The graph reflects a NEWER promotion than the one being ingested. Its
-	// updated_at is deliberately older: ordering comes from the seq alone.
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	r, err := s.Run(ctx,
-		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-9', m.promotion_seq = 9, m.updated_at = $at`,
-		map[string]any{"at": base.Add(-time.Hour)})
-	require.NoError(t, err)
-	_, err = r.Consume(ctx)
-	require.NoError(t, err)
-	require.NoError(t, s.Close(ctx))
-
-	in := versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.retired", "sha256:gone")}, nil)
-	in.PromotionSeq = 1
-	res, err := newVersionRepo(client).WriteVersions(ctx, in)
-	require.NoError(t, err)
-	assert.True(t, res.GraphAhead)
-	assert.Equal(t, int64(9), res.GraphPromotionSeq)
-	assert.Equal(t, []string{"analytics.retired"}, res.UnmatchedNodeIDs)
-	assert.Equal(t, 1, res.NodeVersionsCreated, "the history is recorded, not lost")
-
-	assert.Equal(t, "sha256:gone", versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, true, versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.backfilled AS v`, nil))
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.version_seq AS v`, nil))
-	assert.Nil(t, versionScalar(t, client,
-		`MATCH (:Table)-[:CURRENT]->(v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.content_hash AS v`, nil),
-		"nothing points at it: there is no :Table to attach")
-}
-
-// A merely-late delivery — the graph has not yet applied this release — must
-// still be reported as unmatched so the handler retries and trails the swap.
-func TestCodeVersionRepository_SwapNotLandedIsNotReportedAsGraphAhead(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-
-	base := time.Now().UTC()
-
-	// The graph reflects an OLDER promotion; its updated_at is deliberately
-	// later, which must not matter.
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	r, err := s.Run(ctx,
-		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-0', m.promotion_seq = 2, m.updated_at = $at`,
-		map[string]any{"at": base.Add(time.Hour)})
-	require.NoError(t, err)
-	_, err = r.Consume(ctx)
-	require.NoError(t, err)
-	require.NoError(t, s.Close(ctx))
-
-	in := versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.pending", "sha256:x")}, nil)
-	in.PromotionSeq = 3
-	res, err := newVersionRepo(client).WriteVersions(ctx, in)
-	require.NoError(t, err)
-	assert.False(t, res.GraphAhead, "an older live promotion means the swap has not landed yet")
-	assert.Equal(t, int64(2), res.GraphPromotionSeq)
-	assert.Equal(t, []string{"analytics.pending"}, res.UnmatchedNodeIDs)
-	assert.Equal(t, 0, res.NodeVersionsCreated, "nothing is written; the handler retries instead")
-}
-
-// A release's version write is the fix for every rejection filed against the
-// node before that release was promoted: once the version becomes current,
-// each such rejection still lacking a resolution is linked to it, a rejection
-// filed after the promotion is left alone, and an already-resolved rejection
-// keeps pointing at its original fix rather than being moved onto whatever
-// version a later release introduces.
-func TestWriteVersions_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
-
-	t0 := time.Now().UTC()
-	seedRejection(t, client, "rel-early", "analytics.revenue", t0)
-	seedRejection(t, client, "rel-late", "analytics.revenue", t0.Add(2*time.Hour))
-
-	resolvedByQuery := `MATCH (:Rejection {release_id: $release_id, node_id: 'analytics.revenue'})-[:RESOLVED_BY]->(v)
-		RETURN v.content_hash AS v`
-
-	repo := newVersionRepo(client)
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
+	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
 	assert.Equal(t, 1, res.RejectionsResolved)
+	assert.Equal(t, []string{"sha256:v1"}, resolvedBy("rel-early"))
+	assert.Empty(t, resolvedBy("rel-late"), "a rejection dated after the promotion is not linked")
 
-	assert.Equal(t, "sha256:v1", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-early"}),
-		"the rejection filed before the promotion is linked to the version that just became current")
-	assert.Nil(t, versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-late"}),
-		"a rejection dated after the promotion must not be linked")
+	again := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
+	assert.Zero(t, again.RejectionsResolved, "a replay links nothing again")
 
-	// A second, identical write reports no new links: the node's code is
-	// unchanged, so nothing is written or linked.
-	res2, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 0, res2.RejectionsResolved, "a replay of the same release must not report the link again")
-
-	// A later release changes the node's code again. The already-resolved
-	// rejection must keep pointing at its original fix rather than move onto
-	// the newer version, while the still-open one becomes eligible now that
-	// its own promotion has landed.
-	res3, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", t0.Add(3*time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 1, res3.RejectionsResolved, "only the still-open rejection is newly linked")
-
-	assert.Equal(t, "sha256:v1", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-early"}),
-		"an already-resolved rejection must not be moved onto a later version")
-	assert.Equal(t, int64(1), versionScalar(t, client,
-		`MATCH (:Rejection {release_id:'rel-early', node_id:'analytics.revenue'})-[r:RESOLVED_BY]->() RETURN count(r) AS v`, nil),
-		"still exactly one [:RESOLVED_BY] edge on the already-resolved rejection")
-	assert.Equal(t, "sha256:v2", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-late"}),
-		"the previously-open rejection is now linked to the version that resolved it")
+	later := f.writeBatch(batchOf("rel-3", 3, versionOf("analytics.revenue", "sha256:v3")))
+	assert.Equal(t, 1, later.RejectionsResolved, "only the still-open rejection is linked")
+	assert.Equal(t, []string{"sha256:v1"}, resolvedBy("rel-early"), "a resolved rejection keeps its fix")
+	assert.Equal(t, []string{"sha256:v3"}, resolvedBy("rel-late"))
 }
 
-// TestWriteVersions_ForwardLinkGuardIsPerNodeVersionFamily verifies the
-// promotion-time back-link guard is keyed on the RESOLVED_BY edge's target
-// label, not raw edge existence: a merged fix PR draws its own
-// RESOLVED_BY->(:Proposal) provenance edge that coexists with the
-// own-timeline RESOLVED_BY->(:NodeVersion) edge this write draws, so a
-// rejection already carrying a Proposal link must still receive its own
-// NodeVersion link — while a rejection already linked to a :NodeVersion is
-// still left alone by a later promotion (existing skip behavior, pinned here
-// scoped to the same family).
-func TestWriteVersions_ForwardLinkGuardIsPerNodeVersionFamily(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
-	seedVersionTable(t, client, "analytics.margin", "sha256:v0")
+// The open-rejection guard looks at [:RESOLVED_BY] edges to a :NodeVersion
+// only: a merged fix PR's [:RESOLVED_BY] to a :Proposal does not stop the
+// promotion's own link.
+func TestWriteBatch_ForwardLinkGuardIsPerNodeVersionFamily(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.seedRejection("rel-proposal", "analytics.revenue", promotedAtOf(0))
+	f.exec(`MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel-proposal'})
+		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop-1'})
+		MERGE (rej)-[:RESOLVED_BY]->(p)`, nil)
 
-	t0 := time.Now().UTC()
-	repo := newVersionRepo(client)
-
-	// analytics.revenue: a rejection already carrying merged-PR provenance
-	// (RESOLVED_BY -> :Proposal) must still get its own-timeline
-	// RESOLVED_BY -> :NodeVersion link when the fix promotes.
-	seedRejection(t, client, "rel-proposal", "analytics.revenue", t0)
-	seedResolvedByProposal(t, client, "rel-proposal", "analytics.revenue", "prop-1")
-
-	// analytics.margin: an ordinary rejection used below to pin the skip
-	// behavior once its own-timeline link is established.
-	seedRejection(t, client, "rel-resolved", "analytics.margin", t0)
-
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
-		[]codeversion.NodeVersion{
-			nodeInput("analytics.revenue", "sha256:v1"),
-			nodeInput("analytics.margin", "sha256:v1"),
-		}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 2, res.RejectionsResolved,
-		"both rejections receive their own-timeline NodeVersion link, including the Proposal-linked one")
-
-	assert.Equal(t, "sha256:v1", versionScalar(t, client, `
-		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS v`, nil),
-		"the Proposal-linked rejection must still receive the promotion-time NodeVersion link")
-	assert.Equal(t, int64(1), versionScalar(t, client, `
-		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[:RESOLVED_BY]->(:Proposal)
-		RETURN count(*) AS v`, nil),
-		"the pre-existing Proposal provenance edge is untouched")
-	assert.Equal(t, int64(2), versionScalar(t, client, `
-		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[r:RESOLVED_BY]->()
-		RETURN count(r) AS v`, nil),
-		"the rejection now carries both the Proposal edge and the new NodeVersion edge")
-
-	// A second, later promotion of analytics.margin must not move or
-	// duplicate the NodeVersion link the first promotion just established.
-	res2, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", t0.Add(2*time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.margin", "sha256:v2")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 0, res2.RejectionsResolved,
-		"a rejection already linked to a :NodeVersion must still be skipped")
-	assert.Equal(t, "sha256:v1", versionScalar(t, client, `
-		MATCH (:Rejection {release_id:'rel-resolved', node_id:'analytics.margin'})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS v`, nil),
-		"the already-established NodeVersion link must not move to the later version")
+	res := f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1")))
+	assert.Equal(t, 1, res.RejectionsResolved)
+	assert.Equal(t, int64(2), f.count(`
+		MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-proposal'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil),
+		"the rejection carries the proposal's edge and the version's")
 }
 
-// A release whose promoted_at trails the node's watermark must not be able to
-// claim it resolved anything, even when that promoted_at is still later than
-// the rejection's — its code is not what the node is actually running. The
-// watermark is advanced past it here by an intervening same-hash promotion,
-// which writes no version and so never runs the linking query itself,
-// leaving the rejection open for the late release to wrongly claim if the
-// watermark guard is missing.
-func TestWriteVersions_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.watermark", "sha256:base")
+// A promotion older than the node's watermark is not the code the node runs,
+// so it resolves nothing, even when it is later than the rejection.
+func TestWriteBatch_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.watermark")
+	f.writeBatch(batchOf("rel-base", 1, versionOf("analytics.watermark", "sha256:base")))
+	f.seedRejection("rel-target", "analytics.watermark", promotedAtOf(1).Add(30*time.Minute))
+	f.writeBatch(batchOf("rel-samehash", 3, versionOf("analytics.watermark", "sha256:base")))
 
-	repo := newVersionRepo(client)
-	t0 := time.Now().UTC()
-
-	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-base", t0,
-		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:base")}, nil))
-	require.NoError(t, err)
-
-	seedRejection(t, client, "rel-target", "analytics.watermark", t0.Add(30*time.Minute))
-
-	// A same-hash promotion two hours later advances the node's watermark
-	// without writing a new version, so its batch never adds this node to
-	// currents and its link query never runs for it — the rejection stays
-	// open.
-	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-samehash", t0.Add(2*time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:base")}, nil))
-	require.NoError(t, err)
-
-	// A late-arriving release carries an older promoted_at than the watermark
-	// the same-hash promotion just set, and a different content hash, so it
-	// still writes a version and includes this node in currents — even though
-	// its own promoted_at (t0+1h) is after the rejection's at (t0+30m).
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-stale", t0.Add(time.Hour),
-		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:reverted")}, nil))
-	require.NoError(t, err)
-	assert.Equal(t, 0, res.CurrentPointersMoved, "the stale release must not move the pointer")
-	assert.Equal(t, 0, res.RejectionsResolved,
-		"the stale release's code is not what is running, so it must not resolve anything")
-
-	assert.Nil(t, versionScalar(t, client,
-		`MATCH (:Rejection {release_id:'rel-target', node_id:'analytics.watermark'})-[:RESOLVED_BY]->(v)
-		 RETURN v.content_hash AS v`, nil),
-		"the rejection must remain unresolved")
+	res := f.writeBatch(batchOf("rel-stale", 2, versionOf("analytics.watermark", "sha256:reverted")))
+	assert.Zero(t, res.CurrentPointersMoved)
+	assert.Zero(t, res.RejectionsResolved)
+	assert.Zero(t, f.count(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-target'})-[r:RESOLVED_BY]->() RETURN count(r) AS n`, nil))
 }
 
-// The forward-link stamps the [:RESOLVED_BY] edge with the resolving
-// promotion's own timestamp and release, not just the link to the version
-// node. The precedent detail query needs the edge's promoted_at as its diff
-// baseline, because a reverted-to version node keeps its own, earlier
-// promoted_at forever (version nodes are immutable).
-func TestWriteVersions_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeVersionFixtures(t, client)
-	t.Cleanup(func() { wipeVersionFixtures(t, client) })
-	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
+// The [:RESOLVED_BY] edge carries the resolving promotion's time and release:
+// the precedent detail diffs from it, because a reverted-to version keeps its
+// own earlier promoted_at.
+func TestWriteBatch_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	f.seedRejection("rel-early", "analytics.revenue", promotedAtOf(0))
 
-	t0 := time.Now().UTC()
-	seedRejection(t, client, "rel-early", "analytics.revenue", t0)
+	require.Equal(t, 1, f.writeBatch(batchOf("rel-1", 1, versionOf("analytics.revenue", "sha256:v1"))).RejectionsResolved)
 
-	repo := newVersionRepo(client)
-	promotedAt := t0.Add(time.Hour)
-	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", promotedAt,
-		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
-	require.NoError(t, err)
-	require.Equal(t, 1, res.RejectionsResolved)
-
-	edgePromotedAt := versionScalar(t, client,
-		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.promoted_at AS v`, nil)
-	at, ok := edgePromotedAt.(time.Time)
-	require.True(t, ok, "rb.promoted_at must round-trip as a time.Time, got %T", edgePromotedAt)
-	assert.True(t, promotedAt.Equal(at), "rb.promoted_at must equal the promotion that resolved it")
-
-	assert.Equal(t, "rel-1", versionScalar(t, client,
-		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.release_id AS v`, nil),
-		"rb.release_id must name the release that resolved it")
+	recs := f.rows(`MATCH (:Rejection {tenant_id: $tenant_id, release_id: 'rel-early'})-[rb:RESOLVED_BY]->() RETURN properties(rb) AS p`, nil)
+	require.Len(t, recs, 1)
+	p, _ := recs[0].Get("p")
+	edge := p.(map[string]any)
+	assert.Equal(t, "rel-1", edge["release_id"])
+	at, ok := edge["promoted_at"].(time.Time)
+	require.True(t, ok, "promoted_at is a datetime, got %T", edge["promoted_at"])
+	assert.True(t, promotedAtOf(1).Equal(at))
 }

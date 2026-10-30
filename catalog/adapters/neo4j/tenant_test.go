@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,6 +87,21 @@ func TestPromoteRelease_RefusesAnotherTenantsCall(t *testing.T) {
 	tx := &transaction{run: run, logger: quietLogger()}
 
 	_, err = tx.Topology().PromoteRelease(context.Background(), "tenant-b", "r1", 1, nil, time.Now().UTC())
+	assert.ErrorIs(t, err, errTenantMismatch)
+	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
+}
+
+// The code-version repository refuses another tenant's batch the same way.
+func TestWriteBatch_RefusesAnotherTenantsCall(t *testing.T) {
+	rec := &recordingRunner{}
+	run, err := NewTenantRunner("tenant-a", rec)
+	require.NoError(t, err)
+	tx := &transaction{run: run, logger: quietLogger()}
+
+	_, err = tx.CodeVersions().WriteBatch(context.Background(), "tenant-b", codeversion.WriteInput{
+		ReleaseID: "r1", PromotionSeq: 1,
+		Nodes: []codeversion.NodeVersion{{UniqueID: "a", ContentHash: "h"}},
+	})
 	assert.ErrorIs(t, err, errTenantMismatch)
 	assert.Zero(t, rec.calls, "no statement is sent for another tenant")
 }

@@ -219,11 +219,12 @@ var _ uow.UnitOfWork = (*fakeGraphUnitOfWork)(nil)
 
 // fakeGraphTx hands out the fake repositories a test wires in.
 type fakeGraphTx struct {
-	topology repository.ReleasePromotionRepository
+	topology     repository.ReleasePromotionRepository
+	codeVersions repository.CodeVersionRepository
 }
 
 func (t *fakeGraphTx) Topology() repository.ReleasePromotionRepository { return t.topology }
-func (t *fakeGraphTx) CodeVersions() repository.CodeVersionRepository  { return nil }
+func (t *fakeGraphTx) CodeVersions() repository.CodeVersionRepository  { return t.codeVersions }
 func (t *fakeGraphTx) CaseBase() repository.CaseBaseRepository         { return nil }
 
 var _ uow.Tx = (*fakeGraphTx)(nil)

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
-	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,9 +13,6 @@ import (
 func TestTx_PlaceholderRepositoriesRefuseEveryCall(t *testing.T) {
 	ctx := context.Background()
 	tx := &transaction{}
-
-	_, err := tx.CodeVersions().WriteVersions(ctx, codeversion.WriteInput{})
-	assert.ErrorIs(t, err, errRepositoryNotTransactional)
 
 	assert.ErrorIs(t, tx.CaseBase().RecordRejection(ctx, casebase.Rejection{}), errRepositoryNotTransactional)
 	assert.ErrorIs(t, tx.CaseBase().RecordProposal(ctx, casebase.Proposal{}, casebase.PullRequest{}), errRepositoryNotTransactional)

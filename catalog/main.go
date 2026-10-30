@@ -291,12 +291,12 @@ func main() {
 	// release.promoted:v2 (versions) — an independent consumer group. It reads
 	// the release's code-bundle document and topology artifact from object
 	// storage and records the :NodeVersion / :CodeUnitVersion history behind the
-	// topology. Isolated from the swap so promotion never waits on the bundle,
-	// and free to retry until the swap it trails has landed.
+	// topology, in batches, through the Neo4j unit of work. Isolated from the
+	// swap so promotion never waits on the bundle; it does not wait for the
+	// swap either, creating inactive a node the swap has not written yet.
 	codeBundleReader := s3infra.NewCodeBundleReader(objectStore)
-	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, topologyArtifactReader, codeVersionRepo, logger)
+		graphUnitOfWork, codeBundleReader, topologyArtifactReader, logger)
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the

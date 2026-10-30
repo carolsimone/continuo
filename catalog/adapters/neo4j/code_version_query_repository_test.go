@@ -52,7 +52,7 @@ func TestCodeVersionQueryRepository_NodeVersions_NewestFirstIsCurrentOnce(t *tes
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
 	for i, h := range []string{"sha256:v1", "sha256:v2", "sha256:v3"} {
-		_, err := writer.WriteVersions(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
+		_, err := writer.Write(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
 			base.Add(time.Duration(i)*time.Minute),
 			[]codeversion.NodeVersion{nodeInput("analytics.revenue", h)}, nil))
 		require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestCodeVersionQueryRepository_NodeVersions_RespectsLimit(t *testing.T) {
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
 	for i, h := range []string{"sha256:v1", "sha256:v2", "sha256:v3"} {
-		_, err := writer.WriteVersions(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
+		_, err := writer.Write(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
 			base.Add(time.Duration(i)*time.Minute),
 			[]codeversion.NodeVersion{nodeInput("analytics.revenue", h)}, nil))
 		require.NoError(t, err)
@@ -139,10 +139,10 @@ func TestCodeVersionQueryRepository_NodeVersions_RetiredNodeReturnsHistoryIsCurr
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", base,
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
 	require.NoError(t, err)
 
@@ -179,16 +179,16 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurren
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", base,
 		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h2")}, nil))
 	require.NoError(t, err)
 	// The revert: re-promote content_hash h1. h1's :NodeVersion already
 	// exists, so its own promoted_at (set ON CREATE only) stays at its
 	// original, older value — only the :CURRENT pointer moves.
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-3", base.Add(2*time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-3", base.Add(2*time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
 	require.NoError(t, err)
 
@@ -248,7 +248,7 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty(
 	seedVersionTable(t, client, "analytics.retired_node", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.retired_node", "sha256:v1")}, nil))
 	require.NoError(t, err)
 
@@ -281,10 +281,10 @@ func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T)
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", base,
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
 	require.NoError(t, err)
 
@@ -307,7 +307,7 @@ func TestCodeVersionQueryRepository_VersionsBySeq_MissingSeqReturnsErrNodeNotFou
 	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
 	require.NoError(t, err)
 
@@ -335,13 +335,13 @@ func TestCodeVersionQueryRepository_Ancestors_OrderedMostRecentlyChangedFirstBou
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-a", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-a", base,
 		[]codeversion.NodeVersion{nodeInput("a", "sha256:a1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-b", base.Add(time.Hour),
+	_, err = writer.Write(ctx, versionWriteInput("rel-b", base.Add(time.Hour),
 		[]codeversion.NodeVersion{nodeInput("b", "sha256:b1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-c", base.Add(2*time.Hour),
+	_, err = writer.Write(ctx, versionWriteInput("rel-c", base.Add(2*time.Hour),
 		[]codeversion.NodeVersion{nodeInput("c", "sha256:c1")}, nil))
 	require.NoError(t, err)
 
@@ -371,10 +371,10 @@ func TestCodeVersionQueryRepository_Ancestors_RespectsSinceFilter(t *testing.T) 
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-a", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-a", base,
 		[]codeversion.NodeVersion{nodeInput("a", "sha256:a1")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-b", base.Add(2*time.Hour),
+	_, err = writer.Write(ctx, versionWriteInput("rel-b", base.Add(2*time.Hour),
 		[]codeversion.NodeVersion{nodeInput("b", "sha256:b1")}, nil))
 	require.NoError(t, err)
 
@@ -396,7 +396,7 @@ func TestCodeVersionQueryRepository_UnitsForNode_ReturnsCurrentVersionUnits(t *t
 	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"},
 			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2"})},
@@ -436,12 +436,12 @@ func TestCodeVersionQueryRepository_UnitVersions_NewestFirstIsCurrent(t *testing
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", base,
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"})},
 		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u1", Source: "one"}}))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u2"})},
 		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u2", Source: "two"}}))
@@ -467,7 +467,7 @@ func TestCodeVersionQueryRepository_NodeVersions_IncludeCodeFalseOmitsCodeBodies
 	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
 	require.NoError(t, err)
 
@@ -535,7 +535,7 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_ReturnsAllChainsCappedPerU
 
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", base,
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1a"},
 			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2a"},
@@ -548,7 +548,7 @@ func TestCodeVersionQueryRepository_UnitVersionsBatch_ReturnsAllChainsCappedPerU
 	require.NoError(t, err)
 	// A second version of m1 only: exercises the per-unit cap and the
 	// newest-first ordering within a unit's own chain.
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+	_, err = writer.Write(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1b"},
 			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2a"},
@@ -596,13 +596,13 @@ func seedRevertScenario(t *testing.T, ctx context.Context, client neo4jinfra.Neo
 	seedDependsOn(t, client, "n", "a")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-a1", base,
+	_, err := writer.Write(ctx, versionWriteInput("rel-a1", base,
 		[]codeversion.NodeVersion{nodeInput("a", "sha256:A")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-a2", base.Add(time.Hour),
+	_, err = writer.Write(ctx, versionWriteInput("rel-a2", base.Add(time.Hour),
 		[]codeversion.NodeVersion{nodeInput("a", "sha256:B")}, nil))
 	require.NoError(t, err)
-	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-a3", base.Add(2*time.Hour),
+	_, err = writer.Write(ctx, versionWriteInput("rel-a3", base.Add(2*time.Hour),
 		[]codeversion.NodeVersion{nodeInput("a", "sha256:A")}, nil))
 	require.NoError(t, err)
 }
@@ -694,7 +694,7 @@ func TestCodeVersionQueryRepository_Ancestors_CapAppliesToTheMostRecentlyChanged
 	writer := newVersionRepo(client)
 	base := time.Now().UTC()
 	for i, uid := range uids {
-		_, err := writer.WriteVersions(ctx, versionWriteInput("rel-"+uid, base.Add(time.Duration(i)*time.Minute),
+		_, err := writer.Write(ctx, versionWriteInput("rel-"+uid, base.Add(time.Duration(i)*time.Minute),
 			[]codeversion.NodeVersion{nodeInput(uid, "sha256:"+uid)}, nil))
 		require.NoError(t, err)
 	}
@@ -722,7 +722,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueID_BatchesAllUnits_
 	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
 			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"},
 			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2"},
@@ -782,7 +782,7 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_KnownNodeNoUnits_Integratio
 	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
 
 	writer := newVersionRepo(client)
-	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+	_, err := writer.Write(ctx, versionWriteInput("rel-1", time.Now().UTC(),
 		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
 	require.NoError(t, err)
 

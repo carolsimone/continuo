@@ -35,24 +35,35 @@ type ReleasePromotionRepository interface {
 	) (topology.PromotionOutcome, error)
 }
 
-// CodeVersionRepository writes the code-version history behind the :Table
-// topology. Implementations decide what to write by comparing each incoming
-// node's content_hash against the version the graph currently marks as current
-// — never against a flag carried by the event — so any later release converges a
-// graph that missed a write.
+// CodeVersionRepository writes a tenant's code-version history behind the
+// :Node topology. Implementations decide what to write by comparing each
+// incoming node's content_hash against the version the graph currently marks
+// as current — never against a flag carried by the event — so any later
+// release converges a graph that missed a write.
 type CodeVersionRepository interface {
-	// WriteVersions ingests one release's versions. It is idempotent: replaying
-	// the same input the second time writes nothing.
+	// WriteBatch ingests one batch of a release's versions into tenantID's
+	// graph. It does not wait for the release's topology swap: a node of the
+	// batch the graph does not hold yet is created inactive from its entry in
+	// in.Topology, which the swap makes live when it applies a release that
+	// carries it. A node with no entry in in.Topology, or whose entry is a
+	// dbt-test, is skipped.
+	//
+	// Every node the batch matches, and every shared-code unit its nodes use,
+	// advances its watermark, code_version_promotion_seq, to the larger of its
+	// value and in.PromotionSeq, even when its code is unchanged; its :CURRENT
+	// moves only while the watermark equals in.PromotionSeq, so an older
+	// promotion records its versions and leaves the pointer alone. Every write
+	// MERGEs by identity: writing the same batch again writes nothing.
 	//
 	// Promoting a node's version also resolves the case base: every still-open
 	// :Rejection of that node is forward-linked [:RESOLVED_BY] to the version
-	// that just became current, under the same per-node watermark guard as the
-	// pointer move. This is the ordinary-case half of the convergence — the
-	// fix promoted after the rejection was recorded; CaseBaseRepository's
+	// that just became current, under the same watermark guard as the pointer
+	// move. This is the ordinary-case half of the convergence — the fix
+	// promoted after the rejection was recorded; CaseBaseRepository's
 	// RecordRejection covers the reverse order, back-linking a rejection to a
-	// version already promoted before it arrived. RejectionsResolved counts
-	// the links this write created.
-	WriteVersions(ctx context.Context, in codeversion.WriteInput) (codeversion.WriteResult, error)
+	// version already promoted before it arrived. RejectionsResolved counts the
+	// links this write created.
+	WriteBatch(ctx context.Context, tenantID string, in codeversion.WriteInput) (codeversion.WriteResult, error)
 }
 
 // CaseBaseRepository writes the failure-precedent case base. Both writes are

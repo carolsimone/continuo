@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
-	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 )
 
@@ -17,16 +16,6 @@ import (
 
 // errRepositoryNotTransactional is the error of every placeholder method.
 var errRepositoryNotTransactional = errors.New("neo4j: this repository cannot run on the unit of work's transaction")
-
-// codeVersionsTxPlaceholder stands in for the code-version repository on a
-// uow.Tx.
-type codeVersionsTxPlaceholder struct{}
-
-var _ repository.CodeVersionRepository = codeVersionsTxPlaceholder{}
-
-func (codeVersionsTxPlaceholder) WriteVersions(context.Context, codeversion.WriteInput) (codeversion.WriteResult, error) {
-	return codeversion.WriteResult{}, fmt.Errorf("CodeVersionRepository.WriteVersions: %w", errRepositoryNotTransactional)
-}
 
 // caseBaseTxPlaceholder stands in for the case-base repository on a uow.Tx.
 type caseBaseTxPlaceholder struct{}

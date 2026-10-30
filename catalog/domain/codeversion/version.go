@@ -1,9 +1,13 @@
 // Package codeversion holds the vocabulary of the code-version history behind
-// the :Table topology: what code a node ran, which shared code was in scope, and
+// the :Node topology: what code a node ran, which shared code was in scope, and
 // the release that promoted it.
 package codeversion
 
-import "time"
+import (
+	"time"
+
+	"github.com/carolsimone/continuo/catalog/domain/topology"
+)
 
 // UnitRef identifies one exact shared-code version a node version used.
 type UnitRef struct {
@@ -43,42 +47,34 @@ type CodeUnitVersion struct {
 	Source   string
 }
 
-// WriteInput is one release's complete version-ingestion request. Nodes carries
-// EVERY node in the release's code bundle: which of them actually produce a
-// version is decided against the graph, not here.
+// WriteInput is one batch of a release's version ingestion. Nodes carries
+// bundle nodes of the release: which of them produce a version is decided
+// against the graph, not here.
 type WriteInput struct {
 	ReleaseID string
-	// PromotionSeq is the promotion this ingestion belongs to; it decides
-	// whether the live topology is ahead of it or has not reached it yet.
+	// PromotionSeq is the promotion this ingestion belongs to. It is the
+	// version watermark of every node and shared-code unit the batch matches:
+	// a node's :CURRENT moves only while its watermark equals this seq.
 	PromotionSeq int64
 	Repo         string
 	CommitSHA    string
 	PromotedAt   time.Time
 	Nodes        []NodeVersion
 	Units        []CodeUnitVersion
+	// Topology holds the release's nodes as the topology swap writes them,
+	// keyed by unique_id. A node of Nodes the graph does not hold yet is created
+	// inactive from its entry; a node of Nodes with no entry is skipped.
+	Topology map[string]topology.ReleasePromotedTopologyNode
 }
 
-// WriteResult reports what a write actually did, so the caller can log it and
-// decide whether the release's topology swap has landed yet.
+// WriteResult reports what a write actually did, so the caller can log it.
 type WriteResult struct {
+	// NodesCreated counts the inactive :Node created for bundle nodes the graph
+	// did not hold yet.
+	NodesCreated         int
 	NodeVersionsCreated  int
 	UnitVersionsCreated  int
 	CurrentPointersMoved int
-	// UnmatchedNodeIDs are bundle nodes with no :Table in the graph.
-	UnmatchedNodeIDs []string
-	// GraphReleaseID is the release the topology currently reflects — empty on a
-	// graph that has never been promoted to.
-	GraphReleaseID string
-	// GraphPromotionSeq is the live promotion's seq — 0 on a graph never
-	// promoted to, or promoted before promotion seqs existed.
-	GraphPromotionSeq int64
-	// GraphAhead reports that the topology has already applied a promotion NEWER
-	// than the one being ingested (GraphPromotionSeq > WriteInput.PromotionSeq).
-	// It separates "the swap has not landed yet", where retrying converges, from
-	// "the swap has moved on", where a node this release carried may have been
-	// retired and will never reappear — so retrying only burns the delivery
-	// budget and loses that node's history.
-	GraphAhead bool
 	// RejectionsResolved counts open :Rejection nodes this write linked to a
 	// newly-current version via [:RESOLVED_BY].
 	RejectionsResolved int

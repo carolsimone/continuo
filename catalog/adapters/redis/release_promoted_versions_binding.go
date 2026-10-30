@@ -11,13 +11,14 @@ import (
 )
 
 // NewReleasePromotedVersionsBinding wires ParseReleasePromotedV2 into the
-// ReleasePromotedVersionsHandler. A decode failure is permanent
-// (events.ErrPermanent): the binding logs and returns the error so the consumer
-// dead-letters the entry.
+// ReleasePromotedVersionsHandler, which writes under the tenant the parsed
+// input carries. A decode failure, and an envelope without a tenant, is
+// permanent (events.ErrPermanent): the binding logs and returns the error so
+// the consumer dead-letters the entry.
 //
 // outbox_entry_id is extracted from the message fields and threaded to the
-// handler so the dedup layer can catch re-XADDs of the same upstream outbox row
-// that arrive under a fresh Redis message ID.
+// handler so its processed-message marker also catches a re-XADD of the same
+// upstream outbox row under a fresh Redis message ID.
 func NewReleasePromotedVersionsBinding(
 	handler *handlers.ReleasePromotedVersionsHandler,
 	logger *slog.Logger,

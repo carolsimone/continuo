@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
+	"github.com/carolsimone/continuo/catalog/domain/topology"
 	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
@@ -20,13 +21,21 @@ import (
 // one version's fidelity instead of bloating the graph store.
 const MaxCompiledCodeBytes = 256 * 1024
 
-// planVersionWrite turns a release's code bundle plus its promotion into a
-// version-write request. It performs no input/output and makes no write
-// decision: every bundle node is carried through, because whether a node needs a
-// version is a question only the graph can answer.
+// VersionsBatchSize is how many bundle nodes one write transaction of the
+// versions group carries. A baseline release ingests the whole estate at once,
+// and one unbounded transaction holding every node's source text would
+// dominate the server's heap.
+const VersionsBatchSize = 100
+
+// planVersionWrite turns a release's code bundle, the nodes its topology swap
+// writes and its promotion into a version-write request. It performs no
+// input/output and makes no write decision: every bundle node is carried
+// through, because whether a node needs a version is a question only the graph
+// can answer.
 func planVersionWrite(
 	in domainModel.PromoteReleaseInput,
 	b codebundle.Bundle,
+	nodesOfRelease []topology.ReleasePromotedTopologyNode,
 	logger *slog.Logger,
 ) codeversion.WriteInput {
 	// changed_node_ids qualifies provenance; it never gates a write.
@@ -95,6 +104,11 @@ func planVersionWrite(
 		})
 	}
 
+	topo := make(map[string]topology.ReleasePromotedTopologyNode, len(nodesOfRelease))
+	for _, n := range nodesOfRelease {
+		topo[n.UniqueID] = n
+	}
+
 	return codeversion.WriteInput{
 		ReleaseID:    in.ReleaseID,
 		PromotionSeq: in.PromotionSeq,
@@ -103,7 +117,39 @@ func planVersionWrite(
 		PromotedAt:   in.PromotedAt,
 		Nodes:        nodes,
 		Units:        units,
+		Topology:     topo,
 	}
+}
+
+// versionBatches splits a version-write request into batches of at most size
+// nodes, in the request's order. Each batch carries the request's promotion,
+// and the shared-code units and topology entries of its own nodes only. An
+// empty request yields no batch.
+func versionBatches(in codeversion.WriteInput, size int) []codeversion.WriteInput {
+	var batches []codeversion.WriteInput
+	for start := 0; start < len(in.Nodes); start += size {
+		end := min(start+size, len(in.Nodes))
+		batch := in
+		batch.Nodes = in.Nodes[start:end]
+		batch.Topology = make(map[string]topology.ReleasePromotedTopologyNode, end-start)
+		used := map[string]struct{}{}
+		for _, n := range batch.Nodes {
+			if entry, ok := in.Topology[n.UniqueID]; ok {
+				batch.Topology[n.UniqueID] = entry
+			}
+			for _, ref := range n.UnitRefs {
+				used[ref.UnitID] = struct{}{}
+			}
+		}
+		batch.Units = nil
+		for _, u := range in.Units {
+			if _, ok := used[u.UnitID]; ok {
+				batch.Units = append(batch.Units, u)
+			}
+		}
+		batches = append(batches, batch)
+	}
+	return batches
 }
 
 // closureRefs expands a node's direct shared-code dependencies into the full

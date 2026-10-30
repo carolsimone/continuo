@@ -212,8 +212,8 @@ func (r *releasePromotionRepository) lockCurrentRelease(ctx context.Context) (st
 	return releaseID, seq, nil
 }
 
-// topologyParams renders the release's nodes as the $topology parameter of the
-// swap's statements, and lists their unique ids.
+// topologyParams renders a release's nodes as the $topology parameter of the
+// statements that write them as :Node, and lists their unique ids.
 func topologyParams(nodes []topology.ReleasePromotedTopologyNode) ([]map[string]any, []string) {
 	topo := make([]map[string]any, 0, len(nodes))
 	uniqueIDs := make([]string, 0, len(nodes))

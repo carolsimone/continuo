@@ -31,9 +31,9 @@ import (
 //   - version_seq is a stable per-node handle for addressing one of a node's
 //     versions, not an ordering: it is assigned max+1 at ingestion time, so a
 //     late-arriving OLDER release receives the HIGHEST seq. Sorting by it
-//     would put stale code at the top of a "newest first" view; a
-//     graph-ahead write (an unattached, backfilled history entry) creates
-//     exactly this case.
+//     would put stale code at the top of a "newest first" view; a late
+//     older promotion, whose version is recorded without becoming current,
+//     creates exactly this case.
 //
 // A node's version rows are matched by unique_id directly (node_version_uid
 // backs that lookup) and joined against its :Table's :CURRENT pointer only
