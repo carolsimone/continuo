@@ -67,7 +67,7 @@
         "logLevel": {"type": "string"},
         "teamImagePrefix": {"type": "string"},
         "runControllerGrpcAddr": {"type": "string"},
-        "orchestratorGrpcAddr": {"type": "string"},
+        "catalogGrpcAddr": {"type": "string"},
         "agentRemediationGrpcAddr": {"type": "string"},
         "agentChatGrpcAddr": {"type": "string"},
         "deadLetterControllerGrpcAddr": {"type": "string"},

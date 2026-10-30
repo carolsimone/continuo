@@ -600,7 +600,7 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   > "${tmp}/egress-np-env.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-env.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default:50051","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator.default.svc.cluster.local:50052"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"orchestrator","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller.default:50051","CONTINUO_CATALOG_ADDR":"catalog.default.svc.cluster.local:50052"}},{"name":"run-controller","enabled":true,"httpPort":8082},{"name":"catalog","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
   > "${tmp}/egress-np-forms.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.yaml"
 # An in-cluster address the allowlist admits on the port the agents use is left
@@ -610,7 +610,7 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.
 # a wildcard allowlist entry over the cluster domain matches them on another
 # port; an llm.baseUrl on localhost needs no allowlist entry.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator:50052"}}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_RUN_CONTROLLER_ADDR":"run-controller:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_CATALOG_ADDR":"catalog:50052"}}]' \
   > "${tmp}/egress-allowlisted-local.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-local.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \

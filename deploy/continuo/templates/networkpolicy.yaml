@@ -45,7 +45,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [run-controller, orchestrator, execution-controller,
+                values: [run-controller, catalog, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller, db-init-migrate]
         - podSelector:
@@ -83,7 +83,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [run-controller, orchestrator, execution-controller,
+                values: [run-controller, catalog, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller,
                          topology-controller, ui]
@@ -110,7 +110,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ $instance }}
-              app.kubernetes.io/name: orchestrator
+              app.kubernetes.io/name: catalog
       ports:
         - port: 7687
 {{- end }}
@@ -139,7 +139,7 @@ spec:
                 operator: In
                 values: [execution-controller, release-controller,
                          remediation, agent-remediation, ui,
-                         topology-controller, orchestrator, run-controller,
+                         topology-controller, catalog, run-controller,
                          minio-bucket-init]
         - podSelector:
             matchLabels:
@@ -176,7 +176,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "continuo.fullname" . }}-allow-orchestrator-grpc
+  name: {{ include "continuo.fullname" . }}-allow-catalog-grpc
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
@@ -184,7 +184,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/instance: {{ $instance }}
-      app.kubernetes.io/name: orchestrator
+      app.kubernetes.io/name: catalog
   policyTypes: ["Ingress"]
   ingress:
     - from:

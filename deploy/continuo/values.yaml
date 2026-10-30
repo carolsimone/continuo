@@ -35,7 +35,7 @@ global:
   teamImagePrefix: ""
 
   runControllerGrpcAddr: run-controller:50051
-  orchestratorGrpcAddr: orchestrator:50052
+  catalogGrpcAddr: catalog:50052
   agentRemediationGrpcAddr: agent-remediation:50054  # in-cluster gRPC address release-controller uses to read remediation attempts before starting a retry round
   agentChatGrpcAddr: agent-chat:50053
   deadLetterControllerGrpcAddr: dead-letter-controller:50055  # in-cluster gRPC address of dead-letter-controller's DeadLetterService (`continuo dlq`)
@@ -449,7 +449,7 @@ database:
   # Postgres connection-pool limits for the Go services, published to them as
   # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
   # each service's own default, sized to how many queries it runs at once
-  # (open/idle: run-controller 20/10, orchestrator 35/5,
+  # (open/idle: run-controller 20/10, catalog 35/5,
   # execution-controller 30/5, release-controller 15/5, remediation 10/5,
   # agent-remediation 10/5, agent-chat 20/5, dead-letter-controller 12/5). Each
   # limit is a cap per pod, and the sum of the caps is the worst case: with the
@@ -467,7 +467,7 @@ database:
   # its lease waker's 60 s pass or the attempt reconcile's pass, which grants
   # freed nodes before it looks for stalled runs, and run-controller's cron
   # loop sees a cron edit on its next pass, at most 60 s later.
-  # maxOpenConns applies to every Go service, orchestrator included, whose 13
+  # maxOpenConns applies to every Go service, catalog included, whose 13
   # consumers need about two connections each: do not set it below about 30,
   # or handlers that hold a transaction and need a second connection stall
   # until their deadline. To fit a small Postgres, lower the low-concurrency
@@ -585,7 +585,7 @@ egress:
     resources: {}
 
 metrics:
-  # Every Go service (run-controller, orchestrator, execution-controller,
+  # Every Go service (run-controller, catalog, execution-controller,
   # release-controller, remediation, agent-remediation, agent-chat,
   # dead-letter-controller, egress-proxy) serves Prometheus metrics at /metrics
   # on this port, on a listener of its own, so a scraper can be admitted to it
@@ -648,7 +648,7 @@ services:
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
 
-  - name: orchestrator
+  - name: catalog
     enabled: true
     replicas: 1
     httpPort: 8087
@@ -664,7 +664,7 @@ services:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: NEO4J_PASSWORD, ref: neo4j}
       - {name: REDIS_PASSWORD, ref: redis}
-      # S3 credentials are NOT listed here. orchestrator reads each release's
+      # S3 credentials are NOT listed here. catalog reads each release's
       # code-bundle document, and the deployment template injects the credentials
       # for every storage-reading service (see continuo.s3.credentialServices in
       # _helpers.tpl) so they survive an upgrade that carries an older copy of
@@ -697,7 +697,7 @@ services:
       HEALTH_PORT: "8091"
       GRPC_PORT: "50053"
       CONTINUO_RUN_CONTROLLER_ADDR: run-controller:50051
-      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      CONTINUO_CATALOG_ADDR: catalog:50052
       CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__  # rendered from global.deadLetterControllerGrpcAddr
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
@@ -884,7 +884,7 @@ services:
       POSTGRES_DB: continuo_agent_remediation
       AGENT_REMEDIATION_HTTP_PORT: "8092"
       AGENT_REMEDIATION_GRPC_PORT: "50054"
-      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      CONTINUO_CATALOG_ADDR: catalog:50052
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
       GITHUB_BASE_URL: https://api.github.com

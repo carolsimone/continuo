@@ -217,7 +217,7 @@ export default function NodeDetailPage() {
   // backstop there. Only a KNOWN, positive test_count is runnable: a known zero
   // and an unset count (a node predating test_count capture, so test_count_known
   // is false) are both treated as "no tests" and gate the latest-mode trigger,
-  // matching the orchestrator's single-node gate.
+  // matching catalog's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
   // The newest run in the history that a press of this page could have made:

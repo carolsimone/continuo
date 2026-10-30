@@ -37,7 +37,7 @@ UPGRADE NOTES
   With an external bucket (s3.*), grant topology-controller write access and
   release-controller read/write/delete access to tenants/, and keep any
   lifecycle expiry rule off that prefix.
-  orchestrator and run-controller also read tenants/ (read access with an
+  catalog and run-controller also read tenants/ (read access with an
   external bucket).
 {{- if .Values.validation.imageTag }}
 
@@ -52,13 +52,13 @@ UPGRADE NOTES
   (digests are repository-scoped and do not carry over).
 {{- end }}
 
-  orchestrator now reads object storage to record node code-version history, so
+  catalog now reads object storage to record node code-version history, so
   it needs S3 to be reachable and authenticated. The chart supplies the
   credentials for you — they no longer come from the `services` list, so an older
   copy of values.yaml still works — but two things are yours to check:
     * If you run a NetworkPolicy of your own (not this chart's), allow
-      orchestrator egress to your object store.
-    * If you set s3.* for an external bucket, orchestrator now needs read access
+      catalog egress to your object store.
+    * If you set s3.* for an external bucket, catalog now needs read access
       to the code-bundles/ prefix.
   Until it can read that prefix, promotions still succeed and runs are
   unaffected: only code-version history is skipped, and it catches up on the

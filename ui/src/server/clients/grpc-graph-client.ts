@@ -2,7 +2,7 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
 
-const PROTO_PATH = path.join(process.cwd(), 'proto/orchestrator/v1/orchestrator.proto');
+const PROTO_PATH = path.join(process.cwd(), 'proto/catalog/v1/catalog.proto');
 const PROTO_DIR = path.join(process.cwd(), 'proto');
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -22,7 +22,7 @@ export interface GrpcGraphClient {
 }
 
 export function createGrpcGraphClient(address: string): GrpcGraphClient {
-  const client = new proto.orchestrator.v1.OrchestratorQuery(
+  const client = new proto.catalog.v1.CatalogQuery(
     address,
     grpc.credentials.createInsecure()
   );

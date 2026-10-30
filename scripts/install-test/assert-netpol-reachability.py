@@ -101,7 +101,7 @@ REQUIRED_EDGES = [
      "operator dashboard reads release detail over HTTP"),
     ("ui", "agent-remediation", 50054,
      "operator dashboard reads remediation proposals over gRPC"),
-    ("ui", "orchestrator", 50052,
+    ("ui", "catalog", 50052,
      "operator dashboard reads the topology and run projections over gRPC"),
     ("agent-chat", "dead-letter-controller", 50055,
      "continuo dlq list/show/redrive read and redrive dead letters over gRPC"),
@@ -114,14 +114,14 @@ PROXY_EDGES = [
 ]
 
 CLOSED_EDGES = [
-    ("orchestrator", "run-controller", 50051,
-     "orchestrator calls no run-controller RPC: run-controller fails a stalled run itself"),
+    ("catalog", "run-controller", 50051,
+     "catalog calls no run-controller RPC: run-controller fails a stalled run itself"),
 ]
 
 # While the render holds egress-proxy, no service but the two agents may use it.
 PROXY_CLOSED_EDGES = [
     (source, PROXY, PROXY_PORT, "only agent-chat and agent-remediation use the proxy")
-    for source in ("ui", "run-controller", "orchestrator", "execution-controller", "release-controller",
+    for source in ("ui", "run-controller", "catalog", "execution-controller", "release-controller",
                    "remediation", "dead-letter-controller", "topology-controller")
 ] + [
     ("agent-chat", PROXY, 8093, "the agents reach the proxy on its proxy port only"),
@@ -131,10 +131,10 @@ PROXY_CLOSED_EDGES = [
 # checked here: the destination's ingress rules are other policies' concern.
 REQUIRED_AGENT_EGRESS = [
     ("agent-chat", "run-controller", 50051, "the continuo CLI reads run state"),
-    ("agent-chat", "orchestrator", 50052, "the continuo CLI reads the topology"),
+    ("agent-chat", "catalog", 50052, "the continuo CLI reads the topology"),
     ("agent-chat", "postgresql", 5432, "chat threads"),
     ("agent-chat", "redis", 6379, "the shared rate limiter"),
-    ("agent-remediation", "orchestrator", 50052, "graph context"),
+    ("agent-remediation", "catalog", 50052, "graph context"),
     ("agent-remediation", "postgresql", 5432, "proposals"),
     ("agent-remediation", "redis", 6379, "the remediation stream and the LLM cache"),
     ("agent-remediation", "minio", 9000, "evidence and code bundles"),

@@ -988,7 +988,7 @@ every value in the `services` env of agent-chat and agent-remediation. */}}
 {{- define "continuo.egress.givenAddresses" -}}
 {{- $given := list -}}
 {{- $g := .Values.global | default dict -}}
-{{- range $key := list "runControllerGrpcAddr" "orchestratorGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
+{{- range $key := list "runControllerGrpcAddr" "catalogGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
 {{- $given = append $given (dict "key" (printf "global.%s" $key) "value" (get $g $key)) -}}
 {{- end -}}
 {{- range $svc := .Values.services -}}
@@ -1295,11 +1295,11 @@ lives in the replaceable `services` list. scripts/install-test/assert-redis-gate
 pins this list to the services whose source imports a Redis client.
 */ -}}
 {{- define "continuo.redis.clientServices" -}}
-["run-controller","orchestrator","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
+["run-controller","catalog","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
 {{- end -}}
 
 {{- define "continuo.s3.credentialServices" -}}
-["run-controller","orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
+["run-controller","catalog","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}
 
 {{- define "continuo.auth.issuerUrl" -}}
@@ -1488,7 +1488,7 @@ scripts/install-test/assert-metrics.py pins this list to the services whose
 source imports pkg/metrics.
 */ -}}
 {{- define "continuo.metrics.services" -}}
-["run-controller","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
+["run-controller","catalog","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
 {{- end -}}
 
 {{/*

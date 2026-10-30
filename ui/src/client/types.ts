@@ -82,7 +82,7 @@ export interface GraphNode {
 }
 
 // A dependency edge in execution order: `from` runs first, `to` reads its
-// output. The server reverses the orchestrator's DEPENDS_ON edge into this
+// output. The server reverses catalog's DEPENDS_ON edge into this
 // orientation, so depth, column, arrowhead and upstream/downstream all follow
 // from it directly.
 export interface GraphEdge {

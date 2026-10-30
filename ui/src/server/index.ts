@@ -20,7 +20,7 @@ import { loadMaintenance } from './maintenance';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const RUN_CONTROLLER_GRPC_ADDR = process.env.RUN_CONTROLLER_GRPC_ADDR || 'localhost:50051';
-const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
+const CATALOG_GRPC_ADDR = process.env.CATALOG_GRPC_ADDR || 'localhost:50052';
 const AGENT_CHAT_GRPC_ADDR = process.env.AGENT_CHAT_GRPC_ADDR || 'localhost:50053';
 const REMEDIATION_GRPC_ADDR = process.env.REMEDIATION_GRPC_ADDR || 'localhost:50054';
 const CONFIG_FILE = process.env.CONFIG_FILE;
@@ -52,7 +52,7 @@ async function main() {
   assertS3Config();
 
   const client = createGrpcClient(RUN_CONTROLLER_GRPC_ADDR);
-  const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
+  const graphClient = createGrpcGraphClient(CATALOG_GRPC_ADDR);
   const remediationClient = createRemediationClient(REMEDIATION_GRPC_ADDR);
 
   // Optional GitHub App integration for PR creation — disabled (not fatal)
