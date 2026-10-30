@@ -50,6 +50,12 @@ COPY catalog/ ./catalog/
 
 WORKDIR /app/catalog
 
+# catalog-backup, the operator command that takes, lists and restores exports
+# of a tenant's graph. The compose stack bind-mounts the source over
+# /app/catalog, which hides this binary there: run it with
+# `docker exec catalog go run ./cmd/catalog-backup <command>` instead.
+RUN go build -o /app/catalog/bin/catalog-backup ./cmd/catalog-backup
+
 EXPOSE 8087 50052
 
 CMD ["tail", "-f", "/dev/null"]

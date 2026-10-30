@@ -37,12 +37,17 @@ WORKDIR /app/catalog
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/catalog .
 
+# catalog-backup, the operator command run with `kubectl exec deploy/catalog`.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/catalog-backup ./cmd/catalog-backup
+
 # Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
 COPY --from=builder /app/bin/catalog /usr/local/bin/catalog
+COPY --from=builder /app/bin/catalog-backup /usr/local/bin/catalog-backup
 
 EXPOSE 8087 50052
 

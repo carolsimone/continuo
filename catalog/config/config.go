@@ -88,12 +88,8 @@ type Config struct {
 func Load(v *pkgconfig.Validator) Config {
 	return Config{
 		Redis: pkgconfig.LoadRedis(v),
-		Neo4j: Neo4jConfig{
-			URI:      v.Require("NEO4J_URI"),
-			User:     v.Require("NEO4J_USER"),
-			Password: v.Require("NEO4J_PASSWORD"),
-		},
-		S3: pkgconfig.LoadS3(v),
+		Neo4j: LoadNeo4j(v),
+		S3:    pkgconfig.LoadS3(v),
 
 		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort: envInt("HTTP_PORT", 8087),
@@ -109,13 +105,23 @@ func Load(v *pkgconfig.Validator) Config {
 	}
 }
 
+// LoadNeo4j reads the Neo4j connection settings, NEO4J_URI, NEO4J_USER and
+// NEO4J_PASSWORD, all required: a missing one is recorded on v.
+func LoadNeo4j(v *pkgconfig.Validator) Neo4jConfig {
+	return Neo4jConfig{
+		URI:      v.Require("NEO4J_URI"),
+		User:     v.Require("NEO4J_USER"),
+		Password: v.Require("NEO4J_PASSWORD"),
+	}
+}
+
 // loadBackup reads the backup settings. A value catalog cannot honour is
 // recorded on v, so catalog refuses to start: an enabled flag that is not a
 // boolean, a schedule checkBackupSchedule refuses, or a keep that is not a
 // whole number of at least 1. The values are checked whether or not the
 // backup is enabled, as the chart checks them.
 func loadBackup(v *pkgconfig.Validator) BackupConfig {
-	b := BackupConfig{Enabled: true, Schedule: defaultBackupSchedule, Keep: defaultBackupKeep}
+	b := BackupConfig{Enabled: true, Schedule: defaultBackupSchedule, Keep: LoadBackupKeep(v)}
 	if raw := os.Getenv(backupEnabledKey); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -131,15 +137,24 @@ func loadBackup(v *pkgconfig.Validator) BackupConfig {
 			b.Schedule = raw
 		}
 	}
-	if raw := os.Getenv(backupKeepKey); raw != "" {
-		keep, err := strconv.Atoi(raw)
-		if err != nil || keep < 1 {
-			v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number of at least 1)", backupKeepKey, raw))
-		} else {
-			b.Keep = keep
-		}
-	}
 	return b
+}
+
+// LoadBackupKeep reads how many of each tenant's newest exports are kept,
+// CATALOG_BACKUP_KEEP (default 7). A value that is not a whole number of at
+// least 1 is recorded on v and the default is returned. An export run by hand
+// prunes with the same keep as the scheduled one.
+func LoadBackupKeep(v *pkgconfig.Validator) int {
+	raw := os.Getenv(backupKeepKey)
+	if raw == "" {
+		return defaultBackupKeep
+	}
+	keep, err := strconv.Atoi(raw)
+	if err != nil || keep < 1 {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number of at least 1)", backupKeepKey, raw))
+		return defaultBackupKeep
+	}
+	return keep
 }
 
 // minBackupInterval is the shortest @every interval a backup schedule may

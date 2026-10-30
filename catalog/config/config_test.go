@@ -139,3 +139,57 @@ func assertNoBackupProblem(t *testing.T, missing []string) {
 }
 
 func strconvQuote(s string) string { return fmt.Sprintf("%q", s) }
+
+// LoadNeo4j reads the three Neo4j settings the operator command shares with
+// the service, and records each one that is missing.
+func TestLoadNeo4j_ReadsAndRequiresTheThreeKeys(t *testing.T) {
+	t.Setenv("NEO4J_URI", "bolt://neo4j:7687")
+	t.Setenv("NEO4J_USER", "neo4j")
+	t.Setenv("NEO4J_PASSWORD", "secret")
+	var v pkgconfig.Validator
+	got := LoadNeo4j(&v)
+	if want := (Neo4jConfig{URI: "bolt://neo4j:7687", User: "neo4j", Password: "secret"}); got != want {
+		t.Fatalf("LoadNeo4j = %+v, want %+v", got, want)
+	}
+	if len(v.Missing()) != 0 {
+		t.Fatalf("LoadNeo4j recorded %v", v.Missing())
+	}
+
+	for _, key := range []string{"NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"} {
+		t.Setenv(key, "")
+	}
+	var missing pkgconfig.Validator
+	LoadNeo4j(&missing)
+	if len(missing.Missing()) != 3 {
+		t.Fatalf("LoadNeo4j recorded %v, want the three keys", missing.Missing())
+	}
+}
+
+// LoadBackupKeep is the keep Load reads: the default 7 when unset, the value
+// when it is a whole number of at least 1, and a recorded problem with the
+// default returned otherwise.
+func TestLoadBackupKeep(t *testing.T) {
+	for _, c := range []struct {
+		raw     string
+		want    int
+		problem bool
+	}{
+		{"", 7, false},
+		{"1", 1, false},
+		{"30", 30, false},
+		{"0", 7, true},
+		{"-2", 7, true},
+		{"many", 7, true},
+	} {
+		t.Run(c.raw, func(t *testing.T) {
+			t.Setenv("CATALOG_BACKUP_KEEP", c.raw)
+			var v pkgconfig.Validator
+			if got := LoadBackupKeep(&v); got != c.want {
+				t.Fatalf("LoadBackupKeep = %d, want %d", got, c.want)
+			}
+			if problem := len(v.Missing()) > 0; problem != c.problem {
+				t.Fatalf("problems = %v, want a problem: %v", v.Missing(), c.problem)
+			}
+		})
+	}
+}
