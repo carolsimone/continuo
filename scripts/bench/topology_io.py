@@ -1,10 +1,12 @@
 """Live-topology export, union with a bench DAG, and comparison with the live graphs.
 
 On a shared install the benchmark never announces a topology that omits a live
-node: a swap retires missing nodes and deletes those no recent run used,
-cutting their code-version and failure-history links. It also never announces
-a dbt test node: the artifact current_prod points at keeps tests for
-validation, but catalog leaves them out of its graph.
+node: a swap retires every node it omits (catalog keeps it as an inactive node
+with its code versions and failure history, and drops its outgoing
+dependencies, and run-controller's live release no longer carries it), so the
+live schedule graphs would lose it until a later announcement carries it
+again. It also never announces a dbt test node: the artifact current_prod
+points at keeps tests for validation, but catalog leaves them out of its graph.
 """
 from __future__ import annotations
 
