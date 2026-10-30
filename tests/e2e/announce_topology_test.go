@@ -59,9 +59,9 @@ func announceTopology(t *testing.T, ctx context.Context, releaseID string, nodes
 	return res
 }
 
-// livePointer is catalog's live topology pointer, (:Meta {key:
-// 'current_release'}): the release it holds and the promotion seq it was
-// applied under (0 before any).
+// livePointer is catalog's live topology pointer of the default tenant,
+// (:Meta {tenant_id: 'default', key: 'current_release'}): the release it holds
+// and the promotion seq it was applied under (0 before any).
 type livePointer struct {
 	releaseID    string
 	promotionSeq int64
@@ -73,7 +73,7 @@ func readLivePointer(ctx context.Context, clients *testClients) livePointer {
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 	defer session.Close(ctx)
 	res, err := session.Run(ctx,
-		`MATCH (m:Meta {key: 'current_release'})
+		`MATCH (m:Meta {tenant_id: 'default', key: 'current_release'})
 		 RETURN m.release_id AS release_id, coalesce(m.promotion_seq, 0) AS seq`, nil)
 	if err != nil || !res.Next(ctx) {
 		return livePointer{}

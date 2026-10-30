@@ -738,7 +738,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 	defer session.Close(ctx)
 	res, err := session.Run(ctx,
-		`MATCH (v:NodeVersion {release_id: $rid}) RETURN count(v) AS n`,
+		`MATCH (v:NodeVersion {tenant_id: 'default', release_id: $rid}) RETURN count(v) AS n`,
 		map[string]any{"rid": runID})
 	require.NoError(t, err, "count :NodeVersion rows for %s", runID)
 	require.True(t, res.Next(ctx), "count query returned no row")

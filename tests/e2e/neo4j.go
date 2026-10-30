@@ -31,13 +31,14 @@ func queryNeo4jRecords(t *testing.T, ctx context.Context, clients *testClients, 
 	return records
 }
 
-// deleteSeededTableNodes removes the :Table nodes with the given unique ids,
-// with their relationships, and fails the test when it cannot: a node left
-// behind leaks into the topology the tests after it read. It runs on a context
-// of its own, so a test whose context has ended still cleans up. Register it
-// with t.Cleanup right after the clients are set up, and the close of the
-// clients (also a t.Cleanup, registered first) runs after it.
-func deleteSeededTableNodes(t *testing.T, clients *testClients, ids ...string) {
+// deleteSeededNodes removes the default tenant's :Node nodes with the given
+// unique ids, with their relationships, and fails the test when it cannot: a
+// node left behind leaks into the topology the tests after it read. It matches
+// the ids it is given and the tenant, so it never touches another node. It runs
+// on a context of its own, so a test whose context has ended still cleans up.
+// Register it with t.Cleanup right after the clients are set up, and the close
+// of the clients (also a t.Cleanup, registered first) runs after it.
+func deleteSeededNodes(t *testing.T, clients *testClients, ids ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -46,19 +47,19 @@ func deleteSeededTableNodes(t *testing.T, clients *testClients, ids ...string) {
 	})
 	defer func() { _ = session.Close(ctx) }()
 
-	result, err := session.Run(ctx, `MATCH (t:Table) WHERE t.unique_id IN $ids DETACH DELETE t`,
+	result, err := session.Run(ctx, `MATCH (t:Node {tenant_id: 'default'}) WHERE t.unique_id IN $ids DETACH DELETE t`,
 		map[string]any{"ids": ids})
 	if err == nil {
 		_, err = result.Consume(ctx)
 	}
 	if err != nil {
-		t.Errorf("remove the seeded :Table nodes %v from Neo4j: %v", ids, err)
+		t.Errorf("remove the seeded :Node nodes %v from Neo4j: %v", ids, err)
 	}
 }
 
 // queryNeo4jRows runs cypher and returns every record as a column-name-keyed
 // map, for assertions that read more than one column or more than one row —
-// e.g. one row per (target :Table, amended) pair off an EDITED fan-out.
+// e.g. one row per (target :Node, amended) pair off an EDITED fan-out.
 func queryNeo4jRows(t *testing.T, ctx context.Context, clients *testClients, cypher string, params map[string]any) []map[string]any {
 	t.Helper()
 	records := queryNeo4jRecords(t, ctx, clients, cypher, params)
@@ -90,7 +91,7 @@ func pollNeo4jPRState(
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		rows := queryNeo4jRows(t, ctx, clients, `
-			MATCH (:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service})
+			MATCH (:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {tenant_id: 'default', service: $service})
 			RETURN pl.pr_state AS pr_state`,
 			map[string]any{"proposal_id": proposalID, "service": service})
 		if len(rows) != 1 {

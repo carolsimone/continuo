@@ -448,7 +448,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	//     draw the case-base provenance edges catalog's pr_closed
 	//     consumer maintains: one RESOLVED_BY per resolved descendant to the
 	//     shared :Proposal, and one EDITED edge from that :Proposal to the
-	//     changed ancestor's :Table, both carrying amended=false. The stub
+	//     changed ancestor's :Node, both carrying amended=false. The stub
 	//     serves the PR's own written commit at the merge sha (nothing pushes
 	//     a further commit in this test), so the merged content is
 	//     byte-identical to what was proposed.
@@ -478,7 +478,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {release_id: $release_id})-[rb:RESOLVED_BY]->(p:Proposal {proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id})-[rb:RESOLVED_BY]->(p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
 		RETURN count(r) AS n, collect(DISTINCT rb.amended) AS amended`,
 		map[string]any{"release_id": releaseID, "proposal_id": row.ID})
 	require.Len(t, resolvedRows, 1, "expected one summary row for the RESOLVED_BY query")
@@ -488,7 +488,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		"every RESOLVED_BY drawn by an as-proposed merge must carry amended=false; got %+v", resolvedRows[0])
 
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (p:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table)
+		MATCH (p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
 		RETURN t.unique_id AS unique_id, e.amended AS amended`,
 		map[string]any{"proposal_id": row.ID})
 	require.Len(t, editRows, 1, "the shared-upstream attempt drew one EDITED edge, to the ancestor it repaired; got %+v", editRows)
@@ -596,7 +596,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 		`SELECT manifest_s3_key FROM service_prod WHERE service_name = $1`, changedService).Scan(&baselineManifest))
 	require.Equal(t, "s3://continuo/service-2/e2e-baseline/manifest.json", baselineManifest)
 
-	// 2. Seed both broken models' :Table nodes in Neo4j so the Locator can
+	// 2. Seed both broken models' :Node nodes in Neo4j so the Locator can
 	//    resolve each one's file path and owning service.
 	seedFTableETopologyNode(t, ctx, clients)
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
@@ -720,7 +720,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, otherService, "rejected", 60*time.Second)
 
 	mergedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
 	require.Len(t, mergedResolved, 1,
@@ -728,7 +728,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	require.Equal(t, false, mergedResolved[0]["amended"], "an as-proposed merge's RESOLVED_BY edge must carry amended=false")
 
 	rejectedResolved := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableGUniqueID, "proposal_id": row.ID})
 	require.Empty(t, rejectedResolved,
@@ -866,14 +866,14 @@ FROM e2e_schema.ftable_c c`
 	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
 	require.Len(t, resolvedRows, 1, "ftable_e must have exactly one RESOLVED_BY edge to the proposal")
 	require.Equal(t, true, resolvedRows[0]["amended"], "an amended merge's RESOLVED_BY edge must carry amended=true")
 
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table {unique_id: $node_id})
+		MATCH (:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default', unique_id: $node_id})
 		RETURN e.amended AS amended`,
 		map[string]any{"proposal_id": row.ID, "node_id": ftableEUniqueID})
 	require.Len(t, editRows, 1, "ftable_e must have exactly one EDITED edge from the proposal")
@@ -1171,7 +1171,7 @@ func fetchStubPullRequest(t *testing.T, ctx context.Context, repo string, number
 	return pr
 }
 
-// topologyModel is one dbt model to place in Neo4j as a :Table node.
+// topologyModel is one dbt model to place in Neo4j as a :Node.
 type topologyModel struct {
 	uniqueID string
 	schema   string
@@ -1180,12 +1180,12 @@ type topologyModel struct {
 	filePath string
 }
 
-// seedModelTopologyNodes MERGEs a minimal :Table node per model so the
-// agent-remediation's Locator (the GetNodeLocation gRPC call) can resolve each
-// node's file path and service name. In a cold e2e no release has been
-// promoted, so Neo4j is empty; a node missing here is reported NOT_FOUND, which
-// makes an upstream cluster skip its target and degrades a node's source
-// resolution silently.
+// seedModelTopologyNodes MERGEs a minimal :Node per model, under the default
+// tenant, so the agent-remediation's Locator (the GetNodeLocation gRPC call)
+// can resolve each node's file path and service name. In a cold e2e no release
+// has been promoted, so Neo4j is empty; a node missing here is reported
+// NOT_FOUND, which makes an upstream cluster skip its target and degrades a
+// node's source resolution silently.
 //
 // The unique_id uses the same key format the release-promotion handler writes
 // ("{schema_name}.{table_name}"), and original_file_path matches the dbt
@@ -1205,7 +1205,7 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 	ids := make([]string, 0, len(models))
 	for _, m := range models {
 		_, err := session.Run(ctx, `
-			MERGE (t:Table {unique_id: $uid})
+			MERGE (t:Node {tenant_id: 'default', unique_id: $uid})
 			SET t.schema_name        = $schema_name,
 			    t.table_name         = $table_name,
 			    t.service_name       = $service_name,
@@ -1223,7 +1223,7 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 		ids = append(ids, m.uniqueID)
 	}
 
-	t.Cleanup(func() { deleteSeededTableNodes(t, clients, ids...) })
+	t.Cleanup(func() { deleteSeededNodes(t, clients, ids...) })
 	t.Logf("seeded topology nodes in Neo4j: %v", ids)
 }
 
@@ -1363,12 +1363,12 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 	pollNeo4jPRState(t, ctx, clients, row.ID, producerService, "merged", 60*time.Second)
 
 	resolvedRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		MATCH (r:Rejection {tenant_id: 'default', release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {tenant_id: 'default', proposal_id: $proposal_id})
 		RETURN rb.amended AS amended`,
 		map[string]any{"release_id": releaseID, "node_id": xbreakDownUniqueID, "proposal_id": row.ID})
 	require.Len(t, resolvedRows, 1, "the consumer is resolved by the producer's merged fix")
 	editRows := queryNeo4jRows(t, ctx, clients, `
-		MATCH (p:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table)
+		MATCH (p:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[e:EDITED]->(t:Node {tenant_id: 'default'})
 		RETURN t.unique_id AS unique_id`,
 		map[string]any{"proposal_id": row.ID})
 	require.Len(t, editRows, 1)
