@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/repository"
@@ -482,9 +483,9 @@ func versionParams(n codeversion.NodeVersion, seq int64) map[string]any {
 
 // with returns a copy of params with key set to value.
 func with(params map[string]any, key string, value any) map[string]any {
-	out := make(map[string]any, len(params)+1)
-	for k, v := range params {
-		out[k] = v
+	out := maps.Clone(params)
+	if out == nil {
+		out = make(map[string]any, 1)
 	}
 	out[key] = value
 	return out
