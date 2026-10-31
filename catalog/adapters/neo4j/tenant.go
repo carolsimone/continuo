@@ -54,8 +54,10 @@ func (t TenantRunner) Run(ctx context.Context, cypher string, params map[string]
 	if _, ok := params[tenantParam]; ok {
 		return nil, errTenantParamOverride
 	}
-	bound := make(map[string]any, len(params)+1)
-	maps.Copy(bound, params)
+	bound := maps.Clone(params)
+	if bound == nil {
+		bound = make(map[string]any, 1)
+	}
 	bound[tenantParam] = t.tenantID
 	return t.runner.Run(ctx, cypher, bound)
 }
