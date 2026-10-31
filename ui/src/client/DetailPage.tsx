@@ -22,8 +22,9 @@ import { useLastRun } from './detail-page/useLastRun';
 import { useRunRows } from './detail-page/useRunRows';
 import { useScheduleGraph } from './detail-page/useScheduleGraph';
 import { useSelectedRunGraph } from './detail-page/useSelectedRunGraph';
+import { useTriggerRun } from './detail-page/useTriggerRun';
 import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
-import { settlesRequest, useActionRequestId, type ActionRequestId } from './request-id';
+import { useActionRequestId, type ActionRequestId } from './request-id';
 import DAGPanel from './DAGPanel';
 import NodeTypeIcon from './NodeTypeIcon';
 import PastRunsPanel from './PastRunsPanel';
@@ -69,15 +70,14 @@ interface DetailPageProps {
 // still sends the same id.
 export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const { name } = useParams<{ name: string }>();
-  const { take, renew } = useActionRequestId();
-  return <ScheduleDetail key={name} name={name} mode={mode} takeRequestId={take} renewTriggerId={renew} />;
+  const requestId = useActionRequestId();
+  return <ScheduleDetail key={name} name={name} mode={mode} requestId={requestId} />;
 }
 
-function ScheduleDetail({ name, mode, takeRequestId, renewTriggerId }: {
+function ScheduleDetail({ name, mode, requestId }: {
   name: string | undefined;
   mode: DetailMode;
-  takeRequestId: ActionRequestId['take'];
-  renewTriggerId: ActionRequestId['renew'];
+  requestId: ActionRequestId;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -98,16 +98,6 @@ function ScheduleDetail({ name, mode, takeRequestId, renewTriggerId }: {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
-  // The trigger button's request id: a press that gets no answer and is
-  // repeated for the same schedule, while the page still shows the last run
-  // the first press saw, sends the same id, so the run the first press made is
-  // returned rather than made twice. The page reads the schedule's last run
-  // when it arrives at the schedule; a newer one read then makes the next
-  // press a new action, and the id is renewed once the server has given its
-  // final answer. While that read is loading or after it failed, the page
-  // does not know the last run (lastRunObservation is undefined).
-  const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
   const [runView, setRunView] = useState<'list' | 'graph'>('list');
   const [laneCollapsed, setLaneCollapsed] = useState<Set<string>>(new Set());
@@ -120,30 +110,9 @@ function ScheduleDetail({ name, mode, takeRequestId, renewTriggerId }: {
     setTimeout(() => setRerunFailedState('idle'), 3000);
   }, []);
 
-  const handleTriggerRun = useCallback(async () => {
-    if (!name) return;
-    setTriggerState('loading');
-    setTriggerError(null);
-    try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request_id: takeRequestId(name, lastRunObservation) }),
-      });
-      if (settlesRequest(res)) renewTriggerId();
-      if (res.ok) {
-        setTriggerState('success');
-        setTimeout(() => setTriggerState('idle'), 3000);
-      } else {
-        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setTriggerError(body.error ?? 'Request failed — please try again');
-        setTriggerState('error');
-      }
-    } catch {
-      setTriggerError('Request failed — please try again');
-      setTriggerState('error');
-    }
-  }, [name, lastRunObservation, takeRequestId, renewTriggerId]);
+  const { triggerState, triggerError, trigger: handleTriggerRun } = useTriggerRun(
+    name, lastRunObservation, requestId,
+  );
 
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
