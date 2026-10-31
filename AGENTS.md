@@ -97,6 +97,8 @@ Do not consider a task complete until the architecture documentation has been re
 - No cross-references that only resolve relative to an edit or another section's numbering — e.g. citing "Step 3a" outside the numbered flow that defines it. Name the mechanism (the function, the field) instead.
 - Deprecated/removed features are simply absent, not documented as history.
 
+**Mermaid sequence diagrams never carry a raw `;` or `#` in their text.** In a `sequenceDiagram`, `;` ends a statement like a newline does, so a `;` in a message, a `Note` or an `alt`/`else`/`opt`/`loop` label is a parse error and the whole diagram fails to render; a `#` there drops the rest of the line without an error. Separate clauses with `,` or `<br/>`. A quoted string that must keep one writes it as Mermaid's entity code: `#59;` for `;`, `#35;` for `#`.
+
 Services should be Go based service, find `Dockerfile.dev` in the service folders if you need to know how to build them.
 The exception is `topology-controller`, which is Python 3.14 and uses uv for dependency management.
 All the other services should, more or less, use a similar stack but with different dependencies.

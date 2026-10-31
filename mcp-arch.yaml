@@ -1,0 +1,72 @@
+# enola's config for this repository.
+#
+# A run pointed at the repository root (`enola --generate .`, `enola baseline pin`,
+# `enola check`, the MCP `generate_snapshot` tool) reads this file's `ignore`,
+# `extractors` and `renderers`, because enola looks for `mcp-arch.yaml` in the
+# directory it is given. Without it enola uses built-in defaults, which index the
+# git worktrees under `.worktrees/` and the local `.superpowers/` scratch (about
+# 90% of the facts of a root snapshot). A root run collapses every service into
+# one node.
+#
+# For one `service` node per service directory (so impact, find_path and the
+# crossrepo edges work across services), pass this file itself:
+#
+#   enola --generate mcp-arch.yaml
+#
+# Entries in `repos:` resolve relative to this file, and each store is written
+# to <service>/.enola (gitignored).
+ignore:
+  - "**/vendor/**"
+  - "**/*_test.go"
+  - "**/*.pb.go"
+  - "**/mocks/**"
+  - "**/.venv/**"
+  - "**/venv/**"
+  - "**/__pycache__/**"
+  - "**/site-packages/**"
+  - "**/.pytest_cache/**"
+  - "**/*_test.py"
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/coverage/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/*.spec.tsx"
+  - "**/.git/**"
+  - "**/.enola/**"
+  - "**/.worktrees/**"
+  - "**/.superpowers/**"
+  - "**/.claude/**"
+  - "**/.opencode/**"
+  - "**/.agents/**"
+  - "**/.codex/**"
+  - "**/tests/**"
+extractors:
+  - go
+  - python
+  - typescript
+  - grpc
+  - manifests
+renderers:
+  - llm_context
+output:
+  dir: ".enola"
+  max_context_tokens: 16000
+repos:
+  - agent-chat
+  - agent-remediation
+  - catalog
+  - cli
+  - dbt
+  - dead-letter-controller
+  - egress-proxy
+  - execution-controller
+  - pkg
+  - release-controller
+  - remediation
+  - run-controller
+  - s3-sidecar
+  - topology-controller
+  - ui
