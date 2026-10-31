@@ -43,7 +43,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # in pyarrow, which ships manylinux wheels only — alpine's musl libc would
 # force a source build. continuo-python-runtime declares requires-python
 # >= 3.14, which python:3.14-slim satisfies.
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # ca-certificates/tzdata carry over from the alpine stage this replaces.
 # continuo-python-runtime provides the continuo-runtime CLI the
