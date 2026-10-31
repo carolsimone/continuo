@@ -1783,4 +1783,49 @@ describe('DetailPage — arrival and teardown', () => {
     expect(screen.getByText('old_orders')).toBeInTheDocument();
     expect(screen.queryByText('orders')).toBeNull();
   });
+
+  it('keeps the current schedule\'s request id when another schedule\'s late trigger answer lands', async () => {
+    const aAnswer = deferred<Response>();
+    const ids: Record<string, string[]> = { a: [], b: [] };
+    const pages = mockFetchSequence({
+      '/api/schedules/a/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/a/runs': async () => ({ runs: [], total_count: 0 }),
+      '/api/schedules/b/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/b/runs': async () => ({ runs: [], total_count: 0 }),
+      '/api/schedules': async () => ({ schedules: [] }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const trigger = /^\/api\/schedules\/(a|b)\/trigger$/.exec(String(input));
+      if (!trigger) return pages(input);
+      ids[trigger[1]].push(JSON.parse(String(init?.body)).request_id);
+      // Schedule a's answer is held; schedule b's first answer is a gateway error.
+      return trigger[1] === 'a'
+        ? aAnswer.promise
+        : ({ ok: false, status: 503, json: async () => ({}) } as Response);
+    }));
+    render(
+      <MemoryRouter initialEntries={['/schedule/a']}>
+        <GoTo to="/schedule/b" />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const press = async () => fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await press();
+    await waitFor(() => expect(ids.a).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'go' }));
+    await press();
+    await waitFor(() => expect(ids.b).toHaveLength(1));
+    await screen.findByText('Request failed — please try again');
+
+    aAnswer.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+    await flushReads();
+    await press();
+
+    // A 503 may be a timed-out call whose run committed: the retry repeats the id.
+    await waitFor(() => expect(ids.b).toHaveLength(2));
+    expect(ids.b[1]).toBe(ids.b[0]);
+  });
 });

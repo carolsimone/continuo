@@ -25,12 +25,15 @@ export function useTriggerRun(
     setTriggerState('loading');
     setTriggerError(null);
     try {
+      const id = takeRequestId(name, lastRunObservation);
       const res = await fetch(`/api/schedules/${encodeURIComponent(name)}/trigger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request_id: takeRequestId(name, lastRunObservation) }),
+        body: JSON.stringify({ request_id: id }),
       });
-      if (settlesRequest(res)) renewRequestId();
+      // The page keeps one request id across schedules: an answer that lands
+      // after another schedule's press took over renews nothing.
+      if (settlesRequest(res)) renewRequestId(id);
       if (res.ok) {
         setTriggerState('success');
         setTimeout(() => setTriggerState('idle'), 3000);
