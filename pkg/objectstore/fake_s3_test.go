@@ -195,8 +195,37 @@ func (f *fakeS3) createUpload(w http.ResponseWriter, bucket, key string) {
 	id := "upload-" + strconv.Itoa(f.nextID)
 	f.uploads[id] = &fakeUpload{bucket: bucket, key: key, parts: map[int][]byte{}}
 	f.mu.Unlock()
+	writeXML(w, initiateMultipartUploadResult{Bucket: bucket, Key: key, UploadID: id})
+}
+
+// initiateMultipartUploadResult is the body S3 answers CreateMultipartUpload
+// with.
+type initiateMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadID string   `xml:"UploadId"`
+}
+
+// completeMultipartUploadResult is the body S3 answers
+// CompleteMultipartUpload with.
+type completeMultipartUploadResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CompleteMultipartUploadResult"`
+	Bucket  string   `xml:"Bucket"`
+	Key     string   `xml:"Key"`
+	ETag    string   `xml:"ETag"`
+}
+
+// writeXML answers with v marshalled as an XML document, so the bucket and
+// key a request named are escaped in it.
+func writeXML(w http.ResponseWriter, v any) {
+	body, err := xml.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/xml")
-	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>%s</Bucket><Key>%s</Key><UploadId>%s</UploadId></InitiateMultipartUploadResult>`, bucket, key, id)
+	_, _ = w.Write(append([]byte(xml.Header), body...))
 }
 
 func (f *fakeS3) uploadPart(w http.ResponseWriter, r *http.Request, id, partNumber string) {
@@ -268,8 +297,7 @@ func (f *fakeS3) completeUpload(w http.ResponseWriter, r *http.Request, bucket, 
 	}
 	f.objects[bucket+"/"+key] = fakeObject{body: assembled, modified: time.Now()}
 	delete(f.uploads, id)
-	w.Header().Set("Content-Type", "application/xml")
-	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>%s</Bucket><Key>%s</Key><ETag>"%s"</ETag></CompleteMultipartUploadResult>`, bucket, key, etag(assembled))
+	writeXML(w, completeMultipartUploadResult{Bucket: bucket, Key: key, ETag: `"` + etag(assembled) + `"`})
 }
 
 func (f *fakeS3) abortUpload(w http.ResponseWriter, r *http.Request, id string) {

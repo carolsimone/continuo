@@ -431,14 +431,14 @@ func stallFixture(graph ports.GraphExporter, stallAfter time.Duration) *exporter
 }
 
 // exportWithin runs ExportTenant under a deadline far past the stall bound,
-// and returns its error and how long it ran.
-func exportWithin(t *testing.T, ex *Exporter, deadline time.Duration) (error, time.Duration) {
+// and returns how long it ran and its error.
+func exportWithin(t *testing.T, ex *Exporter, deadline time.Duration) (time.Duration, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	start := time.Now()
 	_, err := ex.ExportTenant(ctx, tenant)
-	return err, time.Since(start)
+	return time.Since(start), err
 }
 
 // assertStalledAndCleanedUp checks that a stalled export failed with
@@ -482,7 +482,7 @@ func TestExporter_AStalledExportFailsWithinTheBound(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := stallFixture(graph, 50*time.Millisecond)
-			err, took := exportWithin(t, f.ex, 3*time.Second)
+			took, err := exportWithin(t, f.ex, 3*time.Second)
 			assertStalledAndCleanedUp(t, f, err, took)
 		})
 	}
@@ -493,7 +493,7 @@ func TestExporter_AStalledExportFailsWithinTheBound(t *testing.T) {
 func TestExporter_AStalledUploadFailsWithinTheBound(t *testing.T) {
 	f := stallFixture(smallGraph(3), 50*time.Millisecond)
 	f.store.sink = func(w *fakeSink) { w.blockWrites = true }
-	err, took := exportWithin(t, f.ex, 3*time.Second)
+	took, err := exportWithin(t, f.ex, 3*time.Second)
 	assertStalledAndCleanedUp(t, f, err, took)
 }
 
@@ -506,7 +506,7 @@ func TestExporter_AHungRenewalDoesNotHideAStall(t *testing.T) {
 	}}, 50*time.Millisecond)
 	f.ex.keeper.renewTimeout = 10 * time.Millisecond
 	f.lease.renewBlocks = true
-	err, took := exportWithin(t, f.ex, 3*time.Second)
+	took, err := exportWithin(t, f.ex, 3*time.Second)
 	assertStalledAndCleanedUp(t, f, err, took)
 }
 
@@ -527,7 +527,7 @@ func TestExporter_AnExportThatMovesIsNotStalled(t *testing.T) {
 		return nil
 	}}
 	f := stallFixture(graph, 120*time.Millisecond)
-	err, took := exportWithin(t, f.ex, 3*time.Second)
+	took, err := exportWithin(t, f.ex, 3*time.Second)
 	require.NoError(t, err)
 	assert.Greater(t, took, 2*f.ex.keeper.stallAfter, "the export ran longer than the stall limit")
 	assert.Len(t, f.store.keys(), 1)

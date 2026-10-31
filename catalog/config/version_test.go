@@ -9,10 +9,10 @@ import (
 // module's version when the build stamped one, otherwise the VCS revision
 // (marked when the tree was modified), otherwise "unknown".
 func TestVersion_ComesFromTheBuild(t *testing.T) {
-	setting := func(kv ...string) []debug.BuildSetting {
-		var out []debug.BuildSetting
-		for i := 0; i < len(kv); i += 2 {
-			out = append(out, debug.BuildSetting{Key: kv[i], Value: kv[i+1]})
+	setting := func(pairs ...[2]string) []debug.BuildSetting {
+		out := make([]debug.BuildSetting, 0, len(pairs))
+		for _, kv := range pairs {
+			out = append(out, debug.BuildSetting{Key: kv[0], Value: kv[1]})
 		}
 		return out
 	}
@@ -23,9 +23,9 @@ func TestVersion_ComesFromTheBuild(t *testing.T) {
 		want string
 	}{
 		{"no build info", nil, false, "unknown"},
-		{"a module version", &debug.BuildInfo{Main: debug.Module{Version: "v0.16.0"}, Settings: setting("vcs.revision", "abc123")}, true, "v0.16.0"},
-		{"a development build at a revision", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: setting("vcs.revision", "abc123", "vcs.modified", "false")}, true, "abc123"},
-		{"a modified tree", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: setting("vcs.revision", "abc123", "vcs.modified", "true")}, true, "abc123+dirty"},
+		{"a module version", &debug.BuildInfo{Main: debug.Module{Version: "v0.16.0"}, Settings: setting([2]string{"vcs.revision", "abc123"})}, true, "v0.16.0"},
+		{"a development build at a revision", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: setting([2]string{"vcs.revision", "abc123"}, [2]string{"vcs.modified", "false"})}, true, "abc123"},
+		{"a modified tree", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: setting([2]string{"vcs.revision", "abc123"}, [2]string{"vcs.modified", "true"})}, true, "abc123+dirty"},
 		{"a development build without VCS", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true, "unknown"},
 		{"no version and no VCS", &debug.BuildInfo{}, true, "unknown"},
 	}

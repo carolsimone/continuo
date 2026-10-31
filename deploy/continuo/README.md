@@ -295,9 +295,16 @@ first. While it is held, on every catalog pod, catalog's consumers back off and
 retry that tenant's writes (reads go on), and the writes land once the export
 ends: `continuo_catalog_export_duration_seconds` is how long they waited. The
 lease is renewed while the export makes progress, expires within two minutes
-when its process dies, and an export that moves no record and no byte for two
-minutes stops and releases it. An export or a restore that finds the lease held
-by another is skipped.
+when its process dies, and an export that moves no record for two minutes stops
+and releases it. An export or a restore that finds the lease held by another is
+skipped.
+
+**A shutdown during an export.** catalog stops an export in flight within its
+drain window, half of `SHUTDOWN_GRACE` (7.5 s by default): the export aborts
+its upload and releases the lease, and the next slot exports the tenant again.
+When the process ends before that, the lease lapses within two minutes and the
+parts already uploaded stay in the bucket until the lifecycle rule
+`AbortIncompleteMultipartUpload` (under the S3 access below) removes them.
 
 ### The command
 
@@ -386,6 +393,15 @@ was written after the export is gone:
 - versions of releases promoted after the export, so a node changed since then
   keeps a stale current version until its next release;
 - rejections, proposals and PR outcomes recorded after the export.
+
+One export can itself hold a hole. catalog writes a release's code versions in
+batches of 100 nodes, each its own transaction behind the export lease, and
+records the message as processed with the last batch. An export that lands
+between two batches of one release holds that release's versions for the
+earlier batches and none for the later ones, whose nodes keep the `:CURRENT`
+of their previous version. The live graph converges, because the message is
+delivered again once the export ends and writes its batches again. A restore
+of that export leaves those nodes so until their next change.
 
 Topology written after the export comes back with the re-announce in step 3.
 

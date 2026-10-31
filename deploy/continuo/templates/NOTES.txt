@@ -93,8 +93,10 @@ To run no exports, set catalog.backup.enabled=false.
 catalog keeps no Postgres: if your values override services, name catalog's
 entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
 With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init
-container that waits for a database catalog is not allowed to reach (or that
-was never created) and fails after ten minutes, so catalog never starts.
+container that waits for that database and can keep catalog from starting: it
+fails after ten minutes when catalog cannot reach the database (the
+NetworkPolicy no longer admits catalog to Postgres) or the database is missing
+(a fresh install never creates it).
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

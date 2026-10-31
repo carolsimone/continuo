@@ -436,7 +436,11 @@ runs:
 # catalog through the shared ConfigMap as CATALOG_BACKUP_ENABLED,
 # CATALOG_BACKUP_SCHEDULE and CATALOG_BACKUP_KEEP; a value outside these rules
 # fails the install, and catalog refuses to start on a schedule its cron parser
-# rejects or a keep below 1.
+# rejects or a keep below 1. A shutdown of catalog stops an export in flight
+# within its drain window (half of SHUTDOWN_GRACE): the export aborts its
+# upload and releases the lease. When the process ends first, the lease
+# lapses within two minutes and the parts already uploaded stay in the bucket
+# until a lifecycle rule AbortIncompleteMultipartUpload removes them.
 catalog:
   backup:
     enabled: true
@@ -492,9 +496,10 @@ database:
   # loop sees a cron edit on its next pass, at most 60 s later.
   # maxOpenConns replaces the default of every one of those services at once,
   # the largest of which is execution-controller's 30: a lower value can leave
-  # a service's handlers waiting for a connection. To fit a small Postgres, lower the low-concurrency
-  # services one at a time through their services[].env (DB_MAX_OPEN_CONNS /
-  # DB_MAX_IDLE_CONNS), or raise Postgres max_connections.
+  # a service's handlers waiting for a connection. To fit a small Postgres,
+  # lower the low-concurrency services one at a time through their
+  # services[].env (DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS), or raise Postgres
+  # max_connections.
   # Set the two together: maxIdleConns may not exceed maxOpenConns, and the
   # render fails when maxIdleConns is set without maxOpenConns (an idle limit
   # above a service's own open limit would stop that service from starting). A

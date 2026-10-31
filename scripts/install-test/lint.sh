@@ -157,7 +157,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules note prints on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, catalog backup and catalog Postgres notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -207,8 +207,8 @@ if grep -qF "$backup_note" "${tmp}/notes-upgrade-backup-off.txt"; then
 fi
 # An upgrading operator is told once that catalog's services entry carries no
 # Postgres keys, since a POSTGRES_DB left there renders an init container that
-# never completes; an installing one renders the chart's own entry and is told
-# nothing.
+# can keep catalog from starting; an installing one renders the chart's own
+# entry and is told nothing.
 catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.'
 [ "$(grep -cF "$catalog_postgres_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
   || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a services override"; exit 1; }

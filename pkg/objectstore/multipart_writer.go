@@ -214,7 +214,7 @@ func (w *multipartWriter) Abort() error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), abortTimeout)
 	defer cancel()
 	if err := w.abortUpload(ctx); err != nil {
-		w.fail(err)
+		_ = w.fail(err) // later Writes and Closes report the failure; Abort returns its own
 		return err
 	}
 	w.finish(writerAborted)
