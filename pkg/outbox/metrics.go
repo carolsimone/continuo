@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -36,11 +35,17 @@ type Metrics struct {
 
 var _ Observer = (*Metrics)(nil)
 
+// Registerer is what NewMetrics needs of a metrics registry: *metrics.Registry
+// satisfies it.
+type Registerer interface {
+	Register(cs ...prometheus.Collector)
+}
+
 // NewMetrics registers continuo_outbox_published_total,
 // continuo_outbox_publish_failures_total, continuo_outbox_backlog,
 // continuo_outbox_oldest_open_age_seconds and continuo_outbox_dead_letters
 // on reg, each labelled by table.
-func NewMetrics(reg *metrics.Registry) *Metrics {
+func NewMetrics(reg Registerer) *Metrics {
 	m := &Metrics{
 		published: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_outbox_published_total", Help: "Outbox rows published.",

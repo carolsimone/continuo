@@ -11,9 +11,9 @@ import (
 )
 
 // PruneFunc deletes at most limit rows that are older than retention, evaluated
-// against the database clock, and returns how many it removed. The sweeper
+// against the store's own clock, and returns how many it removed. The sweeper
 // calls it in a loop until a pass removes fewer than limit rows (backlog
-// drained), so each statement holds only a small lock.
+// drained), so each call holds only a small lock.
 type PruneFunc func(ctx context.Context, retention time.Duration, limit int) (int64, error)
 
 // Target names one table-and-prune pair the sweeper keeps bounded. Name is
@@ -33,7 +33,7 @@ type Config struct {
 	Retention time.Duration
 	// Interval is how often the sweep runs. Default 1 hour.
 	Interval time.Duration
-	// BatchLimit is the maximum rows deleted per statement; the sweeper loops
+	// BatchLimit is the maximum rows deleted per call; the sweeper loops
 	// until a pass deletes fewer than this. Default 1000.
 	BatchLimit int
 	// MaxBatchesPerSweep caps how many LIMIT iterations one sweep performs, so a
@@ -59,11 +59,10 @@ func (c Config) withDefaults() Config {
 }
 
 // Sweeper periodically prunes rows that have aged past the retention window
-// from one or more tables. Every service runs one over what would otherwise
-// grow without bound: its transactional outbox and its message_processing
-// dedup rows (every dispatched outbox row and every consumed message leaves a
-// row, the latter carrying its full payload), and any store of its own, such
-// as catalog's processed-message markers.
+// from one or more stores, through the PruneFunc of each Target. A service
+// runs one over what would otherwise grow without bound: a transactional
+// outbox, the message_processing dedup rows (every consumed message leaves a
+// row carrying its full payload), or a graph's processed-message markers.
 type Sweeper struct {
 	targets []Target
 	cfg     Config
