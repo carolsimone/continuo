@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { resolveActiveGraph, headerDriftLabel, taskStatusTitle, runFailureLabel } from './detail-page-helpers';
+import {
+  resolveActiveGraph, headerDriftLabel, taskStatusTitle, runFailureLabel,
+  graphBadgeLabel, graphCardState, runTabState, driftLabelOf,
+} from './detail-page-helpers';
+import type { RunGraph, RunSummary, ScheduleGraph } from './types';
 
 describe('resolveActiveGraph mode=latest', () => {
   const scheduleGraph = { nodes: [{ node_id: 't', node_type: 'model', schedule_name: 's' }], edges: [] };
@@ -56,5 +60,110 @@ describe('runFailureLabel', () => {
     expect(runFailureLabel('empty_selection')).toBe('failed: empty selection');
     expect(runFailureLabel(null)).toBeNull();
     expect(runFailureLabel('')).toBeNull();
+  });
+});
+
+describe('graphBadgeLabel', () => {
+  const run: RunSummary = {
+    run_id: 'r', schedule_name: 's', status: 'failed', created_at: null, completed_at: null,
+  } as RunSummary;
+  const graph: ScheduleGraph = { nodes: [{ node_id: 'n', node_type: 'model', schedule_name: 's' }], edges: [] };
+  const emptyGraph: ScheduleGraph = { nodes: [], edges: [] };
+
+  it('is "catalog" in latest mode whatever else is true', () => {
+    expect(graphBadgeLabel({ mode: 'latest', selectedRun: run, liveRunExists: true, activeGraph: null })).toBe('catalog');
+  });
+
+  it('is "snapshot" for a selected run, before a live run', () => {
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: run, liveRunExists: true, activeGraph: graph })).toBe('snapshot');
+  });
+
+  it('is "live" while a run is active', () => {
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: null, liveRunExists: true, activeGraph: null })).toBe('live');
+  });
+
+  it('is "catalog" for a non-empty graph with no live run', () => {
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: null, liveRunExists: false, activeGraph: graph })).toBe('catalog');
+  });
+
+  it('is "idle" with no graph or an empty one', () => {
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: null, liveRunExists: false, activeGraph: null })).toBe('idle');
+    expect(graphBadgeLabel({ mode: 'run', selectedRun: null, liveRunExists: false, activeGraph: emptyGraph })).toBe('idle');
+  });
+});
+
+describe('graphCardState', () => {
+  const runGraph = { nodes: [], edges: [] } as unknown as RunGraph;
+
+  it('is "loading" for a selected run whose graph has not arrived', () => {
+    expect(graphCardState({ selectedRunId: 'r', runGraph: null, shouldRenderGraph: false, graphState: 'ready' })).toBe('loading');
+    expect(graphCardState({ selectedRunId: 'r', runGraph: null, shouldRenderGraph: true, graphState: 'ready' })).toBe('loading');
+  });
+
+  it('is "ready" or "empty" for a selected run whose graph arrived', () => {
+    expect(graphCardState({ selectedRunId: 'r', runGraph, shouldRenderGraph: true, graphState: 'error' })).toBe('ready');
+    expect(graphCardState({ selectedRunId: 'r', runGraph, shouldRenderGraph: false, graphState: 'ready' })).toBe('empty');
+  });
+
+  it('is "ready" with no selected run when there is a graph to draw', () => {
+    expect(graphCardState({ selectedRunId: null, runGraph: null, shouldRenderGraph: true, graphState: 'error' })).toBe('ready');
+  });
+
+  it('passes the schedule graph state through when nothing is drawn', () => {
+    for (const graphState of ['loading', 'ready', 'empty', 'error'] as const) {
+      expect(graphCardState({ selectedRunId: null, runGraph: null, shouldRenderGraph: false, graphState })).toBe(graphState);
+    }
+  });
+});
+
+describe('runTabState', () => {
+  const runGraph = { nodes: [], edges: [] } as unknown as RunGraph;
+  const base = { lastRunId: 'r' as string | null | undefined, runsCount: 0, taskCount: 1, selectedRunId: null as string | null, runGraph: null as RunGraph | null };
+
+  it('is "no-runs" for a schedule that never ran and has no past runs or tasks', () => {
+    expect(runTabState({ ...base, lastRunId: null, taskCount: 0 })).toBe('no-runs');
+  });
+
+  it('is not "no-runs" once a past run or a task exists', () => {
+    expect(runTabState({ ...base, lastRunId: null, runsCount: 2, taskCount: 0 })).toBe('loading');
+    expect(runTabState({ ...base, lastRunId: null, taskCount: 1 })).toBe('ready');
+  });
+
+  it('is "loading" while the last run is unresolved', () => {
+    expect(runTabState({ ...base, lastRunId: undefined })).toBe('loading');
+  });
+
+  it('is "loading" while a selected run\'s graph has not arrived, even with tasks', () => {
+    expect(runTabState({ ...base, selectedRunId: 'old', runGraph: null })).toBe('loading');
+  });
+
+  it('is "loading" while the tasks have not arrived', () => {
+    expect(runTabState({ ...base, taskCount: 0 })).toBe('loading');
+  });
+
+  it('is "ready" with tasks and, for a selected run, its graph', () => {
+    expect(runTabState(base)).toBe('ready');
+    expect(runTabState({ ...base, selectedRunId: 'old', runGraph })).toBe('ready');
+  });
+
+  it('ignores the last run id when a run is selected', () => {
+    expect(runTabState({ ...base, lastRunId: undefined, selectedRunId: 'old', runGraph })).toBe('ready');
+  });
+});
+
+describe('driftLabelOf', () => {
+  const graphAt = (run: number | null | undefined, latest: number) =>
+    ({ nodes: [], edges: [], run_promotion_seq: run, latest_promotion_seq: latest }) as unknown as RunGraph;
+
+  it('is null without a graph, for a fresh run and for a run without a promotion seq', () => {
+    expect(driftLabelOf(null)).toBeNull();
+    expect(driftLabelOf(graphAt(7, 7))).toBeNull();
+    expect(driftLabelOf(graphAt(0, 7))).toBeNull();
+    expect(driftLabelOf(graphAt(undefined, 7))).toBeNull();
+  });
+
+  it('words how many releases a stale run is behind', () => {
+    expect(driftLabelOf(graphAt(6, 7))).toBe('source 1 release behind latest');
+    expect(driftLabelOf(graphAt(4, 7))).toBe('source 3 releases behind latest');
   });
 });

@@ -11,12 +11,22 @@ import {
   Task,
   TaskAttempt,
 } from './types';
-import { resolveActiveGraph, headerDriftLabel, groupAttemptsByTask, runFailureLabel } from './detail-page-helpers';
+import {
+  DetailMode,
+  GraphState,
+  resolveActiveGraph,
+  headerDriftLabel,
+  groupAttemptsByTask,
+  runFailureLabel,
+  graphBadgeLabel as graphBadgeLabelOf,
+  graphCardState as graphCardStateOf,
+  runTabState,
+  driftLabelOf,
+} from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
 import type { RunStatus } from '../server/generated/vocabulary.gen';
 import { settlesRequest, useActionRequestId } from './request-id';
-import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodeTypeIcon from './NodeTypeIcon';
 import PastRunsPanel from './PastRunsPanel';
@@ -77,7 +87,7 @@ export function isRerunnableStatus(status: RunStatus | null | undefined): boolea
 }
 
 interface DetailPageProps {
-  mode?: 'run' | 'latest';
+  mode?: DetailMode;
 }
 
 export default function DetailPage({ mode = 'run' }: DetailPageProps) {
@@ -107,7 +117,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
-  const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [graphState, setGraphState] = useState<GraphState>('loading');
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
   // The trigger button's request id: a press that gets no answer and is
   // repeated for the same schedule, while the page still shows the last run
@@ -411,9 +421,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // never run shows "No runs yet."; a selected historical run whose snapshot
   // is still loading, or a live run whose tasks are still arriving, shows
   // "Loading run…". Only a non-empty task set renders the header and views.
-  const runTabNoRuns = lastRunId === null && runsCount === 0 && tasks.length === 0;
-  const runTabLoading = !runTabNoRuns
-    && ((selectedRunId ? runGraph === null : lastRunId === undefined) || tasks.length === 0);
+  const runTab = runTabState({
+    lastRunId, runsCount, taskCount: tasks.length, selectedRunId, runGraph,
+  });
 
   // Service-level grouping shared by the graph and the nodes table. A graph
   // with a single service always renders expanded — a lone service vertex
@@ -471,24 +481,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     ? 'Failed to load the historical DAG snapshot.'
     : 'Failed to load the dependency graph.';
   const shouldRenderGraph = !!activeGraph && activeGraph.nodes.length > 0;
-  const graphCardState = selectedRunId
-    ? runGraph === null
-      ? 'loading'
-      : shouldRenderGraph
-        ? 'ready'
-        : 'empty'
-    : shouldRenderGraph
-      ? 'ready'
-      : graphState;
-  const graphBadgeLabel = mode === 'latest'
-    ? 'catalog'
-    : selectedRun
-      ? 'snapshot'
-      : liveRunExists
-        ? 'live'
-        : activeGraph && activeGraph.nodes.length > 0
-          ? 'catalog'
-          : 'idle';
+  const graphCardState = graphCardStateOf({ selectedRunId, runGraph, shouldRenderGraph, graphState });
+  const graphBadgeLabel = graphBadgeLabelOf({ mode, selectedRun, liveRunExists, activeGraph });
   const graphBadgeClass =
     graphBadgeLabel === 'snapshot'
       ? `pill-sm ${pillClass(snapshotRun?.status).replace('pill', 'pill-sm')}`
@@ -521,18 +515,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setExpandedServices(new Set());
   };
 
-  const driftLabel: string | null = (() => {
-    if (!liveRunGraph) return null;
-    const state = getDriftState(liveRunGraph.run_promotion_seq, liveRunGraph.latest_promotion_seq);
-    // Only a stale run gets a label; 'unknown' (a run without a promotion
-    // seq) and 'fresh' are silent.
-    if (state !== 'stale') return null;
-    return getDriftBadge(
-      state,
-      Number(liveRunGraph.run_promotion_seq ?? 0),
-      Number(liveRunGraph.latest_promotion_seq ?? 0),
-    );
-  })();
+  const driftLabel = driftLabelOf(liveRunGraph);
 
   const showRerunFailed = isRerunnableStatus(scheduler?.status) && Boolean(lastRunId);
 
@@ -765,12 +748,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           <Tabs variant="page" param="panel" defaultSlug="run" tabs={pageTabSpecs} />
           {activePage === 'run' && (
             <div className="run-view">
-              {runTabNoRuns ? (
+              {runTab === 'no-runs' ? (
                 <div className="graph-empty-state">
                   <p className="graph-empty-title">No runs yet.</p>
                   <p className="graph-empty-copy">This schedule has not run.</p>
                 </div>
-              ) : runTabLoading ? (
+              ) : runTab === 'loading' ? (
                 <div className="graph-empty-state">
                   <p className="graph-empty-title">Loading run…</p>
                   <p className="graph-empty-copy">
