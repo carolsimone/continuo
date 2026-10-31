@@ -1,5 +1,13 @@
-import { GraphNode, RunGraph, ScheduleGraph, Task, TaskAttempt } from './types';
+import { GraphNode, RunGraph, RunSummary, ScheduleGraph, Task, TaskAttempt } from './types';
 import { formatDuration } from './node-helpers';
+import { getDriftBadge, getDriftState } from './drift-helpers';
+import type { RunStatus } from '../server/generated/vocabulary.gen';
+
+// Which of the detail page's two layouts is shown: one run's rows, or the
+// schedule's catalog graph beside its past runs.
+export type DetailMode = 'run' | 'latest';
+
+export type GraphState = 'loading' | 'ready' | 'empty' | 'error';
 
 export function taskNodeId(task: Task): string {
   return `${task.service_name}.${task.schema_name}.${task.table_name}`;
@@ -94,7 +102,7 @@ export function runPagePath(runId: string): string {
 }
 
 interface ResolveActiveGraphArgs {
-  mode?: 'run' | 'latest';
+  mode?: DetailMode;
   scheduleGraph: ScheduleGraph | null;
   liveRunGraph: RunGraph | null;
   selectedRunGraph: RunGraph | null;
@@ -117,7 +125,7 @@ export function resolveActiveGraph({
 }
 
 interface HeaderDriftLabelArgs {
-  mode?: 'run' | 'latest';
+  mode?: DetailMode;
   driftLabel: string | null;
 }
 
@@ -229,4 +237,127 @@ export function attemptWaitSeconds(a: TaskAttempt): number | null {
 // formatAttemptSeconds renders a duration in whole seconds.
 export function formatAttemptSeconds(sec: number | null): string {
   return sec === null ? '—' : formatDuration(Math.round(sec));
+}
+
+interface GraphBadgeLabelArgs {
+  mode: DetailMode;
+  selectedRun: RunSummary | null;
+  liveRunExists: boolean;
+  activeGraph: ScheduleGraph | null;
+}
+
+// The badge on the graph card: what the drawn graph is a picture of.
+export function graphBadgeLabel({
+  mode,
+  selectedRun,
+  liveRunExists,
+  activeGraph,
+}: GraphBadgeLabelArgs): 'catalog' | 'snapshot' | 'live' | 'idle' {
+  if (mode === 'latest') return 'catalog';
+  if (selectedRun) return 'snapshot';
+  if (liveRunExists) return 'live';
+  return activeGraph && activeGraph.nodes.length > 0 ? 'catalog' : 'idle';
+}
+
+interface GraphCardStateArgs {
+  selectedRunId: string | null;
+  runGraph: RunGraph | null;
+  shouldRenderGraph: boolean;
+  graphState: GraphState;
+}
+
+// What the graph card shows: a selected run waits for its own snapshot, any
+// other view draws the graph when it has nodes and otherwise reports how the
+// schedule graph's read went.
+export function graphCardState({
+  selectedRunId,
+  runGraph,
+  shouldRenderGraph,
+  graphState,
+}: GraphCardStateArgs): GraphState {
+  if (selectedRunId) {
+    if (runGraph === null) return 'loading';
+    return shouldRenderGraph ? 'ready' : 'empty';
+  }
+  return shouldRenderGraph ? 'ready' : graphState;
+}
+
+interface RunTabStateArgs {
+  lastRunId: string | null | undefined;
+  runsCount: number;
+  taskCount: number;
+  selectedRunId: string | null;
+  runGraph: RunGraph | null;
+}
+
+// What the Run tab shows before it has a task set to summarise: a schedule
+// that never ran says so, a run whose snapshot or tasks are still arriving
+// reads as loading, and only a non-empty task set renders the progress header
+// and the views.
+export function runTabState({
+  lastRunId,
+  runsCount,
+  taskCount,
+  selectedRunId,
+  runGraph,
+}: RunTabStateArgs): 'no-runs' | 'loading' | 'ready' {
+  if (lastRunId === null && runsCount === 0 && taskCount === 0) return 'no-runs';
+  const unresolved = selectedRunId ? runGraph === null : lastRunId === undefined;
+  return unresolved || taskCount === 0 ? 'loading' : 'ready';
+}
+
+// The header's drift label for the live run. Only a stale run gets one:
+// 'unknown' (a run without a promotion seq) and 'fresh' are silent.
+export function driftLabelOf(liveRunGraph: RunGraph | null): string | null {
+  if (!liveRunGraph) return null;
+  const state = getDriftState(liveRunGraph.run_promotion_seq, liveRunGraph.latest_promotion_seq);
+  if (state !== 'stale') return null;
+  return getDriftBadge(
+    state,
+    Number(liveRunGraph.run_promotion_seq ?? 0),
+    Number(liveRunGraph.latest_promotion_seq ?? 0),
+  );
+}
+
+export function pillClass(status: string | null | undefined): string {
+  const normalized = status ?? '';
+  if (normalized.includes('succeed')) return 'pill--succeeded';
+  if (normalized.includes('fail')) return 'pill--failed';
+  if (normalized.includes('cancelling')) return 'pill--cancelling';
+  if (normalized.includes('cancel')) return 'pill--cancelled';
+  if (normalized.includes('skip')) return 'pill--skipped';
+  if (normalized.includes('run') || normalized.includes('current')) return 'pill--running';
+  return 'pill--pending';
+}
+
+// A cancelling run has not ended: its Jobs are still being stopped, so the
+// page keeps polling it until it reads cancelled.
+export function isTerminalStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped';
+}
+
+// A failed or cancelled run can be rerun; a cancelling one has not ended.
+export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'failed' || status === 'cancelled';
+}
+
+// The classes of the graph card's badge: a snapshot takes its run's status
+// colour, a live graph reads as current, anything else as pending.
+export function graphBadgeClass(
+  label: 'catalog' | 'snapshot' | 'live' | 'idle',
+  snapshotStatus: string | null | undefined,
+): string {
+  if (label === 'snapshot') return `pill-sm ${pillClass(snapshotStatus).replace('pill', 'pill-sm')}`;
+  return label === 'live' ? 'pill-sm pill-sm--current' : 'pill-sm pill-sm--pending';
+}
+
+export function formatStatusLabel(status: string | null | undefined): string {
+  if (!status) return 'pending';
+  return status.replace(/_/g, ' ');
+}
+
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }

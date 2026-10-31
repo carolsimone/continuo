@@ -31,8 +31,11 @@ export interface ActionRequestId {
   // once per request id, so a send repeated with the same id returns the run
   // the first send made instead of making another.
   id: string;
-  // renew mints the id of the next action. It is stable across renders.
-  renew: () => void;
+  // renew mints the id of the next action. It is stable across renders. A
+  // caller whose request has been answered passes the id that request sent:
+  // once another action has taken over, that id is no longer the one in use
+  // and the answer renews nothing. Without an id it renews unconditionally.
+  renew: (answeredId?: string) => void;
   // take returns the id for a press made now. fingerprint names what the
   // press asks for and observed what the page shows (see Observation). A
   // press repeats the one already sent, and gets the current id, while it
@@ -73,7 +76,8 @@ export function useActionRequestId(): ActionRequestId {
   const sent = useRef<Sent | null>(null);
   if (sent.current === null) sent.current = { id, sent: false, fingerprint: '', observed: undefined };
 
-  const renew = useCallback(() => {
+  const renew = useCallback((answeredId?: string) => {
+    if (answeredId !== undefined && answeredId !== sent.current?.id) return;
     const next = newRequestId();
     sent.current = { id: next, sent: false, fingerprint: '', observed: undefined };
     setId(next);

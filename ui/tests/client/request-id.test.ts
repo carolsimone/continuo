@@ -133,6 +133,28 @@ describe('requestId', () => {
       expect(renewed).not.toBe(minted);
       expect(result.current.id).toBe(renewed);
     });
+
+    it('requestId: renew with the id an answer belongs to renews it while that id is still the one in use', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const sent = result.current.take('a', 'run-1');
+
+      act(() => result.current.renew(sent));
+
+      expect(result.current.take('a', 'run-1')).not.toBe(sent);
+    });
+
+    it('requestId: renew with the id of an earlier action leaves the id of the action now in use', () => {
+      const { result } = renderHook(() => useActionRequestId());
+      const earlier = result.current.take('a', 'run-1');
+      // A press asking for something else starts another action.
+      const current = result.current.take('b', 'run-2');
+      expect(current).not.toBe(earlier);
+
+      // The earlier action's late answer must not end the current one.
+      act(() => result.current.renew(earlier));
+
+      expect(result.current.take('b', 'run-2')).toBe(current);
+    });
   });
 
   it('settlesRequest: a success and a refusal are final, a 5xx leaves the request open', () => {

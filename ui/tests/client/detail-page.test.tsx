@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
 import { TaskAttempt } from '../../src/client/types';
@@ -1567,5 +1567,265 @@ describe('DetailPage — brand header', () => {
     expect(brand).toHaveAttribute('href', '/');
     const back = header.querySelector('.detail-back-link')!;
     expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+// A promise a test settles by hand, to hold one read in flight while the page
+// moves on.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+// Lets every settled read land and every state update it causes render.
+const flushReads = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+function GoTo({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(to)}>go</button>;
+}
+
+describe('DetailPage — arrival and teardown', () => {
+  const OLD_RUN_ID = 'run-old';
+  const runSummary = (id: string, schedule = SCHED) => ({
+    run_id: id, schedule_name: schedule, status: 'failed',
+    created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z',
+  });
+  const taskRows = (table: string, status = 'failed') => ({
+    total_count: 1,
+    tasks: [{
+      task_id: `t-${table}`, service_name: 'svc1', schema_name: 'public', table_name: table,
+      job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
+    }],
+  });
+  const openPastRunsTab = async () => fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+  // Chooses the run in the n-th row of the Past runs list (row 0 is the live
+  // run while one is active), then returns to the Run tab.
+  const chooseRun = (container: HTMLElement, rowIndex: number) => {
+    fireEvent.click(container.querySelectorAll('.run-row')[rowIndex]);
+  };
+
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('ignores a response for the schedule the page has left', async () => {
+    const aRuns = deferred<unknown>();
+    const fetchMock = mockFetchSequence({
+      '/api/schedules/a/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/a/runs': () => aRuns.promise,
+      '/api/schedules/b/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/b/runs': async () => ({ runs: [], total_count: 0 }),
+      '/api/schedules': async () => ({ schedules: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(
+      <MemoryRouter initialEntries={['/schedule/a']}>
+        <GoTo to="/schedule/b" />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('No runs yet.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'go' }));
+    await waitFor(() => expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).startsWith('/api/schedules/b/runs')),
+    ).toBe(true));
+
+    aRuns.resolve({ runs: [runSummary('a-run', 'a')], total_count: 4 });
+    await flushReads();
+
+    const pastRunsTab = await screen.findByRole('tab', { name: /past runs/i });
+    expect(within(pastRunsTab).queryByText('4')).toBeNull();
+    fireEvent.click(pastRunsTab);
+    expect(container.querySelectorAll('.run-row')).toHaveLength(0);
+  });
+
+  it('stops polling the graph when a latest page unmounts', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const fetchMock = mockFetchSequence(latestRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    const graphReads = () => fetchMock.mock.calls
+      .filter((c) => String(c[0]).startsWith(`/api/schedules/${LATEST_SCHED}/graph`)).length;
+
+    const { unmount } = render(withLatestRouter());
+    await screen.findByText('catalog');
+    const first = graphReads();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(graphReads()).toBe(first + 1);
+
+    unmount();
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(graphReads()).toBe(first + 1);
+  });
+
+  it('does not show the first run\'s rows after another run is chosen', async () => {
+    const firstTasks = deferred<unknown>();
+    vi.stubGlobal('fetch', mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [runSummary('run-a'), runSummary('run-b')],
+      }),
+      '/api/runs/run-a/graph': async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      '/api/runs/run-a/tasks': () => firstTasks.promise,
+      '/api/runs/run-a/attempts': async () => ({ attempts: [], total_count: 0 }),
+      '/api/runs/run-b/graph': async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      '/api/runs/run-b/tasks': async () => taskRows('b_orders'),
+      '/api/runs/run-b/attempts': async () => ({ attempts: [], total_count: 0 }),
+    }));
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('orders');
+
+    await openPastRunsTab();
+    await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(2));
+    chooseRun(container, 0);
+    chooseRun(container, 1);
+    fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+    await screen.findByText('b_orders');
+
+    firstTasks.resolve(taskRows('a_orders'));
+    await flushReads();
+
+    expect(screen.getByText('b_orders')).toBeInTheDocument();
+    expect(screen.queryByText('a_orders')).toBeNull();
+  });
+
+  describe('when a read fails', () => {
+    const reject = async () => { throw new Error('read failed'); };
+
+    it('keeps the rows when the past runs list fails', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({ ...freshRoutes(), [`/api/schedules/${SCHED}/runs`]: reject }));
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+      await openPastRunsTab();
+      expect(container.querySelectorAll('.run-row')).toHaveLength(0);
+    });
+
+    it('reads as loading when the tasks read fails', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({ ...freshRoutes(), [`/api/runs/${RUN_ID}/tasks`]: reject }));
+      render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('Loading run…')).toBeInTheDocument();
+    });
+
+    it('keeps the tasks when the attempts read fails', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({ ...freshRoutes(), [`/api/runs/${RUN_ID}/attempts`]: reject }));
+      render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+    });
+
+    it('keeps the tasks when the run read fails', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({ ...freshRoutes(), [`/api/runs/${RUN_ID}`]: reject }));
+      render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+    });
+
+    it('shows "Graph unavailable" in latest mode when the graph read fails', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({
+        ...latestRoutes(),
+        [`/api/schedules/${LATEST_SCHED}/graph`]: reject,
+      }));
+      render(withLatestRouter());
+      expect(await screen.findByText('Graph unavailable')).toBeInTheDocument();
+    });
+
+    it('shows "No runs yet." when the schedule list cannot be read on arrival', async () => {
+      vi.stubGlobal('fetch', mockFetchSequence({
+        [`/api/schedules/${SCHED}/graph`]: async () => ({ nodes: [], edges: [] }),
+        [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
+        '/api/schedules': reject,
+      }));
+      render(withRouter(null));
+      expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+    });
+  });
+
+  it('keeps the new run\'s rows when the old run\'s final read lands late', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const finalRead = deferred<unknown>();
+    let ended = false;
+    let latestTaskReads = 0;
+    const runAt = (status: string) => ({
+      run_id: RUN_ID, schedule_name: SCHED, status,
+      created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+    });
+    vi.stubGlobal('fetch', mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/runs/${RUN_ID}/tasks`]: async () => {
+        latestTaskReads += 1;
+        // Read 1 is the arrival read and read 2 the poll's; read 3 is the
+        // final read after the poll saw the run end.
+        return latestTaskReads === 3 ? finalRead.promise : taskRows('orders', 'running');
+      },
+      [`/api/runs/${RUN_ID}`]: async () => runAt(ended ? 'succeeded' : 'running'),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [runSummary(OLD_RUN_ID)] }),
+      [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      [`/api/runs/${OLD_RUN_ID}/tasks`]: async () => taskRows('old_orders'),
+      [`/api/runs/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    }));
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('orders');
+
+    ended = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(latestTaskReads).toBe(3);
+
+    await openPastRunsTab();
+    await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(1));
+    chooseRun(container, 0);
+    fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+    await screen.findByText('old_orders');
+
+    finalRead.resolve(taskRows('orders', 'succeeded'));
+    await flushReads();
+
+    expect(screen.getByText('old_orders')).toBeInTheDocument();
+    expect(screen.queryByText('orders')).toBeNull();
+  });
+
+  it('keeps the current schedule\'s request id when another schedule\'s late trigger answer lands', async () => {
+    const aAnswer = deferred<Response>();
+    const ids: Record<string, string[]> = { a: [], b: [] };
+    const pages = mockFetchSequence({
+      '/api/schedules/a/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/a/runs': async () => ({ runs: [], total_count: 0 }),
+      '/api/schedules/b/graph': async () => ({ nodes: [], edges: [] }),
+      '/api/schedules/b/runs': async () => ({ runs: [], total_count: 0 }),
+      '/api/schedules': async () => ({ schedules: [] }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const trigger = /^\/api\/schedules\/(a|b)\/trigger$/.exec(String(input));
+      if (!trigger) return pages(input);
+      ids[trigger[1]].push(JSON.parse(String(init?.body)).request_id);
+      // Schedule a's answer is held; schedule b's first answer is a gateway error.
+      return trigger[1] === 'a'
+        ? aAnswer.promise
+        : ({ ok: false, status: 503, json: async () => ({}) } as Response);
+    }));
+    render(
+      <MemoryRouter initialEntries={['/schedule/a']}>
+        <GoTo to="/schedule/b" />
+        <Routes>
+          <Route path="/schedule/:name" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const press = async () => fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await press();
+    await waitFor(() => expect(ids.a).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'go' }));
+    await press();
+    await waitFor(() => expect(ids.b).toHaveLength(1));
+    await screen.findByText('Request failed — please try again');
+
+    aAnswer.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+    await flushReads();
+    await press();
+
+    // A 503 may be a timed-out call whose run committed: the retry repeats the id.
+    await waitFor(() => expect(ids.b).toHaveLength(2));
+    expect(ids.b[1]).toBe(ids.b[0]);
   });
 });

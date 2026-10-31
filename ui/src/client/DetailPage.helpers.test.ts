@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isTerminalStatus, isRerunnableStatus, pillClass } from './DetailPage';
+import { isTerminalStatus, isRerunnableStatus, pillClass } from './detail-page-helpers';
 
 describe('isTerminalStatus', () => {
   it('treats skipped as terminal', () => {
