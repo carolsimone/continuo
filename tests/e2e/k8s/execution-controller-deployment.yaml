@@ -137,9 +137,13 @@ spec:
               value: "default"
             - name: MAX_CONCURRENT_JOBS
               value: "50"
-            # A pod has 3 minutes to start a container; the chart default is 15.
+            # A pod has 1 minute to start a container, the lowest value the
+            # service accepts; the chart default is 15 minutes. The start-timeout
+            # and node-deadline e2e tests each wait out this value (a Job's
+            # deadline is the start timeout plus the node's own timeout), so it
+            # sets how long they run.
             - name: JOB_START_TIMEOUT_SECONDS
-              value: "180"
+              value: "60"
             # The chart's execution.kubeClientQPS and execution.kubeClientBurst defaults.
             - name: K8S_CLIENT_QPS
               value: "50"
