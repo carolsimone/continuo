@@ -184,8 +184,6 @@ func TestPrClosedProvenanceHandler_FoundMarkerSkips(t *testing.T) {
 	assert.Len(t, u.writes, 1)
 }
 
-// An outcome the graph fails to record fails the message with no marker, so
-// the redelivery records it again.
 // A message another delivery finished between the lookup and the write is
 // acknowledged: its Write finds the marker and records nothing.
 func TestPrClosedProvenanceHandler_ProcessedMeanwhileWritesNothing(t *testing.T) {
@@ -199,6 +197,8 @@ func TestPrClosedProvenanceHandler_ProcessedMeanwhileWritesNothing(t *testing.T)
 	assert.Len(t, u.writes, 1)
 }
 
+// An outcome the graph fails to record fails the message with no marker, so
+// the redelivery records it again.
 func TestPrClosedProvenanceHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{err: errors.New("neo4j: transient failure")})
 

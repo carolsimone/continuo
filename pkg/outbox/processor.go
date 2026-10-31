@@ -17,9 +17,10 @@ import (
 
 // Publisher performs the side effect an outbox entry represents. Every
 // service's publisher XADDs to entry.StreamName the fields its Render
-// (Renderer) returns for the entry, plus an outbox_entry_id that names the
-// entry, one XADD per entry; run-controller's also sends a whole batch in one
-// pipeline (BatchPublisher).
+// (Renderer) returns for the entry, one XADD per entry, with an
+// outbox_entry_id that deduplicates the message (the entry's own id; a redrive
+// of an outbox-source dead letter keeps the original event's id instead);
+// run-controller's also sends a whole batch in one pipeline (BatchPublisher).
 type Publisher interface {
 	Publish(ctx context.Context, entry *Entry) error
 }
@@ -29,8 +30,8 @@ type Publisher interface {
 // XADDs). PublishBatch returns one error per entry, positionally aligned with
 // entries; a nil at index i means entry i succeeded. The processor uses this
 // path automatically when the publisher implements it, and falls back to
-// per-entry Publish otherwise — so multi-step publishers (execution-controller) keep their
-// sequential semantics untouched.
+// per-entry Publish otherwise, so a publisher that does not implement it keeps
+// its one-entry-at-a-time semantics.
 //
 // Ordering guarantee: implementations MUST issue the per-entry side effects in
 // the slice order they receive, over a single connection, so the rows of one
