@@ -340,3 +340,24 @@ export function isTerminalStatus(status: RunStatus | null | undefined): boolean 
 export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
   return status === 'failed' || status === 'cancelled';
 }
+
+// The classes of the graph card's badge: a snapshot takes its run's status
+// colour, a live graph reads as current, anything else as pending.
+export function graphBadgeClass(
+  label: 'catalog' | 'snapshot' | 'live' | 'idle',
+  snapshotStatus: string | null | undefined,
+): string {
+  if (label === 'snapshot') return `pill-sm ${pillClass(snapshotStatus).replace('pill', 'pill-sm')}`;
+  return label === 'live' ? 'pill-sm pill-sm--current' : 'pill-sm pill-sm--pending';
+}
+
+export function formatStatusLabel(status: string | null | undefined): string {
+  if (!status) return 'pending';
+  return status.replace(/_/g, ' ');
+}
+
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveActiveGraph, headerDriftLabel, taskStatusTitle, runFailureLabel,
-  graphBadgeLabel, graphCardState, runTabState, driftLabelOf,
+  graphBadgeLabel, graphBadgeClass, graphCardState, runTabState, driftLabelOf,
+  formatStatusLabel, formatDate,
 } from './detail-page-helpers';
 import type { RunGraph, RunSummary, ScheduleGraph } from './types';
 
@@ -165,5 +166,36 @@ describe('driftLabelOf', () => {
   it('words how many releases a stale run is behind', () => {
     expect(driftLabelOf(graphAt(6, 7))).toBe('source 1 release behind latest');
     expect(driftLabelOf(graphAt(4, 7))).toBe('source 3 releases behind latest');
+  });
+});
+
+describe('graphBadgeClass', () => {
+  it('colours a snapshot badge by the snapshot run\'s status', () => {
+    expect(graphBadgeClass('snapshot', 'failed')).toBe('pill-sm pill-sm--failed');
+    expect(graphBadgeClass('snapshot', 'succeeded')).toBe('pill-sm pill-sm--succeeded');
+    expect(graphBadgeClass('snapshot', null)).toBe('pill-sm pill-sm--pending');
+  });
+
+  it('marks a live badge as current and every other badge as pending', () => {
+    expect(graphBadgeClass('live', null)).toBe('pill-sm pill-sm--current');
+    expect(graphBadgeClass('catalog', null)).toBe('pill-sm pill-sm--pending');
+    expect(graphBadgeClass('idle', null)).toBe('pill-sm pill-sm--pending');
+  });
+});
+
+describe('formatStatusLabel', () => {
+  it('reads an empty status as pending and spaces underscores', () => {
+    expect(formatStatusLabel(null)).toBe('pending');
+    expect(formatStatusLabel('')).toBe('pending');
+    expect(formatStatusLabel('never run')).toBe('never run');
+    expect(formatStatusLabel('in_progress')).toBe('in progress');
+  });
+});
+
+describe('formatDate', () => {
+  it('shows a dash for no date, the text of an unparsable one, and a local date otherwise', () => {
+    expect(formatDate(null)).toBe('—');
+    expect(formatDate('not a date')).toBe('not a date');
+    expect(formatDate('2026-09-01T10:00:00Z')).toBe(new Date('2026-09-01T10:00:00Z').toLocaleString());
   });
 });
