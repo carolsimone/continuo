@@ -1,7 +1,8 @@
 # continuo
 
 LLM-friendly command-line client for the Continuo platform. Calls the
-`run-controller` service over gRPC and emits machine-readable JSON by default.
+`run-controller` service over gRPC, and the `catalog` service for a node's code
+history and failure precedents, and emits machine-readable JSON by default.
 
 ## Status
 
@@ -54,7 +55,7 @@ continuo [global-flags] <command> [args...]
 | Flag         | Env                    | Default           | Purpose                                            |
 |--------------|------------------------|-------------------|----------------------------------------------------|
 | `--endpoint` | `CONTINUO_RUN_CONTROLLER_ADDR` | `localhost:50051` | gRPC address of the run-controller service |
-| `--orchestrator-endpoint` | `CONTINUO_ORCHESTRATOR_ADDR` | `localhost:50052` | gRPC address of the orchestrator service |
+| `--catalog-endpoint` | `CONTINUO_CATALOG_ADDR` | `localhost:50052` | gRPC address of the catalog service (`node versions`, `node diff`, `node upstream-changes`, `node code-units`, `precedents`) |
 | `--dead-letter-endpoint` | `CONTINUO_DEAD_LETTER_ADDR` | `localhost:50055` | gRPC address of dead-letter-controller |
 | `--timeout`  | `CONTINUO_TIMEOUT`     | `10s`             | Per-call deadline (any `time.ParseDuration` value) |
 | `--human`    | —                      | `false`           | Emit a human one-liner on **stderr** instead of JSON on stdout |
@@ -170,7 +171,7 @@ RunService.GetScheduleGraph. Success prints a JSON object to stdout:
 
 ### `node list`
 
-Lists the node catalog with per-node run statistics, one page at a time.
+Lists the nodes with per-node run statistics, one page at a time.
 Calls RunService.ListNodes. This is the command that turns a bare table
 name into the `<service> <schema> <table>` triple every other `node`
 subcommand takes. Success prints a JSON object to stdout:

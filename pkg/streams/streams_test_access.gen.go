@@ -42,8 +42,8 @@ func PkgConstantsForTest() map[string]string {
 		"ReleaseControllerSeedBuildCompleted": ReleaseControllerSeedBuildCompleted,
 		"ExecutionControllerCompileRequested": ExecutionControllerCompileRequested,
 		"ReleaseControllerCompileCompleted": ReleaseControllerCompileCompleted,
-		"OrchestratorReleasePromoted": OrchestratorReleasePromoted,
-		"OrchestratorReleasePromotedVersions": OrchestratorReleasePromotedVersions,
+		"CatalogReleaseTopology": CatalogReleaseTopology,
+		"CatalogReleaseVersions": CatalogReleaseVersions,
 		"ExecutionControllerReleasePromoted": ExecutionControllerReleasePromoted,
 		"RunControllerReleasePromoted": RunControllerReleasePromoted,
 		"RemediationReleaseRejected": RemediationReleaseRejected,
@@ -51,8 +51,8 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutionControllerPipelineRunFinished": ExecutionControllerPipelineRunFinished,
 		"RemediationRetryRequested": RemediationRetryRequested,
 		"AgentRemediationRemediationRequested": AgentRemediationRemediationRequested,
-		"OrchestratorRemediationRequestedRejections": OrchestratorRemediationRequestedRejections,
-		"OrchestratorRemediationPrOpenedProposals": OrchestratorRemediationPrOpenedProposals,
-		"OrchestratorRemediationPrClosedProvenance": OrchestratorRemediationPrClosedProvenance,
+		"CatalogRemediationRequestedRejections": CatalogRemediationRequestedRejections,
+		"CatalogRemediationPrOpenedProposals": CatalogRemediationPrOpenedProposals,
+		"CatalogRemediationPrClosedProvenance": CatalogRemediationPrClosedProvenance,
 	}
 }

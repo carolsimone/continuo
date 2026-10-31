@@ -12,7 +12,7 @@ import (
 
 // CandidateSourceReader implements ports.CandidateSourceReader over an
 // object-store reader: it reads one node's source out of a release's code
-// bundle. It reuses the bundle contract decoder shared with the orchestrator,
+// bundle. It reuses the bundle contract decoder shared with catalog,
 // but exposes only the slice remediation needs.
 type CandidateSourceReader struct {
 	objects objectstore.Reader
@@ -21,7 +21,7 @@ type CandidateSourceReader struct {
 var _ ports.CandidateSourceReader = (*CandidateSourceReader)(nil)
 
 // maxBundleBytes caps the bundle document held in memory, mirroring the
-// orchestrator's ceiling for the same object.
+// catalog's ceiling for the same object.
 const maxBundleBytes int64 = 64 * 1024 * 1024
 
 // NewCandidateSourceReader builds a CandidateSourceReader over objects. A
@@ -56,7 +56,7 @@ func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqu
 		// The URI resolved to a bundle for a different release than the trigger's
 		// own — a stale or misrouted object naming the same node id. Returning its
 		// RawCode would stamp another release's source onto this node's fix, the
-		// same guard the orchestrator applies to the same bundle document in
+		// same guard catalog applies to the same bundle document in
 		// remediation_requested_rejections_handler.go and
 		// release_promoted_versions_handler.go.
 		return ports.CandidateSource{}, ports.ErrNotFound

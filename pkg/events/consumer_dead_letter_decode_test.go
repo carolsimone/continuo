@@ -14,7 +14,7 @@ func TestDecodeConsumerDeadLetter_RoundTripsTheWriter(t *testing.T) {
 	at := time.Date(2026, 10, 5, 12, 0, 0, 123456000, time.UTC)
 	values, err := ConsumerDeadLetterFields(DeadLetteredMessage{
 		TenantID: "default", Producer: "run-controller", OccurredAt: at,
-		Stream: "node.updated:v1", Group: "orchestrator-node-updated", MessageID: "1759665600000-0",
+		Stream: "node.updated:v1", Group: "run-controller-node-updated", MessageID: "1759665600000-0",
 		Fields: map[string]string{"a": "1"}, FailureKind: model.DeadLetterKindPermanent, Error: "boom", DeliveryCount: 1,
 	})
 	if err != nil {
@@ -31,7 +31,7 @@ func TestDecodeConsumerDeadLetter_RoundTripsTheWriter(t *testing.T) {
 	if env.Producer != "run-controller" || !env.OccurredAt.Equal(at) || env.SchemaVersion != 1 || env.TenantID != "default" {
 		t.Fatalf("envelope = %+v", env)
 	}
-	if dl.OriginalStream != "node.updated:v1" || dl.OriginalGroup != "orchestrator-node-updated" ||
+	if dl.OriginalStream != "node.updated:v1" || dl.OriginalGroup != "run-controller-node-updated" ||
 		dl.OriginalMessageID != "1759665600000-0" || dl.Fields["a"] != "1" ||
 		dl.FailureKind != model.DeadLetterKindPermanent || dl.Error != "boom" || dl.DeliveryCount != 1 {
 		t.Fatalf("payload = %+v", dl)

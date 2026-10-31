@@ -13,7 +13,6 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/metrics"
-	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,14 +30,6 @@ func TestRegister_AddsServiceLabelledCollector(t *testing.T) {
 	}
 }
 
-type fakeBacklog struct {
-	table string
-	b     outbox.Backlog
-}
-
-func (f fakeBacklog) Table() string                                   { return f.table }
-func (f fakeBacklog) Backlog(context.Context) (outbox.Backlog, error) { return f.b, nil }
-
 func scrape(t *testing.T, h http.Handler) string {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -52,28 +43,19 @@ func scrape(t *testing.T, h http.Handler) string {
 	return string(body)
 }
 
-func TestRegistry_ServesConsumerOutboxAndRuntimeSeries(t *testing.T) {
+func TestRegistry_ServesConsumerAndRuntimeSeries(t *testing.T) {
 	reg := metrics.New("test-svc")
 	c := reg.Consumers()
 	c.Watch("s", "g")
 	c.Handled("s", "g", "ok", 15*time.Millisecond)
 	c.DeadLettered("s", "g", model.DeadLetterKindPermanent)
 	c.Paused("s", "g")
-	o := reg.Outbox()
-	o.Published("t", 3)
-	o.Failed("t", "retry")
-	reg.WatchOutbox(fakeBacklog{table: "t", b: outbox.Backlog{Open: 4, OldestOpenAge: 90 * time.Second, DeadLettered: 1}})
 
 	body := scrape(t, reg.Handler())
 	for _, want := range []string{
 		`continuo_consumer_handler_duration_seconds_count{group="g",result="ok",service="test-svc",stream="s"} 1`,
 		`continuo_consumer_dead_letters_total{group="g",kind="permanent",service="test-svc",stream="s"} 1`,
 		`continuo_consumer_infra_pauses_total{group="g",service="test-svc",stream="s"} 1`,
-		`continuo_outbox_published_total{service="test-svc",table="t"} 3`,
-		`continuo_outbox_publish_failures_total{kind="retry",service="test-svc",table="t"} 1`,
-		`continuo_outbox_backlog{service="test-svc",table="t"} 4`,
-		`continuo_outbox_oldest_open_age_seconds{service="test-svc",table="t"} 90`,
-		`continuo_outbox_dead_letters{service="test-svc",table="t"} 1`,
 		`go_goroutines{service="test-svc"}`,
 	} {
 		assert.Contains(t, body, want)

@@ -38,7 +38,7 @@ type announceResult struct {
 // announceTopology publishes nodes as the topology of releaseID through
 // release-controller's announce-topology: release-controller writes the artifact
 // to MinIO, takes the next promotion seq and queues release.promoted:v2, which
-// the orchestrator applies as it applies a promoted release. The command runs
+// catalog applies as it applies a promoted release. The command runs
 // inside the release-controller container, which carries the service's
 // Postgres and S3 settings.
 func announceTopology(t *testing.T, ctx context.Context, releaseID string, nodes []topologyartifact.Node) announceResult {
@@ -59,9 +59,9 @@ func announceTopology(t *testing.T, ctx context.Context, releaseID string, nodes
 	return res
 }
 
-// livePointer is the orchestrator's live topology pointer, (:Meta {key:
-// 'current_release'}): the release it holds and the promotion seq it was
-// applied under (0 before any).
+// livePointer is catalog's live topology pointer of the default tenant,
+// (:Meta {tenant_id: 'default', key: 'current_release'}): the release it holds
+// and the promotion seq it was applied under (0 before any).
 type livePointer struct {
 	releaseID    string
 	promotionSeq int64
@@ -73,7 +73,7 @@ func readLivePointer(ctx context.Context, clients *testClients) livePointer {
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 	defer session.Close(ctx)
 	res, err := session.Run(ctx,
-		`MATCH (m:Meta {key: 'current_release'})
+		`MATCH (m:Meta {tenant_id: 'default', key: 'current_release'})
 		 RETURN m.release_id AS release_id, coalesce(m.promotion_seq, 0) AS seq`, nil)
 	if err != nil || !res.Next(ctx) {
 		return livePointer{}
@@ -137,31 +137,31 @@ func (l runControllerLiveRelease) withoutModels(schedules []string) []string {
 }
 
 // waitForAnnouncedTopology waits until both readers of a promotion have
-// applied the announcement: the orchestrator's :Meta names its release, at its
+// applied the announcement: catalog's :Meta names its release, at its
 // seq or later, and run-controller's live release is the announced release, with a
 // node of each of schedules, so a StartRun of any of them selects the
 // announced nodes. A timeout names what each of them last held.
 func waitForAnnouncedTopology(t *testing.T, ctx context.Context, clients *testClients, res announceResult, schedules []string) {
 	t.Helper()
 	var (
-		orchestrator     livePointer
+		catalog          livePointer
 		runController    runControllerLiveRelease
 		runControllerErr error
 	)
 	pollUntilDescribed(t, ctx, 60*time.Second, time.Second, func() (bool, error) {
-		orchestrator = readLivePointer(ctx, clients)
+		catalog = readLivePointer(ctx, clients)
 		runController, runControllerErr = readRunControllerLiveRelease(ctx, clients)
 		if runControllerErr != nil {
 			return false, runControllerErr
 		}
-		return orchestrator.releaseID == res.ReleaseID && orchestrator.promotionSeq >= res.PromotionSeq &&
+		return catalog.releaseID == res.ReleaseID && catalog.promotionSeq >= res.PromotionSeq &&
 			runController.releaseID == res.ReleaseID && runController.promotionSeq >= res.PromotionSeq &&
 			len(runController.withoutModels(schedules)) == 0, nil
 	}, func() string {
 		return fmt.Sprintf("timeout waiting for announced topology %s (promotion seq %d) to be applied: "+
-			"the orchestrator's live release is %q at seq %d; run-controller's live release is %q at seq %d "+
+			"catalog's live release is %q at seq %d; run-controller's live release is %q at seq %d "+
 			"(last read error: %v), and no node of it carries the schedules %v",
-			res.ReleaseID, res.PromotionSeq, orchestrator.releaseID, orchestrator.promotionSeq,
+			res.ReleaseID, res.PromotionSeq, catalog.releaseID, catalog.promotionSeq,
 			runController.releaseID, runController.promotionSeq, runControllerErr, runController.withoutModels(schedules))
 	})
 }

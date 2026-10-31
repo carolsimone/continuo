@@ -988,7 +988,7 @@ every value in the `services` env of agent-chat and agent-remediation. */}}
 {{- define "continuo.egress.givenAddresses" -}}
 {{- $given := list -}}
 {{- $g := .Values.global | default dict -}}
-{{- range $key := list "runControllerGrpcAddr" "orchestratorGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
+{{- range $key := list "runControllerGrpcAddr" "catalogGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
 {{- $given = append $given (dict "key" (printf "global.%s" $key) "value" (get $g $key)) -}}
 {{- end -}}
 {{- range $svc := .Values.services -}}
@@ -1295,11 +1295,11 @@ lives in the replaceable `services` list. scripts/install-test/assert-redis-gate
 pins this list to the services whose source imports a Redis client.
 */ -}}
 {{- define "continuo.redis.clientServices" -}}
-["run-controller","orchestrator","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
+["run-controller","catalog","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
 {{- end -}}
 
 {{- define "continuo.s3.credentialServices" -}}
-["run-controller","orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
+["run-controller","catalog","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}
 
 {{- define "continuo.auth.issuerUrl" -}}
@@ -1488,7 +1488,7 @@ scripts/install-test/assert-metrics.py pins this list to the services whose
 source imports pkg/metrics.
 */ -}}
 {{- define "continuo.metrics.services" -}}
-["run-controller","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
+["run-controller","catalog","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
 {{- end -}}
 
 {{/*
@@ -1603,6 +1603,56 @@ value outside 1-168 fails the render.
 {{- fail (printf "runs.taskTimeoutHours=%v must be a whole number of hours from 1 to 168" $r.taskTimeoutHours) -}}
 {{- end -}}
 {{- mul $h 3600 -}}
+{{- end -}}
+
+{{/*
+CATALOG_BACKUP_ENABLED for the shared ConfigMap: "true" or "false" from
+catalog.backup.enabled. A release without a catalog block, or without the key
+(for example after helm upgrade --reuse-values), gets true; a value that is not
+a boolean fails the render.
+*/ -}}
+{{- define "continuo.catalog.backup.enabled" -}}
+{{- $b := (.Values.catalog | default dict).backup | default dict -}}
+{{- $e := true -}}
+{{- if hasKey $b "enabled" -}}{{- $e = $b.enabled -}}{{- end -}}
+{{- if not (kindIs "bool" $e) -}}
+{{- fail (printf "catalog.backup.enabled=%v must be true or false" $e) -}}
+{{- end -}}
+{{- $e -}}
+{{- end -}}
+
+{{/*
+CATALOG_BACKUP_SCHEDULE for the shared ConfigMap: catalog.backup.schedule. A
+release without a catalog block, or without the key, gets "0 2 * * *"; a value
+that is neither five space-separated fields nor an @ descriptor (@daily,
+@every 6h) fails the render. catalog's own cron parser has the last word at
+startup.
+*/ -}}
+{{- define "continuo.catalog.backup.schedule" -}}
+{{- $b := (.Values.catalog | default dict).backup | default dict -}}
+{{- $s := "0 2 * * *" -}}
+{{- if hasKey $b "schedule" -}}{{- $s = $b.schedule -}}{{- end -}}
+{{- if not (kindIs "string" $s) -}}
+{{- fail (printf "catalog.backup.schedule=%v must be a string: a five-field cron or an @ descriptor such as @daily" $s) -}}
+{{- else if not (regexMatch `^\s*(@\S+(\s+\S+)?|\S+(\s+\S+){4})\s*$` $s) -}}
+{{- fail (printf "catalog.backup.schedule=%q must be a five-field cron or an @ descriptor such as @daily or @every 6h" $s) -}}
+{{- end -}}
+{{- $s -}}
+{{- end -}}
+
+{{/*
+CATALOG_BACKUP_KEEP for the shared ConfigMap: catalog.backup.keep. A release
+without a catalog block, or without the key, gets 7; a value below 1 fails the
+render.
+*/ -}}
+{{- define "continuo.catalog.backup.keep" -}}
+{{- $b := (.Values.catalog | default dict).backup | default dict -}}
+{{- $n := 7 -}}
+{{- if hasKey $b "keep" -}}{{- $n = int $b.keep -}}{{- end -}}
+{{- if lt $n 1 -}}
+{{- fail (printf "catalog.backup.keep=%v must be a whole number of at least 1" $b.keep) -}}
+{{- end -}}
+{{- $n -}}
 {{- end -}}
 
 {{/*

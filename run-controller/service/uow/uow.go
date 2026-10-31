@@ -18,7 +18,7 @@ import (
 // methods use the autocommit DB. Handlers never touch the transaction directly.
 //
 // MessageProcessingRepo returns a fresh repo bound to the current tx (or
-// the autocommit DB if no tx is active), mirroring orchestrator's pattern.
+// the autocommit DB if no tx is active).
 //
 // The aggregate-level accessors (Run, Outbox, TaskCollection, Clock) are used
 // by handlers that operate on domain aggregates.

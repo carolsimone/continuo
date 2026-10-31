@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/adapters/cron"
 	"github.com/carolsimone/continuo/run-controller/adapters/http"
@@ -247,15 +248,16 @@ func main() {
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
 	outboxPub := rcpublisher.NewOutboxPublisher(redisClient, logger)
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
 		postgres.OutboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for run-controller
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: outboxMetrics},
 	)
-	metricsReg.WatchOutbox(outboxProc)
+	outboxMetrics.Watch(outboxProc)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
 		return outboxProc.Healthy(outboxHeartbeatStale)
@@ -315,8 +317,8 @@ func main() {
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
 	commandRequestPruner := commands.NewPruner(uowFactory)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
+	retentionSweeper := pkgretention.NewSweeper(
+		[]pkgretention.Target{
 			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
 			{
 				Name:         "message_processing",
@@ -333,7 +335,7 @@ func main() {
 				MinRetention: model.ReplayHorizon,
 			},
 		},
-		pkgoutbox.RetentionConfig{
+		pkgretention.Config{
 			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
 		},

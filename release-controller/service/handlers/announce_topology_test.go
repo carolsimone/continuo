@@ -92,7 +92,7 @@ func TestAnnounceTopology_RefusesAnEmptyTopology(t *testing.T) {
 }
 
 // A topology of only dbt-test nodes survives the len(topo)==0 guard but
-// orchestrator strips every dbt-test when it applies the promotion, leaving an
+// catalog strips every dbt-test when it applies the promotion, leaving an
 // empty swap set that retires every live node. Announcing it is refused, and a
 // topology with at least one non-test node is accepted.
 func TestAnnounceTopology_RefusesAnAllDbtTestTopology(t *testing.T) {

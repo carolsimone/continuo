@@ -82,7 +82,7 @@ export interface GraphNode {
 }
 
 // A dependency edge in execution order: `from` runs first, `to` reads its
-// output. The server reverses the orchestrator's DEPENDS_ON edge into this
+// output. The server reverses catalog's DEPENDS_ON edge into this
 // orientation, so depth, column, arrowhead and upstream/downstream all follow
 // from it directly.
 export interface GraphEdge {
@@ -289,7 +289,7 @@ export interface NodesResponse {
 }
 
 // The distinct active service names, from GET /api/nodes/services. Feeds the
-// catalog and Remediation-tab service filters.
+// node list and Remediation-tab service filters.
 export interface ServicesResponse {
   services: string[];
 }

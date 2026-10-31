@@ -33,10 +33,3 @@ type Pruner interface {
 func NewPruner(exec executor, outboxTable string, logger *slog.Logger) Pruner {
 	return &postgresRepository{exec: exec, outboxTable: outboxTable, logger: logger}
 }
-
-// NewPrunerWithoutOutbox constructs a Pruner for a service whose database has
-// no outbox table: nothing there references a dedup row, so age alone decides
-// whether a row goes.
-func NewPrunerWithoutOutbox(exec executor, logger *slog.Logger) Pruner {
-	return &postgresRepository{exec: exec, logger: logger}
-}

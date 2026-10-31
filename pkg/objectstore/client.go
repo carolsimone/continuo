@@ -172,3 +172,67 @@ func (c *Client) DeletePrefix(ctx context.Context, prefix string) error {
 	}
 	return nil
 }
+
+// GetStream implements StreamReader. The response body is returned as it
+// arrives, so the object is never held whole; closing it ends the request. A
+// Ref that names no object is refused before any request.
+func (c *Client) GetStream(ctx context.Context, ref Ref) (io.ReadCloser, error) {
+	if err := ref.Validate(); err != nil {
+		return nil, err
+	}
+	ref = c.resolve(ref)
+	out, err := c.s3.GetObject(ctx, &awss3.GetObjectInput{
+		Bucket: aws.String(ref.Bucket),
+		Key:    aws.String(ref.Key),
+	})
+	if err != nil {
+		var nsk *s3types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, ref)
+		}
+		return nil, fmt.Errorf("get %s: %w", ref, err)
+	}
+	return out.Body, nil
+}
+
+// List implements Lister. It reads the prefix in the default bucket page by
+// page (ListObjectsV2, at most 1,000 keys a page); S3 returns keys in order.
+func (c *Client) List(ctx context.Context, prefix string) ([]Object, error) {
+	paginator := awss3.NewListObjectsV2Paginator(c.s3, &awss3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+	})
+	var objects []Object
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list s3://%s/%s: %w", c.bucket, prefix, err)
+		}
+		for _, o := range page.Contents {
+			objects = append(objects, Object{
+				Key:          aws.ToString(o.Key),
+				Size:         aws.ToInt64(o.Size),
+				LastModified: aws.ToTime(o.LastModified),
+			})
+		}
+	}
+	return objects, nil
+}
+
+// Delete implements Deleter. S3 answers a delete of a key that holds no object
+// as it does one that did, so a missing object is not an error. A Ref that
+// names no object is refused before any request.
+func (c *Client) Delete(ctx context.Context, ref Ref) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	ref = c.resolve(ref)
+	_, err := c.s3.DeleteObject(ctx, &awss3.DeleteObjectInput{
+		Bucket: aws.String(ref.Bucket),
+		Key:    aws.String(ref.Key),
+	})
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", ref, err)
+	}
+	return nil
+}

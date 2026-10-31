@@ -34,15 +34,6 @@ services:
       - postgres
     tty: true
 
-  flyway-orchestrator:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_orchestrator -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/orchestrator:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
   flyway-release:
     image: flyway/flyway
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_release -user=continuo_svc -password=continuo -connectRetries=30
@@ -101,7 +92,7 @@ services:
       timeout: 5s
 
   neo4j:
-    image: neo4j:5.15.0-community
+    image: neo4j:5.26.28-community
     ports:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
@@ -162,7 +153,7 @@ services:
     volumes:
       - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
-      - ./orchestrator:/app/orchestrator
+      - ./catalog:/app/catalog
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
@@ -238,7 +229,7 @@ services:
     volumes:
       - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
-      - ./orchestrator:/app/orchestrator
+      - ./catalog:/app/catalog
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
@@ -252,17 +243,13 @@ services:
       - kind
     tty: true
 
-  orchestrator:
+  catalog:
     build:
       context: .
-      dockerfile: orchestrator/Dockerfile.dev
-    container_name: orchestrator
+      dockerfile: catalog/Dockerfile.dev
+    container_name: catalog
     depends_on:
-      postgres:
-        condition: service_started
       redis:
-        condition: service_started
-      flyway-orchestrator:
         condition: service_started
       neo4j:
         condition: service_started
@@ -278,12 +265,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      # PostgreSQL
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_orchestrator
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
       # Object storage — the version-ingestion consumer reads each release's
       # code-bundle document
       - S3_ENDPOINT_URL=http://minio:9000
@@ -291,6 +272,10 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
+      # Backup — the chart's catalog.backup.* values (deploy/continuo/values.yaml)
+      - CATALOG_BACKUP_ENABLED=true
+      - CATALOG_BACKUP_SCHEDULE=0 2 * * *
+      - CATALOG_BACKUP_KEEP=7
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087
@@ -304,7 +289,7 @@ services:
       - ./run-controller:/app/run-controller
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
-      - ./orchestrator:/app/orchestrator
+      - ./catalog:/app/catalog
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
@@ -437,7 +422,7 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
-      - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - CONTINUO_CATALOG_ADDR=catalog:50052
       - LLM_PROVIDER=${LLM_PROVIDER:-openai-compatible}
       - LLM_API_KEY=${LLM_API_KEY:-stub}
       - LLM_MODEL=${LLM_MODEL:-stub-model}
@@ -462,7 +447,7 @@ services:
       # are listed so `go run` in this container can still fetch modules.
       - HTTP_PROXY=http://egress-proxy:3128
       - HTTPS_PROXY=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,minio,orchestrator,release-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,minio,catalog,release-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
     volumes:
       # The local stack runs on the e2e map, which adds the suite's fixture
       # services to the demo ones. The map agent-remediation documents for
@@ -565,7 +550,7 @@ services:
       - postgres
       - flyway-agent-chat
       - run-controller
-      - orchestrator
+      - catalog
       - stub-llm
       - redis
       - egress-proxy
@@ -580,7 +565,7 @@ services:
       - GRPC_PORT=50053
       - HEALTH_PORT=8091
       - CONTINUO_RUN_CONTROLLER_ADDR=run-controller:50051
-      - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - CONTINUO_CATALOG_ADDR=catalog:50052
       - CONTINUO_DEAD_LETTER_ADDR=dead-letter-controller:50055
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
@@ -594,7 +579,7 @@ services:
       # public API of LLM_PROVIDER=anthropic|openai.
       - LLM_BASE_URL=${LLM_BASE_URL-http://stub-llm:9100}
       # Outbound HTTP (the LLM) goes through egress-proxy. The gRPC dials to
-      # run-controller, orchestrator and dead-letter-controller, which
+      # run-controller, catalog and dead-letter-controller, which
       # agent-chat's continuo CLI subprocess inherits, are the stack's own
       # services and bypass it. stub-llm is deliberately absent from NO_PROXY:
       # it is an allowlisted egress destination. The Go module hosts are listed
@@ -603,7 +588,7 @@ services:
       # stack's own service and bypasses the proxy.
       - HTTP_PROXY=http://egress-proxy:3128
       - HTTPS_PROXY=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,run-controller,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,run-controller,catalog,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
     ports:
       - "8091:8091"
       - "50053:50053"
@@ -624,7 +609,7 @@ services:
     depends_on:
       run-controller:
         condition: service_started
-      orchestrator:
+      catalog:
         condition: service_started
       postgres:
         condition: service_started
@@ -637,7 +622,7 @@ services:
       dbt-compile-and-load:
         condition: service_started
     environment:
-      - ORCHESTRATOR_HOST=orchestrator
+      - CATALOG_HOST=catalog
       - RUN_CONTROLLER_HOST=run-controller
       - REDIS_HOST=redis
       - NEO4J_HOST=neo4j
@@ -648,7 +633,7 @@ services:
       - ./kubeconfig:/app/kubeconfig
       - ./tests/e2e:/app/tests/e2e
       - ./run-controller:/app/run-controller
-      - ./orchestrator:/app/orchestrator
+      - ./catalog:/app/catalog
       - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
@@ -679,7 +664,7 @@ services:
         condition: service_started
     environment:
       - RUN_CONTROLLER_GRPC_ADDR=run-controller:50051
-      - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
+      - CATALOG_GRPC_ADDR=catalog:50052
       - PORT=8090
       - NODE_ENV=production
       - S3_ENDPOINT_URL=http://minio:9000
@@ -736,7 +721,7 @@ services:
         condition: service_started
     environment:
       - RUN_CONTROLLER_GRPC_ADDR=run-controller:50051
-      - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
+      - CATALOG_GRPC_ADDR=catalog:50052
       - PORT=8090
       - NODE_ENV=production
       - S3_ENDPOINT_URL=http://minio:9000

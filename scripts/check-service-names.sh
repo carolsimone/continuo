@@ -4,12 +4,17 @@
 # product release notes, superpowers docs, and the NOTES.txt upgrade-warning
 # block (which intentionally names old->new for operators).
 #
-# Two lists are checked:
+# Three lists are checked:
 #   - the August names (ui-service, agent-runner, remediation-agent,
 #     manifest-controller), matched case-insensitively. The match is
 #     deliberately hyphen-only: it does not catch camelCase (uiService) or
 #     snake_case (manifest_controller) spellings, which were verified absent
 #     when the rename landed.
+#   - the retired `orchestrator` service name (now `catalog`), matched
+#     case-insensitively as a substring, so it also catches every compound
+#     form: ORCHESTRATOR_GRPC_ADDR, flyway-orchestrator, continuo_orchestrator,
+#     OrchestratorQuery, orchestrator/. The words "orchestration" and
+#     "orchestrates" are ordinary prose and do not match.
 #   - the retired `state` and `executor` service names, matched
 #     case-sensitively and only in forms that cannot be ordinary words (the
 #     word `state` is everywhere: task state, React state, OAuth state). Each
@@ -29,6 +34,7 @@ excludes=(
   ':!docs/superpowers'
   ':!deploy/continuo/templates/NOTES.txt'
   ':!scripts/check-service-names.sh' ':!scripts/check-service-names_test.sh'
+  ':!pkg/deploycheck/compose_no_proxy_test.go'
 )
 
 status=0
@@ -36,6 +42,11 @@ status=0
 if git grep -inE "ui-service|agent-runner|remediation-agent|manifest-controller" -- \
     "${excludes[@]}"; then
   echo "ERROR: retired service name found (see matches above)" >&2
+  status=1
+fi
+
+if git grep -inE "orchestrator" -- "${excludes[@]}"; then
+  echo "ERROR: retired orchestrator name found (see matches above); the service is catalog" >&2
   status=1
 fi
 

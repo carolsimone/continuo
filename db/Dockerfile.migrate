@@ -13,7 +13,6 @@ RUN chmod +x /migrate-all.sh
 
 COPY migration/run_controller /flyway/sql/run_controller
 COPY migration/execution /flyway/sql/execution
-COPY migration/orchestrator /flyway/sql/orchestrator
 COPY migration/release /flyway/sql/release
 COPY migration/agent_chat /flyway/sql/agent_chat
 COPY migration/remediation /flyway/sql/remediation

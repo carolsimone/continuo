@@ -413,8 +413,8 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, _, _, _ := pythonSvc(t, root)
-	svc.Upstream = &fakeUpstream{err: fmt.Errorf("orchestrator down")}
-	svc.Precedents = &fakePrecedents{err: fmt.Errorf("orchestrator down")}
+	svc.Upstream = &fakeUpstream{err: fmt.Errorf("catalog down")}
+	svc.Precedents = &fakePrecedents{err: fmt.Errorf("catalog down")}
 	svc.PriorAttempts = &fakeAttempts{err: fmt.Errorf("db down")}
 	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
 

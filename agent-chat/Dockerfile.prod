@@ -12,7 +12,7 @@ WORKDIR /app
 COPY go.work go.work.sum* ./
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY pkg/go.mod pkg/go.sum ./pkg/
-COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY catalog/go.mod catalog/go.sum ./catalog/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY run-controller/go.mod run-controller/go.sum ./run-controller/

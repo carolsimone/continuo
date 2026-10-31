@@ -229,8 +229,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// replacing the first in the promoted topology, current_prod, and the
 	// code bundle. Two nodes sharing a unique_id are indistinguishable to
 	// every downstream lookup keyed on it — the code bundle, the candidate
-	// object key, release-controller's own topology walks, the
-	// orchestrator's :Table MERGE — so one is silently erased regardless of
+	// object key, release-controller's own topology walks,
+	// catalog's node MERGE — so one is silently erased regardless of
 	// whether their resolved relations also collide. Checked here, above the
 	// bootstrap branch, because the candidate topology recorded at this
 	// point feeds every later route to promoteToProduction: the bootstrap

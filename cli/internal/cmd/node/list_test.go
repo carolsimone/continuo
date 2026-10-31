@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 	assert.Equal(t, "run", fake.gotListOperation)
 	assert.Equal(t, defaultListLimit, fake.gotListLimit)
 	assert.Equal(t, int32(0), fake.gotListOffset)
-	// An empty catalog is a success with an empty array, never null.
+	// An empty node list is a success with an empty array, never null.
 	assert.JSONEq(t, `{"total_count":0,"nodes":[]}`, stdout)
 }
 
@@ -250,4 +251,14 @@ func TestList_LongNamesEveryTaskStatus(t *testing.T) {
 	listed := strings.Split(sentence, ", ")
 	served := []string{"pending", "dispatched", "queued", "running", "stopping", "succeeded", "failed", "cancelled", "skipped"}
 	assert.ElementsMatch(t, served, listed)
+}
+
+// "catalog" names the catalog service (the code-version and failure-precedent
+// reads). The node list is run-controller's, so its help must not send the
+// reader to a catalog.
+func TestNodeListHelpNeverSaysCatalog(t *testing.T) {
+	cmd := NewListCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	for name, text := range map[string]string{"Short": cmd.Short, "Long": cmd.Long, "Example": cmd.Example} {
+		assert.NotContains(t, strings.ToLower(text), "catalog", "node list %s", name)
+	}
 }

@@ -44,6 +44,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 )
 
 // llmClientTimeout bounds a single LLM HTTP request. Without it the LLM path
@@ -213,7 +214,7 @@ func main() {
 	artifactWriter := s3.NewArtifactWriter(objectStore, cfg.S3.Bucket)
 	bundleReader := s3.NewCandidateSourceReader(objectStore)
 
-	graphClient, err := grpcadapter.NewGraphClient(cfg.OrchestratorAddr)
+	graphClient, err := grpcadapter.NewGraphClient(cfg.CatalogAddr)
 	if err != nil {
 		logger.Error("grpc graph client dial", "error", err)
 		os.Exit(1)
@@ -329,16 +330,17 @@ func main() {
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.
-	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
-	metricsReg.WatchOutbox(outboxProc)
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
+	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, outboxMetrics, liveReg, logger)
+	outboxMetrics.Watch(outboxProc)
 
 	// Retention sweeper — prunes processed agent_remediation_outbox rows older
 	// than RETENTION_DAYS and message_processing dedup rows, whatever their
 	// state, older than the longer of RETENTION_DAYS and the 30-day replay
 	// horizon, on one timer using DB-clock cutoffs.
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
+	retentionSweeper := pkgretention.NewSweeper(
+		[]pkgretention.Target{
 			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
 			{
 				Name:         "message_processing",
@@ -346,7 +348,7 @@ func main() {
 				MinRetention: model.ReplayHorizon,
 			},
 		},
-		pkgoutbox.RetentionConfig{
+		pkgretention.Config{
 			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
 		},

@@ -13,13 +13,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 # Layer 1: Workspace stub. All go.mod / go.sum files are copied so
 # `go mod download` can satisfy every dependency cited by go.work, but
-# only the modules this image builds against (pkg, orchestrator,
+# only the modules this image builds against (pkg, catalog,
 # agent-remediation) get their source trees later. Limiting the
 # source-copy layers to the service-owned dirs means a change to another
 # service does not invalidate this image's cache.
 COPY go.work go.work.sum* ./
 COPY pkg/go.mod pkg/go.sum ./pkg/
-COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY catalog/go.mod catalog/go.sum ./catalog/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
@@ -31,7 +31,7 @@ COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
 # other services' source trees to be present in this image. pkg and
-# orchestrator stay because agent-remediation imports both directly.
+# catalog stay because agent-remediation imports both directly.
 RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./execution-controller \
@@ -48,10 +48,10 @@ RUN go work edit -dropuse=./run-controller \
 RUN go mod download
 
 # Layer 4: Source for the modules this service builds against. pkg/ and
-# orchestrator/ first (lower churn) so a change in agent-remediation/
+# catalog/ first (lower churn) so a change in agent-remediation/
 # does not invalidate those layers.
 COPY pkg/ ./pkg/
-COPY orchestrator/ ./orchestrator/
+COPY catalog/ ./catalog/
 COPY agent-remediation/ ./agent-remediation/
 # Integration tests read production backfill expressions as SELECT fixtures.
 COPY db/migration/agent_remediation/ ./db/migration/agent_remediation/

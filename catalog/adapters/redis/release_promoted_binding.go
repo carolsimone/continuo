@@ -1,0 +1,34 @@
+package redis
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/carolsimone/continuo/catalog/service/handlers"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	goredis "github.com/redis/go-redis/v9"
+)
+
+// NewReleasePromotedBinding wires ParseReleasePromotedV2 into the
+// ReleasePromotedHandler. A decode failure or a message without a tenant is
+// permanent (events.ErrPermanent): the binding logs and returns the error so
+// the consumer dead-letters the entry.
+//
+// outbox_entry_id is extracted from the message fields and threaded to the
+// handler, whose processed-message marker then also recognises a re-XADD of
+// the same upstream outbox row under a fresh Redis message ID.
+func NewReleasePromotedBinding(
+	handler *handlers.ReleasePromotedHandler,
+	logger *slog.Logger,
+) pkgredis.MessageHandler {
+	return func(ctx context.Context, msg goredis.XMessage) error {
+		in, err := ParseReleasePromotedV2(msg)
+		if err != nil {
+			logger.Error("release.promoted: decode failure — dead-lettering",
+				"message_id", msg.ID, "error", err)
+			return err
+		}
+		return handler.Handle(ctx, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values), in)
+	}
+}

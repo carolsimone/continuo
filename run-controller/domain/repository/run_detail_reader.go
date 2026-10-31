@@ -29,15 +29,15 @@ type TaskDetailReader interface {
 	ListRunTasks(ctx context.Context, tenantID string, runID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]projection.TaskDetail, int, error)
 }
 
-// NodeReader reads the history and catalog of a tenant's nodes.
+// NodeReader reads the history and node list of a tenant's nodes.
 type NodeReader interface {
 	// ListNodeTasks returns the most recent tasks of a node applying
 	// operation, newest run first; the tasks of model.OperationRun include
 	// the node's full refreshes. limit is capped at 50, 0 meaning 50.
 	ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
 
-	// ListNodes returns one page of the node catalog of operation (the
-	// catalog of model.OperationRun includes full refreshes) and how many
+	// ListNodes returns one page of the node list of operation (the
+	// node list of model.OperationRun includes full refreshes) and how many
 	// nodes match search (a case-insensitive exact match on the table name;
 	// empty means all) and serviceName (exact; empty means all).
 	ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error)

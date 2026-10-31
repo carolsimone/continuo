@@ -1,5 +1,5 @@
 # config/service_repos.yaml
-# Maps a service name (orchestrator topology service_name; dbt or python) to its
+# Maps a service name (catalog topology service_name; dbt or python) to its
 # project root within that service's own repository. agent-remediation joins
 # <repo_path> with an offending file's path to read the model's source from
 # GitHub — the repo itself comes from the release/remediation trigger — so it can

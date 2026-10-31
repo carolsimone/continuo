@@ -23,7 +23,7 @@ data:
   NEO4J_URI: {{ include "continuo.neo4j.uri" . | quote }}
   NEO4J_USER: {{ include "continuo.neo4j.username" . | quote }}
   RUN_CONTROLLER_GRPC_ADDR: {{ .Values.global.runControllerGrpcAddr | quote }}
-  ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
+  CATALOG_GRPC_ADDR: {{ .Values.global.catalogGrpcAddr | quote }}
   AGENT_REMEDIATION_GRPC_ADDR: {{ .Values.global.agentRemediationGrpcAddr | quote }}
   AGENT_CHAT_GRPC_ADDR: {{ .Values.global.agentChatGrpcAddr | quote }}
   S3_ENDPOINT_URL: {{ include "continuo.s3.endpointUrl" . | quote }}
@@ -42,4 +42,7 @@ data:
   K8S_CLIENT_BURST: {{ include "continuo.execution.kubeClientBurst" . | quote }}
   TASK_MAX_RETRIES: {{ include "continuo.runs.taskMaxRetries" . | quote }}
   TASK_TIMEOUT_SECONDS: {{ include "continuo.runs.taskTimeoutSeconds" . | quote }}
+  CATALOG_BACKUP_ENABLED: {{ include "continuo.catalog.backup.enabled" . | quote }}
+  CATALOG_BACKUP_SCHEDULE: {{ include "continuo.catalog.backup.schedule" . | quote }}
+  CATALOG_BACKUP_KEEP: {{ include "continuo.catalog.backup.keep" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}

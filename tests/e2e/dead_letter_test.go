@@ -75,15 +75,15 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	defer cancel()
 	clients := setupClients(t, ctx)
 
-	// release.promoted:v2 has four consumer groups. Both orchestrator groups and
+	// release.promoted:v2 has four consumer groups. Both catalog groups and
 	// run-controller's reject an entry without an envelope as a permanent failure (their
 	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
 	// so each dead-letters the original; execution-controller's teardown is
 	// best-effort and acknowledges it. group is the one the redrive addresses;
 	// the others must acknowledge the redriven entry without a handler.
 	const stream = streams.ReleasePromotedV2
-	const group = streams.OrchestratorReleasePromoted
-	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.RunControllerReleasePromoted, streams.ExecutionControllerReleasePromoted}
+	const group = streams.CatalogReleaseTopology
+	otherGroups := []string{streams.CatalogReleaseVersions, streams.RunControllerReleasePromoted, streams.ExecutionControllerReleasePromoted}
 
 	// 1-2. Publish the malformed entry and wait for the dead letter of the group
 	// that will be redriven. The sibling groups dead-letter the same original;
@@ -91,7 +91,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	// result of the redrive.
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
-	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
+	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.CatalogReleaseVersions, origID, "open")
 	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
 	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
@@ -179,7 +179,7 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const stream = streams.ReleasePromotedV2
-	const group = streams.OrchestratorReleasePromoted
+	const group = streams.CatalogReleaseTopology
 	bin := buildCLI(t, ctx)
 	env := []string{
 		"CONTINUO_DEAD_LETTER_ADDR=" + getEnv("DEAD_LETTER_HOST", "dead-letter-controller") + ":50055",
@@ -188,7 +188,7 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
-	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
+	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.CatalogReleaseVersions, origID, "open")
 	runControllerSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.RunControllerReleasePromoted, origID, "open")
 	cleanupIDs := []string{dl.GetId(), sibling.GetId(), runControllerSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })

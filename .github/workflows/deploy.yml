@@ -72,7 +72,7 @@ jobs:
               - 'db/**'
               - 'deploy/**'
               - 'run-controller/**'
-              - 'orchestrator/**'
+              - 'catalog/**'
               - 'execution-controller/**'
               - 'ui/**'
               - 'topology-controller/**'
@@ -90,12 +90,12 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'run-controller/**'
-            orchestrator:
+            catalog:
               - 'Dockerfile.base'
               - 'go.work'
               - 'go.work.sum'
               - 'pkg/**'
-              - 'orchestrator/**'
+              - 'catalog/**'
             execution_controller:
               - 'Dockerfile.base'
               - 'go.work'
@@ -130,7 +130,7 @@ jobs:
               - 'go.work'
               - 'go.work.sum'
               - 'pkg/**'
-              - 'orchestrator/**'
+              - 'catalog/**'
               - 'agent-remediation/**'
             dead_letter_controller:
               - 'Dockerfile.base'
@@ -153,7 +153,7 @@ jobs:
         id: matrix
         env:
           RUN_CONTROLLER_CHANGED: ${{ steps.filter.outputs.run_controller }}
-          ORCHESTRATOR_CHANGED: ${{ steps.filter.outputs.orchestrator }}
+          CATALOG_CHANGED: ${{ steps.filter.outputs.catalog }}
           EXECUTION_CONTROLLER_CHANGED: ${{ steps.filter.outputs.execution_controller }}
           UI_CHANGED: ${{ steps.filter.outputs.ui }}
           TOPOLOGY_CHANGED: ${{ steps.filter.outputs.topology_controller }}
@@ -169,7 +169,7 @@ jobs:
           matrix="$(
             jq -cn \
               --arg run_controller "$RUN_CONTROLLER_CHANGED" \
-              --arg orchestrator "$ORCHESTRATOR_CHANGED" \
+              --arg catalog "$CATALOG_CHANGED" \
               --arg execution_controller "$EXECUTION_CONTROLLER_CHANGED" \
               --arg ui "$UI_CHANGED" \
               --arg topology "$TOPOLOGY_CHANGED" \
@@ -184,7 +184,7 @@ jobs:
               '{
                 include: [
                   {service: "run-controller", changed: $run_controller, dockerfile: "run-controller/Dockerfile.prod", context: "."},
-                  {service: "orchestrator", changed: $orchestrator, dockerfile: "orchestrator/Dockerfile.prod", context: "."},
+                  {service: "catalog", changed: $catalog, dockerfile: "catalog/Dockerfile.prod", context: "."},
                   {service: "execution-controller", changed: $execution_controller, dockerfile: "execution-controller/Dockerfile.prod", context: "."},
                   {service: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},
                   {service: "topology-controller", changed: $topology, dockerfile: "topology-controller/Dockerfile.prod", context: "topology-controller"},

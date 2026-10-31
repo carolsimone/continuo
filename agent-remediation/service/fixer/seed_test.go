@@ -102,7 +102,7 @@ func TestSeed_SanitizesCSVBeforeLLM(t *testing.T) {
 }
 
 // TestSeed_FallbackUsesLocator proves that when in.FilePath or in.Service is
-// empty, seedGather fills both from the orchestrator graph's NodeLocator
+// empty, seedGather fills both from the catalog graph's NodeLocator
 // before resolving the repo path, and that the CSV read uses the located
 // path.
 func TestSeed_FallbackUsesLocator(t *testing.T) {

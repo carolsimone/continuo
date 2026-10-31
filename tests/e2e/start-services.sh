@@ -12,12 +12,12 @@ log_info "Starting all services..."
 start_service "run-controller" "run-controller" "run-controller"
 check_health "run-controller" 8082 || exit 1
 
-# Copy kubeconfig so orchestrator can run kubectl during e2e tests
-docker exec orchestrator mkdir -p /root/.kube
-docker cp kubeconfig/kubeconfig.yaml orchestrator:/root/.kube/config 2>/dev/null || log_warn "No kubeconfig found — orchestrator kubectl will not work"
-docker network connect kind orchestrator 2>/dev/null || true
+# Copy kubeconfig so catalog can run kubectl during e2e tests
+docker exec catalog mkdir -p /root/.kube
+docker cp kubeconfig/kubeconfig.yaml catalog:/root/.kube/config 2>/dev/null || log_warn "No kubeconfig found — catalog kubectl will not work"
+docker network connect kind catalog 2>/dev/null || true
 
-start_service "orchestrator" "orchestrator" "orchestrator"
+start_service "catalog" "catalog" "catalog"
 
 # Note: execution-controller runs in kind for E2E tests, but we can start it
 # in docker-compose too for development flexibility.
@@ -25,7 +25,7 @@ start_service "orchestrator" "orchestrator" "orchestrator"
 # start_service "execution-controller" "execution-controller" "execution-controller"
 
 # Check health of all started services
-check_health "orchestrator" 8087 || exit 1
+check_health "catalog" 8087 || exit 1
 
 # Uncomment if you started execution-controller:
 # check_health "execution-controller" 8084 || exit 1

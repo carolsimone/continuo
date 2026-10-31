@@ -28,7 +28,7 @@ start_sampler() {
     # stdout is detached so the command substitution that captures the PID returns at once.
     "${here}/sample.sh" k8s "$1" 5 "${BENCH_K8S_NAMESPACE:-continuo}" --kubeconfig "${BENCH_KUBECONFIG}" >/dev/null 2>&1 &
   else
-    "${here}/sample.sh" docker "$1" 5 run-controller orchestrator execution-controller \
+    "${here}/sample.sh" docker "$1" 5 run-controller catalog execution-controller \
       "$(bench_container postgres)" "$(bench_container redis)" "$(bench_container neo4j)" >/dev/null 2>&1 &
   fi
   echo $!

@@ -688,7 +688,7 @@ func TestCanBeRerunSource_AcceptsFailedTerminalWithWork(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	_, _ = r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "orchestrator empty", time.Now())
+	_, _ = r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "empty selection", time.Now())
 	tc.hasNonSucc = true
 
 	if err := r.CanBeRerunSource(ctx, tc); err != nil {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +25,7 @@ type upstreamChangesPayload struct {
 
 // NewUpstreamChangesCommand builds
 // `continuo node upstream-changes <service> <schema> <table> [--depth N] [--since RFC3339]`.
-func NewUpstreamChangesCommand(factory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewUpstreamChangesCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upstream-changes <service> <schema> <table>",
 		Short: "List a model node's ancestors' most recent code changes",
@@ -71,7 +71,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, --depth above 10, or --since is not RFC3339
   not_found  (exit 3)  the node's unique_id is not recorded
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node upstream-changes finance analytics orders --depth 5 --since 2026-07-01T00:00:00Z",
 		Annotations: map[string]string{
@@ -93,7 +93,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.CatalogEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -117,7 +117,7 @@ Errors:
 	return cmd
 }
 
-func toUpstreamChangesPayload(changes []*orchestratorv1.UpstreamChange) upstreamChangesPayload {
+func toUpstreamChangesPayload(changes []*catalogv1.UpstreamChange) upstreamChangesPayload {
 	out := make([]upstreamChangeEntry, 0, len(changes))
 	for _, c := range changes {
 		out = append(out, upstreamChangeEntry{
@@ -132,7 +132,7 @@ func toUpstreamChangesPayload(changes []*orchestratorv1.UpstreamChange) upstream
 // humanUpstreamChanges writes one line per ancestor to stderr:
 //
 //	<depth>  <unique_id>  truncated=<bool>
-func humanUpstreamChanges(stderr io.Writer, changes []*orchestratorv1.UpstreamChange) error {
+func humanUpstreamChanges(stderr io.Writer, changes []*catalogv1.UpstreamChange) error {
 	for _, c := range changes {
 		if _, err := fmt.Fprintf(stderr, "%d  %s  truncated=%t\n", c.GetDepth(), c.GetUniqueId(), c.GetDiff().GetTruncated()); err != nil {
 			return err

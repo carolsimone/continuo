@@ -104,12 +104,12 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
-	//     agent-remediation's Locator (GetNodeLocation gRPC) can resolve the
-	//     node's file path and service name. In a cold e2e no release has been
-	//     promoted yet, so Neo4j is empty; without this seed, GetNodeLocation
-	//     returns NOT_FOUND and Step-2 source resolution degrades silently to
-	//     source_resolved=false.
+	// 3b. Seed the ftable_e topology :Node in Neo4j, under the default tenant,
+	//     so that the agent-remediation's Locator (GetNodeLocation gRPC) can
+	//     resolve the node's file path and service name. In a cold e2e no
+	//     release has been promoted yet, so Neo4j is empty; without this seed,
+	//     GetNodeLocation returns NOT_FOUND and Step-2 source resolution
+	//     degrades silently to source_resolved=false.
 	seedFTableETopologyNode(t, ctx, clients)
 
 	// 4. POST /releases for service-2. ftable_e's SQL references
@@ -428,7 +428,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 
 	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside
-	//    the orchestrator container, so stub-github is reached by its compose
+	//    the catalog container, so stub-github is reached by its compose
 	//    service name, same as the agent-remediation's own GITHUB_BASE_URL.
 	prBody, err := json.Marshal(map[string]string{
 		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
@@ -680,7 +680,7 @@ func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID 
 
 // mergePullRequestViaStub PUTs the stub-github merge endpoint for pull request
 // number n on repo, asserts it succeeds, and returns the merge commit sha the
-// stub reports. The e2e suite runs inside the orchestrator container, so
+// stub reports. The e2e suite runs inside the catalog container, so
 // stub-github is reached by its compose service name — the same base URL
 // agent-remediation and ui use.
 func mergePullRequestViaStub(t *testing.T, ctx context.Context, repo string, n int) string {
@@ -891,13 +891,13 @@ func stripS3Prefix(uri string) string {
 	return ""
 }
 
-// seedFTableETopologyNode inserts a minimal :Table node for e2e_schema.ftable_e
-// into Neo4j. In a cold e2e no release has been promoted, so Neo4j is empty.
-// The agent-remediation's Step-2 source resolution calls GetNodeLocation to
-// obtain the node's original_file_path and service_name (the candidate source
-// itself is read from the release's code bundle first, falling back to a
-// GitHub repo read only when the bundle misses); without this seed,
-// GetNodeLocation returns NOT_FOUND and source_resolved stays false.
+// seedFTableETopologyNode inserts a minimal :Node for e2e_schema.ftable_e under
+// the default tenant into Neo4j. In a cold e2e no release has been promoted, so
+// Neo4j is empty. The agent-remediation's Step-2 source resolution calls
+// GetNodeLocation to obtain the node's original_file_path and service_name
+// (the candidate source itself is read from the release's code bundle first,
+// falling back to a GitHub repo read only when the bundle misses); without this
+// seed, GetNodeLocation returns NOT_FOUND and source_resolved stays false.
 //
 // The node uses the same unique_id key format that the release-promotion handler
 // writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
@@ -914,7 +914,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	defer session.Close(ctx)
 
 	_, err := session.Run(ctx, `
-		MERGE (t:Table {unique_id: $uid})
+		MERGE (t:Node {tenant_id: 'default', unique_id: $uid})
 		SET t.schema_name        = $schema_name,
 		    t.table_name         = $table_name,
 		    t.service_name       = $service_name,
@@ -930,17 +930,18 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	})
 	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
 
-	// Seed one upstream :Table with a DEPENDS_ON edge from ftable_e. The
-	// agent-remediation's upstream evidence now comes from GetUpstreamChanges,
-	// which ranks ancestors by their :NodeVersion history rather than by :Table
-	// properties; this cold e2e seeds no :NodeVersion for the ancestor, so it
-	// carries no change evidence and GetUpstreamChanges skips it. Kept as a
-	// topology fixture only — nothing in this test asserts on it.
+	// Seed one upstream :Node, in the same tenant, with a DEPENDS_ON edge from
+	// ftable_e. The agent-remediation's upstream evidence comes from
+	// GetUpstreamChanges, which ranks ancestors by their :NodeVersion history
+	// rather than by :Node properties; this cold e2e seeds no :NodeVersion for
+	// the ancestor, so it carries no change evidence and GetUpstreamChanges
+	// skips it. Kept as a topology fixture only — nothing in this test asserts
+	// on it.
 	// This ancestor node is private to this test (not the shared ftable_c fixture owned
 	// by seed_topology_test.go) so cleanup cannot corrupt or delete a node other e2e
 	// tests depend on.
 	_, err = session.Run(ctx, `
-		MERGE (up:Table {unique_id: $up_uid})
+		MERGE (up:Node {tenant_id: 'default', unique_id: $up_uid})
 		SET up.schema_name        = $up_schema,
 		    up.table_name         = $up_table,
 		    up.service_name       = $up_service,
@@ -948,7 +949,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		    up.node_type          = 'model',
 		    up.active             = true
 		WITH up
-		MATCH (t:Table {unique_id: $uid})
+		MATCH (t:Node {tenant_id: 'default', unique_id: $uid})
 		MERGE (t)-[:DEPENDS_ON]->(up)
 	`, map[string]interface{}{
 		"up_uid":     "e2e_schema.ftable_upstream_diff",
@@ -961,7 +962,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	require.NoError(t, err, "seed ftable_upstream_diff upstream ancestor in Neo4j")
 
 	t.Cleanup(func() {
-		deleteSeededTableNodes(t, clients, "e2e_schema.ftable_e", "e2e_schema.ftable_upstream_diff")
+		deleteSeededNodes(t, clients, "e2e_schema.ftable_e", "e2e_schema.ftable_upstream_diff")
 	})
 	t.Log("seeded ftable_e topology node + ftable_upstream_diff upstream ancestor in Neo4j")
 }

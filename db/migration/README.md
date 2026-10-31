@@ -21,6 +21,8 @@ db/migration/
 | Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
 | Dead-letter-controller | continuo_dead_letter | dead_letters, dead_letter_outbox |
 
+`catalog` keeps no Postgres: its graph and its processed-message markers live in Neo4j, so it has no migration directory, no `continuo_*` database and no Flyway job. `TestProvisioning_ListsExactlyTheServicesThatKeepPostgres` (`pkg/deploycheck`) holds every provisioning site (`db/migrate-all.sh`, `db/Dockerfile.migrate`, `db/init-databases.sh`, the chart's db-init loop, the compose Flyway jobs and the directories here) to the same list of services.
+
 ## Running Migrations
 
 The consolidated migration image added in `db/Dockerfile.migrate` bakes all service migration trees into one artifact and runs them sequentially via `db/migrate-all.sh`:

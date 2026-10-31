@@ -42,9 +42,9 @@ Environment knobs:
 
 ## Safety on a shared install
 
-The harness announces every topology through release-controller's `announce-topology` command, run inside the install (`kubectl exec deploy/release-controller` on `k8s`, the `release-controller` container on `compose`): it writes the topology artifact, takes the next promotion seq and queues `release.promoted:v2`, without moving `current_prod`. A later real promotion therefore always takes a larger seq and wins over a benchmark topology. An announcement swaps the orchestrator's whole topology: nodes missing from it are retired, and retired nodes that no run used in the last seven days are deleted with their code-version and failure-history links. The harness therefore never announces a topology that omits a live node:
+The harness announces every topology through release-controller's `announce-topology` command, run inside the install (`kubectl exec deploy/release-controller` on `k8s`, the `release-controller` container on `compose`): it writes the topology artifact, takes the next promotion seq and queues `release.promoted:v2`, without moving `current_prod`. A later real promotion therefore always takes a larger seq and wins over a benchmark topology. An announcement swaps catalog's whole topology and becomes run-controller's live release: a node missing from it is retired in catalog (it stays as an inactive node with its code versions, failure history and fix pull requests, and loses its outgoing `:DEPENDS_ON` edges; no node is deleted) and drops out of the live schedule graphs until a later announcement carries it again. The harness therefore never announces a topology that omits a live node:
 
-1. `export_topology.sh` reads `current_prod`'s release id and the nodes of the artifact it points at (`announce-topology --print-current`) and writes `restore.json`: the live release's nodes, with dbt test nodes left out, as the orchestrator leaves them out of its graph.
+1. `export_topology.sh` reads `current_prod`'s release id and the nodes of the artifact it points at (`announce-topology --print-current`) and writes `restore.json`: the live release's nodes, with dbt test nodes left out, as catalog leaves them out of its graph.
 2. `preflight.sh` records the schedule list and refuses to continue unless every scheduled export node is in the live schedule graphs, every node of those graphs is in the export, and the export carries no test node.
 3. Every bench payload is `topology_io.py union` of `restore.json` and the bench DAG; the union refuses a bench node or schedule that a live node already uses.
 4. Before each injection, `run_baseline_dev.sh` checks that `current_prod` still names the exported release and stops otherwise.
@@ -54,7 +54,7 @@ If the machine running the harness dies mid-run, no exit handler runs. Recover b
 
 No scenario rep starts inside a quiet window around the install's own scheduled runs: `BENCH_QUIET_WINDOWS_UTC`, comma-separated `HHMM-HHMM` ranges in UTC (default `2215-2345`, around a 23:00 UTC daily run). The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
 
-A benchmark leaves these traces on a shared install: its runs stay in run-controller's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
+A benchmark leaves these traces on a shared install: its runs stay in run-controller's run history; its bench nodes stay in catalog as inactive nodes once the live topology is restored, like any retired node, with no `:DEPENDS_ON` edges, code versions or case-base links (retention of retired nodes is not implemented, so they stay), and no read returns them except a `GetNode` of that exact node with `include_inactive`; its Job logs stay in the logs bucket under service `bench`.
 
 ## Prerequisites
 
@@ -62,7 +62,7 @@ The machine that runs the harness stays awake for the whole run: a sleeping host
 
 
 - Both targets: `python3` 3.9 or newer, `kubectl`, Docker with BuildKit.
-- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts run-controller, orchestrator, release-controller and execution-controller itself through `start_local_services.sh` (release-controller's outbox publisher is what publishes the announcement `announce-topology` queues); execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
+- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts run-controller, catalog, release-controller and execution-controller itself through `start_local_services.sh` (release-controller's outbox publisher is what publishes the announcement `announce-topology` queues); execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
 - `k8s`: a kubeconfig for the install, ssh access to its k3s node for the image import, and `docker buildx` for the `linux/amd64` build. Obtaining cluster credentials is managed outside this repository.
 
 ## Usage

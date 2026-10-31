@@ -18,8 +18,9 @@ reference.
 | Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
 | Release by hand, or try the API on a local install | [Releasing with your own token](#releasing-with-your-own-token) — mint an ID token and call `/api/v1` with it |
 | Control which hosts the assistant and the fix proposer can reach | [Outbound traffic](#outbound-traffic) — the egress proxy and its allowlist |
+| Back up the catalog graph, or restore it after Neo4j is lost | [Catalog backup and restore](continuo/README.md#5-catalog-backup-and-restore) — the nightly export to the bucket, `catalog-backup`, and the S3 actions the export needs |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
-| Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#5-release-flow-and-ci-gates) |
+| Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#6-release-flow-and-ci-gates) |
 
 ## What is NOT in this repo
 
@@ -229,7 +230,7 @@ one read every few seconds.
 - Where egress must go through a proxy, add `HTTPS_PROXY` together with
   `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
   `NO_PROXY` covering the in-cluster service names the `ui` calls
-  (`release-controller`, `run-controller`, `orchestrator`, `agent-chat`,
+  (`release-controller`, `run-controller`, `catalog`, `agent-chat`,
   `agent-remediation`, and your IdP when it is in-cluster). The `ui` runs on
   Node.js 26, whose built-in `fetch` honours the proxy variables only when
   `NODE_USE_ENV_PROXY=1` is set; without it the key fetch ignores `HTTPS_PROXY`

@@ -108,7 +108,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 // TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly proves that a dbt
 // test whose bind check passes is fully invisible downstream of validation:
 // tbind_ok and its test are new to production, both bind-check ok, the
-// release promotes, and the orchestrator's Neo4j graph gains the model but no
+// release promotes, and catalog's Neo4j graph gains the model but no
 // node for the test — while current_prod still records the test so it is not
 // re-checked as "changed" on the next release.
 func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
@@ -155,17 +155,17 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, batchRejectBudget)
-	// The orchestrator swaps the Neo4j topology asynchronously after the release
+	// Catalog swaps the Neo4j topology asynchronously after the release
 	// reports promoted; wait for tbind_ok to be current for this release before
-	// reading its :Table properties (test_count), or the read races the swap.
+	// reading its :Node properties (test_count), or the read races the swap.
 	waitForTopologySwap(t, ctx, clients, releaseID, tbindOkUniqueID, 2*time.Minute)
 
 	perNode := releasePerNodeResults(t, ctx, clients, releaseID)
 	require.Equal(t, "ok", perNode[tbindOkNotNullTestID].Status, "the test binds")
 
-	rows := queryNeo4jRows(t, ctx, clients, `MATCH (t:Table {unique_id: $uid}) RETURN t.unique_id AS uid`, map[string]any{"uid": tbindOkNotNullTestID})
+	rows := queryNeo4jRows(t, ctx, clients, `MATCH (t:Node {tenant_id: 'default', unique_id: $uid}) RETURN t.unique_id AS uid`, map[string]any{"uid": tbindOkNotNullTestID})
 	require.Empty(t, rows, "a test is never promoted to the graph")
-	require.EqualValues(t, 1, neo4jScalarInt(ctx, clients, `MATCH (t:Table {unique_id: $uid}) RETURN t.test_count AS v`, map[string]any{"uid": tbindOkUniqueID}),
+	require.EqualValues(t, 1, neo4jScalarInt(ctx, clients, `MATCH (t:Node {tenant_id: 'default', unique_id: $uid}) RETURN t.test_count AS v`, map[string]any{"uid": tbindOkUniqueID}),
 		"test_count on the tested model is unchanged by tests being nodes")
 
 	prodHasTest := 0

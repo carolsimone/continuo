@@ -10,14 +10,14 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/spf13/cobra"
 )
 
-// orchestratorClientFactory dials and returns a client.OrchestratorClient. In
-// production this is defaultOrchestratorFactory; tests pass a closure
+// catalogClientFactory dials and returns a client.CatalogClient. In
+// production this is defaultCatalogFactory; tests pass a closure
 // returning a fake.
-type orchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
+type catalogClientFactory func(ctx context.Context, endpoint string) (client.CatalogClient, error)
 
 type proposalPayload struct {
 	ProposalID string `json:"proposal_id"`
@@ -55,10 +55,10 @@ type precedentPayload struct {
 // NewCommand builds `continuo precedents` — top-level: precedent is
 // cross-node, global scope.
 func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
-	return newPrecedentsCommand(defaultOrchestratorFactory, cfg, stdout, stderr)
+	return newPrecedentsCommand(defaultCatalogFactory, cfg, stdout, stderr)
 }
 
-func newPrecedentsCommand(factory orchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func newPrecedentsCommand(factory catalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "precedents [signature]",
 		Short: "Look up how a classified failure was rejected and fixed before",
@@ -116,7 +116,7 @@ Errors:
   usage      (exit 2)  more than one positional argument was given, or
                         neither a signature (--signature or positional) nor a
                         complete --category and --reason pair was given
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo precedents 3f9c…\n  continuo precedents --signature 3f9c…\n  continuo precedents --category logic --reason logic:missing_object --limit 3",
 		Annotations: map[string]string{
@@ -145,7 +145,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.CatalogEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -186,8 +186,8 @@ func resolveSignature(cmd *cobra.Command, args []string) string {
 	return ""
 }
 
-func defaultOrchestratorFactory(ctx context.Context, endpoint string) (client.OrchestratorClient, error) {
-	return client.NewOrchestratorClient(ctx, endpoint)
+func defaultCatalogFactory(ctx context.Context, endpoint string) (client.CatalogClient, error) {
+	return client.NewCatalogClient(ctx, endpoint)
 }
 
 // emit writes the CLIError envelope (stdout JSON, or stderr in human mode) and
@@ -209,7 +209,7 @@ func humanOutput(cmd *cobra.Command) bool {
 	return v
 }
 
-func toPrecedentPayloads(precedents []*orchestratorv1.Precedent) []precedentPayload {
+func toPrecedentPayloads(precedents []*catalogv1.Precedent) []precedentPayload {
 	out := make([]precedentPayload, 0, len(precedents))
 	for _, p := range precedents {
 		out = append(out, toPrecedentPayload(p))
@@ -217,7 +217,7 @@ func toPrecedentPayloads(precedents []*orchestratorv1.Precedent) []precedentPayl
 	return out
 }
 
-func toPrecedentPayload(p *orchestratorv1.Precedent) precedentPayload {
+func toPrecedentPayload(p *catalogv1.Precedent) precedentPayload {
 	payload := precedentPayload{
 		ReleaseID:               p.GetReleaseId(),
 		NodeID:                  p.GetNodeId(),
@@ -238,7 +238,7 @@ func toPrecedentPayload(p *orchestratorv1.Precedent) precedentPayload {
 	return payload
 }
 
-func toResolvingVersionPayload(v *orchestratorv1.VersionView) *resolvingVersionPayload {
+func toResolvingVersionPayload(v *catalogv1.VersionView) *resolvingVersionPayload {
 	return &resolvingVersionPayload{
 		VersionSeq:  v.GetVersionSeq(),
 		ContentHash: v.GetContentHash(),
@@ -250,7 +250,7 @@ func toResolvingVersionPayload(v *orchestratorv1.VersionView) *resolvingVersionP
 	}
 }
 
-func toProposalPayloads(proposals []*orchestratorv1.PrecedentProposal) []proposalPayload {
+func toProposalPayloads(proposals []*catalogv1.PrecedentProposal) []proposalPayload {
 	out := make([]proposalPayload, 0, len(proposals))
 	for _, pr := range proposals {
 		out = append(out, proposalPayload{
@@ -266,7 +266,7 @@ func toProposalPayloads(proposals []*orchestratorv1.PrecedentProposal) []proposa
 // humanPrecedents writes one summary line per precedent to stderr:
 //
 //	<node_id> [<reason>] resolved=<bool> pr=<first pr_url or "-">
-func humanPrecedents(stderr io.Writer, precedents []*orchestratorv1.Precedent) error {
+func humanPrecedents(stderr io.Writer, precedents []*catalogv1.Precedent) error {
 	for _, p := range precedents {
 		pr := "-"
 		if proposals := p.GetProposals(); len(proposals) > 0 {

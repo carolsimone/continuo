@@ -67,7 +67,7 @@ type FailureEvidence struct {
 	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
 	// CodeBundleURI locates the rejected release's code-bundle document;
 	// empty when parse never completed. Forwarded onto the trigger event for
-	// the orchestrator's case base.
+	// catalog's case base.
 	CodeBundleURI string
 	// ParseKind is the contract kind of a parse failure (invalid_sql or
 	// unqualified_reference for a healable one); empty for every other source.

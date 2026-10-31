@@ -77,3 +77,27 @@ func TestComposeNoProxyNamesRunController(t *testing.T) {
 		}
 	}
 }
+
+// agent-chat's CLI subprocess also dials the catalog service over gRPC, so its
+// literal NO_PROXY must name the compose service catalog. No NO_PROXY may list
+// the host orchestrator: no compose service is named that.
+func TestComposeNoProxyNamesCatalog(t *testing.T) {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, "docker-compose.yml")), &compose); err != nil {
+		t.Fatalf("parse docker-compose.yml: %v", err)
+	}
+
+	chat, ok := compose.Services["agent-chat"]
+	if !ok {
+		t.Fatal("docker-compose.yml has no agent-chat service")
+	}
+	if !slices.Contains(noProxyEntries(chat.Environment), "catalog") {
+		t.Errorf("agent-chat's NO_PROXY = %q, want an entry catalog", chat.Environment["NO_PROXY"])
+	}
+
+	for name, svc := range compose.Services {
+		if slices.Contains(noProxyEntries(svc.Environment), "orchestrator") {
+			t.Errorf("service %q has NO_PROXY = %q: no compose service is named orchestrator", name, svc.Environment["NO_PROXY"])
+		}
+	}
+}

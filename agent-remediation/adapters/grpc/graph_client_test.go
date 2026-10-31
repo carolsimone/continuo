@@ -3,16 +3,16 @@ package grpc_test
 import (
 	"testing"
 
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 
 	grpcadapter "github.com/carolsimone/continuo/agent-remediation/adapters/grpc"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 )
 
 func TestMapUpstreamChanges(t *testing.T) {
-	resp := &orchestratorv1.GetUpstreamChangesResponse{Changes: []*orchestratorv1.UpstreamChange{{
+	resp := &catalogv1.GetUpstreamChangesResponse{Changes: []*catalogv1.UpstreamChange{{
 		UniqueId: "analytics.payments", Depth: 1,
-		Diff: &orchestratorv1.VersionDiff{RawCodeDiff: "-a\n+b", ConfigDiff: "-x\n+y", Truncated: true},
+		Diff: &catalogv1.VersionDiff{RawCodeDiff: "-a\n+b", ConfigDiff: "-x\n+y", Truncated: true},
 	}}}
 	got := grpcadapter.MapUpstreamChanges(resp)
 	want := prompt.UpstreamChange{NodeID: "analytics.payments", Depth: 1,
@@ -23,12 +23,12 @@ func TestMapUpstreamChanges(t *testing.T) {
 }
 
 func TestMapPrecedents(t *testing.T) {
-	resp := &orchestratorv1.GetPrecedentsResponse{Precedents: []*orchestratorv1.Precedent{{
+	resp := &catalogv1.GetPrecedentsResponse{Precedents: []*catalogv1.Precedent{{
 		ReleaseId: "rel-9", NodeId: "analytics.orders", Stage: "validation",
 		Category: "sql_error", Reason: "missing_column", ErrorExcerpt: "column x does not exist",
 		RejectedAt: "2026-08-01T00:00:00Z", Resolved: true,
 		ResolutionDiff: "-select 1\n+select 2", ResolutionDiffTruncated: false,
-		Proposals: []*orchestratorv1.PrecedentProposal{{PrUrl: "https://github.com/acme/repo/pull/7"}},
+		Proposals: []*catalogv1.PrecedentProposal{{PrUrl: "https://github.com/acme/repo/pull/7"}},
 	}}}
 	got := grpcadapter.MapPrecedents(resp)
 	if len(got) != 1 || !got[0].Resolved || got[0].PRURL != "https://github.com/acme/repo/pull/7" ||
@@ -43,11 +43,11 @@ func TestMapPrecedents(t *testing.T) {
 // carried into prompt.Precedent.Edited, in the order the server returned
 // them.
 func TestMapPrecedents_CopiesEditedEntries(t *testing.T) {
-	resp := &orchestratorv1.GetPrecedentsResponse{Precedents: []*orchestratorv1.Precedent{{
+	resp := &catalogv1.GetPrecedentsResponse{Precedents: []*catalogv1.Precedent{{
 		ReleaseId: "rel-9", NodeId: "analytics.orders", Stage: "validation",
 		Category: "sql_error", Reason: "missing_column", ErrorExcerpt: "column x does not exist",
 		RejectedAt: "2026-08-01T00:00:00Z", Resolved: true,
-		Edited: []*orchestratorv1.PrecedentEdit{
+		Edited: []*catalogv1.PrecedentEdit{
 			{NodeId: "analytics.payments", Path: "models/payments.sql", Amended: true, Diff: "-old\n+new"},
 			{NodeId: "analytics.orders", Path: "models/orders.sql", Amended: false, Diff: "-a\n+b"},
 		},
@@ -71,7 +71,7 @@ func TestMapPrecedents_CopiesEditedEntries(t *testing.T) {
 }
 
 func TestMapCurrentVersion_EmptyResponse_NotOK(t *testing.T) {
-	_, ok := grpcadapter.MapCurrentVersion(&orchestratorv1.GetNodeVersionsResponse{})
+	_, ok := grpcadapter.MapCurrentVersion(&catalogv1.GetNodeVersionsResponse{})
 	if ok {
 		t.Fatal("empty versions must map to ok=false")
 	}

@@ -49,10 +49,9 @@ type postgresRepository struct {
 	exec executor
 	// outboxTable is the caller's outbox table name (e.g. "execution_outbox",
 	// "run_controller_outbox"), used only by DeleteOlderThan to exclude rows a live
-	// outbox entry still references. Empty when the database has no outbox
-	// table: repositories built via NewPostgresRepository never call
-	// DeleteOlderThan (that method is reached only through the Pruner
-	// interface), and NewPrunerWithoutOutbox prunes on age alone.
+	// outbox entry still references. Empty for repositories built via
+	// NewPostgresRepository, which never call DeleteOlderThan (that method is
+	// reached only through the Pruner interface, built by NewPruner).
 	outboxTable string
 	logger      *slog.Logger
 }

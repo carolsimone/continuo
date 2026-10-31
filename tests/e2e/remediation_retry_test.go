@@ -84,7 +84,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// Seed the ftable_e :Table topology node in Neo4j so the agent-remediation's
+	// Seed the ftable_e topology :Node in Neo4j so the agent-remediation's
 	// Locator can resolve the node's file path and service name for both rounds.
 	seedFTableETopologyNode(t, ctx, clients)
 

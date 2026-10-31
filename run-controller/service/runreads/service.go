@@ -1,6 +1,6 @@
 // Package runreads serves the run views people read: a run and its tasks and
 // attempts, a run's graph, a schedule's completed runs, how far active runs
-// are behind the live release, the node history and catalog, the schedules of
+// are behind the live release, the node history and node list, the schedules of
 // the live release with their graphs, and what a rebase of a failed run would
 // run on the live release. Each read names the tenant it reads and sees only
 // that tenant's rows.

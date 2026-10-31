@@ -50,7 +50,7 @@ auth:
   viewerEmails: team@example.com
 
 databaseInit:
-  enabled: true    # set false if your DBA pre-creates the 9 databases
+  enabled: true    # set false if your DBA pre-creates the 8 databases
 
 ingress:
   enabled: true

@@ -33,7 +33,7 @@ body:
       multiple: true
       options:
         - run-controller
-        - orchestrator
+        - catalog
         - execution-controller
         - release-controller
         - remediation

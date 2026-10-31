@@ -16,10 +16,10 @@ import (
 // client.NewRunClient; tests pass a closure returning a fake.
 type RunClientFactory func(ctx context.Context, endpoint string) (client.RunClient, error)
 
-// OrchestratorClientFactory dials and returns an OrchestratorClient. In
-// production this is client.NewOrchestratorClient; tests pass a closure
+// CatalogClientFactory dials and returns a CatalogClient. In
+// production this is client.NewCatalogClient; tests pass a closure
 // returning a fake.
-type OrchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
+type CatalogClientFactory func(ctx context.Context, endpoint string) (client.CatalogClient, error)
 
 // NewCommand builds `continuo node` and attaches subcommands. cfg is a pointer
 // that root.go fills in via PersistentPreRunE before any subcommand's RunE fires.
@@ -43,10 +43,10 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewFullRefreshCommand(defaultFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewVersionsCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewDiffCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewUpstreamChangesCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
-	cmd.AddCommand(NewCodeUnitsCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewVersionsCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewDiffCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewUpstreamChangesCommand(defaultCatalogFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewCodeUnitsCommand(defaultCatalogFactory, cfg, stdout, stderr))
 	return cmd
 }
 
@@ -54,8 +54,8 @@ func defaultFactory(ctx context.Context, endpoint string) (client.RunClient, err
 	return client.NewRunClient(ctx, endpoint)
 }
 
-func defaultOrchestratorFactory(ctx context.Context, endpoint string) (client.OrchestratorClient, error) {
-	return client.NewOrchestratorClient(ctx, endpoint)
+func defaultCatalogFactory(ctx context.Context, endpoint string) (client.CatalogClient, error) {
+	return client.NewCatalogClient(ctx, endpoint)
 }
 
 // emit writes the CLIError envelope (stdout JSON, or stderr in human mode) and

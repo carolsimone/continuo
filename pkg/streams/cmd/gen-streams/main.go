@@ -1113,7 +1113,7 @@ func validate(c *Contract) error {
 	identRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	knownServices := map[string]struct{}{
 		"run-controller":         {},
-		"orchestrator":           {},
+		"catalog":                {},
 		"execution-controller":   {},
 		"topology-controller":    {},
 		"release-controller":     {},

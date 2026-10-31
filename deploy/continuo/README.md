@@ -160,9 +160,10 @@ Notes that matter before you commit to this path:
   Postgres).
 - **`databaseInit` needs `CREATEDB`.** With `enabled: true` (the default), an
   init container connects as `externalDatabase.username` and idempotently
-  creates all 9 databases: the 8 Flyway-migrated service databases (including
+  creates all 8 databases: the 7 Flyway-migrated service databases (including
   `continuo_dead_letter`, which dead-letter-controller owns) and `continuo_dbt`
-  (the dbt warehouse — the one database no Flyway migration directory owns). If your DBA provisions
+  (the dbt warehouse — the one database no Flyway migration directory owns).
+  catalog keeps its graph in Neo4j and has no database here. If your DBA provisions
   databases out-of-band, set `databaseInit.enabled: false` and drop `CREATEDB`
   from the connecting user's grants.
 - **How migrations run depends on the Postgres mode.** With
@@ -239,8 +240,8 @@ Every container in this chart, bundled or not, gets:
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
 | `externalDatabase.*` / `externalRedis.*` / `externalNeo4j.*` / `s3.*` / `auth.*` (issuer/client fields) | Connection details used when the matching `*.enabled` above is `false`. |
 | `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
-| `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
-| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 152 pooled connections plus nine `LISTEN` connections outside the pools (one per pod of the six services that run an outbox relay: run-controller, execution-controller, release-controller, remediation, agent-remediation and dead-letter-controller; one more in execution-controller and two more in run-controller), 161 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` applies to every service, orchestrator included, whose 13 consumers need about two connections each: do not set it below about 30, or handlers that hold a transaction and need a second connection stall until their deadline. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
+| `databaseInit.enabled` | Idempotently creates all 8 databases (the 7 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
+| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service that keeps a Postgres database (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`; catalog and egress-proxy keep none). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 117 pooled connections plus nine `LISTEN` connections outside the pools (one per pod of the six services that run an outbox relay: run-controller, execution-controller, release-controller, remediation, agent-remediation and dead-letter-controller; one more in execution-controller and two more in run-controller), 126 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` replaces the default of every one of those services at once, the largest of which is execution-controller's 30: a lower value can leave a service's handlers waiting for a connection. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
 | `maintenance.enabled` | Refuse new work while letting running work finish. When enabled (default false), ui, the public release API and the CLI refuse new runs, triggers, releases, remediation retries, schedule edits (a cron saved, paused, resumed or removed) and dead-letter redrives with HTTP 503 / gRPC `UNAVAILABLE` and the message "continuo is in maintenance mode"; run-controller consumes each cron slot that comes due with no run (it is not caught up afterwards); release-controller activates no queued release; agent-remediation records each fix attempt that comes due as skipped, and **Retry remediation** in the UI starts it once maintenance is off. Runs, releases and fix verifications already in progress complete. Changing it restarts every continuo service (the shared ConfigMap changes); turn it on with `helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true` and off again with `--set maintenance.enabled=false`. Five services (`run-controller`, `release-controller`, `agent-remediation`, `dead-letter-controller`, `ui`) refuse to start unless `MAINTENANCE_ENABLED` is exactly `true` or `false`. The chart always sets it; a deployment that does not use the chart must set it. |
 | `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph and, with `egress.enabled`, the egress rules that keep the agents behind egress-proxy (default true). Inert on a CNI that does not enforce NetworkPolicy. With it false nothing stops a connection that skips the proxy. |
 | `egress.enabled` | Sends the outbound HTTP and gRPC traffic of agent-chat and agent-remediation through egress-proxy, a forward proxy that admits a connection only to a host and port on its allowlist (default true). The chart sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` on both agents, and with `networkPolicy.enabled` adds NetworkPolicies that drop every connection that skips the proxy (see [Outbound traffic](https://github.com/carolsimone/continuo/blob/main/deploy/README.md#outbound-traffic)). It renders the allowlist into the ConfigMap `<release>-egress-proxy`, from `llm.baseUrl` (else the provider's public API), the `GITHUB_BASE_URL` of agent-remediation's `services` entry (its `env` only; with `codeload.<host>` for archive downloads), `s3.endpointUrl` when `minio.enabled` is false, and the two lists below. A URL whose host is an IP address stays out of the allowlist, as does every other IP address the agents are given: egress-proxy admits host names only, and the agents reach those directly (see `egress.directDestinations`). A URL whose host is no valid host name (an underscore, for one) or whose port is outside 1-65535 fails the render, naming the setting. When nothing is left to allow, no egress-proxy object renders and the agents get no proxy variable; their NetworkPolicy still applies. With `egress.enabled` false no proxy runs, no proxy variable is set and the agents' egress is open: set your own proxy variables in their `env`, or manage egress natively (Cilium, GKE Dataplane V2). While it is true, a `services` entry for either agent that sets `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` or `S3_ENDPOINT_URL`, or a `GITHUB_BASE_URL` in the `secretEnv` of either agent, fails the render. |
@@ -260,13 +261,263 @@ Every container in this chart, bundled or not, gets:
 | `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) agent-remediation uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
 | `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | Stream trimming, run every 5 minutes by dead-letter-controller (`STREAM_TRIM_ENABLED`, `STREAM_RETENTION`). `retention` (default `72h`, between 0 and `720h`) is how long an entry a lagging consumer group still needs is kept before it is stored as a dead letter and trimmed. `enabled: false` stops trimming. `schedule` is ignored. See the note below the table. |
+| `catalog.backup.enabled` | Whether catalog exports each tenant's graph on `catalog.backup.schedule` (default `true`; `CATALOG_BACKUP_ENABLED`). `false` runs no scheduled exports; `catalog-backup export` still works. See [Catalog backup and restore](#5-catalog-backup-and-restore). |
+| `catalog.backup.schedule` | When catalog exports, in UTC: a five-field cron or an `@` descriptor such as `@daily` or `@every 6h` (default `0 2 * * *`; `CATALOG_BACKUP_SCHEDULE`). A slot catalog misses while it is down is not caught up; the next slot runs. Rendering fails on a value that is neither five fields nor an `@` descriptor, and catalog refuses to start on a schedule its cron parser rejects, one that starts with `CRON_TZ=` or `TZ=`, or an `@every` under a minute. |
+| `catalog.backup.keep` | How many of each tenant's newest exports catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored export it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup export` prunes with the same value. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
 dead-letter-controller stores the messages stream consumers give up on (`consumer.dead_letter:v1`) and the outbox rows relays give up on (`outbox.dead_letter:v1`) in its own database, `continuo_dead_letter`, and serves `DeadLetterService` on gRPC port 50055 (`global.deadLetterControllerGrpcAddr`). List, inspect and redrive dead letters with `continuo dlq list`, `continuo dlq show` and `continuo dlq redrive`, which agent-chat reaches through `CONTINUO_DEAD_LETTER_ADDR`. A redrive republishes the stored message to its original stream, only to the consumer group that failed it, within 30 days of the original message; older dead letters are deleted. A dead letter whose stream the streams contract has retired, or whose stream or consumer group the contract does not declare, cannot be redriven: `continuo dlq list` says why, and a redrive refuses it.
 
 dead-letter-controller also trims every Redis stream every 5 minutes, up to the oldest entry any of the stream's consumer groups still needs. An entry older than `streamReaper.retention` (default `72h`) that a lagging group still needs is first stored as a dead letter of kind `trimmed`, listed by `continuo dlq list quarantine` and redrivable for 30 days, and only then trimmed. A group whose service has not started yet keeps every entry newer than the retention. dead-letter-controller refuses to start with a retention outside 0 to `720h`; `streamReaper.enabled: false` stops trimming, and the streams then grow without bound.
 
-## 5. Release flow and CI gates
+## 5. Catalog backup and restore
+
+catalog keeps the live topology, the code-version history behind it and the
+remediation case base (rejections, error signatures, proposals, PR outcomes) in
+Neo4j. Re-announcing the live release rebuilds the topology; nothing else holds
+the history or the case base. So, on `catalog.backup.schedule` (UTC, default
+02:00 daily), catalog exports each tenant's whole graph to the S3 bucket and
+keeps the newest `catalog.backup.keep` exports of each tenant (default 7).
+`catalog.backup.enabled: false` runs no scheduled exports.
+
+**The export.** One object per export, at
+`tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz`, written as a stream:
+catalog holds one page of records and one 8 MiB upload part in memory at a
+time, whatever the size of the graph. It is gzipped JSON lines: a header line
+(format version, tenant, time, catalog version and the counts per label and
+relationship type), then one line per node, then one line per relationship.
+Every value keeps its Neo4j type: an integer is `{"$int":"…"}`, a float
+`{"$float":"…"}` and a datetime `{"$datetime":"…"}` (an RFC 3339 timestamp with
+an optional `[zone]` suffix), so no reader rounds or reinterprets one.
+
+**Writes pause during an export.** An export takes the tenant's export lease
+first. While it is held, on every catalog pod, catalog's consumers back off and
+retry that tenant's writes (reads go on), and the writes land once the export
+ends: `continuo_catalog_export_duration_seconds` is how long they waited. The
+lease is renewed while the export makes progress, expires within two minutes
+when its process dies, and an export that moves no record for two minutes stops
+and releases it. An export or a restore that finds the lease held by another is
+skipped.
+
+**A shutdown during an export.** catalog stops an export in flight within its
+drain window, half of `SHUTDOWN_GRACE` (7.5 s by default): the export aborts
+its upload and releases the lease, and the next slot exports the tenant again.
+When the process ends before that, the lease lapses within two minutes and the
+parts already uploaded stay in the bucket until the lifecycle rule
+`AbortIncompleteMultipartUpload` (under the S3 access below) removes them.
+
+### The command
+
+`catalog-backup` ships in catalog's image. Run it in a catalog pod; it reads the
+`NEO4J_*` and `S3_*` settings and `CATALOG_BACKUP_KEEP` from the pod's
+environment and needs nothing else of catalog's configuration.
+
+```bash
+# take an export now: every tenant, or one (--tenant default is how an install
+# that has not written anything yet takes its first export)
+kubectl -n continuo exec deploy/catalog -- catalog-backup export
+kubectl -n continuo exec deploy/catalog -- catalog-backup export --tenant default
+
+# list the stored exports, newest first; after a Neo4j loss name the tenant,
+# because a bare list covers only the tenants the graph still holds
+kubectl -n continuo exec deploy/catalog -- catalog-backup list --tenant default
+
+# return a tenant's graph to an export; the tenant is the one the key names
+kubectl -n continuo exec deploy/catalog -- catalog-backup restore \
+  tenants/default/backups/catalog/20261030T020000Z.jsonl.gz --yes
+```
+
+`--tenant` takes a tenant id and does not check it against the graph. A bare
+`export` or `list` covers the tenants the graph holds, and prints a warning on
+stderr when it holds none (the case after a Neo4j loss, while the bucket still
+holds the exports): name the tenant then. `export --tenant <id>` of a tenant the
+graph does not list stores an empty export, with a warning on stderr. So do not
+run `export` on a lost graph before `restore`: the empty export counts toward
+`catalog.backup.keep` and can displace a good one.
+
+On the compose stack the source is bind-mounted over the image's
+`/app/catalog`, which hides the prebuilt binary, so run
+`docker exec catalog go run ./cmd/catalog-backup export` from the container's
+working directory instead.
+
+stdout carries only JSON; diagnostics go to stderr.
+
+| Command | stdout |
+|---|---|
+| `export [--tenant T]` | One line per stored export: `{"object_key","bytes","nodes","relationships","duration_seconds"}` (the last is how long the tenant's writes paused) |
+| `list [--tenant T]` | A JSON array of `{"key","size","last_modified"}`, newest first |
+| `restore <object key> --yes` | `{"object_key","tenant_id","nodes","relationships"}` |
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Done |
+| 1 | An error. `export` of several tenants goes on past a tenant that fails and prints the exports it stored |
+| 2 | Usage: an unknown command or flag, `restore` without `--yes`, or a key outside `tenants/<tenant>/backups/catalog/` |
+| 3 | Skipped: another export or a restore holds a tenant's lease; run it again once that ends |
+
+`SIGINT` and `SIGTERM` cancel the work in flight: an export aborts its upload
+and releases the tenant's lease, so a cancelled export leaves no object behind.
+A hand-run export prunes with `catalog.backup.keep` like a scheduled one.
+
+### Restore after Neo4j is lost
+
+Restore as soon as Neo4j is back, before anything else relies on the catalog:
+anything catalog wrote into the empty graph meanwhile is replaced by the export.
+
+1. Find the export: `catalog-backup list --tenant default`. Take the newest.
+2. `catalog-backup restore <object key> --yes`. It reads and checks the whole
+   file first, with no lease and no write, so a file that cannot be loaded
+   exactly, or that names another tenant, leaves the graph untouched. Then it
+   takes the tenant's lease, deletes the tenant's graph, loads the nodes and
+   then the relationships, runs catalog's schema migration (which brings an
+   export written by an older schema up to date) and releases the lease.
+3. Re-announce the live release, so the live topology is current again:
+   `kubectl -n continuo exec deploy/release-controller -- announce-topology --reannounce-current`.
+
+`--yes` is the safeguard: `restore` deletes the tenant's graph, so without it
+the command exits 2 having changed nothing, and it exits 2 for a key that is
+not an export's. The tenant is read from the key, never from a flag.
+
+**A failed restore.** A restore that fails before it deletes the graph (a
+missing key, a file that does not check out) leaves the graph as it was. One
+that fails after it, exit 1 with "partial" on stderr, leaves the tenant's graph
+partial, and catalog writes into it again once the lease is released. Run the
+same `restore` again: it deletes the tenant's graph first, so a second run
+repairs it.
+
+**What stays lost.** A restore returns the tenant's graph to the time of the
+export. catalog's consumer groups are not rewound: their positions are in Redis,
+and the stream trimmer deletes an entry once every group has read it. So what
+was written after the export is gone:
+
+- versions of releases promoted after the export, so a node changed since then
+  keeps a stale current version until its next release;
+- rejections, proposals and PR outcomes recorded after the export.
+
+One export can itself hold a hole. catalog writes a release's code versions in
+batches of 100 nodes, each its own transaction behind the export lease, and
+records the message as processed with the last batch. An export that lands
+between two batches of one release holds that release's versions for the
+earlier batches and none for the later ones, whose nodes keep the `:CURRENT`
+of their previous version. The live graph converges, because the message is
+delivered again once the export ends and writes its batches again. A restore
+of that export leaves those nodes so until their next change.
+
+Topology written after the export comes back with the re-announce in step 3.
+
+### Alerts
+
+catalog exports these on its `/metrics` (`metrics.port`), and only while
+`catalog.backup.enabled` is true: with the backup disabled none of the five
+exists, whatever `catalog-backup export` has stored.
+
+| Series | Answers |
+|---|---|
+| `continuo_catalog_export_last_success_timestamp_seconds` | When was the newest good export? The oldest tenant's newest export, read from the bucket when Prometheus scrapes (at most once a minute), so an export taken with `catalog-backup` counts (while the backup is enabled) and the value survives a restart. 0 for a tenant with no export. It has no sample until a read from the bucket succeeds |
+| `continuo_catalog_exports_total{outcome}` | Scheduled exports this pod ran: `success`, `failure` or `skipped` |
+| `continuo_catalog_export_duration_seconds` | How long a scheduled export paused the tenant's writes |
+| `continuo_catalog_export_bytes`, `continuo_catalog_export_records{kind}` | Size and record counts of the last scheduled export |
+
+Two alerts for installs that scrape. The first pairs the age with `absent`,
+because the gauge has no sample until the first successful read, and a catalog
+that cannot read the bucket would otherwise raise nothing:
+
+```yaml
+- alert: CatalogExportStale
+  # 93600 s = 26 hours: the nightly export plus two hours of slack.
+  expr: |
+    time() - continuo_catalog_export_last_success_timestamp_seconds{service="catalog"} > 93600
+      or
+    absent(continuo_catalog_export_last_success_timestamp_seconds{service="catalog"})
+  for: 15m
+- alert: CatalogMemoryNearLimit
+  # An export streams, so its memory does not grow with the graph; this fires
+  # when the pod has no room for the export beside catalog's own use.
+  expr: |
+    max by (namespace, pod) (container_memory_working_set_bytes{container="catalog"})
+      / on (namespace, pod)
+    max by (namespace, pod) (kube_pod_container_resource_limits{container="catalog", resource="memory"})
+      > 0.85
+  for: 5m
+```
+
+The rules need cAdvisor and kube-state-metrics. Without them, compare
+`process_resident_memory_bytes{service="catalog"}` with the memory limit set in
+`services[].resources`. With `catalog.backup.enabled: false` the gauge does not
+exist, so the first alert, which pairs `absent()`, would fire at once: drop it
+for such installs.
+
+### S3 access
+
+An install on the bundled MinIO needs nothing here. With an external bucket
+(`s3.*`), the access key, or each pod's IAM role, must allow these actions. The
+shared key already covers `tenants/` for release-controller; the action the
+backup adds is `s3:AbortMultipartUpload`, which catalog needs on its own prefix
+to discard an export it cancels or that fails.
+
+| Prefix | Component | Actions |
+|---|---|---|
+| `tenants/` (topology artifacts, `tenants/<tenant>/topologies/<release>/topology.json.gz`) | topology-controller | `s3:PutObject` |
+| | release-controller | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` |
+| | run-controller, catalog | `s3:GetObject` |
+| `code-bundles/` (`code-bundles/<release>/bundle.json`) | topology-controller | `s3:PutObject` |
+| | catalog, agent-remediation | `s3:GetObject` |
+| | release-controller | `s3:DeleteObject`, `s3:ListBucket` |
+| `candidate-sql/` (`candidate-sql/<release>/candidate_<node>.*`) | topology-controller | `s3:PutObject` |
+| | validation Jobs, agent-remediation | `s3:GetObject` |
+| | release-controller | `s3:DeleteObject`, `s3:ListBucket` |
+| `tenants/<tenant>/backups/catalog/` (the exports) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload` |
+
+`s3:ListBucket` applies to the bucket, not to its objects: grant it on the
+bucket ARN and narrow it with an `s3:prefix` condition. A reader that holds it
+also sees a missing object as 404 rather than 403. The example below is for one
+key shared by all services, which is what the chart configures; with per-pod IAM
+roles, give each role the actions of its own rows, so catalog's role gets the
+`catalog` rows only. The shared key also needs the bucket's other prefixes (job
+logs and results, dbt manifests and parse caches, chat archives and remediation
+proposals), which the table leaves out.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ObjectsOfTheTopologyBundlesAndCandidates",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::continuo/tenants/*",
+        "arn:aws:s3:::continuo/code-bundles/*",
+        "arn:aws:s3:::continuo/candidate-sql/*"
+      ]
+    },
+    {
+      "Sid": "AbortCatalogExportUploads",
+      "Effect": "Allow",
+      "Action": "s3:AbortMultipartUpload",
+      "Resource": "arn:aws:s3:::continuo/tenants/*/backups/catalog/*"
+    },
+    {
+      "Sid": "ListThePrefixes",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::continuo",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["tenants/*", "code-bundles/*", "candidate-sql/*"]
+        }
+      }
+    }
+  ]
+}
+```
+
+An export that is killed mid-upload (a node loss, a `SIGKILL`) leaves its parts
+in the bucket, where they are billed but never listed as an export. A bucket
+lifecycle rule `AbortIncompleteMultipartUpload` (after one day, say) removes
+them.
+
+## 6. Release flow and CI gates
 
 How this chart is tested and published — reference for maintainers, not
 something you need to install it.
@@ -280,7 +531,8 @@ Every PR that touches this chart (or the install-test harness under
 `values-byo.yaml.example`, BYO-inline, BYO-existingSecret), then three real
 kind installs — bundled, BYO with inline credentials, and BYO with a
 pre-created Secret. Each install is checked for completed migrations, healthy
-pods, and answering ui/Dex endpoints. Install jobs also add a CI-only
+pods, answering ui/Dex endpoints, and a catalog export that reaches the bucket
+and shows on catalog's `/metrics`. Install jobs also add a CI-only
 low-CPU-request values override so the chart fits the runner's 2 vCPUs. PR
 installs use the latest published main-branch images, so they prove the
 install path; the e2e suite in `ci.yml` proves the code. The kind cluster

@@ -34,6 +34,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -294,9 +295,10 @@ func main() {
 	// Closing the listener can wait on a connection attempt in progress, so
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
 	outboxProcessor := pkgoutbox.NewProcessor(pgDB, postgres.OutboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()})
-	metricsReg.WatchOutbox(outboxProcessor)
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: outboxMetrics})
+	outboxMetrics.Watch(outboxProcessor)
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	// The dispatcher wakes on the notification the deployments table's
@@ -403,8 +405,8 @@ func main() {
 	// dedup row an outbox row still references is kept until that outbox row is
 	// pruned. Both are pruned on the same timer using DB-clock cutoffs.
 	mpPruner := pkgmessageprocessing.NewPruner(pgDB, postgres.OutboxTable, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
+	retentionSweeper := pkgretention.NewSweeper(
+		[]pkgretention.Target{
 			pkgoutbox.OutboxRetentionTarget(pgDB, postgres.OutboxTable, logger),
 			{
 				Name:         "message_processing",
@@ -412,7 +414,7 @@ func main() {
 				MinRetention: model.ReplayHorizon,
 			},
 		},
-		pkgoutbox.RetentionConfig{
+		pkgretention.Config{
 			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
 		},

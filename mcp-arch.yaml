@@ -57,12 +57,12 @@ output:
 repos:
   - agent-chat
   - agent-remediation
+  - catalog
   - cli
   - dbt
   - dead-letter-controller
   - egress-proxy
   - execution-controller
-  - orchestrator
   - pkg
   - release-controller
   - remediation

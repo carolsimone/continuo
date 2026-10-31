@@ -203,8 +203,9 @@ func main() {
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
 	// ctx is cancelled.
-	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
-	metricsReg.WatchOutbox(outboxProc)
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
+	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, outboxMetrics, liveReg, logger)
+	outboxMetrics.Watch(outboxProc)
 
 	// Start the release.rejected consumer in a goroutine; blocks until ctx is
 	// cancelled.

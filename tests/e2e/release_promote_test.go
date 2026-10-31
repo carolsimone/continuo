@@ -15,7 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
@@ -52,7 +52,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
 //	set → validation.requested:v1 → execution-controller runs a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
-//	→ release.promoted:v2 → orchestrator loads the artifact and swaps the Neo4j topology.
+//	→ release.promoted:v2 → catalog loads the artifact and swaps the Neo4j topology.
 //
 // The changed service is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
@@ -141,26 +141,26 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//     image tag the release was submitted with.
 	assertCandidateTopologyArtifact(t, ctx, clients, releaseID, probeUniqueID, changedImageTag)
 
-	// 7. The orchestrator must have swapped the Neo4j topology to this release.
+	// 7. Catalog must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
 	// 7a. Promotion moved current_prod by reference: it points at the release's
-	//     own artifact under the seq the promotion took, and the orchestrator's
+	//     own artifact under the seq the promotion took, and catalog's
 	//     live pointer carries that same seq.
 	assertCurrentProdByReference(t, ctx, clients, releaseID)
 
 	// 7b. The version-ingestion consumer must have recorded the promoted code
 	//     behind the node, fingerprinted identically to what the swap stamped
-	//     on :Table — that equality is the gap-detection invariant.
+	//     on :Node — that equality is the gap-detection invariant.
 	versionHash := waitForNodeVersion(t, ctx, clients, probeUniqueID, 2*time.Minute)
 	tableHash := neo4jScalarString(ctx, clients,
-		`MATCH (t:Table {unique_id: $uid}) RETURN t.content_hash AS v`,
+		`MATCH (t:Node {tenant_id: 'default', unique_id: $uid}) RETURN t.content_hash AS v`,
 		map[string]any{"uid": probeUniqueID})
 	require.Equal(t, tableHash, versionHash,
 		"the current :NodeVersion must carry the content_hash the topology swap stored")
 	require.NotEmpty(t, neo4jScalarString(ctx, clients,
-		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion) RETURN v.raw_code AS v`,
+		`MATCH (:Node {tenant_id: 'default', unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: 'default'}) RETURN v.raw_code AS v`,
 		map[string]any{"uid": probeUniqueID}),
 		"the recorded version must carry the node's source")
 
@@ -173,12 +173,12 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// provenance only for the case it is defined in — a version this release
 	// actually authored. (planVersionWrite's unit tests pin the full rule.)
 	versionRelease := neo4jScalarString(ctx, clients,
-		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion) RETURN v.release_id AS v`,
+		`MATCH (:Node {tenant_id: 'default', unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: 'default'}) RETURN v.release_id AS v`,
 		map[string]any{"uid": probeUniqueID})
 	require.NotEmpty(t, versionRelease, "the recorded version must carry its authoring release")
 	if versionRelease == releaseID {
 		require.Equal(t, "false", neo4jScalarString(ctx, clients,
-			`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+			`MATCH (:Node {tenant_id: 'default', unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: 'default'})
 			 RETURN toString(v.healed) AS v`,
 			map[string]any{"uid": probeUniqueID}),
 			"this release authored the version, so it is not a healed carry-over")
@@ -188,8 +188,8 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	// 7c. The read-side RPC must surface the same history the write path just
 	//     recorded: GetNodeVersions(probeUniqueID) includes a version whose
-	//     content_hash matches what the topology swap stamped on :Table.
-	versionsResp, err := clients.orchestratorClient.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{
+	//     content_hash matches what the topology swap stamped on :Node.
+	versionsResp, err := clients.catalogClient.GetNodeVersions(ctx, &catalogv1.GetNodeVersionsRequest{
 		UniqueId: probeUniqueID,
 	})
 	require.NoError(t, err, "GetNodeVersions(%s) failed", probeUniqueID)
@@ -203,7 +203,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		}
 	}
 	require.True(t, foundMatchingVersion,
-		"GetNodeVersions(%s) must include a version whose content_hash (%s) matches :Table.content_hash",
+		"GetNodeVersions(%s) must include a version whose content_hash (%s) matches :Node.content_hash",
 		probeUniqueID, tableHash)
 	t.Logf("✅ GetNodeVersions surfaces the promoted version (content_hash=%s)", tableHash)
 
@@ -214,7 +214,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	// 9. The compile leg that just validated rel_probe uploaded the prod-context
 	//    partial-parse artifact for (service-1, changedImageTag). The topology
-	//    swap (step 7) stamped rel_probe's :Table node with that same image_tag,
+	//    swap (step 7) stamped rel_probe's :Node with that same image_tag,
 	//    so the first production run of rel_probe after promotion must hydrate
 	//    from that artifact via the hydrate-parse-cache initContainer.
 	firstRunID, firstScheduleName := triggerRelProbeRun(t, ctx, clients)
@@ -522,7 +522,7 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	// The bootstrap release must promote (no validation) and swap Neo4j topology.
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 		return neo4jScalarString(ctx, clients,
-			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil) == releaseID, nil
+			`MATCH (m:Meta {tenant_id: 'default', key: 'current_release'}) RETURN m.release_id AS v`, nil) == releaseID, nil
 	}, "timeout waiting for bootstrap release "+releaseID+" to promote + swap topology")
 
 	// No validation Job is ever dispatched (bootstrap skips validation).
@@ -531,9 +531,10 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 }
 
 // TestE2E_ReleasePromote_PerServiceLeavesOthersIntact verifies the anti-amputation
-// guarantee: promoting a release for ONE service must not remove the other services'
-// nodes from the Neo4j topology. After promotion the topology must contain nodes
-// from both the changed service and the unchanged services.
+// guarantee: promoting a release for ONE service must not retire the other services'
+// nodes from the Neo4j topology. A node a release does not carry stays in the graph as
+// an inactive :Node, so presence alone proves nothing: after promotion the topology
+// must contain active nodes from both the changed service and the unchanged services.
 //
 // service_prod is seeded for all three services at the baseline; then a release is
 // posted for service-1 only (using rel_probe as the changed node). After promotion
@@ -563,11 +564,10 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
 
-	// Collect the service-2 and service-3 node IDs we expect to survive in the
-	// Neo4j graph. dbt-test nodes are excluded: they are validation-only, are
-	// kept out of the graph by the orchestrator, and never
-	// become :Table nodes, so the graph-level anti-amputation check cannot look
-	// for them. current_prod retention of an unchanged test is covered by the
+	// Collect the service-2 and service-3 node IDs we expect to stay active in the
+	// Neo4j graph. dbt-test nodes are excluded: they are validation-only and
+	// catalog keeps them out of the graph, so the graph-level anti-amputation
+	// check cannot look for them. current_prod retention of an unchanged test is covered by the
 	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
 	// a relation node's id is "<schema>.<table>".
 	survivingServices := []string{"service-2", "service-3"}
@@ -618,18 +618,19 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
 	// Anti-amputation assertion: service-2 and service-3 nodes must still be
-	// present in the Neo4j topology with the new release stamped on them.
+	// active in the Neo4j topology. A node the swap retired would still match by
+	// its unique id, so the query requires active: true.
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 	defer session.Close(ctx)
 	for _, uid := range expectedSurvivingNodes {
 		res, err := session.Run(ctx,
-			`MATCH (t:Table {unique_id: $uid}) RETURN t.unique_id AS uid`,
+			`MATCH (t:Node {tenant_id: 'default', unique_id: $uid, active: true}) RETURN t.unique_id AS uid`,
 			map[string]any{"uid": uid})
 		require.NoError(t, err, "Neo4j query for node %s", uid)
 		require.True(t, res.Next(ctx),
-			"node %s from non-changed service must survive a service-1-only release (anti-amputation)", uid)
+			"node %s from non-changed service must stay active after a service-1-only release (anti-amputation)", uid)
 	}
-	t.Logf("✅ per-service release for %s left %d service-2/3 nodes intact in Neo4j",
+	t.Logf("✅ per-service release for %s left %d service-2/3 nodes active in Neo4j",
 		changedService, len(expectedSurvivingNodes))
 }
 
@@ -1004,8 +1005,8 @@ func waitForReleasePromoted(t *testing.T, ctx context.Context, clients *testClie
 	}, fmt.Sprintf("timeout waiting for release %s to reach promoted", releaseID))
 }
 
-// waitForTopologySwap polls Neo4j until the orchestrator has applied the
-// release.promoted:v2 swap: the :Meta singleton points at releaseID and the
+// waitForTopologySwap polls Neo4j until catalog has applied the
+// release.promoted:v2 swap: the default tenant's :Meta points at releaseID and the
 // promoted node is active and stamped with the new release_id. The swap is
 // asynchronous relative to the release reaching "promoted", so this must poll.
 func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients, releaseID, uniqueID string, timeout time.Duration) {
@@ -1014,14 +1015,14 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 	var lastActive bool
 	pollUntil(t, ctx, timeout, 1*time.Second, func() (bool, error) {
 		lastMeta = neo4jScalarString(ctx, clients,
-			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil)
+			`MATCH (m:Meta {tenant_id: 'default', key: 'current_release'}) RETURN m.release_id AS v`, nil)
 		if lastMeta != releaseID {
 			return false, nil
 		}
 		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
 		defer session.Close(ctx)
 		res, err := session.Run(ctx,
-			`MATCH (t:Table {unique_id: $uid})
+			`MATCH (t:Node {tenant_id: 'default', unique_id: $uid})
 			 RETURN COALESCE(t.active, false) AS active, COALESCE(t.release_id, "") AS release_id`,
 			map[string]any{"uid": uniqueID})
 		if err != nil || !res.Next(ctx) {
@@ -1199,7 +1200,7 @@ func waitForNodeVersion(t *testing.T, ctx context.Context, clients *testClients,
 	var hash string
 	pollUntil(t, ctx, timeout, 1*time.Second, func() (bool, error) {
 		hash = neo4jScalarString(ctx, clients,
-			`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+			`MATCH (:Node {tenant_id: 'default', unique_id: $uid})-[:CURRENT]->(v:NodeVersion {tenant_id: 'default'})
 			 RETURN v.content_hash AS v`,
 			map[string]any{"uid": uniqueID})
 		return hash != "", nil

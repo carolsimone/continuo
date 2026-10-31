@@ -1,10 +1,12 @@
 """Live-topology export, union with a bench DAG, and comparison with the live graphs.
 
 On a shared install the benchmark never announces a topology that omits a live
-node: a swap retires missing nodes and deletes those no recent run used,
-cutting their code-version and failure-history links. It also never announces
-a dbt test node: the artifact current_prod points at keeps tests for
-validation, but the orchestrator leaves them out of its graph.
+node: a swap retires every node it omits (catalog keeps it as an inactive node
+with its code versions and failure history, and drops its outgoing
+dependencies, and run-controller's live release no longer carries it), so the
+live schedule graphs would lose it until a later announcement carries it
+again. It also never announces a dbt test node: the artifact current_prod
+points at keeps tests for validation, but catalog leaves them out of its graph.
 """
 from __future__ import annotations
 
@@ -48,7 +50,7 @@ def restore_payload(current: dict) -> dict:
     nodes = [artifact_node(node) for node in current["topology"] if node.get("node_type") != TEST_NODE_TYPE]
     dropped = len(current["topology"]) - len(nodes)
     if dropped:
-        log.info("restore payload leaves out %d %s nodes, as the orchestrator does", dropped, TEST_NODE_TYPE)
+        log.info("restore payload leaves out %d %s nodes, as catalog does", dropped, TEST_NODE_TYPE)
     return {"release_id": current["release_id"], "topology": nodes}
 
 
@@ -87,7 +89,7 @@ def compare(payload: dict, graphs: list) -> list:
     problems = []
     tests = sorted(node["unique_id"] for node in payload["topology"] if node.get("node_type") == TEST_NODE_TYPE)
     if tests:
-        problems.append(f"payload carries {len(tests)} {TEST_NODE_TYPE} nodes, which the orchestrator never draws: {tests[:5]}")
+        problems.append(f"payload carries {len(tests)} {TEST_NODE_TYPE} nodes, which catalog never draws: {tests[:5]}")
     missing_live = sorted(scheduled - live)
     if missing_live:
         problems.append(f"{len(missing_live)} scheduled export nodes missing from the live graphs: {missing_live[:5]}")

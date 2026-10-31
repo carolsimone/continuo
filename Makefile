@@ -38,7 +38,7 @@ build: build-dev
 build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-run-controller:prod -f run-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-catalog:prod -f catalog/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
@@ -87,7 +87,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -125,7 +125,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-run-controller flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
+	@for svc in $(FLYWAY_JOBS); do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -136,13 +136,13 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
 	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := run-controller orchestrator execution-controller release-controller \
+GO_SERVICES := run-controller catalog execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-orchestrator flyway-release \
+FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
 
@@ -174,15 +174,16 @@ test-deps-down:
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
 # Task-1 baseline proved POSTGRES_HOST alone is NOT enough — pkgconfig.LoadPostgres
-# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service uses its
-# own database continuo_<svc>. Creds (continuo_svc/continuo) come from docker-compose.yml.
+# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service that keeps
+# Postgres uses its own database continuo_<svc> (catalog and egress-proxy keep none, so
+# their db is empty). Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
 # release-controller pins GOFLAGS=-p=1: its adapters/postgres and
 # integration_test packages both TRUNCATE the same shared live-DB tables, so
 # running them as parallel package binaries (the default `go test ./...`
 # behaviour) races between one package's TRUNCATE and another's assertions.
-# orchestrator pins the same flag for the same reason: adapters/neo4j and
+# catalog pins the same flag for the same reason: adapters/neo4j and
 # service/handlers both wipe and rebuild the one shared Neo4j graph.
 # pkg runs its Redis- and Postgres-backed tests against the compose Redis and
 # the Flyway-built continuo_execution database, one package at a time (-p=1).
@@ -198,7 +199,7 @@ test-go: test-deps-up
 	  extra=; pkgs=./...; \
 	  case $$s in \
 	    run-controller) db=continuo_run_controller;; \
-	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
+	    catalog) db=; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
@@ -332,7 +333,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #
 # The proto diffs pin the vendored copies to the canonical contracts. ui's
 # @grpc/proto-loader reads its copies at boot, so drift silently drops fields
-# on the wire instead of failing any build; cli generates its orchestrator
+# on the wire instead of failing any build; cli generates its catalog
 # stubs from its own copy, so drift there ships a client built from another
 # contract. cli generates its run stubs from its own copy of run.proto, so
 # drift there ships a client built from another contract.
@@ -368,8 +369,8 @@ guards: bench-test
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
-	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
-	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
+	diff catalog/proto/catalog/v1/catalog.proto ui/proto/catalog/v1/catalog.proto
+	diff catalog/proto/catalog/v1/catalog.proto cli/proto/catalog/v1/catalog.proto
 	diff run-controller/proto/run/v1/run.proto ui/proto/run.proto
 	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
 	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
@@ -385,7 +386,7 @@ e2e:
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-execution-controller.sh
-	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).

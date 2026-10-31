@@ -23,7 +23,7 @@ import (
 // A then B, and then replays A's release.promoted:v2 entry under a fresh event
 // id and without its outbox entry id — a late delivery or a redrive that dedup
 // cannot recognise. A has a model of a schedule B drops, so applying the
-// replay would swap the orchestrator's live graph and run-controller's live release
+// replay would swap catalog's live graph and run-controller's live release
 // back to A, and give that schedule its model again: run-controller would list it and
 // start it. Neither may happen: A's promotion seq is below the live one.
 func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
@@ -70,13 +70,13 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 
 	// Both groups that apply a promotion handle the replay before the live
 	// pointers are read.
-	for _, group := range []string{streams.OrchestratorReleasePromoted, streams.RunControllerReleasePromoted} {
+	for _, group := range []string{streams.CatalogReleaseTopology, streams.RunControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, group, replayID)
 		assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, group, replayID, "open"),
 			"a late promotion is a valid entry: group %s acknowledges it and never dead-letters it", group)
 	}
 	assert.Equal(t, livePointer{releaseID: b.ReleaseID, promotionSeq: b.PromotionSeq}, readLivePointer(ctx, clients),
-		"a late promotion must not move the orchestrator's live pointer")
+		"a late promotion must not move catalog's live pointer")
 	window := time.NewTimer(negativeWindow)
 	defer window.Stop()
 	tick := time.NewTicker(time.Second)
@@ -121,7 +121,7 @@ func staleScheduleKnown(ctx context.Context, clients *testClients, name string, 
 // whose artifact does not match its checksum. What sits at the key is a
 // different, well-formed topology, so only the checksum stands between it and
 // the live graph, and the entry's seq is far above the live one, so a reader
-// that skipped the check would apply it. The orchestrator's topology group must
+// that skipped the check would apply it. Catalog's topology group must
 // dead-letter the entry as permanent and leave the live pointer where it was.
 // The artifact is under a release id nothing has loaded, so no reader's cache
 // can answer for it.
@@ -172,7 +172,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: fields}).Result()
 	require.NoError(t, err)
 
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, id, "open")
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.CatalogReleaseTopology, id, "open")
 	cleanup := []string{dl.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanup...) })
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(dl.GetFailureKind()))
@@ -188,7 +188,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.
-	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutionControllerReleasePromoted} {
+	for _, g := range []string{streams.CatalogReleaseVersions, streams.ExecutionControllerReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, g, id)
 		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, g, id, "open"); other != nil {
 			cleanup = append(cleanup, other.GetId())

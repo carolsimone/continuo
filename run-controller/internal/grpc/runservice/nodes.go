@@ -60,7 +60,7 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 	return &runv1.ListNodeTasksResponse{Tasks: out}, nil
 }
 
-// ListNodes returns one page of the node catalog. An operation the operation
+// ListNodes returns one page of the node list. An operation the operation
 // vocabulary does not declare is InvalidArgument.
 func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*runv1.ListNodesResponse, error) {
 	tenantID, err := requestTenant(ctx)

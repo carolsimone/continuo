@@ -725,7 +725,7 @@ func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.L
 		return prompt.PythonEvidence{}, err
 	}
 
-	// Upstream ancestor diffs arrive capped by the orchestrator but not
+	// Upstream ancestor diffs arrive capped by catalog but not
 	// sanitized; each is run through the LogSanitizer here, like every other
 	// source string that reaches the LLM.
 	upstream, err := svc.Upstream.UpstreamChanges(ctx, in.NodeID)

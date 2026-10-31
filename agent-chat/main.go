@@ -142,7 +142,7 @@ func main() {
 	cliEnv := append(
 		os.Environ(),
 		"CONTINUO_RUN_CONTROLLER_ADDR="+cfg.RunControllerAddr,
-		"CONTINUO_ORCHESTRATOR_ADDR="+cfg.OrchestratorAddr,
+		"CONTINUO_CATALOG_ADDR="+cfg.CatalogAddr,
 	)
 	// An unset dead-letter address is not forwarded, so the CLI falls back to
 	// its own default rather than receiving a blank override.

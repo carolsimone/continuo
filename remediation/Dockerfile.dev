@@ -11,7 +11,7 @@ WORKDIR /app
 COPY go.work go.work.sum* ./
 COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
-COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY catalog/go.mod catalog/go.sum ./catalog/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
@@ -25,7 +25,7 @@ COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 # other services' source trees to be present in this image.
 RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
-    && go work edit -dropuse=./orchestrator \
+    && go work edit -dropuse=./catalog \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./release-controller \
     && go work edit -dropuse=./agent-remediation \

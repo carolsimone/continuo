@@ -7,7 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	catalogv1 "github.com/carolsimone/continuo/cli/proto/catalog/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,7 @@ type codeUnitVersionsPayload struct {
 
 // NewCodeUnitsCommand builds
 // `continuo node code-units [<unit-id>] [--service <s> --schema <s> --table <t>]`.
-func NewCodeUnitsCommand(factory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewCodeUnitsCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "code-units [<unit-id>]",
 		Short: "List a shared-code unit's (or a node's units') version chain",
@@ -79,7 +79,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --service+--schema+--table
   not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node code-units unit_abc123\n  continuo node code-units --service finance --schema analytics --table orders",
 		Annotations: map[string]string{
@@ -123,7 +123,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.CatalogEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -149,7 +149,7 @@ Errors:
 	return cmd
 }
 
-func toCodeUnitVersionsPayload(versions []*orchestratorv1.UnitVersionView) codeUnitVersionsPayload {
+func toCodeUnitVersionsPayload(versions []*catalogv1.UnitVersionView) codeUnitVersionsPayload {
 	out := make([]unitVersionEntry, 0, len(versions))
 	for _, v := range versions {
 		out = append(out, unitVersionEntry{
@@ -169,7 +169,7 @@ func toCodeUnitVersionsPayload(versions []*orchestratorv1.UnitVersionView) codeU
 // humanCodeUnits writes one line per unit version to stderr:
 //
 //	<unit_id>  <checksum>  <promoted_at>  [current]
-func humanCodeUnits(stderr io.Writer, versions []*orchestratorv1.UnitVersionView) error {
+func humanCodeUnits(stderr io.Writer, versions []*catalogv1.UnitVersionView) error {
 	for _, v := range versions {
 		current := ""
 		if v.GetIsCurrent() {

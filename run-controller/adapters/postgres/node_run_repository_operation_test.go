@@ -14,7 +14,7 @@ import (
 
 // TestListNodes_FiltersByOperation seeds one node identity with both a model
 // run (operation=run) and a test run (operation=test) and asserts ListNodes
-// scopes its catalog stats to the requested operation: querying "test"
+// scopes its node-list stats to the requested operation: querying "test"
 // returns only the test-run slice, querying "run" returns only the model-run
 // slice.
 func TestListNodes_FiltersByOperation(t *testing.T) {
@@ -97,7 +97,7 @@ func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 }
 
 // TestListNodes_FoldsFullRefreshIntoRun seeds a model run and a later full
-// refresh of the same node and asserts the catalog still shows ONE run-row for
+// refresh of the same node and asserts the node list still shows ONE run-row for
 // the node, whose stats span both and whose last status is the full refresh's.
 func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 	db := newTestDB(t)
@@ -174,7 +174,7 @@ func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 
 // TestNodeReads_ReadTheDefaultOperationAsTheStoredRun asserts the node reads
 // match model.OperationRun, the empty default, against the stored 'run': the
-// history and the catalog of the default operation hold the node's run task
+// history and the node list of the default operation hold the node's run task
 // and, as for 'run', its full refresh.
 func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
 	db := newTestDB(t)
@@ -215,11 +215,11 @@ func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
 		t.Fatalf("history operations = %v, want the run and the full refresh", ops)
 	}
 
-	catalog, total, err := nodes.ListNodes(ctx, pkgevents.DefaultTenantID, "defaultop", "", model.OperationRun, 50, 0)
+	nodeList, total, err := nodes.ListNodes(ctx, pkgevents.DefaultTenantID, "defaultop", "", model.OperationRun, 50, 0)
 	if err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
-	if total != 1 || len(catalog) != 1 || catalog[0].Operation != "run" || catalog[0].RunCount != 2 {
-		t.Fatalf("catalog = %+v (total %d), want one run row over two tasks", catalog, total)
+	if total != 1 || len(nodeList) != 1 || nodeList[0].Operation != "run" || nodeList[0].RunCount != 2 {
+		t.Fatalf("node list = %+v (total %d), want one run row over two tasks", nodeList, total)
 	}
 }

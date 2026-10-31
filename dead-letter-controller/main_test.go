@@ -36,7 +36,7 @@ func code(h http.HandlerFunc) int {
 func TestRedriveContractIsTheStreamsContract(t *testing.T) {
 	c := redriveContract()
 	live := deadletter.DeadLetter{Source: deadletter.SourceConsumer, Stream: streams.ReleasePromotedV2,
-		Group: streams.OrchestratorReleasePromoted, Publishable: true}
+		Group: streams.CatalogReleaseTopology, Publishable: true}
 	if r := live.RedriveRefusal(c); r != "" {
 		t.Fatalf("live stream refused: %s", r)
 	}
@@ -48,7 +48,7 @@ func TestRedriveContractIsTheStreamsContract(t *testing.T) {
 }
 
 // The dead letters of schedules.loaded:v1, the consumer's of
-// state-schedule-catalog and the outbox's of orchestrator, are never
+// state-schedule-catalog and the outbox's of its producer, are never
 // redriven: the stream is retired, so nothing reads it, as with every other
 // retired stream.
 func TestRedriveContract_SchedulesLoadedV1DeadLettersAreNotRedrivable(t *testing.T) {

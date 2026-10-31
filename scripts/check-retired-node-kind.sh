@@ -11,7 +11,7 @@ if git grep -n "python-model" -- \
     ':!topology-controller/tests/test_python_kind_rules.py' \
     ':!topology-controller/tests/test_python_contract_parser.py' \
     ':!topology-controller/tests/test_candidate_manifest_handler.py' \
-    ':!orchestrator/adapters/neo4j/schema.go' ':!orchestrator/adapters/neo4j/schema_test.go' \
+    ':!catalog/adapters/neo4j/schema.go' ':!catalog/adapters/neo4j/schema_test.go' \
     ':!release-controller/adapters/postgres/node_type_migration_test.go' \
     ':!execution-controller/adapters/postgres/node_type_migration_test.go' \
     ':!pkg/domain/model/nodetype_guard_test.go' \

@@ -20,7 +20,7 @@ import (
 func verifyServicesHealthy(t *testing.T) {
 	dockerComposeServices := []string{
 		"http://run-controller:8082/health",
-		"http://orchestrator:8087/health",
+		"http://catalog:8087/health",
 	}
 
 	for _, url := range dockerComposeServices {

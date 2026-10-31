@@ -5,7 +5,7 @@ import "time"
 
 const (
 	defaultRunControllerEndpoint = "localhost:50051"
-	defaultOrchestratorEndpoint  = "localhost:50052"
+	defaultCatalogEndpoint       = "localhost:50052"
 	defaultDeadLetterEndpoint    = "localhost:50055"
 	defaultTimeout               = 10 * time.Second
 )
@@ -13,7 +13,7 @@ const (
 // Config is the resolved configuration a command uses at runtime.
 type Config struct {
 	RunControllerEndpoint string
-	OrchestratorEndpoint  string
+	CatalogEndpoint       string
 	DeadLetterEndpoint    string
 	Timeout               time.Duration
 	Human                 bool
@@ -25,23 +25,23 @@ type Config struct {
 
 // Inputs carries raw strings from flags and environment. Empty strings mean "not set".
 type Inputs struct {
-	FlagEndpoint             string
-	FlagOrchestratorEndpoint string
-	FlagDeadLetterEndpoint   string
-	FlagTimeout              string
-	FlagHuman                bool
-	EnvRunControllerAddr     string
-	EnvOrchestratorAddr      string
-	EnvDeadLetterAddr        string
-	EnvTimeout               string
-	EnvActor                 string
+	FlagEndpoint           string
+	FlagCatalogEndpoint    string
+	FlagDeadLetterEndpoint string
+	FlagTimeout            string
+	FlagHuman              bool
+	EnvRunControllerAddr   string
+	EnvCatalogAddr         string
+	EnvDeadLetterAddr      string
+	EnvTimeout             string
+	EnvActor               string
 }
 
 // Resolve applies precedence: flag > env > default. Invalid durations fall back silently to the default.
 func Resolve(in Inputs) Config {
 	cfg := Config{
 		RunControllerEndpoint: defaultRunControllerEndpoint,
-		OrchestratorEndpoint:  defaultOrchestratorEndpoint,
+		CatalogEndpoint:       defaultCatalogEndpoint,
 		DeadLetterEndpoint:    defaultDeadLetterEndpoint,
 		Timeout:               defaultTimeout,
 		Human:                 in.FlagHuman,
@@ -52,11 +52,11 @@ func Resolve(in Inputs) Config {
 	if in.FlagEndpoint != "" {
 		cfg.RunControllerEndpoint = in.FlagEndpoint
 	}
-	if in.EnvOrchestratorAddr != "" {
-		cfg.OrchestratorEndpoint = in.EnvOrchestratorAddr
+	if in.EnvCatalogAddr != "" {
+		cfg.CatalogEndpoint = in.EnvCatalogAddr
 	}
-	if in.FlagOrchestratorEndpoint != "" {
-		cfg.OrchestratorEndpoint = in.FlagOrchestratorEndpoint
+	if in.FlagCatalogEndpoint != "" {
+		cfg.CatalogEndpoint = in.FlagCatalogEndpoint
 	}
 	if in.EnvDeadLetterAddr != "" {
 		cfg.DeadLetterEndpoint = in.EnvDeadLetterAddr

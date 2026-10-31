@@ -55,7 +55,7 @@ func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients 
 // assertCurrentProdByReference checks what a promotion left on current_prod:
 // it names releaseID, points at that release's own artifact (the candidate run's
 // URI and checksum, no copy), carries the promotion seq the promotion took, and
-// the orchestrator's live pointer holds the release under that same seq.
+// catalog's live pointer holds the release under that same seq.
 func assertCurrentProdByReference(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
 	var cpRelease, cpURI, cpSHA, runURI, runSHA string
@@ -72,7 +72,7 @@ func assertCurrentProdByReference(t *testing.T, ctx context.Context, clients *te
 	require.Equal(t, runSHA, cpSHA)
 	require.Positive(t, cpSeq, "a promotion takes a promotion seq")
 	require.Equal(t, livePointer{releaseID: releaseID, promotionSeq: cpSeq}, readLivePointer(ctx, clients),
-		"the orchestrator's live pointer must carry the seq the promotion took")
+		"catalog's live pointer must carry the seq the promotion took")
 	t.Logf("✅ current_prod → %s at promotion seq %d", cpURI, cpSeq)
 }
 

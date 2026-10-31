@@ -17,7 +17,7 @@ import (
 // maxUpstreamDiffBytes caps the own-change diff (what this release changed in
 // the failing model relative to the code that runs now) so one large refactor
 // cannot dominate the prompt. Upstream ancestor diffs arrive already capped by
-// the orchestrator's UpstreamChangeReader.
+// catalog's UpstreamChangeReader.
 const maxUpstreamDiffBytes = 8192
 
 // truncateDiff caps a diff at max bytes, appending a marker when it was cut. The
@@ -142,7 +142,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		releaseOwnDiff = ownChangeDiff(ctx, svc, in.NodeID, candidateSource)
 	}
 
-	// Upstream ancestor diffs arrive already capped by the orchestrator, but not
+	// Upstream ancestor diffs arrive already capped by catalog, but not
 	// sanitized — each is run through the LogSanitizer here before it reaches
 	// the prompt, same as every other source string sent to the LLM.
 	upstream, err := svc.Upstream.UpstreamChanges(ctx, in.NodeID)

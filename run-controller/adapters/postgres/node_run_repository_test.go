@@ -392,7 +392,7 @@ func TestNodeRunRepository_ListNodes_DurationsCountOnlySucceededAttempts(t *test
 }
 
 // TestNodeRunRepository_ListNodes_AggregatesAndFilters seeds two nodes under the
-// same service and asserts the catalog aggregates, ordering (newest last_run_at
+// same service and asserts the node-list aggregates, ordering (newest last_run_at
 // first), the service filter, and the exact table-name search filter.
 func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	db := newTestDB(t)
@@ -943,7 +943,7 @@ func timeoutOf(rows []*projection.NodeSummary) map[string]*int {
 	return out
 }
 
-// A node's catalog row carries the timeout the live release declares for it:
+// A node's node-list row carries the timeout the live release declares for it:
 // an older release's value never shows, and a node declaring none reports
 // none.
 func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T) {
@@ -969,7 +969,7 @@ func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T)
 
 	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 2, total, "joining the live release must not change the catalog count")
+	assert.Equal(t, 2, total, "joining the live release must not change the node-list count")
 	assert.Equal(t, map[string]*int{tblA: ptr(7200), tblB: nil}, timeoutOf(rows))
 }
 
@@ -1000,7 +1000,7 @@ func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *t
 }
 
 // Two nodes of the live release that share a service, schema and table (they
-// differ only in node key) still make one catalog row.
+// differ only in node key) still make one node-list row.
 func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

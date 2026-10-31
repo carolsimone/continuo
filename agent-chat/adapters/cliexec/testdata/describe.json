@@ -13,6 +13,12 @@
           "default": "false"
         },
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -35,12 +41,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -70,6 +70,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -92,12 +98,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -132,6 +132,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -154,12 +160,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -195,6 +195,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -217,12 +223,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -260,6 +260,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -282,12 +288,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -318,7 +318,7 @@
     {
       "path": "node code-units",
       "short": "List a shared-code unit's (or a node's units') version chain",
-      "long": "List a shared-code unit's version chain, newest first.\n\nUse when the user wants the history of a dbt macro (or other shared-code\nunit): every recorded checksum, its source, and the release that promoted it.\n\nThis command takes exactly one of two mutually exclusive selectors:\n\n  <unit-id>                              query one unit's chain directly.\n  --service <s> --schema <s> --table <t> resolve the named node's CURRENT\n                                          units first, then return each of\n                                          their chains concatenated in\n                                          resolution order. All three flags\n                                          are required together; the node is\n                                          addressed by its unique_id,\n                                          \"<schema>.<table>\" ( --service is\n                                          accepted for consistency with the\n                                          other node subcommands but does not\n                                          appear in the unique_id).\n\nSupplying both the positional <unit-id> and any of --service/--schema/--table,\nor supplying neither, is a usage error — there is no default selector.\n\nFlags:\n  --service  Owning service name of the node whose units to list. Must be\n             combined with --schema and --table; mutually exclusive with\n             <unit-id>.\n  --schema   Schema name of the node whose units to list. Must be combined\n             with --service and --table; mutually exclusive with <unit-id>.\n  --table    Table (model) name of the node whose units to list. Must be\n             combined with --service and --schema; mutually exclusive with\n             <unit-id>.\n  --limit    Maximum number of versions returned per unit, newest first.\n             Default 20; the server also applies this default when sent 0,\n             and clamps any value above 200 down to 200.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unit_id\":string,\"checksum\":string,\"source\":string,\n   \"repo\":string,\"commit_sha\":string,\"release_id\":string,\n   \"promoted_at\":string,\"is_current\":bool}]}\n  repo, commit_sha, release_id, promoted_at, and is_current are omitted when\n  the version carries no value for them.\n\nErrors:\n  usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --service+--schema+--table\n  not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "List a shared-code unit's version chain, newest first.\n\nUse when the user wants the history of a dbt macro (or other shared-code\nunit): every recorded checksum, its source, and the release that promoted it.\n\nThis command takes exactly one of two mutually exclusive selectors:\n\n  <unit-id>                              query one unit's chain directly.\n  --service <s> --schema <s> --table <t> resolve the named node's CURRENT\n                                          units first, then return each of\n                                          their chains concatenated in\n                                          resolution order. All three flags\n                                          are required together; the node is\n                                          addressed by its unique_id,\n                                          \"<schema>.<table>\" ( --service is\n                                          accepted for consistency with the\n                                          other node subcommands but does not\n                                          appear in the unique_id).\n\nSupplying both the positional <unit-id> and any of --service/--schema/--table,\nor supplying neither, is a usage error — there is no default selector.\n\nFlags:\n  --service  Owning service name of the node whose units to list. Must be\n             combined with --schema and --table; mutually exclusive with\n             <unit-id>.\n  --schema   Schema name of the node whose units to list. Must be combined\n             with --service and --table; mutually exclusive with <unit-id>.\n  --table    Table (model) name of the node whose units to list. Must be\n             combined with --service and --schema; mutually exclusive with\n             <unit-id>.\n  --limit    Maximum number of versions returned per unit, newest first.\n             Default 20; the server also applies this default when sent 0,\n             and clamps any value above 200 down to 200.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unit_id\":string,\"checksum\":string,\"source\":string,\n   \"repo\":string,\"commit_sha\":string,\"release_id\":string,\n   \"promoted_at\":string,\"is_current\":bool}]}\n  repo, commit_sha, release_id, promoted_at, and is_current are omitted when\n  the version carries no value for them.\n\nErrors:\n  usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --service+--schema+--table\n  not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded\n  unavailable(exit 5)  the catalog service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "[<unit-id>]"
       ],
@@ -348,6 +348,12 @@
           "default": ""
         },
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -370,12 +376,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -402,7 +402,7 @@
     {
       "path": "node diff",
       "short": "Render the diff between two recorded versions of one model node",
-      "long": "Render the diff between two recorded versions of one model node.\n\nUse when the user wants to see exactly what changed between two code versions\nof a dbt model: the raw source diff, the config diff, and which of source,\nshared code, and config actually changed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nFlags:\n  --from  Required. The version_seq to diff from. version_seq is a stable\n          per-node handle used to address a version — it is NOT a\n          chronological ordering, and --from need not be the older version.\n  --to    Required. The version_seq to diff to. Same handle semantics as\n          --from.\n\nOutput (stdout, JSON):\n  {\"unique_id\":string,\n   \"from\":{...version object, same shape as \"node versions\"...},\n   \"to\":{...version object, same shape as \"node versions\"...},\n   \"raw_code_diff\":string,\"config_diff\":string,\"source_changed\":bool,\n   \"shared_code_changed\":bool,\"config_changed\":bool,\"truncated\":bool}\n  raw_code_diff and config_diff are omitted when that part is unchanged.\n  truncated is set when either diff was cut to the server's per-diff 8 KiB cap.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, missing --from/--to, or --from equals --to\n  not_found  (exit 3)  the node's unique_id, or one of the two seqs, is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Render the diff between two recorded versions of one model node.\n\nUse when the user wants to see exactly what changed between two code versions\nof a dbt model: the raw source diff, the config diff, and which of source,\nshared code, and config actually changed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nFlags:\n  --from  Required. The version_seq to diff from. version_seq is a stable\n          per-node handle used to address a version — it is NOT a\n          chronological ordering, and --from need not be the older version.\n  --to    Required. The version_seq to diff to. Same handle semantics as\n          --from.\n\nOutput (stdout, JSON):\n  {\"unique_id\":string,\n   \"from\":{...version object, same shape as \"node versions\"...},\n   \"to\":{...version object, same shape as \"node versions\"...},\n   \"raw_code_diff\":string,\"config_diff\":string,\"source_changed\":bool,\n   \"shared_code_changed\":bool,\"config_changed\":bool,\"truncated\":bool}\n  raw_code_diff and config_diff are omitted when that part is unchanged.\n  truncated is set when either diff was cut to the server's per-diff 8 KiB cap.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, missing --from/--to, or --from equals --to\n  not_found  (exit 3)  the node's unique_id, or one of the two seqs, is not recorded\n  unavailable(exit 5)  the catalog service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<service>",
         "<schema>",
@@ -420,6 +420,12 @@
           "shorthand": "",
           "usage": "Required. The version_seq to diff to (a stable handle, not a chronological position)",
           "default": "0"
+        },
+        {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
         },
         {
           "name": "dead-letter-endpoint",
@@ -444,12 +450,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -492,6 +492,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -514,12 +520,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -564,6 +564,12 @@
           "default": "run"
         },
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -586,12 +592,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -639,8 +639,8 @@
     },
     {
       "path": "node list",
-      "short": "List the node catalog with per-node run statistics",
-      "long": "List the node catalog with per-node run statistics, one page at a time.\n\nUse when the user names a model but not its service or schema, wants to know\nwhich nodes exist in a service, or asks how reliable or slow a model has been.\nEach row carries the (service, schema, table) triple every other node\nsubcommand takes as arguments, so this is the command that resolves a bare\ntable name into an addressable node.\n\nStatistics cover each node's most recent 50 tasks of the selected operation.\n\nArguments: none. Every filter is a flag.\n\nFlags:\n  --search     Table name to look up. Case-insensitive EXACT match on the\n               table name, not a substring: \"orders\" matches \"orders\" and\n               \"Orders\", never \"orders_daily\". Default \"\" (no filter).\n  --service    Exact service name. Default \"\" (all services).\n  --operation  Which operation's tasks feed the statistics: run | test |\n               build. Default \"run\". An unrecognized value is a usage error.\n  --limit      Page size, 1..200. Default 50. A value outside that range is\n               a usage error.\n  --offset     Number of matching rows to skip, >= 0. Default 0.\n\nOutput (stdout, JSON):\n  {\"total_count\":number,\n   \"nodes\":[{\"service_name\":string,\"schema_name\":string,\"table_name\":string,\n   \"task_count\":number,\"success_rate_pct\":number,\"avg_duration_sec\":number,\n   \"p95_duration_sec\":number,\"flaky_rate_pct\":number,\"last_status\":string,\n   \"last_run_at\":string,\"operation\":string,\"timeout_seconds\":number,\n   \"timeout_declared\":bool}]}\n  task_count is the number of the node's tasks in the statistics window (at\n  most 50). total_count is the number of nodes matching the filters regardless of\n  paging; when it exceeds offset + len(nodes), request the next page with a\n  larger --offset. success_rate_pct is omitted when the node has no terminal\n  task in the window; avg_duration_sec and p95_duration_sec are omitted when\n  no task in the window was timed; last_run_at is omitted when the node has\n  never run. last_status is one of succeeded, failed, running, stopping, queued,\n  dispatched, cancelled, skipped, pending. timeout_seconds is the task\n  timeout the node's tasks get, always present: its declared timeout in the\n  live release when timeout_declared is true, else the install default. No\n  match returns {\"total_count\":0,\"nodes\":[]}, not an error.\n\nErrors:\n  usage      (exit 2)  a positional argument was given, --operation is not\n                       run|test|build, --limit is outside 1..200, or --offset\n                       is negative\n  unavailable(exit 5)  the run-controller service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "short": "List the nodes with per-node run statistics",
+      "long": "List the nodes with per-node run statistics, one page at a time.\n\nUse when the user names a model but not its service or schema, wants to know\nwhich nodes exist in a service, or asks how reliable or slow a model has been.\nEach row carries the (service, schema, table) triple every other node\nsubcommand takes as arguments, so this is the command that resolves a bare\ntable name into an addressable node.\n\nStatistics cover each node's most recent 50 tasks of the selected operation.\n\nArguments: none. Every filter is a flag.\n\nFlags:\n  --search     Table name to look up. Case-insensitive EXACT match on the\n               table name, not a substring: \"orders\" matches \"orders\" and\n               \"Orders\", never \"orders_daily\". Default \"\" (no filter).\n  --service    Exact service name. Default \"\" (all services).\n  --operation  Which operation's tasks feed the statistics: run | test |\n               build. Default \"run\". An unrecognized value is a usage error.\n  --limit      Page size, 1..200. Default 50. A value outside that range is\n               a usage error.\n  --offset     Number of matching rows to skip, >= 0. Default 0.\n\nOutput (stdout, JSON):\n  {\"total_count\":number,\n   \"nodes\":[{\"service_name\":string,\"schema_name\":string,\"table_name\":string,\n   \"task_count\":number,\"success_rate_pct\":number,\"avg_duration_sec\":number,\n   \"p95_duration_sec\":number,\"flaky_rate_pct\":number,\"last_status\":string,\n   \"last_run_at\":string,\"operation\":string,\"timeout_seconds\":number,\n   \"timeout_declared\":bool}]}\n  task_count is the number of the node's tasks in the statistics window (at\n  most 50). total_count is the number of nodes matching the filters regardless of\n  paging; when it exceeds offset + len(nodes), request the next page with a\n  larger --offset. success_rate_pct is omitted when the node has no terminal\n  task in the window; avg_duration_sec and p95_duration_sec are omitted when\n  no task in the window was timed; last_run_at is omitted when the node has\n  never run. last_status is one of succeeded, failed, running, stopping, queued,\n  dispatched, cancelled, skipped, pending. timeout_seconds is the task\n  timeout the node's tasks get, always present: its declared timeout in the\n  live release when timeout_declared is true, else the install default. No\n  match returns {\"total_count\":0,\"nodes\":[]}, not an error.\n\nErrors:\n  usage      (exit 2)  a positional argument was given, --operation is not\n                       run|test|build, --limit is outside 1..200, or --offset\n                       is negative\n  unavailable(exit 5)  the run-controller service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [],
       "flags": [
         {
@@ -674,6 +674,12 @@
           "default": ""
         },
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -696,12 +702,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -737,6 +737,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -759,12 +765,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -804,6 +804,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -826,12 +832,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -862,7 +862,7 @@
     {
       "path": "node upstream-changes",
       "short": "List a model node's ancestors' most recent code changes",
-      "long": "List a model node's ancestors' most recent code changes, most-recently-changed first.\n\nUse when the user wants to know what changed upstream of a failing or\nsuspicious dbt model: which ancestors changed, how recently, and what their\ndiff looks like.\n\n\"Most recently changed\" is each ancestor's EFFECTIVE last change, not a\nversion's own creation time: a version node is immutable, so a revert that\nre-points an ancestor's running code at an already-recorded version still\ncounts as a change at the moment of the revert, and the reported diff is that\nrevert's actual before/after rather than the two versions' original creation\norder.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nContract caps (enforced server-side, not adjustable): results are capped at\nthe 5 most-recently-changed ancestors, and each diff is independently capped\nat 8 KiB with its own truncated flag set on the diffs that were cut — size\nprompts against both caps, not just the top-level result count.\n\nFlags:\n  --depth  How many hops upstream to walk. <= 0 (the default) applies the\n           server's default of 3 hops. The server rejects any value above 10\n           as invalid — this is a hard cap, not a client-side clamp.\n  --since  RFC3339 timestamp; ancestors whose effective last change (see\n           above — a revert counts) predates it are excluded. Empty (the\n           default) applies no time filter.\n\nOutput (stdout, JSON):\n  {\"changes\":[{\"unique_id\":string,\"depth\":number,\n   \"diff\":{...diff object, same shape as \"node diff\"...}}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, --depth above 10, or --since is not RFC3339\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "List a model node's ancestors' most recent code changes, most-recently-changed first.\n\nUse when the user wants to know what changed upstream of a failing or\nsuspicious dbt model: which ancestors changed, how recently, and what their\ndiff looks like.\n\n\"Most recently changed\" is each ancestor's EFFECTIVE last change, not a\nversion's own creation time: a version node is immutable, so a revert that\nre-points an ancestor's running code at an already-recorded version still\ncounts as a change at the moment of the revert, and the reported diff is that\nrevert's actual before/after rather than the two versions' original creation\norder.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nContract caps (enforced server-side, not adjustable): results are capped at\nthe 5 most-recently-changed ancestors, and each diff is independently capped\nat 8 KiB with its own truncated flag set on the diffs that were cut — size\nprompts against both caps, not just the top-level result count.\n\nFlags:\n  --depth  How many hops upstream to walk. <= 0 (the default) applies the\n           server's default of 3 hops. The server rejects any value above 10\n           as invalid — this is a hard cap, not a client-side clamp.\n  --since  RFC3339 timestamp; ancestors whose effective last change (see\n           above — a revert counts) predates it are excluded. Empty (the\n           default) applies no time filter.\n\nOutput (stdout, JSON):\n  {\"changes\":[{\"unique_id\":string,\"depth\":number,\n   \"diff\":{...diff object, same shape as \"node diff\"...}}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, --depth above 10, or --since is not RFC3339\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the catalog service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<service>",
         "<schema>",
@@ -879,6 +879,12 @@
           "name": "since",
           "shorthand": "",
           "usage": "RFC3339 timestamp; excludes ancestors whose newest version predates it (default: no filter)",
+          "default": ""
+        },
+        {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
           "default": ""
         },
         {
@@ -904,12 +910,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -935,7 +935,7 @@
     {
       "path": "node versions",
       "short": "List a model node's recorded code-version history",
-      "long": "List a model node's recorded code-version history, newest first.\n\nUse when the user wants to see what code a dbt model has run over time: every\nrecorded version's hashes, the release that promoted it, and (with\n--include-code) the code itself.\n\nNewest first means ordered by when each version's code was FIRST promoted,\nnot by when it last ran: a version node is immutable, so a revert to earlier\ncode re-points at the version that already exists rather than moving it in\nthis list. is_current marks the version that actually runs now — after a\nrevert, that can be a version further down this list, not the first row.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id, matching how the orchestrator tracks version history.\n\nFlags:\n  --limit         Maximum number of versions returned, newest first. Default\n                   20; the server also applies this default when sent 0, and\n                   clamps any value above 200 down to 200.\n  --include-code  Include raw_code/compiled_code in the response. Default\n                   false: both fields come back empty and every other field\n                   (hashes, config_json, provenance) is unaffected. A single\n                   version's compiled_code can run to 256 KiB, so leave this\n                   off unless the code itself is needed.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unique_id\":string,\"version_seq\":number,\"content_hash\":string,\n   \"source_hash\":string,\"shared_code_hash\":string,\"config_hash\":string,\n   \"runtime\":string,\"raw_code\":string,\"compiled_code\":string,\n   \"compiled_truncated\":bool,\"config_json\":string,\"repo\":string,\n   \"commit_sha\":string,\"release_id\":string,\"promoted_at\":string,\n   \"healed\":bool,\"backfilled\":bool,\"is_current\":bool}]}\n  raw_code and compiled_code are empty unless --include-code is set.\n  compiled_code, compiled_truncated, repo, commit_sha, release_id,\n  promoted_at, healed, backfilled, and is_current are omitted when the\n  version carries no value for them (e.g. a version with no release\n  provenance, or one that is not the node's current version).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "List a model node's recorded code-version history, newest first.\n\nUse when the user wants to see what code a dbt model has run over time: every\nrecorded version's hashes, the release that promoted it, and (with\n--include-code) the code itself.\n\nNewest first means ordered by when each version's code was FIRST promoted,\nnot by when it last ran: a version node is immutable, so a revert to earlier\ncode re-points at the version that already exists rather than moving it in\nthis list. is_current marks the version that actually runs now — after a\nrevert, that can be a version further down this list, not the first row.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id, matching how the catalog service tracks version history.\n\nFlags:\n  --limit         Maximum number of versions returned, newest first. Default\n                   20; the server also applies this default when sent 0, and\n                   clamps any value above 200 down to 200.\n  --include-code  Include raw_code/compiled_code in the response. Default\n                   false: both fields come back empty and every other field\n                   (hashes, config_json, provenance) is unaffected. A single\n                   version's compiled_code can run to 256 KiB, so leave this\n                   off unless the code itself is needed.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unique_id\":string,\"version_seq\":number,\"content_hash\":string,\n   \"source_hash\":string,\"shared_code_hash\":string,\"config_hash\":string,\n   \"runtime\":string,\"raw_code\":string,\"compiled_code\":string,\n   \"compiled_truncated\":bool,\"config_json\":string,\"repo\":string,\n   \"commit_sha\":string,\"release_id\":string,\"promoted_at\":string,\n   \"healed\":bool,\"backfilled\":bool,\"is_current\":bool}]}\n  raw_code and compiled_code are empty unless --include-code is set.\n  compiled_code, compiled_truncated, repo, commit_sha, release_id,\n  promoted_at, healed, backfilled, and is_current are omitted when the\n  version carries no value for them (e.g. a version with no release\n  provenance, or one that is not the node's current version).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the catalog service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<service>",
         "<schema>",
@@ -953,6 +953,12 @@
           "shorthand": "",
           "usage": "Maximum number of versions returned, newest first (default 20, server max 200)",
           "default": "20"
+        },
+        {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
         },
         {
           "name": "dead-letter-endpoint",
@@ -979,12 +985,6 @@
           "default": "true"
         },
         {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
-        },
-        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1008,7 +1008,7 @@
     {
       "path": "precedents",
       "short": "Look up how a classified failure was rejected and fixed before",
-      "long": "Look up how a classified failure was rejected and fixed before.\n\nUse when an LLM needs to answer \"how was this exact error solved before?\" for\na validation rejection: has this same failure signature — or the same\n(category, reason) pair — been seen and resolved on a prior release, and if\nso, what changed to fix it.\n\nArguments:\n  signature  Optional positional form of --signature. At most one positional\n             argument is accepted.\n\nSelectors (precedence: --signature, then the positional signature, then\n--category/--reason):\n  --signature  The exact classifier signature to match. Wins over a\n               positional signature when both are given.\n  --category   Together with --reason, matches every rejection sharing that\n               (category, reason) pair. Both must be set to use this form.\n  --reason     See --category.\n\nFlags:\n  --limit         Caps the number of precedents returned, resolved-first then\n                  newest. 0 (the default) applies the server default of 5;\n                  the server clamps the maximum to 20 — this command does not\n                  re-implement that clamp client-side.\n  --include-code  Also return the failing candidate's raw code and the\n                  resolving version's raw code. The error excerpt and the\n                  resolution diff are ALWAYS included regardless of this\n                  flag; the diff is capped server-side at 8 KiB with a\n                  truncated flag set on any diff that was cut.\n\nOutput (stdout, JSON):\n  {\"precedents\":[{\"release_id\":string,\"node_id\":string,\"stage\":string,\n   \"category\":string,\"reason\":string,\"error_excerpt\":string,\n   \"rejected_at\":string,\"failing_code\":string,\"resolved\":bool,\n   \"resolving_version\":{\"version_seq\":number,\"content_hash\":string,\n   \"release_id\":string,\"repo\":string,\"commit_sha\":string,\n   \"promoted_at\":string,\"raw_code\":string},\"resolution_diff\":string,\n   \"resolution_diff_truncated\":bool,\n   \"proposals\":[{\"proposal_id\":string,\"pr_url\":string,\"pr_number\":number,\n   \"pr_state\":string}]}]}\n  failing_code and resolving_version.raw_code are only populated when\n  --include-code is set. resolving_version is omitted when resolved is false.\n  proposals[].pr_state records the proposal's state when the PR was opened\n  (e.g. \"open\") — it is NOT updated when the PR is later merged or closed, so\n  it must not be read as the PR's current state.\n\nAn unknown signature — or an unseen (category, reason) pair — is NOT an\nerror: it returns an empty precedents list with exit 0, because \"no\nprecedent\" is a valid answer to the question this command asks.\n\nErrors:\n  usage      (exit 2)  more than one positional argument was given, or\n                        neither a signature (--signature or positional) nor a\n                        complete --category and --reason pair was given\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Look up how a classified failure was rejected and fixed before.\n\nUse when an LLM needs to answer \"how was this exact error solved before?\" for\na validation rejection: has this same failure signature — or the same\n(category, reason) pair — been seen and resolved on a prior release, and if\nso, what changed to fix it.\n\nArguments:\n  signature  Optional positional form of --signature. At most one positional\n             argument is accepted.\n\nSelectors (precedence: --signature, then the positional signature, then\n--category/--reason):\n  --signature  The exact classifier signature to match. Wins over a\n               positional signature when both are given.\n  --category   Together with --reason, matches every rejection sharing that\n               (category, reason) pair. Both must be set to use this form.\n  --reason     See --category.\n\nFlags:\n  --limit         Caps the number of precedents returned, resolved-first then\n                  newest. 0 (the default) applies the server default of 5;\n                  the server clamps the maximum to 20 — this command does not\n                  re-implement that clamp client-side.\n  --include-code  Also return the failing candidate's raw code and the\n                  resolving version's raw code. The error excerpt and the\n                  resolution diff are ALWAYS included regardless of this\n                  flag; the diff is capped server-side at 8 KiB with a\n                  truncated flag set on any diff that was cut.\n\nOutput (stdout, JSON):\n  {\"precedents\":[{\"release_id\":string,\"node_id\":string,\"stage\":string,\n   \"category\":string,\"reason\":string,\"error_excerpt\":string,\n   \"rejected_at\":string,\"failing_code\":string,\"resolved\":bool,\n   \"resolving_version\":{\"version_seq\":number,\"content_hash\":string,\n   \"release_id\":string,\"repo\":string,\"commit_sha\":string,\n   \"promoted_at\":string,\"raw_code\":string},\"resolution_diff\":string,\n   \"resolution_diff_truncated\":bool,\n   \"proposals\":[{\"proposal_id\":string,\"pr_url\":string,\"pr_number\":number,\n   \"pr_state\":string}]}]}\n  failing_code and resolving_version.raw_code are only populated when\n  --include-code is set. resolving_version is omitted when resolved is false.\n  proposals[].pr_state records the proposal's state when the PR was opened\n  (e.g. \"open\") — it is NOT updated when the PR is later merged or closed, so\n  it must not be read as the PR's current state.\n\nAn unknown signature — or an unseen (category, reason) pair — is NOT an\nerror: it returns an empty precedents list with exit 0, because \"no\nprecedent\" is a valid answer to the question this command asks.\n\nErrors:\n  usage      (exit 2)  more than one positional argument was given, or\n                        neither a signature (--signature or positional) nor a\n                        complete --category and --reason pair was given\n  unavailable(exit 5)  the catalog service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "[signature]"
       ],
@@ -1044,6 +1044,12 @@
           "default": ""
         },
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1066,12 +1072,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1105,6 +1105,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1127,12 +1133,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1184,6 +1184,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1206,12 +1212,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1262,6 +1262,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1284,12 +1290,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1343,6 +1343,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1365,12 +1371,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1407,6 +1407,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1429,12 +1435,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1484,6 +1484,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1506,12 +1512,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1547,6 +1547,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1569,12 +1575,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1634,6 +1634,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1656,12 +1662,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1699,6 +1699,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1721,12 +1727,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1761,6 +1761,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1783,12 +1789,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1831,6 +1831,12 @@
       "args": [],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1853,12 +1859,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1908,6 +1908,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1930,12 +1936,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -1975,6 +1975,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -1997,12 +2003,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2036,6 +2036,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2058,12 +2064,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2104,6 +2104,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2126,12 +2132,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2175,6 +2175,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2197,12 +2203,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2248,6 +2248,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2270,12 +2276,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2335,6 +2335,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2357,12 +2363,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",
@@ -2399,6 +2399,12 @@
       ],
       "flags": [
         {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
           "name": "dead-letter-endpoint",
           "shorthand": "",
           "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
@@ -2421,12 +2427,6 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
-        },
-        {
-          "name": "orchestrator-endpoint",
-          "shorthand": "",
-          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
-          "default": ""
         },
         {
           "name": "timeout",

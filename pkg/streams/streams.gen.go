@@ -30,7 +30,7 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
 	ReleasePromotedV2 = "release.promoted:v2"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
@@ -38,13 +38,13 @@ const (
 	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
 	// RemediationRetryRequestedV1 — A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
-	// RemediationRequestedV2 — One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by orchestrator's case-base rejections group.
+	// RemediationRequestedV2 — One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
 	RemediationRequestedV2 = "remediation.requested:v2"
 	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
-	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by orchestrator's case-base proposals group.
+	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
-	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and orchestrator's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
 	RemediationPrClosedV1 = "remediation.pr_closed:v1"
 )
 
@@ -78,10 +78,10 @@ const (
 	ExecutionControllerCompileRequested = "execution-controller-compile-requested"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
-	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v2.
-	OrchestratorReleasePromoted = "orchestrator-release-promoted"
-	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v2.
-	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
+	// CatalogReleaseTopology — catalog consumer group on release.promoted:v2.
+	CatalogReleaseTopology = "catalog-release-topology"
+	// CatalogReleaseVersions — catalog consumer group on release.promoted:v2.
+	CatalogReleaseVersions = "catalog-release-versions"
 	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v2.
 	ExecutionControllerReleasePromoted = "execution-controller-release-promoted"
 	// RunControllerReleasePromoted — run-controller consumer group on release.promoted:v2.
@@ -96,12 +96,12 @@ const (
 	RemediationRetryRequested = "remediation-retry-requested"
 	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v2.
 	AgentRemediationRemediationRequested = "agent-remediation-remediation-requested"
-	// OrchestratorRemediationRequestedRejections — orchestrator consumer group on remediation.requested:v2.
-	OrchestratorRemediationRequestedRejections = "orchestrator-remediation-requested-rejections"
-	// OrchestratorRemediationPrOpenedProposals — orchestrator consumer group on remediation.pr_opened:v1.
-	OrchestratorRemediationPrOpenedProposals = "orchestrator-remediation-pr-opened-proposals"
-	// OrchestratorRemediationPrClosedProvenance — orchestrator consumer group on remediation.pr_closed:v1.
-	OrchestratorRemediationPrClosedProvenance = "orchestrator-remediation-pr-closed-provenance"
+	// CatalogRemediationRequestedRejections — catalog consumer group on remediation.requested:v2.
+	CatalogRemediationRequestedRejections = "catalog-remediation-requested-rejections"
+	// CatalogRemediationPrOpenedProposals — catalog consumer group on remediation.pr_opened:v1.
+	CatalogRemediationPrOpenedProposals = "catalog-remediation-pr-opened-proposals"
+	// CatalogRemediationPrClosedProvenance — catalog consumer group on remediation.pr_closed:v1.
+	CatalogRemediationPrClosedProvenance = "catalog-remediation-pr-closed-provenance"
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
@@ -147,14 +147,14 @@ var Groups = map[string][]string{
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutionControllerCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
+	ReleasePromotedV2:           {CatalogReleaseTopology, CatalogReleaseVersions, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
-	RemediationRequestedV2:      {AgentRemediationRemediationRequested, OrchestratorRemediationRequestedRejections},
+	RemediationRequestedV2:      {AgentRemediationRemediationRequested, CatalogRemediationRequestedRejections},
 	RemediationProposedV1:       {},
-	RemediationPrOpenedV1:       {OrchestratorRemediationPrOpenedProposals},
-	RemediationPrClosedV1:       {OrchestratorRemediationPrClosedProvenance},
+	RemediationPrOpenedV1:       {CatalogRemediationPrOpenedProposals},
+	RemediationPrClosedV1:       {CatalogRemediationPrClosedProvenance},
 }
 
 // Retired lists the streams removed from the contract; their keys are deleted

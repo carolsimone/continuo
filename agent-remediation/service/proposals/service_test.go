@@ -442,7 +442,7 @@ func TestService_Record_PROpenedPerServiceResolvedSet(t *testing.T) {
 // TestService_Record_PROpenedNamesOnlyTheFixedNodes covers the mixed batch: one
 // attempt addressed two failing nodes, repaired one and skipped the other, and
 // the pull request therefore carries a fix for one of them only. Naming both
-// would attach the PR to a rejection it does nothing about — the orchestrator
+// would attach the PR to a rejection it does nothing about — catalog
 // records it against every node the event names.
 func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
 	repo := &fakeRepo{

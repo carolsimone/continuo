@@ -247,8 +247,9 @@ func main() {
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
 	// ctx is cancelled.
-	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
-	metricsReg.WatchOutbox(outboxProc)
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
+	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, outboxMetrics, liveReg, logger)
+	outboxMetrics.Watch(outboxProc)
 
 	// The queue is advanced once before any consumer runs, so a run left
 	// received while no queue event fired starts on this boot: a candidate held

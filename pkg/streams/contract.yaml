@@ -43,7 +43,7 @@ streams:
   - name: consumer.dead_letter:v1
     const: ConsumerDeadLetterV1
     description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
-    producers: [run-controller, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
+    producers: [run-controller, catalog, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-consumer-dead-letters
@@ -139,15 +139,15 @@ streams:
 
   - name: release.promoted:v2
     const: ReleasePromotedV2
-    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
+    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. catalog swaps its live topology only for a higher promotion_seq and records code versions; run-controller stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
-      - service: orchestrator
-        group: orchestrator-release-promoted
-        const: OrchestratorReleasePromoted
-      - service: orchestrator
-        group: orchestrator-release-promoted-versions
-        const: OrchestratorReleasePromotedVersions
+      - service: catalog
+        group: catalog-release-topology
+        const: CatalogReleaseTopology
+      - service: catalog
+        group: catalog-release-versions
+        const: CatalogReleaseVersions
       - service: execution-controller
         group: execution-controller-release-promoted
         const: ExecutionControllerReleasePromoted
@@ -189,15 +189,15 @@ streams:
 
   - name: remediation.requested:v2
     const: RemediationRequestedV2
-    description: One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by orchestrator's case-base rejections group.
+    description: One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
     producers: [remediation]
     consumers:
       - service: agent-remediation
         group: agent-remediation-remediation-requested
         const: AgentRemediationRemediationRequested
-      - service: orchestrator
-        group: orchestrator-remediation-requested-rejections
-        const: OrchestratorRemediationRequestedRejections
+      - service: catalog
+        group: catalog-remediation-requested-rejections
+        const: CatalogRemediationRequestedRejections
 
   # ---------------- agent-remediation streams ----------------
 
@@ -209,21 +209,21 @@ streams:
 
   - name: remediation.pr_opened:v1
     const: RemediationPrOpenedV1
-    description: Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by orchestrator's case-base proposals group.
+    description: Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
     producers: [agent-remediation]
     consumers:
-      - service: orchestrator
-        group: orchestrator-remediation-pr-opened-proposals
-        const: OrchestratorRemediationPrOpenedProposals
+      - service: catalog
+        group: catalog-remediation-pr-opened-proposals
+        const: CatalogRemediationPrOpenedProposals
 
   - name: remediation.pr_closed:v1
     const: RemediationPrClosedV1
-    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and orchestrator's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
     consumers:
-      - service: orchestrator
-        group: orchestrator-remediation-pr-closed-provenance
-        const: OrchestratorRemediationPrClosedProvenance
+      - service: catalog
+        group: catalog-remediation-pr-closed-provenance
+        const: CatalogRemediationPrClosedProvenance
 
 # Streams removed from the contract. dead-letter-controller deletes their keys
 # from Redis; nothing produces or consumes them.
@@ -417,7 +417,7 @@ vocabularies:
       - value: dbt-test
         const: DbtTest
         runtime: dbt
-        description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
+        description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
 
   - name: run_status
     const: RunStatus

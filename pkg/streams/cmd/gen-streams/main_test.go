@@ -13,9 +13,9 @@ streams:
     description: Node state transitions.
     producers: [run-controller]
     consumers:
-      - service: orchestrator
-        group: orchestrator-node-updated
-        const: OrchestratorNodeUpdated
+      - service: run-controller
+        group: run-controller-node-updated
+        const: RunControllerNodeUpdated
 `
 
 func TestParseContract_Valid(t *testing.T) {
@@ -33,7 +33,7 @@ func TestParseContract_Valid(t *testing.T) {
 	if s.Const != "NodeUpdatedV1" {
 		t.Errorf("const: got %q", s.Const)
 	}
-	if len(s.Consumers) != 1 || s.Consumers[0].Group != "orchestrator-node-updated" {
+	if len(s.Consumers) != 1 || s.Consumers[0].Group != "run-controller-node-updated" {
 		t.Errorf("consumers: %+v", s.Consumers)
 	}
 }
@@ -81,14 +81,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
+      - service: run-controller
         group: same-group
         const: ConstA
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
+      - service: run-controller
         group: same-group
         const: ConstB
 `
@@ -105,14 +105,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
+      - service: run-controller
         group: group-a
         const: SameConst
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
+      - service: run-controller
         group: group-b
         const: SameConst
 `
@@ -129,9 +129,9 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
-        group: orchestrator_node_updated
-        const: OrchestratorNodeUpdated
+      - service: run-controller
+        group: run_controller_node_updated
+        const: RunControllerNodeUpdated
 `
 	_, err := loadAndValidate(strings.NewReader(y))
 	if err == nil || !strings.Contains(err.Error(), "group") || !strings.Contains(err.Error(), "must match") {
@@ -163,9 +163,9 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: orchestrator
-        group: Orchestrator-Node-Updated
-        const: OrchestratorNodeUpdated
+      - service: run-controller
+        group: Run-Controller-Node-Updated
+        const: RunControllerNodeUpdated
 `
 	_, err := loadAndValidate(strings.NewReader(y))
 	if err == nil {
@@ -222,17 +222,17 @@ streams:
     description: Topology after manifest load.
     producers: [topology-controller]
     consumers:
-      - service: orchestrator
-        group: orchestrator-manifest-loaded
-        const: OrchestratorManifestLoaded
+      - service: run-controller
+        group: run-controller-manifest-loaded
+        const: RunControllerManifestLoaded
   - name: irrelevant.to.python:v1
     const: IrrelevantV1
     description: Should not appear in Python output.
     producers: [run-controller]
     consumers:
-      - service: orchestrator
-        group: orchestrator-irrelevant
-        const: OrchestratorIrrelevant
+      - service: run-controller
+        group: run-controller-irrelevant
+        const: RunControllerIrrelevant
 `
 
 func TestEmitPython(t *testing.T) {

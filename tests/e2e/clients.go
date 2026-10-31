@@ -12,8 +12,8 @@ import (
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
+	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -26,14 +26,13 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	orchestratorClient     orchestratorv1.OrchestratorQueryClient
+	catalogClient          catalogv1.CatalogQueryClient
 	runClient              runv1.RunServiceClient
 	agentRemediationClient remediationv1.RemediationProposalsClient
 	deadLetterClient       deadletterv1.DeadLetterServiceClient
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
 	executionDB            *sqlx.DB
-	orchestratorDB         *sqlx.DB
 	runControllerDB        *sqlx.DB
 	releaseDB              *sqlx.DB
 	dbtDB                  *sqlx.DB
@@ -54,7 +53,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	}))
 
 	// Get hosts from environment (use service names for docker-compose)
-	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
+	catalogHost := getEnv("CATALOG_HOST", "catalog")
 	runControllerHost := getEnv("RUN_CONTROLLER_HOST", "run-controller")
 	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
 	deadLetterHost := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
@@ -63,12 +62,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
 	uiBase := getEnv("UI_HTTP_BASE", "http://ui:8090")
 
-	// Setup Orchestrator gRPC client
-	orchestratorConn, err := grpc.NewClient(
-		fmt.Sprintf("%s:50052", orchestratorHost),
+	// Setup catalog gRPC client (CatalogQuery, port 50052)
+	catalogConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50052", catalogHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to orchestrator service")
+	require.NoError(t, err, "Failed to connect to catalog service")
 
 	// Setup run-controller gRPC client (RunService, port 50051)
 	runControllerConn, err := grpc.NewClient(
@@ -108,7 +107,6 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 
 	// Setup PostgreSQL connections for each database
 	executionDB := connectPostgres(t, pgHost, "continuo_execution")
-	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
 	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
@@ -117,14 +115,13 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
 
 	clients := &testClients{
-		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
+		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
 		runClient:              runv1.NewRunServiceClient(runControllerConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
 		executionDB:            executionDB,
-		orchestratorDB:         orchestratorDB,
 		runControllerDB:        runControllerDB,
 		releaseDB:              releaseDB,
 		dbtDB:                  dbtDB,
@@ -184,7 +181,6 @@ func (c *testClients) close(ctx context.Context) {
 	_ = c.redisClient.Close()
 	_ = c.neo4jDriver.Close(closeCtx)
 	_ = c.executionDB.Close()
-	_ = c.orchestratorDB.Close()
 	_ = c.runControllerDB.Close()
 	_ = c.releaseDB.Close()
 	_ = c.dbtDB.Close()

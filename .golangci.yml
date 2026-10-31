@@ -17,7 +17,7 @@ linters:
     generated: lax
     # Explicit safety net for generated code without a header.
     paths:
-      - cli/proto          # generated gRPC stubs (run-controller, orchestrator)
+      - cli/proto          # generated gRPC stubs (run-controller, catalog)
       - ".*\\.gen\\.go$"   # e.g. pkg/streams/streams.gen.go
       - ".*\\.pb\\.go$"    # protobuf stubs
     rules:

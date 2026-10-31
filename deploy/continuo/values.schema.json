@@ -67,7 +67,7 @@
         "logLevel": {"type": "string"},
         "teamImagePrefix": {"type": "string"},
         "runControllerGrpcAddr": {"type": "string"},
-        "orchestratorGrpcAddr": {"type": "string"},
+        "catalogGrpcAddr": {"type": "string"},
         "agentRemediationGrpcAddr": {"type": "string"},
         "agentChatGrpcAddr": {"type": "string"},
         "deadLetterControllerGrpcAddr": {"type": "string"},
@@ -367,6 +367,32 @@
           "minimum": 1,
           "maximum": 168,
           "description": "How long a task's container may run when its node declares no timeout_minutes, and how long every validation, seed-build and compile Job's container may run."
+        }
+      }
+    },
+
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether catalog exports each tenant's graph on the schedule; false runs no exports."
+            },
+            "schedule": {
+              "type": "string",
+              "description": "When catalog exports: a five-field cron in UTC or an @ descriptor such as @daily or @every 6h."
+            },
+            "keep": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many of the newest exports of each tenant catalog keeps; it deletes the rest after an export."
+            }
+          }
         }
       }
     },

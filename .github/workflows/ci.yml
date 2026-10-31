@@ -226,7 +226,7 @@ jobs:
         # wait_for_container_running is defined in scripts/lib/common.sh.
         run: |
           source scripts/lib/common.sh
-          for c in run-controller orchestrator execution-controller \
+          for c in run-controller catalog execution-controller \
                    topology-controller release-controller remediation agent-remediation agent-chat \
                    dead-letter-controller egress-proxy; do
             wait_for_container_running "$c"
@@ -315,7 +315,7 @@ jobs:
 
       - name: Start ui + deploy + e2e
         # Start the ui container, wait for it to become healthy, deploy
-        # execution-controller, then run the full e2e suite inside the orchestrator
+        # execution-controller, then run the full e2e suite inside the catalog
         # container where the test code lives. Comfortably exceeds the go
         # test -timeout below (125m) plus the ui-wait/deploy steps that run
         # first in this same step.
@@ -340,7 +340,7 @@ jobs:
           # lane's own Docker daemon publishes there); unset on GitHub-hosted.
           docker compose up -d ui && wait_for_http_host "http://${CI_HOST_IP:-localhost}:8090/api/schedules"
           bash tests/e2e/deploy-execution-controller.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 125m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 125m /app/tests/e2e/...
 
       - name: Cleanup execution-controller
         if: always()

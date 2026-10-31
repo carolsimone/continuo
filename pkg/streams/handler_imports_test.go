@@ -16,10 +16,10 @@ import (
 // domain-service helpers, reconcile loops — that orchestrate via ports.
 //
 // Whole `service` subtrees are listed where the entire application layer is
-// guarded (orchestrator); narrower entries are used where only specific
+// guarded (catalog); narrower entries are used where only specific
 // application packages exist under a service's tree.
 var handlerDirs = []string{
-	"orchestrator/service",
+	"catalog/service",
 	"run-controller/service/attemptreconcile",
 	"run-controller/service/commands",
 	"run-controller/service/cronloop",
@@ -50,7 +50,7 @@ var handlerDirs = []string{
 	// vocabulary; the concrete *UnitOfWork that satisfies it belongs in
 	// adapters/postgres, so this package must not reach back into an adapter.
 	"execution-controller/service/uow",
-	"orchestrator/service/uow",
+	"catalog/service/uow",
 	"release-controller/service/uow",
 	"remediation/service/uow",
 	"agent-remediation/service/uow",
