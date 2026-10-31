@@ -25,17 +25,18 @@ RETURN m.release_id AS release_id, coalesce(m.promotion_seq, 0) AS promotion_seq
 // leaves the topology alone, so the property never persists.
 const currentReleaseUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'current_release'}) REMOVE m._lock`
 
-// retireDroppedNodesCypher retires every :Node of the tenant the release does
-// not carry, a node with no unique_id included, and deletes the retired nodes'
-// outgoing :DEPENDS_ON, which describe the live topology only. retired_at is
-// stamped when the node goes from live to retired and kept on every later
-// promotion that leaves it retired. Nothing else of a retired node changes: it
+// retireDroppedNodesCypher retires every live :Node of the tenant the release
+// does not carry, a node with no unique_id included: it stamps retired_at and
+// deletes the node's outgoing :DEPENDS_ON, which describe the live topology
+// only. A node already retired is not matched again, so a promotion's work
+// does not grow with the retired nodes the graph keeps, and retired_at stays
+// the time of the retirement. Nothing else of a retired node changes: it
 // keeps its properties, its :CURRENT version, its :FAILED rejections and the
 // :EDITED edges of its fixes.
 const retireDroppedNodesCypher = `
 MATCH (n:Node {tenant_id: $tenant_id})
-WHERE n.unique_id IS NULL OR NOT n.unique_id IN $unique_ids
-SET n.retired_at = CASE WHEN coalesce(n.active, true) THEN $now ELSE n.retired_at END,
+WHERE coalesce(n.active, true) AND (n.unique_id IS NULL OR NOT n.unique_id IN $unique_ids)
+SET n.retired_at = $now,
     n.active = false
 WITH n
 MATCH (n)-[d:DEPENDS_ON]->()

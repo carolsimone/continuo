@@ -5,6 +5,7 @@ package neo4jinfra
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -269,10 +270,14 @@ func (f *isolationFixture) snapshotB() []string {
 	return lines
 }
 
-// onlyA checks a read's result holds what A wrote and nothing B wrote.
+// onlyA checks a read's result holds what A wrote and nothing B wrote. It
+// renders the result as JSON, which follows every pointer, so a value nested
+// behind one (the versions of a precedent, for one) is read too.
 func onlyA(t *testing.T, result any) {
 	t.Helper()
-	text := fmt.Sprintf("%+v", result)
+	rendered, err := json.Marshal(result)
+	require.NoError(t, err)
+	text := string(rendered)
 	assert.Contains(t, text, isoMarkA, "the read returned none of tenant A's data")
 	assert.NotContains(t, text, isoMarkB, "the read returned tenant B's data")
 }

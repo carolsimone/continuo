@@ -6,6 +6,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -93,14 +94,14 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 	rc.AddHook(capture)
 	t.Cleanup(func() { _ = rc.Close() })
 
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: "some.stream:v1", Payload: []byte(`{"release_id":"r1"}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationRequestedV2, Payload: []byte(`{"release_id":"r1"}`)}
 	require.NoError(t, (&remediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
 	require.GreaterOrEqual(t, len(args), 3)
 	assert.Equal(t, "xadd", args[0])
-	assert.Equal(t, "some.stream:v1", args[1])
+	assert.Equal(t, streams.RemediationRequestedV2, args[1])
 	assert.Equal(t, "*", args[2], "the XADD sets no length cap")
 	fields := map[string]any{}
 	for i := 3; i+1 < len(args); i += 2 {
@@ -151,13 +152,13 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := &remediationOutboxPublisher{}
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: "some.stream:v1", Payload: []byte(`{}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationRequestedV2, Payload: []byte(`{}`)}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != "some.stream:v1" {
+	if args.Stream != streams.RemediationRequestedV2 {
 		t.Fatalf("stream = %q", args.Stream)
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {

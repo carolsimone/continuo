@@ -124,7 +124,7 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 		caseBase := tx.CaseBase()
 		for _, rej := range rejections {
 			if err := caseBase.RecordRejection(ctx, tenantID, rej); err != nil {
-				return fmt.Errorf("record rejection %s/%s: %w", rej.ReleaseID, rej.NodeID, err)
+				return err
 			}
 		}
 		return nil
@@ -132,7 +132,7 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 	if err != nil {
 		// The rejections and the marker roll back together, so the message
 		// replays.
-		return fmt.Errorf("record the rejections of release %s: %w", in.ReleaseID, err)
+		return fmt.Errorf("remediation.requested of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
 		h.logger.Info("remediation.requested processed by another delivery of the rejections group meanwhile; acknowledged",

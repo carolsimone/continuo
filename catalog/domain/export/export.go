@@ -110,10 +110,15 @@ func (h Header) Check() error {
 }
 
 // Check refuses a node of a label outside the schema, with no label or a
-// label twice, whose tenant_id is not tenantID, or with a property the graph
-// cannot hold.
+// label twice, whose tenant_id is not tenantID, with a property the graph
+// cannot hold, or with an identity property (graphschema.Identity) that is
+// not text: every identity property of the schema is a string, and the graph
+// compares other values otherwise than their text does (1 equals 1.0, NaN
+// equals nothing), so such a node could pass a check of the file and fail
+// its load.
 func (n NodeRecord) Check(tenantID string) error {
-	if _, err := n.SchemaLabels(); err != nil {
+	labels, err := n.SchemaLabels()
+	if err != nil {
 		return err
 	}
 	if t, ok := n.Props[TenantProperty].(string); !ok || t != tenantID {
@@ -121,6 +126,15 @@ func (n NodeRecord) Check(tenantID string) error {
 	}
 	if err := checkProps(n.Props); err != nil {
 		return fmt.Errorf("node %v: %w", n.Labels, err)
+	}
+	for _, l := range labels {
+		for _, p := range graphschema.Identity(l) {
+			if v, found := n.Props[p]; found {
+				if _, ok := v.(string); !ok {
+					return fmt.Errorf("%w: node %v has identity property %q of type %T, want text", ErrInvalidRecord, n.Labels, p, v)
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -165,7 +179,8 @@ func (n NodeRecord) IsLease() bool {
 }
 
 // Identity returns the values of the properties that identify n under label
-// l, in graphschema.Identity order; ok is false when n lacks one of them.
+// l, in graphschema.Identity order, each a string; ok is false when n lacks
+// one of them or one is not text.
 func (n NodeRecord) Identity(l graphschema.Label) (key []any, ok bool) {
 	props := graphschema.Identity(l)
 	if props == nil {
@@ -173,8 +188,8 @@ func (n NodeRecord) Identity(l graphschema.Label) (key []any, ok bool) {
 	}
 	key = make([]any, 0, len(props))
 	for _, p := range props {
-		v, found := n.Props[p]
-		if !found || v == nil {
+		v, isText := n.Props[p].(string)
+		if !isText {
 			return nil, false
 		}
 		key = append(key, v)
@@ -210,18 +225,24 @@ func (r RelRecord) SchemaType() (graphschema.RelType, error) {
 }
 
 // Check refuses a reference by a label outside the schema, a key that does
-// not match the label's identity, or the export lease node.
+// not match the label's identity (another number of values, or a value that
+// is not text: every identity property of the schema is a string), or the
+// export lease node.
 func (ref NodeRef) Check() error {
 	l, err := ref.SchemaLabel()
 	if err != nil {
 		return err
 	}
-	if want := len(graphschema.Identity(l)); len(ref.Key) != want {
-		return fmt.Errorf("%w: a :%s is named by %d values, want %d", ErrInvalidRecord, l, len(ref.Key), want)
+	identity := graphschema.Identity(l)
+	if len(ref.Key) != len(identity) {
+		return fmt.Errorf("%w: a :%s is named by %d values, want %d", ErrInvalidRecord, l, len(ref.Key), len(identity))
 	}
-	for _, v := range ref.Key {
+	for i, v := range ref.Key {
 		if err := checkScalar(v); err != nil {
 			return fmt.Errorf("a :%s's key: %w", l, err)
+		}
+		if _, ok := v.(string); !ok {
+			return fmt.Errorf("%w: a :%s's key value %s is of type %T, want text", ErrInvalidRecord, l, identity[i], v)
 		}
 	}
 	if l == graphschema.Meta && ref.Key[0] == LeaseNodeKey {

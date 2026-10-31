@@ -11,7 +11,8 @@
 // stored export on its own line: {"object_key","bytes","nodes",
 // "relationships","duration_seconds"}, the last being the seconds the tenant's
 // writes were paused. list prints a JSON array of the stored exports, newest
-// first: [{"key","size","last_modified"}]. restore returns the graph of the
+// first: [{"key","size","last_modified"}]; without --tenant it covers only
+// the tenants the catalog's graph holds. restore returns the graph of the
 // tenant its object key names to that export and prints {"object_key",
 // "tenant_id","nodes","relationships"}; it deletes the tenant's graph before
 // it loads the export, so it refuses to run without --yes.
@@ -74,7 +75,9 @@ Usage:
       {"object_key","bytes","nodes","relationships","duration_seconds"}.
   catalog-backup list [--tenant <tenant>]
       Print the stored exports, newest first, as a JSON array of
-      {"key","size","last_modified"}.
+      {"key","size","last_modified"}. Without --tenant it covers only the
+      tenants the catalog's graph holds: after a loss of the graph, name the
+      tenant to find its exports.
   catalog-backup restore <object key> --yes
       Return the graph of the tenant the key names to that export. This
       deletes the tenant's graph first, so --yes is required. Prints
@@ -236,18 +239,26 @@ func parseOptions(command string, args []string, keys ports.BackupKeys) (options
 }
 
 // parseInterspersed parses args with fs and returns the positional arguments,
-// whether they come before or after the flags.
+// whether they come before or after the flags. A "--" ends the flags: every
+// argument after it is positional, even one that starts with "-".
 func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
-		if fs.NArg() == 0 {
+		rest := fs.Args()
+		if len(rest) == 0 {
 			return positional, nil
 		}
-		positional = append(positional, fs.Arg(0))
-		args = fs.Args()[1:]
+		// The flag package consumes a "--" and stops there; it is gone from
+		// rest, so it shows as one argument fewer than args held after the
+		// flags it parsed.
+		if consumed := len(args) - len(rest); consumed > 0 && args[consumed-1] == "--" {
+			return append(positional, rest...), nil
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
 	}
 }
 

@@ -178,6 +178,19 @@ func TestProposalsHandler_EmptyResolvedNodeIDsFallsBackToNodeID(t *testing.T) {
 
 // A proposal the graph fails to record fails the message with no marker, so
 // the redelivery records it again.
+// A message another delivery finished between the lookup and the write is
+// acknowledged: its Write finds the marker and records nothing.
+func TestProposalsHandler_ProcessedMeanwhileWritesNothing(t *testing.T) {
+	repo := &fakeCaseBaseRepository{}
+	u := newCaseBaseUnitOfWork(repo)
+	u.record(proposalsMarker("1-0", nil))
+
+	require.NoError(t, newProposalsHandler(racingUnitOfWork{u}).
+		Handle(context.Background(), caseBaseTenant, "1-0", nil, prOpenedInput()))
+	assert.Empty(t, repo.recordProposalCalls)
+	assert.Len(t, u.writes, 1)
+}
+
 func TestProposalsHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{err: errors.New("neo4j: transient failure")})
 

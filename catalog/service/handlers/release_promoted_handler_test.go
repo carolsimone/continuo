@@ -274,6 +274,23 @@ func TestReleasePromotedHandler_MissingArtifactIsRetryable(t *testing.T) {
 	assert.Empty(t, u.writes)
 }
 
+// An artifact of another tenant than the message's is permanent: its nodes
+// must not be written into the message's tenant's graph.
+func TestReleasePromotedHandler_ArtifactOfAnotherTenantIsPermanent(t *testing.T) {
+	u := newFakeGraphUnitOfWork(&fakeReleasePromotionRepository{})
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5)
+	other := releaseRA()
+	other.TenantID = "acme"
+	reader.docs[in.TopologyURI] = other
+
+	err := newReleasePromotedHandler(u, reader).Handle(context.Background(), "msg-tenant", nil, in)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, events.ErrPermanent))
+	assert.Contains(t, err.Error(), "acme")
+	assert.Empty(t, u.writes)
+}
+
 func TestReleasePromotedHandler_ArtifactOfAnotherReleaseIsPermanent(t *testing.T) {
 	u := newFakeGraphUnitOfWork(&fakeReleasePromotionRepository{})
 	reader := &fakeArtifactReader{}

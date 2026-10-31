@@ -111,10 +111,10 @@ func TestPrClosedProvenanceHandler_RecordsRejectedOutcome(t *testing.T) {
 	assert.True(t, u.isRecorded(provenanceMarker("1-0", nil)))
 }
 
-// A merged payload emitted before the resolved/edits fields existed still
-// records its outcome — pr_state must update — and passes empty resolved/edits
-// so the repository draws nothing. It must not error.
-func TestPrClosedProvenanceHandler_LegacyMergedDrawsNothing(t *testing.T) {
+// A merged payload without resolved node ids and edits still records its
+// outcome — pr_state must update — and passes empty resolved/edits so the
+// repository draws nothing. It must not error.
+func TestPrClosedProvenanceHandler_MergedWithoutResolvedNodesDrawsNothing(t *testing.T) {
 	repo := &fakeCaseBaseRepository{}
 	u := newCaseBaseUnitOfWork(repo)
 
@@ -131,7 +131,7 @@ func TestPrClosedProvenanceHandler_LegacyMergedDrawsNothing(t *testing.T) {
 	require.Len(t, repo.recordOutcomeCalls, 1)
 	o := repo.recordOutcomeCalls[0]
 	assert.Equal(t, "merged", o.Outcome)
-	assert.Empty(t, o.ResolvedNodeIDs, "no NodeID fallback — a legacy merged PR draws no RESOLVED_BY edges")
+	assert.Empty(t, o.ResolvedNodeIDs, "no NodeID fallback — a merged PR without resolved nodes draws no RESOLVED_BY edges")
 	assert.Empty(t, o.Edits)
 }
 
@@ -186,6 +186,19 @@ func TestPrClosedProvenanceHandler_FoundMarkerSkips(t *testing.T) {
 
 // An outcome the graph fails to record fails the message with no marker, so
 // the redelivery records it again.
+// A message another delivery finished between the lookup and the write is
+// acknowledged: its Write finds the marker and records nothing.
+func TestPrClosedProvenanceHandler_ProcessedMeanwhileWritesNothing(t *testing.T) {
+	repo := &fakeCaseBaseRepository{}
+	u := newCaseBaseUnitOfWork(repo)
+	u.record(provenanceMarker("1-0", nil))
+
+	require.NoError(t, newPrClosedProvenanceHandler(racingUnitOfWork{u}).
+		Handle(context.Background(), caseBaseTenant, "1-0", nil, prClosedMergedInput()))
+	assert.Empty(t, repo.recordOutcomeCalls)
+	assert.Len(t, u.writes, 1)
+}
+
 func TestPrClosedProvenanceHandler_FailedRecordLeavesNoMarker(t *testing.T) {
 	u := newCaseBaseUnitOfWork(&fakeCaseBaseRepository{err: errors.New("neo4j: transient failure")})
 

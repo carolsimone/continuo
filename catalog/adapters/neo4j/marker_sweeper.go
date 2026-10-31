@@ -2,7 +2,6 @@ package neo4jinfra
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -53,8 +52,11 @@ RETURN count(*) AS deleted`
 // database clock, and returns how many it deleted. The limit counts every
 // tenant together: a pass visits the tenants that hold expired markers in
 // turn until it has deleted limit. A tenant whose export lease is held is
-// skipped. A tenant whose sweep fails does not stop the others; the errors
-// come back together with the count of what was deleted.
+// skipped. A tenant whose sweep fails is logged and does not stop the
+// others: its markers wait for the next pass, and the count of what the pass
+// deleted comes back without an error. A cancelled ctx ends the pass with
+// ctx's error and the count so far, and logs nothing, since only a shutdown
+// cancels it.
 //
 // It is a retention.PruneFunc (pkg/retention), so the sweeper calls it in a loop
 // until a pass deletes fewer than limit.
@@ -72,7 +74,6 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 		return 0, err
 	}
 	var deleted int64
-	var failures []error
 	for _, tenantID := range tenants {
 		if deleted >= int64(limit) {
 			break
@@ -82,12 +83,16 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 		}
 		n, err := s.pruneTenant(ctx, tenantID, retentionMs, int64(limit)-deleted)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("sweep processed-message markers of tenant %q: %w", tenantID, err))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return deleted, ctxErr
+			}
+			s.logger.Error("processed-message marker sweep of a tenant failed; its markers wait for the next pass",
+				"tenant_id", tenantID, "error", err)
 			continue
 		}
 		deleted += n
 	}
-	return deleted, errors.Join(failures...)
+	return deleted, nil
 }
 
 // tenantsWithExpiredMarkers lists, in order, the tenants that hold a marker

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 )
 
 var (
@@ -362,12 +363,19 @@ func decodeRef(raw json.RawMessage) (export.NodeRef, error) {
 	return ref, nil
 }
 
+// outboxEntryProperty is the property a processed-message marker keeps the
+// producer's outbox entry id in. The graph holds at most one marker per
+// group and outbox entry id (constraint processed_message_outbox_unique), so
+// Validate refuses a file with two.
+const outboxEntryProperty = "outbox_entry_id"
+
 // Validate reads a whole export file and touches nothing else. It returns
 // the header when the file is one a restore of tenantID can load exactly:
 // the header names tenantID; every line decodes; every label, type and
 // value is the catalog graph's; the counts match the header; no two nodes
-// share an identity; and every relationship names a node of the file. It
-// holds one identity per node, so its memory grows with the export.
+// share an identity, and no two processed-message markers a group and an
+// outbox entry id; and every relationship names a node of the file. It holds
+// one identity per node, so its memory grows with the export.
 func Validate(r io.Reader, tenantID string) (export.Header, error) {
 	rd, err := NewReader(r)
 	if err != nil {
@@ -378,6 +386,7 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 		return export.Header{}, fmt.Errorf("the export is of tenant %q, not %q: %w", h.TenantID, tenantID, export.ErrTenantMismatch)
 	}
 	ids := map[string]struct{}{}
+	outboxEntries := map[[2]string]struct{}{}
 	for {
 		rec, err := rd.Next()
 		if errors.Is(err, io.EOF) {
@@ -406,6 +415,9 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 				}
 				ids[id] = struct{}{}
 			}
+			if err := checkOutboxEntry(x, labels, outboxEntries); err != nil {
+				return export.Header{}, fmt.Errorf("line %d: %w", rd.line, err)
+			}
 		case export.RelRecord:
 			for _, end := range []export.NodeRef{x.From, x.To} {
 				id, err := identityText(end)
@@ -418,6 +430,31 @@ func Validate(r io.Reader, tenantID string) (export.Header, error) {
 			}
 		}
 	}
+}
+
+// checkOutboxEntry refuses a processed-message marker whose outbox entry id
+// is not text, or that shares its group and outbox entry id with a marker
+// seen before, which it records in seen. A marker without an outbox entry id
+// is not checked: the graph's constraint skips it too.
+func checkOutboxEntry(n export.NodeRecord, labels []graphschema.Label, seen map[[2]string]struct{}) error {
+	if !slices.Contains(labels, graphschema.ProcessedMessage) {
+		return nil
+	}
+	v, found := n.Props[outboxEntryProperty]
+	if !found {
+		return nil
+	}
+	entry, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%w: a :%s with %s of type %T, want text", export.ErrInvalidRecord, graphschema.ProcessedMessage, outboxEntryProperty, v)
+	}
+	group, _ := n.Props["group"].(string) // Check has made it text
+	k := [2]string{group, entry}
+	if _, dup := seen[k]; dup {
+		return fmt.Errorf("%w: a second :%s of group %q and %s %q", ErrDuplicateNode, graphschema.ProcessedMessage, group, outboxEntryProperty, entry)
+	}
+	seen[k] = struct{}{}
+	return nil
 }
 
 // identityText renders a node's label and key values as one text, with each

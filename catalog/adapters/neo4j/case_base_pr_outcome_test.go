@@ -205,10 +205,9 @@ func TestRecordPullRequestOutcome_AmendedOrReduction(t *testing.T) {
 	}
 }
 
-// A merged outcome with no resolved nodes and no edits, the payload of a
-// producer that predates those fields, stamps the terminal state and draws no
-// edge.
-func TestRecordPullRequestOutcome_LegacyMergedEmptyLists(t *testing.T) {
+// A merged outcome with no resolved nodes and no edits stamps the terminal
+// state and draws no edge.
+func TestRecordPullRequestOutcome_MergedWithEmptyLists(t *testing.T) {
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
 	closedAt := time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC)

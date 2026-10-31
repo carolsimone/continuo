@@ -17,6 +17,10 @@ import (
 // current names over their old properties. node_unique reuses a current name
 // for a definition without tenant_id, which CREATE ... IF NOT EXISTS alone
 // would keep.
+//
+// catalog owns its Neo4j schema in code (InitSchema), with no migration
+// files a test could replay, so these tests create the old-shape constraints
+// and indexes themselves and drop them again.
 var oldSchemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",

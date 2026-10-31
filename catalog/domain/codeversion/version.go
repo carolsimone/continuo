@@ -47,13 +47,16 @@ type CodeUnitVersion struct {
 	Source   string
 }
 
-// WriteInput is one batch of a release's version ingestion. Nodes carries
-// bundle nodes of the release: which of them produce a version is decided
-// against the graph, not here.
+// WriteInput is a release's version ingestion, or one batch of it: the
+// versions group plans the whole release in one WriteInput and writes it as
+// batches of a bounded number of Nodes, each carrying the shared-code units
+// and topology entries of its own nodes. Nodes carries bundle nodes of the
+// release: which of them produce a version is decided against the graph, not
+// here.
 type WriteInput struct {
 	ReleaseID string
 	// PromotionSeq is the promotion this ingestion belongs to. It is the
-	// version watermark of every node and shared-code unit the batch matches:
+	// version watermark of every node and shared-code unit the write matches:
 	// a node's :CURRENT moves only while its watermark equals this seq.
 	PromotionSeq int64
 	Repo         string
@@ -61,9 +64,10 @@ type WriteInput struct {
 	PromotedAt   time.Time
 	Nodes        []NodeVersion
 	Units        []CodeUnitVersion
-	// Topology holds the release's nodes as the topology swap writes them,
-	// keyed by unique_id. A node of Nodes the graph does not hold yet is created
-	// inactive from its entry; a node of Nodes with no entry is skipped.
+	// Topology holds the topology entries of Nodes, keyed by unique_id, as
+	// the topology swap writes them. A node of Nodes the graph does not hold
+	// yet is created inactive from its entry; a node of Nodes with no entry is
+	// skipped.
 	Topology map[string]topology.ReleasePromotedTopologyNode
 }
 

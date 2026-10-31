@@ -98,12 +98,19 @@ func (s *Sweeper) Run(ctx context.Context) {
 	}
 }
 
-// sweep prunes every target once, each in its own bounded LIMIT loop.
+// sweep prunes every target once, each in its own bounded LIMIT loop. A
+// target that fails is logged with what it deleted before the failure, and
+// the sweep goes on to the next; a cancelled ctx, which only a shutdown
+// cancels, ends the sweep without an error log.
 func (s *Sweeper) sweep(ctx context.Context) {
 	for _, target := range s.targets {
 		deleted, err := s.pruneTarget(ctx, target)
+		if err != nil && ctx.Err() != nil {
+			s.logger.Info("Retention sweep stopped by shutdown", "target", target.Name, "count", deleted)
+			return
+		}
 		if err != nil {
-			s.logger.Error("Retention sweep failed", "target", target.Name, "error", err)
+			s.logger.Error("Retention sweep failed", "target", target.Name, "count", deleted, "error", err)
 			continue
 		}
 		if deleted > 0 {
@@ -114,7 +121,8 @@ func (s *Sweeper) sweep(ctx context.Context) {
 
 // pruneTarget runs the target's PruneFunc in a LIMIT loop until a pass removes
 // fewer rows than the batch limit (backlog cleared) or the per-sweep batch cap
-// is reached. Returns the total deleted across the loop.
+// is reached. Returns the total deleted across the loop, a failed pass's
+// count included.
 func (s *Sweeper) pruneTarget(ctx context.Context, target Target) (int64, error) {
 	retention := max(s.cfg.Retention, target.MinRetention)
 	var total int64
@@ -123,10 +131,10 @@ func (s *Sweeper) pruneTarget(ctx context.Context, target Target) (int64, error)
 			return total, ctx.Err()
 		}
 		n, err := target.Prune(ctx, retention, s.cfg.BatchLimit)
+		total += n
 		if err != nil {
 			return total, err
 		}
-		total += n
 		if int(n) < s.cfg.BatchLimit {
 			break
 		}

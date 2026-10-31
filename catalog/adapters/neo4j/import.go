@@ -163,6 +163,11 @@ func (i *graphImporter) Import(ctx context.Context, tenantID string, in ports.Re
 	if err != nil {
 		return fmt.Errorf("neo4j: import the graph of tenant %q: %w", tenantID, err)
 	}
+	// InitSchema migrates every tenant's graph, not only this one's, and runs
+	// from the operator's process outside the export gate. That is safe: on a
+	// graph already migrated, which every live tenant's is since catalog runs
+	// it at startup, each of its steps changes nothing, so it touches only the
+	// nodes this import loaded in an older shape.
 	if err := InitSchema(ctx, i.client, i.logger); err != nil {
 		return fmt.Errorf("neo4j: import the graph of tenant %q: %w", tenantID, err)
 	}

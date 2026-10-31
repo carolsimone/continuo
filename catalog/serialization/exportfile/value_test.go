@@ -216,3 +216,72 @@ func TestReader_RefusesALineLongerThanItsLimit(t *testing.T) {
 		t.Errorf("Next of a line under the limit = %v", err)
 	}
 }
+
+// TestWriter_RefusesALineLongerThanAReaderAccepts writes with a small limit,
+// so the test need not build a line of the production size: a record whose
+// line a Reader with the same limit would refuse fails the export, naming
+// the record and its size, and writes nothing; a line at the limit is
+// written and read back. NewWriter and NewReader share maxLineBytes.
+func TestWriter_RefusesALineLongerThanAReaderAccepts(t *testing.T) {
+	if got := NewWriter(&bytes.Buffer{}).limit; got != maxLineBytes {
+		t.Fatalf("NewWriter's limit = %d, want maxLineBytes (%d), the Reader's", got, maxLineBytes)
+	}
+	h := export.Header{
+		FormatVersion: export.FormatVersion, TenantID: "t1", ExportedAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC),
+		CatalogVersion: "x", Nodes: map[string]int64{"NodeVersion": 1}, Relationships: map[string]int64{},
+	}
+	version := func(rawCode string) export.NodeRecord {
+		return export.NodeRecord{Labels: []string{"NodeVersion"}, Props: map[string]any{
+			"tenant_id": "t1", "unique_id": "svc.a", "content_hash": "h", "raw_code": rawCode,
+		}}
+	}
+	const limit = 1024
+
+	var buf bytes.Buffer
+	w := newWriter(&buf, limit)
+	if err := w.WriteHeader(h); err != nil {
+		t.Fatal(err)
+	}
+	written := buf.Len()
+	err := w.WriteNode(version(strings.Repeat("x", 2*limit)))
+	if !errors.Is(err, ErrLineTooLong) {
+		t.Fatalf("WriteNode of a line over the limit = %v, want ErrLineTooLong", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "NodeVersion") || !strings.Contains(msg, "bytes") {
+		t.Errorf("the error %q names neither the record nor its size", msg)
+	}
+	if buf.Len() != written {
+		t.Errorf("the refused line wrote %d bytes", buf.Len()-written)
+	}
+
+	// The node line without raw_code, and the raw_code that fills it to
+	// exactly the limit, newline included.
+	empty := mustLine(t, version(""))
+	atLimit := version(strings.Repeat("x", limit-empty))
+	if err := w.WriteNode(atLimit); err != nil {
+		t.Fatalf("WriteNode of a line at the limit = %v", err)
+	}
+	r, err := newReader(bytes.NewReader(buf.Bytes()), limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Next(); err != nil {
+		t.Errorf("a Reader with the same limit refuses the line the Writer wrote: %v", err)
+	}
+}
+
+// mustLine returns the length, newline included, of n's line.
+func mustLine(t *testing.T, n export.NodeRecord) int {
+	t.Helper()
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	h := export.Header{FormatVersion: export.FormatVersion, TenantID: "t1", ExportedAt: time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC), CatalogVersion: "x"}
+	if err := w.WriteHeader(h); err != nil {
+		t.Fatal(err)
+	}
+	before := buf.Len()
+	if err := w.WriteNode(n); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Len() - before
+}

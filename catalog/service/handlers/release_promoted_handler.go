@@ -46,8 +46,8 @@ func NewReleasePromotedHandler(
 //     message ID. A processed message is acknowledged without reading object
 //     storage.
 //  2. Read the topology artifact, outside any transaction. A checksum
-//     mismatch, an unreadable object or an artifact of another release is
-//     permanent; a missing object or an outage is retried.
+//     mismatch, an unreadable object or an artifact of another release or
+//     another tenant is permanent; a missing object or an outage is retried.
 //  3. In one write transaction, swap the topology through PromoteRelease,
 //     which decides by promotion seq (a redelivered or stale promotion writes
 //     nothing), and record the marker.
@@ -99,6 +99,12 @@ func (h *ReleasePromotedHandler) Handle(
 			"tenant_id", in.TenantID, "release_id", in.ReleaseID, "artifact_release_id", doc.ReleaseID, "uri", in.TopologyURI)
 		return fmt.Errorf("%w: topology artifact %s belongs to release %q, the promotion is of %q",
 			pkgevents.ErrPermanent, in.TopologyURI, doc.ReleaseID, in.ReleaseID)
+	}
+	if doc.TenantID != in.TenantID {
+		h.logger.Error("topology artifact belongs to another tenant — dead-lettering the message",
+			"tenant_id", in.TenantID, "release_id", in.ReleaseID, "artifact_tenant_id", doc.TenantID, "uri", in.TopologyURI)
+		return fmt.Errorf("%w: topology artifact %s belongs to tenant %q, the promotion is of %q",
+			pkgevents.ErrPermanent, in.TopologyURI, doc.TenantID, in.TenantID)
 	}
 	nodes := promotedNodes(doc)
 

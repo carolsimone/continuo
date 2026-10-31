@@ -15,11 +15,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Publisher performs whatever side effects an outbox entry represents.
-// For event-only services (release-controller, remediation, agent-remediation),
-// implementations simply XADD entry.Payload to entry.StreamName. For services
-// with multi-step semantics (execution-controller: K8s deploy + multiple
-// XADDs), the implementation is service-aware.
+// Publisher performs the side effect an outbox entry represents. Every
+// service's publisher XADDs to entry.StreamName the fields its Render
+// (Renderer) returns for the entry, plus an outbox_entry_id that names the
+// entry, one XADD per entry; run-controller's also sends a whole batch in one
+// pipeline (BatchPublisher).
 type Publisher interface {
 	Publish(ctx context.Context, entry *Entry) error
 }

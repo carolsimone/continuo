@@ -378,6 +378,37 @@ func TestPromoteRelease_RetiresNodesWithoutUniqueID(t *testing.T) {
 	assert.Equal(t, []string{"public.new_tbl"}, f.activeIDs())
 }
 
+// A node retired by an earlier promotion is not matched by the retire step
+// of a later one, with or without a unique_id: its retired_at stays the time
+// of its retirement however many promotions leave it out.
+func TestPromoteRelease_ANodeRetiredEarlierKeepsItsRetiredAt(t *testing.T) {
+	f := newSwapFixture(t)
+	f.exec(`CREATE (:Node {tenant_id: $tenant_id, schema_name: 'public', table_name: 'no_id', active: true})`, nil)
+	retiredAt := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	f.promote("rel-1", releaseOf(modelNode("public.a"), modelNode("public.b")), retiredAt.Add(-time.Hour))
+	f.promote("rel-2", releaseOf(modelNode("public.a")), retiredAt)
+
+	noID := func() map[string]any {
+		recs := f.rows(`MATCH (n:Node {tenant_id: $tenant_id, table_name: 'no_id'}) RETURN properties(n) AS p`, nil)
+		require.Len(t, recs, 1)
+		p, _ := recs[0].Get("p")
+		return p.(map[string]any)
+	}
+	for i := range 2 {
+		f.promote(fmt.Sprintf("rel-%d", 3+i), releaseOf(modelNode("public.a")), retiredAt.Add(time.Duration(i+1)*24*time.Hour))
+		for name, props := range map[string]map[string]any{"public.b": f.node("public.b"), "the node with no unique_id": noID()} {
+			assert.Equal(t, false, props["active"], name)
+			got, ok := props["retired_at"].(time.Time)
+			require.True(t, ok, "%s: retired_at is a datetime, got %T", name, props["retired_at"])
+			if name == "public.b" {
+				assert.True(t, retiredAt.Equal(got), "%s: retired_at is the time it was retired, got %v", name, got)
+			} else {
+				assert.True(t, retiredAt.Add(-time.Hour).Equal(got), "%s: retired_at is the time it was retired, got %v", name, got)
+			}
+		}
+	}
+}
+
 // An empty release retires every node of the tenant and still becomes the
 // live promotion.
 func TestPromoteRelease_EmptyReleaseRetiresEveryNodeAndRecordsTheMeta(t *testing.T) {

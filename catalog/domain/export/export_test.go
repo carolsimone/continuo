@@ -137,6 +137,50 @@ func TestNodeRecord_IsLease(t *testing.T) {
 	}
 }
 
+// Every identity property of the schema is text. A node whose identity
+// property holds another value is refused, and a reference by one: the graph
+// compares numbers by value (1 equals 1.0) and NaN equals nothing, so a file
+// such a value passed the check of would fail to load after the wipe.
+func TestNodeRecord_CheckRefusesAnIdentityThatIsNotText(t *testing.T) {
+	cases := map[string]export.NodeRecord{
+		"an integer unique_id":  node([]string{"Node"}, map[string]any{"unique_id": int64(1)}),
+		"a float unique_id":     node([]string{"Node"}, map[string]any{"unique_id": 1.0}),
+		"a NaN content_hash":    node([]string{"NodeVersion"}, map[string]any{"unique_id": "a", "content_hash": math.NaN()}),
+		"a boolean message_id":  node([]string{"ProcessedMessage"}, map[string]any{"group": "g", "message_id": true}),
+		"a datetime key":        node([]string{"Meta"}, map[string]any{"key": time.Unix(0, 0).UTC()}),
+		"a list as unique_id":   node([]string{"Node"}, map[string]any{"unique_id": []any{"a"}}),
+		"a second label's role": node([]string{"Node", "Meta"}, map[string]any{"unique_id": "a", "key": int64(2)}),
+	}
+	for name, n := range cases {
+		if err := n.Check(tenant); !errors.Is(err, export.ErrInvalidRecord) {
+			t.Errorf("%s: Check = %v, want ErrInvalidRecord", name, err)
+		}
+		labels, _ := n.SchemaLabels()
+		for _, l := range labels {
+			if key, ok := n.Identity(l); ok {
+				for _, v := range key {
+					if _, isText := v.(string); !isText {
+						t.Errorf("%s: Identity(%s) = %v, a value that is not text", name, l, key)
+					}
+				}
+			}
+		}
+	}
+	if err := node([]string{"Node"}, map[string]any{"unique_id": "a", "seq": int64(1)}).Check(tenant); err != nil {
+		t.Errorf("a node whose identity is text: Check = %v", err)
+	}
+	for name, r := range map[string]export.NodeRef{
+		"an integer key": ref("Node", int64(1)),
+		"a float key":    ref("Node", 1.0),
+		"a NaN key":      ref("NodeVersion", "a", math.NaN()),
+		"a boolean key":  ref("ProcessedMessage", "g", false),
+	} {
+		if err := r.Check(); !errors.Is(err, export.ErrInvalidRecord) {
+			t.Errorf("%s: Check = %v, want ErrInvalidRecord", name, err)
+		}
+	}
+}
+
 func TestNodeRecord_IdentityFollowsTheSchema(t *testing.T) {
 	n := node([]string{"NodeVersion"}, map[string]any{"content_hash": "h", "unique_id": "a.b", "version_seq": int64(3)})
 	key, ok := n.Identity(graphschema.NodeVersion)

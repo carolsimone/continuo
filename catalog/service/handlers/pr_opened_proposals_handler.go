@@ -92,7 +92,7 @@ func (h *PrOpenedProposalsHandler) Handle(
 		for _, nodeID := range resolved {
 			p := casebase.Proposal{ProposalID: in.ProposalID, ReleaseID: in.ReleaseID, NodeID: nodeID}
 			if err := caseBase.RecordProposal(ctx, tenantID, p, pr); err != nil {
-				return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, nodeID, err)
+				return fmt.Errorf("node %s: %w", nodeID, err)
 			}
 		}
 		return nil
@@ -100,7 +100,7 @@ func (h *PrOpenedProposalsHandler) Handle(
 	if err != nil {
 		// The proposals and the marker roll back together, so the message
 		// replays.
-		return fmt.Errorf("record proposal %s: %w", in.ProposalID, err)
+		return fmt.Errorf("remediation.pr_opened of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
 		h.logger.Info("remediation.pr_opened processed by another delivery of the proposals group meanwhile; acknowledged",

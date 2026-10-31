@@ -3,7 +3,9 @@
 package neo4jinfra
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -184,7 +186,7 @@ func TestMarkerSweeper_SkipsATenantWhoseLeaseIsHeld(t *testing.T) {
 
 	// A holder that crashed leaves a lease that expires on its own.
 	a.seedMarkers("a-later", 2, 2*time.Hour)
-	require.NoError(t, lease.Acquire(ctx, a.tenant, ports.LeaseRestore, "restorer-1", 1500*time.Millisecond))
+	require.NoError(t, lease.Acquire(ctx, a.tenant, ports.LeaseRestore, "restorer-1", 5*time.Second))
 	got, err = sweeper.Prune(ctx, time.Hour, 100)
 	require.NoError(t, err)
 	assert.Zero(t, got, "a live lease protects the tenant")
@@ -283,6 +285,83 @@ func TestMarkerSweeper_WaitsForInFlightWrites(t *testing.T) {
 	}
 	f.requireMarkerIDs("1762077600000-0")
 	f.assertGateUnlocked()
+}
+
+// TestMarkerSweeper_ATenantThatFailsDoesNotStopTheOthers breaks tenant A's
+// lease node (its until is text, so the gate cannot tell whether a lease is
+// held): A's sweep fails and is logged, B's markers go, and the pass returns
+// what it deleted with no error, so the sweeper keeps its count.
+func TestMarkerSweeper_ATenantThatFailsDoesNotStopTheOthers(t *testing.T) {
+	ctx := context.Background()
+	a, b := newUoWFixture(t), newUoWFixture(t)
+	a.seedMarkers("a-old", 2, 2*time.Hour)
+	b.seedMarkers("b-old", 3, 2*time.Hour)
+	a.run(`CREATE (:Meta {tenant_id: $tenant_id, key: 'export', holder: 'broken', until: 'not a time'})`, nil)
+	var logs syncBuffer
+	sweeper := NewMarkerSweeper(a.client, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	got, err := sweeper.Prune(ctx, time.Hour, 1000)
+	require.NoError(t, err, "a tenant's failure is logged, not returned")
+	assert.GreaterOrEqual(t, got, int64(3), "the count holds what the other tenants' sweeps deleted")
+	b.requireMarkerIDs()
+	a.requireMarkerIDs("a-old-1", "a-old-2")
+	assert.Contains(t, logs.String(), "level=ERROR")
+	assert.Contains(t, logs.String(), a.tenant, "the log names the tenant whose sweep failed")
+}
+
+// TestMarkerSweeper_ACancelledPassReturnsTheContextsErrorWithoutAnErrorLog
+// cancels a pass while it waits on a tenant's export gate, which a write of
+// the tenant holds: the pass ends with the context's error and logs no
+// error, as a shutdown does.
+func TestMarkerSweeper_ACancelledPassReturnsTheContextsErrorWithoutAnErrorLog(t *testing.T) {
+	f := newUoWFixture(t)
+	f.seedMarkers("old", 2, 2*time.Hour)
+	var logs syncBuffer
+	sweeper := NewMarkerSweeper(f.client, slog.New(slog.NewTextHandler(&logs, nil)))
+	u := NewUnitOfWork(f.client, quietLogger())
+
+	inFn := make(chan struct{})
+	proceed := make(chan struct{})
+	var release sync.Once
+	letWriteFinish := func() { release.Do(func() { close(proceed) }) }
+	t.Cleanup(letWriteFinish)
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- u.Write(context.Background(), f.marker("1762077600000-0", nil), true, func(context.Context, uow.Tx) error {
+			close(inFn)
+			<-proceed
+			return nil
+		})
+	}()
+	<-inFn
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := sweeper.Prune(ctx, time.Hour, 1000)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.NotContains(t, logs.String(), "level=ERROR", "a cancelled pass logs no error")
+
+	letWriteFinish()
+	require.NoError(t, <-writeDone)
+	f.requireMarkerIDs("1762077600000-0", "old-1", "old-2")
+}
+
+// syncBuffer is a bytes.Buffer safe for the concurrent writes of a logger.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestMarkerSweeper_RefusesAnInvalidSweep(t *testing.T) {

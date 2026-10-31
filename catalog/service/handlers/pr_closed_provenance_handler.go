@@ -103,7 +103,7 @@ func (h *PrClosedProvenanceHandler) Handle(
 	if err != nil {
 		// The outcome and the marker roll back together, so the message
 		// replays.
-		return fmt.Errorf("record pull request outcome %s/%s: %w", in.ReleaseID, in.ProposalID, err)
+		return fmt.Errorf("remediation.pr_closed of release %s: %w", in.ReleaseID, err)
 	}
 	if !wrote {
 		h.logger.Info("remediation.pr_closed processed by another delivery of the provenance group meanwhile; acknowledged",

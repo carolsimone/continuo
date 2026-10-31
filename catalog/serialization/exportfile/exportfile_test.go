@@ -547,3 +547,61 @@ func FuzzValidate(f *testing.F) {
 		}
 	})
 }
+
+// A tampered file can hold what a check of typed text would pass and the
+// graph would refuse after the wipe: a key the graph cannot match (NaN), two
+// identities the graph takes for one (1 and 1.0), or two processed-message
+// markers of one group and outbox entry id, which the graph's uniqueness
+// constraint refuses. Validate refuses each before a restore touches the
+// graph.
+func TestExportfile_ValidateRefusesWhatTheGraphCouldNotLoad(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want error
+	}{
+		"a NaN key": {
+			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"NodeVersion":1},"relationships":{}}` + "\n" +
+				`{"node":["NodeVersion"],"props":{"tenant_id":"t1","unique_id":"a","content_hash":{"$float":"NaN"}}}` + "\n",
+			export.ErrInvalidRecord,
+		},
+		"1 and 1.0 as unique_id": {
+			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":2},"relationships":{}}` + "\n" +
+				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$int":"1"}}}` + "\n" +
+				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":{"$float":"1"}}}` + "\n",
+			export.ErrInvalidRecord,
+		},
+		"a relationship end named by a number": {
+			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"Node":1},"relationships":{"DEPENDS_ON":1}}` + "\n" +
+				`{"node":["Node"],"props":{"tenant_id":"t1","unique_id":"a"}}` + "\n" +
+				`{"rel":"DEPENDS_ON","from":["Node","a"],"to":["Node",{"$float":"1"}],"props":{}}` + "\n",
+			export.ErrInvalidRecord,
+		},
+		"two markers of one outbox entry": {
+			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":2},"relationships":{}}` + "\n" +
+				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":"e1"}}` + "\n" +
+				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"2-0","outbox_entry_id":"e1"}}` + "\n",
+			exportfile.ErrDuplicateNode,
+		},
+		"a marker whose outbox entry id is a number": {
+			`{"format_version":1,"tenant_id":"t1","exported_at":"2026-10-30T02:00:00Z","catalog_version":"x","nodes":{"ProcessedMessage":1},"relationships":{}}` + "\n" +
+				`{"node":["ProcessedMessage"],"props":{"tenant_id":"t1","group":"g","message_id":"1-0","outbox_entry_id":{"$int":"1"}}}` + "\n",
+			export.ErrInvalidRecord,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := exportfile.Validate(strings.NewReader(c.body), tenant); !errors.Is(err, c.want) {
+				t.Errorf("Validate = %v, want %v", err, c.want)
+			}
+		})
+	}
+
+	distinct := write(t, header(map[string]int64{"ProcessedMessage": 3}, nil),
+		node("ProcessedMessage", map[string]any{"group": "g", "message_id": "1-0", "outbox_entry_id": "e1"}),
+		node("ProcessedMessage", map[string]any{"group": "h", "message_id": "1-0", "outbox_entry_id": "e1"}),
+		node("ProcessedMessage", map[string]any{"group": "g", "message_id": "2-0"}),
+	)
+	if _, err := exportfile.Validate(bytes.NewReader(distinct), tenant); err != nil {
+		t.Errorf("markers of one outbox entry in two groups, and one with none: Validate = %v", err)
+	}
+}

@@ -145,8 +145,10 @@ func setVersionWatermark(ctx context.Context, session neo4j.SessionWithContext, 
 }
 
 // untenantedConstraintsCypher lists the uniqueness constraints step 5 drops.
-// The type is UNIQUENESS on older 5.x servers and NODE_PROPERTY_UNIQUENESS
-// (or RELATIONSHIP_PROPERTY_UNIQUENESS) on newer ones.
+// A 5.x server (5.26 included) reports a node's uniqueness constraint as
+// UNIQUENESS and a relationship's as RELATIONSHIP_UNIQUENESS; later servers
+// name them NODE_PROPERTY_UNIQUENESS and RELATIONSHIP_PROPERTY_UNIQUENESS.
+// Every one of those contains UNIQUENESS, which is what the filter matches.
 const untenantedConstraintsCypher = `
 SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties
 WHERE type CONTAINS 'UNIQUENESS'

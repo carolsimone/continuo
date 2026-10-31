@@ -262,14 +262,19 @@ func assertSameSet(t *testing.T, where string, got, want []string) {
 	}
 }
 
-// withoutPrefix returns each token with prefix removed and drops the tokens
-// that do not carry it.
-func withoutPrefix(tokens []string, prefix string) []string {
+// withoutPrefix returns each token with prefix removed. A token without the
+// prefix fails the test, naming where it was read: dropping it would hide a
+// database the list provisions from the comparison.
+func withoutPrefix(t *testing.T, where string, tokens []string, prefix string) []string {
+	t.Helper()
 	var out []string
 	for _, tok := range tokens {
-		if rest, ok := strings.CutPrefix(tok, prefix); ok {
-			out = append(out, rest)
+		rest, ok := strings.CutPrefix(tok, prefix)
+		if !ok {
+			t.Errorf("%s provisions %q, which lacks the %s prefix", where, tok, prefix)
+			continue
 		}
+		out = append(out, rest)
 	}
 	return out
 }
@@ -322,12 +327,12 @@ func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
 		created = append(created, m[1])
 	}
 	assertSameSet(t, "db/init-databases.sh CREATE DATABASE",
-		withoutPrefix(created, "continuo_"), withWarehouse)
+		withoutPrefix(t, "db/init-databases.sh", created, "continuo_"), withWarehouse)
 
 	jobDBs := dbInitLoopDatabases(t, read("deploy/continuo/templates/db-init-migrate-job.yaml"),
 		"deploy/continuo/templates/db-init-migrate-job.yaml")
 	assertSameSet(t, "deploy/continuo/templates/db-init-migrate-job.yaml db-init loop",
-		withoutPrefix(jobDBs, "continuo_"), withWarehouse)
+		withoutPrefix(t, "deploy/continuo/templates/db-init-migrate-job.yaml", jobDBs, "continuo_"), withWarehouse)
 
 	var flyway []string
 	for _, m := range regexp.MustCompile(`-url=jdbc:postgresql://postgres:5432/continuo_(\w+)`).

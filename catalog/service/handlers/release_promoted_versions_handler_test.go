@@ -258,6 +258,39 @@ func TestVersionsHandler_SplitsThePlanIntoBatches(t *testing.T) {
 	assert.True(t, u.isRecorded(marker))
 }
 
+// A release of exactly one or two batches' worth of nodes is written in that
+// many Writes, each full, with the marker on the last: no empty batch trails
+// it, and no node is left out.
+func TestVersionsHandler_WritesExactMultiplesOfTheBatchSize(t *testing.T) {
+	for _, batches := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d nodes", batches*handlers.VersionsBatchSize), func(t *testing.T) {
+			repo := &fakeCodeVersionRepository{res: codeversion.WriteResult{NodeVersionsCreated: 1}}
+			u := newVersionsUnitOfWork(repo)
+			bundle, doc := wideRelease(batches * handlers.VersionsBatchSize)
+			artifacts := &fakeArtifactReader{}
+			in := promotionOf(artifacts, doc, 3)
+			in.CodeBundleURI = versionsBundleURI
+
+			require.NoError(t, newVersionsHandler(u, &fakeBundleReader{bundle: bundle}, artifacts).Handle(context.Background(), "1-0", nil, in))
+
+			marker := versionsMarker("1-0", nil)
+			want := make([]fakeGraphWrite, batches)
+			for i := range want {
+				want[i] = fakeGraphWrite{Marker: marker, Final: i == batches-1}
+			}
+			assert.Equal(t, want, u.writes)
+			require.Len(t, repo.calls, batches)
+			total := 0
+			for i, call := range repo.calls {
+				assert.Len(t, call.In.Nodes, handlers.VersionsBatchSize, "batch %d is full", i)
+				total += len(call.In.Nodes)
+			}
+			assert.Equal(t, batches*handlers.VersionsBatchSize, total, "every node is written once")
+			assert.True(t, u.isRecorded(marker))
+		})
+	}
+}
+
 // A batch that fails ends the message with no marker and writes no later
 // batch; the redelivery writes every batch again and records the marker.
 func TestVersionsHandler_FailedBatchStopsTheMessageWithoutMarker(t *testing.T) {
@@ -506,6 +539,24 @@ func TestVersionsHandler_BundleForAnotherReleaseIsPermanent(t *testing.T) {
 		Handle(context.Background(), "1-0", nil, versionsInput(artifacts))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
+	assert.Empty(t, u.writes)
+}
+
+// An artifact of another tenant than the message's is permanent: no version
+// is written under the message's tenant from another tenant's topology.
+func TestVersionsHandler_ArtifactOfAnotherTenantIsPermanent(t *testing.T) {
+	u := newVersionsUnitOfWork(&fakeCodeVersionRepository{})
+	artifacts := &fakeArtifactReader{}
+	in := versionsInput(artifacts)
+	other := versionsArtifact()
+	other.TenantID = "acme"
+	artifacts.docs[in.TopologyURI] = other
+
+	err := newVersionsHandler(u, &fakeBundleReader{bundle: versionsBundle()}, artifacts).
+		Handle(context.Background(), "1-0", nil, in)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
+	assert.Contains(t, err.Error(), "acme")
 	assert.Empty(t, u.writes)
 }
 

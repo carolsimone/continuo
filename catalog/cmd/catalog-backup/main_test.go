@@ -370,19 +370,52 @@ func TestExport_ConnectFailureIsAnError(t *testing.T) {
 	assert.Contains(t, stderr, "NEO4J_URI")
 }
 
-// restore deletes the tenant's graph, so it refuses to run without --yes: exit
-// 2, and nothing is connected to, let alone wiped.
+// restore deletes the tenant's graph, so it refuses to run without --yes, or
+// with --yes=false: exit 2, and nothing is connected to, let alone wiped.
 func TestRestore_WithoutYesIsUsage(t *testing.T) {
+	for name, args := range map[string][]string{
+		"no --yes":    {"restore", acmeKey},
+		"--yes=false": {"restore", acmeKey, "--yes=false"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+
+			code, stdout, stderr := h.run(t, args...)
+
+			require.Equal(t, exitUsage, code)
+			assert.Empty(t, stdout)
+			assert.Empty(t, h.restorer.keys, "nothing is restored")
+			assert.Zero(t, h.connects, "nothing is connected to")
+			assert.Contains(t, stderr, "--yes")
+			assert.Contains(t, stderr, "acme")
+		})
+	}
+}
+
+// A "--" ends the flags: what follows is positional, even an argument that
+// looks like a flag, so "restore -- KEY --yes" names two keys and confirms
+// nothing, while "restore --yes -- KEY" restores KEY.
+func TestRestore_DoubleDashEndsTheFlags(t *testing.T) {
+	for name, args := range map[string][]string{
+		"--yes after --":         {"restore", "--", acmeKey, "--yes"},
+		"--yes after key and --": {"restore", acmeKey, "--", "--yes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+
+			code, stdout, _ := h.run(t, args...)
+
+			require.Equal(t, exitUsage, code, "--yes after -- is a second key, not the confirmation")
+			assert.Empty(t, stdout)
+			assert.Empty(t, h.restorer.keys)
+			assert.Zero(t, h.connects)
+		})
+	}
+
 	h := newHarness()
-
-	code, stdout, stderr := h.run(t, "restore", acmeKey)
-
-	require.Equal(t, exitUsage, code)
-	assert.Empty(t, stdout)
-	assert.Empty(t, h.restorer.keys, "nothing is restored")
-	assert.Zero(t, h.connects, "nothing is connected to")
-	assert.Contains(t, stderr, "--yes")
-	assert.Contains(t, stderr, "acme")
+	code, _, stderr := h.run(t, "restore", "--yes", "--", acmeKey)
+	require.Equal(t, exitOK, code, stderr)
+	assert.Equal(t, []string{acmeKey}, h.restorer.keys)
 }
 
 // The tenant a restore acts on is the one in the object key, and --yes may

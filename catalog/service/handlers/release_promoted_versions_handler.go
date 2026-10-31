@@ -124,7 +124,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		return fmt.Errorf("load topology artifact %s: %w", in.TopologyURI, err)
 	}
 
-	if err := bundleMatchesTopology(bundle, in.ReleaseID, doc); err != nil {
+	if err := bundleMatchesTopology(bundle, in.TenantID, in.ReleaseID, doc); err != nil {
 		// A document that is not this release's must not be written: doing so
 		// would stamp this release's provenance onto another release's code and
 		// could point :CURRENT at a hash that disagrees with :Node.content_hash.
@@ -202,16 +202,19 @@ func addWriteResults(a, b codeversion.WriteResult) codeversion.WriteResult {
 }
 
 // bundleMatchesTopology checks that the fetched bundle and the topology artifact
-// both describe the release the event promoted. They come from the same parse,
-// so they must agree node by node; a disagreement means a URI resolved to
-// another release's object and the code must not be recorded under this
-// release's provenance.
-func bundleMatchesTopology(b codebundle.Bundle, releaseID string, doc topologyartifact.Document) error {
+// both describe the release the event promoted, and the artifact its tenant.
+// They come from the same parse, so they must agree node by node; a
+// disagreement means a URI resolved to another release's object and the code
+// must not be recorded under this release's provenance.
+func bundleMatchesTopology(b codebundle.Bundle, tenantID, releaseID string, doc topologyartifact.Document) error {
 	if b.ReleaseID != releaseID {
 		return fmt.Errorf("bundle belongs to release %q, event promoted %q", b.ReleaseID, releaseID)
 	}
 	if doc.ReleaseID != releaseID {
 		return fmt.Errorf("topology artifact belongs to release %q, event promoted %q", doc.ReleaseID, releaseID)
+	}
+	if doc.TenantID != tenantID {
+		return fmt.Errorf("topology artifact belongs to tenant %q, event promoted for %q", doc.TenantID, tenantID)
 	}
 	for _, n := range doc.Nodes {
 		bn, ok := b.Nodes[n.UniqueID]

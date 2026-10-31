@@ -196,34 +196,45 @@ func TestLease_RenewByOtherHolderIsLost(t *testing.T) {
 	assert.NotContains(t, f.leaseNode(), "_lock")
 }
 
-// TestLease_ExpiresWhenHolderCrashes takes a one-second lease and never renews
-// it, as an exporter that crashed would leave it. Writes back off until the
-// lease's until passes on the database clock, then land; the crashed holder
-// cannot renew or release a lease another holder took over.
+// TestLease_ExpiresWhenHolderCrashes takes a two-second lease and never
+// renews it, as an exporter that crashed would leave it. While it is live,
+// writes back off and a second holder's Acquire is refused, and the test
+// checks the refusal came before the lease's ttl ran out, so a stall of the
+// test cannot pass it. The second holder then polls until the lease's until
+// passes on the database clock and takes it over; the crashed holder can
+// neither renew nor release it. Once the second holder releases it, writes
+// land.
 func TestLease_ExpiresWhenHolderCrashes(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	u := NewUnitOfWork(f.client, quietLogger())
 	lease := NewExportLease(f.client, quietLogger())
 	probe := func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, "after-expiry") }
+	const ttl = 2 * time.Second
 
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "crashed-exporter", time.Second))
+	start := time.Now()
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "crashed-exporter", ttl))
 	require.ErrorIs(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), uow.ErrWritesPaused)
+	err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute)
+	refusedAfter := time.Since(start)
+	require.ErrorIs(t, err, ports.ErrLeaseHeld, "a live lease, though its holder crashed, is not taken over")
+	require.Less(t, refusedAfter, ttl, "the refusal came while the lease was live, so it proves the lease held")
 
-	time.Sleep(2 * time.Second)
-
-	require.NoError(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), "the expired lease no longer pauses writes")
-	assert.Equal(t, int64(1), f.probes())
-	assert.Equal(t, int64(1), f.markers())
+	require.Eventually(t, func() bool {
+		return lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute) == nil
+	}, 15*time.Second, 100*time.Millisecond, "an expired lease is taken over")
+	assert.GreaterOrEqual(t, time.Since(start), ttl, "the lease was not taken over before it expired")
 
 	assert.ErrorIs(t, lease.Renew(ctx, f.tenant, "crashed-exporter", time.Minute), ports.ErrLeaseLost,
 		"an expired lease cannot be renewed: writes may have landed since it lapsed")
-
-	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-2", time.Minute),
-		"an expired lease is taken over")
 	require.NoError(t, lease.Release(ctx, f.tenant, "crashed-exporter"))
 	assert.Equal(t, "exporter-2", f.leaseNode()["holder"], "a release by the old holder leaves the new lease alone")
-	require.ErrorIs(t, u.Write(ctx, f.marker("1762077700000-0", nil), true, probe), uow.ErrWritesPaused)
+	require.ErrorIs(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), uow.ErrWritesPaused)
+
+	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-2"))
+	require.NoError(t, u.Write(ctx, f.marker("1762077600000-0", nil), true, probe), "a released lease no longer pauses writes")
+	assert.Equal(t, int64(1), f.probes())
+	assert.Equal(t, int64(1), f.markers())
 }
 
 // TestLease_AcquireWaitsForInFlightWrite holds a write's transaction open and

@@ -13,8 +13,9 @@
 // JSON numbers.
 //
 // The Writer and the Reader apply the same checks to every record (those of
-// package export), so a file the Writer completes is one the Reader accepts.
-// Validate reads a whole file before a restore touches the graph.
+// package export) and the same bound on the length of a line (maxLineBytes),
+// so a file the Writer completes is one the Reader accepts. Validate reads a
+// whole file before a restore touches the graph.
 package exportfile
 
 import (
@@ -62,10 +63,15 @@ const (
 	stageRelationships
 )
 
+// ErrLineTooLong means a record encodes to a line longer than a Reader
+// accepts (maxLineBytes): an export that held it could never be restored.
+var ErrLineTooLong = errors.New("exportfile: a record longer than a line may be")
+
 // Writer writes an export file to an io.Writer, one Write per line. It is
 // not safe for concurrent use.
 type Writer struct {
 	w        io.Writer
+	limit    int
 	buf      bytes.Buffer
 	enc      *json.Encoder
 	stage    writerStage
@@ -75,7 +81,11 @@ type Writer struct {
 
 // NewWriter returns a Writer that writes to w.
 func NewWriter(w io.Writer) *Writer {
-	wr := &Writer{w: w}
+	return newWriter(w, maxLineBytes)
+}
+
+func newWriter(w io.Writer, limit int) *Writer {
+	wr := &Writer{w: w, limit: limit}
 	wr.enc = json.NewEncoder(&wr.buf)
 	wr.enc.SetEscapeHTML(false)
 	return wr
@@ -92,7 +102,7 @@ func (w *Writer) WriteHeader(h export.Header) error {
 	if err := h.Check(); err != nil {
 		return err
 	}
-	if err := w.writeLine(headerLine{
+	if err := w.writeLine("the header", headerLine{
 		FormatVersion:  h.FormatVersion,
 		TenantID:       h.TenantID,
 		ExportedAt:     h.ExportedAt.UTC().Format(time.RFC3339Nano),
@@ -126,7 +136,7 @@ func (w *Writer) WriteNode(n export.NodeRecord) error {
 	if err != nil {
 		return fmt.Errorf("node %v: %w", n.Labels, err)
 	}
-	return w.writeLine(nodeLine{Node: n.Labels, Props: props})
+	return w.writeLine(fmt.Sprintf("node %v", n.Labels), nodeLine{Node: n.Labels, Props: props})
 }
 
 // WriteRel writes a relationship.
@@ -152,19 +162,24 @@ func (w *Writer) WriteRel(r export.RelRecord) error {
 	if err != nil {
 		return fmt.Errorf("relationship :%s: %w", r.Type, err)
 	}
-	if err := w.writeLine(relLine{Rel: r.Type, From: from, To: to, Props: props}); err != nil {
+	if err := w.writeLine("relationship :"+r.Type, relLine{Rel: r.Type, From: from, To: to, Props: props}); err != nil {
 		return err
 	}
 	w.stage = stageRelationships
 	return nil
 }
 
-// writeLine encodes v as one line and writes it. A failed write may have
-// written part of the line, so every later call returns its error.
-func (w *Writer) writeLine(v any) error {
+// writeLine encodes v, the record what names, as one line and writes it. A
+// line longer than a Reader accepts is refused before anything is written. A
+// failed write may have written part of the line, so every later call
+// returns its error.
+func (w *Writer) writeLine(what string, v any) error {
 	w.buf.Reset()
 	if err := w.enc.Encode(v); err != nil {
 		return fmt.Errorf("exportfile: encode a line: %w", err)
+	}
+	if n := w.buf.Len(); n > w.limit {
+		return fmt.Errorf("%w: %s encodes to %d bytes, over the %d a line may hold", ErrLineTooLong, what, n, w.limit)
 	}
 	if _, err := w.w.Write(w.buf.Bytes()); err != nil {
 		w.err = fmt.Errorf("exportfile: write a line: %w", err)
