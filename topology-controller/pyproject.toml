@@ -7,13 +7,13 @@ dependencies = [
     "redis>=8.1.0",
     "grpcio>=1.85.0",
     "protobuf>=7.36.2",
-    "boto3>=1.43.119",
+    "boto3>=1.43.120",
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-mock>=3.17.0",
     "grpcio-tools>=1.85.0",
 ]
