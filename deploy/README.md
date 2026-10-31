@@ -18,6 +18,7 @@ reference.
 | Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
 | Release by hand, or try the API on a local install | [Releasing with your own token](#releasing-with-your-own-token) — mint an ID token and call `/api/v1` with it |
 | Control which hosts the assistant and the fix proposer can reach | [Outbound traffic](#outbound-traffic) — the egress proxy and its allowlist |
+| Back up the catalog graph, or restore it after Neo4j is lost | [Catalog backup and restore](continuo/README.md#5-catalog-backup-and-restore) — the nightly export to the bucket, `catalog-backup`, and the S3 actions the export needs |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
 | Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#6-release-flow-and-ci-gates) |
 

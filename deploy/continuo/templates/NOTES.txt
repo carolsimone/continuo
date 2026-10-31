@@ -90,6 +90,15 @@ To run no exports, set catalog.backup.enabled=false.
 
 {{- if .Release.IsUpgrade }}
 
+catalog keeps no Postgres: if your values override services, name catalog's
+entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
+With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init
+container that waits for a database catalog is not allowed to reach (or that
+was never created) and fails after ten minutes, so catalog never starts.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 BREAKING: upgrade through continuo 0.10.0 first. This release drops
 release-controller's inline topology columns, and its database migration
 refuses to run until release-controller 0.10.0 has started once and

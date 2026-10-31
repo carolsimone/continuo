@@ -205,6 +205,16 @@ helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrad
 if grep -qF "$backup_note" "${tmp}/notes-upgrade-backup-off.txt"; then
   echo "FAIL: the upgrade notes carry the catalog backup note although the backup is off"; exit 1
 fi
+# An upgrading operator is told once that catalog's services entry carries no
+# Postgres keys, since a POSTGRES_DB left there renders an init container that
+# never completes; an installing one renders the chart's own entry and is told
+# nothing.
+catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.'
+[ "$(grep -cF "$catalog_postgres_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a services override"; exit 1; }
+if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
+fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
 # start on a level it does not know, so the chart (continuo.logLevel in

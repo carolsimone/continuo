@@ -462,25 +462,26 @@ maintenance:
   enabled: false
 
 databaseInit:
-  # Idempotently creates all 9 databases (including continuo_dbt) before the
+  # Idempotently creates all 8 databases (including continuo_dbt) before the
   # Flyway migrations run. Disable when a DBA pre-creates databases; the
   # connecting user then no longer needs CREATEDB.
   enabled: true
 
 database:
-  # Postgres connection-pool limits for the Go services, published to them as
+  # Postgres connection-pool limits for the Go services that keep a Postgres
+  # database (catalog and egress-proxy keep none), published to them as
   # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
   # each service's own default, sized to how many queries it runs at once
-  # (open/idle: run-controller 20/10, catalog 35/5,
+  # (open/idle: run-controller 20/10,
   # execution-controller 30/5, release-controller 15/5, remediation 10/5,
   # agent-remediation 10/5, agent-chat 20/5, dead-letter-controller 12/5). Each
   # limit is a cap per pod, and the sum of the caps is the worst case: with the
-  # defaults and one replica of each service, 152 pooled connections plus nine
+  # defaults and one replica of each service, 117 pooled connections plus nine
   # LISTEN connections: one in each pod of the six services that run an outbox
   # relay (run-controller, execution-controller, release-controller,
   # remediation, agent-remediation, dead-letter-controller), a second in
   # execution-controller (its dispatcher), and a second and a third in
-  # run-controller (its node lease waker and its cron loop); 161 in all.
+  # run-controller (its node lease waker and its cron loop); 126 in all.
   # Consumers handle one message at a time, so steady-state use is far lower.
   # The LISTEN connections sit outside the pool and need a session-mode path
   # to Postgres. Behind a transaction-mode pooler the relays publish on their
@@ -489,10 +490,9 @@ database:
   # its lease waker's 60 s pass or the attempt reconcile's pass, which grants
   # freed nodes before it looks for stalled runs, and run-controller's cron
   # loop sees a cron edit on its next pass, at most 60 s later.
-  # maxOpenConns applies to every Go service, catalog included, whose 13
-  # consumers need about two connections each: do not set it below about 30,
-  # or handlers that hold a transaction and need a second connection stall
-  # until their deadline. To fit a small Postgres, lower the low-concurrency
+  # maxOpenConns replaces the default of every one of those services at once,
+  # the largest of which is execution-controller's 30: a lower value can leave
+  # a service's handlers waiting for a connection. To fit a small Postgres, lower the low-concurrency
   # services one at a time through their services[].env (DB_MAX_OPEN_CONNS /
   # DB_MAX_IDLE_CONNS), or raise Postgres max_connections.
   # Set the two together: maxIdleConns may not exceed maxOpenConns, and the
