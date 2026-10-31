@@ -13,7 +13,6 @@ import {
 } from './types';
 import {
   DetailMode,
-  GraphState,
   resolveActiveGraph,
   headerDriftLabel,
   groupAttemptsByTask,
@@ -25,6 +24,8 @@ import {
 } from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
+import { useScheduleGraph } from './detail-page/useScheduleGraph';
+import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
 import type { RunStatus } from '../server/generated/vocabulary.gen';
 import { settlesRequest, useActionRequestId } from './request-id';
 import DAGPanel from './DAGPanel';
@@ -44,9 +45,6 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
   else next.add(key);
   return next;
 }
-
-// Past runs shown per page; also bounds the height of the run list.
-const RUNS_PAGE_SIZE = 10;
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -101,14 +99,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [lastRunReadFailed, setLastRunReadFailed] = useState(false);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [graph, setGraph] = useState<ScheduleGraph | null>(null);
-  const [promotionSeq, setPromotionSeq] = useState<number>(0);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  // Past runs load one page at a time; `runsTotal` is the schedule's full run
-  // count (null until the first page arrives).
-  const [runsPage, setRunsPage] = useState(0);
-  const [runsTotal, setRunsTotal] = useState<number | null>(null);
+  const { graph, graphState, promotionSeq } = useScheduleGraph(name, mode);
+  const { runs, runsPage, setRunsPage, runsCount } = useScheduleRuns(name);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The selected run's summary, kept so the header still describes it after
   // paging away from the page it was chosen on.
@@ -117,7 +110,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
-  const [graphState, setGraphState] = useState<GraphState>('loading');
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
   // The trigger button's request id: a press that gets no answer and is
   // repeated for the same schedule, while the page still shows the last run
@@ -146,18 +138,13 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setLastRunReadFailed(false);
     setScheduler(null);
     setTasks([]);
-    setGraph(null);
     setAttempts([]);
-    setRuns([]);
-    setRunsPage(0);
-    setRunsTotal(null);
     setSelectedRunId(null);
     setPinnedRun(null);
     setLiveRunGraph(null);
     setRunGraph(null);
     setSelectedNodeId(null);
     setExpandedServices(new Set());
-    setGraphState('loading');
     if (!name || hintedLastRunId !== undefined) return;
 
     let cancelled = false;
@@ -175,54 +162,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       });
     return () => { cancelled = true; };
   }, [name]);
-
-  useEffect(() => {
-    if (!name) return;
-    let cancelled = false;
-
-    const fetchGraph = () => {
-      fetch(`/api/schedules/${name}/graph`)
-        .then((response) => response.json())
-        .then((data: ScheduleGraph) => {
-          if (cancelled) return;
-          setGraph(data);
-          setGraphState(data.nodes.length > 0 ? 'ready' : 'empty');
-          setPromotionSeq(Number(data.promotion_seq ?? 0));
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setGraph(null);
-          setGraphState('error');
-        });
-    };
-
-    fetchGraph();
-    if (mode === 'latest') {
-      const id = setInterval(fetchGraph, 5000);
-      return () => { cancelled = true; clearInterval(id); };
-    }
-    return () => { cancelled = true; };
-  }, [name, mode]);
-
-  useEffect(() => {
-    if (!name) return;
-    let cancelled = false;
-
-    fetch(`/api/schedules/${name}/runs?limit=${RUNS_PAGE_SIZE}&offset=${runsPage * RUNS_PAGE_SIZE}`)
-      .then((response) => response.json())
-      .then((data: { runs: RunSummary[]; total_count?: number }) => {
-        if (cancelled) return;
-        setRuns(data.runs || []);
-        setRunsTotal(typeof data.total_count === 'number' ? data.total_count : null);
-      })
-      .catch(() => {
-        if (!cancelled) setRuns([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [name, runsPage]);
 
   useEffect(() => {
     if (!lastRunId) return;
@@ -410,7 +349,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const selectedRun = runs.find((run) => run.run_id === selectedRunId)
     ?? (pinnedRun && pinnedRun.run_id === selectedRunId ? pinnedRun : null);
-  const runsCount = runsTotal ?? runs.length;
   const activeGraph: ScheduleGraph | null = resolveActiveGraph({
     mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
