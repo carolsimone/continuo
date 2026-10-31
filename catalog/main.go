@@ -24,8 +24,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/objectstore"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -202,15 +202,15 @@ func main() {
 	// whose export lease is held. It runs every RETENTION_SWEEP_INTERVAL_MINUTES
 	// as a tracked goroutine, so shutdown waits for a sweep in flight.
 	markerSweeper := neo4jinfra.NewMarkerSweeper(neo4jClient, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
+	retentionSweeper := pkgretention.NewSweeper(
+		[]pkgretention.Target{
 			{
 				Name:         "processed_messages",
 				Prune:        markerSweeper.Prune,
 				MinRetention: model.ReplayHorizon,
 			},
 		},
-		pkgoutbox.RetentionConfig{
+		pkgretention.Config{
 			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
 		},

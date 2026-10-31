@@ -11,7 +11,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// scrapeTimeout bounds the Redis and Postgres reads one scrape makes.
+// scrapeTimeout bounds the Redis reads one scrape makes.
 const scrapeTimeout = 2 * time.Second
 
 // Consumers returns the observer every stream consumer of this process reports to.

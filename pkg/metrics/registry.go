@@ -1,7 +1,8 @@
 // Package metrics serves a process's Prometheus metrics on a listener of its
-// own. Every series carries the label service. Consumer lag and outbox backlog
-// are read from Redis and Postgres inside each scrape, so a process nobody
-// scrapes does no metrics I/O.
+// own. Every series carries the label service. Consumer lag is read from
+// Redis inside each scrape, as is any collector a process registers (the
+// outbox backlog of pkg/outbox, for one), so a process nobody scrapes does no
+// metrics I/O.
 package metrics
 
 import (
@@ -20,7 +21,6 @@ type Registry struct {
 	labelled  prometheus.Registerer
 	mu        sync.Mutex
 	consumers *consumerMetrics
-	outbox    *outboxMetrics
 }
 
 // New returns a registry whose series carry service=<service>, with Go

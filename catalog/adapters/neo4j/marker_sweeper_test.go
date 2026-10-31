@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +19,7 @@ import (
 )
 
 // Prune is the retention sweeper's prune function.
-var _ pkgoutbox.PruneFunc = (*MarkerSweeper)(nil).Prune
+var _ pkgretention.PruneFunc = (*MarkerSweeper)(nil).Prune
 
 // seedMarkers creates n processed-message markers of the fixture's tenant,
 // named prefix-1 … prefix-n, each recorded age ago by the database clock, so
@@ -129,13 +129,13 @@ func TestMarkerSweeper_KeepsMarkersWithinTheReplayHorizon(t *testing.T) {
 	f.seedMarkers("forty-days", 1, 40*24*time.Hour)
 	sweeper := NewMarkerSweeper(f.client, quietLogger())
 
-	retention := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{{
+	retention := pkgretention.NewSweeper(
+		[]pkgretention.Target{{
 			Name:         "processed_messages",
 			Prune:        sweeper.Prune,
 			MinRetention: model.ReplayHorizon,
 		}},
-		pkgoutbox.RetentionConfig{Retention: 7 * 24 * time.Hour, Interval: 50 * time.Millisecond},
+		pkgretention.Config{Retention: 7 * 24 * time.Hour, Interval: 50 * time.Millisecond},
 		quietLogger(),
 	)
 	ctx, cancel := context.WithCancel(context.Background())

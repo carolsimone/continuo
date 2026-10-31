@@ -1,37 +1,29 @@
-package metrics
+package outbox
 
 import (
 	"context"
 	"sync"
+	"time"
 
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// metricsScrapeTimeout bounds the backlog reads one scrape makes.
+const metricsScrapeTimeout = 2 * time.Second
 
 // BacklogSource is an outbox processor whose table is read at scrape time.
 type BacklogSource interface {
 	Table() string
-	Backlog(ctx context.Context) (pkgoutbox.Backlog, error)
+	Backlog(ctx context.Context) (Backlog, error)
 }
 
-// Outbox returns the observer every outbox processor of this process reports to.
-func (r *Registry) Outbox() pkgoutbox.Observer {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.outbox == nil {
-		r.outbox = newOutboxMetrics()
-		r.labelled.MustRegister(r.outbox)
-	}
-	return r.outbox
-}
-
-// WatchOutbox reports src's backlog gauges.
-func (r *Registry) WatchOutbox(src BacklogSource) {
-	r.Outbox()
-	r.outbox.add(src)
-}
-
-type outboxMetrics struct {
+// Metrics is the Observer every outbox processor of a process reports to,
+// and the collector of the outbox series: the rows each table published, the
+// publishes that failed, and each watched table's backlog, read from the
+// database inside each scrape. A process builds one, on its registry, and
+// only a process with an outbox does.
+type Metrics struct {
 	published    *prometheus.CounterVec
 	failures     *prometheus.CounterVec
 	backlog      *prometheus.Desc
@@ -42,8 +34,14 @@ type outboxMetrics struct {
 	sources []BacklogSource
 }
 
-func newOutboxMetrics() *outboxMetrics {
-	return &outboxMetrics{
+var _ Observer = (*Metrics)(nil)
+
+// NewMetrics registers continuo_outbox_published_total,
+// continuo_outbox_publish_failures_total, continuo_outbox_backlog,
+// continuo_outbox_oldest_open_age_seconds and continuo_outbox_dead_letters
+// on reg, each labelled by table.
+func NewMetrics(reg *metrics.Registry) *Metrics {
+	m := &Metrics{
 		published: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_outbox_published_total", Help: "Outbox rows published.",
 		}, []string{"table"}),
@@ -55,20 +53,27 @@ func newOutboxMetrics() *outboxMetrics {
 		oldest:       prometheus.NewDesc("continuo_outbox_oldest_open_age_seconds", "Age of the oldest pending or scheduled row.", []string{"table"}, nil),
 		deadLettered: prometheus.NewDesc("continuo_outbox_dead_letters", "Outbox rows parked as failed.", []string{"table"}, nil),
 	}
+	reg.Register(m)
+	return m
 }
 
-func (m *outboxMetrics) add(src BacklogSource) {
+// Watch reports src's backlog gauges.
+func (m *Metrics) Watch(src BacklogSource) {
 	m.mu.Lock()
 	m.sources = append(m.sources, src)
 	m.mu.Unlock()
 }
 
-func (m *outboxMetrics) Published(table string, rows int) {
+// Published implements Observer.
+func (m *Metrics) Published(table string, rows int) {
 	m.published.WithLabelValues(table).Add(float64(rows))
 }
-func (m *outboxMetrics) Failed(table, kind string) { m.failures.WithLabelValues(table, kind).Inc() }
 
-func (m *outboxMetrics) Describe(ch chan<- *prometheus.Desc) {
+// Failed implements Observer.
+func (m *Metrics) Failed(table, kind string) { m.failures.WithLabelValues(table, kind).Inc() }
+
+// Describe implements prometheus.Collector.
+func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 	m.published.Describe(ch)
 	m.failures.Describe(ch)
 	ch <- m.backlog
@@ -76,13 +81,15 @@ func (m *outboxMetrics) Describe(ch chan<- *prometheus.Desc) {
 	ch <- m.deadLettered
 }
 
-func (m *outboxMetrics) Collect(ch chan<- prometheus.Metric) {
+// Collect implements prometheus.Collector. A table whose backlog cannot be
+// read within the scrape's bound omits its gauges.
+func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 	m.published.Collect(ch)
 	m.failures.Collect(ch)
 	m.mu.Lock()
 	sources := append([]BacklogSource(nil), m.sources...)
 	m.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), scrapeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), metricsScrapeTimeout)
 	defer cancel()
 	for _, src := range sources {
 		b, err := src.Backlog(ctx)

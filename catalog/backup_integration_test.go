@@ -576,8 +576,10 @@ func (s *countingObjects) OpenWriter(context.Context, objectstore.Ref, string) (
 func (s *countingObjects) GetStream(context.Context, objectstore.Ref) (io.ReadCloser, error) {
 	return nil, errors.New("countingObjects keeps nothing")
 }
-func (s *countingObjects) List(context.Context, string) ([]objectstore.Object, error) { return nil, nil }
-func (s *countingObjects) Delete(context.Context, objectstore.Ref) error              { return nil }
+func (s *countingObjects) List(context.Context, string) ([]objectstore.Object, error) {
+	return nil, nil
+}
+func (s *countingObjects) Delete(context.Context, objectstore.Ref) error { return nil }
 
 type countingWriter struct{ objects *countingObjects }
 

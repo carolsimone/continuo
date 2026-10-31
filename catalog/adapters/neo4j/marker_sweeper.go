@@ -56,7 +56,7 @@ RETURN count(*) AS deleted`
 // skipped. A tenant whose sweep fails does not stop the others; the errors
 // come back together with the count of what was deleted.
 //
-// It is a pkgoutbox.PruneFunc, so the retention sweeper calls it in a loop
+// It is a retention.PruneFunc (pkg/retention), so the sweeper calls it in a loop
 // until a pass deletes fewer than limit.
 func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	retentionMs := retention.Milliseconds()

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -93,35 +95,64 @@ func TestMain_ProbesRedisAndNeo4j(t *testing.T) {
 }
 
 // TestMain_ImportsNoSQLPackage pins that catalog keeps all of its state in
-// Neo4j: main.go imports no SQL connection and no message-processing dedup
-// table, and it takes nothing from pkg/outbox but the retention sweeper's
-// runner (see TestMain_SweepsProcessedMessageMarkers).
+// Neo4j: main.go imports no SQL connection, no SQL driver, no
+// message-processing dedup table and no transactional outbox. The retention
+// sweeper it runs comes from pkg/retention, which holds no database code
+// (see TestMain_SweepsProcessedMessageMarkers).
 func TestMain_ImportsNoSQLPackage(t *testing.T) {
+	banned := []string{
+		"database/sql",
+		"github.com/jmoiron/sqlx",
+		"github.com/lib/pq",
+		"github.com/carolsimone/continuo/pkg/db",
+		"github.com/carolsimone/continuo/pkg/messageprocessing",
+		"github.com/carolsimone/continuo/pkg/outbox",
+	}
 	for _, imp := range parseMain(t).Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		for _, banned := range []string{"/pkg/db", "/pkg/messageprocessing"} {
-			if strings.HasSuffix(path, banned) {
-				t.Fatalf("main.go imports %s", path)
-			}
+		if slices.Contains(banned, path) {
+			t.Errorf("main.go imports %s", path)
 		}
 	}
+}
 
-	outboxNames := map[string]bool{}
-	ast.Inspect(parseMain(t), func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok {
-			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "pkgoutbox" {
-				outboxNames[sel.Sel.Name] = true
+// postgresPackages are the packages that link a Postgres connection into a
+// binary: the two SQL drivers the services use (sqlx and lib/pq, with their
+// subpackages) and this repository's Postgres-backed packages, the connection
+// helper and the transactional outbox. The standard library's database/sql is
+// not among them: it opens no connection by itself, and packages catalog
+// needs link it whatever catalog does (google/uuid's Scan and the database
+// statistics collector of prometheus/client_golang).
+var postgresPackages = []string{
+	"github.com/jmoiron/sqlx",
+	"github.com/lib/pq",
+	"github.com/carolsimone/continuo/pkg/db",
+	"github.com/carolsimone/continuo/pkg/outbox",
+}
+
+// TestMain_LinksNoSQLDriver pins that no package catalog's binary links, its
+// own or a dependency's, is a SQL driver or a Postgres-backed package of this
+// repository: catalog keeps no Postgres, so a shared package that pulls one
+// in is in the wrong place. It reads the transitive closure from
+// `go list -deps` and fails, never skips, when go cannot run.
+func TestMain_LinksNoSQLDriver(t *testing.T) {
+	cmd := exec.Command("go", "list", "-deps", ".")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -deps .: %v\n%s", err, stderr.String())
+	}
+	deps := strings.Fields(string(out))
+	if !slices.Contains(deps, "github.com/carolsimone/continuo/pkg/retention") {
+		t.Fatalf("go list -deps . does not list pkg/retention, which main.go runs: the closure it read is not catalog's (%d packages)", len(deps))
+	}
+	for _, dep := range deps {
+		for _, banned := range postgresPackages {
+			if dep == banned || strings.HasPrefix(dep, banned+"/") {
+				t.Errorf("catalog links %s", dep)
 			}
 		}
-		return true
-	})
-	got := make([]string, 0, len(outboxNames))
-	for name := range outboxNames {
-		got = append(got, name)
-	}
-	slices.Sort(got)
-	if want := []string{"NewRetentionSweeper", "RetentionConfig", "RetentionTarget"}; !slices.Equal(got, want) {
-		t.Fatalf("main.go uses pkg/outbox names %v, want only the retention sweeper %v", got, want)
 	}
 }
 
@@ -144,7 +175,7 @@ func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 			return true
 		}
 		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		if !ok || !isSelector(call.Fun, "pkgoutbox", "NewRetentionSweeper") {
+		if !ok || !isSelector(call.Fun, "pkgretention", "NewSweeper") {
 			return true
 		}
 		build = call
@@ -154,7 +185,7 @@ func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 		return false
 	})
 	if build == nil || sweeper == "" || len(build.Args) != 3 {
-		t.Fatal("main.go does not assign pkgoutbox.NewRetentionSweeper(targets, config, logger) to a variable")
+		t.Fatal("main.go does not assign pkgretention.NewSweeper(targets, config, logger) to a variable")
 	}
 
 	targets, ok := build.Args[0].(*ast.CompositeLit)
@@ -174,7 +205,7 @@ func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 
 	config, ok := build.Args[1].(*ast.CompositeLit)
 	if !ok {
-		t.Fatal("the retention sweeper's config must be a pkgoutbox.RetentionConfig literal")
+		t.Fatal("the retention sweeper's config must be a pkgretention.Config literal")
 	}
 	cfg := fields(config)
 	if !mentionsSelector(cfg["Retention"], "cfg", "RetentionDays") {

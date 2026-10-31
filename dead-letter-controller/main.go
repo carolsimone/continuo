@@ -26,6 +26,7 @@ import (
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -209,15 +210,16 @@ func main() {
 	// Closing the listener can wait on a connection attempt in progress, so the
 	// handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
+	outboxMetrics := pkgoutbox.NewMetrics(metricsReg)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
 		postgres.OutboxTable,
 		redisadapter.NewRedrivePublisher(redisClient),
 		nil, // terminal failures dead-letter through the processor's built-in writer
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: outboxMetrics},
 	)
-	metricsReg.WatchOutbox(outboxProc)
+	outboxMetrics.Watch(outboxProc)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
 		return outboxProc.Healthy(outboxHeartbeatStale)
@@ -235,9 +237,9 @@ func main() {
 
 	// Retention sweeper — prunes processed dead_letter_outbox rows past the
 	// retention window so the table does not grow unbounded.
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger)},
-		pkgoutbox.RetentionConfig{},
+	retentionSweeper := pkgretention.NewSweeper(
+		[]pkgretention.Target{pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger)},
+		pkgretention.Config{},
 		logger,
 	)
 	go retentionSweeper.Run(ctx)
