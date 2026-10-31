@@ -1,9 +1,7 @@
 package backup
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -55,9 +53,12 @@ type fakeLease struct {
 	held       map[string]string // tenant -> holder
 	calls      []leaseCall
 	acquireErr error
-	renewErr   func(n int) error // n counts the Renew calls, from 1
-	releaseErr error
-	renews     int
+	// acquireCommitsThenFails, when set, makes Acquire take the lease and
+	// then return it, as an Acquire whose answer was lost after its commit.
+	acquireCommitsThenFails error
+	renewErr                func(n int) error // n counts the Renew calls, from 1
+	releaseErr              error
+	renews                  int
 	// onAcquire, when set, runs as Acquire is called.
 	onAcquire func()
 	// renewBlocks makes every Renew wait until its context ends, as a
@@ -83,7 +84,7 @@ func (l *fakeLease) Acquire(_ context.Context, tenantID string, kind ports.Lease
 		return fmt.Errorf("tenant %q: %w", tenantID, ports.ErrLeaseHeld)
 	}
 	l.held[tenantID] = holder
-	return nil
+	return l.acquireCommitsThenFails
 }
 
 func (l *fakeLease) Renew(ctx context.Context, tenantID, holder string, ttl time.Duration) error {
@@ -211,43 +212,126 @@ func smallGraph(n int) fakeGraph {
 	}}
 }
 
-// fakeStore is a BackupStore in memory. Each error field, when set, is what
-// that call returns; deleteErr is per key.
+// fakeKey is the key a fakeStore gives tenantID's export taken at at: the
+// fake lays out its keys its own way, as the service never reads one.
+func fakeKey(tenantID string, at time.Time) string {
+	return tenantID + "@" + at.UTC().Format(fakeKeyTime)
+}
+
+const fakeKeyTime = "20060102T150405Z"
+
+// storedExport is one export a fakeStore holds: its header and its records,
+// in the order they were written, and the size Close reported.
+type storedExport struct {
+	header  export.Header
+	records []any
+	size    int64
+}
+
+// fakeStore is a BackupStore in memory, holding records. Each error field,
+// when set, is what that call returns; deleteErr is per key.
 type fakeStore struct {
-	mu        sync.Mutex
-	objects   map[string][]byte
-	writers   []*fakeWriter
-	reads     []string
-	deleted   []string
-	lists     int
-	openErr   error
-	listErr   error
-	readErr   func(n int) error // n counts the Read calls, from 1
-	deleteErr map[string]error
-	// writer configures each writer Open returns.
-	writer func(w *fakeWriter)
+	mu          sync.Mutex
+	exports     map[string]storedExport
+	sinks       []*fakeSink
+	sources     []*fakeSource
+	reads       []string // the keys Validate and OpenRead read, in order
+	deleted     []string
+	lists       int
+	openErr     error
+	listErr     error
+	validateErr error
+	readErr     func(n int) error // n counts the reads, from 1
+	deleteErr   map[string]error
+	// sink configures each sink Open returns.
+	sink func(s *fakeSink)
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{objects: map[string][]byte{}, deleteErr: map[string]error{}}
+	return &fakeStore{exports: map[string]storedExport{}, deleteErr: map[string]error{}}
 }
 
-func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.BackupWriter, string, error) {
-	key, err := export.ObjectKey(tenantID, at)
+func (s *fakeStore) Locate(key string) (string, time.Time, error) {
+	tenantID, stamp, ok := strings.Cut(key, "@")
+	if !ok || tenantID == "" {
+		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotAnExportKey, key)
+	}
+	at, err := time.Parse(fakeKeyTime, stamp)
 	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: %q", ports.ErrNotAnExportKey, key)
+	}
+	return tenantID, at, nil
+}
+
+func (s *fakeStore) CheckTenant(tenantID string) error {
+	if tenantID == "" || strings.Contains(tenantID, "@") {
+		return fmt.Errorf("%w: %q", ports.ErrInvalidTenant, tenantID)
+	}
+	return nil
+}
+
+func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
+	if err := s.CheckTenant(tenantID); err != nil {
 		return nil, "", err
 	}
+	key := fakeKey(tenantID, at)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.openErr != nil {
 		return nil, "", s.openErr
 	}
-	w := &fakeWriter{store: s, key: key, ctx: ctx}
-	if s.writer != nil {
-		s.writer(w)
+	w := &fakeSink{store: s, key: key, ctx: ctx}
+	if s.sink != nil {
+		s.sink(w)
 	}
-	s.writers = append(s.writers, w)
+	s.sinks = append(s.sinks, w)
 	return w, key, nil
+}
+
+// read records a read of key and returns the export stored there.
+func (s *fakeStore) read(key string) (storedExport, error) {
+	if _, _, err := s.Locate(key); err != nil {
+		return storedExport{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads = append(s.reads, key)
+	if s.readErr != nil {
+		if err := s.readErr(len(s.reads)); err != nil {
+			return storedExport{}, err
+		}
+	}
+	e, ok := s.exports[key]
+	if !ok {
+		return storedExport{}, fmt.Errorf("%w: %s", ports.ErrBackupNotFound, key)
+	}
+	return e, nil
+}
+
+func (s *fakeStore) OpenRead(_ context.Context, key string) (ports.ExportSource, error) {
+	e, err := s.read(key)
+	if err != nil {
+		return nil, err
+	}
+	src := &fakeSource{header: e.header, records: slices.Clone(e.records)}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sources = append(s.sources, src)
+	return src, nil
+}
+
+func (s *fakeStore) Validate(_ context.Context, key, tenantID string) (export.Header, error) {
+	e, err := s.read(key)
+	if err != nil {
+		return export.Header{}, err
+	}
+	if s.validateErr != nil {
+		return export.Header{}, s.validateErr
+	}
+	if e.header.TenantID != tenantID {
+		return export.Header{}, fmt.Errorf("the export is of tenant %q, not %q: %w", e.header.TenantID, tenantID, export.ErrTenantMismatch)
+	}
+	return e.header, nil
 }
 
 func (s *fakeStore) List(_ context.Context, tenantID string) ([]ports.BackupObject, error) {
@@ -257,34 +341,16 @@ func (s *fakeStore) List(_ context.Context, tenantID string) ([]ports.BackupObje
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	prefix, err := export.ObjectPrefix(tenantID)
-	if err != nil {
-		return nil, err
-	}
 	var out []ports.BackupObject
-	for _, key := range slices.Sorted(maps.Keys(s.objects)) {
-		if strings.HasPrefix(key, prefix) {
-			out = append(out, ports.BackupObject{Key: key, Size: int64(len(s.objects[key]))})
+	for key, e := range s.exports {
+		owner, at, err := s.Locate(key)
+		if err != nil || owner != tenantID {
+			continue
 		}
+		out = append(out, ports.BackupObject{Key: key, TenantID: owner, TakenAt: at, Size: e.size})
 	}
-	slices.Reverse(out)
+	slices.SortFunc(out, func(a, b ports.BackupObject) int { return b.TakenAt.Compare(a.TakenAt) })
 	return out, nil
-}
-
-func (s *fakeStore) Read(_ context.Context, key string) (io.ReadCloser, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reads = append(s.reads, key)
-	if s.readErr != nil {
-		if err := s.readErr(len(s.reads)); err != nil {
-			return nil, err
-		}
-	}
-	body, ok := s.objects[key]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ports.ErrBackupNotFound, key)
-	}
-	return io.NopCloser(bytes.NewReader(bytes.Clone(body))), nil
 }
 
 func (s *fakeStore) Delete(_ context.Context, key string) error {
@@ -294,49 +360,71 @@ func (s *fakeStore) Delete(_ context.Context, key string) error {
 		return err
 	}
 	s.deleted = append(s.deleted, key)
-	delete(s.objects, key)
+	delete(s.exports, key)
 	return nil
 }
 
-func (s *fakeStore) put(key string, body []byte) {
+// put stores an export of tenantID taken at at holding n :Node nodes and a
+// chain of n-1 relationships, and returns its key.
+func (s *fakeStore) put(tenantID string, at time.Time, n int) string {
+	key := fakeKey(tenantID, at)
+	h := header(tenantID, int64(n), int64(max(n-1, 0)))
+	h.ExportedAt = at
+	var records []any
+	for i := range n {
+		records = append(records, node(tenantID, i))
+	}
+	for i := 1; i < n; i++ {
+		records = append(records, dependsOn(i, i-1))
+	}
+	s.putExport(key, storedExport{header: h, records: records, size: int64(len(records))})
+	return key
+}
+
+func (s *fakeStore) putExport(key string, e storedExport) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.objects[key] = body
+	s.exports[key] = e
 }
 
 func (s *fakeStore) keys() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Sorted(maps.Keys(s.objects))
+	return slices.Sorted(maps.Keys(s.exports))
 }
 
-func (s *fakeStore) object(key string) ([]byte, bool) {
+func (s *fakeStore) stored(key string) (storedExport, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.objects[key]
-	return b, ok
+	e, ok := s.exports[key]
+	return e, ok
 }
 
-func (s *fakeStore) lastWriter() *fakeWriter {
+func (s *fakeStore) lastSink() *fakeSink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.writers) == 0 {
+	if len(s.sinks) == 0 {
 		return nil
 	}
-	return s.writers[len(s.writers)-1]
+	return s.sinks[len(s.sinks)-1]
 }
 
-// fakeWriter is the BackupWriter of a fakeStore: it stores its bytes at Close.
-// writeErr, closeErr and abortErr, when set, are what those calls return;
-// onWrite, when set, runs before each Write; blockWrites makes every Write
-// wait until the context the writer was opened with ends, as an upload to a
-// store that never answers does.
-type fakeWriter struct {
+// fakeSinkRecordBytes is the size a fakeSink gives each record it stores.
+const fakeSinkRecordBytes = 100
+
+// fakeSink is the ExportSink of a fakeStore: it stores its records at Close,
+// with a size of fakeSinkRecordBytes per record. writeErr, closeErr and
+// abortErr, when set, are what those calls return; onWrite, when set, runs
+// before each record; blockWrites makes every record wait until the context
+// the sink was opened with ends, as a write to a store that never answers
+// does.
+type fakeSink struct {
 	store       *fakeStore
 	key         string
 	ctx         context.Context
 	blockWrites bool
-	buf         bytes.Buffer
+	header      export.Header
+	records     []any
 	closed      bool
 	aborted     bool
 	aborts      int
@@ -346,36 +434,46 @@ type fakeWriter struct {
 	onWrite     func()
 }
 
-func (w *fakeWriter) Write(p []byte) (int, error) {
+func (w *fakeSink) write(rec any) error {
 	if w.onWrite != nil {
 		w.onWrite()
 	}
 	if w.blockWrites {
 		<-w.ctx.Done()
-		return 0, w.ctx.Err()
+		return w.ctx.Err()
 	}
 	if w.closed || w.aborted {
-		return 0, errors.New("fakeWriter: write after Close or Abort")
+		return fmt.Errorf("%w: %s", ports.ErrExportClosed, w.key)
 	}
 	if w.writeErr != nil {
-		return 0, w.writeErr
+		return w.writeErr
 	}
-	return w.buf.Write(p)
-}
-
-func (w *fakeWriter) Close() error {
-	if w.closed || w.aborted {
-		return errors.New("fakeWriter: Close after Close or Abort")
+	if h, ok := rec.(export.Header); ok {
+		w.header = h
+		return nil
 	}
-	if w.closeErr != nil {
-		return w.closeErr
-	}
-	w.closed = true
-	w.store.put(w.key, bytes.Clone(w.buf.Bytes()))
+	w.records = append(w.records, rec)
 	return nil
 }
 
-func (w *fakeWriter) Abort() error {
+func (w *fakeSink) WriteHeader(h export.Header) error   { return w.write(h) }
+func (w *fakeSink) WriteNode(n export.NodeRecord) error { return w.write(n) }
+func (w *fakeSink) WriteRel(r export.RelRecord) error   { return w.write(r) }
+
+func (w *fakeSink) Close() (int64, error) {
+	if w.closed || w.aborted {
+		return 0, fmt.Errorf("%w: %s", ports.ErrExportClosed, w.key)
+	}
+	if w.closeErr != nil {
+		return 0, w.closeErr
+	}
+	w.closed = true
+	size := int64(fakeSinkRecordBytes * (len(w.records) + 1))
+	w.store.putExport(w.key, storedExport{header: w.header, records: slices.Clone(w.records), size: size})
+	return size, nil
+}
+
+func (w *fakeSink) Abort() error {
 	w.aborts++
 	if w.closed {
 		return nil
@@ -384,6 +482,30 @@ func (w *fakeWriter) Abort() error {
 		return w.abortErr
 	}
 	w.aborted = true
+	return nil
+}
+
+// fakeSource is the ExportSource of a fakeStore: it hands back the records of
+// a stored export.
+type fakeSource struct {
+	header  export.Header
+	records []any
+	closed  bool
+}
+
+func (s *fakeSource) Header() export.Header { return s.header }
+
+func (s *fakeSource) Next() (any, error) {
+	if len(s.records) == 0 {
+		return nil, io.EOF
+	}
+	rec := s.records[0]
+	s.records = s.records[1:]
+	return rec, nil
+}
+
+func (s *fakeSource) Close() error {
+	s.closed = true
 	return nil
 }
 

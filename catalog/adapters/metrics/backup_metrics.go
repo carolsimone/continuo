@@ -20,8 +20,9 @@ const (
 	// last-success gauge, so frequent scrapes list the store at most once a
 	// minute.
 	lastSuccessCacheFor = time.Minute
-	// lastSuccessReadTimeout bounds one read of the tenants and their exports.
-	lastSuccessReadTimeout = 10 * time.Second
+	// lastSuccessReadTimeout bounds one read of the tenants and their
+	// exports, well under Prometheus's default scrape timeout of 10 s.
+	lastSuccessReadTimeout = 5 * time.Second
 )
 
 // BackupMetrics counts the exports this process runs, by outcome, and
@@ -91,8 +92,10 @@ func (m *BackupMetrics) ExportObserved(outcome string, d time.Duration, bytes in
 
 // lastSuccess is the collector of the last-success gauge. A scrape reads the
 // tenants and each tenant's exports at most once per lastSuccessCacheFor; a
-// read that fails is logged and the last value stays. With no tenant, or no
-// read that succeeded yet, the gauge has no sample.
+// read that fails is logged and the last value stays. The read holds no lock,
+// so a scrape that comes while another one reads serves the last value at
+// once instead of waiting. With no tenant, or no read that succeeded yet, the
+// gauge has no sample.
 type lastSuccess struct {
 	desc    *prometheus.Desc
 	store   ports.BackupStore
@@ -110,18 +113,31 @@ func (c *lastSuccess) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
 
 func (c *lastSuccess) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if now := c.clock(); c.readAt.IsZero() || now.Sub(c.readAt) >= lastSuccessCacheFor {
+	now := c.clock()
+	due := c.readAt.IsZero() || now.Sub(c.readAt) >= lastSuccessCacheFor
+	if due {
+		// Taking the read's turn before the lock is let go keeps every other
+		// scrape of the next minute from reading too.
 		c.readAt = now
+	}
+	c.mu.Unlock()
+
+	if due {
 		value, known, err := c.read()
+		c.mu.Lock()
 		if err != nil {
 			c.logger.Warn("the last catalog export could not be read from object storage; its gauge keeps the last value", "error", err)
 		} else {
 			c.value, c.known = value, known
 		}
+		c.mu.Unlock()
 	}
-	if c.known {
-		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, c.value)
+
+	c.mu.Lock()
+	value, known := c.value, c.known
+	c.mu.Unlock()
+	if known {
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, value)
 	}
 }
 

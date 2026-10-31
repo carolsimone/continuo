@@ -9,7 +9,6 @@
 package backup
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -19,7 +18,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/google/uuid"
 )
@@ -35,28 +33,27 @@ const (
 	// releaseTimeout bounds the release of a lease, which runs even when the
 	// work's context was cancelled.
 	releaseTimeout = 10 * time.Second
-	// stallLimit is how long an export or a restore may move no record and
-	// no byte, counted afresh at the start of each of its steps, before it is
-	// stopped: a holder that is stuck pauses the tenant's writes no longer
-	// than one that crashed.
+	// stallLimit is how long an export or a restore may move no record,
+	// counted afresh at the start of each of its steps, before it is stopped:
+	// a holder that is stuck pauses the tenant's writes no longer than one
+	// that crashed.
 	stallLimit = leaseTTL
 	// renewTimeout bounds one renewal, so a database that never answers does
 	// not keep the stall from being noticed.
 	renewTimeout = 10 * time.Second
 )
 
-// ErrStalled means an export or a restore moved no record and no byte for
-// stallLimit and was stopped, so its lease does not keep pausing the
-// tenant's writes.
-var ErrStalled = errors.New("no record or byte moved for the stall limit")
+// ErrStalled means an export or a restore moved no record for stallLimit and
+// was stopped, so its lease does not keep pausing the tenant's writes.
+var ErrStalled = errors.New("no record moved for the stall limit")
 
 // ErrSkipped means the export or restore did not start: another export or a
 // restore holds the tenant's lease.
 var ErrSkipped = errors.New("another export or restore holds the tenant's lease")
 
-// Result is one stored export: its key, the size of the object, the records
-// it holds and how long it held the tenant's lease, the time the tenant's
-// writes were paused.
+// Result is one stored export: its key, the size the store keeps, the
+// records it holds and how long it held the tenant's lease, the time the
+// tenant's writes were paused.
 type Result struct {
 	ObjectKey     string
 	Bytes         int64
@@ -65,8 +62,8 @@ type Result struct {
 	Duration      time.Duration
 }
 
-// Exporter exports one tenant's graph at a time as a gzipped export file,
-// streamed to the backup store, and keeps the tenant's newest exports.
+// Exporter exports one tenant's graph at a time, streaming its records into
+// the backup store, and keeps the tenant's newest exports.
 type Exporter struct {
 	keeper  leaseKeeper
 	graph   ports.GraphExporter
@@ -78,7 +75,7 @@ type Exporter struct {
 }
 
 // NewExporter returns an Exporter that keeps the newest keep exports of each
-// tenant. clock names each export's object.
+// tenant. clock dates each export.
 func NewExporter(lease ports.ExportLease, graph ports.GraphExporter, store ports.BackupStore, metrics ports.BackupMetrics, keep int, clock func() time.Time, logger *slog.Logger) *Exporter {
 	return &Exporter{
 		keeper: newLeaseKeeper(lease, logger),
@@ -86,12 +83,12 @@ func NewExporter(lease ports.ExportLease, graph ports.GraphExporter, store ports
 	}
 }
 
-// ExportTenant exports tenantID's graph. It opens the object first, so a
+// ExportTenant exports tenantID's graph. It opens the export first, so a
 // store that refuses writes fails the export before the tenant's writes are
-// paused; then it takes the tenant's export lease, streams the graph through
-// gzip into the object, confirms the lease is still held, completes the
-// object and releases the lease. A held lease skips the export
-// (ErrSkipped). Any failure aborts the upload, so nothing is stored, and
+// paused; then it takes the tenant's export lease, streams the graph's
+// records into the export, confirms the lease is still held, completes the
+// export and releases the lease. A held lease skips the export
+// (ErrSkipped). Any failure aborts the export, so nothing is stored, and
 // releases the lease. After a stored export it deletes the tenant's exports
 // beyond the newest keep. Every export is logged and observed with its
 // outcome.
@@ -119,8 +116,8 @@ func (e *Exporter) ExportTenant(ctx context.Context, tenantID string) (Result, e
 }
 
 func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) {
-	// The object is opened with the work's context, so a stall or a lost
-	// lease that cancels it also ends an upload the store never answers.
+	// The export is opened with the work's context, so a stall or a lost
+	// lease that cancels it also ends a write the store never answers.
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	w, key, err := e.store.Open(workCtx, tenantID, e.clock())
@@ -128,17 +125,12 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 		return Result{}, fmt.Errorf("open the export of tenant %q: %w", tenantID, err)
 	}
 	holder := newHolder(ports.LeaseExport)
-	if err := e.keeper.lease.Acquire(workCtx, tenantID, ports.LeaseExport, holder, e.keeper.ttl); err != nil {
-		if errors.Is(err, ports.ErrLeaseHeld) {
-			err = fmt.Errorf("export of tenant %q: %w", tenantID, ErrSkipped)
-		} else {
-			err = fmt.Errorf("take the export lease of tenant %q: %w", tenantID, err)
-		}
-		return Result{}, errors.Join(err, e.abort(w, key))
+	if err := e.keeper.acquire(workCtx, tenantID, ports.LeaseExport, holder); err != nil {
+		return Result{}, errors.Join(fmt.Errorf("export of tenant %q: %w", tenantID, err), e.abort(w, key))
 	}
 	held := e.clock()
 	res, err := e.stream(workCtx, cancel, tenantID, holder, w)
-	// The lease is released before a failed upload is aborted, so the
+	// The lease is released before a failed export is aborted, so the
 	// tenant's writes resume without waiting on the store.
 	releaseErr := e.keeper.release(ctx, tenantID, holder)
 	res.Duration = e.clock().Sub(held)
@@ -155,12 +147,11 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 
 // stream writes the tenant's graph to w and completes it, while holder's
 // lease is held, renewed and watched; ctx is the work's context and cancel
-// ends it. Every record written and every byte sent to w is progress, and so
-// is the start of completing w; the counting the graph does before its
-// header has the stall limit from the start. It completes w only once the
-// lease is confirmed held after the read: no write can have changed the
-// graph under it.
-func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.BackupWriter) (Result, error) {
+// ends it. Every record written to w is progress, and so is the start of
+// completing w; the counting the graph does before its header has the stall
+// limit from the start. It completes w only once the lease is confirmed held
+// after the read: no write can have changed the graph under it.
+func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.ExportSink) (Result, error) {
 	work := &progress{}
 	stop := e.keeper.watch(ctx, cancel, tenantID, holder, work)
 	defer stop()
@@ -170,54 +161,33 @@ func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, t
 		}
 		return err
 	}
-	sink := &countingWriter{w: w, work: work}
-	zw := gzip.NewWriter(sink)
-	records := &countingRecords{RecordWriter: exportfile.NewWriter(zw), work: work}
+	records := &countingRecords{RecordWriter: w, work: work}
 	if err := e.graph.Export(ctx, tenantID, records); err != nil {
 		return Result{}, fail(fmt.Errorf("export the graph of tenant %q: %w", tenantID, err))
 	}
 	if cause := stopCause(ctx); cause != nil {
 		return Result{}, fail(cause)
 	}
-	if err := zw.Close(); err != nil {
-		return Result{}, fail(fmt.Errorf("compress the export of tenant %q: %w", tenantID, err))
-	}
 	if err := e.keeper.confirm(ctx, tenantID, holder); err != nil {
 		return Result{}, fail(err)
 	}
 	work.advance()
-	if err := w.Close(); err != nil {
+	size, err := w.Close()
+	if err != nil {
 		return Result{}, fail(fmt.Errorf("complete the export of tenant %q: %w", tenantID, err))
 	}
-	return Result{Bytes: sink.n, Nodes: records.nodes, Relationships: records.rels}, nil
+	return Result{Bytes: size, Nodes: records.nodes, Relationships: records.rels}, nil
 }
 
-// abort discards an upload that will not be completed. A failure is logged:
-// the parts uploaded so far stay in the store until a bucket rule that
-// aborts incomplete multipart uploads removes them.
-func (e *Exporter) abort(w ports.BackupWriter, key string) error {
+// abort discards an export that will not be completed. A failure is logged:
+// what was uploaded so far stays in the store until a bucket rule that
+// aborts incomplete multipart uploads removes it.
+func (e *Exporter) abort(w ports.ExportSink, key string) error {
 	if err := w.Abort(); err != nil {
 		e.logger.Error("catalog export not aborted: its uploaded parts stay in the store", "object_key", key, "error", err)
 		return fmt.Errorf("abort the export %s: %w", key, err)
 	}
 	return nil
-}
-
-// countingWriter counts the bytes written through it, each write that moves
-// bytes being progress.
-type countingWriter struct {
-	w    ports.BackupWriter
-	work *progress
-	n    int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	if n > 0 {
-		c.work.advance()
-	}
-	return n, err
 }
 
 // countingRecords counts the nodes and relationships written through it,
@@ -259,8 +229,8 @@ func (c *countingRecords) WriteRel(r export.RelRecord) error {
 // use.
 type progress struct{ n atomic.Int64 }
 
-// advance records one step of progress: a record or bytes moved, or the
-// start of a step that moves neither for a while.
+// advance records one step of progress: a record moved, or the start of a
+// step that moves none for a while.
 func (p *progress) advance() { p.n.Add(1) }
 
 func (p *progress) load() int64 { return p.n.Load() }
@@ -358,6 +328,21 @@ func stopCause(ctx context.Context) error {
 		return cause
 	}
 	return nil
+}
+
+// acquire takes tenantID's lease for holder. A lease another holder has is
+// ErrSkipped. Any other failure may hide an Acquire that committed while its
+// answer was lost, so the lease is released for holder before the failure is
+// returned; releasing a lease holder does not have does nothing.
+func (k leaseKeeper) acquire(ctx context.Context, tenantID string, kind ports.LeaseKind, holder string) error {
+	err := k.lease.Acquire(ctx, tenantID, kind, holder, k.ttl)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ports.ErrLeaseHeld):
+		return ErrSkipped
+	}
+	return errors.Join(fmt.Errorf("take the export lease: %w", err), k.release(ctx, tenantID, holder))
 }
 
 // confirm renews holder's lease once more. Every renewal requires a live

@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
 var (
@@ -48,8 +47,6 @@ type Reader struct {
 	rels     map[string]int64
 	err      error
 }
-
-var _ ports.RecordReader = (*Reader)(nil)
 
 // NewReader reads and checks the header line of r.
 func NewReader(r io.Reader) (*Reader, error) {

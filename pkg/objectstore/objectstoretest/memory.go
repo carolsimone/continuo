@@ -52,6 +52,7 @@ type Memory struct {
 	failList         map[string]error
 	reads            []Read
 	puts             []Write
+	requests         int
 }
 
 // stored is an object in a Memory: its bytes and when it was stored.
@@ -102,6 +103,7 @@ func (m *Memory) Get(_ context.Context, ref objectstore.Ref, maxBytes int64) ([]
 	ref = m.resolve(ref)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	m.reads = append(m.reads, Read{Ref: ref, MaxBytes: maxBytes})
 	if err := m.failGet[ref]; err != nil {
 		return nil, err
@@ -127,6 +129,7 @@ func (m *Memory) Put(_ context.Context, ref objectstore.Ref, body []byte, conten
 	ref = m.resolve(ref)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failPut[ref]; err != nil {
 		return err
 	}
@@ -151,6 +154,7 @@ func (m *Memory) GetStream(_ context.Context, ref objectstore.Ref) (io.ReadClose
 	ref = m.resolve(ref)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failGet[ref]; err != nil {
 		return nil, err
 	}
@@ -167,6 +171,7 @@ func (m *Memory) GetStream(_ context.Context, ref objectstore.Ref) (io.ReadClose
 func (m *Memory) List(_ context.Context, prefix string) ([]objectstore.Object, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failList[prefix]; err != nil {
 		return nil, err
 	}
@@ -192,6 +197,7 @@ func (m *Memory) Delete(_ context.Context, ref objectstore.Ref) error {
 	ref = m.resolve(ref)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failDeleteObject[ref]; err != nil {
 		return err
 	}
@@ -212,6 +218,7 @@ func (m *Memory) OpenWriter(ctx context.Context, ref objectstore.Ref, contentTyp
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failPut[ref]; err != nil {
 		return nil, err
 	}
@@ -296,6 +303,7 @@ func (m *Memory) DeletePrefix(_ context.Context, prefix string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests++
 	if err := m.failDeletePrefix[prefix]; err != nil {
 		return err
 	}
@@ -344,6 +352,16 @@ func (m *Memory) FailList(prefix string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failList[prefix] = err
+}
+
+// Requests returns how many role calls reached the store: every Get, Put,
+// GetStream, List, Delete, OpenWriter and DeletePrefix that passed its own
+// checks of the Ref, the read limit or the prefix, whether the store then
+// answered it or failed it.
+func (m *Memory) Requests() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.requests
 }
 
 // Reads returns every Get that reached the store, in order.

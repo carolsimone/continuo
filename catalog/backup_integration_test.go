@@ -25,7 +25,6 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
@@ -231,13 +230,11 @@ func (f *graphFixture) processed(tenantID, id string) bool {
 	return ok
 }
 
-// stored returns the keys of the exports the object store holds for
+// stored returns the keys of the exports the backup store holds for
 // tenantID.
 func (f *graphFixture) stored(tenantID string) []string {
 	f.t.Helper()
-	prefix, err := export.ObjectPrefix(tenantID)
-	require.NoError(f.t, err)
-	objs, err := f.mem.List(context.Background(), prefix)
+	objs, err := f.store.List(context.Background(), tenantID)
 	require.NoError(f.t, err)
 	var keys []string
 	for _, o := range objs {
@@ -249,21 +246,24 @@ func (f *graphFixture) stored(tenantID string) []string {
 // records reads the export stored at key.
 func (f *graphFixture) records(key string) (export.Header, []any) {
 	f.t.Helper()
-	body, err := f.mem.Get(context.Background(), objectstore.Ref{Key: key}, 1<<30)
+	src, err := f.store.OpenRead(context.Background(), key)
 	require.NoError(f.t, err)
-	zr, err := gzip.NewReader(bytes.NewReader(body))
-	require.NoError(f.t, err)
-	r, err := exportfile.NewReader(zr)
-	require.NoError(f.t, err)
+	defer func() { _ = src.Close() }()
 	var recs []any
 	for {
-		rec, err := r.Next()
+		rec, err := src.Next()
 		if errors.Is(err, io.EOF) {
-			return r.Header(), recs
+			return src.Header(), recs
 		}
 		require.NoError(f.t, err)
 		recs = append(recs, rec)
 	}
+}
+
+// exportKey is the key the backup store gives tenantID's export taken at at:
+// tenants/<tenant>/backups/catalog/<UTC second>.jsonl.gz.
+func exportKey(tenantID string, at time.Time) string {
+	return "tenants/" + tenantID + "/backups/catalog/" + at.UTC().Format("20060102T150405Z") + ".jsonl.gz"
 }
 
 // putGzip stores body, gzipped, at key.
@@ -277,9 +277,9 @@ func (f *graphFixture) putGzip(key, body string) {
 	require.NoError(f.t, f.mem.Put(context.Background(), objectstore.Ref{Key: key}, buf.Bytes(), "application/gzip"))
 }
 
-// gateStore wraps a BackupStore so the first write of the first export it
-// opens waits: entered closes when that write arrives, and the write goes on
-// once proceed is closed. The lease is held by then, since the export
+// gateStore wraps a BackupStore so the first record of the first export it
+// opens waits: entered closes when that record arrives, and the write goes
+// on once proceed is closed. The lease is held by then, since the export
 // writes only after it took the lease.
 type gateStore struct {
 	ports.BackupStore
@@ -292,21 +292,22 @@ func newGateStore(store ports.BackupStore) *gateStore {
 	return &gateStore{BackupStore: store, entered: make(chan struct{}), proceed: make(chan struct{})}
 }
 
-func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.BackupWriter, string, error) {
+func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
 	w, key, err := g.BackupStore.Open(ctx, tenantID, at)
 	if err != nil {
 		return nil, "", err
 	}
-	return &gateWriter{BackupWriter: w, gate: g}, key, nil
+	return &gateSink{ExportSink: w, gate: g}, key, nil
 }
 
-type gateWriter struct {
-	ports.BackupWriter
+type gateSink struct {
+	ports.ExportSink
 	gate   *gateStore
 	passed bool
 }
 
-func (w *gateWriter) Write(p []byte) (int, error) {
+// WriteHeader is the first record of every export.
+func (w *gateSink) WriteHeader(h export.Header) error {
 	if !w.passed {
 		w.passed = true
 		first := false
@@ -315,7 +316,7 @@ func (w *gateWriter) Write(p []byte) (int, error) {
 			<-w.gate.proceed
 		}
 	}
-	return w.BackupWriter.Write(p)
+	return w.ExportSink.WriteHeader(h)
 }
 
 func waitFor(t *testing.T, ch <-chan struct{}, what string) {
@@ -439,13 +440,11 @@ func TestExporter_StoreRefusesOpenBeforeTheLease(t *testing.T) {
 	tenantID := f.tenant("refused")
 	f.seed(tenantID)
 	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
-	key, err := export.ObjectKey(tenantID, at)
-	require.NoError(t, err)
-	f.mem.FailPut(objectstore.Ref{Key: key}, errors.New("AccessDenied"))
+	f.mem.FailPut(objectstore.Ref{Key: exportKey(tenantID, at)}, errors.New("AccessDenied"))
 	metrics := &recordedMetrics{}
 	ex := f.exporter(f.store, metrics, func() time.Time { return at })
 
-	_, err = ex.ExportTenant(context.Background(), tenantID)
+	_, err := ex.ExportTenant(context.Background(), tenantID)
 	require.ErrorContains(t, err, "AccessDenied")
 	exists, _ := f.leaseNode(tenantID)
 	assert.False(t, exists, "no lease was taken: the lease node was never created")
@@ -522,11 +521,10 @@ func TestRestorer_ValidatesBeforeItWipes(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			i++
-			key, err := export.ObjectKey(tenantID, time.Date(2026, 10, 30, 2, 0, i, 0, time.UTC))
-			require.NoError(t, err)
+			key := exportKey(tenantID, time.Date(2026, 10, 30, 2, 0, i, 0, time.UTC))
 			f.putGzip(key, body)
 
-			_, err = f.restorer().Restore(context.Background(), key)
+			_, err := f.restorer().Restore(context.Background(), key)
 			require.Error(t, err)
 			assert.NotErrorIs(t, err, backup.ErrPartialRestore)
 			assert.Equal(t, before, f.dump(tenantID), "the graph is untouched")
@@ -566,28 +564,29 @@ func TestRestorer_WipesLoadsAndReleases(t *testing.T) {
 	require.NoError(t, f.write(tenantID, "m-after-restore"), "writes go on after the restore")
 }
 
-// countingStore is a BackupStore whose writer counts the bytes it is given
-// and keeps none, so a test can measure what an export itself holds.
-type countingStore struct{ written atomic.Int64 }
+// countingObjects is an object store whose writers count the bytes they are
+// given and keep none, so the production backup store over it measures what
+// an export itself holds: the codec, the compressor and the records in
+// flight. It lists nothing and reads nothing.
+type countingObjects struct{ written atomic.Int64 }
 
-func (s *countingStore) Open(_ context.Context, tenantID string, at time.Time) (ports.BackupWriter, string, error) {
-	key, err := export.ObjectKey(tenantID, at)
-	return &countingSink{store: s}, key, err
+func (s *countingObjects) OpenWriter(context.Context, objectstore.Ref, string) (objectstore.ObjectWriter, error) {
+	return &countingWriter{objects: s}, nil
 }
-func (s *countingStore) List(context.Context, string) ([]ports.BackupObject, error) { return nil, nil }
-func (s *countingStore) Read(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("countingStore keeps nothing")
+func (s *countingObjects) GetStream(context.Context, objectstore.Ref) (io.ReadCloser, error) {
+	return nil, errors.New("countingObjects keeps nothing")
 }
-func (s *countingStore) Delete(context.Context, string) error { return nil }
+func (s *countingObjects) List(context.Context, string) ([]objectstore.Object, error) { return nil, nil }
+func (s *countingObjects) Delete(context.Context, objectstore.Ref) error              { return nil }
 
-type countingSink struct{ store *countingStore }
+type countingWriter struct{ objects *countingObjects }
 
-func (w *countingSink) Write(p []byte) (int, error) {
-	w.store.written.Add(int64(len(p)))
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.objects.written.Add(int64(len(p)))
 	return len(p), nil
 }
-func (w *countingSink) Close() error { return nil }
-func (w *countingSink) Abort() error { return nil }
+func (w *countingWriter) Close() error { return nil }
+func (w *countingWriter) Abort() error { return nil }
 
 // seedSynthetic writes n :Node nodes of tenantID, each with payload bytes of
 // random text, and a :DEPENDS_ON chain through them.
@@ -652,8 +651,9 @@ func peakHeapDuring(fn func()) uint64 {
 
 // An export holds one fetch page of records and the compressor's window,
 // whatever the size of the graph: exporting a graph ten times larger leaves
-// the peak heap within twice the smaller export's peak plus 16 MiB. The sink
-// counts bytes and keeps none, so only the export's own memory is measured.
+// the peak heap within twice the smaller export's peak plus 16 MiB. The
+// object store under the production backup store counts bytes and keeps
+// none, so only the export's own memory is measured.
 func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 	const (
 		n       = 2000
@@ -665,13 +665,14 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 	f.seedSynthetic(large, 10*n, payload)
 
 	measure := func(tenantID string) (uint64, backup.Result, int64) {
-		sink := &countingStore{}
-		ex := f.exporter(sink, &recordedMetrics{}, time.Now)
+		objects := &countingObjects{}
+		ex := f.exporter(s3infra.NewBackupStore(objects), &recordedMetrics{}, time.Now)
 		var res backup.Result
 		var err error
 		peak := peakHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
 		require.NoError(t, err)
-		return peak, res, sink.written.Load()
+		require.Equal(t, objects.written.Load(), res.Bytes, "the export reports the bytes the store took")
+		return peak, res, objects.written.Load()
 	}
 	peakSmall, resSmall, bytesSmall := measure(small)
 	peakLarge, resLarge, bytesLarge := measure(large)

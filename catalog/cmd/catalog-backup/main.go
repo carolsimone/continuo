@@ -52,7 +52,6 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
-	"github.com/carolsimone/continuo/catalog/domain/export"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -131,15 +130,15 @@ func main() {
 		<-ctx.Done()
 		stop()
 	}()
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, connect)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, s3infra.BackupKeys{}, connect)
 	stop()
 	os.Exit(code)
 }
 
 // run executes one command line and returns the exit code. Arguments are
-// checked before anything is connected to, so a usage error needs no Neo4j or
-// object store.
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, connect connectFunc) int {
+// checked with keys before anything is connected to, so a usage error needs
+// no Neo4j or object store.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, keys ports.BackupKeys, connect connectFunc) int {
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 
 	if len(args) == 0 {
@@ -155,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, connect c
 		return usageError(logger, stderr, fmt.Errorf("unknown command %q", command))
 	}
 
-	opts, err := parseOptions(command, rest)
+	opts, err := parseOptions(command, rest, keys)
 	if errors.Is(err, flag.ErrHelp) {
 		_, _ = io.WriteString(stderr, usageText)
 		return exitOK
@@ -187,9 +186,10 @@ func usageError(logger *slog.Logger, stderr io.Writer, err error) int {
 	return exitUsage
 }
 
-// parseOptions parses the arguments of command. flag.ErrHelp means -h was
-// given; any other error is a usage error.
-func parseOptions(command string, args []string) (options, error) {
+// parseOptions parses the arguments of command, checking a tenant and
+// locating a key with keys. flag.ErrHelp means -h was given; any other error
+// is a usage error.
+func parseOptions(command string, args []string, keys ports.BackupKeys) (options, error) {
 	fs := flag.NewFlagSet("catalog-backup "+command, flag.ContinueOnError)
 	// The flag package would print each error and the flag defaults itself;
 	// run reports the error and the usage instead.
@@ -213,8 +213,8 @@ func parseOptions(command string, args []string) (options, error) {
 			return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(positional, " "))
 		}
 		if o.tenantSet {
-			if _, err := export.ObjectPrefix(o.tenant); err != nil {
-				return options{}, fmt.Errorf("--tenant %q cannot name a tenant: it is empty or holds a slash", o.tenant)
+			if err := keys.CheckTenant(o.tenant); err != nil {
+				return options{}, fmt.Errorf("--tenant %q cannot name a tenant: %w", o.tenant, err)
 			}
 		}
 		return o, nil
@@ -224,7 +224,7 @@ func parseOptions(command string, args []string) (options, error) {
 		return options{}, errors.New("restore takes exactly one object key")
 	}
 	o.key = positional[0]
-	if o.keyTenant, _, err = export.ParseObjectKey(o.key); err != nil {
+	if o.keyTenant, _, err = keys.Locate(o.key); err != nil {
 		return options{}, fmt.Errorf("%q is not the object key of a catalog export: a key looks like "+
 			"tenants/<tenant>/backups/catalog/<UTC time>.jsonl.gz, and `catalog-backup list` prints them", o.key)
 	}
@@ -361,33 +361,24 @@ func runList(ctx context.Context, logger *slog.Logger, stdout io.Writer, d deps,
 				"name one with --tenant <tenant> to list its exports")
 		}
 	}
-	type stored struct {
-		object ports.BackupObject
-		at     time.Time
-	}
-	var all []stored
+	var all []ports.BackupObject
 	for _, tenant := range tenants {
 		objects, err := d.store.List(ctx, tenant)
 		if err != nil {
 			logger.Error("list the exports of the tenant", "tenant_id", tenant, "error", err)
 			return exitError
 		}
-		for _, o := range objects {
-			// The store lists only export keys; a key that does not parse
-			// sorts last.
-			_, at, _ := export.ParseObjectKey(o.Key)
-			all = append(all, stored{object: o, at: at})
-		}
+		all = append(all, objects...)
 	}
-	slices.SortStableFunc(all, func(a, b stored) int {
-		return cmp.Or(b.at.Compare(a.at), strings.Compare(b.object.Key, a.object.Key))
+	slices.SortStableFunc(all, func(a, b ports.BackupObject) int {
+		return cmp.Or(b.TakenAt.Compare(a.TakenAt), strings.Compare(b.Key, a.Key))
 	})
 	out := make([]listLine, 0, len(all))
-	for _, s := range all {
+	for _, o := range all {
 		out = append(out, listLine{
-			Key:          s.object.Key,
-			Size:         s.object.Size,
-			LastModified: s.object.LastModified.UTC().Format(time.RFC3339),
+			Key:          o.Key,
+			Size:         o.Size,
+			LastModified: o.LastModified.UTC().Format(time.RFC3339),
 		})
 	}
 	if err := json.NewEncoder(stdout).Encode(out); err != nil {
@@ -424,7 +415,7 @@ func runRestore(ctx context.Context, logger *slog.Logger, stdout io.Writer, d de
 			"`catalog-backup list --tenant "+opts.keyTenant+"` lists the tenant's exports",
 			"tenant_id", opts.keyTenant, "object_key", opts.key, "error", err)
 		return exitError
-	case errors.Is(err, export.ErrNotAnExportKey):
+	case errors.Is(err, ports.ErrNotAnExportKey):
 		logger.Error("usage", "object_key", opts.key, "error", err)
 		return exitUsage
 	case err != nil:

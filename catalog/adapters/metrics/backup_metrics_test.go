@@ -63,18 +63,33 @@ func (f *fakeTenants) set(tenants []string, err error) {
 	f.tenants, f.err = tenants, err
 }
 
-// countingStore counts the List calls that reach a BackupStore.
+// countingStore counts the List calls that reach a BackupStore, and fails
+// the List of each tenant listErr names with its error.
 type countingStore struct {
 	ports.BackupStore
-	mu    sync.Mutex
-	lists int
+	mu      sync.Mutex
+	lists   int
+	listErr map[string]error
 }
 
 func (s *countingStore) List(ctx context.Context, tenantID string) ([]ports.BackupObject, error) {
 	s.mu.Lock()
 	s.lists++
+	err := s.listErr[tenantID]
 	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return s.BackupStore.List(ctx, tenantID)
+}
+
+func (s *countingStore) failList(tenantID string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listErr == nil {
+		s.listErr = map[string]error{}
+	}
+	s.listErr[tenantID] = err
 }
 
 func (s *countingStore) count() int {
@@ -87,9 +102,9 @@ func storeExport(t *testing.T, store ports.BackupStore, tenantID string, at time
 	t.Helper()
 	w, key, err := store.Open(context.Background(), tenantID, at)
 	require.NoError(t, err)
-	_, err = io.WriteString(w, "export")
+	require.NoError(t, w.WriteHeader(export.Header{FormatVersion: export.FormatVersion, TenantID: tenantID, ExportedAt: at, CatalogVersion: "test"}))
+	_, err = w.Close()
 	require.NoError(t, err)
-	require.NoError(t, w.Close())
 	listed, err := store.List(context.Background(), tenantID)
 	require.NoError(t, err)
 	for _, o := range listed {
@@ -128,8 +143,7 @@ func unix(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
 // the same value, and a store or tenant-list failure keeps the last value and
 // is logged.
 func TestBackupMetrics_LastSuccessComesFromTheStore(t *testing.T) {
-	mem := objectstoretest.NewMemory("continuo")
-	store := &countingStore{BackupStore: s3infra.NewBackupStore(mem)}
+	store := &countingStore{BackupStore: s3infra.NewBackupStore(objectstoretest.NewMemory("continuo"))}
 	tenants := &fakeTenants{tenants: []string{"a", "b"}}
 	clock := &fakeClock{now: time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)}
 	var logs bytes.Buffer
@@ -174,8 +188,7 @@ func TestBackupMetrics_LastSuccessComesFromTheStore(t *testing.T) {
 	tenants.set([]string{"a", "b"}, nil)
 	clock.Advance(time.Minute)
 	require.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m))
-	prefix, _ := export.ObjectPrefix("b")
-	mem.FailList(prefix, errors.New("SlowDown"))
+	store.failList("b", errors.New("SlowDown"))
 	clock.Advance(time.Minute)
 	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m), "a store failure keeps the last value")
 	assert.Contains(t, logs.String(), "SlowDown")
@@ -184,6 +197,63 @@ func TestBackupMetrics_LastSuccessComesFromTheStore(t *testing.T) {
 	clock.Advance(time.Minute)
 	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m), "a tenant-list failure keeps the last value")
 	assert.Contains(t, logs.String(), "connection refused")
+}
+
+// blockingStore is a BackupStore whose List waits until release is closed:
+// entered closes when the first List arrives, and deadline records how long
+// that List's context gave it.
+type blockingStore struct {
+	ports.BackupStore
+	entered  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+	deadline time.Duration
+}
+
+func (s *blockingStore) List(ctx context.Context, tenantID string) ([]ports.BackupObject, error) {
+	s.once.Do(func() {
+		if d, ok := ctx.Deadline(); ok {
+			s.deadline = time.Until(d)
+		}
+		close(s.entered)
+	})
+	<-s.release
+	return s.BackupStore.List(ctx, tenantID)
+}
+
+// A scrape that comes while another one reads the store serves the last
+// value at once instead of waiting on the read, and the read is bounded well
+// under Prometheus's 10 s scrape timeout.
+func TestBackupMetrics_AScrapeDoesNotWaitOnAnotherOnesRead(t *testing.T) {
+	store := &blockingStore{
+		BackupStore: s3infra.NewBackupStore(objectstoretest.NewMemory("continuo")),
+		entered:     make(chan struct{}), release: make(chan struct{}),
+	}
+	clock := &fakeClock{now: time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)}
+	m := NewBackupMetrics(pkgmetrics.New("catalog"), store, &fakeTenants{tenants: []string{"a"}}, clock.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	first := make(chan []float64, 1)
+	go func() { first <- lastSuccessSamples(t, m) }()
+	select {
+	case <-store.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first scrape did not read the store")
+	}
+
+	second := make(chan []float64, 1)
+	go func() { second <- lastSuccessSamples(t, m) }()
+	select {
+	case got := <-second:
+		assert.Empty(t, got, "nothing was read yet, so the second scrape has no sample")
+	case <-time.After(2 * time.Second):
+		t.Fatal("a second scrape waited on the first one's read")
+	}
+
+	close(store.release)
+	assert.Equal(t, []float64{0}, <-first, "the first scrape reports what it read: a tenant with no export")
+	assert.Positive(t, store.deadline)
+	assert.LessOrEqual(t, store.deadline, 5*time.Second, "the read is bounded at 5 s")
+	assert.Equal(t, 5*time.Second, lastSuccessReadTimeout)
 }
 
 // With no tenant at all there is no export to be late, and no sample; the

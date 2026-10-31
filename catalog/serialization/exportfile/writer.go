@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
 // headerLine is the JSON shape of the header.
@@ -73,8 +72,6 @@ type Writer struct {
 	tenantID string
 	err      error
 }
-
-var _ ports.RecordWriter = (*Writer)(nil)
 
 // NewWriter returns a Writer that writes to w.
 func NewWriter(w io.Writer) *Writer {

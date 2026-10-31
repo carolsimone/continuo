@@ -1,16 +1,13 @@
 package backup
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 
 	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
@@ -39,36 +36,31 @@ func NewRestorer(lease ports.ExportLease, graph ports.GraphImporter, store ports
 	return &Restorer{keeper: newLeaseKeeper(lease, logger), graph: graph, store: store, logger: logger}
 }
 
-// Restore returns the graph of the tenant key names to the export stored at
-// key. An export file is gzipped JSON lines: a header, then one line per node
-// and one per relationship, each property value in its own type (a datetime
-// as RFC 3339 text with an optional [zone] suffix).
+// Restore returns the graph of the tenant key belongs to (the store locates
+// it) to the export stored at key.
 //
-// It streams the object twice and never holds it whole. The first read checks
-// the whole file (exportfile.Validate) with no lease and no write, so a file
-// that cannot be loaded exactly, or that names another tenant, leaves the
-// graph untouched. Then it takes the tenant's export lease (ErrSkipped while
-// another export or restore holds it), opens the object again and checks its
-// header against the first read's before it wipes the tenant's graph, loads
-// the export, confirms the lease is still held and releases it. While it
-// holds the lease, a step that moves no record and no byte for stallLimit (a
+// It reads the export twice and never holds it whole. The first read checks
+// the whole export (BackupStore.Validate) with no lease and no write, so an
+// export that cannot be loaded exactly, or that names another tenant, leaves
+// the graph untouched. Then it takes the tenant's export lease (ErrSkipped
+// while another export or restore holds it), opens the export again and
+// checks its header against the first read's before it wipes the tenant's
+// graph, loads the export, confirms the lease is still held and releases it.
+// While it holds the lease, a step that moves no record for stallLimit (a
 // database or store that never answers) stops it with ErrStalled and
 // releases the lease. A failure after the wipe returns ErrPartialRestore.
 func (r *Restorer) Restore(ctx context.Context, key string) (RestoreResult, error) {
-	tenantID, _, err := export.ParseObjectKey(key)
+	tenantID, _, err := r.store.Locate(key)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	header, err := r.validate(ctx, key, tenantID)
+	header, err := r.store.Validate(ctx, key, tenantID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("the export %s cannot be restored, and the graph of tenant %q is untouched: %w", key, tenantID, err)
 	}
 	holder := newHolder(ports.LeaseRestore)
-	if err := r.keeper.lease.Acquire(ctx, tenantID, ports.LeaseRestore, holder, r.keeper.ttl); err != nil {
-		if errors.Is(err, ports.ErrLeaseHeld) {
-			return RestoreResult{}, fmt.Errorf("restore of tenant %q: %w", tenantID, ErrSkipped)
-		}
-		return RestoreResult{}, fmt.Errorf("take the export lease of tenant %q: %w", tenantID, err)
+	if err := r.keeper.acquire(ctx, tenantID, ports.LeaseRestore, holder); err != nil {
+		return RestoreResult{}, fmt.Errorf("restore of tenant %q: %w", tenantID, err)
 	}
 	res, err := r.load(ctx, tenantID, holder, key, header)
 	if releaseErr := r.keeper.release(ctx, tenantID, holder); releaseErr != nil {
@@ -84,43 +76,26 @@ func (r *Restorer) Restore(ctx context.Context, key string) (RestoreResult, erro
 	return res, nil
 }
 
-// validate reads the whole object and returns its header when it is an
-// export tenantID's restore can load exactly.
-func (r *Restorer) validate(ctx context.Context, key, tenantID string) (export.Header, error) {
-	rc, err := r.store.Read(ctx, key)
-	if err != nil {
-		return export.Header{}, err
-	}
-	defer func() { _ = rc.Close() }()
-	zr, err := gzip.NewReader(rc)
-	if err != nil {
-		return export.Header{}, fmt.Errorf("decompress: %w", err)
-	}
-	return exportfile.Validate(zr, tenantID)
-}
-
-// load opens the object again, checks it is the one validate read, wipes the
-// tenant's graph and imports the object, while holder's lease is held,
-// renewed and watched. Every byte read from the object and every record
-// read is progress, and so is the start of the wipe and of the import, which
-// move neither while the database works.
+// load opens the export again, checks it is the one Validate read, wipes the
+// tenant's graph and imports the export, while holder's lease is held,
+// renewed and watched. Opening the export and every record read is progress,
+// and so is the start of the wipe and of the import, which move no record
+// while the database works.
 func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, validated export.Header) (RestoreResult, error) {
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	work := &progress{}
 	stop := r.keeper.watch(workCtx, cancel, tenantID, holder, work)
 	defer stop()
-	rc, err := r.store.Read(workCtx, key)
+	in, err := r.store.OpenRead(workCtx, key)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("the export %s cannot be read again, and the graph of tenant %q is untouched: %w", key, tenantID, err)
 	}
-	defer func() { _ = rc.Close() }()
-	in, err := openExport(&progressReader{r: rc, work: work})
-	if err == nil && !sameHeader(in.Header(), validated) {
-		err = errors.New("its header differs from the one validated: the object changed")
-	}
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("the export %s changed since it was validated, and the graph of tenant %q is untouched: %w", key, tenantID, err)
+	defer func() { _ = in.Close() }()
+	work.advance()
+	if !sameHeader(in.Header(), validated) {
+		return RestoreResult{}, fmt.Errorf("the export %s changed since it was validated, and the graph of tenant %q is untouched: "+
+			"its header differs from the one validated", key, tenantID)
 	}
 
 	partial := func(step string, err error) error {
@@ -148,33 +123,10 @@ func (r *Restorer) load(ctx context.Context, tenantID, holder, key string, valid
 	return RestoreResult{Nodes: counted.nodes, Relationships: counted.rels}, nil
 }
 
-// openExport reads the gzip and export headers of an export stream.
-func openExport(r io.Reader) (*exportfile.Reader, error) {
-	zr, err := gzip.NewReader(r)
-	if err != nil {
-		return nil, fmt.Errorf("decompress: %w", err)
-	}
-	return exportfile.NewReader(zr)
-}
-
 // sameHeader reports whether two export headers are equal.
 func sameHeader(a, b export.Header) bool {
 	return a.FormatVersion == b.FormatVersion && a.TenantID == b.TenantID && a.ExportedAt.Equal(b.ExportedAt) &&
 		a.CatalogVersion == b.CatalogVersion && maps.Equal(a.Nodes, b.Nodes) && maps.Equal(a.Relationships, b.Relationships)
-}
-
-// progressReader reads through r, each read that moves bytes being progress.
-type progressReader struct {
-	r    io.Reader
-	work *progress
-}
-
-func (p *progressReader) Read(b []byte) (int, error) {
-	n, err := p.r.Read(b)
-	if n > 0 {
-		p.work.advance()
-	}
-	return n, err
 }
 
 // countingReader counts the node and relationship records read through it,

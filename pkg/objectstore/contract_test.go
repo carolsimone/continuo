@@ -32,8 +32,8 @@ type store interface {
 }
 
 // subject is one implementation under contract, and a count of the calls
-// that reached its backing store: requests for the Client, reads and stored
-// writes for the Memory.
+// that reached its backing store: HTTP requests for the Client, role calls
+// for the Memory.
 type subject struct {
 	store store
 	calls func() int
@@ -47,7 +47,7 @@ func subjects(t *testing.T) map[string]subject {
 	mem := objectstoretest.NewMemory("continuo")
 	return map[string]subject{
 		"Client": {store: newTestClient(t, srv.URL), calls: func() int { return len(srv.Requests()) }},
-		"Memory": {store: mem, calls: func() int { return len(mem.Reads()) + len(mem.Puts()) }},
+		"Memory": {store: mem, calls: mem.Requests},
 	}
 }
 
@@ -314,6 +314,51 @@ func TestRoles_OpenWriterStoresAZeroByteObject(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, listed, 1)
 			assert.Zero(t, listed[0].Size)
+		})
+	}
+}
+
+// One Write of 20 MiB spans three 8 MiB parts: the object comes back whole.
+func TestRoles_OneWriteLargerThanAPartIsStoredWhole(t *testing.T) {
+	for name, s := range subjects(t) {
+		t.Run(name, func(t *testing.T) {
+			ref := objectstore.Ref{Key: "exports/one-write"}
+			body := content(20 * mib)
+			w, err := s.store.OpenWriter(context.Background(), ref, "text/plain")
+			require.NoError(t, err)
+			n, err := w.Write(body)
+			require.NoError(t, err)
+			assert.Equal(t, len(body), n, "the one Write takes every byte")
+			require.NoError(t, w.Close())
+
+			assert.True(t, bytes.Equal(body, readStream(t, s.store, ref)), "the 20 MiB written in one call come back equal")
+		})
+	}
+}
+
+// The count the refused-Ref assertions read rises with every streaming call
+// that reaches the store, so those assertions catch an OpenWriter, a
+// GetStream or a Delete that reaches it.
+func TestRoles_StreamingCallsAreCountedWhenTheyReachTheStore(t *testing.T) {
+	for name, s := range subjects(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			ref := objectstore.Ref{Key: "exports/counted"}
+
+			before := s.calls()
+			w, err := s.store.OpenWriter(ctx, ref, "text/plain")
+			require.NoError(t, err)
+			assert.Greater(t, s.calls(), before, "OpenWriter")
+			require.NoError(t, w.Abort())
+
+			before = s.calls()
+			_, err = s.store.GetStream(ctx, ref)
+			require.ErrorIs(t, err, objectstore.ErrNotFound)
+			assert.Greater(t, s.calls(), before, "GetStream")
+
+			before = s.calls()
+			require.NoError(t, s.store.Delete(ctx, ref))
+			assert.Greater(t, s.calls(), before, "Delete")
 		})
 	}
 }

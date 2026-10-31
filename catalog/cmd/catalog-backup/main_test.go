@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/stretchr/testify/assert"
@@ -109,7 +110,7 @@ func (h *harness) run(t *testing.T, args ...string) (code int, stdout, stderr st
 func (h *harness) runCtx(t *testing.T, ctx context.Context, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = run(ctx, args, &out, &errOut, h.connect)
+	code = run(ctx, args, &out, &errOut, s3infra.BackupKeys{}, h.connect)
 	return code, out.String(), errOut.String()
 }
 
@@ -319,7 +320,7 @@ func TestExport_NamedTenantExportsEvenWhenTheTenantListFails(t *testing.T) {
 // A tenant id that cannot name a backup prefix is a usage error, before the
 // command connects to anything.
 func TestExport_TenantIDThatNamesNoPrefixIsUsage(t *testing.T) {
-	for _, id := range []string{"", "a/b", "../x"} {
+	for _, id := range []string{"", ".", "..", "a/b", "../x"} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
 			h := newHarness()
 
@@ -424,6 +425,7 @@ func TestRestore_KeyOutsideTheBackupPrefixIsUsage(t *testing.T) {
 		"tenants/acme/backups/catalog/latest.jsonl.gz",
 		"tenants/acme/backups/catalog/../../other/20261030T020000Z.jsonl.gz",
 		"tenants//backups/catalog/20261030T020000Z.jsonl.gz",
+		"tenants/../backups/catalog/20261030T020000Z.jsonl.gz",
 		"",
 	} {
 		t.Run(key, func(t *testing.T) {
@@ -536,13 +538,15 @@ func TestList_PrintsNewestFirst(t *testing.T) {
 		require.NoError(t, err)
 		return ts
 	}
+	// The time each export was taken orders the list, not the time its
+	// object was last modified.
 	h.store.objects["acme"] = []ports.BackupObject{
-		{Key: "tenants/acme/backups/catalog/20261029T020000Z.jsonl.gz", Size: 300, LastModified: at("2026-10-29T02:00:05Z")},
-		{Key: "tenants/acme/backups/catalog/20261027T020000Z.jsonl.gz", Size: 100, LastModified: at("2026-10-27T02:00:04Z")},
+		{Key: "tenants/acme/backups/catalog/20261029T020000Z.jsonl.gz", TenantID: "acme", TakenAt: at("2026-10-29T02:00:00Z"), Size: 300, LastModified: at("2026-10-31T02:00:05Z")},
+		{Key: "tenants/acme/backups/catalog/20261027T020000Z.jsonl.gz", TenantID: "acme", TakenAt: at("2026-10-27T02:00:00Z"), Size: 100, LastModified: at("2026-10-27T02:00:04Z")},
 	}
 	h.store.objects["default"] = []ports.BackupObject{
-		{Key: "tenants/default/backups/catalog/20261030T020000Z.jsonl.gz", Size: 400, LastModified: at("2026-10-30T02:00:06Z")},
-		{Key: "tenants/default/backups/catalog/20261028T020000Z.jsonl.gz", Size: 200, LastModified: at("2026-10-28T02:00:03Z")},
+		{Key: "tenants/default/backups/catalog/20261030T020000Z.jsonl.gz", TenantID: "default", TakenAt: at("2026-10-30T02:00:00Z"), Size: 400, LastModified: at("2026-10-30T02:00:06Z")},
+		{Key: "tenants/default/backups/catalog/20261028T020000Z.jsonl.gz", TenantID: "default", TakenAt: at("2026-10-28T02:00:00Z"), Size: 200, LastModified: at("2026-10-28T02:00:03Z")},
 	}
 
 	code, stdout, stderr := h.run(t, "list")
@@ -656,13 +660,17 @@ func TestList_FailureIsAnErrorWithNothingOnStdout(t *testing.T) {
 }
 
 func TestList_TenantIDThatNamesNoPrefixIsUsage(t *testing.T) {
-	h := newHarness()
+	for _, id := range []string{"a/b", ".."} {
+		t.Run(id, func(t *testing.T) {
+			h := newHarness()
 
-	code, stdout, _ := h.run(t, "list", "--tenant", "a/b")
+			code, stdout, _ := h.run(t, "list", "--tenant", id)
 
-	require.Equal(t, exitUsage, code)
-	assert.Empty(t, stdout)
-	assert.Zero(t, h.connects)
+			require.Equal(t, exitUsage, code)
+			assert.Empty(t, stdout)
+			assert.Zero(t, h.connects)
+		})
+	}
 }
 
 // Usage errors exit 2 before the command connects to anything, and put the
