@@ -19,12 +19,6 @@ export function useScheduleRuns(name: string | undefined): {
   const [runsTotal, setRunsTotal] = useState<number | null>(null);
 
   useEffect(() => {
-    setRuns([]);
-    setRunsPage(0);
-    setRunsTotal(null);
-  }, [name]);
-
-  useEffect(() => {
     if (!name) return;
     let cancelled = false;
 

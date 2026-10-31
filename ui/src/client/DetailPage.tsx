@@ -1,18 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import { ReactFlowProvider } from '@xyflow/react';
-import {
-  RunGraph,
-  RunSummary,
-  Scheduler,
-  ScheduleGraph,
-  ScheduleSummary,
-  Task,
-  TaskAttempt,
-} from './types';
+import { RunSummary, ScheduleGraph } from './types';
 import {
   DetailMode,
+  isRerunnableStatus,
+  isTerminalStatus,
+  pillClass,
   resolveActiveGraph,
   headerDriftLabel,
   groupAttemptsByTask,
@@ -23,11 +18,12 @@ import {
   driftLabelOf,
 } from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
-import { fetchAllPages } from './fetch-all-pages';
+import { useLastRun } from './detail-page/useLastRun';
+import { useRunRows } from './detail-page/useRunRows';
 import { useScheduleGraph } from './detail-page/useScheduleGraph';
+import { useSelectedRunGraph } from './detail-page/useSelectedRunGraph';
 import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
-import type { RunStatus } from '../server/generated/vocabulary.gen';
-import { settlesRequest, useActionRequestId } from './request-id';
+import { settlesRequest, useActionRequestId, type ActionRequestId } from './request-id';
 import DAGPanel from './DAGPanel';
 import NodeTypeIcon from './NodeTypeIcon';
 import PastRunsPanel from './PastRunsPanel';
@@ -46,25 +42,9 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
   return next;
 }
 
-function initialLastRunId(locationState: unknown): string | null | undefined {
-  if (locationState == null) return undefined;
-  return ((locationState as { last_run_id?: string | null } | null)?.last_run_id ?? null);
-}
-
 function formatStatusLabel(status: string | null | undefined): string {
   if (!status) return 'pending';
   return status.replace(/_/g, ' ');
-}
-
-export function pillClass(status: string | null | undefined): string {
-  const normalized = status ?? '';
-  if (normalized.includes('succeed')) return 'pill--succeeded';
-  if (normalized.includes('fail')) return 'pill--failed';
-  if (normalized.includes('cancelling')) return 'pill--cancelling';
-  if (normalized.includes('cancel')) return 'pill--cancelled';
-  if (normalized.includes('skip')) return 'pill--skipped';
-  if (normalized.includes('run') || normalized.includes('current')) return 'pill--running';
-  return 'pill--pending';
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -73,41 +53,48 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-// A cancelling run has not ended: its Jobs are still being stopped, so the
-// page keeps polling it until it reads cancelled.
-export function isTerminalStatus(status: RunStatus | null | undefined): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped';
-}
-
-// A failed or cancelled run can be rerun; a cancelling one has not ended.
-export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
-  return status === 'failed' || status === 'cancelled';
+interface DetailPageProps {
+  mode?: DetailMode;
 }
 
 interface DetailPageProps {
   mode?: DetailMode;
 }
 
+// A schedule's page. Each schedule gets its own ScheduleDetail, so arriving
+// at another schedule starts from empty page state, while a navigation that
+// changes only the query string — a panel tab — keeps it. The trigger
+// button's request id is held here, above that boundary: a press that got no
+// answer and is repeated after the page left the schedule and came back
+// still sends the same id.
 export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const { name } = useParams<{ name: string }>();
+  const { take, renew } = useActionRequestId();
+  return <ScheduleDetail key={name} name={name} mode={mode} takeRequestId={take} renewTriggerId={renew} />;
+}
+
+function ScheduleDetail({ name, mode, takeRequestId, renewTriggerId }: {
+  name: string | undefined;
+  mode: DetailMode;
+  takeRequestId: ActionRequestId['take'];
+  renewTriggerId: ActionRequestId['renew'];
+}) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [lastRunId, setLastRunId] = useState<string | null | undefined>(() => initialLastRunId(location.state));
-  // Set when the schedule list could not be read on arrival: lastRunId is then
-  // null without the page knowing the schedule never ran.
-  const [lastRunReadFailed, setLastRunReadFailed] = useState(false);
-  const [scheduler, setScheduler] = useState<Scheduler | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
+  const {
+    lastRunId, lastRunObservation, scheduler, setScheduler, liveRunGraph,
+  } = useLastRun(name, location.state);
   const { graph, graphState, promotionSeq } = useScheduleGraph(name, mode);
   const { runs, runsPage, setRunsPage, runsCount } = useScheduleRuns(name);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The selected run's summary, kept so the header still describes it after
   // paging away from the page it was chosen on.
   const [pinnedRun, setPinnedRun] = useState<RunSummary | null>(null);
-  const [liveRunGraph, setLiveRunGraph] = useState<RunGraph | null>(null);
-  const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
+  const { tasks, attempts, clearRows } = useRunRows({
+    lastRunId, selectedRunId, mode, onScheduler: setScheduler,
+  });
+  const runGraph = useSelectedRunGraph(selectedRunId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
@@ -119,196 +106,11 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // press a new action, and the id is renewed once the server has given its
   // final answer. While that read is loading or after it failed, the page
   // does not know the last run (lastRunObservation is undefined).
-  const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
   const [runView, setRunView] = useState<'list' | 'graph'>('list');
   const [laneCollapsed, setLaneCollapsed] = useState<Set<string>>(new Set());
-
-  // Arriving at a schedule resets every piece of page state and resolves the
-  // run the page opens on. The dashboard card passes the schedule's last run
-  // id as navigation state so that lookup can be skipped; without it the id
-  // is read from the schedule list. Only the schedule name drives this effect:
-  // a navigation that changes just the query string — a panel tab — writes a
-  // new history entry with null state, and must not wipe the page.
-  useEffect(() => {
-    const hintedLastRunId = initialLastRunId(location.state);
-    setLastRunId(hintedLastRunId);
-    setLastRunReadFailed(false);
-    setScheduler(null);
-    setTasks([]);
-    setAttempts([]);
-    setSelectedRunId(null);
-    setPinnedRun(null);
-    setLiveRunGraph(null);
-    setRunGraph(null);
-    setSelectedNodeId(null);
-    setExpandedServices(new Set());
-    if (!name || hintedLastRunId !== undefined) return;
-
-    let cancelled = false;
-    fetch('/api/schedules')
-      .then((response) => response.json())
-      .then((data: { schedules: ScheduleSummary[] }) => {
-        if (cancelled) return;
-        const match = (data.schedules || []).find((schedule) => schedule.schedule_name === name);
-        setLastRunId(match?.last_run_id ?? null);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setLastRunId(null);
-        setLastRunReadFailed(true);
-      });
-    return () => { cancelled = true; };
-  }, [name]);
-
-  useEffect(() => {
-    if (!lastRunId) return;
-    let cancelled = false;
-
-    fetch(`/api/runs/${lastRunId}`)
-      .then((response) => response.json())
-      .then((data: Scheduler) => {
-        if (!cancelled) setScheduler(data);
-      })
-      .catch(() => {
-        if (!cancelled) setScheduler(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lastRunId]);
-
-  useEffect(() => {
-    if (!lastRunId) return;
-    let cancelled = false;
-
-    fetch(`/api/runs/${lastRunId}/graph`)
-      .then((response) => response.json())
-      .then((data: RunGraph) => {
-        if (!cancelled) setLiveRunGraph(data);
-      })
-      .catch(() => {
-        if (!cancelled) setLiveRunGraph(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lastRunId]);
-
-  // The run the Run tab shows — a selected past run, else the latest — has
-  // its tasks and every attempt of every task read from run-controller. A past run is
-  // read once; the latest run is re-read every 5 s until it is terminal. A
-  // poll reads the rows alongside the run's status, so the poll that first
-  // sees the run terminal may hold rows from before the run ended: once that
-  // poll's reads have landed, the rows are read one last time.
-  useEffect(() => {
-    const shownRunId = selectedRunId ?? lastRunId;
-    if (!shownRunId) return;
-    if (mode === 'latest') return;
-    let cancelled = false;
-    let timer: number | undefined;
-    const controller = new AbortController();
-
-    // Resolves once both reads have landed (or failed) and been applied.
-    const fetchRunRows = (): Promise<void> => {
-      const taskRead = fetchAllPages<Task>(`/api/runs/${shownRunId}/tasks`, 'tasks', {
-        signal: controller.signal,
-      })
-        .then((all) => {
-          if (!cancelled) setTasks(all);
-        })
-        .catch(() => {
-          if (!cancelled) setTasks([]);
-        });
-
-      const attemptRead = fetchAllPages<TaskAttempt>(`/api/runs/${shownRunId}/attempts`, 'attempts', {
-        signal: controller.signal,
-      })
-        .then((all) => {
-          if (!cancelled) setAttempts(all);
-        })
-        .catch(() => {
-          if (!cancelled) setAttempts([]);
-        });
-
-      return Promise.all([taskRead, attemptRead]).then(() => undefined);
-    };
-
-    if (selectedRunId) {
-      fetchRunRows();
-      return () => {
-        cancelled = true;
-        controller.abort();
-      };
-    }
-
-    const fetchDynamic = () => {
-      const schedulerRequest = fetch(`/api/runs/${shownRunId}`)
-        .then((response) => response.json())
-        .then((data: Scheduler) => {
-          if (!cancelled) setScheduler(data);
-          return data;
-        })
-        .catch(() => {
-          return null;
-        });
-
-      // Resolves with the run's status once its row reads have landed too.
-      return Promise.all([schedulerRequest, fetchRunRows()]).then(([nextScheduler]) => nextScheduler);
-    };
-
-    fetchDynamic().then((freshScheduler) => {
-      if (cancelled) return;
-      if (freshScheduler && !isTerminalStatus(freshScheduler.status)) {
-        timer = window.setInterval(() => {
-          fetchDynamic().then((nextScheduler) => {
-            if (cancelled) return;
-            if (timer && nextScheduler && isTerminalStatus(nextScheduler.status)) {
-              window.clearInterval(timer);
-              timer = undefined;
-              // The run has ended: read the rows it ended with.
-              fetchRunRows();
-            }
-          });
-        }, 5000);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (timer !== undefined) {
-        window.clearInterval(timer);
-      }
-    };
-  }, [lastRunId, selectedRunId, mode]);
-
-  useEffect(() => {
-    if (!selectedRunId) {
-      setRunGraph(null);
-      return;
-    }
-
-    let cancelled = false;
-    setRunGraph(null);
-
-    fetch(`/api/runs/${selectedRunId}/graph`)
-      .then((response) => response.json())
-      .then((data: RunGraph) => {
-        if (!cancelled) setRunGraph(data);
-      })
-      .catch(() => {
-        if (!cancelled) setRunGraph(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRunId]);
 
   // The rerun-failed dialog posts the rerun or the rebase itself; once one is
   // accepted the dialog closes and the page's button shows the success.
@@ -317,8 +119,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setRerunFailedState('success');
     setTimeout(() => setRerunFailedState('idle'), 3000);
   }, []);
-
-  const lastRunObservation = lastRunReadFailed ? undefined : lastRunId;
 
   const handleTriggerRun = useCallback(async () => {
     if (!name) return;
@@ -440,13 +240,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     ? new Set(activeGraph.edges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
     : new Set<string>();
 
-  // The shown run's rows are cleared at once, so the newly chosen run never
-  // renders over the previous run's tasks while its own are read.
   const handleSelectRun = (runId: string | null) => {
-    if (runId !== selectedRunId) {
-      setTasks([]);
-      setAttempts([]);
-    }
+    if (runId !== selectedRunId) clearRows();
     setSelectedRunId(runId);
     setPinnedRun(runs.find((run) => run.run_id === runId) ?? null);
     setSelectedNodeId(null);

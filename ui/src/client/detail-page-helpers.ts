@@ -1,6 +1,7 @@
 import { GraphNode, RunGraph, RunSummary, ScheduleGraph, Task, TaskAttempt } from './types';
 import { formatDuration } from './node-helpers';
 import { getDriftBadge, getDriftState } from './drift-helpers';
+import type { RunStatus } from '../server/generated/vocabulary.gen';
 
 // Which of the detail page's two layouts is shown: one run's rows, or the
 // schedule's catalog graph beside its past runs.
@@ -316,4 +317,26 @@ export function driftLabelOf(liveRunGraph: RunGraph | null): string | null {
     Number(liveRunGraph.run_promotion_seq ?? 0),
     Number(liveRunGraph.latest_promotion_seq ?? 0),
   );
+}
+
+export function pillClass(status: string | null | undefined): string {
+  const normalized = status ?? '';
+  if (normalized.includes('succeed')) return 'pill--succeeded';
+  if (normalized.includes('fail')) return 'pill--failed';
+  if (normalized.includes('cancelling')) return 'pill--cancelling';
+  if (normalized.includes('cancel')) return 'pill--cancelled';
+  if (normalized.includes('skip')) return 'pill--skipped';
+  if (normalized.includes('run') || normalized.includes('current')) return 'pill--running';
+  return 'pill--pending';
+}
+
+// A cancelling run has not ended: its Jobs are still being stopped, so the
+// page keeps polling it until it reads cancelled.
+export function isTerminalStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped';
+}
+
+// A failed or cancelled run can be rerun; a cancelling one has not ended.
+export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
+  return status === 'failed' || status === 'cancelled';
 }

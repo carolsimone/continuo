@@ -13,11 +13,6 @@ export function useScheduleGraph(
   const [promotionSeq, setPromotionSeq] = useState<number>(0);
 
   useEffect(() => {
-    setGraph(null);
-    setGraphState('loading');
-  }, [name]);
-
-  useEffect(() => {
     if (!name) return;
     let cancelled = false;
 
