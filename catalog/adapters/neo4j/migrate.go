@@ -2,7 +2,6 @@ package neo4jinfra
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -49,25 +48,11 @@ const (
 	initSchemaRetryDelay = time.Second
 )
 
-// concurrentMigrationCodes are the Neo4j error codes, besides the driver's
-// retryable ones, that another catalog pod migrating at the same time raises.
-// Running two InitSchema calls together on a graph that needs every step
-// raised only Neo.TransientError.Transaction.DeadlockDetected, which the driver
-// already treats as retryable, so the set is empty.
-var concurrentMigrationCodes = map[string]struct{}{}
-
-// concurrentMigrationError reports whether err is one a concurrent migration
-// causes: an error the driver retries, or one in concurrentMigrationCodes.
+// concurrentMigrationError reports whether err is one another catalog pod
+// migrating at the same time causes: an error the Neo4j driver retries, such as
+// the deadlock two migrations raise on each other's schema locks.
 func concurrentMigrationError(err error) bool {
-	if neo4j.IsRetryable(err) {
-		return true
-	}
-	var neo4jErr *neo4j.Neo4jError
-	if errors.As(err, &neo4jErr) {
-		_, ok := concurrentMigrationCodes[neo4jErr.Code]
-		return ok
-	}
-	return false
+	return neo4j.IsRetryable(err)
 }
 
 // retryMigration runs migrate up to attempts times, delay apart, while it

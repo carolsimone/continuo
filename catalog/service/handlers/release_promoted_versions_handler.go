@@ -50,8 +50,11 @@ func NewReleasePromotedVersionsHandler(
 //     catches a re-XADD of the same upstream outbox row under a fresh Redis
 //     message ID. A processed message is acknowledged without reading object
 //     storage.
-//  2. Read the code bundle and the topology artifact, outside any
-//     transaction. A malformed or oversized bundle, a corrupt artifact, or a
+//  2. A promotion with a bundle first asks the unit of work whether the
+//     tenant's writes are paused by an export or a restore, and returns
+//     uow.ErrWritesPaused without reading object storage when they are.
+//     Otherwise it reads the code bundle and the topology artifact, outside
+//     any transaction. A malformed or oversized bundle, a corrupt artifact, or a
 //     bundle or artifact of another release is permanent; a missing object or
 //     an outage is retried. A promotion with no bundle records only its
 //     marker.
