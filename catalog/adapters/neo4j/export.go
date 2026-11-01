@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )

@@ -2,14 +2,12 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/service/ports"
-	"github.com/robfig/cron/v3"
 )
 
 const (
@@ -21,19 +19,12 @@ const (
 	// run it. A slot it wakes for later than that, because the process or
 	// its host was not running at the slot's time, is missed, not run late.
 	slotTolerance = 5 * time.Minute
-	// minInterval is the shortest @every interval a schedule may name: each
-	// export pauses the tenant's writes while it runs.
-	minInterval = time.Minute
 )
-
-// neverFiresProbe is the instant a schedule must fire after to be taken as
-// firing at all; the schedules that fail it name a date no calendar has.
-var neverFiresProbe = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 // Scheduler exports every tenant at each slot of a cron schedule, in UTC.
 type Scheduler struct {
 	spec     string
-	schedule cron.Schedule
+	schedule ports.BackupSchedule
 	tenants  ports.GraphTenants
 	ex       *Exporter
 	clock    func() time.Time
@@ -41,12 +32,10 @@ type Scheduler struct {
 	sleep    func(ctx context.Context, d time.Duration) error
 }
 
-// NewScheduler returns a Scheduler for spec: five cron fields or an @
-// descriptor that robfig/cron's standard parser reads, in UTC. It refuses a
-// CRON_TZ= or TZ= prefix, an @every under a minute and a schedule no date
-// satisfies, as catalog's configuration does.
-func NewScheduler(spec string, tenants ports.GraphTenants, ex *Exporter, clock func() time.Time, logger *slog.Logger) (*Scheduler, error) {
-	schedule, err := parseSchedule(spec)
+// NewScheduler returns a Scheduler for spec, which parser reads. It returns
+// the parser's reason when spec cannot be a backup schedule.
+func NewScheduler(spec string, parser ports.BackupScheduleParser, tenants ports.GraphTenants, ex *Exporter, clock func() time.Time, logger *slog.Logger) (*Scheduler, error) {
+	schedule, err := parser.Parse(spec)
 	if err != nil {
 		return nil, fmt.Errorf("catalog export schedule %q: %w", spec, err)
 	}
@@ -54,27 +43,6 @@ func NewScheduler(spec string, tenants ports.GraphTenants, ex *Exporter, clock f
 		spec: strings.TrimSpace(spec), schedule: schedule, tenants: tenants, ex: ex,
 		clock: clock, logger: logger, sleep: sleepCtx,
 	}, nil
-}
-
-func parseSchedule(spec string) (cron.Schedule, error) {
-	text := strings.TrimSpace(spec)
-	if text == "" {
-		return nil, errors.New("the schedule is empty")
-	}
-	if strings.HasPrefix(text, "CRON_TZ=") || strings.HasPrefix(text, "TZ=") {
-		return nil, errors.New("the schedule runs in UTC and must not start with CRON_TZ= or TZ=")
-	}
-	schedule, err := cron.ParseStandard(text)
-	if err != nil {
-		return nil, err
-	}
-	if every, ok := schedule.(cron.ConstantDelaySchedule); ok && every.Delay < minInterval {
-		return nil, fmt.Errorf("an @every interval is at least %s", minInterval)
-	}
-	if schedule.Next(neverFiresProbe).IsZero() {
-		return nil, errors.New("no date satisfies the schedule")
-	}
-	return schedule, nil
 }
 
 // Run exports every tenant at each slot until ctx ends. The next slot is
@@ -133,12 +101,7 @@ func (s *Scheduler) exportAll(ctx context.Context) {
 		s.logger.Error("catalog export: the tenants could not be listed; no tenant is exported until the next slot", "error", err)
 		return
 	}
-	for _, tenantID := range tenants {
-		if ctx.Err() != nil {
-			return
-		}
-		_, _ = s.ex.ExportTenant(ctx, tenantID)
-	}
+	s.ex.ExportEach(ctx, tenants, func(string, Result, error) {})
 }
 
 // sleepCtx sleeps d, or until ctx ends.

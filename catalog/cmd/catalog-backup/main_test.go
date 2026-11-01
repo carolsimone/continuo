@@ -26,11 +26,24 @@ type fakeExporter struct {
 	calls   []string
 	results map[string]backup.Result
 	errs    map[string]error
-	// onExport runs inside ExportTenant, before it answers.
+	// onExport runs inside the export of a tenant, before it answers.
 	onExport func(ctx context.Context, tenantID string)
 }
 
-func (f *fakeExporter) ExportTenant(ctx context.Context, tenantID string) (backup.Result, error) {
+// ExportEach follows backup.Exporter's contract: the tenants in order, each
+// reported as it ends, and none started once ctx has ended.
+func (f *fakeExporter) ExportEach(ctx context.Context, tenants []string, each func(string, backup.Result, error)) []string {
+	for i, tenantID := range tenants {
+		if ctx.Err() != nil {
+			return tenants[i:]
+		}
+		res, err := f.exportTenant(ctx, tenantID)
+		each(tenantID, res, err)
+	}
+	return nil
+}
+
+func (f *fakeExporter) exportTenant(ctx context.Context, tenantID string) (backup.Result, error) {
 	f.calls = append(f.calls, tenantID)
 	if f.onExport != nil {
 		f.onExport(ctx, tenantID)

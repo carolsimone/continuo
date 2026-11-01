@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
 	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
+	"github.com/carolsimone/continuo/catalog/service/export"
 )
 
 const tenant = "t1"

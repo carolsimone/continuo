@@ -310,7 +310,7 @@ func TestMain_RunsTheBackupOnlyWhenEnabled(t *testing.T) {
 	if args := calls["backup.NewExporter"].Args; len(args) != 7 || exprText(args[4]) != "cfg.Backup.Keep" {
 		t.Errorf("backup.NewExporter must take cfg.Backup.Keep as its keep, got %v", exprText(calls["backup.NewExporter"]))
 	}
-	if args := calls["backup.NewScheduler"].Args; len(args) != 5 || exprText(args[0]) != "cfg.Backup.Schedule" {
+	if args := calls["backup.NewScheduler"].Args; len(args) != 6 || exprText(args[0]) != "cfg.Backup.Schedule" {
 		t.Errorf("backup.NewScheduler must take cfg.Backup.Schedule as its spec, got %v", exprText(calls["backup.NewScheduler"]))
 	}
 	if scheduler == "" {

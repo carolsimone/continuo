@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/export"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 )
 
 const tenant = "t1"

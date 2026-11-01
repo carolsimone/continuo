@@ -10,11 +10,8 @@ import (
 )
 
 // ReleasePromotionRepository swaps a tenant's live Neo4j topology when a
-// promotion is newer than the one the graph holds. Implementations MUST run the
-// whole swap in one Neo4j transaction that first write-locks the tenant's
-// :Meta {key:'current_release'} node and only then reads its promotion_seq, so
-// concurrent promotions of a tenant serialise and an older one can never revert
-// a newer one.
+// promotion is newer than the one the graph holds. A tenant's promotions apply
+// one at a time, and an older promotion never reverts a newer one.
 type ReleasePromotionRepository interface {
 	// PromoteRelease applies the release's topology to tenantID's graph when
 	// promotionSeq is greater than the tenant's live promotion's: every node the
@@ -45,8 +42,8 @@ type CodeVersionRepository interface {
 	// graph. It does not wait for the release's topology swap: a node of the
 	// batch the graph does not hold yet is created inactive from its entry in
 	// in.Topology, which the swap makes live when it applies a release that
-	// carries it. A node with no entry in in.Topology, or whose entry is a
-	// dbt-test, is skipped.
+	// carries it. in.Topology holds the nodes the release's topology swap
+	// writes; a batch node with no entry there is skipped.
 	//
 	// Every node the batch matches, and every shared-code unit its nodes use,
 	// advances its watermark, code_version_promotion_seq, to the larger of its
