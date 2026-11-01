@@ -17,6 +17,23 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.18.0 · 2026-11-01 · `MINOR`
+
+**TL;DR**
+
+- Two services have new names: `state` is now `run-controller`, and `orchestrator` is now `catalog`. Old names and settings stop working, so **this release needs a manual upgrade**: follow the steps in the changelog.
+- `catalog` no longer uses Postgres, and it backs itself up to your S3 bucket every night.
+- Before you upgrade: stop all runs, releases and remediation rounds, and take a Postgres dump and a Neo4j dump. The upgrade changes both in place.
+
+What else is new:
+
+- **catalog keeps what a release drops.** A node that leaves the live topology stays in the graph as a retired node, with its code versions, failures and fix PRs. A release that brings it back makes it live again.
+- **Nightly backup.** catalog writes each tenant's graph to your bucket at 02:00 UTC and keeps the last 7. `catalog-backup` takes an export now, lists them and restores one. On an external bucket, catalog's role needs `s3:AbortMultipartUpload` on `tenants/<tenant>/backups/catalog/`. Turn it off with `catalog.backup.enabled=false`.
+- **Safer cron.** A schedule whose fire keeps failing backs off, one minute doubling up to fifteen, and a schedule whose stored cron no longer parses shows in a new `continuo_schedules{state="unparsable"}` series.
+- The changes are breaking, and while continuo is in beta they ship as a `MINOR`.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0180---2026-11-01) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.18.0)
+
 ## 0.17.0 · 2026-10-28 · `MINOR`
 
 - **Schedules are data.** An operator sets a schedule's cron in the ui (**Edit cron** or **Add cron** on its card) or with `continuo schedule set-cron`; state stores it in its own database and fires it durably: one run per slot, also across restarts, and after a downtime only the latest missed slot fires. The chart carries no schedules file any more, so **every cron stops until it is set again**. `helm upgrade` deletes the `<fullname>-schedules` ConfigMap, so copy the crons out of it first; `NOTES.txt` prints a warning on upgrade.
