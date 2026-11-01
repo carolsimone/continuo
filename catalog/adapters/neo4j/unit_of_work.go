@@ -52,6 +52,34 @@ func (u *unitOfWork) Processed(ctx context.Context, m uow.Marker) (bool, error) 
 	return recorded, nil
 }
 
+// WritesPaused reads the tenant's lease node in a read transaction. It takes no
+// gate, so it answers while an export or a restore holds the lease.
+func (u *unitOfWork) WritesPaused(ctx context.Context, tenantID string) (bool, error) {
+	session := u.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+	paused, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (bool, error) {
+		run, err := NewTenantRunner(tenantID, tx)
+		if err != nil {
+			return false, err
+		}
+		res, err := run.Run(ctx, leaseHeldCypher, nil)
+		if err != nil {
+			return false, err
+		}
+		recs, err := res.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return false, err
+		}
+		held, _ := recs[0].Get("held")
+		b, _ := held.(bool)
+		return b, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("read export lease: %w", err)
+	}
+	return paused, nil
+}
+
 // Write runs fn in one write transaction for m's tenant, in this order: lock
 // the export gate (ErrWritesPaused while a lease is held), re-check the
 // marker (found: remove m's in-flight mark, skip fn, return nil), run fn,

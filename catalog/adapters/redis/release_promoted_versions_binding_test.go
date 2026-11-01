@@ -27,6 +27,10 @@ func (p *processedUnitOfWork) Processed(_ context.Context, m uow.Marker) (bool, 
 	return true, nil
 }
 
+func (p *processedUnitOfWork) WritesPaused(context.Context, string) (bool, error) {
+	panic("a processed message checks nothing")
+}
+
 func (p *processedUnitOfWork) Write(context.Context, uow.Marker, bool, func(context.Context, uow.Tx) error) error {
 	panic("a processed message writes nothing")
 }

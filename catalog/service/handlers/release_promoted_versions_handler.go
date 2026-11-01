@@ -96,6 +96,16 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		return h.recordMarker(ctx, marker)
 	}
 
+	// While the tenant's writes are paused the first write would be refused and
+	// the message redelivered, so skip the download it would repeat.
+	paused, err := h.uow.WritesPaused(ctx, in.TenantID)
+	if err != nil {
+		return fmt.Errorf("check whether the tenant's writes are paused: %w", err)
+	}
+	if paused {
+		return fmt.Errorf("tenant %q: %w", in.TenantID, uow.ErrWritesPaused)
+	}
+
 	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)
 	if err != nil {
 		if errors.Is(err, ports.ErrBundleMalformed) || errors.Is(err, ports.ErrBundleTooLarge) {

@@ -494,3 +494,21 @@ func TestUnitOfWork_FoundMarkerEndsItsInFlightMark(t *testing.T) {
 	assert.NotContains(t, node, "inflight_until")
 	f.assertGateUnlocked()
 }
+
+func TestUnitOfWork_WritesPausedFollowsTheLease(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+	paused := func() bool {
+		ok, err := u.WritesPaused(ctx, f.tenant)
+		require.NoError(t, err)
+		return ok
+	}
+
+	assert.False(t, paused(), "a tenant with no lease node is not paused")
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	assert.True(t, paused())
+	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-1"))
+	assert.False(t, paused())
+}

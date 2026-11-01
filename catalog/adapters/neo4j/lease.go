@@ -71,6 +71,12 @@ RETURN m.until IS NOT NULL AND m.until > datetime() AS held,
 // exportGateUnlockCypher removes the gate's lock property before commit.
 const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) REMOVE m._lock`
 
+// leaseHeldCypher reads, without locking, whether the tenant's lease is live. A
+// tenant with no lease node returns no row.
+const leaseHeldCypher = `
+MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+RETURN m.until IS NOT NULL AND m.until > datetime() AS held`
+
 // leaseLockCypher locks an existing lease node and reports its holder and
 // whether its lease is live, for a renewal or a release.
 const leaseLockCypher = `

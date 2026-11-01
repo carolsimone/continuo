@@ -29,6 +29,11 @@ type UnitOfWork interface {
 	// message id or, when m carries one, by outbox entry id. It opens no write
 	// transaction and takes no gate.
 	Processed(ctx context.Context, m Marker) (bool, error)
+	// WritesPaused reports whether an export or a restore holds tenantID's
+	// lease, so that a Write now would return ErrWritesPaused. It runs in a
+	// read transaction and takes no gate: it only saves work a write would
+	// discard, and the Write itself is what guarantees correctness.
+	WritesPaused(ctx context.Context, tenantID string) (bool, error)
 	// Write runs fn in one Neo4j write transaction for m.TenantID: it locks the
 	// tenant's export lease node and returns ErrWritesPaused while a lease is
 	// held; re-checks the marker (a found marker skips fn and returns nil);
