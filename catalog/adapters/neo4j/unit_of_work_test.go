@@ -405,16 +405,18 @@ func TestUnitOfWork_NonFinalWriteMarksItsMessageInFlight(t *testing.T) {
 
 	f.writeProbeBatch(u, a, false, "batch-1")
 	node := f.leaseNode()
-	assert.Equal(t, []any{"1762077600000-0"}, node["inflight_message_ids"])
-	until, ok := node["inflight_until"].(time.Time)
-	require.True(t, ok, "inflight_until is a datetime")
+	assert.Equal(t, []any{inflightKey(a)}, node["inflight_message_ids"])
+	untils, _ := node["inflight_untils"].([]any)
+	require.Len(t, untils, 1, "each mark has its own lapse time")
+	until, ok := untils[0].(time.Time)
+	require.True(t, ok, "a lapse time is a datetime")
 	assert.Greater(t, time.Until(until), time.Minute, "the mark lives for the in-flight TTL")
 	f.assertGateUnlocked()
 
 	f.writeProbeBatch(u, a, true, "batch-2")
 	node = f.leaseNode()
 	assert.NotContains(t, node, "inflight_message_ids")
-	assert.NotContains(t, node, "inflight_until")
+	assert.NotContains(t, node, "inflight_untils")
 }
 
 func TestUnitOfWork_FinalWriteKeepsOtherMessagesInFlight(t *testing.T) {
@@ -426,13 +428,13 @@ func TestUnitOfWork_FinalWriteKeepsOtherMessagesInFlight(t *testing.T) {
 	f.writeProbeBatch(u, a, false, "a-1")
 	f.writeProbeBatch(u, b, false, "b-1")
 	f.writeProbeBatch(u, a, true, "a-2")
-	assert.Equal(t, []any{"1762077700000-0"}, f.inflightIDs(), "A's last batch leaves B's id")
-	assert.Contains(t, f.leaseNode(), "inflight_until")
+	assert.Equal(t, []any{inflightKey(b)}, f.inflightIDs(), "A's last batch leaves B's id")
+	assert.Contains(t, f.leaseNode(), "inflight_untils")
 
 	f.writeProbeBatch(u, b, true, "b-2")
 	node := f.leaseNode()
 	assert.NotContains(t, node, "inflight_message_ids")
-	assert.NotContains(t, node, "inflight_until")
+	assert.NotContains(t, node, "inflight_untils")
 }
 
 func TestUnitOfWork_RepeatedNonFinalWriteListsItsMessageOnce(t *testing.T) {
@@ -442,7 +444,7 @@ func TestUnitOfWork_RepeatedNonFinalWriteListsItsMessageOnce(t *testing.T) {
 
 	f.writeProbeBatch(u, a, false, "batch-1")
 	f.writeProbeBatch(u, a, false, "batch-2")
-	assert.Equal(t, []any{"1762077600000-0"}, f.inflightIDs())
+	assert.Equal(t, []any{inflightKey(a)}, f.inflightIDs())
 }
 
 func TestUnitOfWork_FinalOnlyWriteLeavesNoInFlightMark(t *testing.T) {
@@ -452,7 +454,7 @@ func TestUnitOfWork_FinalOnlyWriteLeavesNoInFlightMark(t *testing.T) {
 	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), true, "only")
 	node := f.leaseNode()
 	assert.NotContains(t, node, "inflight_message_ids")
-	assert.NotContains(t, node, "inflight_until")
+	assert.NotContains(t, node, "inflight_untils")
 }
 
 func TestUnitOfWork_FailedNonFinalWriteLeavesNoInFlightMark(t *testing.T) {
@@ -466,7 +468,7 @@ func TestUnitOfWork_FailedNonFinalWriteLeavesNoInFlightMark(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 	node := f.leaseNode()
 	assert.NotContains(t, node, "inflight_message_ids", "a rolled-back batch marks nothing")
-	assert.NotContains(t, node, "inflight_until")
+	assert.NotContains(t, node, "inflight_untils")
 }
 
 // A redelivery under a fresh stream message id finishes the message under that
@@ -481,7 +483,7 @@ func TestUnitOfWork_FoundMarkerEndsItsInFlightMark(t *testing.T) {
 
 	f.writeProbeBatch(u, a, false, "a-1")
 	f.writeProbeBatch(u, b, true, "b-final")
-	assert.Equal(t, []any{"1762077600000-0"}, f.inflightIDs(), "B's final write does not clear A's id")
+	assert.Equal(t, []any{inflightKey(a)}, f.inflightIDs(), "B's final write does not clear A's id")
 
 	called := false
 	require.NoError(t, u.Write(context.Background(), a, true, func(ctx context.Context, tx uow.Tx) error {
@@ -491,7 +493,7 @@ func TestUnitOfWork_FoundMarkerEndsItsInFlightMark(t *testing.T) {
 	assert.False(t, called, "A finds B's marker by the outbox entry id and skips fn")
 	node := f.leaseNode()
 	assert.NotContains(t, node, "inflight_message_ids")
-	assert.NotContains(t, node, "inflight_until")
+	assert.NotContains(t, node, "inflight_untils")
 	f.assertGateUnlocked()
 }
 
@@ -511,4 +513,46 @@ func TestUnitOfWork_WritesPausedFollowsTheLease(t *testing.T) {
 	assert.True(t, paused())
 	require.NoError(t, lease.Release(ctx, f.tenant, "exporter-1"))
 	assert.False(t, paused())
+}
+
+// versionsMarker is the versions group's marker for the same stream message
+// that marker(messageID) names for the topology group: both groups read one
+// release.promoted:v2 entry, so both carry its message id.
+func (f *uowFixture) versionsMarker(messageID string) uow.Marker {
+	return uow.Marker{TenantID: f.tenant, Group: streams.CatalogReleaseVersions, MessageID: messageID}
+}
+
+// Two groups read the same stream message under the same message id. The
+// topology group's final write must not end the versions group's mark, or an
+// export would start between the versions group's batches.
+func TestUnitOfWork_AnotherGroupsFinalWriteKeepsTheMessageInFlight(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+	const id = "1762077600000-0"
+
+	f.writeProbeBatch(u, f.versionsMarker(id), false, "versions-1")
+	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-final")
+	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute), ports.ErrWritesInFlight,
+		"the topology group's final write leaves the versions group between its batches")
+
+	f.writeProbeBatch(u, f.versionsMarker(id), true, "versions-final")
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+}
+
+// A redelivery of a message one group already finished finds that group's
+// marker and clears its mark; it must not clear another group's.
+func TestUnitOfWork_AnotherGroupsFoundMarkerKeepsTheMessageInFlight(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+	const id = "1762077600000-0"
+
+	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-final")
+	f.writeProbeBatch(u, f.versionsMarker(id), false, "versions-1")
+	f.writeProbeBatch(u, f.marker(id, nil), true, "topology-redelivered")
+	require.ErrorIs(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute), ports.ErrWritesInFlight,
+		"the topology group's redelivery leaves the versions group between its batches")
 }

@@ -112,7 +112,7 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
 			// An earlier delivery of the message may have died between its
 			// batches under this id; the message is finished, so its mark ends.
-			if err := clearInFlight(ctx, run, m.MessageID); err != nil {
+			if err := clearInFlight(ctx, run, inflightKey(m)); err != nil {
 				return false, err
 			}
 			if err := unlockExportGate(ctx, run); err != nil {
@@ -127,10 +127,10 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 			if err := recordMarker(ctx, run, m); err != nil {
 				return false, fmt.Errorf("record processed-message marker: %w", err)
 			}
-			if err := clearInFlight(ctx, run, m.MessageID); err != nil {
+			if err := clearInFlight(ctx, run, inflightKey(m)); err != nil {
 				return false, err
 			}
-		} else if err := markInFlight(ctx, run, m.MessageID); err != nil {
+		} else if err := markInFlight(ctx, run, inflightKey(m)); err != nil {
 			return false, err
 		}
 		if err := unlockExportGate(ctx, run); err != nil {
@@ -138,6 +138,13 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		}
 		return true, nil
 	})
+}
+
+// inflightKey names m's in-flight mark. Several consumer groups read one stream
+// message under one message id, and each finishes it on its own, so the mark
+// belongs to the group and the message together.
+func inflightKey(m uow.Marker) string {
+	return m.Group + "/" + m.MessageID
 }
 
 // transaction is the uow.Tx of one Write: its open Neo4j transaction, bound to

@@ -25,37 +25,41 @@ import (
 // locks the node after the lease is taken sees it held.
 
 // A message whose writes span several transactions (a non-final batch of the
-// code versions) also marks itself on the lease node: inflight_message_ids lists
-// the ids of the messages between two of their batches, and inflight_until, a
-// datetime on the database clock, is the time the mark lapses. The mark is
-// live while the list is not empty and inflight_until lies ahead of
-// datetime(). An export's Acquire refuses while it is live, so an export never
-// starts between a message's batches; a crashed handler's mark lapses on its
-// own. A write never waits for the mark.
+// code versions) also marks itself on the lease node, between two of its
+// batches. inflight_message_ids lists the marks, one per consumer group and
+// message, and inflight_untils lists, in the same order, the datetime on the
+// database clock at which each lapses. A mark is live while its lapse time lies
+// ahead of datetime(), so each message lapses on its own clock and a later
+// message's batches never extend an earlier one's. An export's Acquire refuses
+// while any mark is live, so an export never starts between a message's
+// batches; a crashed handler's mark lapses on its own. A write never waits for
+// a mark.
 
 // inflightTTL is how long a non-final write keeps its message's mark live. It
 // exceeds the time one batch takes, and a message that dies mid-way holds an
 // export back for at most this long after its last batch.
 const inflightTTL = 2 * time.Minute
 
-// inflightMarkCypher adds a message to the in-flight list, once, and moves the
-// mark's lapse time to ttl from now.
+// inflightMarkCypher adds a mark, once, and moves its lapse time to ttl from
+// now. It drops the marks that have lapsed, so an abandoned message does not
+// stay on the list.
 const inflightMarkCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
-SET m.inflight_message_ids = CASE
-      WHEN $message_id IN coalesce(m.inflight_message_ids, []) THEN m.inflight_message_ids
-      ELSE coalesce(m.inflight_message_ids, []) + $message_id END,
-    m.inflight_until = datetime() + duration({milliseconds: $ttl_ms})`
+WITH m, coalesce(m.inflight_message_ids, []) AS ids, coalesce(m.inflight_untils, []) AS untils
+WITH m, ids, untils,
+     [i IN range(0, size(ids) - 1) WHERE ids[i] <> $mark AND untils[i] > datetime()] AS keep
+SET m.inflight_message_ids = [i IN keep | ids[i]] + [$mark],
+    m.inflight_untils = [i IN keep | untils[i]] + [datetime() + duration({milliseconds: $ttl_ms})]`
 
-// inflightClearCypher removes a message from the in-flight list, and the
-// mark's lapse time once the list is empty. A tenant with no mark is left as
-// it is.
+// inflightClearCypher removes a mark, and both lists once none is left. A
+// tenant with no mark is left as it is.
 const inflightClearCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
 WHERE m.inflight_message_ids IS NOT NULL
-WITH m, [id IN m.inflight_message_ids WHERE id <> $message_id] AS rest
-SET m.inflight_message_ids = CASE WHEN size(rest) = 0 THEN null ELSE rest END,
-    m.inflight_until = CASE WHEN size(rest) = 0 THEN null ELSE m.inflight_until END`
+WITH m, m.inflight_message_ids AS ids, m.inflight_untils AS untils
+WITH m, ids, untils, [i IN range(0, size(ids) - 1) WHERE ids[i] <> $mark] AS keep
+SET m.inflight_message_ids = CASE WHEN size(keep) = 0 THEN null ELSE [i IN keep | ids[i]] END,
+    m.inflight_untils = CASE WHEN size(keep) = 0 THEN null ELSE [i IN keep | untils[i]] END`
 
 // exportGateCypher locks the tenant's lease node, creating it on the tenant's
 // first write, and reports whether a lease is held and whether a message's
@@ -66,7 +70,7 @@ const exportGateCypher = `
 MERGE (m:Meta {tenant_id: $tenant_id, key: 'export'})
 SET m._lock = true
 RETURN m.until IS NOT NULL AND m.until > datetime() AS held,
-       coalesce(size(m.inflight_message_ids), 0) > 0 AND m.inflight_until IS NOT NULL AND m.inflight_until > datetime() AS inflight`
+       any(u IN coalesce(m.inflight_untils, []) WHERE u > datetime()) AS inflight`
 
 // exportGateUnlockCypher removes the gate's lock property before commit.
 const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) REMOVE m._lock`
@@ -95,7 +99,7 @@ REMOVE m._lock`
 const leaseTakeExportCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
-REMOVE m._lock, m.inflight_message_ids, m.inflight_until`
+REMOVE m._lock, m.inflight_message_ids, m.inflight_untils`
 
 // leaseExtendCypher moves a renewed lease's until and unlocks the node.
 const leaseExtendCypher = `
@@ -138,20 +142,20 @@ func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
 	return gateState{held: heldB, inflight: inflightB}, nil
 }
 
-// markInFlight lists messageID as in flight on the locked lease node.
-func markInFlight(ctx context.Context, run TenantRunner, messageID string) error {
+// markInFlight adds mark to the in-flight marks on the locked lease node.
+func markInFlight(ctx context.Context, run TenantRunner, mark string) error {
 	if err := execCypher(ctx, run, inflightMarkCypher, map[string]any{
-		"message_id": messageID, "ttl_ms": inflightTTL.Milliseconds(),
+		"mark": mark, "ttl_ms": inflightTTL.Milliseconds(),
 	}); err != nil {
 		return fmt.Errorf("mark message in flight: %w", err)
 	}
 	return nil
 }
 
-// clearInFlight removes messageID from the in-flight list on the locked lease
+// clearInFlight removes mark from the in-flight marks on the locked lease
 // node.
-func clearInFlight(ctx context.Context, run TenantRunner, messageID string) error {
-	if err := execCypher(ctx, run, inflightClearCypher, map[string]any{"message_id": messageID}); err != nil {
+func clearInFlight(ctx context.Context, run TenantRunner, mark string) error {
+	if err := execCypher(ctx, run, inflightClearCypher, map[string]any{"mark": mark}); err != nil {
 		return fmt.Errorf("clear message in flight: %w", err)
 	}
 	return nil
