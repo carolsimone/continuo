@@ -3,7 +3,7 @@ package graphschema_test
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 )
 
 func TestGraphSchema_EveryLabelHasAnIdentity(t *testing.T) {

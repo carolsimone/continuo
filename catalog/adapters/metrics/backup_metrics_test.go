@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"

@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/google/uuid"
 )

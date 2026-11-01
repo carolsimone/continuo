@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"

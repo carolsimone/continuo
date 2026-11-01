@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 )
 
 // RecordWriter receives a tenant's export: the header first, then every node,
