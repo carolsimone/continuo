@@ -66,11 +66,11 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		return errors.New("neo4j: a write needs a function to run")
 	}
 	return inWriteTx(ctx, u.client, m.TenantID, func(run TenantRunner) (bool, error) {
-		held, err := lockExportGate(ctx, run)
+		gate, err := lockExportGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if held {
+		if gate.held {
 			u.logger.Debug("catalog write paused by the export lease",
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
 			return false, fmt.Errorf("tenant %q: %w", m.TenantID, uow.ErrWritesPaused)

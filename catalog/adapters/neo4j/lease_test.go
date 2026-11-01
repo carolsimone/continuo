@@ -11,6 +11,7 @@ import (
 
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -289,4 +290,58 @@ func TestLease_AcquireWaitsForInFlightWrite(t *testing.T) {
 	assert.Equal(t, "exporter-1", f.leaseNode()["holder"])
 	require.ErrorIs(t, u.Write(ctx, f.marker("1762077700000-0", nil), true, func(context.Context, uow.Tx) error { return nil }),
 		uow.ErrWritesPaused, "a write that starts after the lease is taken backs off")
+}
+
+func TestLease_ExportWaitsForWritesInFlight(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+	a := f.marker("1762077600000-0", nil)
+
+	f.writeProbeBatch(u, a, false, "batch-1")
+	err := lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute)
+	require.ErrorIs(t, err, ports.ErrWritesInFlight)
+	assert.NotContains(t, f.leaseNode(), "holder", "a refused export takes no lease")
+	f.assertGateUnlocked()
+
+	f.writeProbeBatch(u, a, true, "batch-2")
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	assert.Equal(t, "exporter-1", f.leaseNode()["holder"])
+}
+
+// A handler that dies between two batches never sends its final write; its
+// mark lapses, and the next export goes ahead rather than wait for a
+// redelivery that may take hours.
+func TestLease_ExportTakesOverALapsedInFlightMark(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+
+	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), false, "batch-1")
+	s := f.client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx, `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) SET m.inflight_until = datetime() - duration('PT1S')`,
+		map[string]any{"tenant_id": f.tenant})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	node := f.leaseNode()
+	assert.Equal(t, "exporter-1", node["holder"])
+	assert.NotContains(t, node, "inflight_message_ids")
+	assert.NotContains(t, node, "inflight_until")
+}
+
+func TestLease_RestoreIgnoresWritesInFlight(t *testing.T) {
+	ctx := context.Background()
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	lease := NewExportLease(f.client, quietLogger())
+
+	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), false, "batch-1")
+	require.NoError(t, lease.Acquire(ctx, f.tenant, ports.LeaseRestore, "restorer-1", time.Minute))
+	assert.Equal(t, []any{"1762077600000-0"}, f.inflightIDs(), "a restore leaves the mark in place")
 }

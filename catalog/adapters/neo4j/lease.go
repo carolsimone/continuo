@@ -58,10 +58,15 @@ SET m.inflight_message_ids = CASE WHEN size(rest) = 0 THEN null ELSE rest END,
     m.inflight_until = CASE WHEN size(rest) = 0 THEN null ELSE m.inflight_until END`
 
 // exportGateCypher locks the tenant's lease node, creating it on the tenant's
-// first write, and reports whether a lease is held. SET takes the lock before
-// RETURN reads until, so the read sees the lease as the last holder of the
-// lock committed it.
-const exportGateCypher = `MERGE (m:Meta {tenant_id: $tenant_id, key: 'export'}) SET m._lock = true RETURN m.until IS NOT NULL AND m.until > datetime() AS held`
+// first write, and reports whether a lease is held and whether a message's
+// in-flight mark is live. SET takes the lock before RETURN reads until, so the
+// read sees the lease and the mark as the last holder of the lock committed
+// them.
+const exportGateCypher = `
+MERGE (m:Meta {tenant_id: $tenant_id, key: 'export'})
+SET m._lock = true
+RETURN m.until IS NOT NULL AND m.until > datetime() AS held,
+       coalesce(size(m.inflight_message_ids), 0) > 0 AND m.inflight_until IS NOT NULL AND m.inflight_until > datetime() AS inflight`
 
 // exportGateUnlockCypher removes the gate's lock property before commit.
 const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) REMOVE m._lock`
@@ -79,6 +84,13 @@ MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock`
 
+// leaseTakeExportCypher records a new export lease like leaseTakeCypher and
+// removes the in-flight mark, which Acquire has found lapsed or absent.
+const leaseTakeExportCypher = `
+MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
+REMOVE m._lock, m.inflight_message_ids, m.inflight_until`
+
 // leaseExtendCypher moves a renewed lease's until and unlocks the node.
 const leaseExtendCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
@@ -90,14 +102,34 @@ const leaseClearCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
 REMOVE m.holder, m.kind, m.until, m._lock`
 
+// gateState is what a transaction reads from the tenant's lease node under the
+// gate's lock.
+type gateState struct {
+	// held is true while an export or a restore holds the lease.
+	held bool
+	// inflight is true while a message sits between two of its writes.
+	inflight bool
+}
+
 // lockExportGate takes the tenant's export gate on the open transaction and
-// reports whether an export or a restore holds the lease.
-func lockExportGate(ctx context.Context, run TenantRunner) (held bool, err error) {
-	held, err = singleBool(ctx, run, exportGateCypher, nil, "held")
+// reads the lease and the in-flight mark.
+func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
+	res, err := run.Run(ctx, exportGateCypher, nil)
 	if err != nil {
-		return false, fmt.Errorf("lock export gate: %w", err)
+		return gateState{}, fmt.Errorf("lock export gate: %w", err)
 	}
-	return held, nil
+	rec, err := res.Single(ctx)
+	if err != nil {
+		return gateState{}, fmt.Errorf("lock export gate: %w", err)
+	}
+	held, _ := rec.Get("held")
+	inflight, _ := rec.Get("inflight")
+	heldB, heldOK := held.(bool)
+	inflightB, inflightOK := inflight.(bool)
+	if !heldOK || !inflightOK {
+		return gateState{}, fmt.Errorf("lock export gate: columns are %T and %T, want booleans", held, inflight)
+	}
+	return gateState{held: heldB, inflight: inflightB}, nil
 }
 
 // markInFlight lists messageID as in flight on the locked lease node.
@@ -143,7 +175,9 @@ func NewExportLease(client Neo4jClient, logger *slog.Logger) ports.ExportLease {
 
 // Acquire takes the tenant's lease for holder, after the tenant's in-flight
 // writes commit. A live lease, whoever holds it, is ErrLeaseHeld; an expired
-// one is taken over.
+// one is taken over. An export also refuses with ErrWritesInFlight while a
+// message's in-flight mark is live, and removes a mark that has lapsed; a
+// restore ignores the mark.
 func (l *exportLease) Acquire(ctx context.Context, tenantID string, kind ports.LeaseKind, holder string, ttl time.Duration) error {
 	if kind != ports.LeaseExport && kind != ports.LeaseRestore {
 		return fmt.Errorf("neo4j: unknown export lease kind %q", kind)
@@ -153,14 +187,21 @@ func (l *exportLease) Acquire(ctx context.Context, tenantID string, kind ports.L
 		return err
 	}
 	err = inWriteTx(ctx, l.client, tenantID, func(run TenantRunner) (bool, error) {
-		held, err := lockExportGate(ctx, run)
+		gate, err := lockExportGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if held {
+		if gate.held {
 			return false, fmt.Errorf("tenant %q: %w", tenantID, ports.ErrLeaseHeld)
 		}
-		if err := execCypher(ctx, run, leaseTakeCypher, map[string]any{
+		take := leaseTakeCypher
+		if kind == ports.LeaseExport {
+			if gate.inflight {
+				return false, fmt.Errorf("tenant %q: %w", tenantID, ports.ErrWritesInFlight)
+			}
+			take = leaseTakeExportCypher
+		}
+		if err := execCypher(ctx, run, take, map[string]any{
 			"holder": holder, "kind": string(kind), "ttl_ms": ttlMs,
 		}); err != nil {
 			return false, fmt.Errorf("take export lease: %w", err)

@@ -129,11 +129,11 @@ func (s *MarkerSweeper) tenantsWithExpiredMarkers(ctx context.Context, retention
 func (s *MarkerSweeper) pruneTenant(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error) {
 	var deleted int64
 	err := inWriteTx(ctx, s.client, tenantID, func(run TenantRunner) (bool, error) {
-		held, err := lockExportGate(ctx, run)
+		gate, err := lockExportGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if held {
+		if gate.held {
 			s.logger.Debug("marker sweep skipped: the tenant's export lease is held", "tenant_id", tenantID)
 			return false, nil
 		}
