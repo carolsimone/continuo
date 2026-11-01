@@ -50,7 +50,6 @@ _INFRA_BACKOFF_BASE_S = 1.0
 _INFRA_BACKOFF_CAP_S = 60.0
 _PAUSE_SLICE_S = 5.0
 # Logged once per abandoned message, after its dead letter is written.
-# scripts/bench/outage.sh counts abandoned messages by this text.
 LOG_DEAD_LETTERED = "Message dead-lettered — ACKing to drop from PEL"
 
 

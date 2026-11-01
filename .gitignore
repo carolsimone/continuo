@@ -110,5 +110,3 @@ sarif/
 node_modules/
 docs/arch/
 
-# Benchmark results and kubeconfigs written by scripts/bench; never committed.
-.bench/
