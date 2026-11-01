@@ -394,14 +394,7 @@ was written after the export is gone:
   keeps a stale current version until its next release;
 - rejections, proposals and PR outcomes recorded after the export.
 
-One export can itself hold a hole. catalog writes a release's code versions in
-batches of 100 nodes, each its own transaction behind the export lease, and
-records the message as processed with the last batch. An export that lands
-between two batches of one release holds that release's versions for the
-earlier batches and none for the later ones, whose nodes keep the `:CURRENT`
-of their previous version. The live graph converges, because the message is
-delivered again once the export ends and writes its batches again. A restore
-of that export leaves those nodes so until their next change.
+An export waits while a release's code versions are between two of their batches, so it never holds part of one release's versions. A batch that dies mid-release holds the export back for at most two minutes.
 
 Topology written after the export comes back with the re-announce in step 3.
 

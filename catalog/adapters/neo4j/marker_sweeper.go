@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -23,11 +24,24 @@ import (
 type MarkerSweeper struct {
 	client Neo4jClient
 	logger *slog.Logger
+
+	// listTenants and pruneOne are the sweeper's two reads of the graph; they
+	// are fields so a test can drive Prune without a database.
+	listTenants func(ctx context.Context, retentionMs int64) ([]string, error)
+	pruneOne    func(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error)
+
+	// failed holds the tenants whose prune failed in the sweep that is under
+	// way, which skips them until AfterSweep.
+	mu     sync.Mutex
+	failed map[string]struct{}
 }
 
 // NewMarkerSweeper returns a sweeper over client's graph.
 func NewMarkerSweeper(client Neo4jClient, logger *slog.Logger) *MarkerSweeper {
-	return &MarkerSweeper{client: client, logger: logger}
+	s := &MarkerSweeper{client: client, logger: logger, failed: map[string]struct{}{}}
+	s.listTenants = s.tenantsWithExpiredMarkers
+	s.pruneOne = s.pruneTenant
+	return s
 }
 
 // expiredMarkerTenantsCypher lists the tenants that hold a marker recorded
@@ -53,13 +67,15 @@ RETURN count(*) AS deleted`
 // tenant together: a pass visits the tenants that hold expired markers in
 // turn until it has deleted limit. A tenant whose export lease is held is
 // skipped. A tenant whose sweep fails is logged and does not stop the
-// others: its markers wait for the next pass, and the count of what the pass
-// deleted comes back without an error. A cancelled ctx ends the pass with
-// ctx's error and the count so far, and logs nothing, since only a shutdown
-// cancels it.
+// others: it is skipped for the rest of the sweep, so it logs once however
+// many passes the sweep takes, and its markers wait for the next sweep. The
+// count of what the pass deleted comes back without an error. A cancelled ctx
+// ends the pass with ctx's error and the count so far, and logs nothing, since
+// only a shutdown cancels it.
 //
 // It is a retention.PruneFunc (pkg/retention), so the sweeper calls it in a loop
-// until a pass deletes fewer than limit.
+// until a pass deletes fewer than limit or the sweep reaches its cap on
+// batches, then calls AfterSweep, which forgets the failed tenants.
 func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	retentionMs := retention.Milliseconds()
 	if retentionMs < 1 {
@@ -69,7 +85,7 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 		return 0, fmt.Errorf("neo4j: a marker sweep needs a limit of at least 1, got %d", limit)
 	}
 
-	tenants, err := s.tenantsWithExpiredMarkers(ctx, retentionMs)
+	tenants, err := s.listTenants(ctx, retentionMs)
 	if err != nil {
 		return 0, err
 	}
@@ -78,21 +94,49 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 		if deleted >= int64(limit) {
 			break
 		}
-		if err := ctx.Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return deleted, err
 		}
-		n, err := s.pruneTenant(ctx, tenantID, retentionMs, int64(limit)-deleted)
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return deleted, ctxErr
+		if s.hasFailed(tenantID) {
+			continue
+		}
+		n, pruneErr := s.pruneOne(ctx, tenantID, retentionMs, int64(limit)-deleted)
+		if pruneErr != nil {
+			if err = ctx.Err(); err != nil {
+				return deleted, err
 			}
-			s.logger.Error("processed-message marker sweep of a tenant failed; its markers wait for the next pass",
-				"tenant_id", tenantID, "error", err)
+			s.markFailed(tenantID)
+			s.logger.Error("processed-message marker sweep of a tenant failed; its markers wait for the next sweep",
+				"tenant_id", tenantID, "error", pruneErr)
 			continue
 		}
 		deleted += n
 	}
 	return deleted, nil
+}
+
+// AfterSweep ends the sweep the pruner has been running: the tenants whose
+// prune failed in it are tried again in the next. pkg/retention calls it when
+// a sweep ends, however it ends.
+func (s *MarkerSweeper) AfterSweep() { s.clearFailed() }
+
+func (s *MarkerSweeper) hasFailed(tenantID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.failed[tenantID]
+	return ok
+}
+
+func (s *MarkerSweeper) markFailed(tenantID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed[tenantID] = struct{}{}
+}
+
+func (s *MarkerSweeper) clearFailed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.failed)
 }
 
 // tenantsWithExpiredMarkers lists, in order, the tenants that hold a marker
@@ -129,11 +173,11 @@ func (s *MarkerSweeper) tenantsWithExpiredMarkers(ctx context.Context, retention
 func (s *MarkerSweeper) pruneTenant(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error) {
 	var deleted int64
 	err := inWriteTx(ctx, s.client, tenantID, func(run TenantRunner) (bool, error) {
-		held, err := lockExportGate(ctx, run)
+		gate, err := lockExportGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if held {
+		if gate.held {
 			s.logger.Debug("marker sweep skipped: the tenant's export lease is held", "tenant_id", tenantID)
 			return false, nil
 		}

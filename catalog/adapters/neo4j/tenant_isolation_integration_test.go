@@ -410,6 +410,14 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, err)
 			assert.True(t, done)
 		}},
+		{"unitOfWork.WritesPaused", func(t *testing.T) {
+			paused, err := f.a.uow.WritesPaused(ctx, tenant())
+			require.NoError(t, err)
+			assert.False(t, paused, "B's export lease does not pause A's writes")
+			paused, err = f.a.uow.WritesPaused(ctx, f.b.tenant)
+			require.NoError(t, err)
+			assert.True(t, paused, "B's own writes are paused by its lease")
+		}},
 		{"unitOfWork.Write", func(t *testing.T) {
 			err := f.a.uow.Write(ctx, f.topologyMarker(tenant()), true, func(context.Context, uow.Tx) error {
 				f.wroteA = true

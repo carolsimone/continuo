@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -23,8 +24,59 @@ import (
 // A batched step runs each statement as one auto-commit transaction whose
 // inner transactions commit every migrationBatchRows rows (CALL { … } IN
 // TRANSACTIONS).
+//
+// Catalog pods that start together, as in a rolling restart with several
+// replicas, run the migration at once and can deadlock on each other's schema
+// locks. InitSchema retries the whole migration when a step fails with such an
+// error (up to initSchemaAttempts attempts, initSchemaRetryDelay apart): every
+// step is idempotent, so the retry finishes what the other pod left. Any other
+// error fails at once.
+//
+// No step takes the tenant's export gate. Step 4 only fills a missing version
+// watermark, so an export that captured a node before step 4 ran is repaired
+// at the next start.
 func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) error {
-	return runMigration(ctx, client, logger, startupMigration)
+	return retryMigration(ctx, initSchemaAttempts, initSchemaRetryDelay, logger, func(ctx context.Context) error {
+		return runMigration(ctx, client, logger, startupMigration)
+	})
+}
+
+const (
+	// initSchemaAttempts bounds how many times InitSchema runs the migration.
+	initSchemaAttempts = 5
+	// initSchemaRetryDelay is the wait between two attempts.
+	initSchemaRetryDelay = time.Second
+)
+
+// concurrentMigrationError reports whether err is one another catalog pod
+// migrating at the same time causes: an error the Neo4j driver retries, such as
+// the deadlock two migrations raise on each other's schema locks.
+func concurrentMigrationError(err error) bool {
+	return neo4j.IsRetryable(err)
+}
+
+// retryMigration runs migrate up to attempts times, delay apart, while it
+// fails with a concurrentMigrationError. It returns nil on the first success,
+// any other error at once, the last error after the last attempt, and ctx's
+// error when ctx ends while it waits.
+func retryMigration(ctx context.Context, attempts int, delay time.Duration, logger *slog.Logger, migrate func(context.Context) error) error {
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err = migrate(ctx); err == nil || !concurrentMigrationError(err) {
+			return err
+		}
+		if attempt == attempts {
+			break
+		}
+		logger.Warn("Neo4j startup migration collided with another catalog's; retrying",
+			"attempt", attempt, "attempts", attempts, "error", err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("startup migration interrupted (last failure: %v): %w", err, ctx.Err())
+		case <-time.After(delay):
+		}
+	}
+	return err
 }
 
 // migrationBatchRows is how many rows each inner transaction of a batched

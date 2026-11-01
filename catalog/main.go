@@ -207,6 +207,7 @@ func main() {
 			{
 				Name:         "processed_messages",
 				Prune:        markerSweeper.Prune,
+				AfterSweep:   markerSweeper.AfterSweep,
 				MinRetention: model.ReplayHorizon,
 			},
 		},

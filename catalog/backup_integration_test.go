@@ -16,6 +16,9 @@ import (
 	"maps"
 	"os"
 	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -292,8 +295,8 @@ func newGateStore(store ports.BackupStore) *gateStore {
 	return &gateStore{BackupStore: store, entered: make(chan struct{}), proceed: make(chan struct{})}
 }
 
-func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
-	w, key, err := g.BackupStore.Open(ctx, tenantID, at)
+func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
+	w, key, err := g.BackupStore.Open(ctx, tenantID, at, progress)
 	if err != nil {
 		return nil, "", err
 	}
@@ -614,17 +617,25 @@ WITH ns[i] AS a, ns[i - 1] AS b
 CREATE (a)-[:DEPENDS_ON]->(b)`, nil)
 }
 
-// peakHeapDuring runs fn and returns the largest HeapAlloc sampled every
-// 10 ms while it ran, after a collection that leaves only live memory.
-func peakHeapDuring(fn func()) uint64 {
+// peakLiveHeapDuring runs fn and returns the largest live heap sampled every
+// 10 ms while it ran. Live heap is what the last collection found reachable, so
+// it leaves out garbage that has not been collected yet and the peak does not
+// depend on when the collector runs; collecting at GOGC=10 keeps that
+// measurement current, so a burst of allocation is seen before it is dropped.
+func peakLiveHeapDuring(fn func()) uint64 {
+	defer debug.SetGCPercent(debug.SetGCPercent(10))
 	runtime.GC()
 	var peak atomic.Uint64
-	sample := func() {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
+	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	read := func() {
+		metrics.Read(sample)
+		if sample[0].Value.Kind() != metrics.KindUint64 {
+			return
+		}
+		live := sample[0].Value.Uint64()
 		for {
 			old := peak.Load()
-			if m.HeapAlloc <= old || peak.CompareAndSwap(old, m.HeapAlloc) {
+			if live <= old || peak.CompareAndSwap(old, live) {
 				return
 			}
 		}
@@ -636,7 +647,7 @@ func peakHeapDuring(fn func()) uint64 {
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			sample()
+			read()
 			select {
 			case <-stop:
 				return
@@ -647,7 +658,7 @@ func peakHeapDuring(fn func()) uint64 {
 	fn()
 	close(stop)
 	<-sampled
-	sample()
+	read()
 	return peak.Load()
 }
 
@@ -671,7 +682,7 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 		ex := f.exporter(s3infra.NewBackupStore(objects), &recordedMetrics{}, time.Now)
 		var res backup.Result
 		var err error
-		peak := peakHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
+		peak := peakLiveHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
 		require.NoError(t, err)
 		require.Equal(t, objects.written.Load(), res.Bytes, "the export reports the bytes the store took")
 		return peak, res, objects.written.Load()
@@ -690,4 +701,63 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 		"the larger export writes far more than the bound's slack, so an export that held it whole would break the bound")
 	assert.LessOrEqual(t, peakLarge, bound,
 		"the peak heap of an export ten times larger stays within twice the smaller one's plus 16 MiB")
+}
+
+// An export started between two batches of one message waits for the message's
+// last batch, so the stored file holds all of the message's data and its
+// processed-message marker.
+func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
+	ctx := context.Background()
+	f := newGraphFixture(t)
+	tenantID := f.tenant("inflight")
+	marker := uow.Marker{TenantID: tenantID, Group: "b3-test", MessageID: "1762077600000-0"}
+	batch := func(name string, final bool) {
+		f.exec(tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $name, active: true})`, map[string]any{"name": name})
+		require.NoError(t, f.uow.Write(ctx, marker, final, func(context.Context, uow.Tx) error { return nil }))
+	}
+
+	batch("batch-1", false)
+	ex := f.exporter(f.store, &recordedMetrics{}, time.Now)
+	done := make(chan error, 1)
+	go func() {
+		_, err := ex.ExportTenant(ctx, tenantID)
+		done <- err
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	_, holder := f.leaseNode(tenantID)
+	assert.Nil(t, holder, "the export waits and takes no lease between the message's batches")
+	select {
+	case err := <-done:
+		t.Fatalf("the export ended between the message's batches: %v", err)
+	default:
+	}
+
+	batch("batch-2", true)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the export did not go ahead after the message's last batch")
+	}
+
+	keys := f.stored(tenantID)
+	require.Len(t, keys, 1)
+	_, recs := f.records(keys[0])
+	var probes []string
+	markers := 0
+	for _, rec := range recs {
+		n, ok := rec.(export.NodeRecord)
+		if !ok {
+			continue
+		}
+		if slices.Contains(n.Labels, "Node") {
+			probes = append(probes, n.Props["unique_id"].(string))
+		}
+		if slices.Contains(n.Labels, "ProcessedMessage") {
+			markers++
+		}
+	}
+	assert.ElementsMatch(t, []string{"batch-1", "batch-2"}, probes, "the export holds both of the message's batches")
+	assert.Equal(t, 1, markers, "the export holds the message's marker")
 }

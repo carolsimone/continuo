@@ -52,10 +52,40 @@ func (u *unitOfWork) Processed(ctx context.Context, m uow.Marker) (bool, error) 
 	return recorded, nil
 }
 
+// WritesPaused reads the tenant's lease node in a read transaction. It takes no
+// gate, so it answers while an export or a restore holds the lease.
+func (u *unitOfWork) WritesPaused(ctx context.Context, tenantID string) (bool, error) {
+	session := u.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+	paused, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (bool, error) {
+		run, err := NewTenantRunner(tenantID, tx)
+		if err != nil {
+			return false, err
+		}
+		res, err := run.Run(ctx, leaseHeldCypher, nil)
+		if err != nil {
+			return false, err
+		}
+		recs, err := res.Collect(ctx)
+		if err != nil || len(recs) == 0 {
+			return false, err
+		}
+		held, _ := recs[0].Get("held")
+		b, _ := held.(bool)
+		return b, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("read export lease: %w", err)
+	}
+	return paused, nil
+}
+
 // Write runs fn in one write transaction for m's tenant, in this order: lock
 // the export gate (ErrWritesPaused while a lease is held), re-check the
-// marker (found: skip fn, return nil), run fn, CREATE the marker when final,
-// unlock the gate, commit. Any error rolls the whole transaction back.
+// marker (found: remove m's in-flight mark, skip fn, return nil), run fn,
+// CREATE the marker when final and otherwise mark m in flight, remove m's
+// in-flight mark when final, unlock the gate, commit. Any error rolls the
+// whole transaction back.
 func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn func(ctx context.Context, tx uow.Tx) error) error {
 	if err := validateMarker(m); err != nil {
 		return err
@@ -64,11 +94,11 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		return errors.New("neo4j: a write needs a function to run")
 	}
 	return inWriteTx(ctx, u.client, m.TenantID, func(run TenantRunner) (bool, error) {
-		held, err := lockExportGate(ctx, run)
+		gate, err := lockExportGate(ctx, run)
 		if err != nil {
 			return false, err
 		}
-		if held {
+		if gate.held {
 			u.logger.Debug("catalog write paused by the export lease",
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
 			return false, fmt.Errorf("tenant %q: %w", m.TenantID, uow.ErrWritesPaused)
@@ -80,7 +110,15 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 		if recorded {
 			u.logger.Debug("message already processed; write skipped",
 				"tenant_id", m.TenantID, "group", m.Group, "message_id", m.MessageID)
-			return false, nil
+			// An earlier delivery of the message may have died between its
+			// batches under this id; the message is finished, so its mark ends.
+			if err := clearInFlight(ctx, run, inflightKey(m)); err != nil {
+				return false, err
+			}
+			if err := unlockExportGate(ctx, run); err != nil {
+				return false, err
+			}
+			return true, nil
 		}
 		if err := fn(ctx, &transaction{run: run, logger: u.logger}); err != nil {
 			return false, err
@@ -89,12 +127,24 @@ func (u *unitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn fun
 			if err := recordMarker(ctx, run, m); err != nil {
 				return false, fmt.Errorf("record processed-message marker: %w", err)
 			}
+			if err := clearInFlight(ctx, run, inflightKey(m)); err != nil {
+				return false, err
+			}
+		} else if err := markInFlight(ctx, run, inflightKey(m)); err != nil {
+			return false, err
 		}
 		if err := unlockExportGate(ctx, run); err != nil {
 			return false, err
 		}
 		return true, nil
 	})
+}
+
+// inflightKey names m's in-flight mark. Several consumer groups read one stream
+// message under one message id, and each finishes it on its own, so the mark
+// belongs to the group and the message together.
+func inflightKey(m uow.Marker) string {
+	return m.Group + "/" + m.MessageID
 }
 
 // transaction is the uow.Tx of one Write: its open Neo4j transaction, bound to

@@ -64,8 +64,11 @@ type fakeGraphUnitOfWork struct {
 	recorded     map[string]bool
 	processedErr error
 	writeErr     error
-	processed    []uow.Marker
-	writes       []fakeGraphWrite
+	// paused and pausedErr are what WritesPaused returns.
+	paused    bool
+	pausedErr error
+	processed []uow.Marker
+	writes    []fakeGraphWrite
 }
 
 // fakeGraphWrite is one Write call.
@@ -110,6 +113,10 @@ func (f *fakeGraphUnitOfWork) Processed(_ context.Context, m uow.Marker) (bool, 
 		return false, f.processedErr
 	}
 	return f.isRecorded(m), nil
+}
+
+func (f *fakeGraphUnitOfWork) WritesPaused(context.Context, string) (bool, error) {
+	return f.paused, f.pausedErr
 }
 
 func (f *fakeGraphUnitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn func(ctx context.Context, tx uow.Tx) error) error {

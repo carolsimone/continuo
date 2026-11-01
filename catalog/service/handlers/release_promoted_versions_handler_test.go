@@ -592,3 +592,30 @@ func TestVersionsHandler_BundleHashDisagreeingWithTheArtifactIsPermanent(t *test
 	assert.Contains(t, err.Error(), "analytics.revenue")
 	assert.Empty(t, u.writes)
 }
+
+// While an export or a restore holds the tenant's lease, the write would be
+// refused, so the handler fetches nothing from object storage.
+func TestVersionsHandler_PausedWritesSkipTheBundleDownload(t *testing.T) {
+	u := newVersionsUnitOfWork(&fakeCodeVersionRepository{})
+	u.paused = true
+	reader := &fakeBundleReader{bundle: versionsBundle()}
+	artifacts := &fakeArtifactReader{}
+
+	err := newVersionsHandler(u, reader, artifacts).Handle(context.Background(), "1-0", nil, versionsInput(artifacts))
+	require.ErrorIs(t, err, uow.ErrWritesPaused)
+	assert.Empty(t, reader.calls, "the code bundle is not downloaded")
+	assert.Empty(t, artifacts.calls, "nor the topology artifact")
+	assert.Empty(t, u.writes, "and no write is tried")
+}
+
+func TestVersionsHandler_PausedCheckFailureIsRetried(t *testing.T) {
+	u := newVersionsUnitOfWork(&fakeCodeVersionRepository{})
+	u.pausedErr = errors.New("neo4j down")
+	reader := &fakeBundleReader{bundle: versionsBundle()}
+	artifacts := &fakeArtifactReader{}
+
+	err := newVersionsHandler(u, reader, artifacts).Handle(context.Background(), "1-0", nil, versionsInput(artifacts))
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, pkgevents.ErrPermanent), "an outage is retried, not dead-lettered")
+	assert.Empty(t, reader.calls)
+}

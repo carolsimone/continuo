@@ -100,7 +100,7 @@ func (s *countingStore) count() int {
 
 func storeExport(t *testing.T, store ports.BackupStore, tenantID string, at time.Time) ports.BackupObject {
 	t.Helper()
-	w, key, err := store.Open(context.Background(), tenantID, at)
+	w, key, err := store.Open(context.Background(), tenantID, at, nil)
 	require.NoError(t, err)
 	require.NoError(t, w.WriteHeader(export.Header{FormatVersion: export.FormatVersion, TenantID: tenantID, ExportedAt: at, CatalogVersion: "test"}))
 	_, err = w.Close()

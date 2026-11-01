@@ -50,8 +50,11 @@ func NewReleasePromotedVersionsHandler(
 //     catches a re-XADD of the same upstream outbox row under a fresh Redis
 //     message ID. A processed message is acknowledged without reading object
 //     storage.
-//  2. Read the code bundle and the topology artifact, outside any
-//     transaction. A malformed or oversized bundle, a corrupt artifact, or a
+//  2. A promotion with a bundle first asks the unit of work whether the
+//     tenant's writes are paused by an export or a restore, and returns
+//     uow.ErrWritesPaused without reading object storage when they are.
+//     Otherwise it reads the code bundle and the topology artifact, outside
+//     any transaction. A malformed or oversized bundle, a corrupt artifact, or a
 //     bundle or artifact of another release is permanent; a missing object or
 //     an outage is retried. A promotion with no bundle records only its
 //     marker.
@@ -94,6 +97,16 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		h.logger.Warn("release.promoted carries no code_bundle_uri — no versions to ingest",
 			"tenant_id", in.TenantID, "release_id", in.ReleaseID, "promotion_seq", in.PromotionSeq)
 		return h.recordMarker(ctx, marker)
+	}
+
+	// While the tenant's writes are paused the first write would be refused and
+	// the message redelivered, so skip the download it would repeat.
+	paused, err := h.uow.WritesPaused(ctx, in.TenantID)
+	if err != nil {
+		return fmt.Errorf("check whether the tenant's writes are paused: %w", err)
+	}
+	if paused {
+		return fmt.Errorf("tenant %q: %w", in.TenantID, uow.ErrWritesPaused)
 	}
 
 	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)

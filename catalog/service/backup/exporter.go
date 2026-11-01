@@ -41,6 +41,9 @@ const (
 	// renewTimeout bounds one renewal, so a database that never answers does
 	// not keep the stall from being noticed.
 	renewTimeout = 10 * time.Second
+	// inFlightRetryEvery is how often an export that was refused because a
+	// message's writes are in flight asks for the lease again.
+	inFlightRetryEvery = 2 * time.Second
 )
 
 // ErrStalled means an export or a restore moved no record for stallLimit and
@@ -120,7 +123,8 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 	// lease that cancels it also ends a write the store never answers.
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	w, key, err := e.store.Open(workCtx, tenantID, e.clock())
+	work := &progress{}
+	w, key, err := e.store.Open(workCtx, tenantID, e.clock(), work.advance)
 	if err != nil {
 		return Result{}, fmt.Errorf("open the export of tenant %q: %w", tenantID, err)
 	}
@@ -129,7 +133,7 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 		return Result{}, errors.Join(fmt.Errorf("export of tenant %q: %w", tenantID, err), e.abort(w, key))
 	}
 	held := e.clock()
-	res, err := e.stream(workCtx, cancel, tenantID, holder, w)
+	res, err := e.stream(workCtx, cancel, tenantID, holder, w, work)
 	// The lease is released before a failed export is aborted, so the
 	// tenant's writes resume without waiting on the store.
 	releaseErr := e.keeper.release(ctx, tenantID, holder)
@@ -148,11 +152,11 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 // stream writes the tenant's graph to w and completes it, while holder's
 // lease is held, renewed and watched; ctx is the work's context and cancel
 // ends it. Every record written to w is progress, and so is the start of
-// completing w; the counting the graph does before its header has the stall
-// limit from the start. It completes w only once the lease is confirmed held
+// completing w, and so is every write w makes to the store (work was handed to
+// the store's Open); the counting the graph does before its header has the
+// stall limit from the start. It completes w only once the lease is confirmed held
 // after the read: no write can have changed the graph under it.
-func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.ExportSink) (Result, error) {
-	work := &progress{}
+func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.ExportSink, work *progress) (Result, error) {
 	stop := e.keeper.watch(ctx, cancel, tenantID, holder, work)
 	defer stop()
 	fail := func(err error) error {
@@ -257,13 +261,16 @@ type leaseKeeper struct {
 	renewEvery   time.Duration
 	stallAfter   time.Duration
 	renewTimeout time.Duration
-	logger       *slog.Logger
+	// waitEvery is the interval at which acquire asks again while a message's
+	// writes are in flight.
+	waitEvery time.Duration
+	logger    *slog.Logger
 }
 
 func newLeaseKeeper(lease ports.ExportLease, logger *slog.Logger) leaseKeeper {
 	return leaseKeeper{
 		lease: lease, ttl: leaseTTL, renewEvery: leaseRenewEvery,
-		stallAfter: stallLimit, renewTimeout: renewTimeout, logger: logger,
+		stallAfter: stallLimit, renewTimeout: renewTimeout, waitEvery: inFlightRetryEvery, logger: logger,
 	}
 }
 
@@ -331,18 +338,40 @@ func stopCause(ctx context.Context) error {
 }
 
 // acquire takes tenantID's lease for holder. A lease another holder has is
-// ErrSkipped. Any other failure may hide an Acquire that committed while its
-// answer was lost, so the lease is released for holder before the failure is
-// returned; releasing a lease holder does not have does nothing.
+// ErrSkipped. While a message's writes are in flight (ports.ErrWritesInFlight)
+// it asks again every waitEvery until it gets the lease, finds one held
+// (ErrSkipped) or ctx ends; a refusal took nothing, so it releases nothing.
+// Any other failure may hide an Acquire that committed while its answer was
+// lost, so the lease is released for holder before the failure is returned;
+// releasing a lease holder does not have does nothing.
 func (k leaseKeeper) acquire(ctx context.Context, tenantID string, kind ports.LeaseKind, holder string) error {
-	err := k.lease.Acquire(ctx, tenantID, kind, holder, k.ttl)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, ports.ErrLeaseHeld):
-		return ErrSkipped
+	var waitingSince time.Time
+	for {
+		err := k.lease.Acquire(ctx, tenantID, kind, holder, k.ttl)
+		switch {
+		case err == nil:
+			if !waitingSince.IsZero() {
+				k.logger.Info("catalog export lease taken after waiting",
+					"tenant_id", tenantID, "waited", time.Since(waitingSince).Round(time.Millisecond).String())
+			}
+			return nil
+		case errors.Is(err, ports.ErrLeaseHeld):
+			return ErrSkipped
+		case errors.Is(err, ports.ErrWritesInFlight):
+			if waitingSince.IsZero() {
+				waitingSince = time.Now()
+				k.logger.Info("catalog export waiting: a message's writes are in flight",
+					"tenant_id", tenantID, "holder", holder)
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("wait for the writes in flight of tenant %q: %w", tenantID, context.Cause(ctx))
+			case <-time.After(k.waitEvery):
+			}
+			continue
+		}
+		return errors.Join(fmt.Errorf("take the export lease: %w", err), k.release(ctx, tenantID, holder))
 	}
-	return errors.Join(fmt.Errorf("take the export lease: %w", err), k.release(ctx, tenantID, holder))
 }
 
 // confirm renews holder's lease once more. Every renewal requires a live
