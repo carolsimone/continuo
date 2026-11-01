@@ -378,3 +378,119 @@ func TestUnitOfWork_WriteLandsAfterLeaseRelease(t *testing.T) {
 	assert.True(t, f.processed(u, m))
 	f.assertGateUnlocked()
 }
+
+// inflightIDs returns the message ids the tenant's lease node lists as in
+// flight, or nil when it lists none.
+func (f *uowFixture) inflightIDs() []any {
+	f.t.Helper()
+	node := f.leaseNode()
+	if node == nil {
+		return nil
+	}
+	ids, _ := node["inflight_message_ids"].([]any)
+	return ids
+}
+
+func (f *uowFixture) writeProbeBatch(u uow.UnitOfWork, m uow.Marker, final bool, name string) {
+	f.t.Helper()
+	require.NoError(f.t, u.Write(context.Background(), m, final, func(ctx context.Context, tx uow.Tx) error {
+		return f.writeProbe(ctx, tx, name)
+	}))
+}
+
+func TestUnitOfWork_NonFinalWriteMarksItsMessageInFlight(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	a := f.marker("1762077600000-0", nil)
+
+	f.writeProbeBatch(u, a, false, "batch-1")
+	node := f.leaseNode()
+	assert.Equal(t, []any{"1762077600000-0"}, node["inflight_message_ids"])
+	until, ok := node["inflight_until"].(time.Time)
+	require.True(t, ok, "inflight_until is a datetime")
+	assert.Greater(t, time.Until(until), time.Minute, "the mark lives for the in-flight TTL")
+	f.assertGateUnlocked()
+
+	f.writeProbeBatch(u, a, true, "batch-2")
+	node = f.leaseNode()
+	assert.NotContains(t, node, "inflight_message_ids")
+	assert.NotContains(t, node, "inflight_until")
+}
+
+func TestUnitOfWork_FinalWriteKeepsOtherMessagesInFlight(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	a := f.marker("1762077600000-0", nil)
+	b := f.marker("1762077700000-0", nil)
+
+	f.writeProbeBatch(u, a, false, "a-1")
+	f.writeProbeBatch(u, b, false, "b-1")
+	f.writeProbeBatch(u, a, true, "a-2")
+	assert.Equal(t, []any{"1762077700000-0"}, f.inflightIDs(), "A's last batch leaves B's id")
+	assert.Contains(t, f.leaseNode(), "inflight_until")
+
+	f.writeProbeBatch(u, b, true, "b-2")
+	node := f.leaseNode()
+	assert.NotContains(t, node, "inflight_message_ids")
+	assert.NotContains(t, node, "inflight_until")
+}
+
+func TestUnitOfWork_RepeatedNonFinalWriteListsItsMessageOnce(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	a := f.marker("1762077600000-0", nil)
+
+	f.writeProbeBatch(u, a, false, "batch-1")
+	f.writeProbeBatch(u, a, false, "batch-2")
+	assert.Equal(t, []any{"1762077600000-0"}, f.inflightIDs())
+}
+
+func TestUnitOfWork_FinalOnlyWriteLeavesNoInFlightMark(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+
+	f.writeProbeBatch(u, f.marker("1762077600000-0", nil), true, "only")
+	node := f.leaseNode()
+	assert.NotContains(t, node, "inflight_message_ids")
+	assert.NotContains(t, node, "inflight_until")
+}
+
+func TestUnitOfWork_FailedNonFinalWriteLeavesNoInFlightMark(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	boom := errors.New("fn failed")
+
+	err := u.Write(context.Background(), f.marker("1762077600000-0", nil), false, func(ctx context.Context, tx uow.Tx) error {
+		return boom
+	})
+	require.ErrorIs(t, err, boom)
+	node := f.leaseNode()
+	assert.NotContains(t, node, "inflight_message_ids", "a rolled-back batch marks nothing")
+	assert.NotContains(t, node, "inflight_until")
+}
+
+// A redelivery under a fresh stream message id finishes the message under that
+// id, so the id of the delivery that died mid-way is the one a write must
+// find and clear when it finds the marker.
+func TestUnitOfWork_FoundMarkerEndsItsInFlightMark(t *testing.T) {
+	f := newUoWFixture(t)
+	u := NewUnitOfWork(f.client, quietLogger())
+	entry := uuid.New()
+	a := f.marker("1762077600000-0", &entry)
+	b := f.marker("1762077700000-0", &entry)
+
+	f.writeProbeBatch(u, a, false, "a-1")
+	f.writeProbeBatch(u, b, true, "b-final")
+	assert.Equal(t, []any{"1762077600000-0"}, f.inflightIDs(), "B's final write does not clear A's id")
+
+	called := false
+	require.NoError(t, u.Write(context.Background(), a, true, func(ctx context.Context, tx uow.Tx) error {
+		called = true
+		return nil
+	}))
+	assert.False(t, called, "A finds B's marker by the outbox entry id and skips fn")
+	node := f.leaseNode()
+	assert.NotContains(t, node, "inflight_message_ids")
+	assert.NotContains(t, node, "inflight_until")
+	f.assertGateUnlocked()
+}

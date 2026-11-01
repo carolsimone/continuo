@@ -24,6 +24,39 @@ import (
 // it waits for the tenant's in-flight writes to commit, and every write that
 // locks the node after the lease is taken sees it held.
 
+// A message whose writes span several transactions (a non-final batch of the
+// code versions) also marks itself on the lease node: inflight_message_ids lists
+// the ids of the messages between two of their batches, and inflight_until, a
+// datetime on the database clock, is the time the mark lapses. The mark is
+// live while the list is not empty and inflight_until lies ahead of
+// datetime(). An export's Acquire refuses while it is live, so an export never
+// starts between a message's batches; a crashed handler's mark lapses on its
+// own. A write never waits for the mark.
+
+// inflightTTL is how long a non-final write keeps its message's mark live. It
+// exceeds the time one batch takes, and a message that dies mid-way holds an
+// export back for at most this long after its last batch.
+const inflightTTL = 2 * time.Minute
+
+// inflightMarkCypher adds a message to the in-flight list, once, and moves the
+// mark's lapse time to ttl from now.
+const inflightMarkCypher = `
+MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+SET m.inflight_message_ids = CASE
+      WHEN $message_id IN coalesce(m.inflight_message_ids, []) THEN m.inflight_message_ids
+      ELSE coalesce(m.inflight_message_ids, []) + $message_id END,
+    m.inflight_until = datetime() + duration({milliseconds: $ttl_ms})`
+
+// inflightClearCypher removes a message from the in-flight list, and the
+// mark's lapse time once the list is empty. A tenant with no mark is left as
+// it is.
+const inflightClearCypher = `
+MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+WHERE m.inflight_message_ids IS NOT NULL
+WITH m, [id IN m.inflight_message_ids WHERE id <> $message_id] AS rest
+SET m.inflight_message_ids = CASE WHEN size(rest) = 0 THEN null ELSE rest END,
+    m.inflight_until = CASE WHEN size(rest) = 0 THEN null ELSE m.inflight_until END`
+
 // exportGateCypher locks the tenant's lease node, creating it on the tenant's
 // first write, and reports whether a lease is held. SET takes the lock before
 // RETURN reads until, so the read sees the lease as the last holder of the
@@ -65,6 +98,25 @@ func lockExportGate(ctx context.Context, run TenantRunner) (held bool, err error
 		return false, fmt.Errorf("lock export gate: %w", err)
 	}
 	return held, nil
+}
+
+// markInFlight lists messageID as in flight on the locked lease node.
+func markInFlight(ctx context.Context, run TenantRunner, messageID string) error {
+	if err := execCypher(ctx, run, inflightMarkCypher, map[string]any{
+		"message_id": messageID, "ttl_ms": inflightTTL.Milliseconds(),
+	}); err != nil {
+		return fmt.Errorf("mark message in flight: %w", err)
+	}
+	return nil
+}
+
+// clearInFlight removes messageID from the in-flight list on the locked lease
+// node.
+func clearInFlight(ctx context.Context, run TenantRunner, messageID string) error {
+	if err := execCypher(ctx, run, inflightClearCypher, map[string]any{"message_id": messageID}); err != nil {
+		return fmt.Errorf("clear message in flight: %w", err)
+	}
+	return nil
 }
 
 // unlockExportGate removes the gate's lock property; the lock itself is

@@ -34,6 +34,10 @@ type UnitOfWork interface {
 	// held; re-checks the marker (a found marker skips fn and returns nil);
 	// runs fn; when final, CREATEs the marker; commits. An error from fn rolls
 	// the transaction back and is returned as it is.
+	//
+	// A write that is not final marks m's message in flight on the tenant's
+	// lease node, until the message's final write or until the mark lapses, so
+	// an export never starts between a message's writes.
 	Write(ctx context.Context, m Marker, final bool, fn func(ctx context.Context, tx Tx) error) error
 }
 
