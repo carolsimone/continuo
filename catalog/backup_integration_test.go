@@ -16,6 +16,8 @@ import (
 	"maps"
 	"os"
 	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
 	"slices"
 	"sort"
 	"sync"
@@ -615,17 +617,25 @@ WITH ns[i] AS a, ns[i - 1] AS b
 CREATE (a)-[:DEPENDS_ON]->(b)`, nil)
 }
 
-// peakHeapDuring runs fn and returns the largest HeapAlloc sampled every
-// 10 ms while it ran, after a collection that leaves only live memory.
-func peakHeapDuring(fn func()) uint64 {
+// peakLiveHeapDuring runs fn and returns the largest live heap sampled every
+// 10 ms while it ran. Live heap is what the last collection found reachable, so
+// it leaves out garbage that has not been collected yet and the peak does not
+// depend on when the collector runs; collecting at GOGC=10 keeps that
+// measurement current, so a burst of allocation is seen before it is dropped.
+func peakLiveHeapDuring(fn func()) uint64 {
+	defer debug.SetGCPercent(debug.SetGCPercent(10))
 	runtime.GC()
 	var peak atomic.Uint64
-	sample := func() {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
+	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	read := func() {
+		metrics.Read(sample)
+		if sample[0].Value.Kind() != metrics.KindUint64 {
+			return
+		}
+		live := sample[0].Value.Uint64()
 		for {
 			old := peak.Load()
-			if m.HeapAlloc <= old || peak.CompareAndSwap(old, m.HeapAlloc) {
+			if live <= old || peak.CompareAndSwap(old, live) {
 				return
 			}
 		}
@@ -637,7 +647,7 @@ func peakHeapDuring(fn func()) uint64 {
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			sample()
+			read()
 			select {
 			case <-stop:
 				return
@@ -648,7 +658,7 @@ func peakHeapDuring(fn func()) uint64 {
 	fn()
 	close(stop)
 	<-sampled
-	sample()
+	read()
 	return peak.Load()
 }
 
@@ -672,7 +682,7 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 		ex := f.exporter(s3infra.NewBackupStore(objects), &recordedMetrics{}, time.Now)
 		var res backup.Result
 		var err error
-		peak := peakHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
+		peak := peakLiveHeapDuring(func() { res, err = ex.ExportTenant(context.Background(), tenantID) })
 		require.NoError(t, err)
 		require.Equal(t, objects.written.Load(), res.Bytes, "the export reports the bytes the store took")
 		return peak, res, objects.written.Load()
