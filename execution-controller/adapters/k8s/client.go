@@ -8,9 +8,11 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/num"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,15 +20,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
-
-// jobTTLSecondsAfterFinished bounds how long a terminal (Succeeded or Failed) dbt
-// Job — and its pod — stays on the cluster before Kubernetes garbage-collects it.
-// The observer reads and uploads a Job's pod log to S3 once its attempt ends, so
-// this window only needs to cover ad-hoc kubectl-level debugging of a
-// still-present pod, not log retention: the S3 copy is durable long before this
-// elapses. 24h matches the other Job TTL backstops in this repo
-// (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
-const jobTTLSecondsAfterFinished = int32(86400)
 
 // JobParams represents the parameters needed to create a K8s Job
 type JobParams struct {
@@ -63,6 +56,13 @@ type K8sClient struct {
 	clientset kubernetes.Interface
 	logger    *slog.Logger
 	commands  ports.CommandResolver
+	// jobTTLSeconds is the TTLSecondsAfterFinished of every task, validation,
+	// seed-build and compile Job the client creates: how long a finished
+	// (Succeeded or Failed) Job and its pod stay on the cluster before
+	// Kubernetes deletes them. The observer uploads an attempt's pod log and
+	// results to S3 as soon as the attempt ends, so the window only serves
+	// debugging a finished pod with kubectl.
+	jobTTLSeconds int32
 }
 
 // RateLimit is the request rate limit of the Kubernetes client: QPS requests
@@ -82,8 +82,10 @@ func (l RateLimit) apply(rc *rest.Config) {
 // NewK8sClient creates a new K8sClient limited to limit.
 // Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
 // in-cluster config (K8s pod with a ServiceAccount). commands resolves the
-// per-service dbt command dialect for every Job this client builds.
-func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit RateLimit) (*K8sClient, error) {
+// per-service dbt command dialect for every Job this client builds, and every
+// task, validation, seed-build and compile Job it creates is deleted by
+// Kubernetes jobTTL after it finishes.
+func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit RateLimit, jobTTL time.Duration) (*K8sClient, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -109,13 +111,22 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit Rat
 
 	logger.Info("K8s client initialized successfully")
 
-	return NewK8sClientFor(clientset, logger, commands), nil
+	return NewK8sClientFor(clientset, logger, commands, jobTTL), nil
 }
 
 // NewK8sClientFor creates a K8sClient over clientset; commands resolves the
-// per-service dbt command dialect for every Job it builds.
-func NewK8sClientFor(clientset kubernetes.Interface, logger *slog.Logger, commands ports.CommandResolver) *K8sClient {
-	return &K8sClient{clientset: clientset, logger: logger, commands: commands}
+// per-service dbt command dialect for every Job it builds, and every task,
+// validation, seed-build and compile Job it creates carries jobTTL, in whole
+// seconds, as its TTLSecondsAfterFinished.
+func NewK8sClientFor(clientset kubernetes.Interface, logger *slog.Logger, commands ports.CommandResolver, jobTTL time.Duration) *K8sClient {
+	return &K8sClient{clientset: clientset, logger: logger, commands: commands,
+		jobTTLSeconds: num.ClampInt32(jobTTL / time.Second)}
+}
+
+// finishedJobTTL is the TTLSecondsAfterFinished of a Job the client creates.
+func (c *K8sClient) finishedJobTTL() *int32 {
+	ttl := c.jobTTLSeconds
+	return &ttl
 }
 
 // Clientset is the Kubernetes clientset the client uses, for the Job watch.

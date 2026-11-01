@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+
+- **Finished Jobs are now deleted after 30 minutes instead of 24 hours.** This covers task, validation, seed-build and compile Jobs and their pods. Set `execution.jobTTLMinutes` (1 to 10080) to change it; it reaches execution-controller as `JOB_TTL_SECONDS`. If a Job is deleted before its log was uploaded (for example, execution-controller was down for longer than this time), its pod log is lost. No values change is needed to upgrade.
+
 ## [0.18.0] - 2026-11-01
 
 **TL;DR**

@@ -200,7 +200,7 @@ func main() {
 		logger.Error("Invalid dbt commands config", "error", err)
 		os.Exit(1)
 	}
-	k8sClient, err := k8s.NewK8sClient(logger, cmdResolver, k8s.RateLimit{QPS: cfg.K8sClientQPS, Burst: cfg.K8sClientBurst})
+	k8sClient, err := k8s.NewK8sClient(logger, cmdResolver, k8s.RateLimit{QPS: cfg.K8sClientQPS, Burst: cfg.K8sClientBurst}, cfg.JobTTL)
 	if err != nil {
 		logger.Error("Failed to create K8s client", "error", err)
 		os.Exit(1)
