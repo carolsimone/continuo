@@ -53,6 +53,10 @@ type fakeLease struct {
 	held       map[string]string // tenant -> holder
 	calls      []leaseCall
 	acquireErr error
+	// acquireErrs, when set, is consumed one error per Acquire call: a
+	// non-nil entry is returned, and once the list is spent Acquire behaves
+	// as if it were unset.
+	acquireErrs []error
 	// acquireCommitsThenFails, when set, makes Acquire take the lease and
 	// then return it, as an Acquire whose answer was lost after its commit.
 	acquireCommitsThenFails error
@@ -77,6 +81,13 @@ func (l *fakeLease) Acquire(_ context.Context, tenantID string, kind ports.Lease
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, leaseCall{"Acquire", tenantID, kind, holder, ttl})
+	if len(l.acquireErrs) > 0 {
+		err := l.acquireErrs[0]
+		l.acquireErrs = l.acquireErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
 	if l.acquireErr != nil {
 		return l.acquireErr
 	}

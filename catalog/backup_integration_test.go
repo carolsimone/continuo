@@ -16,6 +16,7 @@ import (
 	"maps"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -690,4 +691,63 @@ func TestExport_MemoryDoesNotGrowWithTheCatalog(t *testing.T) {
 		"the larger export writes far more than the bound's slack, so an export that held it whole would break the bound")
 	assert.LessOrEqual(t, peakLarge, bound,
 		"the peak heap of an export ten times larger stays within twice the smaller one's plus 16 MiB")
+}
+
+// An export started between two batches of one message waits for the message's
+// last batch, so the stored file holds all of the message's data and its
+// processed-message marker.
+func TestExport_WaitsForAMessageBetweenBatches(t *testing.T) {
+	ctx := context.Background()
+	f := newGraphFixture(t)
+	tenantID := f.tenant("inflight")
+	marker := uow.Marker{TenantID: tenantID, Group: "b3-test", MessageID: "1762077600000-0"}
+	batch := func(name string, final bool) {
+		f.exec(tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $name, active: true})`, map[string]any{"name": name})
+		require.NoError(t, f.uow.Write(ctx, marker, final, func(context.Context, uow.Tx) error { return nil }))
+	}
+
+	batch("batch-1", false)
+	ex := f.exporter(f.store, &recordedMetrics{}, time.Now)
+	done := make(chan error, 1)
+	go func() {
+		_, err := ex.ExportTenant(ctx, tenantID)
+		done <- err
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	_, holder := f.leaseNode(tenantID)
+	assert.Nil(t, holder, "the export waits and takes no lease between the message's batches")
+	select {
+	case err := <-done:
+		t.Fatalf("the export ended between the message's batches: %v", err)
+	default:
+	}
+
+	batch("batch-2", true)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the export did not go ahead after the message's last batch")
+	}
+
+	keys := f.stored(tenantID)
+	require.Len(t, keys, 1)
+	_, recs := f.records(keys[0])
+	var probes []string
+	markers := 0
+	for _, rec := range recs {
+		n, ok := rec.(export.NodeRecord)
+		if !ok {
+			continue
+		}
+		if slices.Contains(n.Labels, "Node") {
+			probes = append(probes, n.Props["unique_id"].(string))
+		}
+		if slices.Contains(n.Labels, "ProcessedMessage") {
+			markers++
+		}
+	}
+	assert.ElementsMatch(t, []string{"batch-1", "batch-2"}, probes, "the export holds both of the message's batches")
+	assert.Equal(t, 1, markers, "the export holds the message's marker")
 }

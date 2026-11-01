@@ -77,6 +77,7 @@ func TestExporter_LeaseConstants(t *testing.T) {
 	assert.Equal(t, leaseRenewEvery, ex.keeper.renewEvery)
 	assert.Equal(t, stallLimit, ex.keeper.stallAfter)
 	assert.Equal(t, renewTimeout, ex.keeper.renewTimeout)
+	assert.Equal(t, inFlightRetryEvery, ex.keeper.waitEvery)
 	r := NewRestorer(newFakeLease(), &fakeImporter{}, newFakeStore(), quietLogger())
 	assert.Equal(t, ex.keeper.stallAfter, r.keeper.stallAfter)
 }
@@ -532,4 +533,50 @@ func TestExporter_AnExportThatMovesIsNotStalled(t *testing.T) {
 	assert.Greater(t, took, 2*f.ex.keeper.stallAfter, "the export ran longer than the stall limit")
 	assert.Len(t, f.store.keys(), 1)
 	assert.Equal(t, []string{ports.ExportSuccess}, f.metrics.outcomes())
+}
+
+func TestExporter_WaitsForWritesInFlightThenExports(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	f.lease.acquireErrs = []error{ports.ErrWritesInFlight, ports.ErrWritesInFlight}
+	f.ex.keeper.waitEvery = 5 * time.Millisecond
+
+	_, err := f.ex.ExportTenant(context.Background(), tenant)
+	require.NoError(t, err)
+	assert.Len(t, f.lease.callsOf("Acquire"), 3, "two refusals, then the lease")
+	assert.Equal(t, []string{ports.ExportSuccess}, f.metrics.outcomes())
+	assert.NotContains(t, f.lease.ops()[:2], "Release", "a refusal took nothing, so it releases nothing")
+}
+
+func TestExporter_StopsWaitingWhenItsContextEnds(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	f.lease.acquireErr = ports.ErrWritesInFlight
+	f.ex.keeper.waitEvery = 5 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.ex.ExportTenant(ctx, tenant)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("the export kept waiting after its context ended")
+	}
+	assert.True(t, f.store.lastSink().aborted, "the opened export is aborted")
+	assert.Equal(t, []string{ports.ExportFailure}, f.metrics.outcomes())
+}
+
+// A restore can take the lease while an export waits; the export then ends
+// skipped instead of queueing behind the restore.
+func TestExporter_WaitingExportSkipsWhenALeaseTurnsUp(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	f.lease.acquireErrs = []error{ports.ErrWritesInFlight, ports.ErrLeaseHeld}
+	f.ex.keeper.waitEvery = 5 * time.Millisecond
+
+	_, err := f.ex.ExportTenant(context.Background(), tenant)
+	require.ErrorIs(t, err, ErrSkipped)
+	assert.Equal(t, []string{ports.ExportSkipped}, f.metrics.outcomes())
 }
