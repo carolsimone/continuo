@@ -101,7 +101,7 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | `cascade-2000` | `dag-2000` under a single failing root | Retries of the root, then 1,999 skips |
 | `cancel-500` | `dag-500` with 30 s nodes | Cancel after 60 s, immediate re-trigger, second run cancelled after 90 s; overlap of the two runs' Jobs |
 | `outage-postgres`, `outage-neo4j` | `dag-500` | The datastore container is disconnected from its networks for 10 minutes during a run and reconnected with its aliases, so its data survives (local stack only); final status and dropped messages |
-| `sweep-10`, `sweep-50`, `sweep-100`, `sweep-200` | 5 levels of 10, 50, 100 or 200 nodes, fan-in 2 | Hand-off against level width; the report fits its growth per task of width |
+| `sweep-10`, `sweep-50`, `sweep-100`, `sweep-200` | 5 levels of 10, 50, 100 or 200 nodes, fan-in 2 | Hand-off against level width; the report fits its growth per task of width over the widths up to 50 |
 | `fail-once` | 5 levels × 50 nodes, fan-in 2; every node fails its first attempt and succeeds on its retry | Retry turnaround |
 | `start-image` | 10 nodes on an image tag that does not exist (local stack only) | A pod that cannot pull its image: attempts, overlapping attempts, how the run ends |
 | `start-quota` | 10 nodes while a `pods: 0` ResourceQuota (`k8s/no-pods-quota.yaml`) holds the Job namespace (local stack only) | A Job that never gets a pod: whether the start timeout ends it, and how the run ends |
@@ -142,11 +142,13 @@ The hand-off steps take, for each node, the upstream whose last Job finished las
 
 | Measure | Target | Read from |
 |---|---|---|
-| Hand-off p50 at width 100 | ≤ 5 s | `sweep-100` |
-| Growth of the hand-off per task of level width | < 0.1 s | least-squares slope of the hand-off p50 over the `sweep-*` widths |
+| Hand-off p50 at the admission width (50) | ≤ 5 s | `sweep-50` |
+| Growth of the hand-off per task of level width | < 0.1 s | least-squares slope of the hand-off p50 over the `sweep-*` widths up to 50 |
 | Retry turnaround p50 | ≤ 5 s | `fail-once` |
 | Messages per attempt | 4 | `sweep-100` |
 | Overlapping attempts | 0 | the largest of any scenario |
+
+A level wider than 50 waits for admission (`execution.maxConcurrentJobs`, default 50), so the two hand-off targets read the widths up to 50. `sweep-100` and `sweep-200` show that queueing and are not held to them.
 
 ## Run history
 

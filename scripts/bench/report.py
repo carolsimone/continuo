@@ -22,6 +22,10 @@ SCALARS = ["wall_s", "busy_s", "idle_s", "first_start_s", "finalize_s", "observe
 
 SWEEP = re.compile(r"^sweep-(\d+)$")
 
+# The chart's default `execution.maxConcurrentJobs`. A level wider than this waits for admission by design, so
+# the hand-off targets read only the sweep widths up to it.
+ADMISSION_WIDTH = 50
+
 
 def aggregate(reps: list) -> dict:
     out = {}
@@ -53,12 +57,14 @@ def p50_of(scenarios: dict, name: str, key: str) -> Optional[float]:
 
 
 def sweep_slope(scenarios: dict) -> Optional[float]:
-    """Least-squares slope of the hand-off p50 against the level width over the sweep-<width> scenarios,
-    in seconds per task of width; None with fewer than two widths measured."""
+    """Least-squares slope of the hand-off p50 against the level width over the sweep-<width> scenarios
+    up to ADMISSION_WIDTH, in seconds per task of width; None with fewer than two widths measured."""
     points = []
     for name in scenarios:
         match = SWEEP.match(name)
-        value = p50_of(scenarios, name, "handoff_p50_s") if match else None
+        if not match or int(match.group(1)) > ADMISSION_WIDTH:
+            continue
+        value = p50_of(scenarios, name, "handoff_p50_s")
         if value is not None:
             points.append((int(match.group(1)), value))
     if len(points) < 2:
@@ -76,8 +82,9 @@ def largest(scenarios: dict, key: str) -> Optional[float]:
 
 # The run-lifecycle targets: (measure, target, how it is read from the results).
 TARGETS = [
-    ("hand-off p50 at width 100 (sweep-100)", "≤ 5 s", lambda s: p50_of(s, "sweep-100", "handoff_p50_s")),
-    ("hand-off growth per task of level width (sweep-*)", "< 0.1 s", sweep_slope),
+    (f"hand-off p50 at the admission width (sweep-{ADMISSION_WIDTH})", "≤ 5 s",
+     lambda s: p50_of(s, f"sweep-{ADMISSION_WIDTH}", "handoff_p50_s")),
+    (f"hand-off growth per task of level width (sweep-* up to {ADMISSION_WIDTH})", "< 0.1 s", sweep_slope),
     ("retry turnaround p50 (fail-once)", "≤ 5 s", lambda s: p50_of(s, "fail-once", "retry_turnaround_p50_s")),
     ("messages per attempt (sweep-100)", "4", lambda s: p50_of(s, "sweep-100", "messages_per_attempt")),
     ("overlapping attempts, largest of any scenario", "0", lambda s: largest(s, "overlapping_attempts")),

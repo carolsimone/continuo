@@ -98,10 +98,10 @@ def test_main_fails_when_a_folder_holds_no_results(tmp_path, capsys):
 
 
 def test_compare_lists_each_target_on_both_sides():
-    before = {"fail-once": [rep(1, retry_turnaround_p50_s=26.0)], "sweep-100": [rep(1, handoff_p50_s=60.0)]}
-    after = {"fail-once": [rep(1, retry_turnaround_p50_s=2.0)], "sweep-100": [rep(1, handoff_p50_s=4.0)]}
+    before = {"fail-once": [rep(1, retry_turnaround_p50_s=26.0)], "sweep-50": [rep(1, handoff_p50_s=60.0)]}
+    after = {"fail-once": [rep(1, retry_turnaround_p50_s=2.0)], "sweep-50": [rep(1, handoff_p50_s=4.0)]}
     markdown = compare.compare(before, after, "A", "B")
     assert "## Targets" in markdown
     assert "| retry turnaround p50 (fail-once) | ≤ 5 s | 26.00 | 2.00 |" in markdown
-    assert "| hand-off p50 at width 100 (sweep-100) | ≤ 5 s | 60.00 | 4.00 |" in markdown
-    assert "| hand-off growth per task of level width (sweep-*) | < 0.1 s | — | — |" in markdown
+    assert "| hand-off p50 at the admission width (sweep-50) | ≤ 5 s | 60.00 | 4.00 |" in markdown
+    assert "| hand-off growth per task of level width (sweep-* up to 50) | < 0.1 s | — | — |" in markdown

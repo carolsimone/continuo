@@ -37,23 +37,31 @@ def sweep_rep(handoff, **fields):
 
 
 def test_sweep_slope_fits_the_handoff_against_the_level_width():
-    scenarios = {"sweep-10": [sweep_rep(2.0)], "sweep-50": [sweep_rep(6.0)], "sweep-100": [sweep_rep(11.0)],
-                 "dag-500": [sweep_rep(99.0)]}
+    scenarios = {"sweep-10": [sweep_rep(2.0)], "sweep-50": [sweep_rep(6.0)], "dag-500": [sweep_rep(99.0)]}
     assert round(report.sweep_slope(scenarios), 4) == 0.1
     assert report.sweep_slope({"sweep-10": [sweep_rep(2.0)]}) is None
+
+
+def test_sweep_slope_ignores_widths_above_the_admission_width():
+    # a level wider than the admission width queues by design, so its hand-off is not part of the fit
+    scenarios = {"sweep-10": [sweep_rep(2.0)], "sweep-50": [sweep_rep(6.0)], "sweep-100": [sweep_rep(61.0)],
+                 "sweep-200": [sweep_rep(190.0)]}
+    assert round(report.sweep_slope(scenarios), 4) == 0.1
+    assert report.sweep_slope({"sweep-10": [sweep_rep(2.0)], "sweep-100": [sweep_rep(61.0)]}) is None
 
 
 def test_render_lists_each_target_with_its_measured_value():
     scenarios = {
         "sweep-10": [sweep_rep(2.0, overlapping_attempts=0)],
-        "sweep-100": [sweep_rep(11.0, messages_per_attempt=5.0, overlapping_attempts=0)],
+        "sweep-50": [sweep_rep(6.0, overlapping_attempts=0)],
+        "sweep-100": [sweep_rep(61.0, messages_per_attempt=5.0, overlapping_attempts=0)],
         "fail-once": [sweep_rep(None, retry_turnaround_p50_s=26.0, overlapping_attempts=0)],
         "start-image": [sweep_rep(None, overlapping_attempts=20)],
     }
     markdown = report.render(scenarios)
     assert "## Targets" in markdown
-    assert "| hand-off p50 at width 100 (sweep-100) | ≤ 5 s | 11.00 |" in markdown
-    assert "| hand-off growth per task of level width (sweep-*) | < 0.1 s | 0.10 |" in markdown
+    assert "| hand-off p50 at the admission width (sweep-50) | ≤ 5 s | 6.00 |" in markdown
+    assert "| hand-off growth per task of level width (sweep-* up to 50) | < 0.1 s | 0.10 |" in markdown
     assert "| retry turnaround p50 (fail-once) | ≤ 5 s | 26.00 |" in markdown
     assert "| messages per attempt (sweep-100) | 4 | 5.00 |" in markdown
     assert "| overlapping attempts, largest of any scenario | 0 | 20.00 |" in markdown
