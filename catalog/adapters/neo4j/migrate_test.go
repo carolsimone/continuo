@@ -106,7 +106,7 @@ type oldShapeFixture struct {
 
 func newOldShapeFixture(t *testing.T) *oldShapeFixture {
 	t.Helper()
-	f := &oldShapeFixture{t: t, client: integrationClient(t), marker: t.Name()}
+	f := &oldShapeFixture{t: t, client: ownNeo4j(t), marker: t.Name()}
 	f.lookups = readGraphSchema(t, f.client).lookups
 	t.Cleanup(func() {
 		if err := InitSchema(context.Background(), f.client, quietLogger()); err != nil {

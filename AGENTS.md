@@ -170,6 +170,8 @@ Please read: `tests/e2e/README.md`.
 **Database schema in integration tests:**
 Integration tests run against the schema the Flyway migrations in `db/migration/` built (`make test-deps-up` applies them). A test never issues DDL, never replays migrations, and never creates test-only tables or databases; it cleans up by `TRUNCATE` or `DELETE` of the rows it owns. A test-only schema drifts from production, and a `DROP` on a shared database breaks every other suite that uses it. A test whose tables are missing fails with a message to run the migrations, rather than rebuilding them.
 
+catalog's Neo4j schema lives in code (`InitSchema`). A catalog test that needs Neo4j DDL, such as the startup migration's tests, runs against its own throwaway Neo4j started with testcontainers (`ownNeo4j` in `catalog/adapters/neo4j`). Every other catalog test runs against the docker-compose Neo4j, on the schema `InitSchema` builds.
+
 # Deployment
 Continuo deploys as a Helm chart; see `deploy/README.md` for install modes and values.
 Provisioning the infrastructure a production install runs against, and obtaining cluster
