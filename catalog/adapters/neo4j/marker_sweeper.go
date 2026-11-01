@@ -31,7 +31,7 @@ type MarkerSweeper struct {
 	pruneOne    func(ctx context.Context, tenantID string, retentionMs, limit int64) (int64, error)
 
 	// failed holds the tenants whose prune failed in the sweep that is under
-	// way, which skips them until it ends.
+	// way, which skips them until AfterSweep.
 	mu     sync.Mutex
 	failed map[string]struct{}
 }
@@ -74,8 +74,8 @@ RETURN count(*) AS deleted`
 // only a shutdown cancels it.
 //
 // It is a retention.PruneFunc (pkg/retention), so the sweeper calls it in a loop
-// until a pass deletes fewer than limit. That pass ends the sweep, and with it
-// the set of failed tenants.
+// until a pass deletes fewer than limit or the sweep reaches its cap on
+// batches, then calls AfterSweep, which forgets the failed tenants.
 func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	retentionMs := retention.Milliseconds()
 	if retentionMs < 1 {
@@ -85,20 +85,11 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 		return 0, fmt.Errorf("neo4j: a marker sweep needs a limit of at least 1, got %d", limit)
 	}
 
-	var deleted int64
-	var err error
-	// A pass that ends the sweep (it deleted fewer than limit, or failed)
-	// clears the failed tenants, so the next sweep tries them again.
-	defer func() {
-		if err != nil || deleted < int64(limit) {
-			s.clearFailed()
-		}
-	}()
-
 	tenants, err := s.listTenants(ctx, retentionMs)
 	if err != nil {
 		return 0, err
 	}
+	var deleted int64
 	for _, tenantID := range tenants {
 		if deleted >= int64(limit) {
 			break
@@ -123,6 +114,11 @@ func (s *MarkerSweeper) Prune(ctx context.Context, retention time.Duration, limi
 	}
 	return deleted, nil
 }
+
+// AfterSweep ends the sweep the pruner has been running: the tenants whose
+// prune failed in it are tried again in the next. pkg/retention calls it when
+// a sweep ends, however it ends.
+func (s *MarkerSweeper) AfterSweep() { s.clearFailed() }
 
 func (s *MarkerSweeper) hasFailed(tenantID string) bool {
 	s.mu.Lock()

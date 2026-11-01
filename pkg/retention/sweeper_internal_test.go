@@ -80,3 +80,33 @@ func TestSweep_ACancelledSweepLogsNoError(t *testing.T) {
 		t.Error("the sweep went on after its context was cancelled")
 	}
 }
+
+// A target hears when its sweep ends, whichever way it ends: a short pass, a
+// failed pass, or the cap on batches per sweep.
+func TestSweep_TellsTheTargetWhenItsSweepEnds(t *testing.T) {
+	for name, tc := range map[string]struct {
+		prune func(limit int) (int64, error)
+		want  int
+	}{
+		"short pass":  {func(int) (int64, error) { return 0, nil }, 1},
+		"failed pass": {func(int) (int64, error) { return 0, errors.New("unreachable") }, 1},
+		"batch cap":   {func(limit int) (int64, error) { return int64(limit), nil }, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ended, passes := 0, 0
+			s := NewSweeper([]Target{{
+				Name: "t",
+				Prune: func(_ context.Context, _ time.Duration, limit int) (int64, error) {
+					passes++
+					return tc.prune(limit)
+				},
+				AfterSweep: func() { ended++ },
+			}}, Config{BatchLimit: 10, MaxBatchesPerSweep: 3}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			s.sweep(context.Background())
+			if ended != tc.want {
+				t.Fatalf("AfterSweep ran %d times after %d passes, want %d", ended, passes, tc.want)
+			}
+		})
+	}
+}

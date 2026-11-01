@@ -23,6 +23,11 @@ type Target struct {
 	Name         string
 	Prune        PruneFunc
 	MinRetention time.Duration
+	// AfterSweep, when set, runs once when the target's sweep ends: after a pass
+	// that removed fewer rows than the batch limit, after a failed pass, and
+	// after the last batch the sweep's cap allows. A prune that keeps state
+	// across the passes of one sweep drops it here.
+	AfterSweep func()
 }
 
 // Config groups the sweeper's timing knobs. All have safe defaults so no
@@ -123,6 +128,9 @@ func (s *Sweeper) sweep(ctx context.Context) {
 // is reached. Returns the total deleted across the loop, a failed pass's
 // count included.
 func (s *Sweeper) pruneTarget(ctx context.Context, target Target) (int64, error) {
+	if target.AfterSweep != nil {
+		defer target.AfterSweep()
+	}
 	retention := max(s.cfg.Retention, target.MinRetention)
 	var total int64
 	for i := 0; i < s.cfg.MaxBatchesPerSweep; i++ {
