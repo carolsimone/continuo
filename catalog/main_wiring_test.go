@@ -153,7 +153,7 @@ func TestMain_LinksNoSQLDriver(t *testing.T) {
 		{"./cmd/catalog-backup", "github.com/carolsimone/continuo/catalog/adapters/neo4j"},
 	} {
 		t.Run(tc.pkg, func(t *testing.T) {
-			cmd := exec.Command("go", "list", "-deps", tc.pkg)
+			cmd := exec.Command("go", "list", "-deps", tc.pkg) //nolint:gosec // G204: tc.pkg is one of the two literal packages of the table above
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			out, err := cmd.Output()
