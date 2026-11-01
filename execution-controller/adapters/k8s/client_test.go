@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -124,12 +125,16 @@ func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
 		"prod query job must not set the candidate output schema")
 }
 
+// testJobTTL is the finished-Job TTL of the clients the test helpers build,
+// and testJobTTLSeconds the TTLSecondsAfterFinished their Jobs carry.
+const (
+	testJobTTL              = 30 * time.Minute
+	testJobTTLSeconds int32 = 1800
+)
+
 // newQueryTestClient creates a K8sClient backed by a fake clientset for unit tests.
 func newQueryTestClient() *K8sClient {
-	cs := fake.NewSimpleClientset()
-	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
-	c.setClientsetForTest(cs)
-	return c
+	return NewK8sClientFor(fake.NewSimpleClientset(), slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults(), testJobTTL)
 }
 
 func TestCreateJob_AlreadyExistsIsSuccess(t *testing.T) {
@@ -177,9 +182,9 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 }
 
 // TestCreateQueryJob_SetsTTLSecondsAfterFinished verifies that a production dbt
-// Job carries a TTLSecondsAfterFinished so Kubernetes garbage-collects the Job
-// (and its pod) some time after it terminates, instead of leaving failed pods on
-// the cluster indefinitely.
+// Job carries the client's finished-Job TTL as its TTLSecondsAfterFinished, so
+// Kubernetes deletes the Job (and its pod) that long after it finishes instead
+// of leaving finished pods on the cluster.
 func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newQueryTestClient()
@@ -204,7 +209,41 @@ func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
-	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, testJobTTLSeconds, *job.Spec.TTLSecondsAfterFinished)
+}
+
+// A client built with a finished-Job TTL puts exactly that TTL, in seconds, on
+// every kind of Job it creates: the task Job and the validation, seed-build
+// and compile legs.
+func TestEveryJobKindCarriesTheClientsJobTTL(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/runtime:v1")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh")
+	t.Setenv("S3_SIDECAR_IMAGE", "ghcr.io/x/sidecar:v1")
+	cs := fake.NewSimpleClientset()
+	c := NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), commandcfg.Defaults(), 45*time.Minute)
+	ctx := context.Background()
+	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ServiceName: "svc", SchemaName: "public",
+		TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", CandidateSchema: "_cand_r1",
+		CandidateArtifactURI: "s3://b/sql", ManifestS3URI: "s3://b/manifest.json", Namespace: "ns"}
+	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", Namespace: "ns"}))
+	v := cand
+	v.JobName = "validate"
+	require.NoError(t, c.CreateValidationJob(ctx, v))
+	sb := cand
+	sb.JobName, sb.NodeType = "seed", "dbt-seed"
+	require.NoError(t, c.CreateSeedBuildJob(ctx, sb))
+	cp := cand
+	cp.JobName = "compile"
+	require.NoError(t, c.CreateCompileJob(ctx, cp))
+
+	jobs, err := cs.BatchV1().Jobs("ns").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, jobs.Items, 4)
+	for _, j := range jobs.Items {
+		require.NotNil(t, j.Spec.TTLSecondsAfterFinished, "Job %s sets no TTLSecondsAfterFinished", j.Name)
+		assert.Equal(t, int32(2700), *j.Spec.TTLSecondsAfterFinished, "Job %s", j.Name)
+	}
 }
 
 // The Job watch selects JobSelector, so every Job execution-controller

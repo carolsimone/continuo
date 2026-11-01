@@ -28,6 +28,14 @@ const (
 	MaxJobStartTimeout     = 2 * time.Hour
 )
 
+// The finished-Job TTL's default and the range execution-controller accepts:
+// the chart's execution.jobTTLMinutes, 1 minute to 7 days.
+const (
+	defaultJobTTL = 30 * time.Minute
+	MinJobTTL     = time.Minute
+	MaxJobTTL     = 7 * 24 * time.Hour
+)
+
 // The Kubernetes client's request rate limit: its defaults and the ranges
 // execution-controller accepts, the chart's execution.kubeClientQPS and
 // execution.kubeClientBurst.
@@ -63,6 +71,9 @@ type Config struct {
 	// JobStartTimeout is how long a Job's pod may take, after the Job is
 	// created, to start any container; past it the attempt is ended.
 	JobStartTimeout time.Duration
+	// JobTTL is how long a finished task, validation, seed-build or compile
+	// Job, and its pod, stays on the cluster before Kubernetes deletes it.
+	JobTTL time.Duration
 	// K8sClientQPS and K8sClientBurst limit the requests per second the
 	// Kubernetes client sends, and how many it may send at once in a spike.
 	K8sClientQPS   int
@@ -106,7 +117,8 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:              envInt("HTTP_PORT", 8084),
 		K8sNamespace:          v.Require("K8S_NAMESPACE"),
 		MaxConcurrentJobs:     maxConcurrentJobs(v),
-		JobStartTimeout:       jobStartTimeout(v),
+		JobStartTimeout:       wholeSecondsInRange(v, "JOB_START_TIMEOUT_SECONDS", defaultJobStartTimeout, MinJobStartTimeout, MaxJobStartTimeout),
+		JobTTL:                wholeSecondsInRange(v, "JOB_TTL_SECONDS", defaultJobTTL, MinJobTTL, MaxJobTTL),
 		K8sClientQPS:          k8sClientQPS,
 		K8sClientBurst:        k8sClientBurst,
 		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
@@ -130,23 +142,22 @@ func maxConcurrentJobs(v *pkgconfig.Validator) int {
 	return defaultMaxConcurrentJobs
 }
 
-// jobStartTimeout reads JOB_START_TIMEOUT_SECONDS, a whole number of seconds
-// from MinJobStartTimeout to MaxJobStartTimeout; unset selects the default. Any
-// other value is a validation failure naming the key. The seconds are compared
-// with the range before they become a duration, so a value too large for one
-// is refused rather than wrapped into the range.
-func jobStartTimeout(v *pkgconfig.Validator) time.Duration {
-	const key = "JOB_START_TIMEOUT_SECONDS"
+// wholeSecondsInRange reads key as a whole number of seconds from lo to hi;
+// unset selects fallback. Any other value is a validation failure naming the
+// key. The seconds are compared with the range before they become a duration,
+// so a value too large for one is refused rather than wrapped into the range.
+// It reads JOB_START_TIMEOUT_SECONDS and JOB_TTL_SECONDS.
+func wholeSecondsInRange(v *pkgconfig.Validator, key string, fallback, lo, hi time.Duration) time.Duration {
 	raw := os.Getenv(key)
 	if raw == "" {
-		return defaultJobStartTimeout
+		return fallback
 	}
-	minSecs, maxSecs := int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())
+	minSecs, maxSecs := int(lo.Seconds()), int(hi.Seconds())
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < minSecs || n > maxSecs {
 		v.Add(fmt.Sprintf("%s (invalid value %q: expected whole seconds from %d to %d)",
 			key, raw, minSecs, maxSecs))
-		return defaultJobStartTimeout
+		return fallback
 	}
 	return time.Duration(n) * time.Second
 }

@@ -144,6 +144,10 @@ spec:
             # sets how long they run.
             - name: JOB_START_TIMEOUT_SECONDS
               value: "60"
+            # A finished Job and its pod are deleted 30 minutes after they
+            # finish, the chart's execution.jobTTLMinutes default.
+            - name: JOB_TTL_SECONDS
+              value: "1800"
             # The chart's execution.kubeClientQPS and execution.kubeClientBurst defaults.
             - name: K8S_CLIENT_QPS
               value: "50"

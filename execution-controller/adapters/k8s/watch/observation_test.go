@@ -85,7 +85,7 @@ func TestObservation_TheJobCreatedForAnAttemptRunsIt(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	cs := fake.NewSimpleClientset()
-	client := k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults())
+	client := k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults(), 30*time.Minute)
 	taskID := "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b-r2", TaskID: taskID,
@@ -109,7 +109,7 @@ func TestObservation_ReadsTheRunIDLabel(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	cs := fake.NewSimpleClientset()
-	client := k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults())
+	client := k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults(), 30*time.Minute)
 	runID := "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
