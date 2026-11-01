@@ -392,6 +392,14 @@ execution:
   # with start_timeout. Whole minutes from 1 to 120: anything else fails the
   # install, and execution-controller refuses to start on it.
   startTimeoutMinutes: 15
+  # Finished-Job TTL: how long a task, validation, seed-build or compile Job
+  # and its pod stay on the cluster after they finish (succeeded or failed)
+  # before Kubernetes deletes them. A short time loses nothing:
+  # execution-controller uploads an attempt's log and results to S3 as soon as
+  # the attempt ends. Keep it longer only to debug a finished pod with
+  # kubectl. Whole minutes from 1 to 10080 (7 days): anything else fails the
+  # install, and execution-controller refuses to start on it.
+  jobTTLMinutes: 30
   # Request rate limit of execution-controller's Kubernetes client, which
   # every Job it creates, watches and reads goes through. kubeClientQPS is
   # how many requests per second it sends once running steadily;

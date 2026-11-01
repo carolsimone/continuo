@@ -1543,6 +1543,23 @@ upgrade --reuse-values), gets 15 minutes; a value outside
 {{- end -}}
 
 {{/*
+JOB_TTL_SECONDS for the shared ConfigMap: execution.jobTTLMinutes in seconds,
+how long a finished task, validation, seed-build or compile Job and its pod
+stay before Kubernetes deletes them. A release without an execution block, or
+without the key (helm upgrade --reuse-values), gets 30 minutes; a value
+outside 1-10080 fails the render.
+*/ -}}
+{{- define "continuo.execution.jobTTLSeconds" -}}
+{{- $e := .Values.execution | default dict -}}
+{{- $m := 30 -}}
+{{- if hasKey $e "jobTTLMinutes" -}}{{- $m = int $e.jobTTLMinutes -}}{{- end -}}
+{{- if or (lt $m 1) (gt $m 10080) -}}
+{{- fail (printf "execution.jobTTLMinutes=%v must be a whole number of minutes from 1 to 10080" $e.jobTTLMinutes) -}}
+{{- end -}}
+{{- mul $m 60 -}}
+{{- end -}}
+
+{{/*
 K8S_CLIENT_QPS for the shared ConfigMap: execution.kubeClientQPS. A release
 without an execution block, or without the key (helm upgrade --reuse-values
 from an older chart), gets 50; a value outside 1-1000 fails the render.

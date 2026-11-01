@@ -29,8 +29,9 @@ func TestCreateSeedBuildJob_TeamImageDbtSeedIntoCandidate(t *testing.T) {
 }
 
 // TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished verifies that a seed-build
-// Job carries a TTLSecondsAfterFinished so Kubernetes garbage-collects it (and
-// its pod) after it terminates, instead of leaving failed pods around forever.
+// Job carries the client's finished-Job TTL as its TTLSecondsAfterFinished, so
+// Kubernetes deletes it (and its pod) that long after it finishes instead of
+// leaving finished pods around.
 func TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	c := newValidationTestClient()
@@ -43,7 +44,7 @@ func TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	require.NoError(t, c.CreateSeedBuildJob(context.Background(), p))
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
-	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, testJobTTLSeconds, *job.Spec.TTLSecondsAfterFinished)
 }
 
 func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {

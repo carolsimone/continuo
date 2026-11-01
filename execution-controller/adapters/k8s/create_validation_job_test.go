@@ -36,9 +36,7 @@ func newValidationTestClient(objects ...*batchv1.Job) *K8sClient {
 		runtimeObjs = append(runtimeObjs, o)
 	}
 	cs := fake.NewSimpleClientset(runtimeObjs...)
-	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
-	c.setClientsetForTest(cs)
-	return c
+	return NewK8sClientFor(cs, slog.New(slog.NewTextHandler(os.Stderr, nil)), commandcfg.Defaults(), testJobTTL)
 }
 
 func fetchJob(t *testing.T, c *K8sClient, namespace, name string) *batchv1.Job {
@@ -66,9 +64,9 @@ func validationParams() ValidationJobParams {
 }
 
 // TestCreateValidationJob_SetsTTLSecondsAfterFinished verifies that a
-// mode=validation Job carries a TTLSecondsAfterFinished so Kubernetes
-// garbage-collects it (and its pod) after it terminates, instead of leaving
-// failed release-validation pods around forever.
+// mode=validation Job carries the client's finished-Job TTL as its
+// TTLSecondsAfterFinished, so Kubernetes deletes it (and its pod) that long
+// after it finishes instead of leaving finished release-validation pods around.
 func TestCreateValidationJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newValidationTestClient()
@@ -77,7 +75,7 @@ func TestCreateValidationJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
-	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, testJobTTLSeconds, *job.Spec.TTLSecondsAfterFinished)
 }
 
 func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testing.T) {
