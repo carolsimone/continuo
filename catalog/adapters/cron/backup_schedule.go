@@ -54,6 +54,8 @@ func (BackupScheduleParser) Parse(spec string) (ports.BackupSchedule, error) {
 // zone of the time it is given, so the time is converted first.
 type utcSchedule struct{ schedule cron.Schedule }
 
+var _ ports.BackupSchedule = utcSchedule{}
+
 func (s utcSchedule) Next(after time.Time) time.Time {
 	return s.schedule.Next(after.UTC())
 }
