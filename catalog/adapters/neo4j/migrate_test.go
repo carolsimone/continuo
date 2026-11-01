@@ -4,7 +4,9 @@ package neo4jinfra
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -371,4 +373,62 @@ func TestMigrate_KeepsAnExistingWatermark(t *testing.T) {
 			assert.Equal(t, wantLabel, got, "run %d: the :%s watermarks", run, label)
 		}
 	}
+}
+
+// runInitSchemaTogether runs n InitSchema calls at once on client and returns
+// their errors. It logs the Neo4j code of every failure, so a reproduction
+// records which codes a concurrent migration raises.
+func runInitSchemaTogether(t *testing.T, client Neo4jClient, n int) []error {
+	t.Helper()
+	errs := make([]error, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = InitSchema(context.Background(), client, quietLogger())
+		}()
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		var neo4jErr *neo4j.Neo4jError
+		if errors.As(err, &neo4jErr) {
+			t.Logf("start %d failed with Neo4j code %s: %v", i, neo4jErr.Code, err)
+		} else {
+			t.Logf("start %d failed: %v", i, err)
+		}
+	}
+	return errs
+}
+
+// TestInitSchema_ConcurrentStartsBothSucceed: a rolling restart with two
+// replicas starts both pods on a graph that needs every step, and neither
+// exits.
+func TestInitSchema_ConcurrentStartsBothSucceed(t *testing.T) {
+	f := newOldShapeFixture(t)
+
+	for i, err := range runInitSchemaTogether(t, f.client, 2) {
+		require.NoError(t, err, "start %d", i)
+	}
+	f.assertMigrated("after the concurrent starts")
+	assertTargetSchema(t, f.client, f.lookups)
+}
+
+// TestInitSchema_ConcurrentStartsOnAMigratedGraph: the routine rolling restart,
+// on a graph that is already migrated, starts both pods.
+func TestInitSchema_ConcurrentStartsOnAMigratedGraph(t *testing.T) {
+	client := ownNeo4j(t)
+	require.NoError(t, InitSchema(context.Background(), client, quietLogger()))
+	lookups := readGraphSchema(t, client).lookups
+
+	for i, err := range runInitSchemaTogether(t, client, 2) {
+		require.NoError(t, err, "start %d", i)
+	}
+	assertTargetSchema(t, client, lookups)
 }
