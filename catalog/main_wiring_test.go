@@ -15,12 +15,22 @@ import (
 // parseMain parses this service's main.go.
 func parseMain(t *testing.T) *ast.File {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, parser.ParseComments)
+	return parseFile(t, "main.go")
+}
+
+// parseFile parses the Go file at path, relative to this directory.
+func parseFile(t *testing.T, path string) *ast.File {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
+		t.Fatalf("parse %s: %v", path, err)
 	}
 	return f
 }
+
+// backupCommandMain is main.go of the catalog-backup binary, which ships in
+// catalog's image and keeps no Postgres either.
+const backupCommandMain = "cmd/catalog-backup/main.go"
 
 // TestMain_ConsumesOnlyTopologyAndCaseBaseStreams pins the streams catalog
 // reads: the two release.promoted:v2 groups (topology swap, code versions) and
@@ -108,10 +118,12 @@ func TestMain_ImportsNoSQLPackage(t *testing.T) {
 		"github.com/carolsimone/continuo/pkg/messageprocessing",
 		"github.com/carolsimone/continuo/pkg/outbox",
 	}
-	for _, imp := range parseMain(t).Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		if slices.Contains(banned, path) {
-			t.Errorf("main.go imports %s", path)
+	for _, file := range []string{"main.go", backupCommandMain} {
+		for _, imp := range parseFile(t, file).Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if slices.Contains(banned, path) {
+				t.Errorf("%s imports %s", file, path)
+			}
 		}
 	}
 }
@@ -136,23 +148,30 @@ var postgresPackages = []string{
 // in is in the wrong place. It reads the transitive closure from
 // `go list -deps` and fails, never skips, when go cannot run.
 func TestMain_LinksNoSQLDriver(t *testing.T) {
-	cmd := exec.Command("go", "list", "-deps", ".")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("go list -deps .: %v\n%s", err, stderr.String())
-	}
-	deps := strings.Fields(string(out))
-	if !slices.Contains(deps, "github.com/carolsimone/continuo/pkg/retention") {
-		t.Fatalf("go list -deps . does not list pkg/retention, which main.go runs: the closure it read is not catalog's (%d packages)", len(deps))
-	}
-	for _, dep := range deps {
-		for _, banned := range postgresPackages {
-			if dep == banned || strings.HasPrefix(dep, banned+"/") {
-				t.Errorf("catalog links %s", dep)
+	for _, tc := range []struct{ pkg, mustLink string }{
+		{".", "github.com/carolsimone/continuo/pkg/retention"},
+		{"./cmd/catalog-backup", "github.com/carolsimone/continuo/catalog/adapters/neo4j"},
+	} {
+		t.Run(tc.pkg, func(t *testing.T) {
+			cmd := exec.Command("go", "list", "-deps", tc.pkg)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("go list -deps %s: %v\n%s", tc.pkg, err, stderr.String())
 			}
-		}
+			deps := strings.Fields(string(out))
+			if !slices.Contains(deps, tc.mustLink) {
+				t.Fatalf("go list -deps %s does not list %s, which the binary runs: the closure it read is not catalog's (%d packages)", tc.pkg, tc.mustLink, len(deps))
+			}
+			for _, dep := range deps {
+				for _, banned := range postgresPackages {
+					if dep == banned || strings.HasPrefix(dep, banned+"/") {
+						t.Errorf("%s links %s", tc.pkg, dep)
+					}
+				}
+			}
+		})
 	}
 }
 
