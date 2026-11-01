@@ -8,8 +8,7 @@
 # because they build the package. The shared e2e launcher
 # (scripts/lib/common.sh) starts those same services with `go run`, so it is held
 # to the same rule: `go run .`, never `go run main.go`. So are the other places
-# that relaunch a service with `go run`: the e2e harness (tests/e2e/*.go) and the
-# bench launcher (scripts/bench/start_local_services.sh).
+# that relaunch a service with `go run`: the e2e harness (tests/e2e/*.go).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,9 +29,9 @@ done
 # Every place that launches a service with `go run`/`go build` starts services
 # whose package main may span several files, so it must run the whole package
 # (`go run .`), never `main.go` alone: the shared e2e launcher, the e2e harness
-# (which relaunches services in their containers) and the bench launcher.
+# (which relaunches services in their containers).
 single_file_main='go (run|build)( [^"]*)? main\.go([[:space:]"]|$)'
-launchers=(scripts/lib/common.sh scripts/bench/start_local_services.sh)
+launchers=(scripts/lib/common.sh)
 for f in tests/e2e/*.go; do
   [ -f "$f" ] && launchers+=("$f")
 done
@@ -48,6 +47,6 @@ for launcher in "${launchers[@]}"; do
 done
 
 if [ "$fail" -eq 0 ]; then
-  echo "package builds OK (no single-file main.go build in Dockerfile.dev, the e2e launcher, the e2e harness or the bench launcher)"
+  echo "package builds OK (no single-file main.go build in Dockerfile.dev, the e2e launcher or the e2e harness)"
 fi
 exit "$fail"

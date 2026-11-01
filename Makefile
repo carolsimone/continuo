@@ -230,19 +230,10 @@ test-topology:
 	$(DOCKER_COMPOSE) up -d topology-controller
 	docker exec topology-controller uv run pytest -v
 
-.PHONY: bench-test
-bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harness
-	docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$(CURDIR):/repo:ro" -w /repo/scripts/bench \
-	  ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
-	  sh -c "uv run --no-project --with pytest pytest -q -p no:cacheprovider tests/"
-	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo koalaman/shellcheck:v0.10.0 -x \
-	  scripts/bench/*.sh scripts/bench/image/dbt
-
 # Fast gates that need no running stack. CI runs this target verbatim (a single
 # `make guards` step), so a gate added here reaches CI automatically;
 # check-ci-alignment.sh fails CI if the workflow ever re-inlines one of these
-# lines instead. The bench-test prerequisite runs the benchmark harness's
-# pytest suite and shellcheck in containers, so it needs Docker.
+# lines instead.
 #
 # The check scripts:
 # - check-service-names: no tracked file outside immutable history (Flyway
@@ -338,7 +329,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # contract. cli generates its run stubs from its own copy of run.proto, so
 # drift there ships a client built from another contract.
 .PHONY: guards
-guards: bench-test
+guards:
 	bash scripts/check-service-names.sh
 	bash scripts/check-service-names_test.sh
 	bash scripts/check-dead-go.sh

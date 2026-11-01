@@ -17,8 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// releaseShape is a synthetic release the way scripts/bench/gen_topology.py
-// builds one: levels of dbt models named nKK_IIII, each reading fanIn nodes of
+// releaseShape is a synthetic release: levels of dbt models named nKK_IIII, each reading fanIn nodes of
 // the level above. With failRoot, level 0 is the single node fail_root. With
 // tests, every node has one data test.
 type releaseShape struct {

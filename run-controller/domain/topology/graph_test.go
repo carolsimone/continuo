@@ -34,8 +34,7 @@ func diamond() topology.Graph {
 	)
 }
 
-// layered builds the benchmark's synthetic DAG the way
-// scripts/bench/gen_topology.py does: level k holds nodes named nKK_IIII, and
+// layered builds a synthetic layered DAG: level k holds nodes named nKK_IIII, and
 // each reads fanIn nodes of level k-1 (index, index+1, … modulo the level's
 // size). With failRoot, level 0 is the single node fail_root and the other
 // nodes fill the remaining levels.

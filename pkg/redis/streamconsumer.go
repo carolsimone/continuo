@@ -355,8 +355,7 @@ var (
 
 const (
 	// logDeadLettered is logged once per message the consumer abandons, after
-	// its dead letter is written. scripts/bench/outage.sh counts abandoned
-	// messages by this line's text.
+	// its dead letter is written.
 	logDeadLettered = "Message dead-lettered — ACKing to drop from PEL"
 	logInfraPause   = "Infrastructure error — pausing consumer"
 )
