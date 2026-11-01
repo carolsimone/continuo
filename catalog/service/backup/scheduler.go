@@ -101,12 +101,7 @@ func (s *Scheduler) exportAll(ctx context.Context) {
 		s.logger.Error("catalog export: the tenants could not be listed; no tenant is exported until the next slot", "error", err)
 		return
 	}
-	for _, tenantID := range tenants {
-		if ctx.Err() != nil {
-			return
-		}
-		_, _ = s.ex.ExportTenant(ctx, tenantID)
-	}
+	s.ex.ExportEach(ctx, tenants, func(string, Result, error) {})
 }
 
 // sleepCtx sleeps d, or until ctx ends.

@@ -602,3 +602,57 @@ func TestExporter_WaitingExportSkipsWhenALeaseTurnsUp(t *testing.T) {
 	require.ErrorIs(t, err, ErrSkipped)
 	assert.Equal(t, []string{ports.ExportSkipped}, f.metrics.outcomes())
 }
+
+// ExportEach exports the tenants one after the other, in the order given, and
+// reports each one's outcome as it ends.
+func TestExporter_ExportEachExportsInOrder(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	var order []string
+	var results []Result
+
+	notReached := f.ex.ExportEach(context.Background(), []string{"a", "b", "c"}, func(tenantID string, res Result, err error) {
+		require.NoError(t, err)
+		order = append(order, tenantID)
+		results = append(results, res)
+	})
+
+	assert.Equal(t, []string{"a", "b", "c"}, order)
+	assert.Empty(t, notReached)
+	for i, tenantID := range order {
+		assert.Equal(t, fakeKey(tenantID, exportAt), results[i].ObjectKey, "each tenant's export is its own")
+	}
+}
+
+// A tenant whose export fails or is skipped does not stop the ones after it:
+// each hears its own error.
+func TestExporter_ExportEachReportsEachTenantsError(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	f.lease.held["b"] = "someone-else"
+	var errs []error
+
+	f.ex.ExportEach(context.Background(), []string{"a", "b", "c"}, func(_ string, _ Result, err error) {
+		errs = append(errs, err)
+	})
+
+	require.Len(t, errs, 3)
+	assert.NoError(t, errs[0])
+	assert.ErrorIs(t, errs[1], ErrSkipped)
+	assert.NoError(t, errs[2])
+}
+
+// When the context ends, ExportEach starts no further tenant and returns the
+// ones it did not start.
+func TestExporter_ExportEachReturnsTheTenantsItDidNotStart(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var order []string
+
+	notReached := f.ex.ExportEach(ctx, []string{"a", "b", "c"}, func(tenantID string, _ Result, _ error) {
+		order = append(order, tenantID)
+		cancel()
+	})
+
+	assert.Equal(t, []string{"a"}, order)
+	assert.Equal(t, []string{"b", "c"}, notReached)
+}

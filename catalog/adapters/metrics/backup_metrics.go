@@ -153,3 +153,13 @@ func (c *lastSuccess) read() (float64, bool, error) {
 	}
 	return float64(at.UnixNano()) / 1e9, true, nil
 }
+
+// NopBackupMetrics drops the observations of the exports a process takes. A
+// process that ends with its export, such as catalog-backup, uses it: the
+// last-success gauge reads the store, where its export lands too.
+type NopBackupMetrics struct{}
+
+var _ ports.BackupMetrics = NopBackupMetrics{}
+
+// ExportObserved drops the observation.
+func (NopBackupMetrics) ExportObserved(string, time.Duration, int64, int64, int64) {}

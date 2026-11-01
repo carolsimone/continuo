@@ -118,6 +118,21 @@ func (e *Exporter) ExportTenant(ctx context.Context, tenantID string) (Result, e
 	return res, err
 }
 
+// ExportEach exports the tenants one after the other, in the order given, and
+// calls each with a tenant's result and error as soon as its export ends, so
+// one tenant's failure or skip does not stop the rest. When ctx ends it starts
+// no further export and returns the tenants it did not start.
+func (e *Exporter) ExportEach(ctx context.Context, tenants []string, each func(tenantID string, res Result, err error)) (notReached []string) {
+	for i, tenantID := range tenants {
+		if ctx.Err() != nil {
+			return tenants[i:]
+		}
+		res, err := e.ExportTenant(ctx, tenantID)
+		each(tenantID, res, err)
+	}
+	return nil
+}
+
 func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) {
 	// The export is opened with the work's context, so a stall or a lost
 	// lease that cancels it also ends a write the store never answers.
