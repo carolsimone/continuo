@@ -85,7 +85,6 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
 	}
-	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.JobName,
@@ -94,7 +93,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: c.finishedJobTTL(),
 			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -239,7 +238,6 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		annotationReleaseID: params.ReleaseID,
 		annotationNodeID:    params.NodeID,
 	}
-	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -249,7 +247,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: c.finishedJobTTL(),
 			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
@@ -422,7 +420,6 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		annotationReleaseID: params.ReleaseID,
 		annotationNodeID:    params.NodeID,
 	}
-	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -432,7 +429,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: c.finishedJobTTL(),
 			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
@@ -604,7 +601,6 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		annotationReleaseID: params.ReleaseID,
 		annotationNodeID:    params.NodeID,
 	}
-	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -614,7 +610,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: c.finishedJobTTL(),
 			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},

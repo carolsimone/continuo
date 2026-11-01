@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoad_RetentionSweeperSettings(t *testing.T) {
@@ -116,6 +118,7 @@ func TestLoad_UnionOfDispatchAndObserveSettings(t *testing.T) {
 	require.Equal(t, 8084, cfg.HTTPPort)
 	require.Equal(t, 50, cfg.MaxConcurrentJobs)
 	require.Equal(t, 15*time.Minute, cfg.JobStartTimeout)
+	require.Equal(t, 30*time.Minute, cfg.JobTTL)
 	require.Equal(t, 50, cfg.LogTailLines)
 	require.Equal(t, 4096, cfg.ErrorMessageMaxLength)
 	require.Equal(t, "b", cfg.S3.Bucket)
@@ -192,6 +195,97 @@ func TestJobStartTimeoutRangeMatchesTheChart(t *testing.T) {
 	got := schema.Properties.Execution.Properties.StartTimeoutMinutes
 	assert.Equal(t, MinJobStartTimeout, time.Duration(got.Minimum)*time.Minute)
 	assert.Equal(t, MaxJobStartTimeout, time.Duration(got.Maximum)*time.Minute)
+}
+
+func TestLoad_JobTTL(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		invalid bool
+	}{
+		{"", 30 * time.Minute, false},
+		{"1800", 30 * time.Minute, false},
+		{"2700", 45 * time.Minute, false},
+		{"60", time.Minute, false},
+		{"604800", 7 * 24 * time.Hour, false},
+		{"59", 0, true},
+		{"0", 0, true},
+		{"-60", 0, true},
+		{"604801", 0, true},
+		{"30m", 0, true},
+		{"1800.5", 0, true},
+		// 18446744674 s is 2^64 ns plus about ten minutes: refused, though its
+		// nanoseconds would wrap into the range.
+		{"18446744674", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("JOB_TTL_SECONDS", c.raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			if c.invalid {
+				require.NotEmpty(t, v.Missing(), "a finished-Job TTL the service cannot honour stops it at boot")
+				assert.Contains(t, strings.Join(v.Missing(), ","), "JOB_TTL_SECONDS")
+				return
+			}
+			require.Empty(t, v.Missing())
+			assert.Equal(t, c.want, cfg.JobTTL)
+		})
+	}
+}
+
+// The chart's execution.jobTTLMinutes accepts the range the service accepts
+// and defaults to the service's default, in its schema, its values and the
+// helper that renders JOB_TTL_SECONDS (whose default a release without the key
+// gets): a value the chart allows but the service refused would render and
+// then stop execution-controller at startup, and an install without the key
+// would get another TTL than one that never set it.
+func TestJobTTLRangeAndDefaultMatchTheChart(t *testing.T) {
+	rawSchema, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
+	require.NoError(t, err)
+	var schema struct {
+		Properties struct {
+			Execution struct {
+				Properties struct {
+					JobTTLMinutes struct {
+						Type    string `json:"type"`
+						Minimum int    `json:"minimum"`
+						Maximum int    `json:"maximum"`
+					} `json:"jobTTLMinutes"`
+				} `json:"properties"`
+			} `json:"execution"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(rawSchema, &schema))
+	bounds := schema.Properties.Execution.Properties.JobTTLMinutes
+	assert.Equal(t, "integer", bounds.Type, "values.schema.json execution.jobTTLMinutes takes whole minutes")
+	assert.Equal(t, MinJobTTL, time.Duration(bounds.Minimum)*time.Minute, "values.schema.json minimum")
+	assert.Equal(t, MaxJobTTL, time.Duration(bounds.Maximum)*time.Minute, "values.schema.json maximum")
+
+	rawValues, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.yaml"))
+	require.NoError(t, err)
+	var values struct {
+		Execution struct {
+			JobTTLMinutes int `yaml:"jobTTLMinutes"`
+		} `yaml:"execution"`
+	}
+	require.NoError(t, yaml.Unmarshal(rawValues, &values))
+	assert.Equal(t, defaultJobTTL, time.Duration(values.Execution.JobTTLMinutes)*time.Minute, "values.yaml default")
+
+	rawHelpers, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "templates", "_helpers.tpl"))
+	require.NoError(t, err)
+	helper := regexp.MustCompile(`(?s)define "continuo\.execution\.jobTTLSeconds".*?\$m := (\d+) -}}.*?\(lt \$m (\d+)\) \(gt \$m (\d+)\)`).
+		FindStringSubmatch(string(rawHelpers))
+	require.NotNil(t, helper, "_helpers.tpl defines continuo.execution.jobTTLSeconds with a default and a range check")
+	minutes := func(s string) time.Duration {
+		n, err := strconv.Atoi(s)
+		require.NoError(t, err)
+		return time.Duration(n) * time.Minute
+	}
+	assert.Equal(t, defaultJobTTL, minutes(helper[1]), "_helpers.tpl default")
+	assert.Equal(t, MinJobTTL, minutes(helper[2]), "_helpers.tpl minimum")
+	assert.Equal(t, MaxJobTTL, minutes(helper[3]), "_helpers.tpl maximum")
 }
 
 func TestKubeClientRateLimit(t *testing.T) {

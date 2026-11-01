@@ -364,6 +364,24 @@ done
 grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/execution-null.yaml" \
   || { echo "FAIL: a release without execution values must get the default start timeout"; exit 1; }
 
+# execution.jobTTLMinutes reaches execution-controller through the shared
+# ConfigMap in seconds; a value outside 1-10080 fails the render, and values
+# without the key (as `helm upgrade --reuse-values` can produce) render the
+# 30-minute default.
+echo "--- execution.jobTTLMinutes reaches the ConfigMap in seconds; values outside 1-10080 are refused"
+grep -q 'JOB_TTL_SECONDS: "1800"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set JOB_TTL_SECONDS to 1800"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.jobTTLMinutes=45 > "${tmp}/ttl-set.yaml"
+grep -q 'JOB_TTL_SECONDS: "2700"' "${tmp}/ttl-set.yaml" \
+  || { echo "FAIL: execution.jobTTLMinutes does not reach the shared ConfigMap in seconds"; exit 1; }
+for bad in 0 10081 -5 1.5; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.jobTTLMinutes=${bad} > /dev/null 2>&1; then
+    echo "FAIL: execution.jobTTLMinutes=${bad} must fail the render"; exit 1
+  fi
+done
+grep -q 'JOB_TTL_SECONDS: "1800"' "${tmp}/execution-null.yaml" \
+  || { echo "FAIL: a release without execution values must get the default finished-Job TTL"; exit 1; }
+
 # execution.kubeClientQPS and execution.kubeClientBurst reach
 # execution-controller through the shared ConfigMap; a QPS outside 1-1000, a
 # burst outside 1-2000 or a burst below the QPS fails the render, and a release

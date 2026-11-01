@@ -893,7 +893,7 @@ func (h *harness) watchOver(t *testing.T, cs *fake.Clientset, ns string) *watch.
 	t.Cleanup(stopWatch)
 	w.Start(watchCtx)
 	require.True(t, w.WaitForCacheSync(watchCtx))
-	jobs := k8s.NewJobControl(k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), nil), ns)
+	jobs := k8s.NewJobControl(k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, 30*time.Minute), ns)
 	h.o.deps.Cache, h.o.deps.Lookup, h.o.deps.Terminator, h.o.deps.Logs = w, w, jobs, jobs
 	return w
 }
