@@ -281,7 +281,7 @@ func (s *fakeStore) CheckTenant(tenantID string) error {
 	return nil
 }
 
-func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
+func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
 	if err := s.CheckTenant(tenantID); err != nil {
 		return nil, "", err
 	}
@@ -291,7 +291,7 @@ func (s *fakeStore) Open(ctx context.Context, tenantID string, at time.Time) (po
 	if s.openErr != nil {
 		return nil, "", s.openErr
 	}
-	w := &fakeSink{store: s, key: key, ctx: ctx}
+	w := &fakeSink{store: s, key: key, ctx: ctx, progress: progress}
 	if s.sink != nil {
 		s.sink(w)
 	}
@@ -443,6 +443,9 @@ type fakeSink struct {
 	closeErr    error
 	abortErr    error
 	onWrite     func()
+	// progress is what the store was told to call after each write to its
+	// object store; a nil progress is not called.
+	progress func()
 }
 
 func (w *fakeSink) write(rec any) error {

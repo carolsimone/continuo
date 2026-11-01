@@ -73,8 +73,10 @@ type BackupStore interface {
 	// its key. The store is reached with the call, so a store that refuses
 	// writes fails Open before anything is written. Two exports of one tenant
 	// taken in the same second share a key, and the later replaces the
-	// earlier.
-	Open(ctx context.Context, tenantID string, at time.Time) (ExportSink, string, error)
+	// earlier. When progress is not nil, the sink calls it each time a write to
+	// the object store returns, so each part a large record fills counts as
+	// progress for the caller's stall watch.
+	Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ExportSink, string, error)
 	// OpenRead opens the export stored at key and reads its header. A missing
 	// export is ErrBackupNotFound.
 	OpenRead(ctx context.Context, key string) (ExportSource, error)

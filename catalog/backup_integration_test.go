@@ -293,8 +293,8 @@ func newGateStore(store ports.BackupStore) *gateStore {
 	return &gateStore{BackupStore: store, entered: make(chan struct{}), proceed: make(chan struct{})}
 }
 
-func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
-	w, key, err := g.BackupStore.Open(ctx, tenantID, at)
+func (g *gateStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
+	w, key, err := g.BackupStore.Open(ctx, tenantID, at, progress)
 	if err != nil {
 		return nil, "", err
 	}

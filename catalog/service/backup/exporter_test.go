@@ -535,6 +535,28 @@ func TestExporter_AnExportThatMovesIsNotStalled(t *testing.T) {
 	assert.Equal(t, []string{ports.ExportSuccess}, f.metrics.outcomes())
 }
 
+// A record whose write takes longer than the stall limit stays alive while the
+// store reports progress for each write to the object store that makes up the
+// record.
+func TestExporter_StoreProgressKeepsALongRecordAlive(t *testing.T) {
+	f := newExporterFixture(smallGraph(1), 7)
+	f.ex.keeper.renewEvery = 5 * time.Millisecond
+	f.ex.keeper.stallAfter = 30 * time.Millisecond
+	f.store.sink = func(w *fakeSink) {
+		w.onWrite = func() {
+			for range 6 {
+				time.Sleep(10 * time.Millisecond)
+				if w.progress != nil {
+					w.progress()
+				}
+			}
+		}
+	}
+
+	_, err := f.ex.ExportTenant(context.Background(), tenant)
+	require.NoError(t, err)
+}
+
 func TestExporter_WaitsForWritesInFlightThenExports(t *testing.T) {
 	f := newExporterFixture(smallGraph(1), 7)
 	f.lease.acquireErrs = []error{ports.ErrWritesInFlight, ports.ErrWritesInFlight}

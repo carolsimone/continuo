@@ -123,7 +123,8 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 	// lease that cancels it also ends a write the store never answers.
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	w, key, err := e.store.Open(workCtx, tenantID, e.clock())
+	work := &progress{}
+	w, key, err := e.store.Open(workCtx, tenantID, e.clock(), work.advance)
 	if err != nil {
 		return Result{}, fmt.Errorf("open the export of tenant %q: %w", tenantID, err)
 	}
@@ -132,7 +133,7 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 		return Result{}, errors.Join(fmt.Errorf("export of tenant %q: %w", tenantID, err), e.abort(w, key))
 	}
 	held := e.clock()
-	res, err := e.stream(workCtx, cancel, tenantID, holder, w)
+	res, err := e.stream(workCtx, cancel, tenantID, holder, w, work)
 	// The lease is released before a failed export is aborted, so the
 	// tenant's writes resume without waiting on the store.
 	releaseErr := e.keeper.release(ctx, tenantID, holder)
@@ -151,11 +152,11 @@ func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) 
 // stream writes the tenant's graph to w and completes it, while holder's
 // lease is held, renewed and watched; ctx is the work's context and cancel
 // ends it. Every record written to w is progress, and so is the start of
-// completing w; the counting the graph does before its header has the stall
-// limit from the start. It completes w only once the lease is confirmed held
+// completing w, and so is every write w makes to the store (work was handed to
+// the store's Open); the counting the graph does before its header has the
+// stall limit from the start. It completes w only once the lease is confirmed held
 // after the read: no write can have changed the graph under it.
-func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.ExportSink) (Result, error) {
-	work := &progress{}
+func (e *Exporter) stream(ctx context.Context, cancel context.CancelCauseFunc, tenantID, holder string, w ports.ExportSink, work *progress) (Result, error) {
 	stop := e.keeper.watch(ctx, cancel, tenantID, holder, work)
 	defer stop()
 	fail := func(err error) error {

@@ -52,8 +52,9 @@ func NewBackupStore(objects backupObjects) *BackupStore {
 }
 
 // Open opens the multipart upload of tenantID's export taken at at, and
-// returns the sink that encodes its records into it.
-func (s *BackupStore) Open(ctx context.Context, tenantID string, at time.Time) (ports.ExportSink, string, error) {
+// returns the sink that encodes its records into it. progress, when not nil,
+// is called after each write to the upload returns.
+func (s *BackupStore) Open(ctx context.Context, tenantID string, at time.Time, progress func()) (ports.ExportSink, string, error) {
 	key, err := exportKey(tenantID, at)
 	if err != nil {
 		return nil, "", err
@@ -62,7 +63,7 @@ func (s *BackupStore) Open(ctx context.Context, tenantID string, at time.Time) (
 	if err != nil {
 		return nil, "", fmt.Errorf("open the export %s: %w", key, storeError(key, err))
 	}
-	return newExportSink(w, key), key, nil
+	return newExportSink(w, key, progress), key, nil
 }
 
 // OpenRead streams the export at key and reads its header.
@@ -182,8 +183,8 @@ const (
 	sinkAborted
 )
 
-func newExportSink(w objectstore.ObjectWriter, key string) *exportSink {
-	object := &countingObject{w: w, key: key}
+func newExportSink(w objectstore.ObjectWriter, key string, progress func()) *exportSink {
+	object := &countingObject{w: w, key: key, progress: progress}
 	zw := gzip.NewWriter(object)
 	return &exportSink{key: key, records: exportfile.NewWriter(zw), zw: zw, object: object}
 }
@@ -247,11 +248,14 @@ func (s *exportSink) usable() error {
 }
 
 // countingObject writes through to an object writer, counting the bytes the
-// store took and translating its errors.
+// store took, calling progress after each write that succeeds and translating
+// its errors. The object writer uploads a part inside the write that fills it,
+// so a record that fills several parts calls progress once per write.
 type countingObject struct {
-	w   objectstore.ObjectWriter
-	key string
-	n   int64
+	w        objectstore.ObjectWriter
+	key      string
+	n        int64
+	progress func()
 }
 
 func (c *countingObject) Write(p []byte) (int, error) {
@@ -259,6 +263,9 @@ func (c *countingObject) Write(p []byte) (int, error) {
 	c.n += int64(n)
 	if err != nil {
 		return n, storeError(c.key, err)
+	}
+	if c.progress != nil {
+		c.progress()
 	}
 	return n, nil
 }

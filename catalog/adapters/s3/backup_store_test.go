@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -70,7 +72,7 @@ func writeRecords(t *testing.T, w ports.RecordWriter, h export.Header, recs []an
 // through the store, and returns its key.
 func storeExport(t *testing.T, store *BackupStore, tenantID string, at time.Time, n int) string {
 	t.Helper()
-	w, key, err := store.Open(context.Background(), tenantID, at)
+	w, key, err := store.Open(context.Background(), tenantID, at, nil)
 	require.NoError(t, err)
 	h, recs := exportOf(tenantID, n)
 	writeRecords(t, w, h, recs)
@@ -123,7 +125,7 @@ func TestBackupStore_OpenStoresTheRecordsAsAGzippedExportFile(t *testing.T) {
 	store := NewBackupStore(mem)
 	ctx := context.Background()
 
-	w, key, err := store.Open(ctx, "default", backupAt.Add(1500*time.Millisecond))
+	w, key, err := store.Open(ctx, "default", backupAt.Add(1500*time.Millisecond), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "tenants/default/backups/catalog/20261030T020001Z.jsonl.gz", key)
 	h, recs := exportOf("default", 3)
@@ -158,7 +160,7 @@ func TestBackupStore_OpenFailsWhenTheStoreRefusesTheUpload(t *testing.T) {
 	boom := errors.New("AccessDenied")
 	mem.FailPut(objectstore.Ref{Key: key}, boom)
 
-	w, _, err := NewBackupStore(mem).Open(context.Background(), "default", backupAt)
+	w, _, err := NewBackupStore(mem).Open(context.Background(), "default", backupAt, nil)
 	require.ErrorIs(t, err, boom)
 	assert.Nil(t, w)
 }
@@ -167,7 +169,7 @@ func TestBackupStore_RefusesATenantThatNamesNoPrefix(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	for _, tenantID := range []string{"", ".", "..", "a/b"} {
-		_, _, err := store.Open(context.Background(), tenantID, backupAt)
+		_, _, err := store.Open(context.Background(), tenantID, backupAt, nil)
 		require.ErrorIs(t, err, ports.ErrInvalidTenant, tenantID)
 		_, err = store.List(context.Background(), tenantID)
 		require.ErrorIs(t, err, ports.ErrInvalidTenant, tenantID)
@@ -183,7 +185,7 @@ func TestBackupStore_AbortLeavesNoExportAndAClosedSinkRefusesUse(t *testing.T) {
 	store := NewBackupStore(mem)
 	h, recs := exportOf("default", 1)
 
-	aborted, _, err := store.Open(context.Background(), "default", backupAt)
+	aborted, _, err := store.Open(context.Background(), "default", backupAt, nil)
 	require.NoError(t, err)
 	writeRecords(t, aborted, h, recs)
 	require.NoError(t, aborted.Abort())
@@ -195,7 +197,7 @@ func TestBackupStore_AbortLeavesNoExportAndAClosedSinkRefusesUse(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, listed)
 
-	closed, _, err := store.Open(context.Background(), "default", backupAt.Add(time.Hour))
+	closed, _, err := store.Open(context.Background(), "default", backupAt.Add(time.Hour), nil)
 	require.NoError(t, err)
 	writeRecords(t, closed, h, recs)
 	_, err = closed.Close()
@@ -228,7 +230,7 @@ func (c closedWriters) OpenWriter(ctx context.Context, ref objectstore.Ref, cont
 // port's ErrExportClosed.
 func TestBackupStore_TranslatesAClosedObjectWriter(t *testing.T) {
 	store := NewBackupStore(closedWriters{objectstoretest.NewMemory(defaultBucket)})
-	w, _, err := store.Open(context.Background(), "default", backupAt)
+	w, _, err := store.Open(context.Background(), "default", backupAt, nil)
 	require.NoError(t, err)
 	h, _ := exportOf("default", 1)
 	err = w.WriteHeader(h) // the compressor writes its own header with the first line
@@ -245,7 +247,7 @@ func TestBackupStore_ASinkFailsOnceItsContextIsCancelled(t *testing.T) {
 	mem := objectstoretest.NewMemory(defaultBucket)
 	store := NewBackupStore(mem)
 	ctx, cancel := context.WithCancel(context.Background())
-	w, _, err := store.Open(ctx, "default", backupAt)
+	w, _, err := store.Open(ctx, "default", backupAt, nil)
 	require.NoError(t, err)
 	h, recs := exportOf("default", 2)
 	writeRecords(t, w, h, recs)
@@ -416,4 +418,29 @@ func TestBackupStore_DeleteFailureKeepsItsCause(t *testing.T) {
 	mem.FailDelete(objectstore.Ref{Key: key}, boom)
 
 	require.ErrorIs(t, store.Delete(context.Background(), key), boom)
+}
+
+// A record that fills several parts of the object counts as progress once per
+// write to the store, so a stall watch sees a slow upload move.
+func TestBackupStore_ProgressFiresForEachWriteToTheStore(t *testing.T) {
+	mem := objectstoretest.NewMemory("continuo")
+	progressed := 0
+	w, _, err := NewBackupStore(mem).Open(context.Background(), "default", backupAt, func() { progressed++ })
+	require.NoError(t, err)
+	h, _ := exportOf("default", 1)
+	require.NoError(t, w.WriteHeader(h))
+
+	// Random hex does not compress, so the one record becomes many writes.
+	raw := make([]byte, 10<<20)
+	_, err = rand.Read(raw)
+	require.NoError(t, err)
+	require.NoError(t, w.WriteNode(export.NodeRecord{Labels: []string{"Node"}, Props: map[string]any{
+		"tenant_id": "default", "unique_id": "svc.big", "blob": hex.EncodeToString(raw),
+	}}))
+	before := progressed
+	_, err = w.Close()
+	require.NoError(t, err)
+
+	assert.GreaterOrEqual(t, progressed, 3, "each write to the object store is progress")
+	assert.Positive(t, progressed-before, "completing the export writes the compressor's tail")
 }
