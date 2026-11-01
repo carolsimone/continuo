@@ -316,7 +316,7 @@ func main() {
 			neo4jinfra.NewExportLease(neo4jClient, logger),
 			neo4jinfra.NewGraphExporter(neo4jClient, config.Version(), logger),
 			backupStore,
-			metricsinfra.NewBackupMetrics(metricsReg, backupStore, graphTenants, time.Now, logger),
+			metricsinfra.NewBackupMetrics(metricsReg, backup.NewFreshness(graphTenants, backupStore), time.Now, logger),
 			cfg.Backup.Keep,
 			time.Now,
 			logger,

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,11 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
-	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
-	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
 )
 
 // fakeClock is a clock the test moves by hand.
@@ -44,77 +40,56 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// fakeTenants lists the tenants the test sets, or fails with err.
-type fakeTenants struct {
-	mu      sync.Mutex
-	tenants []string
-	err     error
+// fakeFreshness answers with the freshness the test sets, or fails with err,
+// and counts the reads. When block is set, a read waits until it is closed
+// (entered closes when the first read arrives, and deadline records how long
+// that read's context gave it).
+type fakeFreshness struct {
+	mu    sync.Mutex
+	at    time.Time
+	known bool
+	err   error
+	reads int
+
+	block    chan struct{}
+	entered  chan struct{}
+	once     sync.Once
+	deadline time.Duration
 }
 
-func (f *fakeTenants) Tenants(context.Context) ([]string, error) {
+var _ ports.ExportFreshness = (*fakeFreshness)(nil)
+
+func (f *fakeFreshness) OldestNewestExport(ctx context.Context) (time.Time, bool, error) {
+	f.mu.Lock()
+	f.reads++
+	f.mu.Unlock()
+	if f.block != nil {
+		f.once.Do(func() {
+			if d, ok := ctx.Deadline(); ok {
+				f.deadline = time.Until(d)
+			}
+			close(f.entered)
+		})
+		<-f.block
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.tenants), f.err
+	return f.at, f.known, f.err
 }
 
-func (f *fakeTenants) set(tenants []string, err error) {
+func (f *fakeFreshness) set(at time.Time, known bool, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.tenants, f.err = tenants, err
+	f.at, f.known, f.err = at, known, err
 }
 
-// countingStore counts the List calls that reach a BackupStore, and fails
-// the List of each tenant listErr names with its error.
-type countingStore struct {
-	ports.BackupStore
-	mu      sync.Mutex
-	lists   int
-	listErr map[string]error
+func (f *fakeFreshness) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
 }
 
-func (s *countingStore) List(ctx context.Context, tenantID string) ([]ports.BackupObject, error) {
-	s.mu.Lock()
-	s.lists++
-	err := s.listErr[tenantID]
-	s.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	return s.BackupStore.List(ctx, tenantID)
-}
-
-func (s *countingStore) failList(tenantID string, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.listErr == nil {
-		s.listErr = map[string]error{}
-	}
-	s.listErr[tenantID] = err
-}
-
-func (s *countingStore) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lists
-}
-
-func storeExport(t *testing.T, store ports.BackupStore, tenantID string, at time.Time) ports.BackupObject {
-	t.Helper()
-	w, key, err := store.Open(context.Background(), tenantID, at, nil)
-	require.NoError(t, err)
-	require.NoError(t, w.WriteHeader(export.Header{FormatVersion: export.FormatVersion, TenantID: tenantID, ExportedAt: at, CatalogVersion: "test"}))
-	_, err = w.Close()
-	require.NoError(t, err)
-	listed, err := store.List(context.Background(), tenantID)
-	require.NoError(t, err)
-	for _, o := range listed {
-		if o.Key == key {
-			return o
-		}
-	}
-	t.Fatalf("%s is not listed", key)
-	return ports.BackupObject{}
-}
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // lastSuccessSamples returns the values the last-success gauge reports.
 func lastSuccessSamples(t *testing.T, m *BackupMetrics) []float64 {
@@ -137,107 +112,57 @@ func (c constCollector) Collect(ch chan<- prometheus.Metric) { ch <- c.m }
 
 func unix(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
 
-// The last-success gauge is read from the store when scraped: the newest
-// export of each tenant, the oldest of those across tenants, 0 when a tenant
-// has none. It lists the store at most once a minute, a new process reads
-// the same value, and a store or tenant-list failure keeps the last value and
-// is logged.
-func TestBackupMetrics_LastSuccessComesFromTheStore(t *testing.T) {
-	store := &countingStore{BackupStore: s3infra.NewBackupStore(objectstoretest.NewMemory("continuo"))}
-	tenants := &fakeTenants{tenants: []string{"a", "b"}}
+// The last-success gauge reports the freshness in Unix seconds, fractional,
+// and 0 when a tenant has no export. It reads the freshness at most once a
+// minute, and a failed read keeps the last value and is logged.
+func TestBackupMetrics_LastSuccessReportsTheFreshness(t *testing.T) {
+	freshness := &fakeFreshness{}
 	clock := &fakeClock{now: time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)}
 	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	newMetrics := func() *BackupMetrics {
-		return NewBackupMetrics(pkgmetrics.New("catalog"), store, tenants, clock.Now, logger)
-	}
-	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	m := NewBackupMetrics(pkgmetrics.New("catalog"), freshness, clock.Now, slog.New(slog.NewTextHandler(&logs, nil)))
 
-	storeExport(t, store, "a", at.Add(-24*time.Hour))
-	time.Sleep(2 * time.Millisecond)
-	aNewest := storeExport(t, store, "a", at)
-	time.Sleep(2 * time.Millisecond)
-	bNewest := storeExport(t, store, "b", at.Add(time.Minute))
-	require.True(t, bNewest.LastModified.After(aNewest.LastModified))
+	newest := time.Date(2026, 10, 30, 2, 0, 0, 500_000_000, time.UTC)
+	freshness.set(newest, true, nil)
+	assert.Equal(t, []float64{unix(newest)}, lastSuccessSamples(t, m), "the freshness, with its fraction of a second")
+	assert.InDelta(t, 0.5, unix(newest)-float64(newest.Unix()), 1e-6)
 
-	m := newMetrics()
-	assert.Equal(t, []float64{unix(aNewest.LastModified)}, lastSuccessSamples(t, m),
-		"the oldest tenant's newest export")
-
-	before := store.count()
+	before := freshness.count()
 	clock.Advance(59 * time.Second)
-	assert.Equal(t, []float64{unix(aNewest.LastModified)}, lastSuccessSamples(t, m))
-	assert.Equal(t, before, store.count(), "a second scrape inside a minute lists nothing")
+	freshness.set(newest.Add(time.Hour), true, nil)
+	assert.Equal(t, []float64{unix(newest)}, lastSuccessSamples(t, m), "inside a minute the cached value serves")
+	assert.Equal(t, before, freshness.count(), "a second scrape inside a minute reads no freshness")
 
-	time.Sleep(2 * time.Millisecond)
-	aNewer := storeExport(t, store, "a", at.Add(2*time.Minute))
 	clock.Advance(2 * time.Second)
-	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m),
-		"after a minute the store is read again; b is now the oldest")
-	assert.Greater(t, store.count(), before)
+	assert.Equal(t, []float64{unix(newest.Add(time.Hour))}, lastSuccessSamples(t, m), "after a minute it reads again")
 
-	again := newMetrics()
-	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, again),
-		"a new process reads the same value from the store")
-	require.True(t, aNewer.LastModified.After(bNewest.LastModified))
-
-	tenants.set([]string{"a", "b", "c"}, nil)
 	clock.Advance(time.Minute)
+	freshness.set(time.Time{}, true, nil)
 	assert.Equal(t, []float64{0}, lastSuccessSamples(t, m), "a tenant with no export reads 0")
 
-	tenants.set([]string{"a", "b"}, nil)
 	clock.Advance(time.Minute)
-	require.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m))
-	store.failList("b", errors.New("SlowDown"))
+	freshness.set(newest, true, nil)
+	require.Equal(t, []float64{unix(newest)}, lastSuccessSamples(t, m))
+
 	clock.Advance(time.Minute)
-	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m), "a store failure keeps the last value")
+	freshness.set(time.Time{}, false, errors.New("SlowDown"))
+	assert.Equal(t, []float64{unix(newest)}, lastSuccessSamples(t, m), "a failed read keeps the last value")
 	assert.Contains(t, logs.String(), "SlowDown")
-
-	tenants.set(nil, errors.New("neo4j: connection refused"))
-	clock.Advance(time.Minute)
-	assert.Equal(t, []float64{unix(bNewest.LastModified)}, lastSuccessSamples(t, m), "a tenant-list failure keeps the last value")
-	assert.Contains(t, logs.String(), "connection refused")
 }
 
-// blockingStore is a BackupStore whose List waits until release is closed:
-// entered closes when the first List arrives, and deadline records how long
-// that List's context gave it.
-type blockingStore struct {
-	ports.BackupStore
-	entered  chan struct{}
-	release  chan struct{}
-	once     sync.Once
-	deadline time.Duration
-}
-
-func (s *blockingStore) List(ctx context.Context, tenantID string) ([]ports.BackupObject, error) {
-	s.once.Do(func() {
-		if d, ok := ctx.Deadline(); ok {
-			s.deadline = time.Until(d)
-		}
-		close(s.entered)
-	})
-	<-s.release
-	return s.BackupStore.List(ctx, tenantID)
-}
-
-// A scrape that comes while another one reads the store serves the last
-// value at once instead of waiting on the read, and the read is bounded well
-// under Prometheus's 10 s scrape timeout.
+// A scrape that comes while another one reads serves the last value at once
+// instead of waiting on the read, and the read is bounded well under
+// Prometheus's 10 s scrape timeout.
 func TestBackupMetrics_AScrapeDoesNotWaitOnAnotherOnesRead(t *testing.T) {
-	store := &blockingStore{
-		BackupStore: s3infra.NewBackupStore(objectstoretest.NewMemory("continuo")),
-		entered:     make(chan struct{}), release: make(chan struct{}),
-	}
+	freshness := &fakeFreshness{block: make(chan struct{}), entered: make(chan struct{}), known: true}
 	clock := &fakeClock{now: time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)}
-	m := NewBackupMetrics(pkgmetrics.New("catalog"), store, &fakeTenants{tenants: []string{"a"}}, clock.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m := NewBackupMetrics(pkgmetrics.New("catalog"), freshness, clock.Now, quietLogger())
 
 	first := make(chan []float64, 1)
 	go func() { first <- lastSuccessSamples(t, m) }()
 	select {
-	case <-store.entered:
+	case <-freshness.entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the first scrape did not read the store")
+		t.Fatal("the first scrape did not read the freshness")
 	}
 
 	second := make(chan []float64, 1)
@@ -249,22 +174,21 @@ func TestBackupMetrics_AScrapeDoesNotWaitOnAnotherOnesRead(t *testing.T) {
 		t.Fatal("a second scrape waited on the first one's read")
 	}
 
-	close(store.release)
+	close(freshness.block)
 	assert.Equal(t, []float64{0}, <-first, "the first scrape reports what it read: a tenant with no export")
-	assert.Positive(t, store.deadline)
-	assert.LessOrEqual(t, store.deadline, 5*time.Second, "the read is bounded at 5 s")
+	assert.Positive(t, freshness.deadline)
+	assert.LessOrEqual(t, freshness.deadline, 5*time.Second, "the read is bounded at 5 s")
 	assert.Equal(t, 5*time.Second, lastSuccessReadTimeout)
 }
 
 // With no tenant at all there is no export to be late, and no sample; the
 // first read failing reports nothing either.
 func TestBackupMetrics_LastSuccessHasNoSampleWithoutTenants(t *testing.T) {
-	store := s3infra.NewBackupStore(objectstoretest.NewMemory("continuo"))
 	clock := &fakeClock{now: time.Now()}
-	m := NewBackupMetrics(pkgmetrics.New("catalog"), store, &fakeTenants{}, clock.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m := NewBackupMetrics(pkgmetrics.New("catalog"), &fakeFreshness{}, clock.Now, quietLogger())
 	assert.Empty(t, lastSuccessSamples(t, m))
 
-	failing := NewBackupMetrics(pkgmetrics.New("catalog"), store, &fakeTenants{err: errors.New("down")}, clock.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	failing := NewBackupMetrics(pkgmetrics.New("catalog"), &fakeFreshness{err: errors.New("down")}, clock.Now, quietLogger())
 	assert.Empty(t, lastSuccessSamples(t, failing))
 }
 
@@ -272,8 +196,7 @@ func TestBackupMetrics_LastSuccessHasNoSampleWithoutTenants(t *testing.T) {
 // size and record series, which describe the last stored export.
 func TestBackupMetrics_CountsEachExportByOutcome(t *testing.T) {
 	reg := pkgmetrics.New("catalog")
-	store := s3infra.NewBackupStore(objectstoretest.NewMemory("continuo"))
-	m := NewBackupMetrics(reg, store, &fakeTenants{}, time.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m := NewBackupMetrics(reg, &fakeFreshness{}, time.Now, quietLogger())
 	for _, outcome := range []string{ports.ExportSuccess, ports.ExportFailure, ports.ExportSkipped} {
 		assert.Zero(t, testutil.ToFloat64(m.exports.WithLabelValues(outcome)), "%s starts at 0", outcome)
 	}
@@ -311,13 +234,11 @@ func TestBackupMetrics_CountsEachExportByOutcome(t *testing.T) {
 // The last-success gauge is served under its name with the service label.
 func TestBackupMetrics_LastSuccessIsScraped(t *testing.T) {
 	reg := pkgmetrics.New("catalog")
-	store := s3infra.NewBackupStore(objectstoretest.NewMemory("continuo"))
-	o := storeExport(t, store, "default", time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC))
-	NewBackupMetrics(reg, store, &fakeTenants{tenants: []string{"default"}}, time.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	NewBackupMetrics(reg, &fakeFreshness{at: at, known: true}, time.Now, quietLogger())
 
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	assert.Contains(t, rec.Body.String(), `continuo_catalog_export_last_success_timestamp_seconds{service="catalog"} `)
+	assert.Contains(t, rec.Body.String(), `continuo_catalog_export_last_success_timestamp_seconds{service="catalog"} 1.7933256e+09`)
 	assert.Contains(t, rec.Body.String(), "# TYPE continuo_catalog_export_last_success_timestamp_seconds gauge")
-	assert.NotZero(t, o.LastModified)
 }

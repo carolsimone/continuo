@@ -4,9 +4,7 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -43,8 +41,9 @@ var _ ports.BackupMetrics = (*BackupMetrics)(nil)
 // continuo_catalog_export_duration_seconds, continuo_catalog_export_bytes,
 // continuo_catalog_export_records and
 // continuo_catalog_export_last_success_timestamp_seconds on reg. The last of
-// those lists tenants' exports in store; clock times its cache.
-func NewBackupMetrics(reg *pkgmetrics.Registry, store ports.BackupStore, tenants ports.GraphTenants, clock func() time.Time, logger *slog.Logger) *BackupMetrics {
+// those reads the tenants' stored exports through freshness; clock times its
+// cache.
+func NewBackupMetrics(reg *pkgmetrics.Registry, freshness ports.ExportFreshness, clock func() time.Time, logger *slog.Logger) *BackupMetrics {
 	m := &BackupMetrics{
 		exports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_catalog_exports_total",
@@ -67,7 +66,7 @@ func NewBackupMetrics(reg *pkgmetrics.Registry, store ports.BackupStore, tenants
 			desc: prometheus.NewDesc("continuo_catalog_export_last_success_timestamp_seconds",
 				"Unix time of the newest stored export of the tenant whose newest export is the oldest, 0 when a tenant has none; read from object storage at most once a minute.",
 				nil, nil),
-			store: store, tenants: tenants, clock: clock, logger: logger,
+			freshness: freshness, clock: clock, logger: logger,
 		},
 	}
 	for _, outcome := range []string{ports.ExportSuccess, ports.ExportFailure, ports.ExportSkipped} {
@@ -91,17 +90,16 @@ func (m *BackupMetrics) ExportObserved(outcome string, d time.Duration, bytes in
 }
 
 // lastSuccess is the collector of the last-success gauge. A scrape reads the
-// tenants and each tenant's exports at most once per lastSuccessCacheFor; a
+// exports' freshness at most once per lastSuccessCacheFor; a
 // read that fails is logged and the last value stays. The read holds no lock,
 // so a scrape that comes while another one reads serves the last value at
 // once instead of waiting. With no tenant, or no read that succeeded yet, the
 // gauge has no sample.
 type lastSuccess struct {
-	desc    *prometheus.Desc
-	store   ports.BackupStore
-	tenants ports.GraphTenants
-	clock   func() time.Time
-	logger  *slog.Logger
+	desc      *prometheus.Desc
+	freshness ports.ExportFreshness
+	clock     func() time.Time
+	logger    *slog.Logger
 
 	mu     sync.Mutex
 	readAt time.Time
@@ -141,29 +139,17 @@ func (c *lastSuccess) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// read returns the oldest of the tenants' newest exports, in Unix seconds,
-// and false when there is no tenant.
+// read returns the oldest of the tenants' newest exports, in Unix seconds
+// (0 when a tenant has none), and false when there is no tenant.
 func (c *lastSuccess) read() (float64, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), lastSuccessReadTimeout)
 	defer cancel()
-	tenants, err := c.tenants.Tenants(ctx)
-	if err != nil {
-		return 0, false, fmt.Errorf("list the tenants: %w", err)
+	at, known, err := c.freshness.OldestNewestExport(ctx)
+	if err != nil || !known {
+		return 0, false, err
 	}
-	if len(tenants) == 0 {
-		return 0, false, nil
+	if at.IsZero() {
+		return 0, true, nil
 	}
-	oldest := math.Inf(1)
-	for _, tenantID := range tenants {
-		objects, err := c.store.List(ctx, tenantID)
-		if err != nil {
-			return 0, false, err
-		}
-		newest := 0.0
-		if len(objects) > 0 {
-			newest = float64(objects[0].LastModified.UnixNano()) / 1e9
-		}
-		oldest = min(oldest, newest)
-	}
-	return oldest, true, nil
+	return float64(at.UnixNano()) / 1e9, true, nil
 }
