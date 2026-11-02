@@ -18,6 +18,7 @@ shipped in those.
 
 ### Changed
 
+- **Redis keys move under the `continuo:` prefix, and a `streams-init` step creates the streams.** Every stream, consumer group and ui session key now starts with `continuo:`, and no service creates a stream or group any more: the new `streams-init` Job (the dead-letter-controller image's `/streams-init`) creates them all. With `redis.enabled=false` it runs as a `pre-install,pre-upgrade` hook after the migrations, so the streams exist before the services roll; with the bundled Redis it is a regular Job, and the services wait up to five minutes for their groups. During this release a service also reads a stream under its old unprefixed name while that key still holds its group, and old keys are not deleted. ui users sign in once more, because their sessions move to `continuo:uisession:`. The new `redisInit.createStreams` (default `true`) turns creation off, for a Redis login that may not create streams: set it to `false` and have the Redis owner run `/streams-init` with a login that may. No values change is needed to upgrade.
 - **Finished Jobs are now deleted after 30 minutes instead of 24 hours.** This covers task, validation, seed-build and compile Jobs and their pods. Set `execution.jobTTLMinutes` (1 to 10080) to change it; it reaches execution-controller as `JOB_TTL_SECONDS`. If a Job is deleted before its log was uploaded (for example, execution-controller was down for longer than this time), its pod log is lost. No values change is needed to upgrade.
 
 ## [0.18.0] - 2026-11-01

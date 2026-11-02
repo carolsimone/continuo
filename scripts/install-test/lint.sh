@@ -73,6 +73,32 @@ for f in defaults byo-example byo-inline byo-secret; do
   python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
 done
 
+# streams-init creates every Redis stream and consumer group before the
+# services need them. With a BYO Redis (it exists already) it is a pre-install
+# and pre-upgrade hook, so the streams exist before the services roll; with the
+# bundled Redis (no release resource exists while hooks run) it is a regular
+# Job. A hook cannot read a Secret the release creates as a regular resource,
+# so the BYO renders with inline credentials must give it a hook Secret.
+# redisInit.createStreams reaches it as REDIS_INIT_CREATE_STREAMS, also when a
+# release has no redisInit values (helm upgrade --reuse-values).
+echo "--- streams-init Job: a hook with a BYO Redis, a regular Job with the bundled one, createStreams reaches it"
+python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true
+for f in byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=false \
+  > "${tmp}/streams-init-off.yaml"
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
+  --set redisInit.createStreams=false > "${tmp}/streams-init-byo-off.yaml"
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit=null > "${tmp}/streams-init-null.yaml" \
+  || { echo "FAIL: rendering with redisInit=null failed; values without a redisInit block must render"; exit 1; }
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=maybe > /dev/null 2>&1; then
+  echo "FAIL: redisInit.createStreams=maybe must fail the render"; exit 1
+fi
+
 # A service reads its HTTP port under one specific env name. The chart sets a
 # differently named variable that works only while the default happens to equal
 # the Deployment's containerPort, and changing httpPort then moves the probes
@@ -214,6 +240,20 @@ catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWOR
   || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a services override"; exit 1; }
 if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
+fi
+
+# An upgrading operator is told once about the `continuo:` Redis prefix, that
+# ui users sign in once more, and how to turn stream creation off; an
+# installing one is told nothing.
+redis_note='set redisInit.createStreams=false.'
+[ "$(grep -cF "$redis_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once how to set redisInit.createStreams=false"; exit 1; }
+grep -qF 'prefix `continuo:`' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the upgrade notes do not name the continuo: Redis key prefix"; exit 1; }
+grep -qF 'every ui user signs in once more' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the upgrade notes do not say that ui users sign in once more"; exit 1; }
+if grep -qF "$redis_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the Redis prefix upgrade note"; exit 1
 fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to

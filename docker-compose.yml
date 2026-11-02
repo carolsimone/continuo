@@ -500,6 +500,28 @@ services:
     networks:
       - default
 
+  # One-shot: creates every Redis stream and consumer group of the release
+  # under the continuo: prefix, then exits. Consumers wait up to five minutes
+  # for their groups, so no service depends on it. It builds from
+  # dead-letter-controller's Dockerfile and runs from the source baked into
+  # that image.
+  streams-init:
+    build:
+      context: .
+      dockerfile: dead-letter-controller/Dockerfile.dev
+    working_dir: /app/dead-letter-controller
+    command: go run ./cmd/streams-init
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=continuo
+      - LOG_LEVEL=INFO
+    restart: "no"
+    networks:
+      - default
+
   egress-proxy:
     build:
       context: .

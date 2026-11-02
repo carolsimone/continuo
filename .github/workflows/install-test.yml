@@ -25,6 +25,7 @@ on:
     paths:
       - 'deploy/continuo/**'
       - 'scripts/install-test/**'
+      - 'deploy/redis-acl-rules.acl'
       - '.github/workflows/install-test.yml'
       # release.yml and the scripts it drives have no other CI gate — this
       # is the only workflow that parses and exercises them (run.sh sources

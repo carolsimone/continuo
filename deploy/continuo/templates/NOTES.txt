@@ -90,6 +90,21 @@ To run no exports, set catalog.backup.enabled=false.
 
 {{- if .Release.IsUpgrade }}
 
+Every Redis key now lives under the prefix `continuo:` (streams, consumer
+groups, ui sessions). The streams-init step creates each stream and consumer
+group under that prefix before the services roll: a pre-upgrade hook Job when
+redis.enabled=false, a Job of the release with the bundled Redis. The ui keeps
+its sessions under continuo:uisession:, so every ui user signs in once more
+after this upgrade. Keys under the old names stay in Redis and are not deleted.
+streams-init needs a Redis login that may create streams (XGROUP CREATE with
+MKSTREAM). If yours may not, have the Redis owner create the streams by running
+/streams-init from the dead-letter-controller image with a login that may, and
+set redisInit.createStreams=false. Until the streams exist, consumers wait for
+their groups and producers retry.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 catalog keeps no Postgres: if your values override services, name catalog's
 entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
 With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init

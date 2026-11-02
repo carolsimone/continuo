@@ -73,7 +73,9 @@ When the kind cluster and all Docker images already exist:
 docker rm -f run-controller catalog execution-controller ui 2>/dev/null || true
 docker compose down
 
-# Start (or restart) all docker-compose services
+# Start (or restart) all docker-compose services. The one-shot streams-init
+# service creates every Redis stream and consumer group under the continuo:
+# prefix and exits; the services wait up to five minutes for their groups.
 docker compose up -d
 
 # Wait for neo4j to be healthy (can take up to 90s)

@@ -166,10 +166,15 @@ test-deps-up:
 	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
 	  $(DOCKER_COMPOSE) up $$f || exit 1; \
 	done
+	@# streams-init creates the streams and consumer groups once Redis is
+	@# healthy. It is recreated like the Flyway jobs, and `up` exits non-zero
+	@# unless the container exited 0.
+	@$(DOCKER_COMPOSE) rm -fsv streams-init >/dev/null 2>&1 || true
+	@$(DOCKER_COMPOSE) up --exit-code-from streams-init --abort-on-container-exit streams-init
 
 .PHONY: test-deps-down
 test-deps-down:
-	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis $(FLYWAY_JOBS) 2>/dev/null || true
+	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis streams-init $(FLYWAY_JOBS) 2>/dev/null || true
 
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
