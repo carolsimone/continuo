@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,25 @@ type Secret struct {
 	// from the environment or is unset.
 	file string
 }
+
+// redacted is what a Secret formats as when it holds a credential.
+const redacted = "[redacted]"
+
+// String returns "[redacted]" for a credential that is set and "" for one that
+// is not, so the %v, %+v and %s verbs never print the credential.
+func (s Secret) String() string {
+	if !s.IsSet() {
+		return ""
+	}
+	return redacted
+}
+
+// GoString returns the same as String, so the %#v verb never prints the
+// credential.
+func (s Secret) GoString() string { return s.String() }
+
+// LogValue returns the same as String, so slog never logs the credential.
+func (s Secret) LogValue() slog.Value { return slog.StringValue(s.String()) }
 
 // Name returns the environment variable the credential is read from.
 func (s Secret) Name() string { return s.name }

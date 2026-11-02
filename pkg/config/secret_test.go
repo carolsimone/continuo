@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,5 +261,46 @@ func TestCredentialVarsAreTheClosedList(t *testing.T) {
 	}
 	if strings.Join(CredentialVars, ",") != strings.Join(want, ",") {
 		t.Fatalf("CredentialVars = %v", CredentialVars)
+	}
+}
+
+func TestSecretNeverFormatsItsValue(t *testing.T) {
+	const credential = "hunter2-credential"
+	t.Setenv("POSTGRES_PASSWORD", credential)
+	t.Setenv("POSTGRES_PASSWORD_FILE", "")
+	s := (&Validator{}).RequireSecret("POSTGRES_PASSWORD")
+	holder := struct{ Password Secret }{Password: s}
+
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		for _, operand := range []any{s, &s, holder} {
+			got := fmt.Sprintf(verb, operand)
+			if strings.Contains(got, credential) {
+				t.Errorf("Sprintf(%q, %T) = %q; it carries the credential", verb, operand, got)
+			}
+			if !strings.Contains(got, "[redacted]") {
+				t.Errorf("Sprintf(%q, %T) = %q; want [redacted]", verb, operand, got)
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "password", s, "holder", holder)
+	if strings.Contains(buf.String(), credential) {
+		t.Errorf("slog output %q carries the credential", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"password":"[redacted]"`) {
+		t.Errorf("slog output %q; want \"password\":\"[redacted]\"", buf.String())
+	}
+}
+
+func TestUnsetSecretFormatsEmpty(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("LLM_API_KEY_FILE", "")
+	s := (&Validator{}).OptionalSecret("LLM_API_KEY")
+	if got := fmt.Sprintf("%v|%#v", s, s); got != "|" {
+		t.Errorf("unset Secret formats as %q; want empty", got)
+	}
+	if got := s.LogValue().String(); got != "" {
+		t.Errorf("unset Secret LogValue = %q; want empty", got)
 	}
 }
