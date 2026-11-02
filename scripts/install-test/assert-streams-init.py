@@ -90,13 +90,12 @@ def check_job(docs, mode, create_streams):
         if secret is not None:
             secret_annotations = secret["metadata"].get("annotations") or {}
             if "pre-install" not in secret_annotations.get(HOOK, ""):
-                failures.append(f"the hook reads Secret {ref['name']}, a regular resource Helm creates only "
+                failures.append("the hook reads a Secret that is a regular resource, which Helm creates only "
                                 "after pre-install hooks: the pod would never start")
             elif hook_weight(secret) >= hook_weight(job):
-                failures.append(f"hook Secret {ref['name']} (weight {hook_weight(secret)}) is not created "
-                                f"before the Job (weight {hook_weight(job)})")
+                failures.append("the hook's Secret is not created before the Job: its hook weight must be lower")
             elif ref["key"] not in (secret.get("stringData") or {}) | (secret.get("data") or {}):
-                failures.append(f"hook Secret {ref['name']} has no key {ref['key']!r}")
+                failures.append("the hook's Secret lacks the key the Job reads")
 
     security = container.get("securityContext") or {}
     if security.get("allowPrivilegeEscalation") is not False:
