@@ -18,8 +18,8 @@ type fakeAdmin struct {
 	groups   map[string]map[string]bool // stream -> group -> exists
 	streams  map[string]bool            // stream -> exists with no declared group
 	calls    int
-	created  int // calls that reported created == true
-	failOn   string // "key group" that errors
+	created  int    // calls that reported created == true
+	failOn   string // "<stream> <group>" whose EnsureGroup errors
 	failWith error
 }
 
