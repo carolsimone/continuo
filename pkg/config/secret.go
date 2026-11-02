@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -118,9 +119,11 @@ func (v *Validator) reported(name string) bool {
 }
 
 // readSecretFile returns the content of path with one trailing newline ("\n"
-// or "\r\n") removed. A file that is empty after that is an error.
+// or "\r\n") removed. A file that is empty after that is an error. The path
+// is the operator's <NAME>_FILE setting, so any file the process can read is
+// a valid choice.
 func readSecretFile(path string) (string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", err
 	}

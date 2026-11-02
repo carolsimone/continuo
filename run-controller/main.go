@@ -45,7 +45,6 @@ import (
 	"github.com/carolsimone/continuo/run-controller/service/seedreconcile"
 	"github.com/carolsimone/continuo/run-controller/service/topologyretention"
 	"github.com/carolsimone/continuo/run-controller/service/uow"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
@@ -194,16 +193,10 @@ func main() {
 	taskCollection := postgres.NewTaskCollection(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
-	// Initialize Redis client
-	redisClient := goredis.NewClient(&goredis.Options{
-		Addr:     cfg.Redis.Addr(),
-		Password: cfg.Redis.Password,
-	})
-
-	// Redis is a separate workload that may still be starting (or its Service
-	// not yet resolvable) when this process boots, so wait for it with backoff
-	// instead of exiting on the first refused dial.
-	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	// Initialize the Redis client. Redis is a separate workload that may still
+	// be starting (or its Service not yet resolvable) when this process boots,
+	// so wait for it with backoff instead of exiting on the first refused dial.
+	redisClient, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for Redis")
 		os.Exit(0)

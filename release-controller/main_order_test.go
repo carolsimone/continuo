@@ -41,7 +41,7 @@ func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	if check < 0 {
 		t.Fatal("main.go must call handlers.CheckLegacyTopologyColumnsDropped")
 	}
-	for _, later := range []string{"objectstore.New(", "httpinfra.NewServer(", "redisadapter.NewClient(", "handlers.AdvanceQueue(", `runConsumer("`} {
+	for _, later := range []string{"objectstore.New(", "httpinfra.NewServer(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)

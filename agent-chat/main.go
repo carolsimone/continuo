@@ -30,7 +30,6 @@ import (
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -167,25 +166,20 @@ func main() {
 	// REDIS_ADDR is set we use the Redis-backed limiter (global across
 	// replicas); otherwise the process-local in-memory limiter (single replica).
 	var limiter ports.RateLimiter
-	if cfg.RedisAddr != "" {
-		redisClient := goredis.NewClient(&goredis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       0,
-		})
+	if cfg.RedisEnabled {
 		// Redis is a separate workload that may still be starting (or its
 		// Service not yet resolvable) when this process boots, so wait for it
 		// with backoff instead of exiting on the first refused dial.
-		err := pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+		redisClient, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 		if errors.Is(err, context.Canceled) {
 			logger.Info("Shutdown requested while waiting for Redis")
 			os.Exit(0)
 		}
 		if err != nil {
-			logger.Error("failed to connect to Redis for rate limiting", "addr", cfg.RedisAddr, "error", err)
+			logger.Error("failed to connect to Redis for rate limiting", "addr", cfg.Redis.Addr(), "error", err)
 			os.Exit(1)
 		}
-		logger.Info("Redis connection established for shared rate limiting", "addr", cfg.RedisAddr)
+		logger.Info("Redis connection established for shared rate limiting", "addr", cfg.Redis.Addr())
 		metricsReg.WatchRedis(redisClient)
 		lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
 			logger.Info("Closing Redis connection")

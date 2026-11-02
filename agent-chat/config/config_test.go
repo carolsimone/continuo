@@ -19,6 +19,9 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("LLM_PROVIDER", "anthropic")
 	t.Setenv("LLM_API_KEY", "k")
 	t.Setenv("LLM_MODEL", "claude-sonnet-4-6")
+	for _, key := range []string{"REDIS_ADDR", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_PASSWORD_FILE"} {
+		t.Setenv(key, "")
+	}
 }
 
 func TestLoad_DefaultsAndRequired(t *testing.T) {
@@ -33,6 +36,40 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	assert.Equal(t, 65536, cfg.ToolResultMaxBytes)
 	assert.Equal(t, 30, cfg.RetentionDays)
 	assert.False(t, cfg.RetentionArchiveS3)
+}
+
+// With REDIS_ADDR unset agent-chat runs its in-memory rate limiter and needs
+// no Redis password.
+func TestLoad_RedisOffWithoutAddr(t *testing.T) {
+	setBaseEnv(t)
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.False(t, cfg.RedisEnabled)
+}
+
+// With REDIS_ADDR set the shared limiter's Redis password is required, in
+// either form; the file form is read on every new connection.
+func TestLoad_RedisReadsThePasswordFile(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("REDIS_ADDR", "redis:6379")
+	file := filepath.Join(t.TempDir(), "REDIS_PASSWORD")
+	require.NoError(t, os.WriteFile(file, []byte("from-file\n"), 0o600))
+	t.Setenv("REDIS_PASSWORD_FILE", file)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	require.True(t, cfg.RedisEnabled)
+	assert.Equal(t, "redis:6379", cfg.Redis.Addr())
+	pw, err := cfg.Redis.Password.Value()
+	require.NoError(t, err)
+	assert.Equal(t, "from-file", pw)
+
+	t.Setenv("REDIS_PASSWORD_FILE", "")
+	v = &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "REDIS_PASSWORD")
 }
 
 func TestLoad_LLMAPIKeyOptional(t *testing.T) {

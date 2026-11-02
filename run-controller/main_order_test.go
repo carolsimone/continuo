@@ -19,7 +19,7 @@ func TestStartupChecksTheRunControllerSchemaFirst(t *testing.T) {
 	if check < 0 {
 		t.Fatal("main.go must call svchandlers.CheckSchema")
 	}
-	for _, later := range []string{"pkgredis.WaitForRedis(", "runsettle.Settle(", "runConsumer(c.name"} {
+	for _, later := range []string{"pkgredis.Connect(", "runsettle.Settle(", "runConsumer(c.name"} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)

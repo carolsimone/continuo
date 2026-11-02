@@ -28,7 +28,6 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
@@ -155,16 +154,9 @@ func main() {
 	}
 	logger.Info("Neo4j schema initialized")
 
-	// 2. Redis client
-	redisClient := goredis.NewClient(&goredis.Options{
-		Addr:     cfg.Redis.Addr(),
-		Password: cfg.Redis.Password,
-		DB:       0,
-	})
-
-	// Redis is a separate workload too: wait for it with backoff rather than
-	// exiting on the first refused dial.
-	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	// 2. Redis client. Redis is a separate workload too: wait for it with
+	// backoff rather than exiting on the first refused dial.
+	redisClient, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for Redis")
 		os.Exit(0)

@@ -36,7 +36,6 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // consumerHandlerTimeout bounds each message handler invocation, so a hung
@@ -176,8 +175,7 @@ func main() {
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
 	// instead of exiting on the first refused dial.
-	redisClient := goredis.NewClient(&goredis.Options{Addr: cfg.Redis.Addr(), Password: cfg.Redis.Password})
-	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	redisClient, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for Redis")
 		os.Exit(0)

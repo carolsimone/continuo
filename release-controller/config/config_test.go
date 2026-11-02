@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,7 +23,12 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("POSTGRES_HOST", "postgres")
 	t.Setenv("POSTGRES_USER", "continuo_svc")
 	t.Setenv("POSTGRES_PASSWORD", "continuo")
+	for _, key := range []string{"REDIS_USERNAME", "REDIS_PASSWORD_FILE"} {
+		t.Setenv(key, "")
+	}
 	t.Setenv("REDIS_HOST", "redis")
+	t.Setenv("REDIS_PORT", "6379")
+	t.Setenv("REDIS_PASSWORD", "continuo")
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("S3_BUCKET", "continuo")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
@@ -95,4 +102,27 @@ func TestLoad_RequiresMaintenance(t *testing.T) {
 	v := &pkgconfig.Validator{}
 	Load(v)
 	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
+}
+
+// Load reads the Redis password through Secret: given as REDIS_PASSWORD_FILE,
+// it is read from the file, and a missing password is reported.
+func TestLoad_ReadsTheRedisPasswordFile(t *testing.T) {
+	setRequiredEnv(t)
+	file := filepath.Join(t.TempDir(), "REDIS_PASSWORD")
+	require.NoError(t, os.WriteFile(file, []byte("from-file\n"), 0o600))
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("REDIS_PASSWORD_FILE", file)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "redis:6379", cfg.Redis.Addr())
+	pw, err := cfg.Redis.Password.Value()
+	require.NoError(t, err)
+	assert.Equal(t, "from-file", pw)
+
+	t.Setenv("REDIS_PASSWORD_FILE", "")
+	v = &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "REDIS_PASSWORD")
 }

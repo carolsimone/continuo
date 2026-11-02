@@ -207,11 +207,7 @@ func main() {
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
 	// instead of exiting on the first refused dial.
-	rc, err := redisadapter.NewClient(ctx, redisadapter.Config{
-		Host:     cfg.Redis.Host,
-		Port:     cfg.Redis.Port,
-		Password: cfg.Redis.Password,
-	}, pkgredis.DefaultStartupPolicy(), logger)
+	rc, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("shutdown requested while waiting for redis")
 		os.Exit(0)
