@@ -359,3 +359,31 @@ func TestHealthy_ReportsAStalledKeyLoop(t *testing.T) {
 	require.Error(t, err, "a stalled loop of the legacy key makes the consumer unhealthy")
 	assert.Contains(t, err.Error(), `on "orders:v1"`)
 }
+
+func TestSafeInvoke_AdvancesTheHeartbeatWhileWaitingForTheHandlerLock(t *testing.T) {
+	c := NewStreamConsumer(nil, "orders:v1", "svc-orders",
+		func(context.Context, goredis.XMessage) error { return nil }, discardLog(), WithHandlerTimeout(time.Minute))
+	c.handlerMu = &sync.Mutex{}
+	// The other key's loop holds the lock for a whole handler invocation.
+	c.handlerMu.Lock()
+	stale := time.Now().Add(-time.Hour).UnixNano()
+	c.lastActivity.Store(stale)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	}()
+
+	require.Eventually(t, func() bool { return c.lastActivity.Load() != stale }, 2*time.Second, 5*time.Millisecond,
+		"a loop waiting for the handler lock advances its heartbeat before it blocks")
+	select {
+	case <-done:
+		t.Fatal("safeInvoke ran the handler while the other loop held the lock")
+	default:
+	}
+	assert.NoError(t, c.Healthy(c.handlerTimeout), "the waiting loop reads healthy within one handler timeout")
+
+	c.handlerMu.Unlock()
+	<-done
+}

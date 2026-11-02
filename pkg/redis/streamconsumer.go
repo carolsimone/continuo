@@ -441,13 +441,16 @@ func (c *StreamConsumer) onDropped(ctx context.Context, msg goredis.XMessage, ca
 // cannot crash the process. deadlineHit reports that the handler's own
 // deadline ended the call while the consumer's context was still live.
 func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (deadlineHit bool, err error) {
+	// Advanced per attempt, so a batch or a slow handler keeps the liveness
+	// heartbeat fresh: once before waiting for the handler lock, so a loop
+	// waiting while another key's loop runs its handler (at most one handler
+	// timeout) stays inside HeartbeatBudget, and again once it holds the lock.
+	c.lastActivity.Store(time.Now().UnixNano())
 	if c.handlerMu != nil && c.workerCount <= 1 {
 		c.handlerMu.Lock()
 		defer c.handlerMu.Unlock()
+		c.lastActivity.Store(time.Now().UnixNano())
 	}
-	// Advanced per attempt, so a batch or a slow handler keeps the liveness
-	// heartbeat fresh.
-	c.lastActivity.Store(time.Now().UnixNano())
 	hctx, cancel := context.WithTimeout(ctx, c.handlerTimeout)
 	defer cancel()
 	defer func() {
