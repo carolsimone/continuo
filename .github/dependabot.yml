@@ -159,6 +159,15 @@ updates:
       # landing unprompted alongside routine patches.
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # agent-remediation installs continuo-python-runtime, which pins
+      # pyarrow==25.0.1. That release has no cp315 wheel (3.15 only has
+      # pyarrow 26.0.0), so on python:3.15-slim pip builds pyarrow from source
+      # and fails for lack of a C compiler. The tag looks like a minor bump and
+      # lands in the grouped pull request. Keep the python image tag below 3.15
+      # and raise this ceiling once continuo-python-runtime pins a pyarrow that
+      # ships a cp315 wheel.
+      - dependency-name: "python"
+        versions: [">=3.15"]
     groups:
       docker:
         patterns: ["*"]
