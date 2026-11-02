@@ -429,7 +429,7 @@ jobs:
     # carolsimone/continuo-infra, which owns dev's cluster access and values,
     # and waits for that run to finish. Its own token needs no scope.
     permissions: {}
-    timeout-minutes: 50
+    timeout-minutes: 180
     steps:
       - name: Mint a token for continuo-infra
         id: app-token
@@ -463,9 +463,19 @@ jobs:
         # whose title names the commit (continuo-infra's deploy sets run-name
         # to "deploy <commit>"). Timestamps are UTC in one format, so string
         # comparison orders them.
-        timeout-minutes: 45
+        #
+        # The step outlasts the longest wait in the infra queue: a deploy can
+        # queue behind a continuo-infra apply (up to 90 minutes) and then run
+        # for up to 60 minutes itself. A shorter limit would end this job red
+        # while dev is still deploying.
+        #
+        # The app token is installed on continuo-infra only, so the compare
+        # call on this repository uses the workflow's own token
+        # (REPO_TOKEN), which reads this public repository.
+        timeout-minutes: 170
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           infra=carolsimone/continuo-infra
@@ -504,7 +514,7 @@ jobs:
               if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
                 continue
               fi
-              status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${sha}" --jq .status 2>/dev/null || true)"
+              status="$(GH_TOKEN="${REPO_TOKEN}" gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${sha}" --jq .status 2>/dev/null || true)"
               if [ "${status}" = "ahead" ] || [ "${status}" = "identical" ]; then
                 echo "${id}"
                 return 0
