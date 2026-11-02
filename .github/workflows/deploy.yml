@@ -442,46 +442,105 @@ jobs:
           owner: carolsimone
           repositories: continuo-infra
 
-      - name: Start the continuo-infra deploy
-        id: start
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          # Taken before the dispatch so the next step can tell this run from
-          # earlier ones.
-          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
-          gh workflow run deploy.yml -R carolsimone/continuo-infra -f commit="${GITHUB_SHA}"
-
-      - name: Find the run it started
-        id: run
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          STARTED_AT: ${{ steps.start.outputs.started_at }}
-        run: |
-          set -euo pipefail
-          # gh workflow run does not print the run it creates: take the newest
-          # workflow_dispatch run created at or after the dispatch whose title
-          # names this commit (continuo-infra's deploy sets run-name to
-          # "deploy <commit>"). The timestamps are UTC in the same format, so
-          # string comparison orders them.
-          for _ in $(seq 1 12); do
-            id="$(gh run list -R carolsimone/continuo-infra --workflow deploy.yml \
-              --event workflow_dispatch --limit 50 --json databaseId,createdAt,displayTitle \
-              --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\" and .displayTitle == \"deploy ${GITHUB_SHA}\")] | sort_by(.createdAt) | last | .databaseId // empty")"
-            if [ -n "${id}" ]; then
-              echo "Deploy run: https://github.com/carolsimone/continuo-infra/actions/runs/${id}"
-              echo "id=${id}" >> "${GITHUB_OUTPUT}"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::No continuo-infra deploy run appeared within 60 s of the dispatch at ${STARTED_AT}"
-          exit 1
-
-      - name: Wait for the continuo-infra deploy
+      - name: Run the continuo-infra deploy
+        # Dispatches continuo-infra's deploy workflow for this commit and waits
+        # for its run to finish; the run's conclusion is this job's outcome.
+        #
+        # continuo-infra's deploy and apply workflows share one concurrency
+        # group that queues, and GitHub keeps one pending run per group: a run
+        # that queues behind a running one cancels the run already pending.
+        # A run that ends `cancelled` therefore does not mean the deploy broke:
+        #  - A deploy of a newer continuo commit took its place. That commit
+        #    deploys everything this one carries (the compare API says it is
+        #    ahead of this commit), and its own workflow run reports the
+        #    outcome, so this job ends green and names that run.
+        #  - An infra apply, or a person, cancelled it. Nothing deployed this
+        #    commit, so the job dispatches once more and waits for that run
+        #    under the same rules; a second cancellation that no newer commit
+        #    explains fails the job.
+        # gh workflow run does not print the run it creates: a run is found as
+        # the newest workflow_dispatch run created at or after the dispatch
+        # whose title names the commit (continuo-infra's deploy sets run-name
+        # to "deploy <commit>"). Timestamps are UTC in one format, so string
+        # comparison orders them.
         timeout-minutes: 45
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RUN_ID: ${{ steps.run.outputs.id }}
-        run: gh run watch "${RUN_ID}" -R carolsimone/continuo-infra --exit-status
+        run: |
+          set -euo pipefail
+          infra=carolsimone/continuo-infra
+          run_id=""
+          run_created_at=""
+
+          # dispatch_and_find: starts a deploy of this commit and sets run_id
+          # and run_created_at to the run it created.
+          dispatch_and_find() {
+            local started_at found
+            started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            gh workflow run deploy.yml -R "${infra}" -f commit="${GITHUB_SHA}"
+            for _ in $(seq 1 12); do
+              found="$(gh run list -R "${infra}" --workflow deploy.yml \
+                --event workflow_dispatch --limit 50 --json databaseId,createdAt,displayTitle \
+                --jq "[.[] | select(.createdAt >= \"${started_at}\" and .displayTitle == \"deploy ${GITHUB_SHA}\")] | sort_by(.createdAt) | last // empty | \"\(.databaseId) \(.createdAt)\"")"
+              if [ -n "${found}" ]; then
+                read -r run_id run_created_at <<< "${found}"
+                echo "Deploy run: https://github.com/${infra}/actions/runs/${run_id}"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "::error::No ${infra} deploy run appeared within 60 s of the dispatch at ${started_at}"
+            return 1
+          }
+
+          # superseding_run: prints the id of a deploy run created after this
+          # run for another continuo commit that is ahead of this one, if any.
+          superseding_run() {
+            local id sha status
+            while read -r id sha; do
+              if [ -z "${id}" ] || [ "${sha}" = "${GITHUB_SHA}" ]; then
+                continue
+              fi
+              if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+                continue
+              fi
+              status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${sha}" --jq .status 2>/dev/null || true)"
+              if [ "${status}" = "ahead" ] || [ "${status}" = "identical" ]; then
+                echo "${id}"
+                return 0
+              fi
+            done < <(gh run list -R "${infra}" --workflow deploy.yml \
+              --event workflow_dispatch --limit 50 --json databaseId,createdAt,displayTitle \
+              --jq ".[] | select(.createdAt > \"${run_created_at}\" and (.displayTitle | startswith(\"deploy \"))) | \"\(.databaseId) \(.displayTitle | ltrimstr(\"deploy \"))\"")
+            return 0
+          }
+
+          dispatch_and_find
+          for attempt in 1 2; do
+            # gh run watch can fail on a transient API error while the run goes
+            # on, so the run counts as finished only once it has a conclusion.
+            conclusion=""
+            while [ -z "${conclusion}" ]; do
+              gh run watch "${run_id}" -R "${infra}" || sleep 15
+              conclusion="$(gh run view "${run_id}" -R "${infra}" --json conclusion -q .conclusion || true)"
+            done
+            run_url="https://github.com/${infra}/actions/runs/${run_id}"
+            if [ "${conclusion}" = "success" ]; then
+              exit 0
+            fi
+            if [ "${conclusion}" != "cancelled" ]; then
+              echo "::error::The continuo-infra deploy ended ${conclusion:-without a conclusion}: ${run_url}"
+              exit 1
+            fi
+            newer="$(superseding_run)"
+            if [ -n "${newer}" ]; then
+              echo "::notice::The deploy of ${GITHUB_SHA} was cancelled in the continuo-infra queue by a deploy of a newer commit, https://github.com/${infra}/actions/runs/${newer}, which deploys it; that commit's own run reports the outcome."
+              exit 0
+            fi
+            if [ "${attempt}" = 2 ]; then
+              echo "::error::The continuo-infra deploy was cancelled again, and no newer commit's deploy replaced it: ${run_url}"
+              exit 1
+            fi
+            echo "::notice::The continuo-infra deploy was cancelled and no newer commit's deploy replaced it (${run_url}); dispatching it once more."
+            dispatch_and_find
+          done
