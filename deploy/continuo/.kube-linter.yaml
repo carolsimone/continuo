@@ -64,9 +64,10 @@ checks:
     # resolves them fine at admission time.
     - "env-value-from"
     # Every services entry runs under a ServiceAccount of its own (rbac.yaml).
-    # dex and egress-proxy run under the namespace's default ServiceAccount,
-    # which this chart never binds to any Role/ClusterRole, so it carries zero
-    # permissions.
+    # egress-proxy, the bundled datastores, Dex, the migration Job and the
+    # bundled MinIO bucket-init Job run under the namespace's default
+    # ServiceAccount, which this chart never binds to any Role/ClusterRole, so
+    # it carries zero permissions.
     - "default-service-account"
     # Kubernetes defaults an omitted Pod-template restartPolicy to "Always"
     # for every Deployment/StatefulSet controller; the rendered manifests rely
