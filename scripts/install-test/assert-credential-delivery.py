@@ -94,10 +94,10 @@ def check_file(deployments: dict, baseline: dict, failures: list) -> None:
             file_vars = {k: e.get("value") for k, e in env.items() if k.endswith("_FILE")}
             for var, value in file_vars.items():
                 if not (value or "").startswith(MOUNT_DIR + "/"):
-                    failures.append(f"{where}: {var}={value!r} is not under {MOUNT_DIR}")
+                    failures.append(f"{where}: {var} does not name a file under {MOUNT_DIR}")
                     continue
                 if value[len(MOUNT_DIR) + 1:] not in items:
-                    failures.append(f"{where}: {var}={value} names no item of the {VOLUME} volume")
+                    failures.append(f"{where}: {var} names no projected item of the {VOLUME} volume")
             if file_vars:
                 mounts = [m for m in container.get("volumeMounts") or [] if m.get("name") == VOLUME]
                 if not any(m.get("mountPath") == MOUNT_DIR and m.get("readOnly") for m in mounts):
@@ -121,7 +121,7 @@ def check_company(deployments: dict, service_accounts: dict, failures: list) -> 
     env = {e["name"]: e for e in main.get("env") or []}
     got = (env.get(f"{COMPANY_VAR}_FILE") or {}).get("value")
     if got != COMPANY_PATH:
-        failures.append(f"{COMPANY_SERVICE}: {COMPANY_VAR}_FILE is {got!r}, want {COMPANY_PATH!r}")
+        failures.append(f"{COMPANY_SERVICE}: {COMPANY_VAR}_FILE does not name {COMPANY_PATH}")
     if COMPANY_VAR in env:
         failures.append(f"{COMPANY_SERVICE}: {COMPANY_VAR} is set; a company-provided file has no Secret behind it")
     if COMPANY_VAR in projected_items(deployment):
