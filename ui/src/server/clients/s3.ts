@@ -1,14 +1,16 @@
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { readSecret } from '../secrets';
 
 function requiredEnv(name: string): string {
-  const v = process.env[name];
+  const v = readSecret(process.env, name);
   if (v === undefined || v.trim() === '') {
     throw new Error(`${name} is required: the S3 client has no credential fallback`);
   }
   return v;
 }
 
-// Fails closed on missing credentials: every supported deployment path
+// Fails closed on missing credentials (each given as the variable or its
+// _FILE form, read once): every supported deployment path
 // (docker-compose, Helm chart) injects explicit S3 credentials, so an unset
 // variable is a wiring error that must surface at server startup, not as a
 // failed S3 call mid-request.

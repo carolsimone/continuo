@@ -16,6 +16,8 @@ import {
 } from './middleware';
 import { createAuthRouter, createDevAuthRouter } from './routes';
 import { SessionStore, toAuthUser } from './session';
+import { refreshRedisCredentials } from './redis-credentials';
+import { readSecret } from '../secrets';
 import { DEV_USER, SESSION_COOKIE, type AppAuth, type AuthUser } from './types';
 
 export interface BuiltAuth {
@@ -66,7 +68,20 @@ export async function buildAuth(cfg: AuthConfig, configuredCi: CiAuthConfig | nu
     ...(ci ? [{ issuer: ci.issuer, audience: ci.audience }] : []),
     { issuer: cfg.issuerUrl, audience: cfg.clientId },
   ]);
-  const redis = new Redis(cfg.redisUrl);
+  const redis = new Redis(cfg.redisUrl, {
+    username: cfg.redisUsername,
+    password: readSecret(process.env, 'REDIS_PASSWORD'),
+  });
+  // The password file may be rewritten while the client is disconnected, so
+  // each reconnect authenticates with the password the file holds then. A
+  // file that cannot be read keeps the previous password.
+  redis.on('reconnecting', () => {
+    try {
+      refreshRedisCredentials(redis, process.env);
+    } catch (err) {
+      console.error(`redis: keeping the previous credentials: ${(err as Error).message}`);
+    }
+  });
   const sessions = new SessionStore(redis, cfg.sessionIdleTtlSeconds, cfg.sessionMaxTtlSeconds);
   const flow = await discoverOidc(cfg);
   const origin = new URL(cfg.publicUrl).origin;

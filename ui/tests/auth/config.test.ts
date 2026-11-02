@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { loadAuthConfig, loadPublicUrl, parseDuration } from '../../src/server/auth/config';
 
 const oidcEnv = {
@@ -7,7 +10,7 @@ const oidcEnv = {
   AUTH_OIDC_CLIENT_ID: 'continuo-ui',
   AUTH_OIDC_CLIENT_SECRET: 's3cret',
   AUTH_PUBLIC_URL: 'https://continuo.example.com/',
-  REDIS_URL: 'redis://:pw@redis:6379',
+  REDIS_URL: 'redis://redis:6379',
 };
 
 describe('loadAuthConfig', () => {
@@ -49,6 +52,33 @@ describe('loadAuthConfig', () => {
     expect(cfg.roleMapping.get('data-eng')).toBe('viewer');
     expect(cfg.operatorEmails.has('ana@corp.com')).toBe(true); // lowercased
     expect(cfg.viewerEmails.has('carol@corp.com')).toBe(true);
+  });
+
+  it('rejects a REDIS_URL that carries credentials', () => {
+    const msg = 'REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD';
+    expect(() => loadAuthConfig({ ...oidcEnv, REDIS_URL: 'redis://:pw@redis:6379' })).toThrow(msg);
+    expect(() => loadAuthConfig({ ...oidcEnv, REDIS_URL: 'redis://ui@redis:6379' })).toThrow(msg);
+  });
+
+  it('reads the Redis username from REDIS_USERNAME', () => {
+    const cfg = loadAuthConfig({ ...oidcEnv, REDIS_USERNAME: 'ui' });
+    if (cfg.mode !== 'oidc') throw new Error('expected oidc');
+    expect(cfg.redisUrl).toBe('redis://redis:6379');
+    expect(cfg.redisUsername).toBe('ui');
+  });
+
+  it('reads AUTH_OIDC_CLIENT_SECRET from a file', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'oidc-secret-'));
+    try {
+      const file = path.join(dir, 'AUTH_OIDC_CLIENT_SECRET');
+      writeFileSync(file, 'from-file\n');
+      const { AUTH_OIDC_CLIENT_SECRET: _omitted, ...rest } = oidcEnv;
+      const cfg = loadAuthConfig({ ...rest, AUTH_OIDC_CLIENT_SECRET_FILE: file });
+      if (cfg.mode !== 'oidc') throw new Error('expected oidc');
+      expect(cfg.clientSecret).toBe('from-file');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects unknown roles in mapping and default', () => {
