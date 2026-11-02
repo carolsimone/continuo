@@ -7,31 +7,39 @@ import (
 	"os"
 	"testing"
 
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// adminClient connects to the compose Redis and returns a unique key the test
-// owns; the key is deleted when the test ends.
-func adminClient(t *testing.T) (*goredis.Client, string) {
+// adminClient connects to the compose Redis and returns a unique stream name
+// the test owns, with the key the admin stores it under; the key is deleted when
+// the test ends, and the test fails if the unprefixed name exists as a key.
+func adminClient(t *testing.T) (rc *goredis.Client, stream, key string) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
 		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
 	}
-	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
+	rc = goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
 	t.Cleanup(func() { _ = rc.Close() })
-	key := "continuo:test.stream-admin:" + uuid.NewString()
-	t.Cleanup(func() { rc.Del(context.Background(), key) })
-	return rc, key
+	stream = "test.stream-admin:" + uuid.NewString()
+	key = pkgredis.Key(stream)
+	t.Cleanup(func() { rc.Del(context.Background(), key, stream) })
+	t.Cleanup(func() {
+		if n, err := rc.Exists(context.Background(), stream).Result(); err != nil || n != 0 {
+			t.Errorf("the unprefixed key %q exists (%d, %v), want only %q", stream, n, err, key)
+		}
+	})
+	return rc, stream, key
 }
 
 func TestEnsureGroupCreatesStreamAndGroupFromZero(t *testing.T) {
-	rc, key := adminClient(t)
+	rc, stream, key := adminClient(t)
 	ctx := context.Background()
 
-	created, err := NewStreamAdmin(rc).EnsureGroup(ctx, key, "g")
+	created, err := NewStreamAdmin(rc).EnsureGroup(ctx, stream, "g")
 	if err != nil || !created {
 		t.Fatalf("EnsureGroup = %v, %v; want true, nil", created, err)
 	}
@@ -45,24 +53,27 @@ func TestEnsureGroupCreatesStreamAndGroupFromZero(t *testing.T) {
 }
 
 func TestEnsureGroupIgnoresBusyGroup(t *testing.T) {
-	rc, key := adminClient(t)
+	rc, stream, key := adminClient(t)
 	ctx := context.Background()
 	admin := NewStreamAdmin(rc)
-	if _, err := admin.EnsureGroup(ctx, key, "g"); err != nil {
+	if _, err := admin.EnsureGroup(ctx, stream, "g"); err != nil {
 		t.Fatal(err)
 	}
-	created, err := admin.EnsureGroup(ctx, key, "g")
+	created, err := admin.EnsureGroup(ctx, stream, "g")
 	if err != nil || created {
 		t.Fatalf("second EnsureGroup = %v, %v; want false, nil", created, err)
+	}
+	if n, err := rc.Exists(ctx, key).Result(); err != nil || n != 1 {
+		t.Fatalf("the prefixed key %q exists = %d, %v; want 1, nil", key, n, err)
 	}
 }
 
 func TestEnsureStreamCreatesAStreamWithNoGroup(t *testing.T) {
-	rc, key := adminClient(t)
+	rc, stream, key := adminClient(t)
 	ctx := context.Background()
 	admin := NewStreamAdmin(rc)
 
-	created, err := admin.EnsureStream(ctx, key)
+	created, err := admin.EnsureStream(ctx, stream)
 	if err != nil || !created {
 		t.Fatalf("EnsureStream = %v, %v; want true, nil", created, err)
 	}
@@ -77,7 +88,7 @@ func TestEnsureStreamCreatesAStreamWithNoGroup(t *testing.T) {
 	if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, NoMkStream: true, Values: map[string]any{"k": "v"}}).Err(); err != nil {
 		t.Fatalf("XADD NOMKSTREAM: %v", err)
 	}
-	again, err := admin.EnsureStream(ctx, key)
+	again, err := admin.EnsureStream(ctx, stream)
 	if err != nil || again {
 		t.Fatalf("second EnsureStream = %v, %v; want false, nil", again, err)
 	}

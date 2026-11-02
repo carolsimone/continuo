@@ -8,16 +8,17 @@ import (
 	"strings"
 	"testing"
 
-	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // fakeAdmin records what Run asks of Redis and remembers what exists, so a
-// second run reports nothing created.
+// second run reports nothing created. It is keyed by the stream names Run
+// passes, which are contract names.
 type fakeAdmin struct {
-	groups   map[string]map[string]bool // key -> group -> exists
-	streams  map[string]bool            // key -> exists with no declared group
+	groups   map[string]map[string]bool // stream -> group -> exists
+	streams  map[string]bool            // stream -> exists with no declared group
 	calls    int
+	created  int // calls that reported created == true
 	failOn   string // "key group" that errors
 	failWith error
 }
@@ -26,28 +27,42 @@ func newFakeAdmin() *fakeAdmin {
 	return &fakeAdmin{groups: map[string]map[string]bool{}, streams: map[string]bool{}}
 }
 
-func (f *fakeAdmin) EnsureGroup(_ context.Context, key, group string) (bool, error) {
+func (f *fakeAdmin) EnsureGroup(_ context.Context, stream, group string) (bool, error) {
 	f.calls++
-	if f.failOn == key+" "+group {
+	if f.failOn == stream+" "+group {
 		return false, f.failWith
 	}
-	if f.groups[key] == nil {
-		f.groups[key] = map[string]bool{}
+	if f.groups[stream] == nil {
+		f.groups[stream] = map[string]bool{}
 	}
-	if f.groups[key][group] {
+	if f.groups[stream][group] {
 		return false, nil
 	}
-	f.groups[key][group] = true
+	f.groups[stream][group] = true
+	f.created++
 	return true, nil
 }
 
-func (f *fakeAdmin) EnsureStream(_ context.Context, key string) (bool, error) {
+func (f *fakeAdmin) EnsureStream(_ context.Context, stream string) (bool, error) {
 	f.calls++
-	if f.streams[key] {
+	if f.streams[stream] {
 		return false, nil
 	}
-	f.streams[key] = true
+	f.streams[stream] = true
+	f.created++
 	return true, nil
+}
+
+// seen is every stream name the admin was asked about.
+func (f *fakeAdmin) seen() map[string]bool {
+	out := map[string]bool{}
+	for stream := range f.groups {
+		out[stream] = true
+	}
+	for stream := range f.streams {
+		out[stream] = true
+	}
+	return out
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)) }
@@ -61,23 +76,22 @@ func TestRunCreatesEveryGroupOfTheContract(t *testing.T) {
 	}
 	for stream, groups := range streams.Groups {
 		for _, g := range groups {
-			if !admin.groups[pkgredis.Key(stream)][g] {
-				t.Errorf("group %s of %s was not created under %s", g, stream, pkgredis.Key(stream))
+			if !admin.groups[stream][g] {
+				t.Errorf("group %s of %s was not created", g, stream)
 			}
 		}
 	}
-	for key := range admin.groups {
-		if !strings.HasPrefix(key, streams.KeyPrefix) {
-			t.Errorf("created the unprefixed key %q", key)
+	// Run names contract streams only: the key prefix is the admin's concern.
+	for name := range admin.seen() {
+		if strings.HasPrefix(name, streams.KeyPrefix) {
+			t.Errorf("asked for the prefixed key %q, want the contract name", name)
 		}
-	}
-	for key := range admin.streams {
-		if !strings.HasPrefix(key, streams.KeyPrefix) {
-			t.Errorf("created the unprefixed key %q", key)
+		if _, ok := streams.Groups[name]; !ok {
+			t.Errorf("asked for %q, which is not a contract stream", name)
 		}
 	}
 	for _, retired := range streams.Retired {
-		if admin.groups[pkgredis.Key(retired)] != nil || admin.streams[pkgredis.Key(retired)] {
+		if admin.groups[retired] != nil || admin.streams[retired] {
 			t.Errorf("created the retired stream %s", retired)
 		}
 	}
@@ -89,7 +103,7 @@ func TestRunCreatesAStreamThatHasNoGroup(t *testing.T) {
 	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
 		t.Fatal(err)
 	}
-	if !admin.streams[pkgredis.Key(streams.RemediationProposedV1)] {
+	if !admin.streams[streams.RemediationProposedV1] {
 		t.Fatalf("the group-less stream was not created: %v", admin.streams)
 	}
 	if len(admin.groups) != 0 {
@@ -102,11 +116,21 @@ func TestRunEveryContractStreamExistsAfterARun(t *testing.T) {
 	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
 		t.Fatal(err)
 	}
-	for _, stream := range []string{streams.ConsumerDeadLetterV1, streams.OutboxDeadLetterV1, streams.RemediationProposedV1} {
-		key := pkgredis.Key(stream)
-		if len(admin.groups[key]) == 0 && !admin.streams[key] {
+	want := map[string]bool{}
+	for stream := range streams.Groups {
+		want[stream] = true
+		if len(admin.groups[stream]) == 0 && !admin.streams[stream] {
 			t.Errorf("stream %s does not exist after the run", stream)
 		}
+	}
+	got := admin.seen()
+	for stream := range got {
+		if !want[stream] {
+			t.Errorf("stream %s exists after the run but is not in the contract", stream)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%d streams exist after the run, want exactly the %d of the contract", len(got), len(want))
 	}
 }
 
@@ -115,13 +139,20 @@ func TestRunIsIdempotent(t *testing.T) {
 	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
 		t.Fatal(err)
 	}
+	callsBefore, createdBefore := admin.calls, admin.created
 	var out bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
 	if err := Run(context.Background(), admin, contractPlan(), logger); err != nil {
 		t.Fatal(err)
 	}
+	if admin.calls == callsBefore {
+		t.Fatal("the second run asked the admin for nothing")
+	}
+	if admin.created != createdBefore {
+		t.Fatalf("the second run created %d streams or groups, want 0", admin.created-createdBefore)
+	}
 	if strings.Contains(out.String(), `"created":1`) {
-		t.Fatalf("the second run created something:\n%s", out.String())
+		t.Fatalf("the second run logged a creation:\n%s", out.String())
 	}
 }
 
@@ -158,7 +189,7 @@ func TestRunCreatesNothingWhenTurnedOff(t *testing.T) {
 func TestRunReturnsTheFirstErrorNamingStreamAndGroup(t *testing.T) {
 	admin := newFakeAdmin()
 	boom := errors.New("boom")
-	admin.failOn = pkgredis.Key(streams.TaskDispatchV1) + " " + streams.ExecutionControllerTaskDispatch
+	admin.failOn = streams.TaskDispatchV1 + " " + streams.ExecutionControllerTaskDispatch
 	admin.failWith = boom
 	err := Run(context.Background(), admin, contractPlan(), discardLogger())
 	if !errors.Is(err, boom) {
