@@ -67,6 +67,8 @@ bash tests/e2e/cleanup-execution-controller.sh
 
 When the kind cluster and all Docker images already exist:
 
+> The compose execution-controller sets `JOB_S3_SECRET_NAME=continuo-job-s3`, so its Job pods fail with class `start` on a kind cluster that lacks that Secret. `setup.sh`, `provision-k8s-test-env.sh` and `deploy-execution-controller.sh` apply it; on an existing cluster without it, run `kubectl apply -f tests/e2e/k8s/job-s3-secret.yaml` once.
+
 ```bash
 # Tear down stale containers — including any left over from the main project directory
 # (the main project uses bare container names like /run-controller, /ui that conflict with this worktree)
