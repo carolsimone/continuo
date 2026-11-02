@@ -116,6 +116,17 @@ envsubst < validation-warehouse-secret.yaml | kubectl apply -f - || {
     exit 1
 }
 
+# The S3 keys of every Job pod come from a Secret, by reference: the Job
+# objects hold no key as a value. The keys are the MinIO root keys compose uses.
+log_info "Creating Job S3 Secret..."
+kubectl create secret generic continuo-job-s3 -n default \
+    --from-literal=AWS_ACCESS_KEY_ID=minioadmin \
+    --from-literal=AWS_SECRET_ACCESS_KEY=minioadmin \
+    --dry-run=client -o yaml | kubectl apply -f - || {
+    log_error "Failed to apply Job S3 Secret"
+    exit 1
+}
+
 # The start-timeout e2e test applies the e2e-no-pods ResourceQuota, which
 # forbids every new pod in the namespace, and deletes it when it ends. Delete
 # one a killed test run left behind, or no pod could start here, this

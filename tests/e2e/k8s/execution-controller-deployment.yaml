@@ -191,6 +191,10 @@ spec:
               value: "minioadmin"
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
+            # The Secret the S3 keys of every Job pod are read from, by
+            # reference: provision-k8s-test-env.sh creates it from the MinIO keys.
+            - name: JOB_S3_SECRET_NAME
+              value: "continuo-job-s3"
             - name: HTTP_PORT
               value: "8084"
             - name: METRICS_PORT

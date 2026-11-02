@@ -81,8 +81,7 @@ func TestCreateValidationJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
-	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	c := newValidationTestClient()
 	p := validationParams() // op defaults to build_from_sql, CandidateArtifactURI set
 
@@ -101,7 +100,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
 	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
-	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"))
+	assertS3KeyFromJobSecret(t, main, "AWS_SECRET_ACCESS_KEY")
 	// CANDIDATE_SQL_PATH / the shared-file indirection is gone.
 	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_PATH"), "no shared file: path env must be unset")
 }
@@ -123,8 +122,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 
 func TestCreateValidationJob_ForwardsS3CredsToMainContainer(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
-	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
 
 	c := newValidationTestClient()
@@ -134,8 +132,8 @@ func TestCreateValidationJob_ForwardsS3CredsToMainContainer(t *testing.T) {
 
 	assert.Equal(t, p.CandidateSchema, envByName(spec, "DBT_TARGET_SCHEMA"))
 	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
-	assert.Equal(t, "test-key-id", envByName(spec, "AWS_ACCESS_KEY_ID"))
-	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"))
+	assertS3KeyFromJobSecret(t, spec.Containers[0], "AWS_ACCESS_KEY_ID")
+	assertS3KeyFromJobSecret(t, spec.Containers[0], "AWS_SECRET_ACCESS_KEY")
 	assert.Equal(t, "us-east-1", envByName(spec, "AWS_DEFAULT_REGION"))
 }
 
@@ -227,7 +225,7 @@ func envMap(env []corev1.EnvVar) map[string]string {
 func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-python-runtime-postgres:test")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
-	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	p := ValidationJobParams{
 		JobName: "vj", ReleaseID: "r1", NodeID: "e2e_schema.py_probe",
 		ServiceName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
@@ -243,7 +241,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 	_, hasSQLURI := env["CANDIDATE_SQL_URI"]
 	assert.False(t, hasSQLURI, "build_from_columns must not set CANDIDATE_SQL_URI")
 	assert.Equal(t, "build_from_columns", env["VALIDATION_OP"])
-	assert.NotEmpty(t, env["AWS_ACCESS_KEY_ID"], "spec fetch needs S3 credentials")
+	assertS3KeyFromJobSecret(t, spec.Containers[0], "AWS_ACCESS_KEY_ID")
 }
 
 // TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently mirrors

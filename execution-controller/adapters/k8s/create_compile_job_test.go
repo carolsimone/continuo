@@ -153,6 +153,7 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 // upload container carrying no PARSE_* env.
 func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	p := ValidationJobParams{
 		ServiceName:   "core",
 		ImageTag:      "abc123",
