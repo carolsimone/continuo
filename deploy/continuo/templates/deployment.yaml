@@ -152,8 +152,10 @@ spec:
               set -eu
               # In file delivery the password is in the file REDISCLI_AUTH_FILE
               # names; redis-cli reads it from REDISCLI_AUTH.
+              {{- include "continuo.readCredentialShell" $ | nindent 14 }}
               if [ -n "${REDISCLI_AUTH_FILE:-}" ]; then
-                REDISCLI_AUTH="$(cat "$REDISCLI_AUTH_FILE")"; export REDISCLI_AUTH
+                read_credential "$REDISCLI_AUTH_FILE"
+                REDISCLI_AUTH="$credential"; export REDISCLI_AUTH
               fi
               tries=0
               until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
@@ -197,8 +199,10 @@ spec:
               set -eu
               # In file delivery the password is in the file PGPASSWORD_FILE
               # names; psql reads it from PGPASSWORD.
+              {{- include "continuo.readCredentialShell" $ | nindent 14 }}
               if [ -n "${PGPASSWORD_FILE:-}" ]; then
-                PGPASSWORD="$(cat "$PGPASSWORD_FILE")"; export PGPASSWORD
+                read_credential "$PGPASSWORD_FILE"
+                PGPASSWORD="$credential"; export PGPASSWORD
               fi
               tries=0
               # Probe through the always-present maintenance database, then

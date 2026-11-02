@@ -243,6 +243,62 @@ grep -qx 'agent-chat agent-chat-cred' <<<"$pull_override" \
   && grep -qx 'execution-controller registry-cred' <<<"$pull_override" \
   || { echo "FAIL: agent-chat's serviceAccount.imagePullSecrets must replace the top-level list for it alone:"; echo "$pull_override"; exit 1; }
 
+# A datastore password every consumer reads from a company file needs no key in
+# the chart's credentials Secret, so an external Neo4j with catalog's password
+# as a file renders without externalNeo4j.password, and still demands one when
+# a service reads it from the Secret.
+echo "--- company-file datastore password needs no inline Secret value"
+cat > "${tmp}/neo4j-company.yaml" <<'YAML'
+neo4j:
+  enabled: false
+externalNeo4j:
+  uri: bolt://neo4j.example:7687
+credentials:
+  files:
+    catalog:
+      NEO4J_PASSWORD: /vault/secrets/neo4j
+YAML
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
+  -f "${tmp}/neo4j-company.yaml" --set externalNeo4j.password= > "${tmp}/neo4j-company-render.yaml" \
+  || { echo "FAIL: an external Neo4j whose password is a company file must render without externalNeo4j.password"; exit 1; }
+! grep -qF 'neo4j-password' "${tmp}/neo4j-company-render.yaml" \
+  || { echo "FAIL: the credentials Secret must carry no neo4j-password when every consumer reads a company file"; exit 1; }
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
+     --set externalNeo4j.password= > /dev/null 2> "${tmp}/neo4j-required.err"; then
+  echo "FAIL: an external Neo4j password read from the Secret must still be required"; exit 1
+fi
+grep -qF 'set externalNeo4j.password or externalNeo4j.existingSecret' "${tmp}/neo4j-required.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/neo4j-required.err"; exit 1; }
+
+# The wait init containers read a password file as the services do: exactly one
+# trailing LF or CRLF dropped. Runs the rendered shell on files that end each
+# way.
+echo "--- wait gates read credential files like the services"
+python3 - "${tmp}/credential-files.yaml" <<'PY'
+import subprocess, sys, tempfile, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d.get("kind") == "Deployment"]
+scripts = {}
+for doc in docs:
+    for init in doc["spec"]["template"]["spec"].get("initContainers") or []:
+        scripts[init["name"]] = init["command"][2]
+assert {"wait-for-redis", "wait-for-migrations"} <= scripts.keys(), sorted(scripts)
+cases = {b"pw": "pw", b"pw\n": "pw", b"pw\r\n": "pw", b"pw\n\n": "pw\n", b"pw\r": "pw\r", b"pw\r\n\r\n": "pw\r\n"}
+for name, script in scripts.items():
+    if "read_credential" not in script:
+        continue
+    preamble = script.split("if [ -n", 1)[0]
+    for content, want in cases.items():
+        with tempfile.NamedTemporaryFile() as f:
+            f.write(content); f.flush()
+            run = subprocess.run(["sh", "-c", preamble + f'read_credential {f.name}; printf %s "$credential"'],
+                                 capture_output=True, check=True)
+        if run.stdout.decode() != want:
+            sys.exit(f"FAIL: {name} read {content!r} as {run.stdout!r}, want {want!r}")
+    gone = subprocess.run(["sh", "-c", preamble + 'read_credential /nonexistent; echo reached'], capture_output=True)
+    if gone.returncode == 0 or b"reached" in gone.stdout:
+        sys.exit(f"FAIL: {name} must stop when its credential file is missing")
+PY
+
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
 # The pod template therefore carries a checksum of it, so `helm upgrade` rolls

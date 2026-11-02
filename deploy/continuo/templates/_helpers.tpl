@@ -1550,6 +1550,30 @@ capabilities:
 {{- end -}}
 {{- end -}}
 
+{{/* "true" when some enabled service still reads the credential group ref
+     (redis, neo4j, authClientSecret...) from its Secret, as a secretKeyRef
+     variable or a projected file. A group every consumer reads from a
+     company-provided file needs no Secret key, so the chart's credentials
+     Secret leaves it out and does not ask for its value.
+     Call: include "continuo.credentialRefFromSecret" (dict "root" $ "ref" "<ref>") */}}
+{{- define "continuo.credentialRefFromSecret" -}}
+{{- $root := .root -}}
+{{- $ref := .ref -}}
+{{- $needed := false -}}
+{{- range $svc := $root.Values.services -}}
+{{- if $svc.enabled -}}
+{{- range $c := (include "continuo.credentialList" (dict "root" $root "svc" $svc) | fromJsonArray) -}}
+{{- if eq $c.ref $ref -}}
+{{- if has (include "continuo.credentialSource" (dict "root" $root "svc" $svc "name" $c.name "ref" $c.ref)) (list "env" "file") -}}
+{{- $needed = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $needed -}}true{{- end -}}
+{{- end -}}
+
 {{/* One credential as container env list items with no indentation:
        env      <AS> from its Secret's key (secretKeyRef)
        file     <AS>_FILE=/var/run/secrets/continuo/<VAR>, an item of the pod's
@@ -1574,6 +1598,23 @@ capabilities:
       name: {{ include "continuo.secretName" (dict "root" .root "ref" .ref) | quote }}
       key: {{ include "continuo.secretKey" (dict "root" .root "ref" .ref) | quote }}
 {{- end }}
+{{- end -}}
+
+{{/* POSIX shell for a wait init container that reads a credential file the
+     way the services do: drop exactly one trailing LF or CRLF, nothing else
+     ($(cat ...) alone drops every trailing LF and keeps a CR). After
+     `read_credential <file>` the value is in $credential. A missing file
+     stops the script (the command substitution fails under `set -e`).
+     Call: include "continuo.readCredentialShell" . | nindent <n> */}}
+{{- define "continuo.readCredentialShell" -}}
+nl="$(printf '\nx')"; nl="${nl%x}"; cr="$(printf '\r')"
+read_credential() {
+  credential="$(cat "$1" && printf x)"; credential="${credential%x}"
+  case "$credential" in
+    *"$cr$nl") credential="${credential%"$cr$nl"}" ;;
+    *"$nl") credential="${credential%"$nl"}" ;;
+  esac
+}
 {{- end -}}
 
 {{/* The volumeMounts of a wait init container that reads one credential: the
