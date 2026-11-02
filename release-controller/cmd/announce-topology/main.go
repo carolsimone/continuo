@@ -310,8 +310,8 @@ func connect(ctx context.Context) (topologyAnnouncer, func(), error) {
 }
 
 // loadConfig reads release-controller's connection settings: POSTGRES_HOST,
-// POSTGRES_USER, POSTGRES_PASSWORD, S3_ENDPOINT_URL, S3_BUCKET and
-// AWS_DEFAULT_REGION are required; POSTGRES_PORT defaults to 5432,
+// POSTGRES_USER, POSTGRES_PASSWORD (or POSTGRES_PASSWORD_FILE),
+// S3_ENDPOINT_URL, S3_BUCKET and AWS_DEFAULT_REGION are required; POSTGRES_PORT defaults to 5432,
 // POSTGRES_DB to continuo_release and DB_SSLMODE to disable. It names every
 // key that is missing or holds a value it cannot use.
 func loadConfig() (pkgconfig.PostgresConfig, pkgconfig.S3Config, error) {
@@ -320,7 +320,7 @@ func loadConfig() (pkgconfig.PostgresConfig, pkgconfig.S3Config, error) {
 		Host:     v.Require("POSTGRES_HOST"),
 		Port:     v.PortOrDefault("POSTGRES_PORT", 5432),
 		User:     v.Require("POSTGRES_USER"),
-		Password: v.Require("POSTGRES_PASSWORD"),
+		Password: v.RequireSecret("POSTGRES_PASSWORD"),
 		DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_release"),
 		SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),
 	}

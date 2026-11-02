@@ -283,7 +283,7 @@ func main() {
 	// Task status reports and release-leg results flow through this
 	// outbox; the relay wakes on the notification a committed insert sends, so
 	// a result reaches its stream without waiting for a poll.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -304,7 +304,7 @@ func main() {
 	// The dispatcher wakes on the notification the deployments table's
 	// triggers send when a deployment is accepted or a slot is released, so
 	// queued work starts without waiting for the 5 s poll.
-	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.DeploymentsChannel, logger)
+	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.DeploymentsChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the dispatcher listener")
 		os.Exit(0)

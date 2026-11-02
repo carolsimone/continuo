@@ -25,7 +25,7 @@ func TestLoadPostgresConfig_Defaults(t *testing.T) {
 	cfg, err := loadPostgresConfig()
 	require.NoError(t, err)
 	assert.Equal(t, pkgconfig.PostgresConfig{
-		Host: "db.example", Port: 5432, User: "seed", Password: "secret",
+		Host: "db.example", Port: 5432, User: "seed", Password: pkgconfig.StaticSecret("POSTGRES_PASSWORD", "secret"),
 		DB: "continuo_release", SSLMode: "disable",
 	}, cfg)
 }

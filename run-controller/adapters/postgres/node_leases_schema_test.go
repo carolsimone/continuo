@@ -147,7 +147,9 @@ func TestNodeLeasesSchema_ADeleteOfNoRowDoesNotNotify(t *testing.T) {
 // arriving there pins the channel name to the trigger's pg_notify.
 func listenForReleases(t *testing.T) *pq.Listener {
 	t.Helper()
-	listener := pq.NewListener(pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), 10*time.Millisecond, time.Second, nil)
+	dsn, err := pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN()
+	require.NoError(t, err)
+	listener := pq.NewListener(dsn, 10*time.Millisecond, time.Second, nil)
 	t.Cleanup(func() { _ = listener.Close() })
 	require.NoError(t, listener.Listen(postgres.NodeLeasesChannel))
 	return listener

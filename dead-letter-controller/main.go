@@ -198,7 +198,7 @@ func main() {
 	// redrive rows to their original streams through RedrivePublisher, and its
 	// own terminal publish failures become outbox.dead_letter:v1 entries. The
 	// relay wakes on the notification a committed insert sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)

@@ -2,6 +2,8 @@ package outbox_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 
 func TestPostgresWaker_SignalsOnlyAfterCommit(t *testing.T) {
 	db := dbForTest(t)
-	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
+	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN, testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 
@@ -41,7 +43,11 @@ func TestPostgresWaker_SignalsOnlyAfterCommit(t *testing.T) {
 func TestPostgresWaker_WakesAfterAReconnectAndKeepsListening(t *testing.T) {
 	db := dbForTest(t)
 	const appName = "pkg-outbox-waker-test"
-	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN()+" application_name="+appName, testOutboxTable, newTestLogger())
+	dsn := func() (string, error) {
+		d, err := testPostgresConfig().DSN()
+		return d + " application_name=" + appName, err
+	}
+	w, err := outbox.NewPostgresWaker(context.Background(), dsn, testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 
@@ -66,11 +72,49 @@ func TestPostgresWaker_WakesAfterAReconnectAndKeepsListening(t *testing.T) {
 	}
 }
 
+// A waker that boots while its password file holds a wrong password keeps
+// retrying; once the file is rotated to the right password, the next failed
+// attempt rebuilds the listener from the fresh file and the LISTEN is
+// established, and rows committed afterwards wake it.
+func TestPostgresWaker_ReconnectsWithARotatedPasswordFile(t *testing.T) {
+	db := dbForTest(t)
+	right, err := testPostgresConfig().Password.Value()
+	require.NoError(t, err)
+	file := filepath.Join(t.TempDir(), "POSTGRES_PASSWORD")
+	require.NoError(t, os.WriteFile(file, []byte("not-the-password\n"), 0o600))
+	t.Setenv("POSTGRES_PASSWORD", "")
+	t.Setenv("POSTGRES_PASSWORD_FILE", file)
+	cfg := testPostgresConfig()
+
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		_ = os.WriteFile(file, []byte(right+"\n"), 0o600)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	w, err := outbox.NewPostgresWaker(ctx, cfg.DSN, testOutboxTable, newTestLogger())
+	require.NoError(t, err, "the LISTEN is established once the file holds the right password")
+	defer func() { _ = w.Close() }()
+
+	// The replacement listener signals once when it connects.
+	select {
+	case <-w.Wake():
+	case <-time.After(5 * time.Second):
+		t.Fatal("no wake once the replacement listener connected")
+	}
+	createRows(t, db, uuid.New(), 1)
+	select {
+	case <-w.Wake():
+	case <-time.After(5 * time.Second):
+		t.Fatal("no wake for a row committed after the listener was replaced")
+	}
+}
+
 // With an hour-long tick, a row committed while the relay is idle publishes
 // within seconds only because its NOTIFY wakes the relay.
 func TestProcessor_PublishesOnNotifyLongBeforeTheTick(t *testing.T) {
 	db := dbForTest(t)
-	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
+	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN, testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 	pub := &orderPublisher{}
@@ -123,7 +167,9 @@ func TestNewPostgresWaker_ReturnsWhenItsContextEndsBeforeTheListen(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	w, err := outbox.NewPostgresWaker(ctx, "host=127.0.0.1 port=1 user=u dbname=d sslmode=disable", "t", newTestLogger())
+	w, err := outbox.NewPostgresWaker(ctx, func() (string, error) {
+		return "host=127.0.0.1 port=1 user=u dbname=d sslmode=disable", nil
+	}, "t", newTestLogger())
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Nil(t, w)
 	assert.Less(t, time.Since(start), 2*time.Second)

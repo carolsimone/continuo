@@ -36,7 +36,9 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	require.Empty(t, v.Missing(), "set POSTGRES_* to a dedicated, externally migrated test database")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	db, err := sqlx.ConnectContext(ctx, "postgres", cfg.DSN())
+	dsn, err := cfg.DSN()
+	require.NoError(t, err)
+	db, err := sqlx.ConnectContext(ctx, "postgres", dsn)
 	require.NoError(t, err, "connect to the externally migrated test database")
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

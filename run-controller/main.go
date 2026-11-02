@@ -235,7 +235,7 @@ func main() {
 	// entry's JSONB payload to its stream. Nested non-scalar fields are
 	// re-encoded to JSON strings so Redis receives only plain scalars. The
 	// relay wakes on the notification a committed insert sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -422,7 +422,7 @@ func main() {
 	// trigger sends when a committed transaction released a lease, and every
 	// leaseWakerInterval. Its goroutine is tracked, so shutdown waits for a
 	// pass in progress.
-	leaseListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.NodeLeasesChannel, logger)
+	leaseListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.NodeLeasesChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the node lease listener")
 		os.Exit(0)
@@ -450,7 +450,7 @@ func main() {
 	// mode consumes each due slot with no run. Its goroutine is tracked, and
 	// shutdown cancels its context before draining it: a fire in progress
 	// rolls back, and its slot fires once, late, on a later pass.
-	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.SchedulesChannel, logger)
+	schedulesListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.SchedulesChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the schedules listener")
 		os.Exit(0)

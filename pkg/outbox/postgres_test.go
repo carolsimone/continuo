@@ -54,7 +54,9 @@ func dbForTest(t *testing.T) *sqlx.DB {
 	if cfg.Host == "" {
 		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
 	}
-	db, err := sqlx.Connect("postgres", cfg.DSN())
+	dsn, err := cfg.DSN()
+	require.NoError(t, err)
+	db, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
 		testdeps.Unavailable(t, "postgres unreachable: %v", err)
 	}

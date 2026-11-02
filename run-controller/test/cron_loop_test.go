@@ -595,7 +595,7 @@ func TestCronLoop_WakesOnANotification(t *testing.T) {
 	c := newCronTenant(t, "daily")
 	slot := march(10, 1, 0)
 	c.clock.set(slot)
-	waker, err := pkgoutbox.NewPostgresWaker(ctx, runControllerDSN, postgres.SchedulesChannel, c.logger)
+	waker, err := pkgoutbox.NewPostgresWaker(ctx, func() (string, error) { return runControllerDSN, nil }, postgres.SchedulesChannel, c.logger)
 	require.NoError(t, err)
 	defer waker.Close() //nolint:errcheck
 	done := make(chan struct{})

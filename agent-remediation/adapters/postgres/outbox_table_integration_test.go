@@ -129,7 +129,7 @@ func TestOutboxWakerWakesOnAgentRemediationOutbox(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	waker, err := pkgoutbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), OutboxTable, slog.Default())
+	waker, err := pkgoutbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN, OutboxTable, slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = waker.Close() })
 

@@ -37,7 +37,7 @@ func TestDeploymentsNotify_WakesOnAcceptAndSlotReleaseOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	waker, err := outbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), postgres.DeploymentsChannel, testLogger())
+	waker, err := outbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN, postgres.DeploymentsChannel, testLogger())
 	require.NoError(t, err)
 	defer func() { _ = waker.Close() }()
 	select { // a waker may signal once when its listener connects

@@ -9,7 +9,6 @@ import (
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 )
 
 const (
@@ -20,18 +19,16 @@ const (
 	connMaxIdleTime = 5 * time.Minute
 )
 
-// Open connects to the database cfg names with cfg's DSN (which carries
-// DB_SSLMODE), bounds the pool by cfg.Pool over the service's defaults, and
-// pings it within ctx.
+// Open connects to the database cfg names (with DB_SSLMODE), bounds the pool
+// by cfg.Pool over the service's defaults, and pings it within ctx. Each new
+// connection the pool opens reads cfg.Password again, so a rotated
+// POSTGRES_PASSWORD_FILE is picked up without a restart.
 func Open(ctx context.Context, cfg pkgconfig.PostgresConfig, defaults pkgconfig.PoolConfig) (*sqlx.DB, error) {
 	pool, err := EffectivePool(cfg.Pool, defaults)
 	if err != nil {
 		return nil, err
 	}
-	db, err := sqlx.Open("postgres", cfg.DSN())
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
+	db := sqlx.NewDb(sql.OpenDB(newConnector(cfg)), "postgres")
 	ApplyPool(db.DB, pool)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()

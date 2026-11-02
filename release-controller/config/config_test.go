@@ -63,7 +63,9 @@ func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
 	cfg := Load(v)
 
 	require.Empty(t, v.Missing())
-	assert.Contains(t, cfg.Postgres.DSN(), "sslmode=require")
+	dsn, err := cfg.Postgres.DSN()
+	require.NoError(t, err)
+	assert.Contains(t, dsn, "sslmode='require'")
 	assert.Equal(t, 9, cfg.Postgres.Pool.MaxOpenConns)
 }
 
