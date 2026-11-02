@@ -68,6 +68,7 @@ func TestRedisKeysCarryThePrefix(t *testing.T) {
 	root := repoRootFromTest(t)
 	exempt := filepath.Join(root, "pkg", "redis", "keys.go")
 	var violations []string
+	scanned := 0
 	for _, dir := range redisKeysGuardRoots(t, root) {
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -83,7 +84,11 @@ func TestRedisKeysCarryThePrefix(t *testing.T) {
 			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || path == exempt {
 				return nil
 			}
-			violations = append(violations, scanRedisKeys(t, root, path, nil)...)
+			found, inspected := scanRedisKeys(t, root, path, nil)
+			violations = append(violations, found...)
+			if inspected {
+				scanned++
+			}
 			return nil
 		})
 		if err != nil {
@@ -92,6 +97,10 @@ func TestRedisKeysCarryThePrefix(t *testing.T) {
 	}
 	for _, v := range violations {
 		t.Error(v)
+	}
+	// A guard that inspected no file would pass vacuously.
+	if scanned == 0 {
+		t.Fatal("the guard inspected no Go file that imports go-redis: its scan roots or file filter are wrong")
 	}
 }
 
@@ -151,12 +160,14 @@ func TestRedisKeyGuardFlagsAnUnprefixedKey(t *testing.T) {
 // scanRedisKeysSource scans one fixture source.
 func scanRedisKeysSource(t *testing.T, src string) []string {
 	t.Helper()
-	return scanRedisKeys(t, "", "fixture.go", []byte(src))
+	found, _ := scanRedisKeys(t, "", "fixture.go", []byte(src))
+	return found
 }
 
 // scanRedisKeys returns one message per unprefixed Redis key in the Go file at
 // path (or in src when it is not nil). Messages name the file relative to root.
-func scanRedisKeys(t *testing.T, root, path string, src []byte) []string {
+// The boolean reports whether the file imports go-redis and was inspected.
+func scanRedisKeys(t *testing.T, root, path string, src []byte) ([]string, bool) {
 	t.Helper()
 	var source any
 	if src != nil {
@@ -174,7 +185,7 @@ func scanRedisKeys(t *testing.T, root, path string, src []byte) []string {
 		}
 	}
 	if !imports {
-		return nil
+		return nil, false
 	}
 	consts := packageStringConsts(t, filepath.Dir(path), f, src != nil)
 	rel := path
@@ -196,7 +207,7 @@ func scanRedisKeys(t *testing.T, root, path string, src []byte) []string {
 		}
 		return true
 	})
-	return found
+	return found, true
 }
 
 // checkKeyLiteral checks the Stream of an XAddArgs literal and the stream fields

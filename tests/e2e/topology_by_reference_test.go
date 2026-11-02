@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
@@ -65,7 +66,7 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 		}
 	}
 	replay["event_id"] = uuid.NewString()
-	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: replay}).Result()
+	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV2), Values: replay}).Result()
 	require.NoError(t, err, "replay A's promotion")
 
 	// Both groups that apply a promotion handle the replay before the live
@@ -169,7 +170,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 		ChangedNodeIDs: []string{},
 	})
 	require.NoError(t, err)
-	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: fields}).Result()
+	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(streams.ReleasePromotedV2), Values: fields}).Result()
 	require.NoError(t, err)
 
 	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.CatalogReleaseTopology, id, "open")
