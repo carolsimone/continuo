@@ -20,7 +20,7 @@ func NewClient(cfg pkgconfig.RedisConfig) *goredis.Client {
 		CredentialsProviderContext: func(context.Context) (string, string, error) {
 			pw, err := password.Value()
 			if err != nil {
-				return "", "", fmt.Errorf("read %s_FILE: %w", password.Name(), err)
+				return "", "", fmt.Errorf("%s_FILE: %w", password.Name(), err)
 			}
 			return username, pw, nil
 		},

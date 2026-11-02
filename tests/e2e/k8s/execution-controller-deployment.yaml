@@ -192,7 +192,8 @@ spec:
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
             # The Secret the S3 keys of every Job pod are read from, by
-            # reference: provision-k8s-test-env.sh creates it from the MinIO keys.
+            # reference: tests/e2e/k8s/job-s3-secret.yaml, which scripts/setup.sh,
+            # deploy-execution-controller.sh and provision-k8s-test-env.sh apply.
             - name: JOB_S3_SECRET_NAME
               value: "continuo-job-s3"
             - name: HTTP_PORT

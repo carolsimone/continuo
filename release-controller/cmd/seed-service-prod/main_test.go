@@ -15,6 +15,7 @@ func setConnectionEnv(t *testing.T) {
 	t.Setenv("POSTGRES_HOST", "db.example")
 	t.Setenv("POSTGRES_USER", "seed")
 	t.Setenv("POSTGRES_PASSWORD", "secret")
+	t.Setenv("POSTGRES_PASSWORD_FILE", "")
 	t.Setenv("POSTGRES_PORT", "")
 	t.Setenv("POSTGRES_DB", "")
 	t.Setenv("DB_SSLMODE", "")
@@ -25,9 +26,13 @@ func TestLoadPostgresConfig_Defaults(t *testing.T) {
 	cfg, err := loadPostgresConfig()
 	require.NoError(t, err)
 	assert.Equal(t, pkgconfig.PostgresConfig{
-		Host: "db.example", Port: 5432, User: "seed", Password: pkgconfig.StaticSecret("POSTGRES_PASSWORD", "secret"),
+		Host: "db.example", Port: 5432, User: "seed", Password: cfg.Password,
 		DB: "continuo_release", SSLMode: "disable",
 	}, cfg)
+	assert.Equal(t, "POSTGRES_PASSWORD", cfg.Password.Name())
+	password, err := cfg.Password.Value()
+	require.NoError(t, err)
+	assert.Equal(t, "secret", password)
 }
 
 // A POSTGRES_PORT that is not a port fails the command before it connects,

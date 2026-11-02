@@ -35,11 +35,23 @@ func TestLoadPostgres_no_missing_when_all_set(t *testing.T) {
 	assert.Equal(t, "pw", pw)
 }
 
+// envPassword returns the POSTGRES_PASSWORD Secret loaded from the
+// environment variable set to value.
+func envPassword(t *testing.T, value string) Secret {
+	t.Helper()
+	t.Setenv("POSTGRES_PASSWORD", value)
+	t.Setenv("POSTGRES_PASSWORD_FILE", "")
+	v := &Validator{}
+	s := v.RequireSecret("POSTGRES_PASSWORD")
+	require.Empty(t, v.Missing())
+	return s
+}
+
 // Every value of the DSN is quoted, so a password holding a space, a quote, an
 // at sign, a colon or a backslash reaches Postgres unchanged.
 func TestDSNQuotesEveryValue(t *testing.T) {
 	cfg := PostgresConfig{Host: "db host", Port: 5432, DB: "d", User: "u",
-		Password: StaticSecret("POSTGRES_PASSWORD", `p w'@:\`), SSLMode: "require"}
+		Password: envPassword(t, `p w'@:\`), SSLMode: "require"}
 	dsn, err := cfg.DSN()
 	require.NoError(t, err)
 	assert.Equal(t, `host='db host' port='5432' dbname='d' user='u' password='p w\'@:\\' sslmode='require'`, dsn)
@@ -50,7 +62,7 @@ func TestDSNQuotesEveryValue(t *testing.T) {
 // lib/pq parses the quoted DSN back to the values it was built from.
 func TestDSNRoundTripsThroughPq(t *testing.T) {
 	cfg := PostgresConfig{Host: "db.example", Port: 6543, DB: "d b", User: `u'1`,
-		Password: StaticSecret("POSTGRES_PASSWORD", `p w'@:\`)}
+		Password: envPassword(t, `p w'@:\`)}
 	dsn, err := cfg.DSN()
 	require.NoError(t, err)
 	parsed, err := pq.NewConfig(dsn)

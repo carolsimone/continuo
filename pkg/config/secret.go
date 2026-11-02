@@ -34,12 +34,6 @@ type Secret struct {
 	file string
 }
 
-// StaticSecret builds a Secret that holds value, for tests and hand-built
-// configs.
-func StaticSecret(name, value string) Secret {
-	return Secret{name: name, value: value}
-}
-
 // Name returns the environment variable the credential is read from.
 func (s Secret) Name() string { return s.name }
 

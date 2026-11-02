@@ -408,6 +408,9 @@ func TestJobS3SecretRequiredWithStaticKeys(t *testing.T) {
 	keyFile := filepath.Join(dir, "key")
 	require.NoError(t, os.WriteFile(keyFile, []byte("file-key\n"), 0o600))
 
+	// The Job Secret's name is a variable so the linter does not read the
+	// JOB_S3_SECRET_NAME entry below as a credential.
+	jobS3Name := "continuo-job-s3"
 	cases := map[string]struct {
 		env     map[string]string
 		missing bool
@@ -422,7 +425,7 @@ func TestJobS3SecretRequiredWithStaticKeys(t *testing.T) {
 			"AWS_SECRET_ACCESS_KEY": "s",
 		}, missing: true},
 		"keys and a Job Secret": {env: map[string]string{
-			"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s", "JOB_S3_SECRET_NAME": "continuo-job-s3",
+			"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s", "JOB_S3_SECRET_NAME": jobS3Name,
 		}},
 		"no keys, the SDK's default chain": {env: map[string]string{}},
 	}

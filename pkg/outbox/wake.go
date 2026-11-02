@@ -198,7 +198,8 @@ func (w *PostgresWaker) replaceIfDSNChanged(gen uint64) {
 	default:
 	}
 	// pq calls this from the old listener's goroutine while that listener
-	// holds no lock, so the close returns at once and its goroutine ends.
+	// holds no lock, so the close returns at once; that goroutine ends after
+	// its current backoff, at most listenerMaxReconnect.
 	_ = old.Close()
 }
 

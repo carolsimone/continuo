@@ -29,7 +29,7 @@ func newConnector(cfg pkgconfig.PostgresConfig) connector {
 func (c connector) Connect(ctx context.Context) (driver.Conn, error) {
 	pw, err := c.password.Value()
 	if err != nil {
-		return nil, fmt.Errorf("read %s_FILE: %w", c.password.Name(), err)
+		return nil, fmt.Errorf("%s_FILE: %w", c.password.Name(), err)
 	}
 	pc, err := pq.NewConfig(c.dsn)
 	if err != nil {

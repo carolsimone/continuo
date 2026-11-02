@@ -66,6 +66,9 @@ func TestRequireSecretBothSetIsReported(t *testing.T) {
 	if !containsEntry(v.Missing(), want) {
 		t.Fatalf("missing = %v; want entry %q", v.Missing(), want)
 	}
+	if containsEntry(v.Missing(), "POSTGRES_PASSWORD") {
+		t.Fatalf("missing = %v; the bare name must not be recorded beside the both-forms problem", v.Missing())
+	}
 }
 
 func TestRequireSecretMissing(t *testing.T) {
@@ -73,8 +76,8 @@ func TestRequireSecretMissing(t *testing.T) {
 	t.Setenv("POSTGRES_PASSWORD_FILE", "")
 	v := &Validator{}
 	s := v.RequireSecret("POSTGRES_PASSWORD")
-	if !containsEntry(v.Missing(), "POSTGRES_PASSWORD") {
-		t.Fatalf("missing = %v; want POSTGRES_PASSWORD", v.Missing())
+	if m := v.Missing(); len(m) != 1 || m[0] != "POSTGRES_PASSWORD" {
+		t.Fatalf("missing = %v; want exactly [POSTGRES_PASSWORD]", m)
 	}
 	if s.IsSet() {
 		t.Fatal("IsSet() = true for a missing secret")
@@ -220,14 +223,6 @@ func TestSecretValueHelpersReturnEmptyWhenReported(t *testing.T) {
 	}
 	if len(v.Missing()) != 2 {
 		t.Fatalf("missing = %v; want 2 entries", v.Missing())
-	}
-}
-
-func TestStaticSecret(t *testing.T) {
-	s := StaticSecret("POSTGRES_PASSWORD", "pw")
-	got, err := s.Value()
-	if err != nil || got != "pw" || !s.IsSet() || s.Name() != "POSTGRES_PASSWORD" {
-		t.Fatalf("Value=%q err=%v IsSet=%v Name=%q", got, err, s.IsSet(), s.Name())
 	}
 }
 

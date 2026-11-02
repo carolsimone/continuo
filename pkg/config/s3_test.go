@@ -6,10 +6,22 @@ import (
 	"testing"
 )
 
+// clearS3Keys unsets both S3 keys in both forms.
+func clearS3Keys(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"AWS_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID_FILE",
+		"AWS_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY_FILE",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestLoadS3_records_all_missing(t *testing.T) {
 	for _, key := range []string{"S3_ENDPOINT_URL", "S3_BUCKET", "AWS_DEFAULT_REGION"} {
 		t.Setenv(key, "")
 	}
+	clearS3Keys(t)
 	v := &Validator{}
 	LoadS3(v)
 	if got := len(v.Missing()); got != 3 {
@@ -17,10 +29,14 @@ func TestLoadS3_records_all_missing(t *testing.T) {
 	}
 }
 
+// The S3 keys are optional: with neither form of either key set, LoadS3
+// records no problem and returns empty keys, which leave the SDK's default
+// credential chain to sign requests.
 func TestLoadS3_no_missing_when_all_set(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://s3:9000")
 	t.Setenv("S3_BUCKET", "mybucket")
 	t.Setenv("AWS_DEFAULT_REGION", "eu-west-1")
+	clearS3Keys(t)
 	v := &Validator{}
 	cfg := LoadS3(v)
 	if len(v.Missing()) != 0 {
@@ -28,6 +44,9 @@ func TestLoadS3_no_missing_when_all_set(t *testing.T) {
 	}
 	if cfg.EndpointURL != "http://s3:9000" || cfg.Bucket != "mybucket" || cfg.Region != "eu-west-1" {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
+		t.Fatalf("want empty keys, got id=%q secret=%q", cfg.AccessKeyID, cfg.SecretAccessKey)
 	}
 }
 
@@ -67,6 +86,7 @@ func TestLoadS3RejectsKeyGivenTwice(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://s3:9000")
 	t.Setenv("S3_BUCKET", "mybucket")
 	t.Setenv("AWS_DEFAULT_REGION", "eu-west-1")
+	clearS3Keys(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAFROMENV")
 	t.Setenv("AWS_ACCESS_KEY_ID_FILE", file)
 

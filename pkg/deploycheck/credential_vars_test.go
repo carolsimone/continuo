@@ -1,6 +1,8 @@
 package deploycheck
 
 import (
+	"encoding/json"
+	"regexp"
 	"slices"
 	"testing"
 
@@ -15,7 +17,9 @@ import (
 // deployment template adds to every storage-reading service on its own. A
 // credential the chart starts delivering without a Secret read would reach
 // the service only in its environment form, and a Secret read the chart never
-// delivers is dead.
+// delivers is dead. The chart's helper continuo.credentialVariables, the list
+// credentials.files keys are checked against and file delivery mounts, must
+// hold the same names.
 func TestCredentialVarsMatchTheChart(t *testing.T) {
 	var values struct {
 		Services []struct {
@@ -45,4 +49,32 @@ func TestCredentialVarsMatchTheChart(t *testing.T) {
 	if !slices.Equal(chart, want) {
 		t.Fatalf("the chart's secretEnv names plus the S3 keys are %v; pkgconfig.CredentialVars is %v", chart, want)
 	}
+
+	helper := chartCredentialVariables(t)
+	slices.Sort(helper)
+	if !slices.Equal(helper, want) {
+		t.Fatalf("_helpers.tpl continuo.credentialVariables is %v; pkgconfig.CredentialVars is %v", helper, want)
+	}
+}
+
+// credentialVariablesDefine matches the body of the continuo.credentialVariables
+// define in _helpers.tpl, a JSON array of variable names.
+var credentialVariablesDefine = regexp.MustCompile(`(?s)\{\{-? define "continuo\.credentialVariables" -?\}\}(.*?)\{\{-? end -?\}\}`)
+
+// chartCredentialVariables returns the names the chart's
+// continuo.credentialVariables helper lists.
+func chartCredentialVariables(t *testing.T) []string {
+	t.Helper()
+	m := credentialVariablesDefine.FindStringSubmatch(readRepoFile(t, "deploy", "continuo", "templates", "_helpers.tpl"))
+	if m == nil {
+		t.Fatal(`_helpers.tpl has no define "continuo.credentialVariables"`)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(m[1]), &names); err != nil {
+		t.Fatalf("parse continuo.credentialVariables %q: %v", m[1], err)
+	}
+	if len(names) == 0 {
+		t.Fatal("continuo.credentialVariables lists no variables")
+	}
+	return names
 }

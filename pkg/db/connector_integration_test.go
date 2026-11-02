@@ -49,6 +49,12 @@ func TestOpenReadsThePasswordFileForEveryNewConnection(t *testing.T) {
 	var one int
 	require.NoError(t, db.GetContext(ctx, &one, `SELECT 1`), "the file's password signs in")
 
+	// held is a connection opened before the rotation; it stays open across it.
+	held, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer held.Close()
+	require.NoError(t, held.QueryRowContext(ctx, `SELECT 1`).Scan(&one))
+
 	// Lowering the idle limit to zero closes every idle connection, so the
 	// next query opens a new one with whatever the file holds then.
 	writePassword(wrongPassword)
@@ -57,6 +63,10 @@ func TestOpenReadsThePasswordFileForEveryNewConnection(t *testing.T) {
 	require.Error(t, err, "a new connection signs in with the rotated file")
 	assert.Contains(t, err.Error(), "password authentication failed")
 	assert.NotContains(t, err.Error(), wrongPassword, "the error does not carry the password")
+
+	require.NoError(t, held.QueryRowContext(ctx, `SELECT 1`).Scan(&one),
+		"a connection opened before the rotation still answers")
+	require.NoError(t, held.Close())
 
 	writePassword(password)
 	require.NoError(t, db.GetContext(ctx, &one, `SELECT 1`), "the restored file signs in again")
