@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
+	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
@@ -84,7 +84,7 @@ type Config struct {
 
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
-func Load(v *pkgconfig.Validator) Config {
+func Load(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) Config {
 	return Config{
 		Redis: pkgconfig.LoadRedis(v),
 		Neo4j: LoadNeo4j(v),
@@ -100,7 +100,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 
-		Backup: loadBackup(v),
+		Backup: loadBackup(v, schedules),
 	}
 }
 
@@ -116,10 +116,10 @@ func LoadNeo4j(v *pkgconfig.Validator) Neo4jConfig {
 
 // loadBackup reads the backup settings. A value catalog cannot honour is
 // recorded on v, so catalog refuses to start: an enabled flag that is not a
-// boolean, a schedule checkBackupSchedule refuses, or a keep that is not a
+// boolean, a schedule the parser refuses, or a keep that is not a
 // whole number of at least 1. The values are checked whether or not the
 // backup is enabled, as the chart checks them.
-func loadBackup(v *pkgconfig.Validator) BackupConfig {
+func loadBackup(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) BackupConfig {
 	b := BackupConfig{Enabled: true, Schedule: defaultBackupSchedule, Keep: LoadBackupKeep(v)}
 	if raw := os.Getenv(backupEnabledKey); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
@@ -130,7 +130,7 @@ func loadBackup(v *pkgconfig.Validator) BackupConfig {
 		}
 	}
 	if raw := os.Getenv(backupScheduleKey); raw != "" {
-		if err := checkBackupSchedule(raw); err != nil {
+		if _, err := schedules.Parse(raw); err != nil {
 			v.Add(fmt.Sprintf("%s (invalid value %q: %v)", backupScheduleKey, raw, err))
 		} else {
 			b.Schedule = raw
@@ -154,12 +154,6 @@ func LoadBackupKeep(v *pkgconfig.Validator) int {
 		return defaultBackupKeep
 	}
 	return keep
-}
-
-// checkBackupSchedule reports why spec cannot be a backup schedule, or nil.
-func checkBackupSchedule(spec string) error {
-	_, err := croninfra.BackupScheduleParser{}.Parse(spec)
-	return err
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

@@ -313,10 +313,9 @@ func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d dep
 	})
 	if len(notReached) > 0 {
 		logger.Error("interrupted: the remaining tenants were not exported", "tenant_ids", notReached)
-		failed += len(notReached)
 	}
 	switch {
-	case failed > 0:
+	case failed > 0 || len(notReached) > 0:
 		return exitError
 	case skipped > 0:
 		return exitSkipped

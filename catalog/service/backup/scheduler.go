@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/service/ports"
@@ -40,7 +39,7 @@ func NewScheduler(spec string, parser ports.BackupScheduleParser, tenants ports.
 		return nil, fmt.Errorf("catalog export schedule %q: %w", spec, err)
 	}
 	return &Scheduler{
-		spec: strings.TrimSpace(spec), schedule: schedule, tenants: tenants, ex: ex,
+		spec: spec, schedule: schedule, tenants: tenants, ex: ex,
 		clock: clock, logger: logger, sleep: sleepCtx,
 	}, nil
 }

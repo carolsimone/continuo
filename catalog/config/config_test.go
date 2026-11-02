@@ -1,11 +1,14 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
+	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
@@ -13,7 +16,7 @@ import (
 func TestLoad_NeedsNothingFromRunController(t *testing.T) {
 	t.Setenv("RUN_CONTROLLER_GRPC_ADDR", "")
 	var v pkgconfig.Validator
-	Load(&v)
+	Load(&v, croninfra.BackupScheduleParser{})
 	if slices.Contains(v.Missing(), "RUN_CONTROLLER_GRPC_ADDR") {
 		t.Fatalf("Load requires RUN_CONTROLLER_GRPC_ADDR; missing = %v", v.Missing())
 	}
@@ -26,7 +29,7 @@ func TestLoad_NeedsNoPostgres(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	var v pkgconfig.Validator
-	Load(&v)
+	Load(&v, croninfra.BackupScheduleParser{})
 	for _, name := range v.Missing() {
 		if strings.HasPrefix(name, "POSTGRES_") {
 			t.Fatalf("Load requires %s; missing = %v", name, v.Missing())
@@ -41,7 +44,7 @@ func TestConfig_BackupDefaults(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	var v pkgconfig.Validator
-	cfg := Load(&v)
+	cfg := Load(&v, croninfra.BackupScheduleParser{})
 	if want := (BackupConfig{Enabled: true, Schedule: "0 2 * * *", Keep: 7}); cfg.Backup != want {
 		t.Fatalf("Backup = %+v, want %+v", cfg.Backup, want)
 	}
@@ -53,7 +56,7 @@ func TestConfig_BackupReadsTheThreeKeys(t *testing.T) {
 	t.Setenv("CATALOG_BACKUP_SCHEDULE", "30 3 * * 1")
 	t.Setenv("CATALOG_BACKUP_KEEP", "3")
 	var v pkgconfig.Validator
-	cfg := Load(&v)
+	cfg := Load(&v, croninfra.BackupScheduleParser{})
 	if want := (BackupConfig{Enabled: false, Schedule: "30 3 * * 1", Keep: 3}); cfg.Backup != want {
 		t.Fatalf("Backup = %+v, want %+v", cfg.Backup, want)
 	}
@@ -68,7 +71,7 @@ func TestConfig_AcceptsTheSchedulesTheChartRenders(t *testing.T) {
 		t.Run(spec, func(t *testing.T) {
 			t.Setenv("CATALOG_BACKUP_SCHEDULE", spec)
 			var v pkgconfig.Validator
-			cfg := Load(&v)
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
 			assertNoBackupProblem(t, v.Missing())
 			if cfg.Backup.Schedule != spec {
 				t.Fatalf("Schedule = %q, want %q", cfg.Backup.Schedule, spec)
@@ -110,7 +113,7 @@ func TestConfig_RefusesBadCronAndKeepBelowOne(t *testing.T) {
 		t.Run(c.key+"="+c.value, func(t *testing.T) {
 			t.Setenv(c.key, c.value)
 			var v pkgconfig.Validator
-			Load(&v)
+			Load(&v, croninfra.BackupScheduleParser{})
 			var named []string
 			for _, problem := range v.Missing() {
 				if strings.HasPrefix(problem, c.key+" ") {
@@ -191,5 +194,27 @@ func TestLoadBackupKeep(t *testing.T) {
 				t.Fatalf("problems = %v, want a problem: %v", v.Missing(), c.problem)
 			}
 		})
+	}
+}
+
+// refusingParser refuses every spec with a fixed reason.
+type refusingParser struct{}
+
+func (refusingParser) Parse(string) (ports.BackupSchedule, error) {
+	return nil, errors.New("not a schedule")
+}
+
+// Load takes its judgement of a schedule from the parser it is given, so the
+// config package names no cron library.
+func TestConfig_ChecksTheScheduleWithTheParserItIsGiven(t *testing.T) {
+	t.Setenv("CATALOG_BACKUP_SCHEDULE", "0 2 * * *")
+	var v pkgconfig.Validator
+	Load(&v, refusingParser{})
+	var found bool
+	for _, problem := range v.Missing() {
+		found = found || strings.Contains(problem, "CATALOG_BACKUP_SCHEDULE") && strings.Contains(problem, "not a schedule")
+	}
+	if !found {
+		t.Fatalf("Load recorded %v, want CATALOG_BACKUP_SCHEDULE refused with the parser's reason", v.Missing())
 	}
 }

@@ -42,7 +42,7 @@ func main() {
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
-	cfg := config.Load(v)
+	cfg := config.Load(v, croninfra.BackupScheduleParser{})
 	if missing := v.Missing(); len(missing) > 0 {
 		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
 		os.Exit(1)
