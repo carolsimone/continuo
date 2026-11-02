@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import { KEY_PREFIX as GENERATED_KEY_PREFIX } from '../generated/redis-keys.gen';
 import type { AuthUser } from './types';
 
 export interface SessionRecord extends AuthUser {
@@ -18,7 +19,8 @@ export interface RedisLike {
   expire(key: string, seconds: number): Promise<number>;
 }
 
-const KEY_PREFIX = 'uisession:';
+// Every Redis key the system owns sits under the contract's key prefix.
+const KEY_PREFIX = `${GENERATED_KEY_PREFIX}uisession:`;
 
 // Server-side sessions: the browser cookie holds only the random id, so
 // deleting the Redis key revokes the session instantly. The Redis TTL gives a

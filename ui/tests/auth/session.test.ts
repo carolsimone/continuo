@@ -24,10 +24,10 @@ describe('SessionStore', () => {
     expect(record).toMatchObject(user);
   });
 
-  it('stores under the uisession: prefix', async () => {
+  it('stores sessions under continuo:uisession:', async () => {
     const { store, redis } = makeStore();
     const id = await store.create(user);
-    expect(redis.keys()).toEqual([`uisession:${id}`]);
+    expect(redis.keys()).toEqual([`continuo:uisession:${id}`]);
   });
 
   it('load touches the idle window: a session stays alive under regular use', async () => {
@@ -72,9 +72,9 @@ describe('SessionStore', () => {
 
   it('treats a corrupt session record as no session and deletes it', async () => {
     const { store, redis } = makeStore();
-    await redis.set('uisession:bad-json', 'not json', 'EX', 3600);
-    await redis.set('uisession:not-object', '42', 'EX', 3600);
-    await redis.set('uisession:missing-fields', JSON.stringify({ email: 'a@b.c' }), 'EX', 3600);
+    await redis.set('continuo:uisession:bad-json', 'not json', 'EX', 3600);
+    await redis.set('continuo:uisession:not-object', '42', 'EX', 3600);
+    await redis.set('continuo:uisession:missing-fields', JSON.stringify({ email: 'a@b.c' }), 'EX', 3600);
     expect(await store.load('bad-json')).toBeNull();
     expect(await store.load('not-object')).toBeNull();
     expect(await store.load('missing-fields')).toBeNull();

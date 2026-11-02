@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -150,7 +151,7 @@ func TestAuthOIDC(t *testing.T) {
 			Password: getEnv("REDIS_PASSWORD", "continuo"),
 		})
 		defer rdb.Close()
-		iter := rdb.Scan(ctx, 0, "uisession:*", 100).Iterator()
+		iter := rdb.Scan(ctx, 0, pkgredis.Key("uisession:*"), 100).Iterator()
 		deleted := 0
 		for iter.Next(ctx) {
 			rdb.Del(ctx, iter.Val())
@@ -160,7 +161,7 @@ func TestAuthOIDC(t *testing.T) {
 			t.Fatalf("redis scan: %v", err)
 		}
 		if deleted == 0 {
-			t.Fatal("expected at least one uisession:* key to delete")
+			t.Fatal("expected at least one continuo:uisession:* key to delete")
 		}
 
 		if st := statusOf(t, client, "GET", base+"/auth/me"); st != http.StatusUnauthorized {
