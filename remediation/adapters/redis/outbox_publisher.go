@@ -13,6 +13,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
 )
 
@@ -33,8 +34,9 @@ func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutb
 	if err != nil {
 		return err
 	}
-	if _, err := p.redis.XAdd(ctx, p.xaddArgs(entry, values)).Result(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+	args := p.xaddArgs(entry, values)
+	if _, err := p.redis.XAdd(ctx, args).Result(); err != nil {
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, pkgredis.MissingStreamError(args.Stream, err))
 	}
 	return nil
 }
@@ -42,11 +44,16 @@ func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutb
 // xaddArgs builds the XADD for entry from its rendered fields plus
 // outbox_entry_id. It sets no length cap: the dead-letter-controller's trim loop
 // bounds every stream.
+//
+// The stream is the prefixed key of entry.StreamName, and NOMKSTREAM keeps XADD
+// from creating it: while the stream is missing the XADD fails and the outbox
+// retries the row.
 func (p *remediationOutboxPublisher) xaddArgs(entry *pkgoutbox.Entry, values map[string]any) *goredis.XAddArgs {
 	values["outbox_entry_id"] = entry.ID.String()
 	return &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		Values: values,
+		Stream:     pkgredis.Key(entry.StreamName),
+		NoMkStream: true,
+		Values:     values,
 	}
 }
 

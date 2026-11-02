@@ -7,6 +7,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
@@ -29,8 +30,11 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != streams.TaskStatusUpdatedV2 {
-		t.Fatalf("stream = %q, want %q", args.Stream, streams.TaskStatusUpdatedV2)
+	if args.Stream != pkgredis.Key(streams.TaskStatusUpdatedV2) {
+		t.Fatalf("stream = %q, want %q", args.Stream, pkgredis.Key(streams.TaskStatusUpdatedV2))
+	}
+	if !args.NoMkStream {
+		t.Fatal("the publisher must not create a stream: NOMKSTREAM is unset")
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
 		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)

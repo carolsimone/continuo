@@ -13,6 +13,7 @@ import (
 	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +59,7 @@ func TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped(t *testing.T) {
 
 			require.Eventually(t, func() bool {
 				pending, err := clients.redisClient.XPendingExt(ctx, &goredis.XPendingExtArgs{
-					Stream: tc.stream, Group: tc.group, Start: id, End: id, Count: 1,
+					Stream: pkgredis.Key(tc.stream), Group: tc.group, Start: id, End: id, Count: 1,
 				}).Result()
 				return err == nil && len(pending) == 0
 			}, 30*time.Second, time.Second, "the original must be acknowledged once its dead letter exists")
@@ -135,7 +136,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	for _, other := range otherGroups {
 		require.Eventually(t, func() bool {
 			pending, err := clients.redisClient.XPendingExt(ctx, &goredis.XPendingExtArgs{
-				Stream: stream, Group: other, Start: redrivenID, End: redrivenID, Count: 1,
+				Stream: pkgredis.Key(stream), Group: other, Start: redrivenID, End: redrivenID, Count: 1,
 			}).Result()
 			return err == nil && len(pending) == 0
 		}, 30*time.Second, time.Second, "group %s must acknowledge the redriven entry", other)
@@ -274,7 +275,7 @@ type cliDeadLetter struct {
 func publishMalformed(ctx context.Context, t *testing.T, clients *testClients, stream string) string {
 	t.Helper()
 	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream, Values: map[string]any{"e2e_dead_letter_probe": t.Name()},
+		Stream: pkgredis.Key(stream), Values: map[string]any{"e2e_dead_letter_probe": t.Name()},
 	}).Result()
 	require.NoError(t, err)
 	return id
@@ -315,7 +316,7 @@ func redrivenEntries(ctx context.Context, rc *goredis.Client, stream, fromID, de
 	// fromID is the id of the entry the test published before triggering the
 	// redrive, so the range starts at the work under test; the redriven entry is
 	// read right after it is published, before any trim run can reach it.
-	entries, err := rc.XRangeN(ctx, stream, fromID, "+", 5000).Result()
+	entries, err := rc.XRangeN(ctx, pkgredis.Key(stream), fromID, "+", 5000).Result()
 	if err != nil {
 		return nil
 	}

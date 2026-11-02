@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -44,8 +45,9 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	if err != nil {
 		return err
 	}
-	if _, err := p.redis.XAdd(ctx, p.xaddArgs(entry, values)).Result(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+	args := p.xaddArgs(entry, values)
+	if _, err := p.redis.XAdd(ctx, args).Result(); err != nil {
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, pkgredis.MissingStreamError(args.Stream, err))
 	}
 	return nil
 }
@@ -53,11 +55,16 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 // xaddArgs builds the XADD for entry from its rendered fields. outbox_entry_id
 // rides every XADD so consumer-side DedupWithOutboxEntryID catches a row
 // republished with a fresh Redis message id. It sets no length cap.
+//
+// The stream is the prefixed key of entry.StreamName, and NOMKSTREAM keeps XADD
+// from creating it: while the stream is missing the XADD fails and the outbox
+// retries the row.
 func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry, values map[string]any) *goredis.XAddArgs {
 	values["outbox_entry_id"] = entry.ID.String()
 	return &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		Values: values,
+		Stream:     pkgredis.Key(entry.StreamName),
+		NoMkStream: true,
+		Values:     values,
 	}
 }
 

@@ -198,7 +198,8 @@ test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
-	    run-controller) db=continuo_run_controller;; \
+	    run-controller) db=continuo_run_controller; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo";; \
 	    catalog) db=; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \

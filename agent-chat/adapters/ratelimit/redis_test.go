@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
 
 func newTestRedis(t *testing.T) *goredis.Client {
@@ -78,4 +80,17 @@ func TestRedis_AllowReturnsErrorWhenBackendDown(t *testing.T) {
 	rl := NewRedis(client, 2)
 	_, err := rl.Allow(ctx, "alice")
 	assert.Error(t, err, "a dead backend surfaces an error so the caller can fail open")
+}
+
+// TestRateLimitKeyIsPrefixed pins the Redis key of a user's window to the
+// continuo: prefix, so the key falls under the service's ACL key pattern.
+func TestRateLimitKeyIsPrefixed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rl := NewRedis(goredis.NewClient(&goredis.Options{Addr: mr.Addr()}), 2)
+
+	ok, err := rl.Allow(context.Background(), "alice")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	assert.Equal(t, []string{pkgredis.Key("agent-chat:ratelimit:alice")}, mr.Keys())
 }

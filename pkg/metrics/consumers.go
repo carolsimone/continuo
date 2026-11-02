@@ -94,7 +94,7 @@ func (m *consumerMetrics) Describe(ch chan<- *prometheus.Desc) {
 	ch <- m.pending
 }
 
-// Collect reads XINFO GROUPS once per watched stream. A stream Redis cannot
+// Collect reads XINFO GROUPS once per watched stream, at its prefixed key. A stream Redis cannot
 // answer for is skipped; Redis reports lag as unknown (negative) after some
 // trims, and then the lag gauge is omitted.
 func (m *consumerMetrics) Collect(ch chan<- prometheus.Metric) {
@@ -108,7 +108,7 @@ func (m *consumerMetrics) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), scrapeTimeout)
 	defer cancel()
 	for stream, groups := range watched {
-		infos, err := client.XInfoGroups(ctx, stream).Result()
+		infos, err := client.XInfoGroups(ctx, pkgredis.Key(stream)).Result()
 		if err != nil {
 			continue
 		}

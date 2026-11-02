@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -26,9 +27,9 @@ func TestWatchStreams_ReportsLengthAndMemory(t *testing.T) {
 	ctx := context.Background()
 	stream := "test.metrics:" + uuid.NewString()
 	missing := "test.metrics.missing:" + uuid.NewString()
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, pkgredis.Key(stream)) })
 	for i := 0; i < 2; i++ {
-		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err(); err != nil {
+		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(stream), Values: map[string]any{"k": "v"}}).Err(); err != nil {
 			t.Fatal(err)
 		}
 	}

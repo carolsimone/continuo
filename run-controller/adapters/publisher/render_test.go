@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/config"
 	"github.com/google/uuid"
@@ -86,7 +87,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	want["outbox_entry_id"] = entry.ID.String()
 
 	require.NoError(t, p.Publish(context.Background(), entry))
-	res, err := rdb.XRange(context.Background(), streams.CompileRequestedV1, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.CompileRequestedV1), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	got := map[string]string{}

@@ -707,12 +707,8 @@ func (c *StreamConsumer) settleContext(ctx context.Context) (context.Context, co
 // never creates the stream: while it is missing the write fails, and
 // deadLetterAndAck keeps the message pending and retries.
 func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]any) error {
-	key := Key(streams.ConsumerDeadLetterV1)
-	err := c.client.XAdd(ctx, &goredis.XAddArgs{Stream: key, NoMkStream: true, Values: values}).Err()
-	if errors.Is(err, goredis.Nil) {
-		return fmt.Errorf("dead-letter stream %q does not exist; the streams-init step creates it", key)
-	}
-	return err
+	err := c.client.XAdd(ctx, &goredis.XAddArgs{Stream: Key(streams.ConsumerDeadLetterV1), NoMkStream: true, Values: values}).Err()
+	return MissingStreamError(Key(streams.ConsumerDeadLetterV1), err)
 }
 
 // deadLetterAndAck writes msg to consumer.dead_letter:v1 and acknowledges it

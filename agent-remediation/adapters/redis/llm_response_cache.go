@@ -10,6 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
 
 // LLMResponseCache is a Redis-backed store of LLM propose results, keyed by the
@@ -35,7 +36,7 @@ func NewLLMResponseCache(client *goredis.Client, ttl time.Duration) *LLMResponse
 // no error); a decode or transport error is returned for the caller to treat as
 // best-effort.
 func (c *LLMResponseCache) Get(ctx context.Context, key string) (ports.ProposeResult, bool, error) {
-	data, err := c.client.Get(ctx, key).Bytes()
+	data, err := c.client.Get(ctx, pkgredis.Key(key)).Bytes()
 	if errors.Is(err, goredis.Nil) {
 		return ports.ProposeResult{}, false, nil
 	}
@@ -55,7 +56,7 @@ func (c *LLMResponseCache) Put(ctx context.Context, key string, result ports.Pro
 	if err != nil {
 		return fmt.Errorf("encode result: %w", err)
 	}
-	if err := c.client.Set(ctx, key, data, c.ttl).Err(); err != nil {
+	if err := c.client.Set(ctx, pkgredis.Key(key), data, c.ttl).Err(); err != nil {
 		return fmt.Errorf("redis set: %w", err)
 	}
 	return nil

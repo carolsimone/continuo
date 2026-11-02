@@ -20,11 +20,12 @@ var _ ports.StreamInspector = (*StreamInspector)(nil)
 // NewStreamInspector returns an inspector over rdb.
 func NewStreamInspector(rdb *goredis.Client) *StreamInspector { return &StreamInspector{rdb: rdb} }
 
-// Snapshot returns the state of the contract groups of stream. A group the
+// Snapshot returns the state of the contract groups of stream, read from its
+// prefixed key. A group the
 // contract lists but Redis does not hold is Missing; a group Redis holds but the
 // contract does not list is returned in unknown and excluded from the snapshot.
 func (s *StreamInspector) Snapshot(ctx context.Context, stream string, contractGroups []string) (trim.Snapshot, []string, bool, error) {
-	infos, err := s.rdb.XInfoGroups(ctx, stream).Result()
+	infos, err := s.rdb.XInfoGroups(ctx, pkgredis.Key(stream)).Result()
 	if err != nil {
 		if strings.Contains(err.Error(), "no such key") {
 			return trim.Snapshot{}, nil, false, nil
@@ -50,7 +51,7 @@ func (s *StreamInspector) Snapshot(ctx context.Context, stream string, contractG
 		}
 		g := trim.Group{Name: info.Name, LastDelivered: last}
 		if info.Pending > 0 {
-			pending, err := s.rdb.XPending(ctx, stream, info.Name).Result()
+			pending, err := s.rdb.XPending(ctx, pkgredis.Key(stream), info.Name).Result()
 			if err != nil {
 				return trim.Snapshot{}, nil, false, fmt.Errorf("xpending %s %s: %w", stream, info.Name, err)
 			}
@@ -128,7 +129,7 @@ func (s *StreamInspector) undeliveredEntries(ctx context.Context, stream, group 
 	var out []goredis.XMessage
 	cursor := "(" + lastDelivered.String()
 	for len(out) < limit {
-		page, err := s.rdb.XRangeN(ctx, stream, cursor, end, int64(limit)).Result()
+		page, err := s.rdb.XRangeN(ctx, pkgredis.Key(stream), cursor, end, int64(limit)).Result()
 		if err != nil {
 			return nil, fmt.Errorf("xrange %s: %w", stream, err)
 		}
@@ -155,7 +156,7 @@ func (s *StreamInspector) pendingEntries(ctx context.Context, stream, group, end
 	start := "-"
 	for len(out) < limit {
 		page, err := s.rdb.XPendingExt(ctx, &goredis.XPendingExtArgs{
-			Stream: stream, Group: group, Start: start, End: end, Count: int64(limit),
+			Stream: pkgredis.Key(stream), Group: group, Start: start, End: end, Count: int64(limit),
 		}).Result()
 		if err != nil {
 			return nil, fmt.Errorf("xpending %s %s: %w", stream, group, err)
@@ -166,7 +167,7 @@ func (s *StreamInspector) pendingEntries(ctx context.Context, stream, group, end
 		pipe := s.rdb.Pipeline()
 		cmds := make([]*goredis.XMessageSliceCmd, len(page))
 		for i, p := range page {
-			cmds[i] = pipe.XRange(ctx, stream, p.ID, p.ID)
+			cmds[i] = pipe.XRange(ctx, pkgredis.Key(stream), p.ID, p.ID)
 		}
 		if _, err := pipe.Exec(ctx); err != nil {
 			return nil, fmt.Errorf("xrange pending %s: %w", stream, err)
@@ -186,21 +187,23 @@ func (s *StreamInspector) pendingEntries(ctx context.Context, stream, group, end
 	return out, nil
 }
 
-// TrimBefore removes the entries of stream with an id below minID. It trims
+// TrimBefore removes the entries of the prefixed key of stream with an id below minID. It trims
 // exactly: an approximate trim (MINID ~) only drops whole macro-nodes and so
 // leaves up to a node of expired entries behind, which a small stream would
 // never shed.
 func (s *StreamInspector) TrimBefore(ctx context.Context, stream string, minID trim.StreamID) (int64, error) {
-	n, err := s.rdb.XTrimMinID(ctx, stream, minID.String()).Result()
+	n, err := s.rdb.XTrimMinID(ctx, pkgredis.Key(stream), minID.String()).Result()
 	if err != nil {
 		return 0, fmt.Errorf("xtrim %s: %w", stream, err)
 	}
 	return n, nil
 }
 
-// DeleteIfExists deletes stream and reports whether it existed.
+// DeleteIfExists deletes the unprefixed key of stream and reports whether it
+// existed. Only the streams removed from the contract are deleted, and those
+// were never written under the prefix.
 func (s *StreamInspector) DeleteIfExists(ctx context.Context, stream string) (bool, error) {
-	n, err := s.rdb.Del(ctx, stream).Result()
+	n, err := s.rdb.Del(ctx, pkgredis.LegacyKey(stream)).Result()
 	if err != nil {
 		return false, fmt.Errorf("del %s: %w", stream, err)
 	}

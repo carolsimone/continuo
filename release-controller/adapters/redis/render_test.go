@@ -8,6 +8,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/google/uuid"
 )
@@ -69,8 +70,11 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != "some.stream:v1" {
+	if args.Stream != pkgredis.Key("some.stream:v1") {
 		t.Fatalf("stream = %q", args.Stream)
+	}
+	if !args.NoMkStream {
+		t.Fatal("the publisher must not create a stream: NOMKSTREAM is unset")
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
 		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)

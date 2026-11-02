@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	goredis "github.com/redis/go-redis/v9"
@@ -201,7 +202,7 @@ func findPromotionEntry(t *testing.T, ctx context.Context, tap *streamTap, relea
 func awaitGroupSettled(t *testing.T, ctx context.Context, clients *testClients, stream, group, id string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		groups, err := clients.redisClient.XInfoGroups(ctx, stream).Result()
+		groups, err := clients.redisClient.XInfoGroups(ctx, pkgredis.Key(stream)).Result()
 		if err != nil {
 			return false
 		}
@@ -215,7 +216,7 @@ func awaitGroupSettled(t *testing.T, ctx context.Context, clients *testClients, 
 			return false
 		}
 		pending, err := clients.redisClient.XPendingExt(ctx, &goredis.XPendingExtArgs{
-			Stream: stream, Group: group, Start: id, End: id, Count: 1,
+			Stream: pkgredis.Key(stream), Group: group, Start: id, End: id, Count: 1,
 		}).Result()
 		return err == nil && len(pending) == 0
 	}, deadLetterAwait, time.Second, "group %s never settled on %s entry %s", group, stream, id)
