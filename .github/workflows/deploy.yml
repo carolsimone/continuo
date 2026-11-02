@@ -10,7 +10,7 @@ on:
         description: >-
           Publish :<git-sha> images for the current commit even when no
           release paths changed (used to backfill images before tagging a
-          release). Skips the Hetzner deploy step.
+          release). Skips the dev deploy.
         type: boolean
         default: false
 
@@ -410,7 +410,7 @@ jobs:
 
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
-    # never deploys, so it never touches the Hetzner box.
+    # never deploys, so it never starts a deploy of dev.
     # !cancelled() is required: build-base is skipped on most pushes, and the
     # implicit success() is chain-wide — without the override a skipped
     # build-base silently skips this job too (no push deployed between the
@@ -424,52 +424,63 @@ jobs:
     needs:
       - detect-changes
       - build-publish
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    # The job holds no credential for dev: it starts the deploy workflow of
+    # carolsimone/continuo-infra, which owns dev's cluster access and values,
+    # and waits for that run to finish. Its own token needs no scope.
+    permissions: {}
+    timeout-minutes: 50
     steps:
-      - name: Deploy to Hetzner
-        # Pinned to a commit SHA, not a tag. This step receives HETZNER_SSH_KEY,
-        # so whoever controls the v1 tag could otherwise move it and inherit
-        # production SSH access. Bump deliberately after reviewing the diff.
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+      - name: Mint a token for continuo-infra
+        id: app-token
+        # Pinned to a commit SHA, not a tag: the token it mints can start
+        # continuo-infra's deploy. Bump deliberately after reviewing the diff.
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: root
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          command_timeout: 25m
-          script: |
-            set -euo pipefail
+          app-id: ${{ secrets.CONTINUO_INFRA_APP_ID }}
+          private-key: ${{ secrets.CONTINUO_INFRA_APP_PRIVATE_KEY }}
+          owner: carolsimone
+          repositories: continuo-infra
 
-            if [ ! -d /root/continuo/.git ]; then
-              echo "/root/continuo is missing; clone the repo on the server before enabling this workflow." >&2
-              exit 1
+      - name: Start the continuo-infra deploy
+        id: start
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Taken before the dispatch so the next step can tell this run from
+          # earlier ones.
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
+          gh workflow run deploy.yml -R carolsimone/continuo-infra -f commit="${GITHUB_SHA}"
+
+      - name: Find the run it started
+        id: run
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          STARTED_AT: ${{ steps.start.outputs.started_at }}
+        run: |
+          set -euo pipefail
+          # gh workflow run does not print the run it creates: take the newest
+          # workflow_dispatch run created at or after the dispatch. The
+          # timestamps are UTC in the same format, so string comparison orders
+          # them.
+          for _ in $(seq 1 12); do
+            id="$(gh run list -R carolsimone/continuo-infra --workflow deploy.yml \
+              --event workflow_dispatch --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\")] | sort_by(.createdAt) | last | .databaseId // empty")"
+            if [ -n "${id}" ]; then
+              echo "Deploy run: https://github.com/carolsimone/continuo-infra/actions/runs/${id}"
+              echo "id=${id}" >> "${GITHUB_OUTPUT}"
+              exit 0
             fi
+            sleep 5
+          done
+          echo "::error::No continuo-infra deploy run appeared within 60 s of the dispatch at ${STARTED_AT}"
+          exit 1
 
-            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-
-            cd /root/continuo
-            # Force the checkout to exactly match origin/main. A plain
-            # `git pull --ff-only` aborts when an untracked file on the server
-            # collides with a file a new commit adds (e.g. local agent output
-            # left in /root/continuo), wedging every deploy. Fetch + hard reset
-            # + clean make the deploy immune to accumulated untracked cruft.
-            git fetch origin main
-            git reset --hard origin/main
-            git clean -fd
-
-            kubectl create namespace continuo --dry-run=client -o yaml | kubectl apply -f -
-
-            # Infra (Postgres/Redis/Neo4j) is managed manually from the
-            # private continuo-infra repo's runbook; this workflow deploys
-            # only the application chart against it (BYO mode).
-            # Values layer in two files: the non-secret install overlay
-            # (tracked as continuo-app/values.install.yaml in the private
-            # continuo-infra repo and synced to the host), then the
-            # credentials-only file on top. Helm deep-merges them.
-            helm upgrade --install continuo-app deploy/continuo \
-              -f /root/continuo-values.install.yaml \
-              -f /root/continuo-values.secret.yaml \
-              --set global.imageTag=${{ github.sha }} \
-              -n continuo \
-              --wait \
-              --timeout 10m
-
+      - name: Wait for the continuo-infra deploy
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+        run: gh run watch "${RUN_ID}" -R carolsimone/continuo-infra --exit-status
