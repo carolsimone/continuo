@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -136,4 +138,28 @@ func TestLoad_RejectsBaseURLEndingInV1(t *testing.T) {
 	v := &pkgconfig.Validator{}
 	Load(v)
 	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+}
+
+func TestLLMKeyFromFile(t *testing.T) {
+	setBaseEnv(t)
+	keyFile := filepath.Join(t.TempDir(), "LLM_API_KEY")
+	require.NoError(t, os.WriteFile(keyFile, []byte("key-from-file\n"), 0o600))
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("LLM_API_KEY_FILE", keyFile)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "key-from-file", cfg.LLMAPIKey)
+}
+
+func TestLLMKeyGivenTwiceIsRefused(t *testing.T) {
+	setBaseEnv(t)
+	keyFile := filepath.Join(t.TempDir(), "LLM_API_KEY")
+	require.NoError(t, os.WriteFile(keyFile, []byte("key-from-file"), 0o600))
+	t.Setenv("LLM_API_KEY_FILE", keyFile)
+
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "LLM_API_KEY: set LLM_API_KEY or LLM_API_KEY_FILE, not both")
 }

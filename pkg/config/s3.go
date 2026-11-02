@@ -11,13 +11,14 @@ type S3Config struct {
 
 // LoadS3 reads S3 connection config from standard env vars.
 // Tier 1 (required): S3_ENDPOINT_URL, S3_BUCKET, AWS_DEFAULT_REGION.
-// Tier 2 (optional): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (empty = use IAM role).
+// Tier 2 (optional): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (empty = use IAM role),
+// each given as the variable or as a file named by <VAR>_FILE.
 func LoadS3(v *Validator) S3Config {
 	return S3Config{
 		EndpointURL:     v.Require("S3_ENDPOINT_URL"),
 		Bucket:          v.Require("S3_BUCKET"),
 		Region:          v.Require("AWS_DEFAULT_REGION"),
-		AccessKeyID:     env("AWS_ACCESS_KEY_ID", ""),
-		SecretAccessKey: env("AWS_SECRET_ACCESS_KEY", ""),
+		AccessKeyID:     v.OptionalSecretValue("AWS_ACCESS_KEY_ID"),
+		SecretAccessKey: v.OptionalSecretValue("AWS_SECRET_ACCESS_KEY"),
 	}
 }
