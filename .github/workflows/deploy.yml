@@ -461,13 +461,14 @@ jobs:
         run: |
           set -euo pipefail
           # gh workflow run does not print the run it creates: take the newest
-          # workflow_dispatch run created at or after the dispatch. The
-          # timestamps are UTC in the same format, so string comparison orders
-          # them.
+          # workflow_dispatch run created at or after the dispatch whose title
+          # names this commit (continuo-infra's deploy sets run-name to
+          # "deploy <commit>"). The timestamps are UTC in the same format, so
+          # string comparison orders them.
           for _ in $(seq 1 12); do
             id="$(gh run list -R carolsimone/continuo-infra --workflow deploy.yml \
-              --event workflow_dispatch --json databaseId,createdAt \
-              --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\")] | sort_by(.createdAt) | last | .databaseId // empty")"
+              --event workflow_dispatch --limit 50 --json databaseId,createdAt,displayTitle \
+              --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\" and .displayTitle == \"deploy ${GITHUB_SHA}\")] | sort_by(.createdAt) | last | .databaseId // empty")"
             if [ -n "${id}" ]; then
               echo "Deploy run: https://github.com/carolsimone/continuo-infra/actions/runs/${id}"
               echo "id=${id}" >> "${GITHUB_OUTPUT}"
