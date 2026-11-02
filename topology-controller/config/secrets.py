@@ -44,7 +44,8 @@ class EnvOrFileCredentialProvider(CredentialProvider):
 
     redis-py asks its provider for credentials each time it opens a connection,
     so a password file that is rotated is picked up by the next connection
-    without a restart.
+    without a restart. The username is not a credential: it is read from its
+    environment variable only, with no <NAME>_FILE form.
     """
 
     def __init__(self, username_var: str = "REDIS_USERNAME", password_var: str = "REDIS_PASSWORD") -> None:
@@ -52,7 +53,7 @@ class EnvOrFileCredentialProvider(CredentialProvider):
         self._password_var = password_var
 
     def get_credentials(self) -> tuple[str] | tuple[str, str]:
-        username = read_secret(self._username_var)
+        username = os.environ.get(self._username_var, "")
         password = read_secret(self._password_var)
         if username:
             return (username, password)

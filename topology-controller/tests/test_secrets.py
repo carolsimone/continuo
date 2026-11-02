@@ -99,3 +99,12 @@ def test_read_secret_non_utf8_file_names_the_variable(monkeypatch, tmp_path):
     assert str(exc_info.value).startswith("REDIS_PASSWORD_FILE: ")
     assert str(path) in str(exc_info.value)
 
+
+def test_credential_provider_ignores_a_username_file(monkeypatch, tmp_path):
+    path = tmp_path / "REDIS_USERNAME"
+    path.write_text("svc\n")
+    monkeypatch.delenv("REDIS_USERNAME", raising=False)
+    monkeypatch.setenv("REDIS_USERNAME_FILE", str(path))
+    monkeypatch.delenv("REDIS_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD", "pw")
+    assert EnvOrFileCredentialProvider().get_credentials() == ("pw",)
