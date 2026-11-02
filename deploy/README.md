@@ -290,6 +290,18 @@ gRPC-only entry by a TCP connect to its `grpcPort`, which works in the Go
 service images, and an entry with neither port by a Python process check, so
 its image must include Python.
 
+Every enabled entry runs under its own ServiceAccount, named after the service,
+which carries the entry's `serviceAccount.annotations` (a cloud role, or the
+identity a Vault role is bound to) and the top-level `imagePullSecrets` (or the
+entry's own `serviceAccount.imagePullSecrets`). Only an entry with
+`rbac.enabled` gets a Role and RoleBinding. egress-proxy, the bundled
+datastores, Dex, the migration Job and the bundled MinIO bucket-init Job run as
+the namespace's `default` ServiceAccount. An entry also takes `podAnnotations`,
+`credentialDelivery` and volumes of any type; the chart's
+[values reference](continuo/README.md#4-values-reference) lists them with
+`credentials.delivery` and `credentials.files`, which hand the credentials to
+the pods as environment variables or as files.
+
 ### Validating service controls
 
 The standard `bash scripts/install-test/lint.sh` gate includes render regressions
@@ -338,7 +350,8 @@ See what it holds with `kubectl -n <namespace> get configmap
 is `continuo-egress-proxy`). The agents' S3 client reaches the endpoint through
 the proxy, and signs its requests with the static keys the chart gives it
 (`s3.accessKeyId` and `s3.secretKey`, or `s3.existingSecret`; an external bucket
-requires them), so it makes no call to STS or the instance metadata service.
+requires them), as variables or as files (`credentials.delivery`,
+`credentials.files`), so it makes no call to STS or the instance metadata service.
 
 **A model you host.** Point the chart at its root URL:
 

@@ -718,6 +718,8 @@ defaultResources:
 #                                  mounted through volumeMounts. A configMap
 #                                  volume with an empty name mounts the chart's
 #                                  ConfigMap for the services that have one.
+# These keys are install-time only: they shape the Deployments and
+# ServiceAccounts, and no service reads them.
 services:
   - name: run-controller
     enabled: true

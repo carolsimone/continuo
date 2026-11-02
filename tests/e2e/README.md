@@ -181,6 +181,7 @@ The E2E test uses a hybrid setup:
 **In kind cluster (Kubernetes):**
 - execution-controller (Deployment)
 - dbt service jobs (run as k8s Jobs, one per table)
+- Secret `continuo-job-s3` (`tests/e2e/k8s/job-s3-secret.yaml`, the MinIO keys), which `scripts/setup.sh`, `deploy-execution-controller.sh` and `provision-k8s-test-env.sh` apply: execution-controller's Job pods read their S3 keys from it by reference (`JOB_S3_SECRET_NAME`)
 
 The controller in kind connects to docker-compose services via docker bridge network (172.17.0.1).
 
