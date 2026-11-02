@@ -90,6 +90,13 @@ To run no exports, set catalog.backup.enabled=false.
 
 {{- if .Release.IsUpgrade }}
 
+Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.
+Image pull secrets, RoleBindings and cloud roles bound to the default ServiceAccount no longer apply:
+set imagePullSecrets (and services[].serviceAccount.annotations for cloud roles) in your values.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 catalog keeps no Postgres: if your values override services, name catalog's
 entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
 With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init

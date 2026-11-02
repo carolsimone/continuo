@@ -16,11 +16,15 @@ shipped in those.
 
 - **Credentials as files.** `credentials.delivery: file` mounts each credential read-only under `/var/run/secrets/continuo` (one file per variable, from the same Secrets) and sets `<VAR>_FILE` instead of putting the value in the environment. The default, `env`, works as before. A service's `credentialDelivery` overrides it for that service.
 - **Credentials your company provides as files** (the Vault Agent injector, a Secrets Store CSI volume): list them in `credentials.files`, per service, with their paths. The chart attaches no Secret for them. To put the files there, a `services` entry now takes `podAnnotations`, `serviceAccount.annotations`, and `volumes` of any type (not only ConfigMaps). If execution-controller's S3 keys are such files, set `execution.jobS3Secret.name`: Job pods can only read a Kubernetes Secret.
-- **Every service has its own ServiceAccount**, named after it. Services other than execution-controller used to run as the namespace's `default` ServiceAccount; if you gave that account permissions or a cloud role, give them to the service's own account (`serviceAccount.annotations`).
+- **`imagePullSecrets`** (top level, a list of `{name: ...}`): the chart puts these pull secrets on every ServiceAccount it creates. A service's `serviceAccount.imagePullSecrets` replaces the list for that service. Empty by default.
 - ui's and topology-controller's `REDIS_URL` no longer carries the Redis password; they read it from `REDIS_PASSWORD`. No values change is needed to upgrade.
 
 ### Changed
 
+- **Every service now runs under its own ServiceAccount**, named after the service. Before, all services but execution-controller ran as the namespace's `default` ServiceAccount. Upgrade note:
+  - Every pod restarts on upgrade.
+  - Anything you attached to the `default` ServiceAccount no longer reaches the services: image pull secrets, RoleBindings, and cloud roles (IRSA, GKE workload identity). Set `imagePullSecrets` for pull secrets, `services[].serviceAccount.annotations` for cloud roles, and bind roles to the new accounts.
+  - If a ServiceAccount named after a service already exists and the chart did not create it, `helm upgrade` fails because Helm cannot adopt it. Delete it, or label and annotate it for Helm, before you upgrade.
 - **Finished Jobs are now deleted after 30 minutes instead of 24 hours.** This covers task, validation, seed-build and compile Jobs and their pods. Set `execution.jobTTLMinutes` (1 to 10080) to change it; it reaches execution-controller as `JOB_TTL_SECONDS`. If a Job is deleted before its log was uploaded (for example, execution-controller was down for longer than this time), its pod log is lost. No values change is needed to upgrade.
 
 ## [0.18.0] - 2026-11-01

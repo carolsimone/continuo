@@ -3,6 +3,13 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Image pull secrets for a private registry, as a list of {name: <Secret>}.
+# Install-time only: the chart puts them on every ServiceAccount it creates
+# (one per service), so each service's pods pull with them. A service's
+# serviceAccount.imagePullSecrets replaces this list for that service. Empty
+# (the default) renders none.
+imagePullSecrets: []
+
 global:
   # Continuo-owned images resolve to:
   #   <imageRegistry>/<imageRepositoryPrefix>/continuo-<name>:<imageTag>
@@ -110,10 +117,9 @@ redis:
 externalRedis:
   host: ""
   port: 6379
-  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui
-  # and topology-controller. A password containing URL-reserved
-  # characters (@, :, /) breaks that URL; use a URL-safe password, or set
-  # existingSecret with a URL-safe value instead.
+  # ui and topology-controller get REDIS_URL=redis://host:port, which carries
+  # no password; every service reads the password on its own, as
+  # REDIS_PASSWORD (or REDIS_PASSWORD_FILE), so any character is fine in it.
   password: ""
   existingSecret: ""
   existingSecretPasswordKey: password
@@ -301,7 +307,11 @@ credentials:
   # Secret for them and sets <VAR>_FILE to the given path, whatever the
   # delivery. Add the pod annotations, ServiceAccount annotations and volumes
   # that put the file there to the service's entry under `services`. A key that
-  # is not one of the credentials above fails the install. Example:
+  # is not one of the credentials above fails the install. With the Vault
+  # Agent injector, a bundled datastore's Redis or Postgres password given as
+  # a file also needs the pod annotation
+  # vault.hashicorp.com/agent-init-first: "true", so the file exists before the
+  # wait-for-redis and wait-for-migrations init containers read it. Example:
   #   files:
   #     agent-chat:
   #       LLM_API_KEY: /vault/secrets/llm
@@ -701,6 +711,8 @@ defaultResources:
 #   serviceAccount:
 #     annotations: {}              annotations on its ServiceAccount (e.g.
 #                                  eks.amazonaws.com/role-arn for IRSA)
+#     imagePullSecrets: []         when set, replaces the top-level
+#                                  imagePullSecrets for this service
 #   credentialDelivery: ""         env or file; empty uses credentials.delivery
 #   volumes: []                    any Kubernetes volume (csi, secret, ...),
 #                                  mounted through volumeMounts. A configMap

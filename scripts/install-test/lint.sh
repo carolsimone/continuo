@@ -181,6 +181,42 @@ for svc in ui topology-controller; do
   deployment_env "$svc" "${tmp}/defaults.yaml" | grep -qx 'REDIS_URL=redis://continuo-redis:6379' \
     || { echo "FAIL: ${svc}'s REDIS_URL must be redis://continuo-redis:6379"; deployment_env "$svc" "${tmp}/defaults.yaml"; exit 1; }
 done
+# Each service's pods pull with the image pull secrets of its own
+# ServiceAccount: none by default, the top-level imagePullSecrets on every
+# ServiceAccount, and a service's serviceAccount.imagePullSecrets in place of
+# them for that service.
+echo "--- imagePullSecrets on every ServiceAccount, replaced per service"
+# pull_secrets RENDER: one `<ServiceAccount> <secret,...>` line per
+# ServiceAccount, `-` for none.
+pull_secrets() {
+  python3 - "$1" <<'PY'
+import sys, yaml
+for doc in yaml.safe_load_all(open(sys.argv[1])):
+    if doc and doc.get("kind") == "ServiceAccount":
+        print(doc["metadata"]["name"], ",".join(s["name"] for s in doc.get("imagePullSecrets") or []) or "-")
+PY
+}
+[ -z "$(pull_secrets "${tmp}/defaults.yaml" | grep -v ' -$')" ] \
+  || { echo "FAIL: the defaults render puts imagePullSecrets on a ServiceAccount:"; pull_secrets "${tmp}/defaults.yaml"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json 'imagePullSecrets=[{"name":"registry-cred"}]' \
+  > "${tmp}/pull-global.yaml"
+pull_global="$(pull_secrets "${tmp}/pull-global.yaml")"
+[ "$(grep -c ' registry-cred$' <<<"$pull_global")" = 10 ] && [ "$(wc -l <<<"$pull_global" | tr -d ' ')" = 10 ] \
+  || { echo "FAIL: imagePullSecrets must reach all ten ServiceAccounts:"; echo "$pull_global"; exit 1; }
+# `services` is a list Helm replaces whole, so the override goes into a copy of
+# the company fixture's list, whose first entry is agent-chat.
+python3 - "${tmp}/company-pull.yaml" <<'PY'
+import sys, yaml
+values = yaml.safe_load(open("scripts/install-test/values-company-files.yaml"))
+values["imagePullSecrets"] = [{"name": "registry-cred"}]
+values["services"][0]["serviceAccount"]["imagePullSecrets"] = [{"name": "agent-chat-cred"}]
+yaml.safe_dump(values, open(sys.argv[1], "w"))
+PY
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/company-pull.yaml" > "${tmp}/pull-override.yaml"
+pull_override="$(pull_secrets "${tmp}/pull-override.yaml")"
+grep -qx 'agent-chat agent-chat-cred' <<<"$pull_override" \
+  && grep -qx 'execution-controller registry-cred' <<<"$pull_override" \
+  || { echo "FAIL: agent-chat's serviceAccount.imagePullSecrets must replace the top-level list for it alone:"; echo "$pull_override"; exit 1; }
 
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
@@ -244,7 +280,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, catalog backup and catalog Postgres notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, catalog backup, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -301,6 +337,16 @@ catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWOR
   || { echo "FAIL: the upgrade notes do not say exactly once to delete catalog's Postgres keys from a services override"; exit 1; }
 if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
+fi
+# An upgrading operator is told once that the services left the namespace's
+# default ServiceAccount, and what stops applying; an installing one is not.
+service_account_note='Every service now runs under its own ServiceAccount, named after it'
+[ "$(grep -cF "$service_account_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that every service has its own ServiceAccount"; exit 1; }
+grep -qF 'set imagePullSecrets' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the ServiceAccount upgrade note does not name imagePullSecrets"; exit 1; }
+if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the ServiceAccount upgrade note"; exit 1
 fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to

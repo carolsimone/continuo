@@ -11,6 +11,15 @@
     "defaultResources", "services"
   ],
   "definitions": {
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {"name": {"type": "string", "minLength": 1}}
+      }
+    },
     "resourceList": {
       "description": "Kubernetes ResourceList: arbitrary resource names (cpu, memory, ephemeral-storage, hugepages-*, extended resources like nvidia.com/gpu) mapped to quantity strings. Passed straight through toYaml in deployment.yaml, so this must not restrict the key set to a fixed cpu/memory pair.",
       "type": "object",
@@ -294,6 +303,11 @@
         "existingSecretTokenKey": {"type": "string"},
         "existingSecretAppPrivateKeyKey": {"type": "string"}
       }
+    },
+
+    "imagePullSecrets": {
+      "$ref": "#/definitions/imagePullSecrets",
+      "description": "Image pull secrets put on every ServiceAccount the chart creates. Install-time only."
     },
 
     "credentials": {
@@ -595,6 +609,10 @@
                 "type": "object",
                 "additionalProperties": {"type": "string"},
                 "description": "Annotations on the ServiceAccount named after the service, e.g. eks.amazonaws.com/role-arn."
+              },
+              "imagePullSecrets": {
+                "$ref": "#/definitions/imagePullSecrets",
+                "description": "When set, replaces the top-level imagePullSecrets on this service's ServiceAccount."
               }
             }
           },
