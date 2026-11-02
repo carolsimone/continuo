@@ -51,6 +51,6 @@ func NewPrClosedBinding(
 				"message_id", msg.ID, "error", err)
 			return err
 		}
-		return handler.Handle(ctx, tenantID, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values), evt)
+		return handler.Handle(ctx, tenantID, pkgredis.DedupMessageID(ctx, msg), messageprocessing.ExtractOutboxEntryID(msg.Values), evt)
 	}
 }

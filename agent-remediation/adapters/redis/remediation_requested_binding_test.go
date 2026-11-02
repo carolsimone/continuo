@@ -67,7 +67,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 		Values: map[string]interface{}{},
 	}
 
-	trigger, err := triggerFromRequested(msg, raw)
+	trigger, err := triggerFromRequested(msg.ID, msg, raw)
 	require.NoError(t, err)
 
 	require.Equal(t, "validation", trigger.Source)
@@ -103,7 +103,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 
 func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
-	_, err := triggerFromRequested(msg, []byte("not-json"))
+	_, err := triggerFromRequested(msg.ID, msg, []byte("not-json"))
 	require.Error(t, err)
 }
 
@@ -132,7 +132,7 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 	require.NoError(t, err)
 
 	msg := goredis.XMessage{ID: "2-0", Values: map[string]interface{}{}}
-	trigger, err := triggerFromRequested(msg, raw)
+	trigger, err := triggerFromRequested(msg.ID, msg, raw)
 	require.NoError(t, err)
 
 	require.Equal(t, "seed_build", trigger.Source)

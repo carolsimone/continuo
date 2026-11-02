@@ -98,7 +98,7 @@ func bindStreamHandler[E any](
 
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, b.streamName, b.payload(msg),
+			pkgredis.DedupMessageID(ctx, msg), b.streamName, b.payload(msg),
 			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {

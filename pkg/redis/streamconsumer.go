@@ -451,7 +451,7 @@ func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (
 		defer c.handlerMu.Unlock()
 		c.lastActivity.Store(time.Now().UnixNano())
 	}
-	hctx, cancel := context.WithTimeout(ctx, c.handlerTimeout)
+	hctx, cancel := context.WithTimeout(withSourceKey(ctx, c.dedupSuffix()), c.handlerTimeout)
 	defer cancel()
 	defer func() {
 		if r := recover(); r != nil {

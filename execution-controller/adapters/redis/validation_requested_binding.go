@@ -95,7 +95,7 @@ func NewValidationRequestedBinding(
 		dedupKey := validationDedupKey(evt.ReleaseID)
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, streams.ValidationRequestedV1, payload,
+			pkgredis.DedupMessageID(ctx, msg), streams.ValidationRequestedV1, payload,
 			&dedupKey,
 		)
 		if err != nil {

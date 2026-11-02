@@ -387,3 +387,49 @@ func TestSafeInvoke_AdvancesTheHeartbeatWhileWaitingForTheHandlerLock(t *testing
 	c.handlerMu.Unlock()
 	<-done
 }
+
+func TestDedupMessageIDKeepsTheEntryIDWithoutAConsumer(t *testing.T) {
+	assert.Equal(t, "5-0", DedupMessageID(context.Background(), goredis.XMessage{ID: "5-0"}))
+}
+
+// Two keys number their entries independently, so a legacy entry and a prefixed
+// entry can carry the same ID. The handler must see two identities: the legacy
+// entry's own ID, which an earlier release recorded, and the prefixed entry's ID
+// qualified by its key.
+func TestConsumerGivesEntriesOfTwoKeysWithOneIDTwoDedupIdentities(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := keysTestStream(t, rc, "dedup-id")
+	group := "test-group"
+	const sharedID = "1700000000000-0"
+	for _, key := range []string{Key(stream), LegacyKey(stream)} {
+		require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, ID: sharedID, Values: map[string]any{"from": key}}).Err())
+	}
+
+	var mu sync.Mutex
+	identities := map[string]string{}
+	c := NewStreamConsumer(rc, stream, group, func(ctx context.Context, m goredis.XMessage) error {
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, sharedID, m.ID, "the entry keeps its own ID, which acknowledgement uses")
+		identities[m.Values["from"].(string)] = DedupMessageID(ctx, m)
+		return nil
+	}, discardLog())
+	c.SetService("pkg-redis-test")
+	c.startup = shortStartup
+	done := startConsumer(ctx, c)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(identities) == 2
+	}, 5*time.Second, 20*time.Millisecond)
+	mu.Lock()
+	assert.Equal(t, sharedID, identities[LegacyKey(stream)], "a legacy entry keeps the identity earlier releases recorded")
+	assert.Equal(t, sharedID+"@"+Key(stream), identities[Key(stream)])
+	mu.Unlock()
+	cancel()
+	assert.NoError(t, <-done)
+}
