@@ -117,12 +117,9 @@ envsubst < validation-warehouse-secret.yaml | kubectl apply -f - || {
 }
 
 # The S3 keys of every Job pod come from a Secret, by reference: the Job
-# objects hold no key as a value. The keys are the MinIO root keys compose uses.
+# objects hold no key as a value.
 log_info "Creating Job S3 Secret..."
-kubectl create secret generic continuo-job-s3 -n default \
-    --from-literal=AWS_ACCESS_KEY_ID=minioadmin \
-    --from-literal=AWS_SECRET_ACCESS_KEY=minioadmin \
-    --dry-run=client -o yaml | kubectl apply -f - || {
+kubectl apply -f job-s3-secret.yaml || {
     log_error "Failed to apply Job S3 Secret"
     exit 1
 }

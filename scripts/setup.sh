@@ -248,6 +248,13 @@ envsubst < tests/e2e/k8s/validation-warehouse-secret.yaml | kubectl apply -f - |
   echo "Error: failed to create validation warehouse Secret"; exit 1
 }
 
+# S3 keys for the Job pods, which they read by Secret reference
+# (JOB_S3_SECRET_NAME).
+echo "Creating Job S3 Secret..."
+kubectl apply -f tests/e2e/k8s/job-s3-secret.yaml || {
+  echo "Error: failed to create Job S3 Secret"; exit 1
+}
+
 # Resolve the API server address reachable from inside docker containers
 KUBE_IP=$(docker exec ${CLUSTER_NAME}-control-plane kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].addresses[0].ip}')
 KUBE_PORT=$(docker exec ${CLUSTER_NAME}-control-plane kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].ports[0].port}')
