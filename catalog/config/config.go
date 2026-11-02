@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
+	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
-	"github.com/robfig/cron/v3"
 )
 
 // ServiceName names this service as the producer of the dead letters its
@@ -157,38 +156,10 @@ func LoadBackupKeep(v *pkgconfig.Validator) int {
 	return keep
 }
 
-// minBackupInterval is the shortest @every interval a backup schedule may
-// name: each export pauses the tenant's writes while it runs.
-const minBackupInterval = time.Minute
-
-// neverFiresProbe is the instant a schedule must fire after to be taken as
-// firing at all; the schedules that fail it name a date no calendar has.
-var neverFiresProbe = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-
 // checkBackupSchedule reports why spec cannot be a backup schedule, or nil.
-// A schedule is five cron fields or an @ descriptor that robfig/cron's
-// standard parser reads, and runs in UTC: a CRON_TZ= or TZ= prefix is
-// refused, as are an @every under a minute and a schedule no date satisfies.
-// Blanks around spec are ignored.
 func checkBackupSchedule(spec string) error {
-	text := strings.TrimSpace(spec)
-	if text == "" {
-		return fmt.Errorf("the schedule is empty")
-	}
-	if strings.HasPrefix(text, "CRON_TZ=") || strings.HasPrefix(text, "TZ=") {
-		return fmt.Errorf("the schedule runs in UTC and must not start with CRON_TZ= or TZ=")
-	}
-	schedule, err := cron.ParseStandard(text)
-	if err != nil {
-		return err
-	}
-	if every, ok := schedule.(cron.ConstantDelaySchedule); ok && every.Delay < minBackupInterval {
-		return fmt.Errorf("an @every interval is at least %s", minBackupInterval)
-	}
-	if schedule.Next(neverFiresProbe).IsZero() {
-		return fmt.Errorf("no date satisfies the schedule")
-	}
-	return nil
+	_, err := croninfra.BackupScheduleParser{}.Parse(spec)
+	return err
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

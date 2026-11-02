@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
 	grpcinfra "github.com/carolsimone/continuo/catalog/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/catalog/adapters/http"
 	metricsinfra "github.com/carolsimone/continuo/catalog/adapters/metrics"
@@ -315,12 +316,12 @@ func main() {
 			neo4jinfra.NewExportLease(neo4jClient, logger),
 			neo4jinfra.NewGraphExporter(neo4jClient, config.Version(), logger),
 			backupStore,
-			metricsinfra.NewBackupMetrics(metricsReg, backupStore, graphTenants, time.Now, logger),
+			metricsinfra.NewBackupMetrics(metricsReg, backup.NewFreshness(graphTenants, backupStore), time.Now, logger),
 			cfg.Backup.Keep,
 			time.Now,
 			logger,
 		)
-		backupScheduler, err := backup.NewScheduler(cfg.Backup.Schedule, graphTenants, exporter, time.Now, logger)
+		backupScheduler, err := backup.NewScheduler(cfg.Backup.Schedule, croninfra.BackupScheduleParser{}, graphTenants, exporter, time.Now, logger)
 		if err != nil {
 			logger.Error("Failed to build the catalog backup scheduler", "error", err)
 			os.Exit(1)

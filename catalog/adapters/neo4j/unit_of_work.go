@@ -62,7 +62,7 @@ func (u *unitOfWork) WritesPaused(ctx context.Context, tenantID string) (bool, e
 		if err != nil {
 			return false, err
 		}
-		res, err := run.Run(ctx, leaseHeldCypher, nil)
+		res, err := run.Run(ctx, leaseHeldCypher, leaseParams(nil))
 		if err != nil {
 			return false, err
 		}

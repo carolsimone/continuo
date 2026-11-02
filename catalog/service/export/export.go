@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 )
 
 // FormatVersion is the version of the export layout this code writes and

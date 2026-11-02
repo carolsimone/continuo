@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
@@ -44,7 +46,7 @@ const inflightTTL = 2 * time.Minute
 // now. It drops the marks that have lapsed, so an abandoned message does not
 // stay on the list.
 const inflightMarkCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 WITH m, coalesce(m.inflight_message_ids, []) AS ids, coalesce(m.inflight_untils, []) AS untils
 WITH m, ids, untils,
      [i IN range(0, size(ids) - 1) WHERE ids[i] <> $mark AND untils[i] > datetime()] AS keep
@@ -54,7 +56,7 @@ SET m.inflight_message_ids = [i IN keep | ids[i]] + [$mark],
 // inflightClearCypher removes a mark, and both lists once none is left. A
 // tenant with no mark is left as it is.
 const inflightClearCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 WHERE m.inflight_message_ids IS NOT NULL
 WITH m, m.inflight_message_ids AS ids, m.inflight_untils AS untils
 WITH m, ids, untils, [i IN range(0, size(ids) - 1) WHERE ids[i] <> $mark] AS keep
@@ -67,50 +69,59 @@ SET m.inflight_message_ids = CASE WHEN size(keep) = 0 THEN null ELSE [i IN keep 
 // read sees the lease and the mark as the last holder of the lock committed
 // them.
 const exportGateCypher = `
-MERGE (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MERGE (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m._lock = true
 RETURN m.until IS NOT NULL AND m.until > datetime() AS held,
        any(u IN coalesce(m.inflight_untils, []) WHERE u > datetime()) AS inflight`
 
 // exportGateUnlockCypher removes the gate's lock property before commit.
-const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'}) REMOVE m._lock`
+const exportGateUnlockCypher = `MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key}) REMOVE m._lock`
 
 // leaseHeldCypher reads, without locking, whether the tenant's lease is live. A
 // tenant with no lease node returns no row.
 const leaseHeldCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 RETURN m.until IS NOT NULL AND m.until > datetime() AS held`
 
 // leaseLockCypher locks an existing lease node and reports its holder and
 // whether its lease is live, for a renewal or a release.
 const leaseLockCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m._lock = true
 RETURN m.holder AS holder, m.until IS NOT NULL AND m.until > datetime() AS live`
 
 // leaseTakeCypher records a new lease on the locked node and unlocks it.
 const leaseTakeCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock`
 
 // leaseTakeExportCypher records a new export lease like leaseTakeCypher and
 // removes the in-flight mark, which Acquire has found lapsed or absent.
 const leaseTakeExportCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.holder = $holder, m.kind = $kind, m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock, m.inflight_message_ids, m.inflight_untils`
 
 // leaseExtendCypher moves a renewed lease's until and unlocks the node.
 const leaseExtendCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.until = datetime() + duration({milliseconds: $ttl_ms})
 REMOVE m._lock`
 
 // leaseClearCypher ends a lease and unlocks the node.
 const leaseClearCypher = `
-MATCH (m:Meta {tenant_id: $tenant_id, key: 'export'})
+MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 REMOVE m.holder, m.kind, m.until, m._lock`
+
+// leaseParams returns params with $lease_key, the key of the tenant's lease
+// node, which every statement on that node binds.
+func leaseParams(params map[string]any) map[string]any {
+	out := make(map[string]any, len(params)+1)
+	maps.Copy(out, params)
+	out["lease_key"] = export.LeaseNodeKey
+	return out
+}
 
 // gateState is what a transaction reads from the tenant's lease node under the
 // gate's lock.
@@ -124,7 +135,7 @@ type gateState struct {
 // lockExportGate takes the tenant's export gate on the open transaction and
 // reads the lease and the in-flight mark.
 func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
-	res, err := run.Run(ctx, exportGateCypher, nil)
+	res, err := run.Run(ctx, exportGateCypher, leaseParams(nil))
 	if err != nil {
 		return gateState{}, fmt.Errorf("lock export gate: %w", err)
 	}
@@ -144,9 +155,9 @@ func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
 
 // markInFlight adds mark to the in-flight marks on the locked lease node.
 func markInFlight(ctx context.Context, run TenantRunner, mark string) error {
-	if err := execCypher(ctx, run, inflightMarkCypher, map[string]any{
+	if err := execCypher(ctx, run, inflightMarkCypher, leaseParams(map[string]any{
 		"mark": mark, "ttl_ms": inflightTTL.Milliseconds(),
-	}); err != nil {
+	})); err != nil {
 		return fmt.Errorf("mark message in flight: %w", err)
 	}
 	return nil
@@ -155,7 +166,7 @@ func markInFlight(ctx context.Context, run TenantRunner, mark string) error {
 // clearInFlight removes mark from the in-flight marks on the locked lease
 // node.
 func clearInFlight(ctx context.Context, run TenantRunner, mark string) error {
-	if err := execCypher(ctx, run, inflightClearCypher, map[string]any{"mark": mark}); err != nil {
+	if err := execCypher(ctx, run, inflightClearCypher, leaseParams(map[string]any{"mark": mark})); err != nil {
 		return fmt.Errorf("clear message in flight: %w", err)
 	}
 	return nil
@@ -164,7 +175,7 @@ func clearInFlight(ctx context.Context, run TenantRunner, mark string) error {
 // unlockExportGate removes the gate's lock property; the lock itself is
 // released when the transaction ends.
 func unlockExportGate(ctx context.Context, run TenantRunner) error {
-	if err := execCypher(ctx, run, exportGateUnlockCypher, nil); err != nil {
+	if err := execCypher(ctx, run, exportGateUnlockCypher, leaseParams(nil)); err != nil {
 		return fmt.Errorf("unlock export gate: %w", err)
 	}
 	return nil
@@ -211,9 +222,9 @@ func (l *exportLease) Acquire(ctx context.Context, tenantID string, kind ports.L
 			}
 			take = leaseTakeExportCypher
 		}
-		if err := execCypher(ctx, run, take, map[string]any{
+		if err := execCypher(ctx, run, take, leaseParams(map[string]any{
 			"holder": holder, "kind": string(kind), "ttl_ms": ttlMs,
-		}); err != nil {
+		})); err != nil {
 			return false, fmt.Errorf("take export lease: %w", err)
 		}
 		return true, nil
@@ -241,7 +252,7 @@ func (l *exportLease) Renew(ctx context.Context, tenantID, holder string, ttl ti
 		if !found || !live || owner != holder {
 			return false, fmt.Errorf("tenant %q, holder %q: %w", tenantID, holder, ports.ErrLeaseLost)
 		}
-		if err := execCypher(ctx, run, leaseExtendCypher, map[string]any{"ttl_ms": ttlMs}); err != nil {
+		if err := execCypher(ctx, run, leaseExtendCypher, leaseParams(map[string]any{"ttl_ms": ttlMs})); err != nil {
 			return false, fmt.Errorf("renew export lease: %w", err)
 		}
 		return true, nil
@@ -263,7 +274,7 @@ func (l *exportLease) Release(ctx context.Context, tenantID, holder string) erro
 		if !found || owner != holder {
 			return false, nil
 		}
-		if err := execCypher(ctx, run, leaseClearCypher, nil); err != nil {
+		if err := execCypher(ctx, run, leaseClearCypher, leaseParams(nil)); err != nil {
 			return false, fmt.Errorf("release export lease: %w", err)
 		}
 		released = true
@@ -281,7 +292,7 @@ func (l *exportLease) Release(ctx context.Context, tenantID, holder string) erro
 // lockLease locks the tenant's lease node and reads its holder and whether its
 // lease is live; found is false when the tenant has no lease node.
 func lockLease(ctx context.Context, run TenantRunner) (holder string, live, found bool, err error) {
-	res, err := run.Run(ctx, leaseLockCypher, nil)
+	res, err := run.Run(ctx, leaseLockCypher, leaseParams(nil))
 	if err != nil {
 		return "", false, false, fmt.Errorf("lock export lease: %w", err)
 	}

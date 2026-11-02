@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 

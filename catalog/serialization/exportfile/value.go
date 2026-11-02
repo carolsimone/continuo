@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 )
 
 // A property value is written as follows, and read back as the same Go value:

@@ -26,7 +26,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 )
 
 // headerLine is the JSON shape of the header.

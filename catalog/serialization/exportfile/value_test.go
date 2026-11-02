@@ -10,7 +10,7 @@ import (
 	"time"
 	_ "time/tzdata" // the named-zone cases must not depend on the host's zone database
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 )
 
 // encodeJSON renders v as the file writes a property value.

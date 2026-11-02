@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 )
 
@@ -358,7 +358,7 @@ func (s *fakeStore) List(_ context.Context, tenantID string) ([]ports.BackupObje
 		if err != nil || owner != tenantID {
 			continue
 		}
-		out = append(out, ports.BackupObject{Key: key, TenantID: owner, TakenAt: at, Size: e.size})
+		out = append(out, ports.BackupObject{Key: key, TenantID: owner, TakenAt: at, LastModified: at, Size: e.size})
 	}
 	slices.SortFunc(out, func(a, b ports.BackupObject) int { return b.TakenAt.Compare(a.TakenAt) })
 	return out, nil

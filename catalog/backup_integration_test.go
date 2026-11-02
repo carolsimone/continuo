@@ -27,8 +27,8 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
-	"github.com/carolsimone/continuo/catalog/domain/export"
 	"github.com/carolsimone/continuo/catalog/service/backup"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/objectstore"

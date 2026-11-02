@@ -34,11 +34,12 @@ type UnitOfWork interface {
 	// read transaction and takes no gate: it only saves work a write would
 	// discard, and the Write itself is what guarantees correctness.
 	WritesPaused(ctx context.Context, tenantID string) (bool, error)
-	// Write runs fn in one Neo4j write transaction for m.TenantID: it locks the
-	// tenant's export lease node and returns ErrWritesPaused while a lease is
-	// held; re-checks the marker (a found marker skips fn and returns nil);
-	// runs fn; when final, CREATEs the marker; commits. An error from fn rolls
-	// the transaction back and is returned as it is.
+	// Write runs fn in one Neo4j write transaction for m.TenantID, with the
+	// marker recorded in that transaction when final. It returns
+	// ErrWritesPaused while an export or a restore holds the tenant's lease, so
+	// a tenant's writes never interleave with the start of an export. A message
+	// the group already processed (its marker is recorded) skips fn and returns
+	// nil. An error from fn rolls the transaction back and is returned as it is.
 	//
 	// A write that is not final marks m's message in flight on the tenant's
 	// lease node, until the message's final write or until the mark lapses, so

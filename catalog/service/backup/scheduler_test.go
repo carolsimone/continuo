@@ -3,17 +3,41 @@ package backup
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/config"
 	"github.com/carolsimone/continuo/catalog/service/ports"
-	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeSchedule fires every period, aligned to UTC midnight, offset into it.
+type fakeSchedule struct{ period, offset time.Duration }
+
+func (f fakeSchedule) Next(after time.Time) time.Time {
+	after = after.UTC()
+	slot := after.Truncate(f.period).Add(f.offset)
+	for !slot.After(after) {
+		slot = slot.Add(f.period)
+	}
+	return slot
+}
+
+// fakeScheduleParser reads the two specs the scheduler tests use: "0 2 * * *"
+// (daily at 02:00 UTC) and "0 * * * *" (hourly). It refuses any other spec.
+type fakeScheduleParser struct{}
+
+func (fakeScheduleParser) Parse(spec string) (ports.BackupSchedule, error) {
+	switch strings.TrimSpace(spec) {
+	case "0 2 * * *":
+		return fakeSchedule{period: 24 * time.Hour, offset: 2 * time.Hour}, nil
+	case "0 * * * *":
+		return fakeSchedule{period: time.Hour}, nil
+	}
+	return nil, errors.New("not a schedule the fake reads")
+}
 
 // schedulerFixture runs a Scheduler over a fake clock: its sleep moves the
 // clock instead of waiting, and each export records the tenant and the time
@@ -56,7 +80,7 @@ func newSchedulerFixture(t *testing.T, spec string, start time.Time, tenants ...
 		return smallGraph(1).export(ctx, tenantID, out)
 	}}
 	ex := NewExporter(newFakeLease(), graph, newFakeStore(), f.metrics, 7, f.clock.Now, quietLogger())
-	s, err := NewScheduler(spec, f.tenants, ex, f.clock.Now, quietLogger())
+	s, err := NewScheduler(spec, fakeScheduleParser{}, f.tenants, ex, f.clock.Now, quietLogger())
 	require.NoError(t, err)
 	s.sleep = func(ctx context.Context, d time.Duration) error {
 		if err := ctx.Err(); err != nil {
@@ -222,34 +246,15 @@ func TestScheduler_SleepEndsWithTheContext(t *testing.T) {
 	assert.Less(t, time.Since(start), time.Second)
 }
 
-// The scheduler refuses exactly the schedules catalog's configuration
-// refuses, so a schedule the configuration lets through always runs.
-func TestScheduler_RefusesWhatTheConfigRefuses(t *testing.T) {
-	specs := []string{
-		"0 2 * * *", "30 3 * * 1", "@daily", "@every 6h", "@every 1m", "  0 2 * * *  ", "0 0 29 2 *",
-		"", "nightly", "0 2 * *", "0 2 * * * *", "61 2 * * *", "@nightly",
-		"CRON_TZ=UTC 0 2 * * *", "TZ=UTC 0 2 * * *", "CRON_TZ=UTC 0 2 * *", " TZ=UTC @daily",
-		"0 0 30 2 *", "@every 30s", "@every 0s",
-	}
+// A spec the parser refuses stops the scheduler from being built, and the
+// error names the spec and the parser's reason.
+func TestScheduler_RefusesASpecTheParserRefuses(t *testing.T) {
 	ex := NewExporter(newFakeLease(), smallGraph(1), newFakeStore(), &fakeMetrics{}, 7, time.Now, quietLogger())
-	for _, spec := range specs {
-		t.Run(fmt.Sprintf("%q", spec), func(t *testing.T) {
-			t.Setenv("CATALOG_BACKUP_SCHEDULE", spec)
-			var v pkgconfig.Validator
-			cfg := config.Load(&v)
-			configRefuses := false
-			for _, problem := range v.Missing() {
-				if len(problem) >= len("CATALOG_BACKUP_SCHEDULE") && problem[:len("CATALOG_BACKUP_SCHEDULE")] == "CATALOG_BACKUP_SCHEDULE" {
-					configRefuses = true
-				}
-			}
-			if spec == "" {
-				// Unset: the configuration falls back to its default.
-				assert.False(t, configRefuses)
-				spec = cfg.Backup.Schedule
-			}
-			_, err := NewScheduler(spec, &fakeTenants{}, ex, time.Now, quietLogger())
-			assert.Equal(t, configRefuses, err != nil, "config refuses: %v, NewScheduler: %v", configRefuses, err)
-		})
-	}
+
+	s, err := NewScheduler("nightly", fakeScheduleParser{}, &fakeTenants{}, ex, time.Now, quietLogger())
+
+	require.Error(t, err)
+	assert.Nil(t, s)
+	assert.Contains(t, err.Error(), `"nightly"`)
+	assert.Contains(t, err.Error(), "not a schedule the fake reads")
 }

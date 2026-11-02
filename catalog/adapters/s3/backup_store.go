@@ -10,8 +10,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
 	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 )

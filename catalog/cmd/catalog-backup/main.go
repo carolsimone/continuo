@@ -50,6 +50,7 @@ import (
 	"syscall"
 	"time"
 
+	metricsinfra "github.com/carolsimone/continuo/catalog/adapters/metrics"
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
@@ -88,9 +89,9 @@ list prints it. stdout carries only JSON; diagnostics go to stderr.
 Exit codes: 0 ok, 1 error, 2 usage, 3 skipped (a lease is held).
 `
 
-// exporter stores the export of one tenant.
+// exporter stores the exports of the tenants it is given, one after the other.
 type exporter interface {
-	ExportTenant(ctx context.Context, tenantID string) (backup.Result, error)
+	ExportEach(ctx context.Context, tenants []string, each func(tenantID string, res backup.Result, err error)) (notReached []string)
 }
 
 // restorer returns a tenant's graph to the export stored at a key.
@@ -287,13 +288,7 @@ func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d dep
 
 	var failed, skipped int
 	enc := json.NewEncoder(stdout)
-	for _, tenant := range tenants {
-		if ctx.Err() != nil {
-			logger.Error("interrupted: the remaining tenants were not exported", "tenant_id", tenant)
-			failed++
-			break
-		}
-		res, err := d.exporter.ExportTenant(ctx, tenant)
+	notReached := d.exporter.ExportEach(ctx, tenants, func(tenant string, res backup.Result, err error) {
 		switch {
 		case errors.Is(err, backup.ErrSkipped):
 			logger.Warn("export skipped: another export or a restore holds the tenant's lease; "+
@@ -315,6 +310,10 @@ func runExport(ctx context.Context, logger *slog.Logger, stdout io.Writer, d dep
 				failed++
 			}
 		}
+	})
+	if len(notReached) > 0 {
+		logger.Error("interrupted: the remaining tenants were not exported", "tenant_ids", notReached)
+		failed += len(notReached)
 	}
 	switch {
 	case failed > 0:
@@ -477,15 +476,6 @@ func neo4jConnectPolicy() neo4jinfra.StartupPolicy {
 	return neo4jinfra.StartupPolicy{Timeout: 30 * time.Second, InitialDelay: time.Second, MaxDelay: 5 * time.Second}
 }
 
-// discardMetrics drops the observations of the exports this process takes:
-// they would end with the process. catalog's last-success gauge reads the
-// store, where a hand-run export lands too.
-type discardMetrics struct{}
-
-var _ ports.BackupMetrics = discardMetrics{}
-
-func (discardMetrics) ExportObserved(string, time.Duration, int64, int64, int64) {}
-
 // connect builds the exporter, the restorer, the backup store and the tenant
 // list over catalog's Neo4j and object store.
 func connect(ctx context.Context, logger *slog.Logger) (deps, func(), error) {
@@ -506,7 +496,7 @@ func connect(ctx context.Context, logger *slog.Logger) (deps, func(), error) {
 	store := s3infra.NewBackupStore(objects)
 	lease := neo4jinfra.NewExportLease(client, logger)
 	d := deps{
-		exporter: backup.NewExporter(lease, neo4jinfra.NewGraphExporter(client, config.Version(), logger), store, discardMetrics{}, cfg.keep, time.Now, logger),
+		exporter: backup.NewExporter(lease, neo4jinfra.NewGraphExporter(client, config.Version(), logger), store, metricsinfra.NopBackupMetrics{}, cfg.keep, time.Now, logger),
 		restorer: backup.NewRestorer(lease, neo4jinfra.NewGraphImporter(client, logger), store, logger),
 		store:    store,
 		tenants:  neo4jinfra.NewGraphTenants(client),

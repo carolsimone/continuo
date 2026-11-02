@@ -9,7 +9,6 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
-	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -205,8 +204,8 @@ type nodeState struct {
 // WriteBatch writes one batch of a release's versions for tenantID on the open
 // transaction:
 //
-//  1. Skip each bundle node with no artifact entry, or whose entry is a
-//     dbt-test, and log the ones skipped.
+//  1. Skip each bundle node with no entry in in.Topology, and log the ones
+//     skipped.
 //  2. Create, inactive, every node of the batch the graph does not hold yet.
 //  3. Read each node's current version and advance its watermark.
 //  4. Record the shared code the nodes use, advance each unit's watermark and
@@ -331,10 +330,10 @@ func (r *codeVersionRepository) WriteBatch(
 	return out, nil
 }
 
-// writableNodes returns the batch's nodes that have an artifact entry other
-// than a dbt-test, with those entries. A dbt-test is never a node of the
-// graph, and a node the artifact does not carry is not one of the release's;
-// both are skipped and logged.
+// writableNodes returns the batch's nodes that have an entry in in.Topology,
+// with those entries. in.Topology holds the nodes the release's topology swap
+// writes; a batch node with no entry there is not one of the release's, and is
+// skipped and logged.
 func (r *codeVersionRepository) writableNodes(
 	tenantID string,
 	in codeversion.WriteInput,
@@ -344,7 +343,7 @@ func (r *codeVersionRepository) writableNodes(
 	var skipped []string
 	for _, n := range in.Nodes {
 		entry, ok := in.Topology[n.UniqueID]
-		if !ok || entry.NodeType == string(pkgModel.NodeTypeDbtTest) {
+		if !ok {
 			skipped = append(skipped, n.UniqueID)
 			continue
 		}

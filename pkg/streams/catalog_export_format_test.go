@@ -30,8 +30,8 @@ var catalogFormatImportRoots = []string{
 var catalogExportPackages = []string{
 	"catalog/service/backup",
 	"catalog/service/ports",
-	"catalog/domain/export",
-	"catalog/domain/graphschema",
+	"catalog/service/export",
+	"catalog/service/export/graphschema",
 }
 
 // TestCatalogServiceAndDomainDoNotOwnTheExportFormat fails on any non-test Go

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
-	"github.com/carolsimone/continuo/catalog/domain/graphschema"
 	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
+	"github.com/carolsimone/continuo/catalog/service/export/graphschema"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"

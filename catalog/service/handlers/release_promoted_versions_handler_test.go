@@ -619,3 +619,28 @@ func TestVersionsHandler_PausedCheckFailureIsRetried(t *testing.T) {
 	assert.False(t, errors.Is(err, pkgevents.ErrPermanent), "an outage is retried, not dead-lettered")
 	assert.Empty(t, reader.calls)
 }
+
+// The handler is the one place a dbt-test is filtered out of a release's
+// topology: when the bundle and the artifact both list one, the batch still
+// carries the bundle's node, but in.Topology, which the repository writes
+// nodes from, holds no entry for the dbt-test.
+func TestVersionsHandler_BundleDbtTestReachesNoTopologyEntry(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeCodeVersionRepository{}
+	u := newVersionsUnitOfWork(repo)
+	bundle := versionsBundle()
+	bundle.Nodes["test.revenue_not_null"] = codebundle.Node{
+		Runtime: "dbt", RawCode: "select 1", CompiledCode: "select 1",
+		SourceHash: "s", SharedCodeHash: "m", ConfigHash: "c", ContentHash: "sha256:def",
+	}
+	reader := &fakeBundleReader{bundle: bundle}
+	artifacts := &fakeArtifactReader{}
+	in := versionsInput(artifacts)
+	in.ChangedNodeIDs = []string{"analytics.revenue", "test.revenue_not_null"}
+
+	require.NoError(t, newVersionsHandler(u, reader, artifacts).Handle(ctx, "1-0", nil, in))
+
+	require.Len(t, repo.calls, 1)
+	assert.NotContains(t, repo.calls[0].In.Topology, "test.revenue_not_null", "a dbt-test has no topology entry")
+	assert.Equal(t, []string{"analytics.revenue"}, topologyIDs(repo.calls[0].In))
+}

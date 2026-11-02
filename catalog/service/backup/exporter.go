@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/carolsimone/continuo/catalog/domain/export"
+	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/google/uuid"
 )
@@ -116,6 +116,21 @@ func (e *Exporter) ExportTenant(ctx context.Context, tenantID string) (Result, e
 		e.metrics.ExportObserved(ports.ExportSuccess, res.Duration, res.Bytes, res.Nodes, res.Relationships)
 	}
 	return res, err
+}
+
+// ExportEach exports the tenants one after the other, in the order given, and
+// calls each with a tenant's result and error as soon as its export ends, so
+// one tenant's failure or skip does not stop the rest. When ctx ends it starts
+// no further export and returns the tenants it did not start.
+func (e *Exporter) ExportEach(ctx context.Context, tenants []string, each func(tenantID string, res Result, err error)) (notReached []string) {
+	for i, tenantID := range tenants {
+		if ctx.Err() != nil {
+			return tenants[i:]
+		}
+		res, err := e.ExportTenant(ctx, tenantID)
+		each(tenantID, res, err)
+	}
+	return nil
 }
 
 func (e *Exporter) export(ctx context.Context, tenantID string) (Result, error) {

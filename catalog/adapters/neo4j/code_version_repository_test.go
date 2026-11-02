@@ -305,20 +305,18 @@ func TestWriteBatch_MissingNodeIsCreatedInactiveFromTheArtifact(t *testing.T) {
 	assert.Equal(t, []string{"analytics.table_a", "analytics.table_e"}, f.nodeIDs())
 }
 
-// A dbt-test is never a node of the graph: a bundle node the artifact names a
-// dbt-test creates no :Node and no version.
-func TestWriteBatch_DbtTestNodeInBundleCreatesNoNode(t *testing.T) {
+// A batch node with no entry in in.Topology creates no :Node and no version:
+// in.Topology holds the nodes the release's topology swap writes, which leaves
+// out a dbt-test.
+func TestWriteBatch_BatchNodeWithoutTopologyEntryCreatesNoNode(t *testing.T) {
 	f := newSwapFixture(t)
 	in := batchOf("r1", 1, versionOf("analytics.orders", "sha256:o1"), versionOf("test.not_null_orders_id", "sha256:t1"))
-	in.Topology["test.not_null_orders_id"] = topology.ReleasePromotedTopologyNode{
-		UniqueID: "test.not_null_orders_id", ServiceName: "svc", NodeType: "dbt-test",
-		UpstreamUniqueIDs: []string{"analytics.orders"},
-	}
+	delete(in.Topology, "test.not_null_orders_id")
 
 	res := f.writeBatch(in)
 	assert.Equal(t, 1, res.NodesCreated)
 	assert.Equal(t, 1, res.NodeVersionsCreated)
-	assert.Equal(t, []string{"analytics.orders"}, f.nodeIDs(), "the dbt-test creates no :Node")
+	assert.Equal(t, []string{"analytics.orders"}, f.nodeIDs(), "the node with no topology entry creates no :Node")
 	assert.Zero(t, f.versionCount("test.not_null_orders_id"), "and no version")
 }
 
