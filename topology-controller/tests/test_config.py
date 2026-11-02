@@ -6,12 +6,13 @@ import pytest
 def test_validate_raises_listing_all_missing(monkeypatch):
     """validate() raises RuntimeError naming every missing required var."""
     required = [
-        "REDIS_URL",
+        "REDIS_URL", "REDIS_PASSWORD",
         "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
         "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
     ]
     for key in required:
         monkeypatch.delenv(key, raising=False)
+        monkeypatch.delenv(f"{key}_FILE", raising=False)
 
     from config.config import validate
     with pytest.raises(RuntimeError) as exc_info:
@@ -25,6 +26,7 @@ def test_validate_raises_listing_all_missing(monkeypatch):
 def test_validate_passes_when_all_required_set(monkeypatch):
     """validate() does not raise when all required vars are present."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
@@ -76,6 +78,7 @@ def test_warehouse_dialect_rejects_unknown_engine(monkeypatch):
 def test_validate_rejects_unsupported_engine(monkeypatch):
     """The unsupported-engine failure lands at startup, via validate()."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
@@ -167,6 +170,7 @@ def test_log_level_rejects_an_unknown_name(monkeypatch):
 def test_validate_rejects_an_unknown_log_level(monkeypatch):
     """The unknown-level failure lands at startup, via validate()."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
@@ -178,3 +182,55 @@ def test_validate_rejects_an_unknown_log_level(monkeypatch):
     from config.config import validate
     with pytest.raises(RuntimeError, match="verbose"):
         validate()
+
+
+def _set_non_credential_env(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+def test_validate_accepts_password_files(monkeypatch, tmp_path):
+    """A credential given only as <NAME>_FILE counts as present."""
+    _set_non_credential_env(monkeypatch)
+    for name in ("REDIS_PASSWORD", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        path = tmp_path / name
+        path.write_text("value\n")
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(f"{name}_FILE", str(path))
+
+    from config.config import validate
+    validate()  # must not raise
+
+
+def test_validate_names_a_credential_with_neither_form(monkeypatch, tmp_path):
+    _set_non_credential_env(monkeypatch)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.delenv("REDIS_PASSWORD_FILE", raising=False)
+
+    from config.config import validate
+    with pytest.raises(RuntimeError, match="REDIS_PASSWORD"):
+        validate()
+
+
+@pytest.mark.parametrize("url", [
+    "redis://user:pw@redis:6379",
+    "redis://:pw@redis:6379/0",
+])
+def test_validate_rejects_a_url_with_credentials(monkeypatch, url):
+    _set_non_credential_env(monkeypatch)
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("REDIS_URL", url)
+
+    from config.config import validate
+    with pytest.raises(RuntimeError) as exc_info:
+        validate()
+    assert str(exc_info.value) == (
+        "REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD"
+    )

@@ -6,7 +6,7 @@ from config.config import (
     HTTP_PORT,
     SERVICE_NAME,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
-    AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+    AWS_DEFAULT_REGION,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
@@ -23,6 +23,7 @@ from adapters.redis.error_class import is_infrastructure
 from adapters.redis.release_requested_binding import parse_release_requested
 from adapters.sources.s3 import S3Source
 from adapters.topology_artifact_writer import TopologyArtifactWriter
+from config.secrets import EnvOrFileCredentialProvider, read_secret
 from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
@@ -40,18 +41,25 @@ def main() -> None:
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 
-    # All credential values come from config, where validate() has already
-    # required them: a missing credential fails the boot instead of falling
-    # back to a placeholder that breaks on the first S3 call.
+    # The keys come from read_secret (the variable or its _FILE), and validate()
+    # has already required them: a missing credential fails the boot instead of
+    # falling back to a placeholder that breaks on the first S3 call.
     s3_client = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT_URL,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        aws_access_key_id=read_secret("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=read_secret("AWS_SECRET_ACCESS_KEY"),
         region_name=AWS_DEFAULT_REGION,
     )
 
-    redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+    # REDIS_URL names the server only. The provider reads the Redis username
+    # and password for each new connection, so a rotated password file is
+    # picked up without a restart.
+    redis_client = redis.from_url(
+        REDIS_URL,
+        decode_responses=False,
+        credential_provider=EnvOrFileCredentialProvider(),
+    )
 
     # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
     candidate_publisher = CandidateManifestPublisher(
