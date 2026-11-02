@@ -147,6 +147,31 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
 fi
 grep -qF 'credentials.files.agent-chat.LLM_KEY: not a credential continuo reads' "${tmp}/credfiles.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
+# A credentials.files key names an enabled services entry; a typo or a disabled
+# service would mount files no pod reads.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set credentials.files.agent-chatt.LLM_API_KEY=/vault/secrets/llm > /dev/null 2> "${tmp}/credfiles.err"; then
+  echo "FAIL: a credentials.files key that names no services entry must fail the render"; exit 1
+fi
+grep -qF 'credentials.files.agent-chatt: no enabled service named agent-chatt' "${tmp}/credfiles.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
+python3 - "$CHART/values.yaml" "${tmp}/agent-chat-disabled.yaml" <<'PY'
+import sys, yaml
+services = yaml.safe_load(open(sys.argv[1]))["services"]
+for svc in services:
+    if svc["name"] == "agent-chat":
+        svc["enabled"] = False
+yaml.safe_dump({"services": services}, open(sys.argv[2], "w"))
+PY
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/agent-chat-disabled.yaml" \
+     --set credentials.files.agent-chat.LLM_API_KEY=/vault/secrets/llm > /dev/null 2> "${tmp}/credfiles.err"; then
+  echo "FAIL: a credentials.files key that names a disabled service must fail the render"; exit 1
+fi
+grep -qF 'credentials.files.agent-chat: no enabled service named agent-chat' "${tmp}/credfiles.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set credentials.files.agent-chat.LLM_API_KEY=/vault/secrets/llm > /dev/null \
+  || { echo "FAIL: a credentials.files key that names an enabled service must render"; exit 1; }
 # Job pods take the S3 key pair only from a Kubernetes Secret, so S3 keys that
 # reach execution-controller as company files need execution.jobS3Secret.name.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \

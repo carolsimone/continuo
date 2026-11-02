@@ -306,8 +306,9 @@ credentials:
   # injector, a Secrets Store CSI volume), per service: the chart attaches no
   # Secret for them and sets <VAR>_FILE to the given path, whatever the
   # delivery. Add the pod annotations, ServiceAccount annotations and volumes
-  # that put the file there to the service's entry under `services`. A key that
-  # is not one of the credentials above fails the install. With the Vault
+  # that put the file there to the service's entry under `services`. A service
+  # with no enabled entry under `services`, or a key that is not one of the
+  # credentials above, fails the install. With the Vault
   # Agent injector, a bundled datastore's Redis or Postgres password given as
   # a file also needs the pod annotation
   # vault.hashicorp.com/agent-init-first: "true", so the file exists before the

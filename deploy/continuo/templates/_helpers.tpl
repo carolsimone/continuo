@@ -1479,12 +1479,22 @@ capabilities:
 {{- toJson $files -}}
 {{- end -}}
 
-{{/* Fails the render on a credentials.files key that is not a credential
-     variable: a service would never read it.
+{{/* Fails the render on a credentials.files service that has no enabled
+     services entry, and on a key under it that is not a credential variable:
+     no pod would read either.
      Call: include "continuo.credentials.assertFiles" $ */}}
 {{- define "continuo.credentials.assertFiles" -}}
 {{- $known := include "continuo.credentialVariables" . | fromJsonArray -}}
+{{- $enabled := list -}}
+{{- range $s := .Values.services -}}
+{{- if $s.enabled -}}
+{{- $enabled = append $enabled $s.name -}}
+{{- end -}}
+{{- end -}}
 {{- range $svc, $vars := (include "continuo.credentialFiles" . | fromJson) -}}
+{{- if not (has $svc $enabled) -}}
+{{- fail (printf "credentials.files.%s: no enabled service named %s" $svc $svc) -}}
+{{- end -}}
 {{- range $name, $_ := ($vars | default dict) -}}
 {{- if not (has $name $known) -}}
 {{- fail (printf "credentials.files.%s.%s: not a credential continuo reads" $svc $name) -}}
