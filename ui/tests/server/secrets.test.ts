@@ -65,8 +65,8 @@ describe('readSecret', () => {
     );
   });
 
-  it('throws when the file is empty', () => {
-    const p = fileWith('');
+  it.each(['', '\n', '\r\n'])('throws when the file is empty after trimming (%j)', (content) => {
+    const p = fileWith(content);
     expect(() => readSecret({ REDIS_PASSWORD_FILE: p }, 'REDIS_PASSWORD')).toThrow(
       `REDIS_PASSWORD_FILE: ${p} is empty`,
     );

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,14 +171,18 @@ func TestSecretValueFailsWhenTheFileGoesAway(t *testing.T) {
 }
 
 func TestSecretEmptyFileIsReported(t *testing.T) {
-	p := writeSecretFile(t, "")
-	t.Setenv("POSTGRES_PASSWORD", "")
-	t.Setenv("POSTGRES_PASSWORD_FILE", p)
-	v := &Validator{}
-	v.RequireSecret("POSTGRES_PASSWORD")
-	want := "POSTGRES_PASSWORD_FILE: " + p + " is empty"
-	if !containsEntry(v.Missing(), want) {
-		t.Fatalf("missing = %v; want entry %q", v.Missing(), want)
+	for _, content := range []string{"", "\n", "\r\n"} {
+		t.Run(fmt.Sprintf("%q", content), func(t *testing.T) {
+			p := writeSecretFile(t, content)
+			t.Setenv("POSTGRES_PASSWORD", "")
+			t.Setenv("POSTGRES_PASSWORD_FILE", p)
+			v := &Validator{}
+			v.RequireSecret("POSTGRES_PASSWORD")
+			want := "POSTGRES_PASSWORD_FILE: " + p + " is empty"
+			if !containsEntry(v.Missing(), want) {
+				t.Fatalf("missing = %v; want entry %q", v.Missing(), want)
+			}
+		})
 	}
 }
 

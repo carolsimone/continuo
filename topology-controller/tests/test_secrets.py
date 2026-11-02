@@ -41,9 +41,10 @@ def test_read_secret_both_set_raises(monkeypatch, tmp_path):
     assert str(exc_info.value) == "REDIS_PASSWORD: set REDIS_PASSWORD or REDIS_PASSWORD_FILE, not both"
 
 
-def test_read_secret_empty_file_raises(monkeypatch, tmp_path):
+@pytest.mark.parametrize("content", [b"", b"\n", b"\r\n"])
+def test_read_secret_empty_file_raises(monkeypatch, tmp_path, content):
     path = tmp_path / "REDIS_PASSWORD"
-    path.write_text("\n")
+    path.write_bytes(content)
     monkeypatch.delenv("REDIS_PASSWORD", raising=False)
     monkeypatch.setenv("REDIS_PASSWORD_FILE", str(path))
     with pytest.raises(RuntimeError) as exc_info:

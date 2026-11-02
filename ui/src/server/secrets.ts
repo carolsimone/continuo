@@ -4,7 +4,8 @@ import { readFileSync } from 'fs';
 // by <name>_FILE. A variable that is unset or empty counts as absent. The file
 // is read on every call, so a rotated credential is picked up by the next
 // read; the file's content loses exactly one trailing newline ("\n" or "\r\n")
-// and nothing else. Returns undefined when neither form is set.
+// and nothing else, and a file that is empty after that trim is an error.
+// Returns undefined when neither form is set.
 export function readSecret(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const fileVar = `${name}_FILE`;
   const value = env[name] || undefined;
@@ -20,6 +21,7 @@ export function readSecret(env: NodeJS.ProcessEnv, name: string): string | undef
   } catch (err) {
     throw new Error(`${fileVar}: ${(err as Error).message}`);
   }
-  if (content === '') throw new Error(`${fileVar}: ${file} is empty`);
-  return content.replace(/\r?\n$/, '');
+  const trimmed = content.replace(/\r?\n$/, '');
+  if (trimmed === '') throw new Error(`${fileVar}: ${file} is empty`);
+  return trimmed;
 }
