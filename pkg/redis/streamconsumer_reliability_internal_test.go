@@ -482,7 +482,7 @@ func TestDeadLetter_CarriesTheMessageTenant(t *testing.T) {
 // deadLettersIn returns the consumer.dead_letter:v1 entries for one test
 // stream. It never fails the test, so it is safe off the test goroutine.
 func deadLettersIn(ctx context.Context, rc *goredis.Client, stream string) ([]goredis.XMessage, error) {
-	all, err := rc.XRange(ctx, streams.ConsumerDeadLetterV1, "-", "+").Result()
+	all, err := rc.XRange(ctx, Key(streams.ConsumerDeadLetterV1), "-", "+").Result()
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +505,7 @@ func deadLettersFor(t *testing.T, rc *goredis.Client, stream string) []goredis.X
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		for _, e := range mine {
-			rc.XDel(ctx, streams.ConsumerDeadLetterV1, e.ID)
+			rc.XDel(ctx, Key(streams.ConsumerDeadLetterV1), e.ID)
 		}
 	})
 	return mine
@@ -514,15 +514,37 @@ func deadLettersFor(t *testing.T, rc *goredis.Client, stream string) []goredis.X
 // DeadLettersFor exposes deadLettersFor to the package's external tests.
 var DeadLettersFor = deadLettersFor
 
+// ensureDeadLetterStream creates the prefixed consumer dead-letter stream when
+// it is missing, as the streams-init step does in a deployment, since a
+// consumer never creates it. A stream the helper created is deleted when the
+// test ends.
+func ensureDeadLetterStream(t *testing.T, rc *goredis.Client) {
+	t.Helper()
+	ctx := context.Background()
+	key := Key(streams.ConsumerDeadLetterV1)
+	if rc.Exists(ctx, key).Val() != 0 {
+		return
+	}
+	const probe = "pkg-redis-test-dead-letter-probe"
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, probe, "$").Err())
+	require.NoError(t, rc.XGroupDestroy(ctx, key, probe).Err())
+	t.Cleanup(func() { rc.Del(context.Background(), key) })
+}
+
+// EnsureDeadLetterStream exposes ensureDeadLetterStream to the package's
+// external tests.
+var EnsureDeadLetterStream = ensureDeadLetterStream
+
 func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := fmt.Sprintf("test-infra-pause-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(context.Background(), stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err())
+	t.Cleanup(func() { rc.Del(context.Background(), key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "v"}}).Err())
 
 	var seenDeliveries []int64
 	var a *StreamConsumer
@@ -546,7 +568,7 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	assert.Equal(t, 4, attempts)
 	assert.Equal(t, []int64{1, 1, 1, 1}, seenDeliveries, "pauses never add a delivery")
 	assert.Zero(t, peerCalls.Load(), "the peer never took the paused message")
-	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	pending, err := rc.XPending(context.Background(), key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
@@ -583,10 +605,11 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := fmt.Sprintf("test-inline-retry-hold-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(context.Background(), stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err())
+	t.Cleanup(func() { rc.Del(context.Background(), key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "v"}}).Err())
 
 	// Each attempt alone stays inside the peer's 400 ms gate, but the two
 	// attempts and the retry delay between them (150+100+300 ms) do not: only
@@ -612,7 +635,7 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	<-peerDone
 	assert.Equal(t, 2, attempts)
 	assert.Zero(t, peerCalls.Load(), "the peer never took the message during its inline retry")
-	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	pending, err := rc.XPending(context.Background(), key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
@@ -622,10 +645,11 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-inline-retry-sibling-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
 	const gate = 600 * time.Millisecond
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	// "left" fails both read-path attempts and succeeds once reclaimed; every
 	// "retried" message fails its first attempt and succeeds on the inline retry.
@@ -643,7 +667,7 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 	c.SetService("pkg-redis-test")
 	c.pauseSlice = 20 * time.Millisecond // the holder runs several times during each retried message
 
-	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "left"}}).Result()
+	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "left"}}).Result()
 	require.NoError(t, err)
 	require.NoError(t, c.readAndProcess(ctx))
 	require.Equal(t, 2, attempts[left], "left pending for the reclaim sweep after its inline retry")
@@ -653,13 +677,13 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 	// longer than the gate.
 	retries := 0
 	for time.Since(leftSettled) < gate+300*time.Millisecond {
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "retried"}}).Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "retried"}}).Err())
 		require.NoError(t, c.readAndProcess(ctx))
 		retries++
 	}
 	require.Greater(t, retries, 3)
 
-	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: left, End: left, Count: 1}).Result()
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: key, Group: group, Start: left, End: left, Count: 1}).Result()
 	require.NoError(t, err)
 	require.Len(t, p, 1)
 	assert.GreaterOrEqual(t, p[0].Idle, time.Since(leftSettled)-100*time.Millisecond,
@@ -667,7 +691,7 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 
 	require.NoError(t, c.reclaimPending(ctx))
 	assert.Equal(t, 3, attempts[left], "the reclaim sweep claims the left-pending message once it has been idle for the gate")
-	pending, err := rc.XPending(ctx, stream, group).Result()
+	pending, err := rc.XPending(ctx, key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
@@ -677,10 +701,11 @@ func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *tes
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-infra-pause-left-pending-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
 	const gate = 600 * time.Millisecond
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	// "left" fails both read-path attempts and succeeds once reclaimed; every
 	// "paused" message hits an outage once, pauses, then succeeds.
@@ -698,7 +723,7 @@ func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *tes
 	c.SetService("pkg-redis-test")
 	c.infraBackoffBase, c.pauseSlice = 100*time.Millisecond, 20*time.Millisecond
 
-	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "left"}}).Result()
+	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "left"}}).Result()
 	require.NoError(t, err)
 	require.NoError(t, c.readAndProcess(ctx))
 	require.Equal(t, 2, attempts[left], "left pending for the reclaim sweep after its inline retry")
@@ -708,13 +733,13 @@ func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *tes
 	// than the gate.
 	pauses := 0
 	for time.Since(leftSettled) < gate+300*time.Millisecond {
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "paused"}}).Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "paused"}}).Err())
 		require.NoError(t, c.readAndProcess(ctx))
 		pauses++
 	}
 	require.Greater(t, pauses, 3)
 
-	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: left, End: left, Count: 1}).Result()
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: key, Group: group, Start: left, End: left, Count: 1}).Result()
 	require.NoError(t, err)
 	require.Len(t, p, 1)
 	assert.GreaterOrEqual(t, p[0].Idle, time.Since(leftSettled)-100*time.Millisecond,
@@ -722,7 +747,7 @@ func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *tes
 
 	require.NoError(t, c.reclaimPending(ctx))
 	assert.Equal(t, 3, attempts[left], "the reclaim sweep claims the left-pending message once it has been idle for the gate")
-	pending, err := rc.XPending(ctx, stream, group).Result()
+	pending, err := rc.XPending(ctx, key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
@@ -733,11 +758,12 @@ func TestStreamConsumer_SlowHandlers_PeerSweepDoesNotTakeBatchSibling(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := fmt.Sprintf("test-slow-handlers-sibling-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(context.Background(), stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	t.Cleanup(func() { rc.Del(context.Background(), key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 	for _, k := range []string{"slow-1", "slow-2", "sibling"} {
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": k}}).Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": k}}).Err())
 	}
 
 	// All three arrive in one read batch. The two slow handlers succeed, each
@@ -763,7 +789,7 @@ func TestStreamConsumer_SlowHandlers_PeerSweepDoesNotTakeBatchSibling(t *testing
 	<-peerDone
 	assert.Equal(t, []int64{1}, siblingDeliveries, "the sibling is still on its first delivery when its turn comes")
 	assert.Zero(t, peerCalls.Load(), "the peer never took a message this consumer had in hand")
-	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	pending, err := rc.XPending(context.Background(), key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 }
@@ -772,28 +798,29 @@ func TestHold_RestartsIdleOfPendingAndSkipsAcknowledged(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-hold-acked-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	acked, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "acked"}}).Result()
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	acked, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "acked"}}).Result()
 	require.NoError(t, err)
-	held, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "held"}}).Result()
+	held, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "held"}}).Result()
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, nil, discardLog())
 	c.SetService("pkg-redis-test")
 	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: group, Consumer: c.consumerName, Streams: []string{stream, ">"}, Count: 10,
+		Group: group, Consumer: c.consumerName, Streams: []string{key, ">"}, Count: 10,
 	}).Result()
 	require.NoError(t, err)
-	require.NoError(t, rc.XAck(ctx, stream, group, acked).Err())
+	require.NoError(t, rc.XAck(ctx, key, group, acked).Err())
 	time.Sleep(200 * time.Millisecond)
 
 	// A re-claim that read the set before the first message settled still
 	// names it; XCLAIM skips an acknowledged id.
 	c.hold(ctx, []string{acked, held})
 
-	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: "-", End: "+", Count: 10}).Result()
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: key, Group: group, Start: "-", End: "+", Count: 10}).Result()
 	require.NoError(t, err)
 	require.Len(t, p, 1, "the acknowledged message is not pending again")
 	assert.Equal(t, held, p[0].ID)
@@ -809,12 +836,13 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeBatchSibling(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := fmt.Sprintf("test-infra-pause-sibling-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(context.Background(), stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	first, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "first"}}).Result()
+	t.Cleanup(func() { rc.Del(context.Background(), key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	first, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "first"}}).Result()
 	require.NoError(t, err)
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "second"}}).Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "second"}}).Err())
 
 	// Both messages arrive in one read batch. The first pauses on an outage
 	// for 400+800+1600 ms, far past the peer's 300 ms reclaim gate, while the
@@ -844,7 +872,7 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeBatchSibling(t *testing.T
 	assert.Equal(t, 4, firstAttempts)
 	assert.Equal(t, []int64{1}, secondDeliveries, "the sibling is still on its first delivery when its turn comes")
 	assert.Zero(t, peerCalls.Load(), "the peer never took the sibling while the first message paused")
-	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	pending, err := rc.XPending(context.Background(), key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
@@ -854,15 +882,16 @@ func TestStreamConsumer_ReclaimPath_HandledMessageAckedWhileALaterOnePauses(t *t
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-reclaim-ack-at-once-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	handled, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "handled"}}).Result()
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	handled, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "handled"}}).Result()
 	require.NoError(t, err)
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "paused"}}).Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "paused"}}).Err())
 	// Both messages are left pending by a consumer that is gone.
 	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: group, Consumer: "abandoned-consumer", Streams: []string{stream, ">"}, Count: 10,
+		Group: group, Consumer: "abandoned-consumer", Streams: []string{key, ">"}, Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -877,7 +906,7 @@ func TestStreamConsumer_ReclaimPath_HandledMessageAckedWhileALaterOnePauses(t *t
 		}
 		attempts++
 		p, perr := rc.XPendingExt(hctx, &goredis.XPendingExtArgs{
-			Stream: stream, Group: group, Start: handled, End: handled, Count: 1,
+			Stream: key, Group: group, Start: handled, End: handled, Count: 1,
 		}).Result()
 		require.NoError(t, perr)
 		handledStillPending = append(handledStillPending, len(p) == 1)
@@ -892,7 +921,7 @@ func TestStreamConsumer_ReclaimPath_HandledMessageAckedWhileALaterOnePauses(t *t
 	require.NoError(t, c.reclaimPending(ctx))
 	assert.Equal(t, []bool{false, false, false}, handledStillPending,
 		"the handled message left the PEL before the outage on its page-mate ended")
-	pending, err := rc.XPending(ctx, stream, group).Result()
+	pending, err := rc.XPending(ctx, key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 }
@@ -901,10 +930,12 @@ func TestStreamConsumer_PermanentError_WritesDeadLetterBeforeAck(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-dead-letter-%d", time.Now().UnixNano())
+	key := Key(stream)
+	ensureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	id, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"payload": "{"}}).Result()
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	id, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"payload": "{"}}).Result()
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, discardLog())
@@ -918,7 +949,7 @@ func TestStreamConsumer_PermanentError_WritesDeadLetterBeforeAck(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(dl[0].Values["payload"].(string)), &p))
 	assert.Equal(t, id, p.OriginalMessageID)
 	assert.Equal(t, model.DeadLetterKindPermanent, p.FailureKind)
-	pending, err := rc.XPending(ctx, stream, group).Result()
+	pending, err := rc.XPending(ctx, key, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 }

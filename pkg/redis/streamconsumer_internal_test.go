@@ -22,16 +22,19 @@ import (
 // no-op (deliveriesFn reports a first delivery) and sleeps honour ctx.
 func testConsumer(handler MessageHandler) *StreamConsumer {
 	return &StreamConsumer{
-		streamName:       "test-stream",
-		logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
-		handler:          handler,
-		observer:         nopObserver{},
-		workerCount:      1,
-		service:          "pkg-redis-test",
-		handlerTimeout:   DefaultHandlerTimeout,
-		infraBackoffBase: defaultInfraBackoffBase,
-		infraBackoffCap:  defaultInfraBackoffCap,
-		pauseSlice:       defaultPauseSlice,
+		consumerConfig: consumerConfig{
+			streamName:       "test-stream",
+			logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+			handler:          handler,
+			observer:         nopObserver{},
+			workerCount:      1,
+			service:          "pkg-redis-test",
+			handlerTimeout:   DefaultHandlerTimeout,
+			infraBackoffBase: defaultInfraBackoffBase,
+			infraBackoffCap:  defaultInfraBackoffCap,
+			pauseSlice:       defaultPauseSlice,
+		},
+		key: Key("test-stream"),
 		// No-op ack by default. Tests asserting ack behaviour override this
 		// with a recorder.
 		ackFn:        func(context.Context, string) error { return nil },
