@@ -2,6 +2,7 @@ package deploycheck
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"testing"
@@ -77,4 +78,44 @@ func chartCredentialVariables(t *testing.T) []string {
 		t.Fatal("continuo.credentialVariables lists no variables")
 	}
 	return names
+}
+
+// credentialListPatterns match the closed credential list each non-Go service
+// keeps for its credential-read guard: the CREDENTIAL_VARS tuple of
+// topology-controller and the CREDENTIAL_VARS array of ui.
+var (
+	pythonCredentialVars = regexp.MustCompile(`(?s)\nCREDENTIAL_VARS = \((.*?)\)`)
+	nodeCredentialVars   = regexp.MustCompile(`(?s)\nconst CREDENTIAL_VARS = \[(.*?)\];`)
+	quotedVariableName   = regexp.MustCompile(`["']([A-Z0-9_]+)["']`)
+)
+
+// TestCredentialVarsMatchThePythonAndNodeLists pins the closed credential
+// lists of topology-controller and ui, which their guards use to keep every
+// credential read on the <NAME>_FILE-aware reader, to pkgconfig.CredentialVars.
+// A credential added on one side only would be read without its file form in
+// the services of the other.
+func TestCredentialVarsMatchThePythonAndNodeLists(t *testing.T) {
+	want := slices.Clone(pkgconfig.CredentialVars)
+	slices.Sort(want)
+	for _, side := range []struct {
+		path    []string
+		pattern *regexp.Regexp
+	}{
+		{[]string{"topology-controller", "tests", "test_credential_reads_guard.py"}, pythonCredentialVars},
+		{[]string{"ui", "tests", "server", "credential-reads-guard.test.ts"}, nodeCredentialVars},
+	} {
+		file := filepath.Join(side.path...)
+		m := side.pattern.FindStringSubmatch(readRepoFile(t, side.path...))
+		if m == nil {
+			t.Fatalf("%s declares no CREDENTIAL_VARS list", file)
+		}
+		var got []string
+		for _, q := range quotedVariableName.FindAllStringSubmatch(m[1], -1) {
+			got = append(got, q[1])
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s CREDENTIAL_VARS is %v; pkgconfig.CredentialVars is %v", file, got, want)
+		}
+	}
 }

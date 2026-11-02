@@ -4,6 +4,7 @@ import path from 'path';
 
 // The closed list of credential variables. Each is read only through
 // readSecret, so the <NAME>_FILE form works everywhere the variable does.
+// pkg/deploycheck pins it to the Go services' list.
 const CREDENTIAL_VARS = [
   'POSTGRES_PASSWORD',
   'REDIS_PASSWORD',

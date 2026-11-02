@@ -12,6 +12,7 @@ SERVICE_DIR = Path(__file__).parent.parent
 SECRETS_MODULE = Path("config") / "secrets.py"
 SKIPPED_DIRS = {".venv", "tests", "proto", "__pycache__"}
 
+# The closed credential list; pkg/deploycheck pins it to the Go services' list.
 CREDENTIAL_VARS = (
     "POSTGRES_PASSWORD",
     "REDIS_PASSWORD",
