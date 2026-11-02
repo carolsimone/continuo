@@ -30,8 +30,9 @@ describe('credential reads', () => {
   it('reads credentials only through readSecret', () => {
     const names = CREDENTIAL_VARS.join('|');
     const direct = new RegExp(`\\benv\\s*(?:\\.\\s*(?:${names})\\b|\\[\\s*['"\`](?:${names})['"\`]\\s*\\])`);
-    const offenders = tsFiles(SERVER_DIR)
-      .filter((f) => path.basename(f) !== 'secrets.ts')
+    const files = tsFiles(SERVER_DIR).filter((f) => path.basename(f) !== 'secrets.ts');
+    expect(files.length).toBeGreaterThan(0);
+    const offenders = files
       .flatMap((f) =>
         readFileSync(f, 'utf8')
           .split('\n')
