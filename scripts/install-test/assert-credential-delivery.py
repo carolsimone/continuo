@@ -88,16 +88,17 @@ def check_file(deployments: dict, baseline: dict, failures: list) -> None:
         items = projected_items(deployment)
         for container in containers(deployment):
             where = f"{name}/{container['name']}"
-            for var in sorted(secret_ref_vars(container)):
-                failures.append(f"{where}: {var} is a secretKeyRef; file delivery puts no credential in the environment")
+            referenced = secret_ref_vars(container)
+            if referenced:
+                failures.append(f"{where}: {len(referenced)} credential variable(s) delivered as secretKeyRef; file delivery puts no credential in the environment")
             env = {e["name"]: e for e in container.get("env") or []}
             file_vars = {k: e.get("value") for k, e in env.items() if k.endswith("_FILE")}
-            for var, value in file_vars.items():
-                if not (value or "").startswith(MOUNT_DIR + "/"):
-                    failures.append(f"{where}: {var} does not name a file under {MOUNT_DIR}")
-                    continue
-                if value[len(MOUNT_DIR) + 1:] not in items:
-                    failures.append(f"{where}: {var} names no projected item of the {VOLUME} volume")
+            outside = [v for v in file_vars.values() if not (v or "").startswith(MOUNT_DIR + "/")]
+            if outside:
+                failures.append(f"{where}: {len(outside)} _FILE variable(s) do not name a file under {MOUNT_DIR}")
+            unprojected = [v for v in file_vars.values() if v not in outside and v[len(MOUNT_DIR) + 1:] not in items]
+            if unprojected:
+                failures.append(f"{where}: {len(unprojected)} _FILE variable(s) name no projected item of the {VOLUME} volume")
             if file_vars:
                 mounts = [m for m in container.get("volumeMounts") or [] if m.get("name") == VOLUME]
                 if not any(m.get("mountPath") == MOUNT_DIR and m.get("readOnly") for m in mounts):
@@ -107,9 +108,9 @@ def check_file(deployments: dict, baseline: dict, failures: list) -> None:
         if base is None:
             continue
         have = {e["name"] for e in main.get("env") or []}
-        for var in sorted(secret_ref_vars(base["spec"]["template"]["spec"]["containers"][0])):
-            if f"{var}_FILE" not in have:
-                failures.append(f"{name}: gets {var} as a secretKeyRef with env delivery but has no {var}_FILE with file delivery")
+        missing = [v for v in secret_ref_vars(base["spec"]["template"]["spec"]["containers"][0]) if f"{v}_FILE" not in have]
+        if missing:
+            failures.append(f"{name}: {len(missing)} credential(s) delivered as secretKeyRef with env delivery have no _FILE twin with file delivery")
 
 
 def check_company(deployments: dict, service_accounts: dict, failures: list) -> None:
