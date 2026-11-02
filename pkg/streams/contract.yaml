@@ -8,6 +8,14 @@
 #   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
 #   - Consumer const: PascalCase, service-prefixed (RunControllerTaskStatusUpdated).
 
+# Every Redis key the system owns is named key_prefix + the contract name, so
+# the stream `task.dispatch:v1` lives at `continuo:task.dispatch:v1`.
+key_prefix: "continuo:"
+
+# While true, consumers also read the unprefixed key of a stream that still
+# holds their group.
+legacy_keys: true
+
 streams:
   # ---------------- run lifecycle streams ----------------
 

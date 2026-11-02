@@ -2,6 +2,14 @@
 // Source: pkg/streams/contract.yaml
 package streams
 
+// KeyPrefix leads the name of every Redis key the system owns: the key of the
+// contract stream "<stream>" is KeyPrefix + "<stream>".
+const KeyPrefix = "continuo:"
+
+// LegacyKeys reports whether the unprefixed key of a stream is still read
+// beside its prefixed key.
+const LegacyKeys = true
+
 // Stream names.
 const (
 	// TaskDispatchV1 — One attempt of a task, from run-controller to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever run-controller asks about an attempt that has gone quiet, with run-controller's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.

@@ -7,6 +7,8 @@ import (
 )
 
 const validYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: node.updated:v1
     const: NodeUpdatedV1
@@ -40,6 +42,8 @@ func TestParseContract_Valid(t *testing.T) {
 
 func TestValidate_DuplicateStreamName(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -58,6 +62,8 @@ streams:
 
 func TestValidate_DuplicateStreamConst(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: SameConst
@@ -76,6 +82,8 @@ streams:
 
 func TestValidate_DuplicateGroup(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -100,6 +108,8 @@ streams:
 
 func TestValidate_DuplicateGroupConst(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -124,6 +134,8 @@ streams:
 
 func TestValidate_GroupNotHyphenated(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -141,6 +153,8 @@ streams:
 
 func TestValidate_UnknownService(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -158,6 +172,8 @@ streams:
 
 func TestValidate_GroupUppercase(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: AV1
@@ -175,6 +191,8 @@ streams:
 
 func TestValidate_GoIdentifier(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: a:v1
     const: 9NotIdentifier
@@ -208,6 +226,8 @@ func TestEmitGo(t *testing.T) {
 var goldenPy string
 
 const pythonRelevantYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: update.graph:v1
     const: UpdateGraphV1
@@ -250,6 +270,8 @@ func TestEmitPython(t *testing.T) {
 }
 
 const vocabYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams:
   - name: node.updated:v1
     const: NodeUpdatedV1
@@ -287,6 +309,8 @@ func TestParseContract_Vocabularies(t *testing.T) {
 func TestValidate_VocabularyRejectsBadValueAndDuplicates(t *testing.T) {
 	cases := map[string]string{
 		"bad value": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: k
@@ -295,6 +319,8 @@ vocabularies:
       - {value: Invalid-SQL, const: A}
 `,
 		"duplicate value": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: k
@@ -304,6 +330,8 @@ vocabularies:
       - {value: a, const: B}
 `,
 		"duplicate const": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: k
@@ -313,6 +341,8 @@ vocabularies:
       - {value: b, const: A}
 `,
 		"empty": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: k
@@ -428,6 +458,8 @@ func TestEmitPythonVocabulary(t *testing.T) {
 }
 
 const nodeTypeYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: node_runtime
@@ -453,6 +485,8 @@ func TestValidate_NodeTypeVocabularyWithHyphensAndRuntime(t *testing.T) {
 func TestValidate_RuntimeRules(t *testing.T) {
 	cases := map[string]string{
 		"runtime on some values only": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - {name: node_runtime, const: NodeRuntime, values: [{value: dbt, const: Dbt}]}
@@ -463,6 +497,8 @@ vocabularies:
       - {value: b, const: B}
 `,
 		"runtime not a node_runtime value": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - {name: node_runtime, const: NodeRuntime, values: [{value: dbt, const: Dbt}]}
@@ -472,6 +508,8 @@ vocabularies:
       - {value: a, const: A, runtime: spark}
 `,
 		"runtime without node_runtime vocabulary": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: node_type
@@ -480,6 +518,8 @@ vocabularies:
       - {value: a, const: A, runtime: dbt}
 `,
 		"node_runtime declared after its user": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: node_type
@@ -572,6 +612,8 @@ func TestEmitTSVocabulary(t *testing.T) {
 }
 
 const failureReasonYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: failure_class
@@ -597,6 +639,8 @@ func TestValidate_FailureReasonVocabularyWithClass(t *testing.T) {
 func TestValidate_ClassRules(t *testing.T) {
 	cases := map[string]string{
 		"class on some values only": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - {name: failure_class, const: FailureClass, values: [{value: task, const: Task}]}
@@ -607,6 +651,8 @@ vocabularies:
       - {value: b, const: B}
 `,
 		"class not a failure_class value": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - {name: failure_class, const: FailureClass, values: [{value: task, const: Task}]}
@@ -616,6 +662,8 @@ vocabularies:
       - {value: a, const: A, class: weather}
 `,
 		"class without failure_class vocabulary": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: failure_reason
@@ -624,6 +672,8 @@ vocabularies:
       - {value: a, const: A, class: task}
 `,
 		"failure_class declared after its user": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: failure_reason
@@ -719,6 +769,8 @@ func TestEmitVocabulary_ListNamesArePlural(t *testing.T) {
 }
 
 const fullRefreshYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: node_runtime
@@ -827,6 +879,8 @@ func TestEmitVocabulary_NoFullRefreshWithoutTheAttribute(t *testing.T) {
 }
 
 const apiKindYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: node_runtime
@@ -934,7 +988,7 @@ func TestEmitVocabulary_NoSecretRefWithoutTheAttribute(t *testing.T) {
 }
 
 func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
-	c := &Contract{Streams: []Stream{{
+	c := &Contract{KeyPrefix: "continuo:", Streams: []Stream{{
 		Name: "consumer.dead_letter:v1", Const: "ConsumerDeadLetterV1", Description: "d",
 		Producers: []string{"dead-letter-controller"},
 		Consumers: []Consumer{{Service: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
@@ -946,6 +1000,7 @@ func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
 
 func TestValidate_RetiredStreamMustNotBeLive(t *testing.T) {
 	c := &Contract{
+		KeyPrefix:      "continuo:",
 		Streams:        []Stream{{Name: "a:v1", Const: "AV1", Description: "d", Producers: []string{"run-controller"}}},
 		RetiredStreams: []RetiredStream{{Name: "a:v1"}},
 	}
@@ -956,6 +1011,7 @@ func TestValidate_RetiredStreamMustNotBeLive(t *testing.T) {
 
 func TestEmitGo_GroupsAndRetired(t *testing.T) {
 	c := &Contract{
+		KeyPrefix: "continuo:",
 		Streams: []Stream{
 			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
 			{Name: "b:v1", Const: "BV1", Description: "d"},
@@ -980,6 +1036,8 @@ func TestEmitGo_GroupsAndRetired(t *testing.T) {
 }
 
 const operationYAML = `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: operation
@@ -1070,6 +1128,8 @@ func TestGenStreams_AVocabularyWithoutSingleNodeOnlyEmitsNone(t *testing.T) {
 func TestValidate_DefaultAndSingleNodeOnlyRules(t *testing.T) {
 	cases := map[string]string{
 		"two defaults": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: operation
@@ -1080,6 +1140,8 @@ vocabularies:
       - {value: test, const: Test, default: true, description: b.}
 `,
 		"default and single node only": `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: operation
@@ -1102,6 +1164,8 @@ vocabularies:
 // a vocabulary's values; the TypeScript list keeps the plural-derived name.
 func TestEmitGoVocabulary_ListFunc(t *testing.T) {
 	y := `
+key_prefix: "continuo:"
+legacy_keys: true
 streams: []
 vocabularies:
   - name: run_status
@@ -1128,5 +1192,72 @@ vocabularies:
 	}
 	if !strings.Contains(tsSrc, "export const RUN_STATUSES: readonly RunStatus[]") {
 		t.Errorf("ts list name changed\n%s", tsSrc)
+	}
+}
+
+func TestKeyPrefixIsValidated(t *testing.T) {
+	const streamless = "streams: []\n"
+	for _, tc := range []struct {
+		name, prefix string
+		ok           bool
+	}{
+		{"valid", `"continuo:"`, true},
+		{"hyphenated", `"my-app:"`, true},
+		{"uppercase", `"Continuo:"`, false},
+		{"no colon", `"continuo"`, false},
+		{"empty", `""`, false},
+		{"leading digit", `"1app:"`, false},
+		{"two segments", `"a:b:"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadAndValidate(strings.NewReader("key_prefix: " + tc.prefix + "\n" + streamless))
+			if tc.ok && err != nil {
+				t.Fatalf("want accepted, got %v", err)
+			}
+			if !tc.ok && (err == nil || !strings.Contains(err.Error(), "key_prefix")) {
+				t.Fatalf("want a key_prefix error, got %v", err)
+			}
+		})
+	}
+	if _, err := loadAndValidate(strings.NewReader(streamless)); err == nil {
+		t.Fatal("a contract without key_prefix must be rejected")
+	}
+}
+
+func TestEmit_LegacyKeysFalse(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader("key_prefix: \"continuo:\"\nlegacy_keys: false\nstreams: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGo(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(goSrc, "const LegacyKeys = false") {
+		t.Errorf("Go output lacks LegacyKeys = false:\n%s", goSrc)
+	}
+	pySrc, err := emitPythonStreams(c, "topology-controller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pySrc, "LEGACY_KEYS = False") {
+		t.Errorf("Python output lacks LEGACY_KEYS = False:\n%s", pySrc)
+	}
+}
+
+//go:embed testdata/redis-keys.gen.ts
+var goldenTSRedisKeys string
+
+func TestEmitTSRedisKeys(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := emitTSRedisKeys(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != goldenTSRedisKeys {
+		t.Fatalf("emitTSRedisKeys mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenTSRedisKeys)
 	}
 }
