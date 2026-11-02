@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+
+- **Generated Redis rules.** `deploy/redis-acl-rules.acl` and `deploy/continuo/files/redis-acl-rules.json` list the Redis rule of every service login (`continuo_<service>`) and of the stream-creating step (`continuo_redis_migrate`), generated from `pkg/streams/contract.yaml`. The rules take effect with per-service logins; until then the chart does not use them and Redis keeps its shared password. No values change is needed to upgrade. A later change to a Redis rule is named in this file with the words "Redis rule".
+
 ### Changed
 
 - **Finished Jobs are now deleted after 30 minutes instead of 24 hours.** This covers task, validation, seed-build and compile Jobs and their pods. Set `execution.jobTTLMinutes` (1 to 10080) to change it; it reaches execution-controller as `JOB_TTL_SECONDS`. If a Job is deleted before its log was uploaded (for example, execution-controller was down for longer than this time), its pod log is lost. No values change is needed to upgrade.

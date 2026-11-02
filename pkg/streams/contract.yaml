@@ -233,6 +233,26 @@ streams:
         group: catalog-remediation-pr-closed-provenance
         const: CatalogRemediationPrClosedProvenance
 
+# Redis grants a service needs beyond the streams it produces and consumes. The
+# rules generator turns each entry into key patterns and commands of that
+# service's login:
+#   keys:        plain-key prefixes (after key_prefix), granted with `commands`
+#   all_streams: every key under key_prefix, granted with `commands`
+#   commands:    Redis commands, lowercase, `command|subcommand` for a subcommand
+redis_access:
+  - service: agent-chat
+    keys: ["agent-chat:ratelimit:"]
+    commands: [eval, evalsha, zremrangebyscore, zcard, zadd, pexpire]
+  - service: agent-remediation
+    keys: ["llmcache:"]
+    commands: [get, set]
+  - service: dead-letter-controller
+    all_streams: true
+    commands: [xrange, xtrim, xlen, del, info, xinfo|groups, xpending]
+  - service: ui
+    keys: ["uisession:"]
+    commands: [get, set, del, expire]
+
 # Streams removed from the contract. dead-letter-controller deletes their keys
 # from Redis; nothing produces or consumes them.
 retired_streams:

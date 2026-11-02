@@ -42,7 +42,10 @@ type Contract struct {
 	LegacyKeys     bool            `yaml:"legacy_keys"`
 	Streams        []Stream        `yaml:"streams"`
 	RetiredStreams []RetiredStream `yaml:"retired_streams"`
-	Vocabularies   []Vocabulary    `yaml:"vocabularies"`
+	// RedisAccess lists the Redis grants a service needs beyond the streams it
+	// produces and consumes.
+	RedisAccess  []RedisAccess `yaml:"redis_access"`
+	Vocabularies []Vocabulary  `yaml:"vocabularies"`
 }
 
 // RetiredStream is a stream name the system no longer uses. Its key is deleted
@@ -205,7 +208,13 @@ func run() error {
 		return fmt.Errorf("write ts redis keys: %w", err)
 	}
 
-	for _, out := range []string{goOut, accessOut, vocabOut, vocabAccessOut, pyOut, pyVocabOut, tsVocabOut, tsKeysOut} {
+	aclOuts, err := writeRedisACLFiles(c, root)
+	if err != nil {
+		return err
+	}
+
+	outs := []string{goOut, accessOut, vocabOut, vocabAccessOut, pyOut, pyVocabOut, tsVocabOut, tsKeysOut}
+	for _, out := range append(outs, aclOuts...) {
 		fmt.Fprintln(os.Stderr, "gen-streams: wrote", out)
 	}
 	return nil
@@ -1162,15 +1171,9 @@ func validate(c *Contract) error {
 	}
 	groupRe := regexp.MustCompile(`^[a-z][a-z0-9-]+$`)
 	identRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	knownServices := map[string]struct{}{
-		"run-controller":         {},
-		"catalog":                {},
-		"execution-controller":   {},
-		"topology-controller":    {},
-		"release-controller":     {},
-		"remediation":            {},
-		"agent-remediation":      {},
-		"dead-letter-controller": {},
+	knownServices := map[string]struct{}{}
+	for _, name := range knownServiceNames() {
+		knownServices[name] = struct{}{}
 	}
 
 	streamNames := map[string]int{}
@@ -1275,6 +1278,10 @@ func validate(c *Contract) error {
 		if defaults > 1 {
 			return fmt.Errorf("vocabulary %q: %d values are marked default, at most one may be", v.Name, defaults)
 		}
+	}
+
+	if err := validateRedisAccess(c); err != nil {
+		return err
 	}
 
 	if err := validateReference(c, "runtime", nodeRuntimeVocabulary, func(v VocabularyValue) string { return v.Runtime }); err != nil {
