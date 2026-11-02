@@ -15,7 +15,7 @@ def read_secret(name: str) -> str:
 
     A file's content has one trailing newline ("\\n" or "\\r\\n") removed.
     Raises RuntimeError when both forms are set, or when the file cannot be
-    read or is empty.
+    read, is not UTF-8 text or is empty.
     """
     file_var = f"{name}_FILE"
     value = os.environ.get(name, "")
@@ -29,6 +29,9 @@ def read_secret(name: str) -> str:
             content = f.read()
     except OSError as exc:
         raise RuntimeError(f"{file_var}: {exc}") from exc
+    except UnicodeDecodeError:
+        # The decode error would quote the offending byte of the credential.
+        raise RuntimeError(f"{file_var}: {path} is not UTF-8 text") from None
     if content.endswith("\n"):
         content = content.removesuffix("\n").removesuffix("\r")
     if content == "":

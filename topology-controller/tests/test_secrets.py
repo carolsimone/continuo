@@ -87,3 +87,15 @@ def test_credential_provider_with_username_returns_both(monkeypatch):
     monkeypatch.setenv("REDIS_USERNAME", "svc")
     monkeypatch.setenv("REDIS_PASSWORD", "pw")
     assert EnvOrFileCredentialProvider().get_credentials() == ("svc", "pw")
+
+
+def test_read_secret_non_utf8_file_names_the_variable(monkeypatch, tmp_path):
+    path = tmp_path / "REDIS_PASSWORD"
+    path.write_bytes(b"\xff\xfe pw")
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD_FILE", str(path))
+    with pytest.raises(RuntimeError) as exc_info:
+        read_secret("REDIS_PASSWORD")
+    assert str(exc_info.value).startswith("REDIS_PASSWORD_FILE: ")
+    assert str(path) in str(exc_info.value)
+
