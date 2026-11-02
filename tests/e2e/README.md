@@ -77,6 +77,8 @@ docker compose down
 # service creates every Redis stream and consumer group under the continuo:
 # prefix and exits; the services wait up to five minutes for their groups.
 docker compose up -d
+# The compose Redis has no persistence: after it restarts or loses its data,
+# run `docker compose up streams-init` to create the streams and groups again.
 
 # Wait for neo4j to be healthy (can take up to 90s)
 docker compose ps   # neo4j should show "(healthy)"

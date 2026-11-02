@@ -130,6 +130,11 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
 	@echo "Flyway migrations done."
+	@echo "Waiting for streams-init to create the Redis streams and groups..."
+	@cid=$$($(DOCKER_COMPOSE) ps -aq streams-init); \
+		if [ -z "$$cid" ] || [ "$$(docker wait $$cid)" != 0 ]; then \
+			echo "streams-init did not exit 0"; exit 1; \
+		fi
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
@@ -152,8 +157,9 @@ FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-release \
 # (laptops, GitHub-hosted fork-PR runs) it is localhost.
 CI_HOST_IP ?= localhost
 
-# Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
-# images are built. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
+# Data dependencies for Go tests: Postgres+Neo4j+Redis up, migrated, and holding
+# every stream and consumer group. The only image built is the dead-letter-controller
+# dev image that runs streams-init. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis

@@ -305,8 +305,8 @@ func TestMigrationLoginRule(t *testing.T) {
 }
 
 // TestEveryConsumerMayWriteItsDeadLetters: the services that write the
-// dead-letter streams (their producers lists) include every service that
-// consumes a stream, and every service with an outbox-producing stream.
+// consumer dead-letter stream (its producers list) include every service that
+// consumes a stream.
 func TestEveryConsumerMayWriteItsDeadLetters(t *testing.T) {
 	c := loadRealContract(t)
 	var consumerDL []string

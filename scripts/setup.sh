@@ -275,3 +275,12 @@ echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"
 
 echo "Starting docker-compose in background..."
 docker compose up -d
+
+# streams-init is a one-shot container that creates every Redis stream and
+# consumer group; the services wait for their groups, so a failure is reported here.
+streams_init_cid=$(docker compose ps -aq streams-init)
+if [ -z "$streams_init_cid" ] || [ "$(docker wait "$streams_init_cid")" != 0 ]; then
+    echo "Error: streams-init did not exit 0" >&2
+    docker compose logs streams-init >&2 || true
+    exit 1
+fi
