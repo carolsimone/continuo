@@ -37,6 +37,8 @@ renders=(
   "byo-example:${CHART}/values-byo.yaml.example"
   "byo-inline:scripts/install-test/values-byo-inline.yaml"
   "byo-secret:scripts/install-test/values-byo-secret.yaml"
+  "credential-files:scripts/install-test/values-credential-files.yaml"
+  "company-files:scripts/install-test/values-company-files.yaml"
 )
 
 tmp="$(mktemp -d)"
@@ -94,6 +96,91 @@ python3 scripts/install-test/assert-run-controller-recreate.py "${tmp}/defaults.
 echo "--- wait-for-redis gates every Redis-using service (defaults) and none (byo)"
 python3 scripts/install-test/assert-redis-gate.py . "${tmp}/defaults.yaml" \
   "${tmp}/byo-example.yaml" "${tmp}/byo-inline.yaml" "${tmp}/byo-secret.yaml"
+
+# Credentials reach a pod in one of three ways: as secretKeyRef variables (env
+# delivery), as files projected from the same Secrets with <VAR>_FILE pointing
+# at them (file delivery), or as files the company provides at paths it names
+# (credentials.files), with no Secret behind them. Every service runs under a
+# ServiceAccount of its own in each. The file render is compared with the same
+# values in env delivery, so a credential cannot get lost between the two.
+echo "--- credential delivery: env, file and company-provided files"
+for f in defaults byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-credential-delivery.py "${tmp}/${f}.yaml" env
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  -f scripts/install-test/values-credential-files.yaml --set credentials.delivery=env > "${tmp}/credential-files-env.yaml"
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/credential-files.yaml" file "${tmp}/credential-files-env.yaml"
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/company-files.yaml" company
+# deployment_env NAME RENDER: the main container env of Deployment NAME, one
+# `VAR=value` (or `VAR<-secret/key`) line per variable.
+deployment_env() {
+  python3 - "$1" "$2" <<'PY'
+import sys, yaml
+for doc in yaml.safe_load_all(open(sys.argv[2])):
+    if doc and doc.get("kind") == "Deployment" and doc["metadata"]["name"] == sys.argv[1]:
+        for e in doc["spec"]["template"]["spec"]["containers"][0].get("env") or []:
+            ref = (e.get("valueFrom") or {}).get("secretKeyRef")
+            print(f"{e['name']}<-{ref['name']}/{ref['key']}" if ref else f"{e['name']}={e.get('value', '')}")
+PY
+}
+# A company file needs no services entry of its own: execution-controller's S3
+# keys, given only in credentials.files, still reach it as files, and its
+# other credentials stay secretKeyRef variables under the install's env delivery.
+company_executor="$(deployment_env execution-controller "${tmp}/company-files.yaml")"
+grep -qx 'AWS_ACCESS_KEY_ID_FILE=/mnt/secrets-store/s3-access-key-id' <<<"$company_executor" \
+  && grep -qx 'AWS_SECRET_ACCESS_KEY_FILE=/mnt/secrets-store/s3-secret-access-key' <<<"$company_executor" \
+  && grep -q '^POSTGRES_PASSWORD<-' <<<"$company_executor" \
+  || { echo "FAIL: execution-controller in the company-files render:"; echo "$company_executor"; exit 1; }
+# A key with no value in the chart's own Secret (llm.apiKey and the GitHub keys
+# default to empty) is left out under file delivery: an empty file fails the
+# service's start, where an empty variable reads as unset.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set credentials.delivery=file > "${tmp}/file-defaults.yaml"
+if deployment_env agent-chat "${tmp}/file-defaults.yaml" | grep -q '^LLM_API_KEY'; then
+  echo "FAIL: file delivery with an empty llm.apiKey must give agent-chat no LLM_API_KEY variable or file"; exit 1
+fi
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/file-defaults.yaml" file
+# A credentials.files entry names a variable continuo reads as a credential;
+# anything else would never be read.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set credentials.files.agent-chat.LLM_KEY=/vault/secrets/llm > /dev/null 2> "${tmp}/credfiles.err"; then
+  echo "FAIL: a credentials.files key that is not a credential must fail the render"; exit 1
+fi
+grep -qF 'credentials.files.agent-chat.LLM_KEY: not a credential continuo reads' "${tmp}/credfiles.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/credfiles.err"; exit 1; }
+# Job pods take the S3 key pair only from a Kubernetes Secret, so S3 keys that
+# reach execution-controller as company files need execution.jobS3Secret.name.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \
+     --set execution.jobS3Secret.name= > /dev/null 2> "${tmp}/jobs3.err"; then
+  echo "FAIL: execution-controller S3 keys as company files without execution.jobS3Secret.name must fail the render"; exit 1
+fi
+grep -qF "execution.jobS3Secret.name is required when execution-controller's S3 keys are files: Job pods can only reference a Kubernetes Secret" "${tmp}/jobs3.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/jobs3.err"; exit 1; }
+# The Secret Job pods read the S3 key pair from: the chart's own S3 Secret and
+# keys by default, or execution.jobS3Secret with its keys defaulting to the
+# variable names.
+for want in 'JOB_S3_SECRET_NAME: "continuo-minio"' 'JOB_S3_ACCESS_KEY_ID_KEY: "access-key-id"' \
+            'JOB_S3_SECRET_ACCESS_KEY_KEY: "secret-access-key"'; do
+  grep -qF "$want" "${tmp}/defaults.yaml" || { echo "FAIL: defaults render lacks ${want}"; exit 1; }
+done
+for want in 'JOB_S3_SECRET_NAME: "company-job-s3"' 'JOB_S3_ACCESS_KEY_ID_KEY: "AWS_ACCESS_KEY_ID"' \
+            'JOB_S3_SECRET_ACCESS_KEY_KEY: "AWS_SECRET_ACCESS_KEY"'; do
+  grep -qF "$want" "${tmp}/company-files.yaml" || { echo "FAIL: company-files render lacks ${want}"; exit 1; }
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set credentials=null > "${tmp}/credentials-null.yaml" \
+  || { echo "FAIL: rendering with credentials=null failed; values without a credentials block must render"; exit 1; }
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/credentials-null.yaml" env
+for bad in 'credentials.delivery=vault' 'credentials.delivery='; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set "$bad" > /dev/null 2> "${tmp}/delivery.err"; then
+    echo "FAIL: ${bad} must fail the render even with the schema check skipped"; exit 1
+  fi
+  grep -qF 'credentials.delivery' "${tmp}/delivery.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/delivery.err"; exit 1; }
+done
+# ui and topology-controller read the Redis password as REDIS_PASSWORD, so the
+# REDIS_URL the chart gives them carries none.
+for svc in ui topology-controller; do
+  deployment_env "$svc" "${tmp}/defaults.yaml" | grep -qx 'REDIS_URL=redis://continuo-redis:6379' \
+    || { echo "FAIL: ${svc}'s REDIS_URL must be redis://continuo-redis:6379"; deployment_env "$svc" "${tmp}/defaults.yaml"; exit 1; }
+done
 
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.

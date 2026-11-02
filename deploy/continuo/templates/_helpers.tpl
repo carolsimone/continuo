@@ -1246,6 +1246,13 @@ render fails on a port that is not one by "continuo.egress.isPort". */}}
 {{- if .Values.redis.enabled -}}6379{{- else -}}{{ .Values.externalRedis.port }}{{- end -}}
 {{- end -}}
 
+{{/* The REDIS_URL that replaces __REDIS_URL__ in a service's env. It carries
+     no password: the services that read it (ui, topology-controller) read the
+     password from REDIS_PASSWORD or REDIS_PASSWORD_FILE. */}}
+{{- define "continuo.redis.url" -}}
+{{- printf "redis://%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) -}}
+{{- end -}}
+
 {{- define "continuo.neo4j.uri" -}}
 {{- if .Values.neo4j.enabled -}}
 {{- printf "bolt://%s:7687" (include "continuo.neo4j.fullname" .) -}}
@@ -1446,6 +1453,231 @@ capabilities:
   {{- if $v.github.existingSecret -}}{{ $v.github.existingSecretAppPrivateKeyKey }}{{- else -}}github-app-private-key{{- end -}}
 {{- else -}}
 {{- fail (printf "unknown secretEnv ref %q" .ref) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* ------- credential delivery ------- */}}
+
+{{/* The variables continuo's services read as credentials, each also as
+     <VAR>_FILE (a path to a file holding the value). JSON list. */}}
+{{- define "continuo.credentialVariables" -}}
+["POSTGRES_PASSWORD","REDIS_PASSWORD","NEO4J_PASSWORD","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","LLM_API_KEY","GITHUB_TOKEN","GITHUB_APP_PRIVATE_KEY","AUTH_OIDC_CLIENT_SECRET"]
+{{- end -}}
+
+{{/* Directory a pod in file delivery mounts its credential files at, one file
+     per variable, named after it. */}}
+{{- define "continuo.credentialDir" -}}/var/run/secrets/continuo{{- end -}}
+
+{{/* credentials.files with an empty map for a service given none, or an
+     empty map for a release without a credentials block (helm upgrade
+     --reuse-values from an older chart). JSON object. */}}
+{{- define "continuo.credentialFiles" -}}
+{{- $files := dict -}}
+{{- range $svc, $vars := (dig "files" dict (.Values.credentials | default dict) | default dict) -}}
+{{- $_ := set $files $svc ($vars | default dict) -}}
+{{- end -}}
+{{- toJson $files -}}
+{{- end -}}
+
+{{/* Fails the render on a credentials.files key that is not a credential
+     variable: a service would never read it.
+     Call: include "continuo.credentials.assertFiles" $ */}}
+{{- define "continuo.credentials.assertFiles" -}}
+{{- $known := include "continuo.credentialVariables" . | fromJsonArray -}}
+{{- range $svc, $vars := (include "continuo.credentialFiles" . | fromJson) -}}
+{{- range $name, $_ := ($vars | default dict) -}}
+{{- if not (has $name $known) -}}
+{{- fail (printf "credentials.files.%s.%s: not a credential continuo reads" $svc $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* "env" or "file": how a service gets its credentials, its
+     credentialDelivery or else credentials.delivery (env when the release has
+     no credentials block). Fails the render on any other value.
+     Call: include "continuo.credentialDelivery" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.credentialDelivery" -}}
+{{- $mode := dig "delivery" "env" (.root.Values.credentials | default dict) -}}
+{{- $where := "credentials.delivery" -}}
+{{- if .svc.credentialDelivery -}}
+{{- $mode = .svc.credentialDelivery -}}
+{{- $where = printf "services[name=%s].credentialDelivery" .svc.name -}}
+{{- end -}}
+{{- if not (has $mode (list "env" "file")) -}}
+{{- fail (printf "%s is %q: it must be env or file" $where (toString $mode)) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/* "true" when the chart's own credentials Secret holds the key of ref with
+     an empty value: llm.apiKey, github.token or github.appPrivateKey left
+     unset with no existingSecret. File delivery leaves such a credential out,
+     since an empty file fails a service's start where an empty variable reads
+     as unset. */}}
+{{- define "continuo.credentialKnownEmpty" -}}
+{{- $v := .root.Values -}}
+{{- if and (eq .ref "llm") (not $v.llm.existingSecret) (not $v.llm.apiKey) -}}true
+{{- else if and (eq .ref "githubToken") (not $v.github.existingSecret) (not $v.github.token) -}}true
+{{- else if and (eq .ref "githubAppPrivateKey") (not $v.github.existingSecret) (not $v.github.appPrivateKey) -}}true
+{{- end -}}
+{{- end -}}
+
+{{/* Where one credential of a service comes from:
+       company  credentials.files gives a path for it
+       file     file delivery, projected from its Secret
+       none     file delivery of a key the chart knows is empty
+       env      a secretKeyRef variable (env delivery, or a name that is not a
+                credential variable, which no service reads as a file)
+     Call: include "continuo.credentialSource" (dict "root" $ "svc" $svc "name" "<VAR>" "ref" "<ref>") */}}
+{{- define "continuo.credentialSource" -}}
+{{- $files := include "continuo.credentialFiles" .root | fromJson -}}
+{{- $isCredential := has .name (include "continuo.credentialVariables" .root | fromJsonArray) -}}
+{{- if and $isCredential (dig .svc.name .name "" $files) -}}company
+{{- else if and $isCredential (eq (include "continuo.credentialDelivery" .) "file") -}}
+{{- if include "continuo.credentialKnownEmpty" . -}}none{{- else -}}file{{- end -}}
+{{- else -}}env
+{{- end -}}
+{{- end -}}
+
+{{/* One credential as container env list items with no indentation:
+       env      <AS> from its Secret's key (secretKeyRef)
+       file     <AS>_FILE=/var/run/secrets/continuo/<VAR>, an item of the pod's
+                continuo-credentials volume ("continuo.credentialProjection")
+       company  <AS>_FILE=<the credentials.files path>, and no Secret
+       none     nothing
+     <AS> is .as when given (an init container's own variable), else <VAR>.
+     Call: include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" "<VAR>" "ref" "<ref>" ["as" "<AS>"]) */}}
+{{- define "continuo.credentialEnv" -}}
+{{- $as := .as | default .name -}}
+{{- $source := include "continuo.credentialSource" . -}}
+{{- if eq $source "company" }}
+- name: {{ printf "%s_FILE" $as }}
+  value: {{ dig .svc.name .name "" (include "continuo.credentialFiles" .root | fromJson) | quote }}
+{{- else if eq $source "file" }}
+- name: {{ printf "%s_FILE" $as }}
+  value: {{ printf "%s/%s" (include "continuo.credentialDir" .root) .name | quote }}
+{{- else if eq $source "env" }}
+- name: {{ $as }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "continuo.secretName" (dict "root" .root "ref" .ref) | quote }}
+      key: {{ include "continuo.secretKey" (dict "root" .root "ref" .ref) | quote }}
+{{- end }}
+{{- end -}}
+
+{{/* The volumeMounts of a wait init container that reads one credential: the
+     continuo-credentials volume when it reads the file projected from its
+     Secret, the service's own volumeMounts when it reads a company file, and
+     nothing (empty output) when it reads a variable.
+     Call: include "continuo.credentialInitMounts" (dict "root" $ "svc" $svc "name" "<VAR>" "ref" "<ref>") */}}
+{{- define "continuo.credentialInitMounts" -}}
+{{- $source := include "continuo.credentialSource" . -}}
+{{- if eq $source "file" }}
+volumeMounts:
+  - name: continuo-credentials
+    mountPath: {{ include "continuo.credentialDir" .root }}
+    readOnly: true
+{{- else if and (eq $source "company") .svc.volumeMounts }}
+volumeMounts:
+  {{- toYaml .svc.volumeMounts | nindent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/* The credentials a service's main container gets, as a JSON list of
+     {name, ref}: the S3 key pair for the services in
+     "continuo.s3.credentialServices", then its secretEnv entries (less the S3
+     pair for those services, which the template injects instead). */}}
+{{- define "continuo.credentialList" -}}
+{{- $needsS3 := has .svc.name (include "continuo.s3.credentialServices" .root | fromJsonArray) -}}
+{{- $list := list -}}
+{{- if $needsS3 -}}
+{{- $list = append $list (dict "name" "AWS_ACCESS_KEY_ID" "ref" "s3AccessKeyId") -}}
+{{- $list = append $list (dict "name" "AWS_SECRET_ACCESS_KEY" "ref" "s3SecretAccessKey") -}}
+{{- end -}}
+{{- range $secret := (.svc.secretEnv | default (list)) -}}
+{{- if not (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) -}}
+{{- $list = append $list (dict "name" $secret.name "ref" $secret.ref) -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $list -}}
+{{- end -}}
+
+{{/* The company-file credentials of a service that "continuo.credentialList"
+     does not name, sorted: each still reaches the service as <VAR>_FILE.
+     JSON list of variable names. */}}
+{{- define "continuo.credentialExtraFiles" -}}
+{{- $listed := list -}}
+{{- range $c := (include "continuo.credentialList" . | fromJsonArray) -}}
+{{- $listed = append $listed $c.name -}}
+{{- end -}}
+{{- $extra := list -}}
+{{- range $name, $_ := (get (include "continuo.credentialFiles" .root | fromJson) .svc.name | default dict) -}}
+{{- if not (has $name $listed) -}}{{- $extra = append $extra $name -}}{{- end -}}
+{{- end -}}
+{{- toJson $extra -}}
+{{- end -}}
+
+{{/* Sources of the pod's projected continuo-credentials volume, as YAML list
+     items with no indentation: one `secret` source per Secret, with an item per
+     credential the pod reads as a file from it (path = the variable's name).
+     Covers the main container's credentials and, in bundled mode, the Redis
+     and Postgres passwords the wait init containers read. Empty when the pod
+     reads no credential file from a Secret.
+     Call: include "continuo.credentialProjection" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.credentialProjection" -}}
+{{- $root := .root -}}
+{{- $svc := .svc -}}
+{{- $wanted := include "continuo.credentialList" . | fromJsonArray -}}
+{{- if and $root.Values.redis.enabled (has $svc.name (include "continuo.redis.clientServices" $root | fromJsonArray)) -}}
+{{- $wanted = append $wanted (dict "name" "REDIS_PASSWORD" "ref" "redis") -}}
+{{- end -}}
+{{- if and $root.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB -}}
+{{- $wanted = append $wanted (dict "name" "POSTGRES_PASSWORD" "ref" "postgres") -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- $order := list -}}
+{{- $bySecret := dict -}}
+{{- range $c := $wanted -}}
+{{- $source := include "continuo.credentialSource" (dict "root" $root "svc" $svc "name" $c.name "ref" $c.ref) -}}
+{{- if and (eq $source "file") (not (hasKey $seen $c.name)) -}}
+{{- $_ := set $seen $c.name true -}}
+{{- $secret := include "continuo.secretName" (dict "root" $root "ref" $c.ref) -}}
+{{- if not (hasKey $bySecret $secret) -}}
+{{- $order = append $order $secret -}}
+{{- $_ := set $bySecret $secret (list) -}}
+{{- end -}}
+{{- $_ := set $bySecret $secret (append (get $bySecret $secret) (dict "key" (include "continuo.secretKey" (dict "root" $root "ref" $c.ref)) "path" $c.name)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $secret := $order }}
+- secret:
+    name: {{ $secret | quote }}
+    items:
+      {{- range $item := get $bySecret $secret }}
+      - key: {{ $item.key | quote }}
+        path: {{ $item.path | quote }}
+      {{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* The Secret Job pods read the S3 key pair from, as a JSON object {name,
+     accessKeyIdKey, secretAccessKeyKey}: execution.jobS3Secret, its keys
+     defaulting to AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or, with no
+     name, the chart's own S3 Secret and keys. Fails the render when
+     execution-controller's S3 keys are company files and no name is set: Job
+     pods cannot read a file execution-controller was given. */}}
+{{- define "continuo.execution.jobS3Secret" -}}
+{{- $cfg := dig "jobS3Secret" dict (.Values.execution | default dict) | default dict -}}
+{{- $name := $cfg.name | default "" -}}
+{{- if $name -}}
+{{- dict "name" $name "accessKeyIdKey" ($cfg.accessKeyIdKey | default "AWS_ACCESS_KEY_ID") "secretAccessKeyKey" ($cfg.secretAccessKeyKey | default "AWS_SECRET_ACCESS_KEY") | toJson -}}
+{{- else -}}
+{{- $files := get (include "continuo.credentialFiles" . | fromJson) "execution-controller" | default dict -}}
+{{- if or (hasKey $files "AWS_ACCESS_KEY_ID") (hasKey $files "AWS_SECRET_ACCESS_KEY") -}}
+{{- fail "execution.jobS3Secret.name is required when execution-controller's S3 keys are files: Job pods can only reference a Kubernetes Secret" -}}
+{{- end -}}
+{{- dict "name" (include "continuo.secretName" (dict "root" . "ref" "s3AccessKeyId")) "accessKeyIdKey" (include "continuo.secretKey" (dict "root" . "ref" "s3AccessKeyId")) "secretAccessKeyKey" (include "continuo.secretKey" (dict "root" . "ref" "s3SecretAccessKey")) | toJson -}}
 {{- end -}}
 {{- end -}}
 

@@ -12,6 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+
+- **Credentials as files.** `credentials.delivery: file` mounts each credential read-only under `/var/run/secrets/continuo` (one file per variable, from the same Secrets) and sets `<VAR>_FILE` instead of putting the value in the environment. The default, `env`, works as before. A service's `credentialDelivery` overrides it for that service.
+- **Credentials your company provides as files** (the Vault Agent injector, a Secrets Store CSI volume): list them in `credentials.files`, per service, with their paths. The chart attaches no Secret for them. To put the files there, a `services` entry now takes `podAnnotations`, `serviceAccount.annotations`, and `volumes` of any type (not only ConfigMaps). If execution-controller's S3 keys are such files, set `execution.jobS3Secret.name`: Job pods can only read a Kubernetes Secret.
+- **Every service has its own ServiceAccount**, named after it. Services other than execution-controller used to run as the namespace's `default` ServiceAccount; if you gave that account permissions or a cloud role, give them to the service's own account (`serviceAccount.annotations`).
+- ui's and topology-controller's `REDIS_URL` no longer carries the Redis password; they read it from `REDIS_PASSWORD`. No values change is needed to upgrade.
+
 ### Changed
 
 - **Finished Jobs are now deleted after 30 minutes instead of 24 hours.** This covers task, validation, seed-build and compile Jobs and their pods. Set `execution.jobTTLMinutes` (1 to 10080) to change it; it reaches execution-controller as `JOB_TTL_SECONDS`. If a Job is deleted before its log was uploaded (for example, execution-controller was down for longer than this time), its pod log is lost. No values change is needed to upgrade.

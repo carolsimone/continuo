@@ -282,6 +282,31 @@ github:
   existingSecretTokenKey: token
   existingSecretAppPrivateKeyKey: app-private-key
 
+# How the chart hands credentials to the pods. Install-time only: it shapes the
+# Deployments, and every service reads both forms. The credentials are
+# POSTGRES_PASSWORD, REDIS_PASSWORD, NEO4J_PASSWORD, AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY, LLM_API_KEY, GITHUB_TOKEN, GITHUB_APP_PRIVATE_KEY and
+# AUTH_OIDC_CLIENT_SECRET.
+credentials:
+  # env: each credential is an environment variable read from its Secret
+  # (secretKeyRef). file: the chart mounts the same Secret keys read-only under
+  # /var/run/secrets/continuo (one file per variable, named after it) and sets
+  # <VAR>_FILE to the file; no credential is in the environment, and a key the
+  # chart knows is empty (llm.apiKey or a GitHub key left unset) is left out.
+  # A service's credentialDelivery overrides it for that service. The bundled
+  # datastores' wait init containers read the same way.
+  delivery: env
+  # Credentials a company provides as files of its own (the Vault Agent
+  # injector, a Secrets Store CSI volume), per service: the chart attaches no
+  # Secret for them and sets <VAR>_FILE to the given path, whatever the
+  # delivery. Add the pod annotations, ServiceAccount annotations and volumes
+  # that put the file there to the service's entry under `services`. A key that
+  # is not one of the credentials above fails the install. Example:
+  #   files:
+  #     agent-chat:
+  #       LLM_API_KEY: /vault/secrets/llm
+  files: {}
+
 # service_name -> project root within that service's repo, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.
 # Leave empty to use the chart's shipped demo map (files/service_repos.yaml),
@@ -412,6 +437,18 @@ execution:
   # execution-controller refuses to start on it.
   kubeClientQPS: 50
   kubeClientBurst: 100
+  # The Secret validation, seed-build and compile Job pods read the S3 key pair
+  # from (Job pods can only reference a Kubernetes Secret). Empty name: the
+  # chart's own S3 Secret and keys (MinIO's, s3.existingSecret's, or the
+  # chart's credentials Secret). With a name, the keys default to
+  # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Required when
+  # execution-controller's S3 keys are company files (credentials.files).
+  # Reaches execution-controller as JOB_S3_SECRET_NAME,
+  # JOB_S3_ACCESS_KEY_ID_KEY and JOB_S3_SECRET_ACCESS_KEY_KEY.
+  jobS3Secret:
+    name: ""
+    accessKeyIdKey: ""
+    secretAccessKeyKey: ""
 
 # Task runs. run-controller decides every attempt of every task. A failed
 # attempt is retried at once, while its task has retries left, unless it failed
@@ -657,6 +694,18 @@ defaultResources:
   requests: {cpu: 100m, memory: 128Mi}
   limits: {cpu: "1", memory: 512Mi}
 
+# One entry per service. Every enabled service runs under a ServiceAccount
+# named after it. Besides the keys the entries below use, an entry takes:
+#   podAnnotations: {}             annotations on the service's pods (e.g. the
+#                                  Vault Agent injector's)
+#   serviceAccount:
+#     annotations: {}              annotations on its ServiceAccount (e.g.
+#                                  eks.amazonaws.com/role-arn for IRSA)
+#   credentialDelivery: ""         env or file; empty uses credentials.delivery
+#   volumes: []                    any Kubernetes volume (csi, secret, ...),
+#                                  mounted through volumeMounts. A configMap
+#                                  volume with an empty name mounts the chart's
+#                                  ConfigMap for the services that have one.
 services:
   - name: run-controller
     enabled: true

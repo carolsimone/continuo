@@ -213,6 +213,9 @@ services:
       - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.10.0
       # Warehouse credentials for validation pods come from this Secret (envFrom).
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
+      # Job pods read the S3 key pair from this Secret in the kind cluster
+      # (keys AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY).
+      - JOB_S3_SECRET_NAME=continuo-job-s3
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt command dialect (per-service command templates for K8s Jobs)
       - DBT_COMMANDS_CONFIG_PATH=/etc/continuo/dbt-commands.yaml
@@ -740,7 +743,8 @@ services:
       - AUTH_PUBLIC_URL=http://ui-auth:8090
       - AUTH_OPERATOR_EMAILS=operator@example.com
       - AUTH_VIEWER_EMAILS=viewer@example.com
-      - REDIS_URL=redis://:continuo@redis:6379
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=continuo
       - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
       - CI_AUTH_ALLOW_INSECURE_ISSUER=true
       - MAINTENANCE_ENABLED=false
@@ -806,7 +810,8 @@ services:
       dockerfile: Dockerfile.dev
     container_name: topology-controller
     environment:
-      REDIS_URL: redis://:continuo@redis:6379
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: continuo
       S3_ENDPOINT_URL: http://minio:9000
       S3_BUCKET: continuo
       S3_ENV: local

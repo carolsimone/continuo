@@ -51,12 +51,11 @@ checks:
     # delete and `pods`/`pods/log` get/list/watch; it has no direct `pods`
     # create verb.
     - "access-to-create-pods"
-    # Every service in this codebase already reads its credentials via
-    # env-var secretKeyRef (a locked, pre-existing app-code contract across
-    # all 9 backend services — see docs/arch/*). Moving to mounted secret
-    # files is an application-code change to each service, out of scope for
-    # a chart-only task; secretKeyRef env injection is still a standard,
-    # RBAC-gated Kubernetes mechanism, not a plaintext file on the image.
+    # credentials.delivery defaults to env: each credential is a secretKeyRef
+    # variable, a standard, RBAC-gated Kubernetes mechanism, not a plaintext
+    # value on the image. An install that keeps credentials out of the
+    # environment sets credentials.delivery=file, and the chart mounts the same
+    # Secret keys as read-only files instead.
     - "read-secret-from-env-var"
     # Only ever fires on the BYO existingSecret render (values-byo.yaml.example):
     # continuo-datastores/continuo-s3/continuo-oidc are pre-created by the
@@ -64,11 +63,10 @@ checks:
     # from the single rendered manifest kube-linter inspects; a real cluster
     # resolves them fine at admission time.
     - "env-value-from"
-    # All 8 non-RBAC services run under the namespace's default
-    # ServiceAccount, which this chart never binds to any Role/ClusterRole —
-    # it carries zero permissions. Only execution-controller needs Kubernetes
-    # API access and already gets a dedicated, least-privilege ServiceAccount
-    # (see rbac.yaml).
+    # Every services entry runs under a ServiceAccount of its own (rbac.yaml).
+    # dex and egress-proxy run under the namespace's default ServiceAccount,
+    # which this chart never binds to any Role/ClusterRole, so it carries zero
+    # permissions.
     - "default-service-account"
     # Kubernetes defaults an omitted Pod-template restartPolicy to "Always"
     # for every Deployment/StatefulSet controller; the rendered manifests rely
