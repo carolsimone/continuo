@@ -35,6 +35,14 @@ cd "${K8S_DIR}"
 log_info "Removing any e2e-no-pods ResourceQuota left behind..."
 kubectl delete resourcequota e2e-no-pods -n default --ignore-not-found=true
 
+# The Job pods read their S3 keys from this Secret (JOB_S3_SECRET_NAME); a Job
+# pod referencing a missing Secret never starts.
+log_info "Applying the Job S3 Secret..."
+kubectl apply -f job-s3-secret.yaml || {
+    log_error "Failed to apply Job S3 Secret"
+    exit 1
+}
+
 # Apply execution-controller
 log_info "Deploying execution-controller..."
 envsubst < execution-controller-deployment.yaml | kubectl apply -f - || {

@@ -90,6 +90,10 @@ To run no exports, set catalog.backup.enabled=false.
 
 {{- if .Release.IsUpgrade }}
 
+Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.
+Image pull secrets, RoleBindings and cloud roles bound to the default ServiceAccount no longer apply:
+set imagePullSecrets (and services[].serviceAccount.annotations for cloud roles) in your values.
+
 Every Redis key now lives under the prefix `continuo:` (streams, ui sessions,
 agent-chat's rate-limit keys, agent-remediation's LLM cache keys). Consumer
 group names do not change. The streams-init step creates each stream and

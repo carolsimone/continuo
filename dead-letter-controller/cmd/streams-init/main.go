@@ -18,7 +18,6 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // redisWait bounds how long the command waits for Redis to answer, so a Redis
@@ -40,7 +39,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	client := goredis.NewClient(&goredis.Options{Addr: redisCfg.Addr(), Password: redisCfg.Password})
+	client := pkgredis.NewClient(redisCfg)
 	defer func() { _ = client.Close() }()
 
 	if createStreams {

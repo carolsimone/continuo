@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	validationmodel "github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/artifacts"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/parsecache"
@@ -1041,17 +1042,38 @@ func continuoImageSecurityContext() *corev1.SecurityContext {
 	return sc
 }
 
-// s3CredEnvVars returns the four S3 credential environment variables forwarded
-// from the execution-controller environment. S3_BUCKET is intentionally omitted —
-// both the compile uploader and the validation runner parse the bucket from their
-// respective URI parameters and never read S3_BUCKET.
+// s3CredEnvVars returns the S3 environment of a Job container: the endpoint
+// and region as values and, when JOB_S3_SECRET_NAME names a Secret, the access
+// key pair as references to that Secret's keys (JOB_S3_ACCESS_KEY_ID_KEY and
+// JOB_S3_SECRET_ACCESS_KEY_KEY, defaulting to the variable names). A Job
+// object never holds a key as a value; without a Job Secret the container
+// carries no key and the SDK's default credential chain applies. S3_BUCKET is
+// intentionally omitted: both the compile uploader and the validation runner
+// parse the bucket from their respective URI parameters and never read
+// S3_BUCKET.
 func s3CredEnvVars() []corev1.EnvVar {
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "S3_ENDPOINT_URL", Value: os.Getenv("S3_ENDPOINT_URL")},
-		{Name: "AWS_ACCESS_KEY_ID", Value: os.Getenv("AWS_ACCESS_KEY_ID")},
-		{Name: "AWS_SECRET_ACCESS_KEY", Value: os.Getenv("AWS_SECRET_ACCESS_KEY")},
 		{Name: "AWS_DEFAULT_REGION", Value: os.Getenv("AWS_DEFAULT_REGION")},
 	}
+	secret := os.Getenv("JOB_S3_SECRET_NAME")
+	if secret == "" {
+		return env
+	}
+	return append(env,
+		jobS3SecretEnv("AWS_ACCESS_KEY_ID", secret, pkgconfig.EnvOrDefault("JOB_S3_ACCESS_KEY_ID_KEY", "AWS_ACCESS_KEY_ID")),
+		jobS3SecretEnv("AWS_SECRET_ACCESS_KEY", secret, pkgconfig.EnvOrDefault("JOB_S3_SECRET_ACCESS_KEY_KEY", "AWS_SECRET_ACCESS_KEY")),
+	)
+}
+
+// jobS3SecretEnv is the env var name read from key of the Secret secret.
+func jobS3SecretEnv(name, secret, key string) corev1.EnvVar {
+	return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{
+		SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secret},
+			Key:                  key,
+		},
+	}}
 }
 
 // warehouseSecretEnvFrom returns the envFrom source that attaches the

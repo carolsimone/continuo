@@ -9,6 +9,7 @@ import main
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import SERVICE_NAME
+from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
 from service.errors import PermanentMessageError
 from streams_contract import (
@@ -58,6 +59,8 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "CandidateSqlUploader", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CodeBundleUploader", lambda *a, **kw: object())
     monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: object())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     monkeypatch.setitem(
         sys.modules, "boto3",
         SimpleNamespace(client=lambda *a, **kw: object()),
@@ -357,3 +360,35 @@ def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypat
     ((args, kwargs),) = built
     assert args[1] == MANIFEST_LOADED_CANDIDATE_V2
     assert kwargs["producer"] == SERVICE_NAME
+
+
+def test_main_signs_in_to_redis_through_the_credential_provider(monkeypatch):
+    """The Redis client takes its credentials from the provider, which reads
+    them on every connection, and the URL carries none."""
+    _common_monkeypatches(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: calls.append((a, kw)) or object())
+
+    main.main()
+
+    ((args, kwargs),) = calls
+    assert args == ("redis://localhost:6379/0",)
+    assert isinstance(kwargs["credential_provider"], EnvOrFileCredentialProvider)
+
+
+def test_main_hands_boto3_the_keys_read_through_read_secret(monkeypatch, tmp_path):
+    _common_monkeypatches(monkeypatch)
+    key_file = tmp_path / "AWS_ACCESS_KEY_ID"
+    key_file.write_text("file-key\n")
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID_FILE", str(key_file))
+    clients = []
+    monkeypatch.setitem(
+        sys.modules, "boto3",
+        SimpleNamespace(client=lambda *a, **kw: clients.append(kw) or object()),
+    )
+
+    main.main()
+
+    assert clients[0]["aws_access_key_id"] == "file-key"
+    assert clients[0]["aws_secret_access_key"] == "secret"

@@ -174,7 +174,9 @@ func TestRunsSchema_OneRunPerScheduledSlot(t *testing.T) {
 // the test ends.
 func listenForSchedules(t *testing.T) *pq.Listener {
 	t.Helper()
-	listener := pq.NewListener(pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), 10*time.Millisecond, time.Second, nil)
+	dsn, err := pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN()
+	require.NoError(t, err)
+	listener := pq.NewListener(dsn, 10*time.Millisecond, time.Second, nil)
 	t.Cleanup(func() { _ = listener.Close() })
 	require.NoError(t, listener.Listen(schedulesChannel))
 	return listener

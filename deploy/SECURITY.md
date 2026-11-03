@@ -30,9 +30,17 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   must point at commits reachable from `main`, images are retagged (not
   rebuilt) from the exact commit's digests, and chart publish is gated on a
   passing kind install test in bundled and BYO modes.
-- **Least-privilege RBAC.** Only execution-controller gets a ServiceAccount
-  with (namespace-scoped, minimal) Kubernetes API access; every other service
-  runs under the default ServiceAccount bound to nothing.
+- **Least-privilege RBAC.** Every `services` entry runs under its own ServiceAccount.
+  Only execution-controller's holds (namespace-scoped, minimal) Kubernetes
+  API access; every other one is bound to nothing. egress-proxy, the bundled
+  datastores, Dex and the chart's Jobs run as the namespace's `default`
+  ServiceAccount.
+- **Credentials as files.** With `credentials.delivery: file` the chart
+  mounts each credential read-only under `/var/run/secrets/continuo` and sets
+  `<VAR>_FILE`, so no credential is in a pod's environment;
+  `credentials.files` points a service at files a secret manager writes
+  (the Vault Agent injector, a Secrets Store CSI volume). The Postgres and
+  Redis passwords are read again for every new connection.
 
 ## What the operator owns
 
@@ -41,9 +49,9 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
 - **Encryption in transit inside the cluster** — run a service mesh or an
   encrypting CNI; the chart is mesh-compatible and configures no app-level
   mTLS.
-- **Secret storage and rotation** — the chart consumes Secrets; creating
-  them from a secret manager (via `existingSecret`) and rotating them is
-  operator process.
+- **Secret storage and rotation** — the chart consumes Secrets or files a
+  secret manager writes; creating them (via `existingSecret` or
+  `credentials.files`) and rotating them is operator process.
 - **Datastore hardening and backups** — bundled datastores are
   quickstart-grade (single instance, no backups); production datastores,
   their TLS, HA, and backup story are yours.

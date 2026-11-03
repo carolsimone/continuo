@@ -17,6 +17,7 @@ import { loadAuthConfig, loadPublicUrl } from './auth/config';
 import { buildAuth } from './auth';
 import { loadCiAuthConfig } from './auth/ci-config';
 import { loadMaintenance } from './maintenance';
+import { readSecret } from './secrets';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const RUN_CONTROLLER_GRPC_ADDR = process.env.RUN_CONTROLLER_GRPC_ADDR || 'localhost:50051';
@@ -27,11 +28,6 @@ const CONFIG_FILE = process.env.CONFIG_FILE;
 const RELEASE_CONTROLLER_URL = process.env.RELEASE_CONTROLLER_URL || 'http://release-controller:8088';
 const CHAT_BRIDGE_ENABLED = process.env.CHAT_BRIDGE_ENABLED === 'true';
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID || '';
-// Reconstructs a well-formed PEM regardless of how its line breaks arrived
-// (real newlines, \n escapes, spaces, CRLF, or a mix) so a value mangled in
-// transit — e.g. a quoted YAML scalar in a Helm values file — is still
-// accepted. See normalizePemPrivateKey for the encodings this repairs.
-const GITHUB_APP_PRIVATE_KEY = normalizePemPrivateKey(process.env.GITHUB_APP_PRIVATE_KEY ?? '');
 const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID || '';
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || undefined;
 
@@ -63,7 +59,11 @@ async function main() {
   // up even though this one integration cannot.
   const githubAppCfg = {
     appId: GITHUB_APP_ID,
-    privateKey: GITHUB_APP_PRIVATE_KEY,
+    // Reconstructs a well-formed PEM regardless of how its line breaks arrived
+    // (real newlines, \n escapes, spaces, CRLF, or a mix) so a value mangled in
+    // transit — e.g. a quoted YAML scalar in a Helm values file — is still
+    // accepted. See normalizePemPrivateKey for the encodings this repairs.
+    privateKey: normalizePemPrivateKey(readSecret(process.env, 'GITHUB_APP_PRIVATE_KEY') ?? ''),
     installationId: GITHUB_APP_INSTALLATION_ID,
     baseUrl: GITHUB_API_BASE_URL,
   };

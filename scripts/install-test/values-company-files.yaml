@@ -1,0 +1,98 @@
+# Install-test fixture: a company that provides some credentials as files of
+# its own. agent-chat's LLM key comes from the Vault Agent injector (the pod
+# annotations ask for it, at /vault/secrets/llm), and execution-controller's S3
+# key pair from a Secrets Store CSI volume. The chart attaches no Secret for
+# either and sets <VAR>_FILE to the given path. agent-chat reads its other
+# credentials as files from their Secrets (credentialDelivery: file), and
+# execution-controller as environment variables (the install's env delivery).
+# Job pods can only reference a Kubernetes Secret, so execution.jobS3Secret
+# names the one they get the S3 key pair from. lint.sh asserts the render.
+# `services` is a list that Helm replaces whole: the other services keep
+# minimal entries so every NetworkPolicy still selects their pods.
+credentials:
+  files:
+    agent-chat:
+      LLM_API_KEY: /vault/secrets/llm
+    execution-controller:
+      AWS_ACCESS_KEY_ID: /mnt/secrets-store/s3-access-key-id
+      AWS_SECRET_ACCESS_KEY: /mnt/secrets-store/s3-secret-access-key
+
+execution:
+  jobS3Secret:
+    name: company-job-s3
+
+services:
+  - name: agent-chat
+    enabled: true
+    httpPort: 8091
+    grpcPort: 50053
+    readinessPath: /ready
+    livenessPath: /livez
+    credentialDelivery: file
+    podAnnotations:
+      vault.hashicorp.com/agent-inject: "true"
+      vault.hashicorp.com/role: continuo-agent-chat
+      vault.hashicorp.com/agent-inject-secret-llm: secret/data/continuo/llm
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/continuo-agent-chat
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      POSTGRES_DB: continuo_agent_chat
+      HEALTH_PORT: "8091"
+      GRPC_PORT: "50053"
+      CONTINUO_RUN_CONTROLLER_ADDR: run-controller:50051
+      CONTINUO_CATALOG_ADDR: catalog:50052
+      CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__
+      LLM_PROVIDER: __LLM_PROVIDER__
+      LLM_MODEL: __LLM_MODEL__
+
+  - name: execution-controller
+    enabled: true
+    httpPort: 8084
+    readinessPath: /ready
+    livenessPath: /livez
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+    rbac:
+      enabled: true
+      rules:
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["create", "get", "list", "watch", "delete"]
+        - apiGroups: [""]
+          resources: ["pods", "pods/log"]
+          verbs: ["get", "list", "watch"]
+    env:
+      POSTGRES_DB: continuo_execution
+      K8S_NAMESPACE: __RELEASE_NAMESPACE__
+      VALIDATION_IMAGE: __VALIDATION_IMAGE__
+      VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
+      S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
+      HTTP_PORT: "8084"
+      DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
+      DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
+    volumeMounts:
+      - {name: dbt-commands, mountPath: /etc/continuo, readOnly: true}
+      - {name: secrets-store, mountPath: /mnt/secrets-store, readOnly: true}
+    volumes:
+      - name: dbt-commands
+        configMap: {name: ""}
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: continuo-execution-controller
+
+  - {name: run-controller, enabled: true, httpPort: 8082, grpcPort: 50051}
+  - {name: catalog, enabled: true, httpPort: 8087, grpcPort: 50052}
+  - {name: ui, enabled: true, httpPort: 8090, probePath: /healthz}
+  - {name: topology-controller, enabled: true, httpPort: 8086}
+  - {name: release-controller, enabled: true, httpPort: 8088, probePath: /healthz}
+  - {name: remediation, enabled: true, httpPort: 8090, probePath: /healthz}
+  - {name: agent-remediation, enabled: true, httpPort: 8092, grpcPort: 50054, probePath: /healthz}
+  - {name: dead-letter-controller, enabled: true, httpPort: 8096, grpcPort: 50055, probePath: /ready}

@@ -110,7 +110,7 @@ func LoadNeo4j(v *pkgconfig.Validator) Neo4jConfig {
 	return Neo4jConfig{
 		URI:      v.Require("NEO4J_URI"),
 		User:     v.Require("NEO4J_USER"),
-		Password: v.Require("NEO4J_PASSWORD"),
+		Password: v.RequireSecretValue("NEO4J_PASSWORD"),
 	}
 }
 

@@ -1,4 +1,5 @@
 import type { Role } from './types';
+import { readSecret } from '../secrets';
 
 export interface OidcAuthConfig {
   mode: 'oidc';
@@ -14,7 +15,8 @@ export interface OidcAuthConfig {
   defaultRole: Role | 'none';
   sessionIdleTtlSeconds: number;
   sessionMaxTtlSeconds: number;
-  redisUrl: string;
+  redisUrl: string; // carries no credentials
+  redisUsername?: string;
 }
 
 export interface DevAuthConfig {
@@ -55,6 +57,31 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return v;
 }
 
+// The credential variable's value, or an error naming it when neither the
+// variable nor its _FILE form yields a non-blank value.
+function requiredSecret(env: NodeJS.ProcessEnv, name: string): string {
+  const v = readSecret(env, name);
+  if (v === undefined || v.trim() === '') throw new Error(`${name} is required when AUTH_MODE=oidc`);
+  return v;
+}
+
+// The Redis URL, which must not embed a username or password: those come from
+// REDIS_USERNAME and REDIS_PASSWORD(_FILE), so the password can be re-read on
+// every reconnect.
+function redisUrlWithoutCredentials(env: NodeJS.ProcessEnv): string {
+  const raw = required(env, 'REDIS_URL');
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw; // not a URL (e.g. a socket path): it holds no userinfo
+  }
+  if (u.username !== '' || u.password !== '') {
+    throw new Error('REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD');
+  }
+  return raw;
+}
+
 // The ui's public base URL from AUTH_PUBLIC_URL, without trailing slashes, or
 // undefined when it is unset or blank. It is the single parse of the setting:
 // the login redirect, the CSRF origin and the cookie Secure flag (through
@@ -81,7 +108,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
     mode: 'oidc',
     issuerUrl: required(env, 'AUTH_OIDC_ISSUER_URL'),
     clientId: required(env, 'AUTH_OIDC_CLIENT_ID'),
-    clientSecret: required(env, 'AUTH_OIDC_CLIENT_SECRET'),
+    clientSecret: requiredSecret(env, 'AUTH_OIDC_CLIENT_SECRET'),
     publicUrl,
     scopes: env.AUTH_OIDC_SCOPES ?? 'openid email profile',
     groupsClaim: env.AUTH_GROUPS_CLAIM ?? 'groups',
@@ -91,6 +118,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
     defaultRole: defaultRole as Role | 'none',
     sessionIdleTtlSeconds: parseDuration(env.AUTH_SESSION_IDLE_TTL ?? '8h', 'AUTH_SESSION_IDLE_TTL'),
     sessionMaxTtlSeconds: parseDuration(env.AUTH_SESSION_MAX_TTL ?? '24h', 'AUTH_SESSION_MAX_TTL'),
-    redisUrl: required(env, 'REDIS_URL'),
+    redisUrl: redisUrlWithoutCredentials(env),
+    redisUsername: env.REDIS_USERNAME || undefined,
   };
 }

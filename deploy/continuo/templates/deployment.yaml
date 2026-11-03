@@ -13,24 +13,33 @@
       "execution-controller" (dict "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml")
       "agent-remediation" (dict "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
       "ui" (dict "name" "continuo.cancelConfigMapName") }}
+{{- include "continuo.credentials.assertFiles" $ }}
 {{- range $svc := .Values.services }}
 {{- if $svc.enabled }}
 {{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
 {{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
 {{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}
+{{- /* How this service's credentials reach it ("continuo.credentialSource"):
+       $fileDelivery when it reads them as files projected from their Secrets,
+       $companyFiles the credentials.files entries the company provides, and
+       $projection the sources of the continuo-credentials volume. */}}
+{{- $fileDelivery := eq (include "continuo.credentialDelivery" (dict "root" $ "svc" $svc)) "file" }}
+{{- $companyFiles := get (include "continuo.credentialFiles" $ | fromJson) $svc.name | default dict }}
+{{- $projection := include "continuo.credentialProjection" (dict "root" $ "svc" $svc) | trim }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $svc.name }}
   namespace: {{ $.Release.Namespace }}
-  {{- if eq $svc.name "execution-controller" }}
+  {{- if or (eq $svc.name "execution-controller") $fileDelivery $companyFiles }}
   annotations:
-    # VALIDATION_WAREHOUSE_SECRET holds the NAME of a Secret (a resource
-    # reference), not a credential value; every real secret in this chart is
-    # injected via secretKeyRef. The heuristic matches the var name only.
-    ignore-check.kube-linter.io/env-var-secret: "value is a Secret name, not a secret"
+    # kube-linter flags every variable whose name contains SECRET and that has
+    # a value. VALIDATION_WAREHOUSE_SECRET holds the NAME of a Secret, and a
+    # <VAR>_FILE variable the path of a credential file; no credential value
+    # is ever in a container's environment.
+    ignore-check.kube-linter.io/env-var-secret: "values are Secret names and credential file paths, not secrets"
   {{- end }}
   labels:
     {{- include "continuo.labels" $ | nindent 4 }}
@@ -79,7 +88,7 @@ spec:
         {{- if $mounted.template }}
         {{- $chartManaged := false }}
         {{- range $volume := $svc.volumes }}
-        {{- if not (dig "configMap" "name" "" $volume) }}{{ $chartManaged = true }}{{ end }}
+        {{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}{{ $chartManaged = true }}{{ end }}
         {{- end }}
         {{- if $chartManaged }}
         # The service reads its mounted file only at startup; a changed file
@@ -88,6 +97,9 @@ spec:
         # `kubectl rollout restart`.
         checksum/{{ $mounted.checksum }}: {{ include (print $.Template.BasePath "/" $mounted.template) $ | sha256sum }}
         {{- end }}
+        {{- end }}
+        {{- with $svc.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
@@ -98,9 +110,7 @@ spec:
       # agent-chat): if this is tighter than SHUTDOWN_GRACE, Kubernetes can
       # SIGKILL mid-teardown before the app's own bounded sequence finishes.
       terminationGracePeriodSeconds: {{ $.Values.global.terminationGracePeriodSeconds }}
-      {{- if and $svc.rbac $svc.rbac.enabled }}
       serviceAccountName: {{ $svc.name }}
-      {{- end }}
       securityContext:
         {{- include "continuo.podSecurityContext" $ | nindent 8 }}
         {{- if eq $svc.name "ui" }}
@@ -127,21 +137,26 @@ spec:
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           securityContext:
             {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
+          {{- $redisAuth := dict "root" $ "svc" $svc "name" "REDIS_PASSWORD" "ref" "redis" "as" "REDISCLI_AUTH" }}
           env:
-            - name: REDISCLI_AUTH
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
-                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+            {{- with include "continuo.credentialEnv" $redisAuth | trim }}{{ . | nindent 12 }}{{ end }}
             - name: REDIS_HOST
               value: {{ include "continuo.redis.host" $ | quote }}
             - name: REDIS_PORT
               value: {{ include "continuo.redis.port" $ | quote }}
+          {{- with include "continuo.credentialInitMounts" $redisAuth | trim }}{{ . | nindent 10 }}{{ end }}
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              # In file delivery the password is in the file REDISCLI_AUTH_FILE
+              # names; redis-cli reads it from REDISCLI_AUTH.
+              {{- include "continuo.readCredentialShell" $ | nindent 14 }}
+              if [ -n "${REDISCLI_AUTH_FILE:-}" ]; then
+                read_credential "$REDISCLI_AUTH_FILE"
+                REDISCLI_AUTH="$credential"; export REDISCLI_AUTH
+              fi
               tries=0
               until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
                 tries=$((tries+1))
@@ -172,18 +187,23 @@ spec:
               value: {{ include "continuo.postgresql.port" $ | quote }}
             - name: PGUSER
               value: {{ include "continuo.postgresql.username" $ | quote }}
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
-                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+            {{- $pgPassword := dict "root" $ "svc" $svc "name" "POSTGRES_PASSWORD" "ref" "postgres" "as" "PGPASSWORD" }}
+            {{- with include "continuo.credentialEnv" $pgPassword | trim }}{{ . | nindent 12 }}{{ end }}
             - name: PGDATABASE
               value: {{ $svc.env.POSTGRES_DB | quote }}
+          {{- with include "continuo.credentialInitMounts" $pgPassword | trim }}{{ . | nindent 10 }}{{ end }}
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              # In file delivery the password is in the file PGPASSWORD_FILE
+              # names; psql reads it from PGPASSWORD.
+              {{- include "continuo.readCredentialShell" $ | nindent 14 }}
+              if [ -n "${PGPASSWORD_FILE:-}" ]; then
+                read_credential "$PGPASSWORD_FILE"
+                PGPASSWORD="$credential"; export PGPASSWORD
+              fi
               tries=0
               # Probe through the always-present maintenance database, then
               # the service's own, using queries that cannot fail server-side:
@@ -217,7 +237,7 @@ spec:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
           {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
-          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") $isAgent }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") $isAgent $companyFiles }}
           env:
             {{- /*
               Services that read or write object storage get their S3 credentials
@@ -228,17 +248,15 @@ spec:
               with nothing. Injecting them from the template makes the credentials
               independent of that replaceable list.
             */}}
+            {{- /*
+              Every credential goes through "continuo.credentialEnv", which
+              renders it as the service's delivery asks: a secretKeyRef
+              variable, a <VAR>_FILE naming its projected file, or a
+              <VAR>_FILE naming a company-provided file.
+            */}}
             {{- if $needsS3 }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
-                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
-                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
+            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" "AWS_ACCESS_KEY_ID" "ref" "s3AccessKeyId") | trim }}{{ . | nindent 12 }}{{ end }}
+            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" "AWS_SECRET_ACCESS_KEY" "ref" "s3SecretAccessKey") | trim }}{{ . | nindent 12 }}{{ end }}
             {{- end }}
             {{- if eq $svc.name "ui" }}
             {{- /* Injected here rather than through the ui's `services` entry so
@@ -254,12 +272,14 @@ spec:
             {{- end }}
             {{- range $secret := ($svc.secretEnv | default (list)) }}
             {{- if not (and $needsS3 (or (eq $secret.name "AWS_ACCESS_KEY_ID") (eq $secret.name "AWS_SECRET_ACCESS_KEY"))) }}
-            - name: {{ $secret.name }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "continuo.secretName" (dict "root" $ "ref" $secret.ref) | quote }}
-                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" $secret.ref) | quote }}
+            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" $secret.name "ref" $secret.ref) | trim }}{{ . | nindent 12 }}{{ end }}
             {{- end }}
+            {{- end }}
+            {{- /* A company file reaches the service even when its entry does
+                   not list the credential. */}}
+            {{- range $name := (include "continuo.credentialExtraFiles" (dict "root" $ "svc" $svc) | fromJsonArray) }}
+            - name: {{ printf "%s_FILE" $name }}
+              value: {{ get $companyFiles $name | quote }}
             {{- end }}
           {{- if $svc.env }}
             {{- range $key, $val := $svc.env }}
@@ -270,7 +290,7 @@ spec:
                   apiVersion: v1
                   fieldPath: metadata.namespace
               {{- else if eq $val "__REDIS_URL__" }}
-              value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%s" (include "continuo.redis.host" $) (include "continuo.redis.port" $) | quote }}
+              value: {{ include "continuo.redis.url" $ | quote }}
               {{- else if eq $val "__DEAD_LETTER_CONTROLLER_ADDR__" }}
               value: {{ $.Values.global.deadLetterControllerGrpcAddr | quote }}
               {{- else if eq $val "__DOCKERHUB_USERNAME__" }}
@@ -389,6 +409,11 @@ spec:
               mountPath: /app/ci-auth
               readOnly: true
           {{- end }}
+          {{- if $projection }}
+            - name: continuo-credentials
+              mountPath: {{ include "continuo.credentialDir" $ }}
+              readOnly: true
+          {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -397,23 +422,31 @@ spec:
           configMap:
             name: {{ include "continuo.ciAuthConfigMapName" $ }}
       {{- end }}
+      {{- if $projection }}
+        {{- /* The Secret keys the pod reads as credential files, one file per
+               variable, named after it ("continuo.credentialProjection"). */}}
+        - name: continuo-credentials
+          projected:
+            sources:
+              {{- $projection | nindent 14 }}
+      {{- end }}
       {{- if $svc.volumes }}
-        {{- if $mounted.name }}
+        {{- /* Volumes of any type render as given. A configMap volume with an
+               empty name mounts the chart's ConfigMap for this service; a
+               service the chart mounts no ConfigMap into has nothing to fall
+               back to, and the API server would refuse the Deployment. */}}
+        {{- $volumes := list }}
         {{- range $volume := $svc.volumes }}
-        - name: {{ $volume.name }}
-          configMap:
-            name: {{ default (include $mounted.name $) $volume.configMap.name }}
-        {{- end }}
-        {{- else }}
-        {{- /* A volume with no ConfigMap name has no chart ConfigMap to fall back
-               to for this service, and the API server refuses the Deployment. */}}
-        {{- range $volume := $svc.volumes }}
-        {{- if not (dig "configMap" "name" "" $volume) }}
+        {{- $volume = deepCopy $volume }}
+        {{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}
+        {{- if not $mounted.name }}
         {{- fail (printf "services[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
         {{- end }}
+        {{- $_ := set $volume "configMap" (dict "name" (include $mounted.name $)) }}
         {{- end }}
-        {{- toYaml $svc.volumes | nindent 8 }}
+        {{- $volumes = append $volumes $volume }}
         {{- end }}
+        {{- toYaml $volumes | nindent 8 }}
       {{- end }}
 {{- end }}
 {{- end }}

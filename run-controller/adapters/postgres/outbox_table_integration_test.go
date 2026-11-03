@@ -84,7 +84,7 @@ func TestOutboxWakerWakesOnRunControllerOutbox(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	waker, err := pkgoutbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), postgres.OutboxTable, discardLogger())
+	waker, err := pkgoutbox.NewPostgresWaker(ctx, pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN, postgres.OutboxTable, discardLogger())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = waker.Close() })
 

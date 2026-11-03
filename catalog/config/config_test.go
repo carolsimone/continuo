@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -216,5 +218,38 @@ func TestConfig_ChecksTheScheduleWithTheParserItIsGiven(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Load recorded %v, want CATALOG_BACKUP_SCHEDULE refused with the parser's reason", v.Missing())
+	}
+}
+
+func TestNeo4jPasswordFromFile(t *testing.T) {
+	passwordFile := filepath.Join(t.TempDir(), "NEO4J_PASSWORD")
+	if err := os.WriteFile(passwordFile, []byte("pw-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NEO4J_URI", "bolt://neo4j:7687")
+	t.Setenv("NEO4J_USER", "neo4j")
+	t.Setenv("NEO4J_PASSWORD", "")
+	t.Setenv("NEO4J_PASSWORD_FILE", passwordFile)
+
+	var v pkgconfig.Validator
+	cfg := LoadNeo4j(&v)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no problems, got %v", v.Missing())
+	}
+	if cfg.Password != "pw-from-file" {
+		t.Fatalf("Password = %q, want %q", cfg.Password, "pw-from-file")
+	}
+}
+
+func TestNeo4jPasswordMissingIsReported(t *testing.T) {
+	t.Setenv("NEO4J_URI", "bolt://neo4j:7687")
+	t.Setenv("NEO4J_USER", "neo4j")
+	t.Setenv("NEO4J_PASSWORD", "")
+	t.Setenv("NEO4J_PASSWORD_FILE", "")
+
+	var v pkgconfig.Validator
+	LoadNeo4j(&v)
+	if !slices.Contains(v.Missing(), "NEO4J_PASSWORD") {
+		t.Fatalf("missing = %v, want NEO4J_PASSWORD", v.Missing())
 	}
 }

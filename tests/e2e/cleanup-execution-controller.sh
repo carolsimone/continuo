@@ -34,6 +34,10 @@ kubectl delete serviceaccount execution-controller -n default --ignore-not-found
 kubectl delete role execution-controller -n default --ignore-not-found=true
 kubectl delete rolebinding execution-controller -n default --ignore-not-found=true
 
+# Delete the Secret the Job pods read their S3 keys from
+log_info "Deleting the Job S3 Secret..."
+kubectl delete secret continuo-job-s3 -n default --ignore-not-found=true
+
 # Delete any test jobs (cleanup test data)
 log_info "Deleting test jobs..."
 kubectl delete jobs -n default -l schedule=e2e-schedule --ignore-not-found=true || true

@@ -1,6 +1,7 @@
 import logging
 import os
 
+from config.secrets import read_secret
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V2,
@@ -24,8 +25,6 @@ S3_BUCKET       = os.environ.get("S3_BUCKET", "")
 S3_ENV          = os.environ.get("S3_ENV", "")
 
 AWS_DEFAULT_REGION    = os.environ.get("AWS_DEFAULT_REGION", "")
-AWS_ACCESS_KEY_ID     = os.environ.get("AWS_ACCESS_KEY_ID", "")
-AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
 # Engine name (as the chart declares it in validation.engine, injected through
 # the shared ConfigMap as WAREHOUSE_ENGINE) -> the sqlglot dialect this service
@@ -98,6 +97,11 @@ MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V2
 _REQUIRED = [
     "REDIS_URL",
     "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
+]
+
+# Credentials that must be given, each as the variable or as <NAME>_FILE.
+_REQUIRED_SECRETS = [
+    "REDIS_PASSWORD",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 ]
 
@@ -105,12 +109,21 @@ _REQUIRED = [
 def validate() -> None:
     """Raise RuntimeError listing all missing required env vars.
 
-    Also rejects an unsupported WAREHOUSE_ENGINE, which is optional but must
-    name an engine this service has a SQL dialect for, and a LOG_LEVEL that
-    names no level this service logs at.
+    A credential counts as present when read_secret finds it in the variable
+    or in its <NAME>_FILE; a credential given both ways, or as an unreadable or
+    empty file, raises read_secret's error. Also rejects a REDIS_URL that
+    carries credentials (they come from REDIS_USERNAME and REDIS_PASSWORD), an
+    unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
+    this service has a SQL dialect for, and a LOG_LEVEL that names no level
+    this service logs at.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
+    missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]
     if missing:
         raise RuntimeError(f"missing required env vars: {', '.join(missing)}")
+    if "@" in os.environ["REDIS_URL"]:
+        raise RuntimeError(
+            "REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD"
+        )
     warehouse_dialect()
     log_level()

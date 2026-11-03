@@ -400,3 +400,55 @@ func TestDeploymentsSetOnlySettingsTheServiceReads(t *testing.T) {
 		assert.True(t, strings.Contains(src, `"`+key+`"`), "%s, set by %v, is read by no code", key, where)
 	}
 }
+
+// A Job pod gets the S3 key by reference to a Secret, so execution-controller
+// refuses to start with S3 keys of its own and no Job Secret to hand its pods.
+func TestJobS3SecretRequiredWithStaticKeys(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "key")
+	require.NoError(t, os.WriteFile(keyFile, []byte("file-key\n"), 0o600))
+
+	// The Job Secret's name is a variable so the linter does not read the
+	// JOB_S3_SECRET_NAME entry below as a credential.
+	jobS3Name := "continuo-job-s3"
+	cases := map[string]struct {
+		env     map[string]string
+		missing bool
+	}{
+		"keys in the environment": {env: map[string]string{
+			"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s",
+		}, missing: true},
+		"access key in a file": {env: map[string]string{
+			"AWS_ACCESS_KEY_ID_FILE": keyFile, "AWS_SECRET_ACCESS_KEY_FILE": keyFile,
+		}, missing: true},
+		"only the secret key": {env: map[string]string{
+			"AWS_SECRET_ACCESS_KEY": "s",
+		}, missing: true},
+		"keys and a Job Secret": {env: map[string]string{
+			"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s", "JOB_S3_SECRET_NAME": jobS3Name,
+		}},
+		"no keys, the SDK's default chain": {env: map[string]string{}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("K8S_NAMESPACE", "ns")
+			t.Setenv("VALIDATION_WAREHOUSE_SECRET", "sec")
+			for _, k := range []string{
+				"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID_FILE",
+				"AWS_SECRET_ACCESS_KEY_FILE", "JOB_S3_SECRET_NAME",
+			} {
+				t.Setenv(k, "")
+			}
+			for k, val := range tc.env {
+				t.Setenv(k, val)
+			}
+			v := &pkgconfig.Validator{}
+			Load(v)
+			if tc.missing {
+				assert.Contains(t, v.Missing(), "JOB_S3_SECRET_NAME")
+			} else {
+				assert.NotContains(t, v.Missing(), "JOB_S3_SECRET_NAME")
+			}
+		})
+	}
+}

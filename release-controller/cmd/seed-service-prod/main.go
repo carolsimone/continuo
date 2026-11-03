@@ -106,7 +106,8 @@ func main() {
 }
 
 // loadPostgresConfig reads the connection settings from the environment.
-// POSTGRES_HOST, POSTGRES_USER and POSTGRES_PASSWORD are required. POSTGRES_PORT
+// POSTGRES_HOST, POSTGRES_USER and POSTGRES_PASSWORD (or
+// POSTGRES_PASSWORD_FILE) are required. POSTGRES_PORT
 // defaults to 5432, POSTGRES_DB to continuo_release and DB_SSLMODE to disable.
 // It returns an error naming every key that is missing or holds a value it
 // cannot use, so the command never connects to an endpoint nobody asked for.
@@ -116,7 +117,7 @@ func loadPostgresConfig() (pkgconfig.PostgresConfig, error) {
 		Host:     v.Require("POSTGRES_HOST"),
 		Port:     v.PortOrDefault("POSTGRES_PORT", 5432),
 		User:     v.Require("POSTGRES_USER"),
-		Password: v.Require("POSTGRES_PASSWORD"),
+		Password: v.RequireSecret("POSTGRES_PASSWORD"),
 		DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_release"),
 		SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),
 	}

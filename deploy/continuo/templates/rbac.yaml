@@ -1,5 +1,13 @@
+{{- /*
+  Every enabled service runs under a ServiceAccount named after it, carrying
+  its serviceAccount.annotations (e.g. a cloud IAM role, or the identity a
+  Vault role is bound to) and the image pull secrets its pods pull with:
+  serviceAccount.imagePullSecrets when the entry sets it, else the top-level
+  imagePullSecrets. Only a service with rbac.enabled gets a Role and
+  RoleBinding; every other ServiceAccount holds no Kubernetes permission.
+*/ -}}
 {{- range $svc := .Values.services }}
-{{- if and $svc.enabled $svc.rbac $svc.rbac.enabled }}
+{{- if $svc.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -9,6 +17,19 @@ metadata:
   labels:
     {{- include "continuo.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
+  {{- with dig "annotations" dict ($svc.serviceAccount | default dict) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- $pullSecrets := $.Values.imagePullSecrets }}
+{{- if hasKey ($svc.serviceAccount | default dict) "imagePullSecrets" }}
+{{- $pullSecrets = $svc.serviceAccount.imagePullSecrets }}
+{{- end }}
+{{- with $pullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- if and $svc.rbac $svc.rbac.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -37,5 +58,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ $svc.name }}
+{{- end }}
 {{- end }}
 {{- end }}

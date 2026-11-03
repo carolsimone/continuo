@@ -41,6 +41,12 @@ data:
   JOB_TTL_SECONDS: {{ include "continuo.execution.jobTTLSeconds" . | quote }}
   K8S_CLIENT_QPS: {{ include "continuo.execution.kubeClientQPS" . | quote }}
   K8S_CLIENT_BURST: {{ include "continuo.execution.kubeClientBurst" . | quote }}
+  {{- /* The Secret and keys execution-controller's Job pods read the S3 key
+         pair from: names, not credentials. */}}
+  {{- $jobS3 := include "continuo.execution.jobS3Secret" . | fromJson }}
+  JOB_S3_SECRET_NAME: {{ $jobS3.name | quote }}
+  JOB_S3_ACCESS_KEY_ID_KEY: {{ $jobS3.accessKeyIdKey | quote }}
+  JOB_S3_SECRET_ACCESS_KEY_KEY: {{ $jobS3.secretAccessKeyKey | quote }}
   TASK_MAX_RETRIES: {{ include "continuo.runs.taskMaxRetries" . | quote }}
   TASK_TIMEOUT_SECONDS: {{ include "continuo.runs.taskTimeoutSeconds" . | quote }}
   CATALOG_BACKUP_ENABLED: {{ include "continuo.catalog.backup.enabled" . | quote }}

@@ -19,7 +19,7 @@ func TestStartupChecksTheExecutionSchemaFirst(t *testing.T) {
 	if check < 0 {
 		t.Fatal("main.go must call handlers.CheckSchema")
 	}
-	for _, later := range []string{"pkgredis.WaitForRedis(", "k8s.NewK8sClient(", "objectstore.New(", `runConsumer("`} {
+	for _, later := range []string{"pkgredis.Connect(", "k8s.NewK8sClient(", "objectstore.New(", `runConsumer("`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)

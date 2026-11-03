@@ -104,6 +104,8 @@ func Load(v *pkgconfig.Validator) Config {
 	// than failing every Job at dispatch time.
 	_ = v.Require("VALIDATION_WAREHOUSE_SECRET")
 
+	requireJobS3SecretWithStaticKeys(v)
+
 	k8sClientQPS, k8sClientBurst := k8sClientRateLimit(v)
 
 	return Config{
@@ -129,6 +131,19 @@ func Load(v *pkgconfig.Validator) Config {
 		TaskTimeout: pkgconfig.LoadTaskTimeout(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
+	}
+}
+
+// requireJobS3SecretWithStaticKeys requires JOB_S3_SECRET_NAME when
+// execution-controller holds S3 keys of its own, as values or files. Job pods
+// get the keys by reference to that Secret and never as values, so without it
+// they would run with no key while this process has one. The adapter reads the
+// name and the Secret's key names through os.Getenv. The keys are read on a
+// throwaway validator: S3 loading reports any problem with them.
+func requireJobS3SecretWithStaticKeys(v *pkgconfig.Validator) {
+	var probe pkgconfig.Validator
+	if probe.OptionalSecret("AWS_ACCESS_KEY_ID").IsSet() || probe.OptionalSecret("AWS_SECRET_ACCESS_KEY").IsSet() {
+		_ = v.Require("JOB_S3_SECRET_NAME")
 	}
 }
 

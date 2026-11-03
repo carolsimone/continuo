@@ -35,7 +35,9 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	db, err := sqlx.ConnectContext(ctx, "postgres", cfg.DSN())
+	dsn, err := cfg.DSN()
+	require.NoError(t, err)
+	db, err := sqlx.ConnectContext(ctx, "postgres", dsn)
 	if err != nil {
 		testdeps.Unavailable(t, "agent-chat postgres unreachable: %v", err)
 	}

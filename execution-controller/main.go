@@ -36,7 +36,6 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // consumerHandlerTimeout bounds each message handler invocation, so a hung
@@ -176,8 +175,7 @@ func main() {
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
 	// instead of exiting on the first refused dial.
-	redisClient := goredis.NewClient(&goredis.Options{Addr: cfg.Redis.Addr(), Password: cfg.Redis.Password})
-	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	redisClient, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for Redis")
 		os.Exit(0)
@@ -283,7 +281,7 @@ func main() {
 	// Task status reports and release-leg results flow through this
 	// outbox; the relay wakes on the notification a committed insert sends, so
 	// a result reaches its stream without waiting for a poll.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -304,7 +302,7 @@ func main() {
 	// The dispatcher wakes on the notification the deployments table's
 	// triggers send when a deployment is accepted or a slot is released, so
 	// queued work starts without waiting for the 5 s poll.
-	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.DeploymentsChannel, logger)
+	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.DeploymentsChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the dispatcher listener")
 		os.Exit(0)

@@ -29,11 +29,12 @@ type Config struct {
 	ToolTimeout        time.Duration
 	ToolResultMaxBytes int
 	RateLimitPerMinute int
-	// RedisAddr, when non-empty, switches the rate limiter to a shared Redis
-	// store so the per-user limit is global across replicas. Empty means the
-	// process-local in-memory limiter (single-replica deployments).
-	RedisAddr     string
-	RedisPassword string
+	// Redis, when RedisEnabled (REDIS_ADDR is set), switches the rate limiter
+	// to a shared Redis store so the per-user limit is global across replicas.
+	// RedisEnabled false means the process-local in-memory limiter
+	// (single-replica deployments).
+	Redis        pkgconfig.RedisConfig
+	RedisEnabled bool
 	// MaxConcurrentSessions caps live chat streams per instance (0 = unlimited).
 	MaxConcurrentSessions int
 	RetentionDays         int
@@ -63,7 +64,7 @@ func Load(v *pkgconfig.Validator) Config {
 		// gRPC without it, and chat sessions fail only when they actually call the
 		// LLM. Requiring it would crashloop the pod on a missing key and time out
 		// the whole helm deploy. main logs a warning when it is empty.
-		LLMAPIKey:             pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
+		LLMAPIKey:             v.OptionalSecretValue("LLM_API_KEY"),
 		LLMModel:              v.Require("LLM_MODEL"),
 		LLMBaseURL:            llm.BaseURL,
 		CLIPath:               pkgconfig.EnvOrDefault("CONTINUO_CLI_PATH", "continuo"),
@@ -78,8 +79,6 @@ func Load(v *pkgconfig.Validator) Config {
 		ToolTimeout:           pkgconfig.EnvDurationOrDefault("TOOL_TIMEOUT", 30*time.Second),
 		ToolResultMaxBytes:    pkgconfig.EnvIntOrDefault("TOOL_RESULT_MAX_BYTES", 65536),
 		RateLimitPerMinute:    pkgconfig.EnvIntOrDefault("CHAT_RATE_LIMIT_PER_MINUTE", 20),
-		RedisAddr:             pkgconfig.EnvOrDefault("REDIS_ADDR", ""),
-		RedisPassword:         pkgconfig.EnvOrDefault("REDIS_PASSWORD", ""),
 		MaxConcurrentSessions: pkgconfig.EnvIntOrDefault("CHAT_MAX_CONCURRENT_SESSIONS", 100),
 		RetentionDays:         pkgconfig.EnvIntOrDefault("RETENTION_DAYS", 30),
 		RetentionSweepEvery:   pkgconfig.EnvDurationOrDefault("RETENTION_SWEEP_EVERY", 24*time.Hour),
@@ -87,5 +86,6 @@ func Load(v *pkgconfig.Validator) Config {
 		ShutdownGrace:         pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", 10*time.Second),
 		MetricsPort:           pkgconfig.LoadMetricsPort(v),
 	}
+	cfg.Redis, cfg.RedisEnabled = pkgconfig.LoadOptionalRedis(v)
 	return cfg
 }

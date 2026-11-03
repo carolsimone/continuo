@@ -236,24 +236,33 @@ func csvParams() JobParams {
 }
 
 // TestBuildPythonPodSpec_CsvGetsS3Credentials verifies a python-csv pod carries
-// all four S3 credential env vars, with the actual configured values forwarded
-// through — the csv harness fetches its own source and needs real credentials,
-// not just the keys present.
+// the S3 endpoint and region as values and the access key pair as references
+// to the Job Secret — the csv harness fetches its own source and needs real
+// credentials, and a pod spec never holds them as values.
 func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
+	t.Setenv("JOB_S3_ACCESS_KEY_ID_KEY", "")
+	t.Setenv("JOB_S3_SECRET_ACCESS_KEY_KEY", "")
 
 	spec, err := buildPythonPodSpec(csvParams())
 	require.NoError(t, err)
 
 	env := envMap(spec.Containers[0].Env)
 	assert.Equal(t, "http://minio:9000", env["S3_ENDPOINT_URL"])
-	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"])
-	assert.Equal(t, "csv-secret-key", env["AWS_SECRET_ACCESS_KEY"])
 	assert.Equal(t, "us-east-2", env["AWS_DEFAULT_REGION"])
+	for _, name := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} {
+		e, ok := envVarByName(spec.Containers[0], name)
+		require.True(t, ok, name)
+		assert.Empty(t, e.Value, name)
+		require.NotNil(t, e.ValueFrom, name)
+		assert.Equal(t, "continuo-job-s3", e.ValueFrom.SecretKeyRef.Name, name)
+		assert.Equal(t, name, e.ValueFrom.SecretKeyRef.Key, name)
+	}
 }
 
 // TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials pins the negative half
@@ -309,8 +318,7 @@ func TestCreateQueryJob_PythonNode_UsesPythonPodSpec(t *testing.T) {
 func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
-	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
+	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
 	client := newValidationTestClient()
 
@@ -330,8 +338,7 @@ func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	assert.Equal(t, "analytics.py_probe", envByName(podSpec, "NODE_ID"))
 	assert.Empty(t, podSpec.InitContainers)
 
-	env := envMap(podSpec.Containers[0].Env)
-	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"], "csv Jobs get S3 credentials")
+	assertS3KeyFromJobSecret(t, podSpec.Containers[0], "AWS_ACCESS_KEY_ID")
 }
 
 // TestCreateQueryJob_PythonNode_IsIdempotent verifies a redelivered command

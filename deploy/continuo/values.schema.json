@@ -11,6 +11,15 @@
     "defaultResources", "services"
   ],
   "definitions": {
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {"name": {"type": "string", "minLength": 1}}
+      }
+    },
     "resourceList": {
       "description": "Kubernetes ResourceList: arbitrary resource names (cpu, memory, ephemeral-storage, hugepages-*, extended resources like nvidia.com/gpu) mapped to quantity strings. Passed straight through toYaml in deployment.yaml, so this must not restrict the key set to a fixed cpu/memory pair.",
       "type": "object",
@@ -296,6 +305,33 @@
       }
     },
 
+    "imagePullSecrets": {
+      "$ref": "#/definitions/imagePullSecrets",
+      "description": "Image pull secrets put on every ServiceAccount the chart creates. Install-time only."
+    },
+
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the chart hands credentials to the pods. Install-time only: it shapes the Deployments.",
+      "properties": {
+        "delivery": {
+          "type": "string",
+          "enum": ["env", "file"],
+          "description": "env: secretKeyRef environment variables. file: the same Secret keys mounted read-only under /var/run/secrets/continuo, with <VAR>_FILE naming each file."
+        },
+        "files": {
+          "type": "object",
+          "description": "Credentials a company provides as files of its own, per service name: credential variable to absolute file path. The chart attaches no Secret for them and sets <VAR>_FILE to the path.",
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]*$"},
+            "additionalProperties": {"type": "string", "pattern": "^/"}
+          }
+        }
+      }
+    },
+
     "serviceRepos": {
       "type": "object",
       "additionalProperties": {"type": "string"},
@@ -354,6 +390,16 @@
           "minimum": 1,
           "maximum": 2000,
           "description": "Requests execution-controller's Kubernetes client may send at once in a spike; at least kubeClientQPS."
+        },
+        "jobS3Secret": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Secret validation, seed-build and compile Job pods read the S3 key pair from. Empty name: the chart's own S3 Secret and keys. Required when execution-controller's S3 keys are company files (credentials.files).",
+          "properties": {
+            "name": {"type": "string"},
+            "accessKeyIdKey": {"type": "string", "description": "Key of the access key id in the named Secret; empty is AWS_ACCESS_KEY_ID."},
+            "secretAccessKeyKey": {"type": "string", "description": "Key of the secret access key in the named Secret; empty is AWS_SECRET_ACCESS_KEY."}
+          }
         }
       }
     },
@@ -561,6 +607,31 @@
           "livenessPath": {"type": "string"},
           "probePath": {"type": "string"},
           "serviceType": {"type": "string"},
+          "podAnnotations": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Annotations on the service's pods, e.g. the Vault Agent injector's."
+          },
+          "serviceAccount": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": "Annotations on the ServiceAccount named after the service, e.g. eks.amazonaws.com/role-arn."
+              },
+              "imagePullSecrets": {
+                "$ref": "#/definitions/imagePullSecrets",
+                "description": "When set, replaces the top-level imagePullSecrets on this service's ServiceAccount."
+              }
+            }
+          },
+          "credentialDelivery": {
+            "type": "string",
+            "enum": ["", "env", "file"],
+            "description": "How this service gets its credentials; empty uses credentials.delivery."
+          },
           "secretEnv": {
             "type": "array",
             "items": {
@@ -613,10 +684,11 @@
           },
           "volumes": {
             "type": "array",
+            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one.",
             "items": {
               "type": "object",
-              "additionalProperties": false,
-              "required": ["name", "configMap"],
+              "additionalProperties": {"type": "object"},
+              "required": ["name"],
               "properties": {
                 "name": {"type": "string"},
                 "configMap": {

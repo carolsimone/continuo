@@ -16,6 +16,8 @@ import {
 } from './middleware';
 import { createAuthRouter, createDevAuthRouter } from './routes';
 import { SessionStore, toAuthUser } from './session';
+import { watchRedisCredentials } from './redis-credentials';
+import { readSecret } from '../secrets';
 import { DEV_USER, SESSION_COOKIE, type AppAuth, type AuthUser } from './types';
 
 export interface BuiltAuth {
@@ -66,7 +68,11 @@ export async function buildAuth(cfg: AuthConfig, configuredCi: CiAuthConfig | nu
     ...(ci ? [{ issuer: ci.issuer, audience: ci.audience }] : []),
     { issuer: cfg.issuerUrl, audience: cfg.clientId },
   ]);
-  const redis = new Redis(cfg.redisUrl);
+  const redis = new Redis(cfg.redisUrl, {
+    username: cfg.redisUsername,
+    password: readSecret(process.env, 'REDIS_PASSWORD'),
+  });
+  watchRedisCredentials(redis, process.env, console);
   const sessions = new SessionStore(redis, cfg.sessionIdleTtlSeconds, cfg.sessionMaxTtlSeconds);
   const flow = await discoverOidc(cfg);
   const origin = new URL(cfg.publicUrl).origin;

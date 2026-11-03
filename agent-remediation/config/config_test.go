@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -333,7 +334,9 @@ func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
 	cfg := Load(v)
 
 	require.Empty(t, v.Missing())
-	assert.Contains(t, cfg.Postgres.DSN(), "sslmode=require")
+	dsn, err := cfg.Postgres.DSN()
+	require.NoError(t, err)
+	assert.Contains(t, dsn, "sslmode='require'")
 	assert.Equal(t, 9, cfg.Postgres.Pool.MaxOpenConns)
 }
 
@@ -413,4 +416,42 @@ func TestLoad_RejectsBaseURLEndingInV1(t *testing.T) {
 	v := &pkgconfig.Validator{}
 	Load(v)
 	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+}
+
+func TestLLMKeyFromFile(t *testing.T) {
+	setBaseEnv(t)
+	keyFile := filepath.Join(t.TempDir(), "LLM_API_KEY")
+	require.NoError(t, os.WriteFile(keyFile, []byte("key-from-file\n"), 0o600))
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("LLM_API_KEY_FILE", keyFile)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "key-from-file", cfg.LLMAPIKey)
+}
+
+func TestGitHubTokenFromFile(t *testing.T) {
+	setBaseEnv(t)
+	tokenFile := filepath.Join(t.TempDir(), "GITHUB_TOKEN")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("ghp_fromfile\n"), 0o600))
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN_FILE", tokenFile)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "ghp_fromfile", cfg.GitHubToken)
+}
+
+func TestGitHubTokenGivenTwiceIsRefused(t *testing.T) {
+	setBaseEnv(t)
+	tokenFile := filepath.Join(t.TempDir(), "GITHUB_TOKEN")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("ghp_fromfile"), 0o600))
+	t.Setenv("GITHUB_TOKEN", "ghp_fromenv")
+	t.Setenv("GITHUB_TOKEN_FILE", tokenFile)
+
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "GITHUB_TOKEN: set GITHUB_TOKEN or GITHUB_TOKEN_FILE, not both")
 }

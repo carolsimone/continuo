@@ -67,6 +67,8 @@ bash tests/e2e/cleanup-execution-controller.sh
 
 When the kind cluster and all Docker images already exist:
 
+> The compose execution-controller sets `JOB_S3_SECRET_NAME=continuo-job-s3`, so its Job pods fail with class `start` on a kind cluster that lacks that Secret. `setup.sh`, `provision-k8s-test-env.sh` and `deploy-execution-controller.sh` apply it; on an existing cluster without it, run `kubectl apply -f tests/e2e/k8s/job-s3-secret.yaml` once.
+
 ```bash
 # Tear down stale containers — including any left over from the main project directory
 # (the main project uses bare container names like /run-controller, /ui that conflict with this worktree)
@@ -185,6 +187,7 @@ The E2E test uses a hybrid setup:
 **In kind cluster (Kubernetes):**
 - execution-controller (Deployment)
 - dbt service jobs (run as k8s Jobs, one per table)
+- Secret `continuo-job-s3` (`tests/e2e/k8s/job-s3-secret.yaml`, the MinIO keys), which `scripts/setup.sh`, `deploy-execution-controller.sh` and `provision-k8s-test-env.sh` apply: execution-controller's Job pods read their S3 keys from it by reference (`JOB_S3_SECRET_NAME`)
 
 The controller in kind connects to docker-compose services via docker bridge network (172.17.0.1).
 

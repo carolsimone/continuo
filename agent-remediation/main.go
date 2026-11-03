@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -181,11 +180,7 @@ func main() {
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
 	// instead of exiting on the first refused dial.
-	rc, err := rredis.NewClient(ctx, rredis.Config{
-		Host:     cfg.Redis.Host,
-		Port:     strconv.Itoa(cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-	}, pkgredis.DefaultStartupPolicy(), logger)
+	rc, err := pkgredis.Connect(ctx, cfg.Redis, pkgredis.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("shutdown requested while waiting for redis")
 		os.Exit(0)
@@ -311,7 +306,7 @@ func main() {
 
 	// The outbox relay wakes on the notification a committed insert into its
 	// table sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
