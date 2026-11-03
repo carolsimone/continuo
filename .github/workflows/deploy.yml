@@ -505,6 +505,9 @@ jobs:
 
           # superseding_run: prints the id of a deploy run created after this
           # run for another continuo commit that is ahead of this one, if any.
+          # createdAt has whole seconds, so a run that replaced this one within
+          # the same second has the same createdAt; run ids only grow, so of
+          # two runs created in the same second the higher id is the later.
           superseding_run() {
             local id sha status
             while read -r id sha; do
@@ -521,7 +524,7 @@ jobs:
               fi
             done < <(gh run list -R "${infra}" --workflow deploy.yml \
               --event workflow_dispatch --limit 50 --json databaseId,createdAt,displayTitle \
-              --jq ".[] | select(.createdAt > \"${run_created_at}\" and (.displayTitle | startswith(\"deploy \"))) | \"\(.databaseId) \(.displayTitle | ltrimstr(\"deploy \"))\"")
+              --jq ".[] | select((.createdAt > \"${run_created_at}\" or (.createdAt == \"${run_created_at}\" and .databaseId > ${run_id})) and (.displayTitle | startswith(\"deploy \"))) | \"\(.databaseId) \(.displayTitle | ltrimstr(\"deploy \"))\"")
             return 0
           }
 
