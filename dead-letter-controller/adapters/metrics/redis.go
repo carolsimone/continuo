@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/prometheus/client_golang/prometheus"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -23,8 +24,8 @@ type streamCollector struct {
 	maxmem  *prometheus.Desc
 }
 
-// WatchStreams registers a collector that reports the length of every stream in
-// streams plus Redis used and maximum memory, read from Redis at scrape time.
+// WatchStreams registers a collector that reports the length of the prefixed key
+// of every stream in streams (labelled by the stream's contract name) plus Redis used and maximum memory, read from Redis at scrape time.
 func WatchStreams(reg *pkgmetrics.Registry, rc *goredis.Client, streams []string) {
 	reg.Register(&streamCollector{
 		rc:      rc,
@@ -50,7 +51,7 @@ func (c *streamCollector) Collect(ch chan<- prometheus.Metric) {
 	pipe := c.rc.Pipeline()
 	lens := make([]*goredis.IntCmd, len(c.streams))
 	for i, s := range c.streams {
-		lens[i] = pipe.XLen(ctx, s)
+		lens[i] = pipe.XLen(ctx, pkgredis.Key(s))
 	}
 	info := pipe.Info(ctx, "memory")
 	if _, err := pipe.Exec(ctx); err != nil {

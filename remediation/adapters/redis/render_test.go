@@ -6,6 +6,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -99,12 +100,13 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
-	require.GreaterOrEqual(t, len(args), 3)
+	require.GreaterOrEqual(t, len(args), 4)
 	assert.Equal(t, "xadd", args[0])
-	assert.Equal(t, streams.RemediationRequestedV2, args[1])
-	assert.Equal(t, "*", args[2], "the XADD sets no length cap")
+	assert.Equal(t, pkgredis.Key(streams.RemediationRequestedV2), args[1])
+	assert.Equal(t, "nomkstream", args[2], "the XADD never creates the stream")
+	assert.Equal(t, "*", args[3], "the XADD sets no length cap")
 	fields := map[string]any{}
-	for i := 3; i+1 < len(args); i += 2 {
+	for i := 4; i+1 < len(args); i += 2 {
 		fields[args[i].(string)] = args[i+1]
 	}
 	assert.Equal(t, map[string]any{
@@ -158,8 +160,11 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != streams.RemediationRequestedV2 {
+	if args.Stream != pkgredis.Key(streams.RemediationRequestedV2) {
 		t.Fatalf("stream = %q", args.Stream)
+	}
+	if !args.NoMkStream {
+		t.Fatal("the publisher must not create a stream: NOMKSTREAM is unset")
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
 		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)

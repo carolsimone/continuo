@@ -55,29 +55,30 @@ func TestStreamConsumer_CleanupStaleConsumers(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-stream-cleanup-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	// A drained consumer left by a replaced pod: registered, zero pending.
-	require.NoError(t, rc.XGroupCreateConsumer(ctx, stream, group, "ghost-old-pod").Err())
+	require.NoError(t, rc.XGroupCreateConsumer(ctx, key, group, "ghost-old-pod").Err())
 
 	// A consumer still holding an un-ACKed entry must be preserved.
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]interface{}{"k": "v"}}).Err())
 	_, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: group, Consumer: "busy-consumer", Streams: []string{stream, ">"}, Count: 1,
+		Group: group, Consumer: "busy-consumer", Streams: []string{key, ">"}, Count: 1,
 	}).Result()
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return nil }, discardLog())
 	c.SetService("pkg-redis-test")
 	// Self must never be deleted even when drained.
-	require.NoError(t, rc.XGroupCreateConsumer(ctx, stream, group, c.consumerName).Err())
+	require.NoError(t, rc.XGroupCreateConsumer(ctx, key, group, c.consumerName).Err())
 
 	c.cleanupStaleConsumers(ctx, 0)
 
-	names := consumerNames(t, rc, ctx, stream, group)
+	names := consumerNames(t, rc, ctx, key, group)
 	assert.NotContains(t, names, "ghost-old-pod", "drained stale consumer must be deleted")
 	assert.Contains(t, names, "busy-consumer", "consumer with pending entries must be kept")
 	assert.Contains(t, names, c.consumerName, "must never delete itself")
@@ -110,10 +111,11 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 	stream := fmt.Sprintf("test-stream-pool-ack-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
 	const keyField = "schedule_id"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	t.Cleanup(func() { rc.Del(ctx, key) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	probe := NewStreamConsumer(rc, stream, group, nil, discardLog(), WithWorkerPool(2, keyField))
 	probe.SetService("pkg-redis-test")
@@ -129,9 +131,9 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 
 	// Add the slow message first: with batch-level acking the fast message would
 	// be forced to wait behind it.
-	slowID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{keyField: slowKey}}).Result()
+	slowID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]interface{}{keyField: slowKey}}).Result()
 	require.NoError(t, err)
-	fastID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{keyField: fastKey}}).Result()
+	fastID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]interface{}{keyField: fastKey}}).Result()
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog(), WithWorkerPool(2, keyField))
@@ -142,7 +144,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 
 	pendingIDs := func() map[string]bool {
 		pend, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-			Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+			Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 		}).Result()
 		require.NoError(t, err)
 		ids := make(map[string]bool, len(pend))
@@ -196,13 +198,12 @@ func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
 	assert.Contains(t, err.Error(), "stalled")
 }
 
-// TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting is the
-// regression test for the incident: a StreamConsumer pointed at an
-// unreachable Redis address must keep retrying — logging and backing off —
-// rather than returning from Start and leaving nothing to restart it. This
-// covers both halves of the loop the incident exposed: the startup
-// ensureConsumerGroup bootstrap, and (via the heartbeat) the read loop
-// proper. No REDIS_ADDR is needed: the address is deliberately unreachable.
+// TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting: a
+// StreamConsumer pointed at an unreachable Redis address keeps retrying its
+// wait for the consumer group — logging and backing off, within its startup
+// policy — rather than returning from Start at the first failure, and keeps
+// its heartbeat fresh while it does. No REDIS_ADDR is needed: the address is
+// deliberately unreachable.
 func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing.T) {
 	unreachable := goredis.NewClient(&goredis.Options{
 		Addr:        "127.0.0.1:1", // nothing listens here; every call fails fast
@@ -222,7 +223,7 @@ func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing
 	time.Sleep(1500 * time.Millisecond)
 	select {
 	case err := <-done:
-		t.Fatalf("Start exited on a transient connection error (err=%v); it must retry indefinitely instead", err)
+		t.Fatalf("Start exited on a transient connection error (err=%v); it must retry within its startup policy instead", err)
 	default:
 		// still running — correct.
 	}
@@ -240,8 +241,8 @@ func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing
 
 // TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces is
 // the [P2] regression: a PERMANENT consumer-group bootstrap failure — here a
-// wrong-typed stream key, which makes XGroupCreateMkStream fail with WRONGTYPE
-// on every attempt — must NOT be retried forever (which would keep the pod
+// wrong-typed stream key, which makes XINFO GROUPS fail with WRONGTYPE on every
+// attempt — must NOT be retried forever (which would keep the pod
 // ready+live consuming nothing while the heartbeat stays green). Instead Start
 // must return the error promptly, so the caller's WorkerExited(name, err)
 // records it and readiness fails loudly. The handler must never run.
@@ -250,12 +251,13 @@ func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t 
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-permanent-boot-%d", time.Now().UnixNano())
+	key := Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
-	// Wrong-typed key: XGroupCreateMkStream on it fails deterministically with
+	// Wrong-typed key: XINFO GROUPS on it fails deterministically with
 	// WRONGTYPE — a misconfiguration no retry can ever clear.
-	require.NoError(t, rc.Set(ctx, stream, "not-a-stream", 0).Err())
+	require.NoError(t, rc.Set(ctx, key, "not-a-stream", 0).Err())
 
 	var received atomic.Int32
 	handler := func(_ context.Context, _ goredis.XMessage) error {
@@ -299,19 +301,21 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-poison-%d", time.Now().UnixNano())
+	key := Key(stream)
+	ensureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
-	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Result()
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]interface{}{"k": "v"}}).Result()
 	require.NoError(t, err)
 
 	// Seed the PEL: a first delivery to some consumer moves the entry into the
 	// group's PEL with delivery count 1. reclaimPending's XAUTOCLAIM then claims
 	// it (bumping the counter) on each sweep.
 	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: group, Consumer: "seed-consumer", Streams: []string{stream, ">"}, Count: 10,
+		Group: group, Consumer: "seed-consumer", Streams: []string{key, ">"}, Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -325,7 +329,7 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	c.SetService("pkg-redis-test")
 
 	pendingCount := func() int64 {
-		res, perr := rc.XPending(ctx, stream, group).Result()
+		res, perr := rc.XPending(ctx, key, group).Result()
 		require.NoError(t, perr)
 		return res.Count
 	}
@@ -353,7 +357,7 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	assert.Equal(t, model.DeadLetterKindTransientExhausted, p.FailureKind)
 	assert.Equal(t, int64(5), p.DeliveryCount)
 	pend, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	for _, p := range pend {

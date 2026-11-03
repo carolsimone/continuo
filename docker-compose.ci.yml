@@ -58,6 +58,13 @@ services:
       cache_to:
         - "type=gha,scope=dead-letter-controller,mode=max"
 
+  # Builds the same image as dead-letter-controller, so it only reads that
+  # service's cache.
+  streams-init:
+    build:
+      cache_from:
+        - "type=gha,scope=dead-letter-controller"
+
   egress-proxy:
     build:
       cache_from:

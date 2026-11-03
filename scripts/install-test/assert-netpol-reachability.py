@@ -105,7 +105,13 @@ REQUIRED_EDGES = [
      "operator dashboard reads the topology and run projections over gRPC"),
     ("agent-chat", "dead-letter-controller", 50055,
      "continuo dlq list/show/redrive read and redrive dead letters over gRPC"),
+    ("streams-init", "redis", 6379,
+     "the streams-init Job creates every stream and consumer group of the release"),
 ]
+
+# Datastores the chart can bundle; an edge to one is checked only while the
+# render holds it.
+DATASTORES = ("postgresql", "redis", "neo4j", "minio")
 
 # Edges that exist only while the render holds egress-proxy.
 PROXY_EDGES = [
@@ -640,6 +646,10 @@ def main(argv):
     edges = REQUIRED_EDGES + (PROXY_EDGES if facts.proxy else [])
     closed = CLOSED_EDGES + (PROXY_CLOSED_EDGES if facts.proxy else [])
     for source, dest, port, why in edges:
+        # A datastore the render does not bundle lives outside the release, and
+        # no policy of the render speaks for it.
+        if dest in DATASTORES and dest not in facts.workloads:
+            continue
         checks["edges"] += 1
         if not ingress_allowed(policies, facts.pod(source), facts.pod(dest), port):
             failures.append(f"ingress {source} -> {dest}:{port}  ({why})")

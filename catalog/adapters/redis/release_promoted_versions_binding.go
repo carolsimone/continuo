@@ -30,6 +30,6 @@ func NewReleasePromotedVersionsBinding(
 				"message_id", msg.ID, "error", err)
 			return err
 		}
-		return handler.Handle(ctx, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values), in)
+		return handler.Handle(ctx, pkgredis.DedupMessageID(ctx, msg), messageprocessing.ExtractOutboxEntryID(msg.Values), in)
 	}
 }

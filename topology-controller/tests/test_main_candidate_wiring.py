@@ -75,6 +75,39 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
 
 
+class _InlineThread(_NoopThread):
+    """Runs its target when started, so main() sees the consumer's outcome."""
+
+    def start(self):
+        self.target()
+
+
+def test_main_exits_non_zero_and_logs_when_the_consumer_cannot_start(monkeypatch, caplog):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main.threading, "Thread", _InlineThread)
+
+    def _failing_start(self):
+        raise RuntimeError("consumer group does not exist")
+
+    monkeypatch.setattr(_RecordingConsumer, "start", _failing_start)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.main()
+
+    assert exited.value.code == 1
+    assert any(
+        record.exc_info and "consumer group does not exist" in str(record.exc_info[1])
+        for record in caplog.records
+    )
+
+
+def test_main_returns_when_the_consumer_ends_cleanly(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main.threading, "Thread", _InlineThread)
+
+    main.main()
+
+
 def test_main_starts_one_candidate_consumer(monkeypatch):
     _common_monkeypatches(monkeypatch)
     main.main()

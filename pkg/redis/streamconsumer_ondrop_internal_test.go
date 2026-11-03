@@ -107,16 +107,18 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-poison-ondrop-%d", time.Now().UnixNano())
+	key := Key(stream)
+	ensureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
-	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"payload": "p"}}).Result()
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]interface{}{"payload": "p"}}).Result()
 	require.NoError(t, err)
 
 	// Seed the PEL so reclaimPending's XAUTOCLAIM keeps bumping the delivery count.
 	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: group, Consumer: "seed-consumer", Streams: []string{stream, ">"}, Count: 10,
+		Group: group, Consumer: "seed-consumer", Streams: []string{key, ">"}, Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -145,7 +147,7 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 	c.SetService("pkg-redis-test")
 
 	pendingCount := func() int64 {
-		res, perr := rc.XPending(ctx, stream, group).Result()
+		res, perr := rc.XPending(ctx, key, group).Result()
 		require.NoError(t, perr)
 		return res.Count
 	}

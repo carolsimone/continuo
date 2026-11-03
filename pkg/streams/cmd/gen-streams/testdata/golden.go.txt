@@ -2,6 +2,14 @@
 // Source: pkg/streams/contract.yaml
 package streams
 
+// KeyPrefix leads the name of every Redis key the system owns: the key of the
+// contract stream "<stream>" is KeyPrefix + "<stream>".
+const KeyPrefix = "continuo:"
+
+// LegacyKeys reports whether the unprefixed key of a stream is still read
+// beside its prefixed key.
+const LegacyKeys = true
+
 // Stream names.
 const (
 	// NodeUpdatedV1 — Node state transitions.

@@ -20,6 +20,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -40,7 +41,8 @@ func (nopTrimObserver) TrimSucceeded(time.Time)         {}
 type trimEnv struct {
 	rc     *goredis.Client
 	db     *sqlx.DB
-	stream string
+	stream string // the contract stream name
+	key    string // the stream's prefixed Redis key
 }
 
 func newTrimEnv(t *testing.T) *trimEnv {
@@ -67,8 +69,9 @@ func newTrimEnv(t *testing.T) *trimEnv {
 	}
 
 	e := &trimEnv{rc: rc, db: db, stream: "test.trim." + strings.ToLower(t.Name()) + ":v1"}
+	e.key = pkgredis.Key(e.stream)
 	cleanup := func() {
-		_ = rc.Del(context.Background(), e.stream).Err()
+		_ = rc.Del(context.Background(), e.key).Err()
 		_, _ = db.Exec(`DELETE FROM dead_letters WHERE stream = $1`, e.stream)
 	}
 	cleanup()
@@ -92,7 +95,7 @@ func (e *trimEnv) addEntries(t *testing.T, old ...string) string {
 	recent := recentID()
 	for _, id := range append(old, recent) {
 		require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{
-			Stream: e.stream, ID: id, Values: map[string]any{"k": "v" + id},
+			Stream: e.key, ID: id, Values: map[string]any{"k": "v" + id},
 		}).Err())
 	}
 	return recent
@@ -100,12 +103,12 @@ func (e *trimEnv) addEntries(t *testing.T, old ...string) string {
 
 func (e *trimEnv) group(t *testing.T, name, start string) {
 	t.Helper()
-	require.NoError(t, e.rc.XGroupCreate(context.Background(), e.stream, name, start).Err())
+	require.NoError(t, e.rc.XGroupCreate(context.Background(), e.key, name, start).Err())
 }
 
 func (e *trimEnv) remaining(t *testing.T) []string {
 	t.Helper()
-	msgs, err := e.rc.XRange(context.Background(), e.stream, "-", "+").Result()
+	msgs, err := e.rc.XRange(context.Background(), e.key, "-", "+").Result()
 	require.NoError(t, err)
 	var ids []string
 	for _, m := range msgs {

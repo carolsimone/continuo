@@ -1,0 +1,7 @@
+# continuo Redis ACL rules: one login per service, generated from pkg/streams/contract.yaml by `go generate ./pkg/streams/...`. Do not edit.
+# Each line is a login without a password: add `>password` or `#<sha256>` after `on`. Redis refuses comment lines in an ACL file, so drop these two lines when you load it.
+user continuo_dead_letter_controller on ~continuo:* ~consumer.dead_letter:v1 ~outbox.dead_letter:v1 ~task.dispatch:v1 ~task.failed:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending +xinfo|consumers +xgroup|delconsumer +xrange +xtrim +xlen +del +info
+user continuo_execution_controller on ~continuo:task.dispatch:v1 %W~continuo:consumer.dead_letter:v1 ~task.dispatch:v1 %W~consumer.dead_letter:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending +xinfo|consumers +xgroup|delconsumer
+user continuo_run_controller on %W~continuo:consumer.dead_letter:v1 %W~continuo:outbox.dead_letter:v1 %W~continuo:task.dispatch:v1 %W~consumer.dead_letter:v1 %W~outbox.dead_letter:v1 %W~task.dispatch:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd
+user continuo_redis_migrate on ~continuo:* -@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type
+user continuo_ui on ~continuo:uisession:* -@all +ping +hello +client|setinfo +xinfo|groups +get +set +del +expire

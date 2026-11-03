@@ -37,12 +37,18 @@ WORKDIR /app/dead-letter-controller
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/dead-letter-controller .
 
+# streams-init, the deploy step that creates every Redis stream and consumer
+# group of the release; the chart runs it from this image before the services.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/streams-init ./cmd/streams-init
+
 # Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
 COPY --from=builder /app/bin/dead-letter-controller /usr/local/bin/dead-letter-controller
+COPY --from=builder /app/bin/streams-init /streams-init
 
 EXPOSE 8096 50055
 

@@ -37,8 +37,67 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)
 
 // StreamConsumer is a generic Redis Streams consumer that delegates message
-// processing to a MessageHandler callback
+// processing to a MessageHandler callback. It reads the stream's key,
+// Key(streamName), and, while streams.LegacyKeys is true and the unprefixed
+// key holds its group, LegacyKey(streamName) too, with one read loop and one
+// reclaim loop per key. It never creates a stream or a group: the streams-init
+// step does.
 type StreamConsumer struct {
+	consumerConfig
+
+	// key is the Redis key this loop reads, acknowledges, claims and inspects.
+	// NewStreamConsumer sets it to Key(streamName); Start gives each further
+	// key it reads a loop of its own (see onKey).
+	key string
+
+	// keyLoops holds the loops Start runs for keys other than key, so Healthy
+	// can check their heartbeats too. It is nil until Start finds such a key.
+	keyLoops atomic.Pointer[[]*StreamConsumer]
+
+	// handlerMu, when set, serializes handler invocations across the loops of
+	// a consumer that processes strictly serially (workerCount 1), so reading
+	// a second key never runs its handler concurrently with itself. Start sets
+	// it when it runs more than one loop; it is nil otherwise.
+	handlerMu *sync.Mutex
+
+	// ackFn acknowledges a single resolved message, returning an error when the
+	// XACK itself failed (the message then stays in the PEL). It defaults to
+	// ackOne (a real XACK) and is a seam so the lane-scheduling logic can be
+	// unit-tested without a live Redis connection.
+	ackFn func(ctx context.Context, id string) error
+
+	// lastActivity is the unix-nano timestamp of the most recent unit of read-
+	// loop progress, stored via atomic.Int64 so Healthy can be polled from the
+	// HTTP health handler's goroutine without racing the loop. It advances once
+	// per loop iteration, once per handler attempt (see safeInvoke) and once per
+	// slice of an infrastructure pause (see pause), so a batch of messages, a
+	// single legitimately-slow handler or a long outage keeps the heartbeat
+	// fresh rather than freezing it for the whole readAndProcess call.
+	// It advances regardless of outcome — including a failed read during a Redis
+	// outage — because the point is distinguishing "the loop is alive and
+	// retrying" from "the loop is wedged or has exited," not "the last read
+	// succeeded." A Redis outage alone must never read as unhealthy here: the
+	// read loop already retries indefinitely, so flagging that as unhealthy
+	// would just add readiness-flap noise on top of a condition the consumer is
+	// already handling correctly.
+	lastActivity atomic.Int64
+
+	// inHand holds the ids of the messages this loop has read or claimed and
+	// not yet settled.
+	inHand inHandSet
+	// Seams over Redis and the clock; NewStreamConsumer wires the real ones.
+	deadLetterFn func(ctx context.Context, values map[string]any) error
+	holdFn       func(ctx context.Context, ids []string)
+	holdTicker   func(d time.Duration) (ticks <-chan time.Time, stop func())
+	deliveriesFn func(ctx context.Context, id string) int64
+	sleepFn      func(ctx context.Context, d time.Duration) bool
+	nowFn        func() time.Time
+}
+
+// consumerConfig is what every loop of one consumer shares: the stream, the
+// group, the handler and the options. onKey copies it whole into the loop of
+// each further key.
+type consumerConfig struct {
 	client        *goredis.Client
 	streamName    string
 	consumerGroup string
@@ -64,28 +123,6 @@ type StreamConsumer struct {
 	// same worker lane. An empty/absent value hashes to a stable lane so order
 	// is never violated, only parallelism is forgone for that message.
 	aggregateKeyField string
-
-	// ackFn acknowledges a single resolved message, returning an error when the
-	// XACK itself failed (the message then stays in the PEL). It defaults to
-	// ackOne (a real XACK) and is a seam so the lane-scheduling logic can be
-	// unit-tested without a live Redis connection.
-	ackFn func(ctx context.Context, id string) error
-
-	// lastActivity is the unix-nano timestamp of the most recent unit of read-
-	// loop progress, stored via atomic.Int64 so Healthy can be polled from the
-	// HTTP health handler's goroutine without racing the loop. It advances once
-	// per loop iteration, once per handler attempt (see safeInvoke) and once per
-	// slice of an infrastructure pause (see pause), so a batch of messages, a
-	// single legitimately-slow handler or a long outage keeps the heartbeat
-	// fresh rather than freezing it for the whole readAndProcess call.
-	// It advances regardless of outcome — including a failed read during a Redis
-	// outage — because the point is distinguishing "the loop is alive and
-	// retrying" from "the loop is wedged or has exited," not "the last read
-	// succeeded." A Redis outage alone must never read as unhealthy here: the
-	// read loop already retries indefinitely, so flagging that as unhealthy
-	// would just add readiness-flap noise on top of a condition the consumer is
-	// already handling correctly.
-	lastActivity atomic.Int64
 
 	// onDrop, when set, is invoked once a dead-lettered message is
 	// acknowledged (see DropHandler). It is a seam for the owning service to
@@ -118,16 +155,9 @@ type StreamConsumer struct {
 	infraBackoffBase time.Duration
 	infraBackoffCap  time.Duration
 	pauseSlice       time.Duration
-	// inHand holds the ids of the messages this consumer has read or claimed
-	// and not yet settled.
-	inHand inHandSet
-	// Seams over Redis and the clock; NewStreamConsumer wires the real ones.
-	deadLetterFn func(ctx context.Context, values map[string]any) error
-	holdFn       func(ctx context.Context, ids []string)
-	holdTicker   func(d time.Duration) (ticks <-chan time.Time, stop func())
-	deliveriesFn func(ctx context.Context, id string) int64
-	sleepFn      func(ctx context.Context, d time.Duration) bool
-	nowFn        func() time.Time
+	// startup bounds how long Start waits for the consumer group to exist
+	// (DefaultStartupPolicy).
+	startup StartupPolicy
 }
 
 // ConsumerOption tunes optional behaviour on a StreamConsumer.
@@ -267,27 +297,29 @@ func NewStreamConsumer(
 	opts ...ConsumerOption,
 ) *StreamConsumer {
 	c := &StreamConsumer{
-		client:           client,
-		streamName:       streamName,
-		consumerGroup:    consumerGroup,
-		consumerName:     consumerName(consumerGroup),
-		handler:          handler,
-		logger:           logger,
-		observer:         nopObserver{},
-		workerCount:      1,
-		handlerTimeout:   DefaultHandlerTimeout,
-		infraBackoffBase: defaultInfraBackoffBase,
-		infraBackoffCap:  defaultInfraBackoffCap,
-		pauseSlice:       defaultPauseSlice,
+		consumerConfig: consumerConfig{
+			client:           client,
+			streamName:       streamName,
+			consumerGroup:    consumerGroup,
+			consumerName:     consumerName(consumerGroup),
+			handler:          handler,
+			logger:           logger,
+			observer:         nopObserver{},
+			workerCount:      1,
+			handlerTimeout:   DefaultHandlerTimeout,
+			infraBackoffBase: defaultInfraBackoffBase,
+			infraBackoffCap:  defaultInfraBackoffCap,
+			pauseSlice:       defaultPauseSlice,
+			startup:          DefaultStartupPolicy(),
+		},
+		key: Key(streamName),
 	}
-	c.ackFn = c.ackOne
+	c.bindKeySeams()
 	c.deadLetterFn = c.xaddDeadLetter
-	c.holdFn = c.hold
 	c.holdTicker = func(d time.Duration) (<-chan time.Time, func()) {
 		t := time.NewTicker(d)
 		return t.C, t.Stop
 	}
-	c.deliveriesFn = c.deliveryCount
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil }
 	c.nowFn = time.Now
 	for _, opt := range opts {
@@ -302,6 +334,31 @@ func NewStreamConsumer(
 	// sees "just started," not "stalled since the epoch."
 	c.lastActivity.Store(time.Now().UnixNano())
 	return c
+}
+
+// bindKeySeams wires the seams that act on c.key to c's own Redis calls.
+func (c *StreamConsumer) bindKeySeams() {
+	c.ackFn = c.ackOne
+	c.holdFn = c.hold
+	c.deliveriesFn = c.deliveryCount
+}
+
+// onKey returns a loop of this consumer over key: the same configuration,
+// handler-serialization lock and key-independent seams, with its own in-hand
+// set, heartbeat and the seams that act on key.
+func (c *StreamConsumer) onKey(key string) *StreamConsumer {
+	l := &StreamConsumer{
+		consumerConfig: c.consumerConfig,
+		key:            key,
+		handlerMu:      c.handlerMu,
+		deadLetterFn:   c.deadLetterFn,
+		holdTicker:     c.holdTicker,
+		sleepFn:        c.sleepFn,
+		nowFn:          c.nowFn,
+	}
+	l.bindKeySeams()
+	l.lastActivity.Store(time.Now().UnixNano())
+	return l
 }
 
 // reclaimInterval is how often the consumer re-scans the PEL for messages
@@ -385,9 +442,16 @@ func (c *StreamConsumer) onDropped(ctx context.Context, msg goredis.XMessage, ca
 // deadline ended the call while the consumer's context was still live.
 func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (deadlineHit bool, err error) {
 	// Advanced per attempt, so a batch or a slow handler keeps the liveness
-	// heartbeat fresh.
+	// heartbeat fresh: once before waiting for the handler lock, so a loop
+	// waiting while another key's loop runs its handler (at most one handler
+	// timeout) stays inside HeartbeatBudget, and again once it holds the lock.
 	c.lastActivity.Store(time.Now().UnixNano())
-	hctx, cancel := context.WithTimeout(ctx, c.handlerTimeout)
+	if c.handlerMu != nil && c.workerCount <= 1 {
+		c.handlerMu.Lock()
+		defer c.handlerMu.Unlock()
+		c.lastActivity.Store(time.Now().UnixNano())
+	}
+	hctx, cancel := context.WithTimeout(withSourceKey(ctx, c.dedupSuffix()), c.handlerTimeout)
 	defer cancel()
 	defer func() {
 		if r := recover(); r != nil {
@@ -617,11 +681,11 @@ func (c *StreamConsumer) holdInHand(ctx context.Context, stop <-chan struct{}) {
 // the consumer is stopping.
 func (c *StreamConsumer) hold(ctx context.Context, ids []string) {
 	err := c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
-		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: ids,
+		Stream: c.key, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: ids,
 	}).Err()
 	if err != nil && ctx.Err() == nil {
 		c.logger.Warn("Could not refresh the idle time of the messages in hand",
-			"stream", c.streamName, "count", len(ids), "error", err)
+			"stream", c.streamName, "key", c.key, "count", len(ids), "error", err)
 	}
 }
 
@@ -638,10 +702,13 @@ func (c *StreamConsumer) settleContext(ctx context.Context) (context.Context, co
 	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
-// xaddDeadLetter appends one entry to consumer.dead_letter:v1 with no length cap;
-// the dead-letter-controller's trim loop bounds the stream.
+// xaddDeadLetter appends one entry to the key of consumer.dead_letter:v1 with
+// no length cap; the dead-letter-controller's trim loop bounds the stream. It
+// never creates the stream: while it is missing the write fails, and
+// deadLetterAndAck keeps the message pending and retries.
 func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]any) error {
-	return c.client.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ConsumerDeadLetterV1, Values: values}).Err()
+	err := c.client.XAdd(ctx, &goredis.XAddArgs{Stream: Key(streams.ConsumerDeadLetterV1), NoMkStream: true, Values: values}).Err()
+	return MissingStreamError(Key(streams.ConsumerDeadLetterV1), err)
 }
 
 // deadLetterAndAck writes msg to consumer.dead_letter:v1 and acknowledges it
@@ -709,49 +776,62 @@ func stringFields(values map[string]any) map[string]string {
 	return out
 }
 
-// Start begins consuming messages from the Redis stream until the context is cancelled
+// Start consumes the stream until ctx is cancelled. It first waits for the
+// consumer group (see waitForGroups) and never creates a stream or a group: it
+// returns an error when the group is still missing once its startup policy is
+// spent, and at once on an answer waiting cannot change (a key of the wrong
+// type). It then runs one read loop and one reclaim loop per key it found and
+// returns nil once ctx ends, or the error that ended a loop: a NOGROUP read,
+// meaning the group was removed while the consumer ran.
 func (c *StreamConsumer) Start(ctx context.Context) error {
 	if c.service == "" {
 		return fmt.Errorf("stream consumer %q/%q has no service name: call SetService before Start", c.streamName, c.consumerGroup)
 	}
-	// Bootstrap the consumer group with the same "log and retry" resilience as
-	// the read loop below, rather than returning on the first failure. Without
-	// this, a Redis outage that happens to overlap process startup (a pod boots
-	// while Redis is mid-restart, or a rollout races a brief Redis blip) makes
-	// Start return a single error and exit for good — every caller in this repo
-	// launches Start once in a goroutine and never calls it again on failure, so
-	// that one-shot failure would permanently kill the consumer even though the
-	// read loop it never reached is fully capable of surviving that same outage.
-	//
-	// A PERMANENT bootstrap error (a wrong-typed stream key, an ACL/auth denial,
-	// an unknown command) is the exception: no amount of retrying clears it, so
-	// looping forever would keep the pod ready+live while it consumes nothing
-	// and never fires WorkerExited. Those are returned instead, so the caller's
-	// WorkerExited(name, err) records the failure — readiness fails and it is
-	// logged loudly — rather than silently masking the misconfiguration.
-	for {
-		c.lastActivity.Store(time.Now().UnixNano())
-		err := c.ensureConsumerGroup(ctx)
-		if err == nil {
-			break
-		}
-		if isPermanentBootstrapError(err) {
-			c.logger.Error("Permanent consumer-group bootstrap failure — not retrying (surfacing to health)",
-				"stream", c.streamName, "group", c.consumerGroup, "error", err)
-			return fmt.Errorf("permanent consumer-group bootstrap failure for stream %q group %q: %w",
-				c.streamName, c.consumerGroup, err)
-		}
-		c.logger.Error("Failed to ensure consumer group at startup — retrying",
-			"stream", c.streamName, "group", c.consumerGroup, "error", err)
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(3 * time.Second):
-		}
+	keys, err := c.waitForGroups(ctx)
+	if err != nil || len(keys) == 0 {
+		return err
 	}
 	c.observer.Watch(c.streamName, c.consumerGroup)
+	if len(keys) == 1 {
+		return c.consume(ctx)
+	}
+
+	if c.workerCount <= 1 {
+		c.handlerMu = &sync.Mutex{}
+	}
+	others := make([]*StreamConsumer, 0, len(keys)-1)
+	for _, key := range keys[1:] {
+		others = append(others, c.onKey(key))
+	}
+	c.keyLoops.Store(&others)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, len(others))
+	for _, l := range others {
+		go func() {
+			err := l.consume(ctx)
+			if err != nil {
+				cancel()
+			}
+			errs <- err
+		}()
+	}
+	err = c.consume(ctx)
+	cancel()
+	all := []error{err}
+	for range others {
+		all = append(all, <-errs)
+	}
+	return errors.Join(all...)
+}
+
+// consume runs this loop's read loop and reclaim loop over c.key until ctx is
+// cancelled (it then returns nil) or a read finds the group gone.
+func (c *StreamConsumer) consume(ctx context.Context) error {
 	c.logger.Info("Starting consumer",
 		"stream", c.streamName,
+		"key", c.key,
 		"group", c.consumerGroup,
 		"consumer", c.consumerName,
 		"workers", c.workerCount,
@@ -761,7 +841,7 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 	// crashed before ACKing (crash recovery), then delete the now-drained
 	// registry entries those instances left behind.
 	if err := c.reclaimPending(ctx); err != nil {
-		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "error", err)
+		c.logger.Error("Failed to reclaim pending messages", "stream", c.streamName, "key", c.key, "error", err)
 	}
 	c.cleanupStaleConsumers(ctx, staleConsumerIdle)
 
@@ -782,16 +862,112 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 			return nil
 		case <-reclaimTicker.C:
 			if err := c.reclaimPending(ctx); err != nil {
-				c.logger.Error("Periodic reclaim pending failed", "stream", c.streamName, "error", err)
+				c.logger.Error("Periodic reclaim pending failed", "stream", c.streamName, "key", c.key, "error", err)
 			}
 			c.cleanupStaleConsumers(ctx, staleConsumerIdle)
 		default:
-			if err := c.readAndProcess(ctx); err != nil {
-				c.logger.Error("Error in read loop", "error", err)
+			err := c.readAndProcess(ctx)
+			if errors.Is(err, errGroupGone) {
+				c.logger.Error("Consumer group no longer exists — stopping the consumer",
+					"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "error", err)
+				return err
+			}
+			if err != nil {
+				c.logger.Error("Error in read loop", "stream", c.streamName, "key", c.key, "error", err)
 				time.Sleep(3 * time.Second)
 			}
 		}
 	}
+}
+
+// waitForGroups returns the keys this consumer reads: Key(streamName) once it
+// holds the consumer group, followed by LegacyKey(streamName) when
+// streams.LegacyKeys is true and that key holds the group too. A missing
+// legacy key, or one without the group, is left out. It polls XINFO GROUPS
+// with the backoff of c.startup until the group exists, its budget is spent
+// or ctx ends (it then returns no keys and no error). It advances the
+// heartbeat on every poll, so a consumer waiting through a Redis outage reads
+// as alive. An answer waiting cannot change (a key of the wrong type, an
+// unknown command) ends the wait at once.
+func (c *StreamConsumer) waitForGroups(ctx context.Context) ([]string, error) {
+	policy := c.startup
+	deadline := time.Now().Add(policy.Timeout)
+	delay := max(policy.InitialDelay, 10*time.Millisecond)
+	for {
+		c.lastActivity.Store(time.Now().UnixNano())
+		keys, err := c.groupKeys(ctx)
+		if err == nil && len(keys) > 0 {
+			return keys, nil
+		}
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		if isPermanentBootstrapError(err) {
+			c.logger.Error("Permanent consumer-group bootstrap failure — not retrying (surfacing to health)",
+				"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "error", err)
+			return nil, fmt.Errorf("permanent consumer-group bootstrap failure for stream %q group %q: %w",
+				c.key, c.consumerGroup, err)
+		}
+		if time.Now().Add(delay).After(deadline) {
+			if err != nil {
+				return nil, fmt.Errorf("could not confirm consumer group %q on %q within %s: %w",
+					c.consumerGroup, c.key, policy.Timeout, err)
+			}
+			return nil, fmt.Errorf("consumer group %q on %q does not exist; the streams-init step creates it",
+				c.consumerGroup, c.key)
+		}
+		if err != nil {
+			c.logger.Warn("Could not read the consumer groups — retrying",
+				"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "retry_in", delay, "error", err)
+		} else {
+			c.logger.Warn("Consumer group does not exist yet — waiting for the streams-init step",
+				"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "retry_in", delay)
+		}
+		if !c.sleepFn(ctx, delay) {
+			return nil, nil
+		}
+		delay = min(delay*2, max(policy.MaxDelay, delay))
+	}
+}
+
+// groupKeys reports the keys that hold the consumer group, Key(streamName)
+// first; it returns none while that key does not hold it.
+func (c *StreamConsumer) groupKeys(ctx context.Context) ([]string, error) {
+	held, err := c.holdsGroup(ctx, c.key)
+	if err != nil || !held {
+		return nil, err
+	}
+	keys := []string{c.key}
+	if !streams.LegacyKeys {
+		return keys, nil
+	}
+	legacy := LegacyKey(c.streamName)
+	held, err = c.holdsGroup(ctx, legacy)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		keys = append(keys, legacy)
+	}
+	return keys, nil
+}
+
+// holdsGroup reports whether key holds the consumer group. A missing key holds
+// none.
+func (c *StreamConsumer) holdsGroup(ctx context.Context, key string) (bool, error) {
+	groups, err := c.client.XInfoGroups(ctx, key).Result()
+	if err != nil {
+		if strings.Contains(err.Error(), "no such key") {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, g := range groups {
+		if g.Name == c.consumerGroup {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Healthy reports whether the read loop has made progress within maxStale. It
@@ -810,14 +986,29 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 // timeout by a margin, so in-flight work and infrastructure pauses never trip
 // liveness while a true wedge still does.
 func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
-	// lastActivity is seeded in NewStreamConsumer, so it is never the zero value
-	// for a real consumer; a zero-value consumer (only constructed in tests)
-	// reads as "1970" and therefore stalled, which is the correct unhealthy
-	// answer for something that never ran.
+	if err := c.heartbeatFresh(maxStale); err != nil {
+		return err
+	}
+	if others := c.keyLoops.Load(); others != nil {
+		for _, l := range *others {
+			if err := l.heartbeatFresh(maxStale); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// heartbeatFresh reports whether this loop has made progress within maxStale.
+func (c *StreamConsumer) heartbeatFresh(maxStale time.Duration) error {
+	// lastActivity is seeded in NewStreamConsumer and onKey, so it is never the
+	// zero value for a real loop; a zero-value consumer (only constructed in
+	// tests) reads as "1970" and therefore stalled, which is the correct
+	// unhealthy answer for something that never ran.
 	lastAt := time.Unix(0, c.lastActivity.Load())
 	if age := time.Since(lastAt); age > maxStale {
-		return fmt.Errorf("stream consumer %q/%q: read loop stalled — no activity for %s (last at %s)",
-			c.streamName, c.consumerGroup, age.Round(time.Second), lastAt.Format(time.RFC3339))
+		return fmt.Errorf("stream consumer %q/%q on %q: read loop stalled — no activity for %s (last at %s)",
+			c.streamName, c.consumerGroup, c.key, age.Round(time.Second), lastAt.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -835,16 +1026,15 @@ func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
 // through to the transient path instead, so an operator's fix is picked up on
 // the next retry with no pod restart. Every network/connection error and every
 // transient server state (connection refused, i/o timeout, LOADING,
-// CLUSTERDOWN, MASTERDOWN, TRYAGAIN, …) is likewise transient. BUSYGROUP never
-// reaches here because ensureConsumerGroup treats it as success.
+// CLUSTERDOWN, MASTERDOWN, TRYAGAIN, …) is likewise transient.
 var permanentBootstrapErrorPrefixes = []string{
 	"WRONGTYPE",
 	"unknown command",
 	"unknown subcommand",
 }
 
-// isPermanentBootstrapError reports whether an ensureConsumerGroup error is a
-// permanent misconfiguration that retrying will never fix. It matches against
+// isPermanentBootstrapError reports whether an error reading the consumer
+// groups at startup is a permanent misconfiguration that retrying will never fix. It matches against
 // the Redis RESP error-code prefix via goredis.HasErrorPrefix, which first
 // unwraps to the underlying server error (so our fmt.Errorf wrapping is
 // transparent) and only matches genuine reply-error codes — a network error, or
@@ -860,14 +1050,6 @@ func isPermanentBootstrapError(err error) bool {
 		}
 	}
 	return false
-}
-
-func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
-	err := c.client.XGroupCreateMkStream(ctx, c.streamName, c.consumerGroup, "0").Err()
-	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		return fmt.Errorf("failed to create consumer group: %w", err)
-	}
-	return nil
 }
 
 // reclaimPending claims and reprocesses messages left in the pending entry list
@@ -903,7 +1085,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 	cursor := "0-0"
 	for {
 		msgs, next, err := c.client.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
-			Stream:   c.streamName,
+			Stream:   c.key,
 			Group:    c.consumerGroup,
 			Consumer: c.consumerName,
 			MinIdle:  gate,
@@ -917,6 +1099,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		if len(msgs) > 0 {
 			c.logger.Warn("Reclaiming pending messages from previous consumers",
 				"stream", c.streamName,
+				"key", c.key,
 				"count", len(msgs),
 				"min_idle", gate,
 			)
@@ -1002,7 +1185,7 @@ func (c *StreamConsumer) ackHandled(ctx context.Context, id string) {
 // the next sweep instead of abandoning live work.
 func (c *StreamConsumer) deliveryCount(ctx context.Context, id string) int64 {
 	pend, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: c.streamName,
+		Stream: c.key,
 		Group:  c.consumerGroup,
 		Start:  id,
 		End:    id,
@@ -1010,7 +1193,7 @@ func (c *StreamConsumer) deliveryCount(ctx context.Context, id string) int64 {
 	}).Result()
 	if err != nil {
 		c.logger.Warn("Could not read PEL delivery count — not dead-lettering this sweep",
-			"stream", c.streamName, "message_id", id, "error", err)
+			"stream", c.streamName, "key", c.key, "message_id", id, "error", err)
 		return 0
 	}
 	if len(pend) == 0 {
@@ -1031,18 +1214,19 @@ func (c *StreamConsumer) deliveryCount(ctx context.Context, id string) int64 {
 // re-registers on its next read. Failures are logged and skipped; cleanup is
 // best-effort housekeeping, never on the message-processing critical path.
 func (c *StreamConsumer) cleanupStaleConsumers(ctx context.Context, minIdle time.Duration) {
-	consumers, err := c.client.XInfoConsumers(ctx, c.streamName, c.consumerGroup).Result()
+	consumers, err := c.client.XInfoConsumers(ctx, c.key, c.consumerGroup).Result()
 	if err != nil {
-		c.logger.Warn("Could not list consumers for cleanup", "stream", c.streamName, "error", err)
+		c.logger.Warn("Could not list consumers for cleanup", "stream", c.streamName, "key", c.key, "error", err)
 		return
 	}
 	for _, cons := range consumers {
 		if cons.Name == c.consumerName || cons.Pending > 0 || cons.Idle < minIdle {
 			continue
 		}
-		if err := c.client.XGroupDelConsumer(ctx, c.streamName, c.consumerGroup, cons.Name).Err(); err != nil {
+		if err := c.client.XGroupDelConsumer(ctx, c.key, c.consumerGroup, cons.Name).Err(); err != nil {
 			c.logger.Warn("Failed to delete stale consumer",
 				"stream", c.streamName,
+				"key", c.key,
 				"consumer", cons.Name,
 				"error", err,
 			)
@@ -1050,17 +1234,26 @@ func (c *StreamConsumer) cleanupStaleConsumers(ctx context.Context, minIdle time
 		}
 		c.logger.Info("Removed drained stale consumer",
 			"stream", c.streamName,
+			"key", c.key,
 			"consumer", cons.Name,
 			"idle", cons.Idle,
 		)
 	}
 }
 
+// errGroupGone marks a read that found the consumer group missing: the group
+// or its key was removed while the consumer ran. The consumer never re-creates
+// it, so the loop stops.
+var errGroupGone = errors.New("consumer group no longer exists")
+
+// readAndProcess reads up to one batch of new entries from c.key and settles
+// each of them. It returns an error wrapping errGroupGone when the key no
+// longer holds the group.
 func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
-	streams, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
+	read, err := c.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group:    c.consumerGroup,
 		Consumer: c.consumerName,
-		Streams:  []string{c.streamName, ">"},
+		Streams:  []string{c.key, ">"},
 		Count:    10,
 		Block:    1 * time.Second,
 	}).Result()
@@ -1070,12 +1263,12 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 			return nil
 		}
 		if strings.Contains(err.Error(), "NOGROUP") {
-			return c.ensureConsumerGroup(ctx)
+			return fmt.Errorf("%w: group %q on %q: %w", errGroupGone, c.consumerGroup, c.key, err)
 		}
 		return fmt.Errorf("failed to read from stream: %w", err)
 	}
 
-	for _, stream := range streams {
+	for _, stream := range read {
 		msgs := stream.Messages
 		c.holdWhileInHand(ctx, msgs, func() {
 			if c.workerCount <= 1 {
@@ -1226,9 +1419,10 @@ func (c *StreamConsumer) admit(ctx context.Context, msg goredis.XMessage) (gored
 // reclaim sweep redelivers it — the returned error lets deadLetterAndAck hold
 // back the drop notification until the ACK is confirmed.
 func (c *StreamConsumer) ackOne(ctx context.Context, id string) error {
-	if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, id).Err(); err != nil {
+	if err := c.client.XAck(ctx, c.key, c.consumerGroup, id).Err(); err != nil {
 		c.logger.Error("Failed to ACK message",
 			"stream", c.streamName,
+			"key", c.key,
 			"message_id", id,
 			"error", err,
 		)

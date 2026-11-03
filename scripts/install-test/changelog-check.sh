@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 # Fails a PR that changes the continuo chart's user-facing surface (values.yaml,
 # values.schema.json, Chart.yaml, templates/**) without also updating
-# CHANGELOG.md, and a PR whose CHANGELOG.md change adds a line under an
-# already released version (changelog-placement-check.sh). Needs BASE_SHA (the
+# CHANGELOG.md, a PR whose CHANGELOG.md change adds a line under an
+# already released version (changelog-placement-check.sh), and a PR that
+# changes the generated Redis rules (deploy/redis-acl-rules.acl) without a
+# CHANGELOG.md line that says "Redis rule". Needs BASE_SHA (the
 # PR's base commit) in the environment; install-test.yml sets it from
 # github.event.pull_request.base.sha and fetches it before calling this script.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 : "${BASE_SHA:?BASE_SHA must be set (the PR base commit)}"
+
+# The Redis rules are applied by the operator's own tooling, which reads the
+# CHANGELOG for what to re-apply: a change to them is named there with the
+# words "Redis rule".
+if [ -n "$(git diff --name-only "${BASE_SHA}" HEAD -- deploy/redis-acl-rules.acl)" ]; then
+  if ! git diff -U0 "${BASE_SHA}" HEAD -- deploy/continuo/CHANGELOG.md | grep -Eq '^\+[^+].*Redis rule'; then
+    echo "::error::deploy/redis-acl-rules.acl changed without a CHANGELOG.md line naming the Redis rule change."
+    echo
+    echo "Add a line containing the words 'Redis rule' under '## [Unreleased]'" \
+         "in deploy/continuo/CHANGELOG.md, saying which login's rule changed" \
+         "so operators re-apply the rules before they upgrade."
+    exit 1
+  fi
+  echo "deploy/redis-acl-rules.acl changed and CHANGELOG.md names the Redis rule change. OK."
+fi
 
 # Two-commit diff (not three-dot): compares tree contents directly, so it
 # works even when BASE_SHA was fetched as a disconnected shallow object with

@@ -86,7 +86,7 @@ spec:
                 values: [run-controller, catalog, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller,
-                         topology-controller, ui]
+                         topology-controller, ui, streams-init]
       ports:
         - port: 6379
 {{- end }}

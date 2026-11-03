@@ -1,6 +1,7 @@
 import json
 from unittest.mock import MagicMock
 from adapters.redis.consumer import Consumer
+from adapters.redis.keys import key
 from config.config import SERVICE_NAME
 from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
@@ -9,9 +10,8 @@ def test_consume_once_dispatches_payload_and_acks():
     """One XREADGROUP poll: a release.requested:v1 message is read by the
     production loop body, dispatched to the message_handler, then ACKed."""
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
     redis_mock.xreadgroup.return_value = [(
-        RELEASE_REQUESTED_V1.encode(),
+        key(RELEASE_REQUESTED_V1).encode(),
         [(b"1700000000-0", {b"payload": json.dumps({
             "release_id": "rel-int",
             "manifest_keys": [
@@ -41,7 +41,7 @@ def test_consume_once_dispatches_payload_and_acks():
     assert payload["release_id"] == "rel-int"
     # ...and the production code ACKed the message id it just processed.
     redis_mock.xack.assert_called_once_with(
-        RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED, b"1700000000-0",
+        key(RELEASE_REQUESTED_V1), TOPOLOGY_CONTROLLER_RELEASE_REQUESTED, b"1700000000-0",
     )
 
 
@@ -49,9 +49,8 @@ def test_consume_once_does_not_ack_when_handler_raises():
     """If the message_handler raises, the production loop must NOT ACK the
     message (it stays in the PEL for redelivery)."""
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
     redis_mock.xreadgroup.return_value = [(
-        RELEASE_REQUESTED_V1.encode(),
+        key(RELEASE_REQUESTED_V1).encode(),
         [(b"1700000000-1", {b"payload": b"{}"})],
     )]
 

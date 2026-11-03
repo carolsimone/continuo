@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/jmoiron/sqlx"
 )
@@ -58,7 +59,9 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	_, _ = clients.runControllerDB.Exec("DELETE FROM runs WHERE schedule_name = $1", scheduleName)
 }
 
-// cleanupRedis removes test streams from Redis
+// cleanupRedis empties the streams the tests publish to. It trims them rather
+// than deleting them: the streams-init step created each stream with its
+// consumer groups, and the services never recreate either.
 func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	testStreams := []string{
 		streams.TaskDispatchV1,
@@ -66,7 +69,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	}
 
 	for _, stream := range testStreams {
-		clients.redisClient.Del(ctx, stream)
+		clients.redisClient.XTrimMaxLen(ctx, pkgredis.Key(stream), 0)
 	}
 
 }

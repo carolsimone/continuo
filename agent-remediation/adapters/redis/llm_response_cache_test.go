@@ -10,6 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
 
 func newTestRedis(t *testing.T) *goredis.Client {
@@ -74,11 +75,29 @@ func TestLLMResponseCache_PutSetsTTL(t *testing.T) {
 	if err := c.Put(ctx, "llmcache:ttl", ports.ProposeResult{Model: "m"}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	ttl, err := client.TTL(ctx, "llmcache:ttl").Result()
+	ttl, err := client.TTL(ctx, pkgredis.Key("llmcache:ttl")).Result()
 	if err != nil {
 		t.Fatalf("TTL: %v", err)
 	}
 	if ttl <= 0 || ttl > time.Hour {
 		t.Fatalf("expected a positive TTL <= 1h, got %v", ttl)
+	}
+}
+
+// TestLLMCacheKeyIsPrefixed pins the Redis key of a cached result to the
+// continuo: prefix, so the key falls under the service's ACL key pattern.
+func TestLLMCacheKeyIsPrefixed(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	c := NewLLMResponseCache(goredis.NewClient(&goredis.Options{Addr: mr.Addr()}), time.Hour)
+
+	if err := c.Put(ctx, "llmcache:abc", ports.ProposeResult{ProposedSQL: "SELECT 1"}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if got, want := mr.Keys(), []string{pkgredis.Key("llmcache:abc")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
+	}
+	if _, ok, err := c.Get(ctx, "llmcache:abc"); err != nil || !ok {
+		t.Fatalf("Get after Put: ok=%v err=%v", ok, err)
 	}
 }

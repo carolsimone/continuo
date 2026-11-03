@@ -93,6 +93,22 @@ To run no exports, set catalog.backup.enabled=false.
 Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.
 Image pull secrets, RoleBindings and cloud roles bound to the default ServiceAccount no longer apply:
 set imagePullSecrets (and services[].serviceAccount.annotations for cloud roles) in your values.
+
+Every Redis key now lives under the prefix `continuo:` (streams, ui sessions,
+agent-chat's rate-limit keys, agent-remediation's LLM cache keys). Consumer
+group names do not change. The streams-init step creates each stream and
+consumer group under that prefix. With redis.enabled=false it is a pre-upgrade
+hook Job that runs before the services roll. With the bundled Redis it is a Job
+of the release, which the services wait for (up to five minutes). The ui keeps
+its sessions under continuo:uisession:, so every ui user signs in once more
+after this upgrade, and agent-chat's rate-limit counters and agent-remediation's
+LLM cache start empty. Keys under the old names stay in Redis and are not
+deleted.
+streams-init needs a Redis login that may create streams (XGROUP CREATE with
+MKSTREAM). If yours may not, have the Redis owner create the streams by running
+/streams-init from the dead-letter-controller image with a login that may, and
+set redisInit.createStreams=false. Until the streams exist, consumers wait for
+their groups and producers retry.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

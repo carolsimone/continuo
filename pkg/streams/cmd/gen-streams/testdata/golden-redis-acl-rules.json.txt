@@ -1,0 +1,10 @@
+{
+  "key_prefix": "continuo:",
+  "logins": [
+    {"service":"dead-letter-controller","username":"continuo_dead_letter_controller","rule":"~continuo:* ~consumer.dead_letter:v1 ~outbox.dead_letter:v1 ~task.dispatch:v1 ~task.failed:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending +xinfo|consumers +xgroup|delconsumer +xrange +xtrim +xlen +del +info"},
+    {"service":"execution-controller","username":"continuo_execution_controller","rule":"~continuo:task.dispatch:v1 %W~continuo:consumer.dead_letter:v1 ~task.dispatch:v1 %W~consumer.dead_letter:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd +xreadgroup +xack +xautoclaim +xclaim +xpending +xinfo|consumers +xgroup|delconsumer"},
+    {"service":"run-controller","username":"continuo_run_controller","rule":"%W~continuo:consumer.dead_letter:v1 %W~continuo:outbox.dead_letter:v1 %W~continuo:task.dispatch:v1 %W~consumer.dead_letter:v1 %W~outbox.dead_letter:v1 %W~task.dispatch:v1 -@all +ping +hello +client|setinfo +xinfo|groups +xadd"},
+    {"service":"streams-init","username":"continuo_redis_migrate","rule":"~continuo:* -@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"},
+    {"service":"ui","username":"continuo_ui","rule":"~continuo:uisession:* -@all +ping +hello +client|setinfo +xinfo|groups +get +set +del +expire"}
+  ]
+}

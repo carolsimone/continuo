@@ -130,6 +130,11 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
 	@echo "Flyway migrations done."
+	@echo "Waiting for streams-init to create the Redis streams and groups..."
+	@cid=$$($(DOCKER_COMPOSE) ps -aq streams-init); \
+		if [ -z "$$cid" ] || [ "$$(docker wait $$cid)" != 0 ]; then \
+			echo "streams-init did not exit 0"; exit 1; \
+		fi
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
@@ -152,8 +157,9 @@ FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-release \
 # (laptops, GitHub-hosted fork-PR runs) it is localhost.
 CI_HOST_IP ?= localhost
 
-# Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
-# images are built. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
+# Data dependencies for Go tests: Postgres+Neo4j+Redis up, migrated, and holding
+# every stream and consumer group. The only image built is the dead-letter-controller
+# dev image that runs streams-init. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis
@@ -166,10 +172,15 @@ test-deps-up:
 	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
 	  $(DOCKER_COMPOSE) up $$f || exit 1; \
 	done
+	@# streams-init creates the streams and consumer groups once Redis is
+	@# healthy. It is recreated like the Flyway jobs, and `up` exits non-zero
+	@# unless the container exited 0.
+	@$(DOCKER_COMPOSE) rm -fsv streams-init >/dev/null 2>&1 || true
+	@$(DOCKER_COMPOSE) up --exit-code-from streams-init --abort-on-container-exit streams-init
 
 .PHONY: test-deps-down
 test-deps-down:
-	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis $(FLYWAY_JOBS) 2>/dev/null || true
+	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis streams-init $(FLYWAY_JOBS) 2>/dev/null || true
 
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
@@ -198,7 +209,8 @@ test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
-	    run-controller) db=continuo_run_controller;; \
+	    run-controller) db=continuo_run_controller; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo";; \
 	    catalog) db=; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \

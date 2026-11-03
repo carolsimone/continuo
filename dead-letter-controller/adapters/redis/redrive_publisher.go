@@ -12,8 +12,9 @@ import (
 )
 
 // RedrivePublisher publishes dead-letter-controller's outbox: a redrive row
-// XADDs the stored fields to the original stream with redriven_from naming the
-// dead letter and, for one group, redrive_group. A consumer or quarantine
+// XADDs the stored fields to the prefixed key of the original stream, which it
+// never creates, with redriven_from naming the dead letter and, for one group,
+// redrive_group. A consumer or quarantine
 // redrive carries the row's id as outbox_entry_id, so it is reprocessed; an
 // outbox-source redrive preserves the original event's outbox_entry_id, so
 // consumers that already processed it deduplicate it. A dead-letter row of this
@@ -87,8 +88,9 @@ func (p *RedrivePublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) 
 		return err
 	}
 	values["outbox_entry_id"] = id
-	if err := p.redis.XAdd(ctx, &goredis.XAddArgs{Stream: entry.StreamName, Values: values}).Err(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+	args := &goredis.XAddArgs{Stream: pkgredis.Key(entry.StreamName), NoMkStream: true, Values: values}
+	if err := p.redis.XAdd(ctx, args).Err(); err != nil {
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, pkgredis.MissingStreamError(args.Stream, err))
 	}
 	return nil
 }

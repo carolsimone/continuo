@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 
+from adapters.redis.keys import xadd_existing
 from adapters.redis.envelope import EVENT_ID_NAMESPACE, envelope_fields
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import DEFAULT_TENANT_ID, FailedNode, TopologyArtifactRef
@@ -110,4 +111,4 @@ class CandidateManifestPublisher:
             schema_version=SCHEMA_VERSION,
             payload=payload,
         )
-        self._redis.xadd(self._stream, fields)
+        xadd_existing(self._redis, self._stream, fields)
