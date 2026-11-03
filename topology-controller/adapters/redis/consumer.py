@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError as RedisResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from adapters.redis import keys
 from adapters.redis.dead_letter import as_text, build_fields, tenant_of
 from adapters.redis.error_class import ErrorClass, classify
 from adapters.redis.redrive import route
 from domain.contract_vocabulary import DeadLetterKind
-from streams_contract import CONSUMER_DEAD_LETTER_V1
+from streams_contract import CONSUMER_DEAD_LETTER_V1, LEGACY_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -23,22 +25,19 @@ logger = logging.getLogger(__name__)
 # its message reclaimed and run a second time by another replica.
 _RECLAIM_MIN_IDLE_MS = 60_000
 
-# How long the initial consumer-group creation keeps waiting for a Redis it
-# cannot reach yet, and how long it pauses between attempts. A process can win
-# the race against its own Redis on a cold start — on Kubernetes the Service
-# DNS name may not resolve, under compose the server may not be accepting
-# connections — and that failure clears itself within seconds. Without this
-# wait the exception escapes the constructor and ends the process, which costs
-# far more than the wait: CrashLoopBackOff then holds the pod down on an
-# exponential delay (10s, 20s, 40s, 80s...) long after Redis is ready.
-#
-# Bounded rather than infinite, because the two failure modes need different
-# answers. main.py only starts the health server once the consumer is
-# constructed, so waiting forever on a genuinely unreachable or misconfigured
-# Redis would leave a process that never serves a probe and never consumes
-# anything, with nothing to signal it. Giving up restores that signal.
-_STARTUP_CONNECT_TIMEOUT_S = 60.0
-_STARTUP_CONNECT_BACKOFF_S = 3.0
+# How long start() waits for the consumer group to exist, polling XINFO GROUPS
+# with a delay that starts at _STARTUP_INITIAL_DELAY_S and doubles up to
+# _STARTUP_MAX_DELAY_S. The streams-init deploy step creates every group, and a
+# process can win the race against it, or against its own Redis (on Kubernetes
+# the Service DNS name may not resolve yet, under compose the server may not be
+# accepting connections). Both clear themselves within seconds to minutes, and
+# giving up on them ends the process, which costs far more than the wait:
+# CrashLoopBackOff then holds the pod down on an exponential delay long after
+# Redis is ready. The wait is bounded because a group that never appears is a
+# deployment fault the process must signal by failing.
+_STARTUP_TIMEOUT_S = 300.0
+_STARTUP_INITIAL_DELAY_S = 1.0
+_STARTUP_MAX_DELAY_S = 10.0
 
 # A message whose handler still fails transiently on this delivery is
 # dead-lettered. The count is the pending entry's delivery counter.
@@ -73,6 +72,10 @@ class Consumer:
             )
         self._redis = redis_client
         self._stream = stream_name
+        # The prefixed key of the stream, the one every consumer reads. start()
+        # adds the unprefixed key while it holds the group too.
+        self._key = keys.key(stream_name)
+        self._keys = [self._key]
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
         self._message_handler = message_handler
@@ -80,74 +83,108 @@ class Consumer:
         self._service = service_name
         self._now = clock
         # The messages of the batch being read or the page being claimed that
-        # have not settled yet, by text id, in delivery order. Settling means
+        # have not settled yet, by (key, text id), in delivery order. The key is
+        # the one the message came from. Settling means
         # being ACKed, dead-lettered and ACKed, or left pending for a retry. A
         # pause holds exactly these (see _hold).
-        self._in_hand: dict[str, object] = {}
+        self._in_hand: dict[tuple[str, str], object] = {}
         # Stamped at the end of every start() loop pass (success or handled
         # failure) so a health check can tell "retrying through a Redis
         # outage" (heartbeat keeps advancing) apart from "the loop stopped
         # running" (heartbeat goes and stays stale) — see adapters/health.
         self.last_heartbeat = time.monotonic()
-        self._create_group_awaiting_redis()
 
-    def _create_group_awaiting_redis(self) -> None:
-        """Create the consumer group, waiting out a Redis that is not
-        reachable yet.
+    def _await_group(self) -> list[str]:
+        """The keys this consumer reads, once the consumer group exists.
 
-        Only a failure to reach Redis is retried. Any other error — a bad
-        argument, a key of the wrong type — is permanent, so it is raised on
-        the first attempt instead of burning the whole startup window on
-        something no amount of waiting will fix.
+        The consumer never creates the group. It polls until the prefixed key
+        of its stream holds the group, advancing the heartbeat on every poll,
+        and returns that key, followed by the unprefixed key while LEGACY_KEYS
+        is true and that key holds the group too. A Redis it cannot reach is
+        waited out like a missing group, and the connection error is raised
+        once the window is spent. Any other error (a key of the wrong type) is
+        permanent, so it is raised on the first attempt instead of burning the
+        window on something no amount of waiting will fix. A group still
+        missing at the end raises RuntimeError.
         """
-        deadline = time.monotonic() + _STARTUP_CONNECT_TIMEOUT_S
+        deadline = time.monotonic() + _STARTUP_TIMEOUT_S
+        delay = _STARTUP_INITIAL_DELAY_S
         attempt = 0
         while True:
             attempt += 1
+            self.last_heartbeat = time.monotonic()
+            unreachable = None
             try:
-                self._create_group()
-                return
+                found = self._group_keys()
             except (RedisConnectionError, RedisTimeoutError) as e:
-                if time.monotonic() >= deadline:
+                found, unreachable = [], e
+            if found:
+                return found
+            if time.monotonic() + delay > deadline:
+                if unreachable is not None:
                     logger.error(
                         "Redis still unreachable after %.0fs and %d attempts; giving up: %s",
-                        _STARTUP_CONNECT_TIMEOUT_S, attempt, e,
+                        _STARTUP_TIMEOUT_S, attempt, unreachable,
                     )
-                    raise
+                    raise unreachable
+                raise RuntimeError(
+                    f'consumer group "{self._group}" on "{self._key}" does not exist; '
+                    "the streams-init step creates it"
+                )
+            if unreachable is not None:
                 logger.warning(
                     "Redis not reachable yet (attempt %d), retrying in %.0fs: %s",
-                    attempt, _STARTUP_CONNECT_BACKOFF_S, e,
+                    attempt, delay, unreachable,
                 )
-                time.sleep(_STARTUP_CONNECT_BACKOFF_S)
-
-    def _create_group(self) -> None:
-        try:
-            self._redis.xgroup_create(self._stream, self._group, id="0", mkstream=True)
-            logger.info("Consumer group created", extra={"group": self._group, "stream": self._stream})
-        except Exception as e:
-            if "BUSYGROUP" in str(e):
-                logger.debug("Consumer group already exists", extra={"group": self._group})
             else:
-                raise
+                logger.warning(
+                    "Consumer group does not exist yet, waiting for the streams-init step: "
+                    "group=%s key=%s retry_in=%.0fs", self._group, self._key, delay,
+                )
+            time.sleep(delay)
+            delay = min(delay * 2, _STARTUP_MAX_DELAY_S)
+
+    def _group_keys(self) -> list[str]:
+        """The keys that hold the consumer group, the prefixed key first; none
+        while the prefixed key does not hold it. A missing unprefixed key, or
+        one without the group, is left out."""
+        if not self._holds_group(self._key):
+            return []
+        found = [self._key]
+        if LEGACY_KEYS:
+            legacy = keys.legacy_key(self._stream)
+            if self._holds_group(legacy):
+                found.append(legacy)
+        return found
+
+    def _holds_group(self, key: str) -> bool:
+        """Whether key holds the consumer group. A missing key holds none."""
+        try:
+            groups = self._redis.xinfo_groups(key)
+        except RedisResponseError as e:
+            if "no such key" in str(e).lower():
+                return False
+            raise
+        return any(as_text(g.get("name")) == self._group for g in groups)
 
     def _process_message(self, msg_id: str, fields: dict) -> None:
         self._message_handler(fields)
 
     def _dispatch_in_hand(self, batch: list[tuple]) -> None:
-        """Dispatch each (id, fields) of a batch this consumer has just read or a
-        page it has just claimed. Every message is in hand from now until it
+        """Dispatch each (key, id, fields) of a batch this consumer has just read
+        or a page it has just claimed, key being the one the message came from. Every message is in hand from now until it
         settles, so a pause on one of them holds the ones still waiting behind it
         and none that already settled. The set is empty again when the batch
         ends, also when it ends on an exception."""
-        self._in_hand = {as_text(msg_id): msg_id for msg_id, _ in batch}
+        self._in_hand = {(key, as_text(msg_id)): msg_id for key, msg_id, _ in batch}
         try:
-            for msg_id, msg_fields in batch:
-                self._dispatch(msg_id, msg_fields)
+            for key, msg_id, msg_fields in batch:
+                self._dispatch(key, msg_id, msg_fields)
         finally:
             self._in_hand.clear()
 
-    def _dispatch(self, msg_id, msg_fields: dict) -> None:
-        """Handle one message and settle it (see _settle). An entry with no
+    def _dispatch(self, key: str, msg_id, msg_fields: dict) -> None:
+        """Handle one message read from key and settle it (see _settle). An entry with no
         fields, and a redriven entry addressed to another group, are ACKed
         without reaching the handler. Whatever the outcome, the message is out
         of the in-hand set when this returns."""
@@ -156,17 +193,17 @@ class Consumer:
                 # An entry trimmed from the stream while it was pending has no
                 # fields left; there is nothing to handle.
                 logger.warning("Pending entry no longer in the stream — acknowledging: message_id=%s", as_text(msg_id))
-                self._ack(msg_id)
+                self._ack(key, msg_id)
                 return
             for_us, msg_fields = route(msg_fields, self._group)
             if not for_us:
-                self._ack(msg_id)
+                self._ack(key, msg_id)
                 return
-            self._settle(msg_id, msg_fields)
+            self._settle(key, msg_id, msg_fields)
         finally:
-            self._in_hand.pop(as_text(msg_id), None)
+            self._in_hand.pop((key, as_text(msg_id)), None)
 
-    def _settle(self, msg_id, msg_fields: dict) -> None:
+    def _settle(self, key: str, msg_id, msg_fields: dict) -> None:
         """Run the handler for one message and settle it. On success it is
         ACKed. On a permanent error, or a transient error on its
         _MAX_DELIVERIES-th delivery, it is dead-lettered and then ACKed.
@@ -189,15 +226,15 @@ class Consumer:
                     )
                     self._pause(msg_id, delay)
                     continue
-                deliveries = self._deliveries(msg_id)
+                deliveries = self._deliveries(key, msg_id)
                 if cls is ErrorClass.PERMANENT:
                     # The message has been delivered at least once, so a count
                     # of 0 (Redis could not tell) is recorded as 1.
-                    self._dead_letter_and_ack(msg_id, msg_fields, DeadLetterKind.PERMANENT, exc,
+                    self._dead_letter_and_ack(key, msg_id, msg_fields, DeadLetterKind.PERMANENT, exc,
                                               max(deliveries, 1))
                 elif deliveries >= _MAX_DELIVERIES:
                     self._dead_letter_and_ack(
-                        msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
+                        key, msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
                     )
                 else:
                     # Render the cause into the message (and attach the
@@ -212,16 +249,16 @@ class Consumer:
                         text_id, deliveries, _MAX_DELIVERIES, exc,
                     )
                 return
-            if self._ack(msg_id):
+            if self._ack(key, msg_id):
                 logger.info("Message ACKed", extra={"msg_id": text_id})
             return
 
-    def _ack(self, msg_id) -> bool:
-        """XACK msg_id. A failure is logged and leaves the message pending, so
+    def _ack(self, key: str, msg_id) -> bool:
+        """XACK msg_id on key, the one it was read from. A failure is logged and leaves the message pending, so
         the reclaim sweep redelivers it instead of the failure aborting the
         batch the message came from."""
         try:
-            self._redis.xack(self._stream, self._group, msg_id)
+            self._redis.xack(key, self._group, msg_id)
         except Exception as exc:
             logger.error("Could not ACK message %s — it stays pending for the reclaim sweep: %s",
                          as_text(msg_id), exc)
@@ -239,11 +276,11 @@ class Consumer:
                 break
         return min(delay, _INFRA_BACKOFF_CAP_S)
 
-    def _deliveries(self, msg_id) -> int:
-        """Times msg_id was delivered to this group. 0 when Redis cannot tell,
+    def _deliveries(self, key: str, msg_id) -> int:
+        """Times msg_id was delivered to this group on key. 0 when Redis cannot tell,
         which never dead-letters a transient failure."""
         try:
-            entries = self._redis.xpending_range(self._stream, self._group, min=msg_id, max=msg_id, count=1)
+            entries = self._redis.xpending_range(key, self._group, min=msg_id, max=msg_id, count=1)
         except Exception as exc:
             logger.warning("Could not read the delivery count of %s: %s", as_text(msg_id), exc)
             return 0
@@ -264,24 +301,25 @@ class Consumer:
 
     def _hold(self, paused_id) -> None:
         """Re-claim the messages in hand for this consumer with one XCLAIM
-        JUSTID: the message paused on and the batch or page siblings still
+        JUSTID per key they came from: the message paused on and the batch or page siblings still
         waiting for their turn. JUSTID resets each entry's idle time without
         counting a delivery, so none of them grows idle enough for a peer's
         reclaim sweep to take it. A message that already settled is not in hand:
         one left pending for a retry keeps aging until the sweep takes it, however
         often later messages pause. XCLAIM skips an id that is no longer pending.
         A failure only shortens the protection, so it is logged."""
-        ids = list(self._in_hand.values())
-        if not ids:
-            return
-        try:
-            self._redis.xclaim(self._stream, self._group, self._name, min_idle_time=0,
-                               message_ids=ids, justid=True)
-        except Exception as exc:
-            logger.warning("Could not refresh the idle time of %d messages in hand (paused on %s): %s",
-                           len(ids), as_text(paused_id), exc)
+        by_key: dict[str, list] = {}
+        for (key, _text_id), msg_id in self._in_hand.items():
+            by_key.setdefault(key, []).append(msg_id)
+        for key, ids in by_key.items():
+            try:
+                self._redis.xclaim(key, self._group, self._name, min_idle_time=0,
+                                   message_ids=ids, justid=True)
+            except Exception as exc:
+                logger.warning("Could not refresh the idle time of %d messages in hand on %s (paused on %s): %s",
+                               len(ids), key, as_text(paused_id), exc)
 
-    def _dead_letter_and_ack(self, msg_id, msg_fields: dict, kind: DeadLetterKind, exc: Exception,
+    def _dead_letter_and_ack(self, key: str, msg_id, msg_fields: dict, kind: DeadLetterKind, exc: Exception,
                              deliveries: int) -> None:
         """Write the dead letter, then ACK. While the write fails the message
         stays pending and the consumer pauses, retrying the write, never the
@@ -296,7 +334,7 @@ class Consumer:
         writes = 0
         while True:
             try:
-                self._redis.xadd(CONSUMER_DEAD_LETTER_V1, fields)
+                keys.xadd_existing(self._redis, CONSUMER_DEAD_LETTER_V1, fields)
                 break
             except Exception as write_exc:
                 writes += 1
@@ -306,19 +344,22 @@ class Consumer:
                 self._pause(msg_id, delay)
         logger.error("%s: stream=%s group=%s message_id=%s failure_kind=%s deliveries=%d dead_letter_event_id=%s error=%s",
                      LOG_DEAD_LETTERED, self._stream, self._group, text_id, kind, deliveries, fields["event_id"], error)
-        self._ack(msg_id)
+        self._ack(key, msg_id)
 
     def _consume_once(self) -> None:
         messages = self._redis.xreadgroup(
             self._group,
             self._name,
-            {self._stream: ">"},
+            {key: ">" for key in self._keys},
             count=10,
             block=1000,
         )
         if not messages:
             return
-        self._dispatch_in_hand([(msg_id, msg_fields) for _stream, msgs in messages for msg_id, msg_fields in msgs])
+        self._dispatch_in_hand([
+            (as_text(stream), msg_id, msg_fields)
+            for stream, msgs in messages for msg_id, msg_fields in msgs
+        ])
 
     def _reclaim_stale_pending(self) -> None:
         """Claim messages left pending by a previous failure or a dead consumer
@@ -331,10 +372,14 @@ class Consumer:
         reclaim window so a transient failure is retried instead of stranding the
         release. Messages that still fail are left pending for the next sweep.
         """
+        for key in self._keys:
+            self._reclaim_stale_pending_on(key)
+
+    def _reclaim_stale_pending_on(self, key: str) -> None:
         cursor = "0-0"
         while True:
             result = self._redis.xautoclaim(
-                self._stream,
+                key,
                 self._group,
                 self._name,
                 min_idle_time=_RECLAIM_MIN_IDLE_MS,
@@ -342,17 +387,26 @@ class Consumer:
                 count=10,
             )
             cursor, claimed = result[0], result[1]
-            self._dispatch_in_hand(claimed)
+            self._dispatch_in_hand([(key, msg_id, msg_fields) for msg_id, msg_fields in claimed])
             if cursor in (b"0-0", "0-0"):
                 break
 
     def start(self) -> None:
         logger.info("Consumer starting", extra={"consumer_name": self._name, "stream": self._stream})
+        self._keys = self._await_group()
+        logger.info("Consumer reading", extra={"stream": self._stream, "keys": self._keys, "group": self._group})
         while True:
             try:
                 self._reclaim_stale_pending()
                 self._consume_once()
             except Exception as e:
+                if "NOGROUP" in str(e):
+                    # The group was removed while the consumer ran. Only the
+                    # streams-init step creates groups, so the loop ends and
+                    # the process restarts to wait for it again.
+                    logger.error("Consumer group no longer exists, stopping the consumer: stream=%s group=%s: %s",
+                                 self._stream, self._group, e)
+                    raise
                 # Broad by design: a transient Redis outage (ConnectionError,
                 # TimeoutError, or any other RedisError) must never escape
                 # this loop and end it — that would leave the process
@@ -362,16 +416,6 @@ class Consumer:
                 # pkg/redis/streamconsumer.go Start()): log, retry, flat
                 # backoff, no distinction between error types at this level.
                 logger.exception("Consumer loop error: %s", e)
-                if "NOGROUP" in str(e):
-                    logger.warning("Consumer group lost, recreating", extra={"stream": self._stream})
-                    try:
-                        self._create_group()
-                    except Exception:
-                        # Redis may still be unreachable while we're trying to
-                        # recreate the group; don't let *this* raise escape
-                        # the loop either — the next pass retries both the
-                        # group recreation (via NOGROUP) and the read.
-                        logger.exception("Failed to recreate consumer group; will retry next pass")
                 time.sleep(3)
             finally:
                 # Every pass through the loop — whether it succeeded or hit a

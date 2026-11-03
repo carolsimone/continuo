@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -21,10 +22,11 @@ type streamTap struct {
 	entries []goredis.XMessage
 }
 
+// startStreamTap taps the prefixed key of the contract stream name stream.
 func startStreamTap(t *testing.T, ctx context.Context, rc *goredis.Client, stream string) *streamTap {
 	t.Helper()
 	from := "0-0"
-	if info, err := rc.XInfoStream(ctx, stream).Result(); err == nil {
+	if info, err := rc.XInfoStream(ctx, pkgredis.Key(stream)).Result(); err == nil {
 		from = info.LastGeneratedID
 	}
 	tap := &streamTap{}
@@ -33,7 +35,7 @@ func startStreamTap(t *testing.T, ctx context.Context, rc *goredis.Client, strea
 	go func() {
 		defer close(done)
 		for tctx.Err() == nil {
-			res, err := rc.XRead(tctx, &goredis.XReadArgs{Streams: []string{stream, from}, Block: time.Second, Count: 500}).Result()
+			res, err := rc.XRead(tctx, &goredis.XReadArgs{Streams: []string{pkgredis.Key(stream), from}, Block: time.Second, Count: 500}).Result()
 			if err != nil {
 				if !errors.Is(err, goredis.Nil) && tctx.Err() == nil {
 					time.Sleep(200 * time.Millisecond)

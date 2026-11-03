@@ -5,6 +5,7 @@ package redis
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
@@ -16,6 +17,18 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// createStream creates the prefixed key of stream as the streams-init step does,
+// since a publisher never creates a stream, and deletes it when the test ends.
+func createStream(t *testing.T, rc *goredis.Client, stream string) {
+	t.Helper()
+	ctx := context.Background()
+	key := pkgredis.Key(stream)
+	t.Cleanup(func() { rc.Del(ctx, key, pkgredis.LegacyKey(stream)) })
+	if err := rc.XGroupCreateMkStream(ctx, key, "test-group", "$").Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRedrivePublisher_PublishXAddsTheStoredFields(t *testing.T) {
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
@@ -25,7 +38,7 @@ func TestRedrivePublisher_PublishXAddsTheStoredFields(t *testing.T) {
 	t.Cleanup(func() { _ = rc.Close() })
 	ctx := context.Background()
 	stream := "test.redrive:" + uuid.NewString()
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	createStream(t, rc, stream)
 
 	dl := deadletter.DeadLetter{ID: uuid.New(), Source: deadletter.SourceConsumer, Group: "g",
 		Fields: map[string]string{"k": "v", "outbox_entry_id": "original"}}
@@ -34,7 +47,7 @@ func TestRedrivePublisher_PublishXAddsTheStoredFields(t *testing.T) {
 	if err := NewRedrivePublisher(rc).Publish(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	msgs, err := rc.XRange(ctx, stream, "-", "+").Result()
+	msgs, err := rc.XRange(ctx, pkgredis.Key(stream), "-", "+").Result()
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("msgs = %v, err = %v", msgs, err)
 	}
@@ -64,7 +77,7 @@ func TestRedrivePublisher_PublishStampsOutboxEntryIDPerSource(t *testing.T) {
 		{"quarantine stamps the entry id", deadletter.SourceQuarantine, true},
 	} {
 		stream := "test.redrive:" + uuid.NewString()
-		t.Cleanup(func() { rc.Del(ctx, stream) })
+		createStream(t, rc, stream)
 		dl := deadletter.DeadLetter{ID: uuid.New(), Source: c.source, Group: "g", FailedOutboxID: "orig-42",
 			Fields: map[string]string{"k": "v", "outbox_entry_id": "orig-42"}}
 		body, _ := serialization.EncodeRedrive(dl)
@@ -72,7 +85,7 @@ func TestRedrivePublisher_PublishStampsOutboxEntryIDPerSource(t *testing.T) {
 		if err := NewRedrivePublisher(rc).Publish(ctx, entry); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		msgs, err := rc.XRange(ctx, stream, "-", "+").Result()
+		msgs, err := rc.XRange(ctx, pkgredis.Key(stream), "-", "+").Result()
 		if err != nil || len(msgs) != 1 {
 			t.Fatalf("%s: msgs = %v, err = %v", c.name, msgs, err)
 		}
@@ -83,5 +96,28 @@ func TestRedrivePublisher_PublishStampsOutboxEntryIDPerSource(t *testing.T) {
 		if got := msgs[0].Values["outbox_entry_id"]; got != want {
 			t.Errorf("%s: outbox_entry_id = %v, want %s", c.name, got, want)
 		}
+	}
+}
+
+func TestRedrivePublisher_PublishRefusesAMissingStream(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
+	}
+	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
+	t.Cleanup(func() { _ = rc.Close() })
+	ctx := context.Background()
+	stream := "test.redrive.missing:" + uuid.NewString()
+	t.Cleanup(func() { rc.Del(ctx, pkgredis.Key(stream), pkgredis.LegacyKey(stream)) })
+
+	dl := deadletter.DeadLetter{ID: uuid.New(), Source: deadletter.SourceConsumer, Group: "g", Fields: map[string]string{"k": "v"}}
+	body, _ := serialization.EncodeRedrive(dl)
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: serialization.EventTypeRedrive, Payload: body, StreamName: stream}
+	err := NewRedrivePublisher(rc).Publish(ctx, entry)
+	if err == nil || !strings.Contains(err.Error(), "does not exist; the streams-init step creates it") {
+		t.Fatalf("Publish = %v, want the missing-stream error", err)
+	}
+	if n, _ := rc.Exists(ctx, pkgredis.Key(stream), pkgredis.LegacyKey(stream)).Result(); n != 0 {
+		t.Fatalf("a redrive created a stream: %d keys exist", n)
 	}
 }

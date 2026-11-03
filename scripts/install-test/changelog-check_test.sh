@@ -40,6 +40,7 @@ new_repo(){
   mkdir -p "$repo/scripts/install-test" "$repo/deploy/continuo/templates"
   cp "$HERE/changelog-check.sh" "$HERE/changelog-placement-check.sh" "$repo/scripts/install-test/"
   printf 'a: 1\n' > "$repo/deploy/continuo/values.yaml"
+  printf 'user continuo_x on ~continuo:a -@all +ping\n' > "$repo/deploy/redis-acl-rules.acl"
   printf '%s\n' "$BASE_CHANGELOG" > "$repo/deploy/continuo/CHANGELOG.md"
   base="$(commit base)"
 }
@@ -48,10 +49,12 @@ edit_changelog(){
   local f="$repo/deploy/continuo/CHANGELOG.md"
   sed "$@" "$f" > "$f.new" && mv "$f.new" "$f"
 }
+touch_rules(){ printf 'user continuo_x on ~continuo:a -@all +ping +xadd\n' > "$repo/deploy/redis-acl-rules.acl"; }
 touch_chart(){ printf 'a: 2\n' > "$repo/deploy/continuo/values.yaml"; }
 check(){ BASE_SHA="$1" bash "$repo/scripts/install-test/changelog-check.sh" >"$out" 2>&1; rc=$?; }
 
 ADD_UNRELEASED='s/^- pending value\.$/&\n- bar value./'
+ADD_RULE_NOTE='s/^- pending value\.$/&\n- The Redis rule of continuo_x gains +xadd./'
 ADD_RELEASED='s/^- foo value\.$/&\n- bar value./'
 CUT='s/^## \[Unreleased\]$/&\n\n## [0.3.0] - 2026-10-27\n\nIntro of 0.3.0. **MINOR.**/'
 
@@ -125,6 +128,36 @@ assert "the merge placed the branch's bullet under the cut version" \
   "awk '/^## \\[0.3.0\\]/{s=1} /^## \\[0.2.0\\]/{s=0} s && /bar value/{f=1} END{exit !f}' \"$repo/deploy/continuo/CHANGELOG.md\""
 check "$main_cut"
 assert "a bullet a merge of main moved under a released section fails" "[ $rc -ne 0 ] && grep -qF '\"## [0.3.0] - 2026-10-27\"' \"$out\""
+
+# A change to the generated Redis rules is named in the CHANGELOG with the
+# words "Redis rule".
+new_repo rules-named
+touch_rules; edit_changelog "$ADD_RULE_NOTE"
+commit pr >/dev/null; check "$base"
+assert "a Redis rule change with a 'Redis rule' line under [Unreleased] passes" "[ $rc -eq 0 ]"
+
+new_repo rules-unnamed
+touch_rules
+commit pr >/dev/null; check "$base"
+assert "a Redis rule change without a CHANGELOG.md change fails" "[ $rc -ne 0 ] && grep -q 'Redis rule' \"$out\""
+
+new_repo rules-other-entry
+touch_rules; edit_changelog "$ADD_UNRELEASED"
+commit pr >/dev/null; check "$base"
+assert "a Redis rule change whose CHANGELOG.md line lacks the words fails" "[ $rc -ne 0 ] && grep -q 'Redis rule' \"$out\""
+
+# A line an earlier PR added does not name this PR's change.
+new_repo rules-stale-note
+edit_changelog "$ADD_RULE_NOTE"
+base="$(commit older-note)"
+touch_rules; edit_changelog 's/^- pending value\.$/&\n- bar value./'
+commit pr >/dev/null; check "$base"
+assert "a Redis rule change that only has an older 'Redis rule' line fails" "[ $rc -ne 0 ] && grep -q 'Redis rule' \"$out\""
+
+new_repo rules-untouched
+touch_chart; edit_changelog "$ADD_UNRELEASED"
+commit pr >/dev/null; check "$base"
+assert "a chart change that leaves the Redis rules alone needs no 'Redis rule' line" "[ $rc -eq 0 ]"
 
 # The surface check this script started with still holds.
 new_repo no-entry

@@ -403,6 +403,17 @@
       }
     },
 
+    "redisInit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "createStreams": {
+          "type": "boolean",
+          "description": "Whether the streams-init Job creates the release's Redis streams and consumer groups. Set false when the Redis login may not create streams: the Job then creates nothing and the Redis owner creates them with streams-init."
+        }
+      }
+    },
+
     "maintenance": {
       "type": "object",
       "additionalProperties": false,

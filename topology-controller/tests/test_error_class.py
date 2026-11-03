@@ -11,6 +11,7 @@ import s3transfer.exceptions
 from botocore.config import Config
 
 from adapters.redis.error_class import ErrorClass, classify
+from adapters.redis.keys import MissingStreamError
 from service.errors import PermanentMessageError
 
 
@@ -23,6 +24,7 @@ def _client_error(status):
     (PermanentMessageError("no payload"), ErrorClass.PERMANENT),
     (redis.exceptions.ConnectionError("refused"), ErrorClass.INFRASTRUCTURE),
     (redis.exceptions.TimeoutError("slow"), ErrorClass.INFRASTRUCTURE),
+    (MissingStreamError("stream continuo:x does not exist"), ErrorClass.INFRASTRUCTURE),
     (botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"), ErrorClass.INFRASTRUCTURE),
     (ConnectionRefusedError(), ErrorClass.INFRASTRUCTURE),
     (socket.gaierror(), ErrorClass.INFRASTRUCTURE),

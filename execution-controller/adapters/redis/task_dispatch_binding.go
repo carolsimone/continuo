@@ -52,7 +52,7 @@ func NewTaskDispatchBinding(
 
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, streams.TaskDispatchV1, payload,
+			pkgredis.DedupMessageID(ctx, msg), streams.TaskDispatchV1, payload,
 			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {

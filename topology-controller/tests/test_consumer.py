@@ -10,6 +10,7 @@ import redis.exceptions as redis_exceptions
 
 import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import LOG_DEAD_LETTERED, Consumer
+from adapters.redis.keys import key, legacy_key
 from config.config import SERVICE_NAME
 from domain.contract_vocabulary import DeadLetterKind
 from service.errors import PermanentMessageError
@@ -22,6 +23,8 @@ from streams_contract import (
 _SERVICE_NAME = SERVICE_NAME
 _STREAM = RELEASE_REQUESTED_V1
 _GROUP = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
+# The key the consumers under test read: the prefixed key of their stream.
+_KEY = key(_STREAM)
 
 
 _TEST_RETRY_SLEEP = 0.01  # real seconds; short enough to keep tests fast
@@ -51,36 +54,8 @@ def _defang_sleep(monkeypatch):
     )
 
 
-def test_consumer_creates_group_on_init():
-    mock_redis = MagicMock()
-    Consumer(
-        redis_client=mock_redis,
-        stream_name=_STREAM,
-        group_name=_GROUP,
-        message_handler=MagicMock(),
-        service_name=_SERVICE_NAME,
-    )
-    mock_redis.xgroup_create.assert_called_once_with(
-        _STREAM, _GROUP, id="0", mkstream=True
-    )
-
-
-def test_consumer_ignores_busygroup_error():
-    mock_redis = MagicMock()
-    mock_redis.xgroup_create.side_effect = Exception("BUSYGROUP Consumer Group name already exists")
-    # Should not raise
-    Consumer(
-        redis_client=mock_redis,
-        stream_name=_STREAM,
-        group_name=_GROUP,
-        message_handler=MagicMock(),
-        service_name=_SERVICE_NAME,
-    )
-
-
 def test_process_message_calls_message_handler_with_fields():
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP ...")
     handler = MagicMock()
     c = Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
@@ -94,7 +69,6 @@ def test_process_message_calls_message_handler_with_fields():
 
 def test_process_message_propagates_handler_exception():
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP ...")
     def boom(_):
         raise RuntimeError("nope")
     c = Consumer(
@@ -112,7 +86,6 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
     as an S3 SignatureDoesNotMatch is otherwise invisible if the detail only
     lives in a `extra={}` field the log format does not render."""
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
 
     def boom(_fields):
         raise RuntimeError("SignatureDoesNotMatch calling GetObject")
@@ -124,7 +97,7 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
     )
 
     with caplog.at_level(logging.ERROR, logger="adapters.redis.consumer"):
-        c._dispatch(msg_id="9-0", msg_fields={b"payload": b"x"})
+        c._dispatch(key="s", msg_id="9-0", msg_fields={b"payload": b"x"})
 
     redis_mock.xack.assert_not_called()
     failures = [r for r in caplog.records if r.levelno == logging.ERROR]
@@ -140,7 +113,6 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
 
 
 def _consumer(redis_mock, handler):
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
     return Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=handler,
@@ -161,7 +133,7 @@ def test_reclaim_redispatches_pending_message_and_acks():
     c._reclaim_stale_pending()
 
     assert seen == [{b"payload": b"x"}]
-    redis_mock.xack.assert_called_once_with("s", "g", b"5-0")
+    redis_mock.xack.assert_called_once_with(key("s"), "g", b"5-0")
 
 
 def test_reclaim_pages_until_cursor_returns_to_zero():
@@ -235,6 +207,17 @@ def _start_in_background(consumer: Consumer) -> threading.Thread:
     return t
 
 
+def _holding(redis_mock, group, *keys):
+    """XINFO GROUPS answers as a server does: the keys listed hold the group
+    (beside another one), every other key does not exist."""
+    def xinfo_groups(name):
+        if name in keys:
+            return [{"name": b"another-group"}, {"name": group.encode()}]
+        raise redis_exceptions.ResponseError("ERR no such key")
+
+    redis_mock.xinfo_groups.side_effect = xinfo_groups
+
+
 def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypatch):
     """A run of redis.exceptions.ConnectionError from _reclaim_stale_pending
     (the exact call site in the incident traceback) must not kill the
@@ -242,7 +225,7 @@ def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypa
     the connection recovers."""
     _defang_sleep(monkeypatch)
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
+    _holding(redis_mock, "g", key("s"))
 
     attempts = {"n": 0}
 
@@ -262,7 +245,7 @@ def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypa
     def xreadgroup_side_effect(*_a, **_kw):
         if attempts["n"] > 3 and not delivered.is_set():
             delivered.set()
-            return [("s", [(b"1-0", {b"payload": b"x"})])]
+            return [(key("s").encode(), [(b"1-0", {b"payload": b"x"})])]
         time.sleep(_TEST_ITERATION_PACING)
         return []
 
@@ -287,50 +270,23 @@ def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypa
     assert attempts["n"] > 3, "must have actually retried xautoclaim after the failures"
 
 
-def test_start_survives_group_recreate_failure_during_nogroup_recovery(monkeypatch):
-    """If Redis is still unreachable when start() tries to recreate a lost
-    consumer group (the NOGROUP branch), that failure must not escape the
-    loop either — it should log and retry on the next pass."""
+def test_start_raises_when_the_group_is_removed_while_running(monkeypatch):
+    """A NOGROUP reply means the group is gone. The consumer never recreates it:
+    start() raises, which ends the consumer thread so the process is restarted
+    and waits for the streams-init step again."""
     _defang_sleep(monkeypatch)
     redis_mock = MagicMock()
+    _holding(redis_mock, "g", key("s"))
+    redis_mock.xautoclaim.side_effect = redis_exceptions.ResponseError(
+        "NOGROUP No such key 'continuo:s' or consumer group 'g'"
+    )
+    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None,
+                 service_name=_SERVICE_NAME)
 
-    creates = {"n": 0}
+    with pytest.raises(redis_exceptions.ResponseError, match="NOGROUP"):
+        c.start()
 
-    def xgroup_create_side_effect(*_a, **_kw):
-        creates["n"] += 1
-        if creates["n"] == 2:
-            # The in-loop recreate attempt fails (Redis still down).
-            raise redis_exceptions.ConnectionError("Error 111 connecting to host:6379.")
-        return None
-
-    redis_mock.xgroup_create.side_effect = xgroup_create_side_effect
-
-    claims = {"n": 0}
-
-    def xautoclaim_side_effect(*_a, **_kw):
-        claims["n"] += 1
-        if claims["n"] == 1:
-            raise Exception("NOGROUP No such key 's' or consumer group 'g'")
-        time.sleep(_TEST_ITERATION_PACING)
-        return (b"0-0", [], [])
-
-    redis_mock.xautoclaim.side_effect = xautoclaim_side_effect
-
-    def xreadgroup_side_effect(*_a, **_kw):
-        time.sleep(_TEST_ITERATION_PACING)
-        return []
-
-    redis_mock.xreadgroup.side_effect = xreadgroup_side_effect
-
-    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None, service_name=_SERVICE_NAME)
-    t = _start_in_background(c)
-
-    deadline = time.monotonic() + 2
-    while claims["n"] < 3 and time.monotonic() < deadline:
-        time.sleep(0.01)
-
-    assert t.is_alive(), "a failure recreating the consumer group must not kill the loop"
-    assert claims["n"] >= 3, "must keep attempting xautoclaim across passes"
+    redis_mock.xgroup_create.assert_not_called()
 
 
 def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
@@ -339,7 +295,7 @@ def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
     every pass, including passes that hit a handled Redis error."""
     _defang_sleep(monkeypatch)
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
+    _holding(redis_mock, "g", key("s"))
     redis_mock.xautoclaim.side_effect = redis_exceptions.ConnectionError("Error 111 connecting.")
     redis_mock.xreadgroup.return_value = []
 
@@ -356,73 +312,266 @@ def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
     assert t.is_alive()
 
 
-def test_create_group_waits_out_a_redis_that_is_not_up_yet(monkeypatch):
-    """A cold start can beat its own Redis: on Kubernetes the Service DNS name
-    may not resolve yet, and under compose the server may not be accepting
-    connections. That is transient and self-clearing, so construction waits it
-    out instead of letting the error kill the process."""
-    _defang_sleep(monkeypatch)
+class _FakeClock:
+    """A clock whose sleep advances it, so a five-minute wait takes no time."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def _fake_clock(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(consumer_mod, "time", clock)
+    return clock
+
+
+def _idle_consumer(redis_mock):
+    return Consumer(
+        redis_client=redis_mock, stream_name=_STREAM, group_name=_GROUP,
+        message_handler=MagicMock(), service_name=_SERVICE_NAME,
+    )
+
+
+def test_consumer_never_creates_its_group(monkeypatch):
+    """The streams-init step creates every group; a consumer that finds its
+    group missing waits for it and never issues XGROUP CREATE."""
+    _fake_clock(monkeypatch)
     redis_mock = MagicMock()
-    unreachable = redis_exceptions.ConnectionError(
-        "Error -2 connecting to continuo-redis:6379. Name or service not known."
-    )
-    redis_mock.xgroup_create.side_effect = [unreachable, unreachable, None]
+    groups = {"present": False}
 
-    Consumer(
-        redis_client=redis_mock,
-        stream_name=_STREAM,
-        group_name=_GROUP,
-        message_handler=MagicMock(),
-        service_name=_SERVICE_NAME,
-    )
+    def xinfo_groups(name):
+        if name == _KEY and groups["present"]:
+            return [{"name": _GROUP.encode()}]
+        groups["present"] = True  # the init step creates it while the consumer waits
+        raise redis_exceptions.ResponseError("ERR no such key")
 
-    assert redis_mock.xgroup_create.call_count == 3
+    redis_mock.xinfo_groups.side_effect = xinfo_groups
+    redis_mock.xautoclaim.side_effect = _Abort()  # ends the loop once the wait is over
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert redis_mock.xinfo_groups.call_count >= 2, "must have waited for the group to appear"
+    redis_mock.xgroup_create.assert_not_called()
 
 
-def test_create_group_gives_up_once_the_startup_window_expires(monkeypatch):
-    """Bounded, not infinite. A Redis that is genuinely unreachable or
-    misconfigured must still fail the process, rather than leave it alive and
-    silent — main.py starts the health server only after this constructor
-    returns, so an endless wait would report no health at all."""
-    _defang_sleep(monkeypatch)
-    monkeypatch.setattr(consumer_mod, "_STARTUP_CONNECT_TIMEOUT_S", 0.05)
+def test_consumer_construction_does_not_touch_redis():
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = redis_exceptions.ConnectionError(
-        "Error -2 connecting to continuo-redis:6379. Name or service not known."
+    _idle_consumer(redis_mock)
+    assert redis_mock.method_calls == []
+
+
+def test_consumer_fails_after_waiting_for_its_group(monkeypatch):
+    """A group that never appears fails the consumer once the five-minute
+    startup window is spent, naming the group and the key."""
+    clock = _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP)  # no key holds the group
+    c = _idle_consumer(redis_mock)
+    start = clock.now
+
+    with pytest.raises(RuntimeError) as err:
+        c.start()
+
+    assert str(err.value) == (
+        f'consumer group "{_GROUP}" on "{_KEY}" does not exist; the streams-init step creates it'
     )
+    waited = clock.now - start
+    assert 290 <= waited <= 300, f"waited {waited}s"
+    assert max(clock.slept) <= 10.0, "the poll interval is capped"
+    redis_mock.xgroup_create.assert_not_called()
+    redis_mock.xreadgroup.assert_not_called()
+
+
+def test_consumer_wait_advances_the_heartbeat(monkeypatch):
+    clock = _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP)
+    c = _idle_consumer(redis_mock)
+    beats = []
+    original = clock.sleep
+    clock.sleep = lambda s: (beats.append(c.last_heartbeat), original(s))
+
+    with pytest.raises(RuntimeError):
+        c.start()
+
+    assert len(set(beats)) > 1, "the heartbeat must advance while the consumer waits for its group"
+
+
+def test_consumer_waits_out_a_redis_that_is_not_up_yet(monkeypatch):
+    """A cold start can beat its own Redis: the unreachable server is transient
+    and self-clearing, so the wait for the group outlasts it."""
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    unreachable = redis_exceptions.ConnectionError("Error -2 connecting to continuo-redis:6379.")
+    redis_mock.xinfo_groups.side_effect = [unreachable, unreachable, [{"name": _GROUP.encode()}],
+                                           redis_exceptions.ResponseError("ERR no such key")]
+    redis_mock.xautoclaim.side_effect = _Abort()
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert redis_mock.xinfo_groups.call_count == 4
+
+
+def test_consumer_gives_up_on_a_redis_that_stays_unreachable(monkeypatch):
+    """Bounded, not infinite: a Redis that never answers fails the process
+    instead of leaving it alive and silent."""
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xinfo_groups.side_effect = redis_exceptions.ConnectionError("Error -2 connecting.")
+    c = _idle_consumer(redis_mock)
 
     with pytest.raises(redis_exceptions.ConnectionError):
-        Consumer(
-            redis_client=redis_mock,
-            stream_name=_STREAM,
-            group_name=_GROUP,
-            message_handler=MagicMock(),
-            service_name=_SERVICE_NAME,
-        )
+        c.start()
 
-    assert redis_mock.xgroup_create.call_count > 1
+    assert redis_mock.xinfo_groups.call_count > 1
 
 
-def test_create_group_does_not_retry_a_permanent_error(monkeypatch):
-    """Only a failure to reach Redis is worth waiting on. A permanent error
-    surfaces immediately instead of burning the whole startup window on
-    something no amount of waiting will fix."""
-    _defang_sleep(monkeypatch)
+def test_consumer_does_not_wait_on_a_permanent_error(monkeypatch):
+    """Only a missing group or an unreachable Redis is worth waiting on; a key of
+    the wrong type surfaces at once."""
+    clock = _fake_clock(monkeypatch)
     redis_mock = MagicMock()
-    redis_mock.xgroup_create.side_effect = redis_exceptions.ResponseError(
+    redis_mock.xinfo_groups.side_effect = redis_exceptions.ResponseError(
         "WRONGTYPE Operation against a key holding the wrong kind of value"
     )
+    c = _idle_consumer(redis_mock)
 
-    with pytest.raises(redis_exceptions.ResponseError):
-        Consumer(
-            redis_client=redis_mock,
-            stream_name=_STREAM,
-            group_name=_GROUP,
-            message_handler=MagicMock(),
-            service_name=_SERVICE_NAME,
-        )
+    with pytest.raises(redis_exceptions.ResponseError, match="WRONGTYPE"):
+        c.start()
 
-    assert redis_mock.xgroup_create.call_count == 1
+    assert redis_mock.xinfo_groups.call_count == 1
+    assert clock.slept == []
+
+
+def _run_until_read(redis_mock, c, monkeypatch):
+    """Run start() until its first XREADGROUP, which ends the loop."""
+    _fake_clock(monkeypatch)
+    redis_mock.xreadgroup.side_effect = _Abort()
+    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
+    with pytest.raises(_Abort):
+        c.start()
+
+
+def test_consumer_reads_the_legacy_key_when_it_holds_the_group(monkeypatch):
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
+    c = _idle_consumer(redis_mock)
+
+    _run_until_read(redis_mock, c, monkeypatch)
+
+    streams_read = redis_mock.xreadgroup.call_args.args[2]
+    assert streams_read == {_KEY: ">", _STREAM: ">"}
+    swept = [call.args[0] for call in redis_mock.xautoclaim.call_args_list]
+    assert swept == [_KEY, _STREAM], "both keys are swept for abandoned messages"
+
+
+def test_consumer_reads_only_the_prefixed_key_without_a_legacy_group(monkeypatch):
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP, _KEY)  # the legacy key does not exist
+    c = _idle_consumer(redis_mock)
+
+    _run_until_read(redis_mock, c, monkeypatch)
+
+    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
+    assert [call.args[0] for call in redis_mock.xautoclaim.call_args_list] == [_KEY]
+
+
+def test_consumer_ignores_a_legacy_key_that_holds_another_group_only(monkeypatch):
+    redis_mock = MagicMock()
+
+    def xinfo_groups(name):
+        if name == _KEY:
+            return [{"name": _GROUP.encode()}]
+        return [{"name": b"another-group"}]
+
+    redis_mock.xinfo_groups.side_effect = xinfo_groups
+    c = _idle_consumer(redis_mock)
+
+    _run_until_read(redis_mock, c, monkeypatch)
+
+    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
+
+
+def test_consumer_reads_only_the_prefixed_key_when_legacy_keys_are_off(monkeypatch):
+    monkeypatch.setattr(consumer_mod, "LEGACY_KEYS", False)
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
+    c = _idle_consumer(redis_mock)
+
+    _run_until_read(redis_mock, c, monkeypatch)
+
+    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
+    assert redis_mock.xinfo_groups.call_count == 1
+
+
+def test_a_message_from_the_legacy_key_is_settled_on_the_legacy_key(monkeypatch):
+    """ACK, delivery count and claim name the key the message came from."""
+    _fake_clock(monkeypatch)
+    redis_mock = _redis_with_pel()
+    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
+    redis_mock.xreadgroup.side_effect = [
+        [(_STREAM.encode(), [(b"1-0", {b"payload": b"old"})]),
+         (_KEY.encode(), [(b"2-0", {b"payload": b"new"})])],
+        _Abort(),
+    ]
+    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
+    seen = []
+    c = Consumer(redis_mock, _STREAM, _GROUP, seen.append, service_name=_SERVICE_NAME)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert seen == [{b"payload": b"old"}, {b"payload": b"new"}]
+    assert [call.args for call in redis_mock.xack.call_args_list] == [
+        (_STREAM, _GROUP, b"1-0"), (_KEY, _GROUP, b"2-0"),
+    ]
+
+
+def test_a_reclaimed_message_is_settled_on_the_key_it_was_claimed_from(monkeypatch):
+    _fake_clock(monkeypatch)
+    redis_mock = _redis_with_pel()
+    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
+
+    def xautoclaim(name, *_a, **_kw):
+        if name == _STREAM:
+            return b"0-0", [(b"5-0", {b"payload": b"x"})], []
+        return b"0-0", [], []
+
+    redis_mock.xautoclaim.side_effect = xautoclaim
+    redis_mock.xreadgroup.side_effect = _Abort()
+    c = Consumer(redis_mock, _STREAM, _GROUP, lambda f: None, service_name=_SERVICE_NAME)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    redis_mock.xack.assert_called_once_with(_STREAM, _GROUP, b"5-0")
+
+
+def test_pause_holds_each_key_s_messages_with_a_claim_on_that_key(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    r.xreadgroup.return_value = [
+        (_STREAM.encode(), [(b"1-0", {b"payload": b"A"})]),
+        (_KEY.encode(), [(b"2-0", {b"payload": b"B"})]),
+    ]
+    c = _dl_consumer(_handler_raising(A=[_OUTAGE]), r)
+
+    c._consume_once()
+
+    claims = [(call.args[0], call.kwargs["message_ids"]) for call in r.xclaim.call_args_list]
+    assert claims == [(_STREAM, [b"1-0"]), (_KEY, [b"2-0"])]
 
 
 # --- error classes and dead letters -----------------------------------------
@@ -435,7 +584,6 @@ def _raising(exc):
 
 
 def _dl_consumer(handler, redis_mock):
-    redis_mock.xgroup_create.return_value = True
     return Consumer(redis_mock, _STREAM, _GROUP, handler, service_name=_SERVICE_NAME)
 
 
@@ -459,10 +607,11 @@ def test_permanent_error_dead_letters_then_acks(monkeypatch, caplog):
     r.xpending_range.return_value = [{"times_delivered": 1}]
     c = _dl_consumer(_raising(PermanentMessageError("no payload")), r)
     with caplog.at_level(logging.ERROR):
-        c._dispatch(b"1-0", {b"x": b"y"})
+        c._dispatch(_KEY, b"1-0", {b"x": b"y"})
     assert _names(r)[-2:] == ["xadd", "xack"]
     stream, fields = r.xadd.call_args[0]
-    assert stream == CONSUMER_DEAD_LETTER_V1
+    assert stream == key(CONSUMER_DEAD_LETTER_V1)
+    assert r.xadd.call_args.kwargs == {"nomkstream": True}
     assert fields["producer"] == _SERVICE_NAME
     assert json.loads(fields["payload"])["failure_kind"] == DeadLetterKind.PERMANENT
     assert caplog.text.count(LOG_DEAD_LETTERED) == 1
@@ -477,11 +626,28 @@ def test_permanent_dead_letter_records_at_least_one_delivery_when_xpending_fails
         else:
             r.xpending_range.return_value = outcome
         c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
-        c._dispatch(b"1-0", {b"k": b"v"})
+        c._dispatch(_KEY, b"1-0", {b"k": b"v"})
         payload = json.loads(r.xadd.call_args[0][1]["payload"])
         assert payload["failure_kind"] == DeadLetterKind.PERMANENT
         assert payload["delivery_count"] == 1
         assert r.xack.called
+
+
+def test_dead_letter_write_to_a_missing_stream_is_retried(monkeypatch):
+    """The dead-letter stream is created by the streams-init step; NOMKSTREAM
+    answers nil until it is, and the write is retried while the message stays
+    pending."""
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    r.xadd.side_effect = [None, b"9-0"]
+    c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
+
+    c._dispatch(_KEY, b"1-0", {b"k": b"v"})
+
+    assert r.xadd.call_count == 2
+    assert all(call.kwargs == {"nomkstream": True} for call in r.xadd.call_args_list)
+    assert _names(r)[-1] == "xack" and _names(r).count("xack") == 1
 
 
 def test_dead_letter_write_failure_keeps_message_pending(monkeypatch, caplog):
@@ -491,7 +657,7 @@ def test_dead_letter_write_failure_keeps_message_pending(monkeypatch, caplog):
     r.xadd.side_effect = [redis_exceptions.ConnectionError("down"), redis_exceptions.ConnectionError("down"), b"9-0"]
     c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
     with caplog.at_level(logging.ERROR):
-        c._dispatch(b"1-0", {b"k": b"v"})
+        c._dispatch(_KEY, b"1-0", {b"k": b"v"})
     calls = _names(r)
     assert calls.count("xadd") == 3
     assert calls[-1] == "xack" and calls.count("xack") == 1
@@ -504,7 +670,7 @@ def test_transient_error_dead_letters_on_the_fifth_delivery(monkeypatch):
         r = MagicMock()
         r.xpending_range.return_value = [{"times_delivered": delivered}]
         c = _dl_consumer(_raising(RuntimeError("flaky")), r)
-        c._dispatch(b"1-0", {b"k": b"v"})
+        c._dispatch(_KEY, b"1-0", {b"k": b"v"})
         assert r.xadd.called is dead_lettered
         assert r.xack.called is dead_lettered
         if dead_lettered:
@@ -531,7 +697,7 @@ def test_infrastructure_error_pauses_without_counting(monkeypatch):
 
     c._pause = spy
     _in_hand(c, b"1-0")
-    c._dispatch(b"1-0", {b"k": b"v"})
+    c._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert delays == [1.0, 2.0], "each consecutive outage waits twice as long"
     delivery_count_reads = [
         call for call in r.xpending_range.call_args_list
@@ -555,7 +721,7 @@ def test_dead_letter_write_retries_never_rerun_the_handler(monkeypatch):
         calls.append(fields)
         raise PermanentMessageError("bad")
 
-    _dl_consumer(handler, r)._dispatch(b"1-0", {b"k": b"v"})
+    _dl_consumer(handler, r)._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert len(calls) == 1
     assert r.xadd.call_count == 2
 
@@ -577,7 +743,7 @@ def test_unreadable_delivery_count_never_dead_letters_a_transient_failure(monkey
     _defang_sleep(monkeypatch)
     r = MagicMock()
     r.xpending_range.side_effect = redis_exceptions.ConnectionError("down")
-    _dl_consumer(_raising(RuntimeError("flaky")), r)._dispatch(b"1-0", {b"k": b"v"})
+    _dl_consumer(_raising(RuntimeError("flaky")), r)._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert not r.xadd.called and not r.xack.called
 
 
@@ -586,7 +752,7 @@ def test_dead_letter_carries_the_message_tenant_and_ids_as_text(monkeypatch):
     r = MagicMock()
     r.xpending_range.return_value = [{"times_delivered": 3}]
     fields = {b"tenant_id": b"acme", b"payload": b"{}"}
-    _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(b"7-1", fields)
+    _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(_KEY, b"7-1", fields)
     _, written = r.xadd.call_args[0]
     payload = json.loads(written["payload"])
     assert written["tenant_id"] == "acme"
@@ -595,7 +761,7 @@ def test_dead_letter_carries_the_message_tenant_and_ids_as_text(monkeypatch):
     assert payload["original_message_id"] == "7-1"
     assert payload["fields"] == {"payload": "{}", "tenant_id": "acme"}
     assert payload["delivery_count"] == 3
-    r.xack.assert_called_once_with(_STREAM, _GROUP, b"7-1")
+    r.xack.assert_called_once_with(_KEY, _GROUP, b"7-1")
 
 
 def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
@@ -603,11 +769,10 @@ def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
     _defang_sleep(monkeypatch)
     r = MagicMock()
     r.xpending_range.return_value = [{"times_delivered": 1}]
-    r.xgroup_create.return_value = True
     at = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
     c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")),
                  service_name=_SERVICE_NAME, clock=lambda: at)
-    c._dispatch(b"1-0", {b"k": b"v"})
+    c._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert r.xadd.call_args[0][1]["occurred_at"] == "2026-10-03T12:00:00.000000Z"
 
 
@@ -617,8 +782,8 @@ def test_reclaimed_message_that_fails_permanently_is_dead_lettered(monkeypatch):
     r.xautoclaim.return_value = (b"0-0", [(b"5-0", {b"payload": b"x"})], [])
     r.xpending_range.return_value = [{"times_delivered": 2}]
     _dl_consumer(_raising(PermanentMessageError("bad")), r)._reclaim_stale_pending()
-    assert r.xadd.call_args[0][0] == CONSUMER_DEAD_LETTER_V1
-    r.xack.assert_called_once_with(_STREAM, _GROUP, b"5-0")
+    assert r.xadd.call_args[0][0] == key(CONSUMER_DEAD_LETTER_V1)
+    r.xack.assert_called_once_with(_KEY, _GROUP, b"5-0")
 
 
 def test_infrastructure_backoff_doubles_from_one_second_and_caps_at_sixty():
@@ -658,8 +823,7 @@ def test_infrastructure_pause_survives_a_failing_idle_refresh(monkeypatch):
 
 def test_failed_ack_after_a_handled_message_leaves_it_pending_and_continues_the_batch():
     r = MagicMock()
-    r.xgroup_create.return_value = True
-    r.xreadgroup.return_value = [(_STREAM.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
+    r.xreadgroup.return_value = [(_KEY.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
     r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
     seen = []
     c = Consumer(r, _STREAM, _GROUP, seen.append, service_name=_SERVICE_NAME)
@@ -671,9 +835,8 @@ def test_failed_ack_after_a_handled_message_leaves_it_pending_and_continues_the_
 def test_failed_ack_after_a_dead_letter_write_leaves_it_pending_and_continues_the_batch(monkeypatch, caplog):
     _defang_sleep(monkeypatch)
     r = MagicMock()
-    r.xgroup_create.return_value = True
     r.xpending_range.return_value = [{"times_delivered": 1}]
-    r.xreadgroup.return_value = [(_STREAM.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
+    r.xreadgroup.return_value = [(_KEY.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
     r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
     c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")), service_name=_SERVICE_NAME)
     with caplog.at_level(logging.ERROR):
@@ -688,7 +851,7 @@ def test_failed_ack_is_logged(caplog):
     r.xack.side_effect = redis_exceptions.ConnectionError("down")
     c = _dl_consumer(lambda f: None, r)
     with caplog.at_level(logging.ERROR):
-        c._dispatch(b"1-0", {b"k": b"v"})
+        c._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert "Could not ACK message 1-0" in caplog.text
     assert "Message ACKed" not in caplog.text
 
@@ -713,7 +876,6 @@ def _redis_with_pel(times_delivered=1):
     read or claimed enters it and XACK removes it, so XPENDING answers as a real
     server would."""
     r = MagicMock()
-    r.xgroup_create.return_value = True
     r.pending = []
 
     def xpending_range(stream, group, min="-", max="+", count=None, consumername=None):
@@ -733,7 +895,7 @@ def _redis_with_pel(times_delivered=1):
 def _serve_batch(r, *messages):
     """The next XREADGROUP returns messages, (id, payload) pairs, as one batch."""
     r.pending.extend(i for i, _ in messages)
-    r.xreadgroup.return_value = [(_STREAM.encode(), [(i, {b"payload": p}) for i, p in messages])]
+    r.xreadgroup.return_value = [(_KEY.encode(), [(i, {b"payload": p}) for i, p in messages])]
 
 
 def _serve_pages(r, *pages):
@@ -768,7 +930,7 @@ def _held(r):
 
 
 def _in_hand(c, *ids):
-    c._in_hand = {i.decode(): i for i in ids}
+    c._in_hand = {(_KEY, i.decode()): i for i in ids}
 
 
 def test_pause_holds_the_paused_message_and_the_batch_siblings_not_yet_handled(monkeypatch):
@@ -852,7 +1014,7 @@ def test_nothing_is_in_hand_once_the_batch_is_done(monkeypatch):
     r = _redis_with_pel()
     _serve_batch(r, _A, _B, _C)
     seen = []
-    c = _dl_consumer(lambda fields: seen.append(sorted(c._in_hand)), r)
+    c = _dl_consumer(lambda fields: seen.append(sorted(text_id for _key, text_id in c._in_hand)), r)
     c._consume_once()
     assert seen == [["1-0", "2-0", "3-0"], ["2-0", "3-0"], ["3-0"]], "a message leaves the set as it settles"
     assert c._in_hand == {}
@@ -888,7 +1050,7 @@ def test_a_reclaimed_page_holds_only_its_own_messages(monkeypatch):
     handle = _handler_raising(A=[RuntimeError("flaky")], C=[_OUTAGE])
 
     def handler(fields):
-        seen.append(sorted(c._in_hand))
+        seen.append(sorted(text_id for _key, text_id in c._in_hand))
         handle(fields)
 
     c = _dl_consumer(handler, r)
@@ -919,7 +1081,7 @@ def test_dead_letter_error_keeps_the_exception_type(monkeypatch, caplog):
     r = MagicMock()
     r.xpending_range.return_value = [{"times_delivered": 5}]
     with caplog.at_level(logging.ERROR):
-        _dl_consumer(_raising(KeyError("s3_uri")), r)._dispatch(b"1-0", {b"k": b"v"})
+        _dl_consumer(_raising(KeyError("s3_uri")), r)._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert json.loads(r.xadd.call_args[0][1]["payload"])["error"] == "KeyError: 's3_uri'"
     assert "error=KeyError: 's3_uri'" in caplog.text
 
@@ -931,18 +1093,18 @@ def test_dispatch_acks_redrive_for_other_group_without_handler():
     r = MagicMock()
     handler = MagicMock()
     c = _dl_consumer(handler, r)
-    c._dispatch(b"9-0", {b"k": b"v", b"redrive_group": b"other"})
+    c._dispatch(_KEY, b"9-0", {b"k": b"v", b"redrive_group": b"other"})
     handler.assert_not_called()
-    r.xack.assert_called_once_with(_STREAM, _GROUP, b"9-0")
+    r.xack.assert_called_once_with(_KEY, _GROUP, b"9-0")
 
 
 def test_dispatch_hands_the_handler_the_original_fields_of_a_redrive_for_this_group():
     r = MagicMock()
     handler = MagicMock()
     c = _dl_consumer(handler, r)
-    c._dispatch(b"9-1", {b"k": b"v", b"redrive_group": _GROUP.encode(), b"redriven_from": b"dl-1"})
+    c._dispatch(_KEY, b"9-1", {b"k": b"v", b"redrive_group": _GROUP.encode(), b"redriven_from": b"dl-1"})
     handler.assert_called_once_with({b"k": b"v"})
-    r.xack.assert_called_once_with(_STREAM, _GROUP, b"9-1")
+    r.xack.assert_called_once_with(_KEY, _GROUP, b"9-1")
 
 
 @pytest.mark.parametrize("msg_id, fields", [(b"8-0", {}), (b"8-1", None)])
@@ -950,6 +1112,6 @@ def test_dispatch_acks_empty_entry_without_handler(msg_id, fields):
     r = MagicMock()
     handler = MagicMock()
     c = _dl_consumer(handler, r)
-    c._dispatch(msg_id, fields)
+    c._dispatch(_KEY, msg_id, fields)
     handler.assert_not_called()
-    r.xack.assert_called_once_with(_STREAM, _GROUP, msg_id)
+    r.xack.assert_called_once_with(_KEY, _GROUP, msg_id)

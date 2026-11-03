@@ -8,6 +8,7 @@ import botocore.exceptions
 import redis.exceptions
 import s3transfer.exceptions
 
+from adapters.redis.keys import MissingStreamError
 from service.errors import PermanentMessageError
 
 
@@ -17,7 +18,8 @@ class ErrorClass(enum.Enum):
     TRANSIENT = "transient"
 
 
-# Failures that mean Redis or S3 could not be reached, or that the connection
+# Failures that mean Redis or S3 could not be reached, that a stream the
+# streams-init step has not created yet was appended to, or that the connection
 # to S3 was lost or timed out part-way through a response. They never count
 # toward the delivery limit: the consumer waits and retries the same message.
 # The botocore pair IncompleteReadError (the body ended before its
@@ -30,6 +32,7 @@ class ErrorClass(enum.Enum):
 _INFRASTRUCTURE = (
     redis.exceptions.ConnectionError,
     redis.exceptions.TimeoutError,
+    MissingStreamError,
     botocore.exceptions.EndpointConnectionError,
     botocore.exceptions.ConnectTimeoutError,
     botocore.exceptions.ReadTimeoutError,

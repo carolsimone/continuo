@@ -118,6 +118,21 @@ externalRedis:
   existingSecret: ""
   existingSecretPasswordKey: password
 
+# The streams-init Job creates every Redis stream and consumer group of the
+# release, under the `continuo:` key prefix, before the services need them.
+# With redis.enabled=false it runs as a pre-install/pre-upgrade hook, so the
+# streams exist before the services roll; with the bundled Redis it is a
+# regular Job. Consumers wait up to five minutes for their group, and a
+# producer never creates a stream.
+redisInit:
+  # Set false when the Redis login the release is given may not create streams
+  # (a BYO Redis whose ACL grants no XGROUP CREATE ... MKSTREAM): the Job then
+  # creates nothing and exits 0. The Redis owner creates the streams instead,
+  # by running /streams-init from the dead-letter-controller image with a login
+  # that may and REDIS_INIT_CREATE_STREAMS left at true. Until the streams
+  # exist, consumers wait for their groups and producers retry.
+  createStreams: true
+
 neo4j:
   enabled: true
   image:

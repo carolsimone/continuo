@@ -87,7 +87,7 @@ func NewSeedBuildRequestedBinding(
 		dedupKey := seedBuildDedupKey(evt.ReleaseID)
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, streams.SeedBuildRequestedV1, payload,
+			pkgredis.DedupMessageID(ctx, msg), streams.SeedBuildRequestedV1, payload,
 			&dedupKey,
 		)
 		if err != nil {

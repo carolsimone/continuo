@@ -8,6 +8,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -32,14 +33,16 @@ func NewOutboxPublisher(redis *goredis.Client, logger *slog.Logger) *OutboxPubli
 }
 
 // Publish renders the entry as its field map (Render), adds the entry's
-// outbox_entry_id and XADDs it to entry.StreamName.
+// outbox_entry_id and XADDs it to the prefixed key of entry.StreamName. It never
+// creates the stream: while the stream is missing the call fails and the outbox
+// retries the row.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	args, err := p.xaddArgs(entry)
 	if err != nil {
 		return err
 	}
 	if err := p.redis.XAdd(ctx, args).Err(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, pkgredis.MissingStreamError(args.Stream, err))
 	}
 	return nil
 }
@@ -67,7 +70,7 @@ func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.En
 			continue // encode failure already recorded
 		}
 		if err := cmd.Err(); err != nil {
-			errs[i] = fmt.Errorf("xadd to %s: %w", entries[i].StreamName, err)
+			errs[i] = fmt.Errorf("xadd to %s: %w", entries[i].StreamName, pkgredis.MissingStreamError(pkgredis.Key(entries[i].StreamName), err))
 		}
 	}
 	return errs
@@ -137,6 +140,10 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 // so consumer-side pkg/messageprocessing.DedupWithOutboxEntryID catches a row
 // republished with a fresh Redis message id. It sets no length cap: the
 // dead-letter-controller's trim loop bounds every stream.
+//
+// The stream is the prefixed key of entry.StreamName, and NOMKSTREAM keeps XADD
+// from creating it: while the stream is missing the XADD fails and the outbox
+// retries the row.
 func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
 	values, err := p.Render(entry)
 	if err != nil {
@@ -144,8 +151,9 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, erro
 	}
 	values["outbox_entry_id"] = entry.ID.String()
 	return &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		Values: values,
+		Stream:     pkgredis.Key(entry.StreamName),
+		NoMkStream: true,
+		Values:     values,
 	}, nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -75,6 +76,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	defer mr.Close()
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
+	require.NoError(t, rdb.XGroupCreateMkStream(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV2), "test-group", "$").Err())
 	p := NewOutboxPublisher(rdb, nil)
 	entry := &outbox.Entry{
 		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
@@ -87,7 +89,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	want["outbox_entry_id"] = entry.ID.String()
 
 	require.NoError(t, p.Publish(context.Background(), entry))
-	res, err := rdb.XRange(context.Background(), streams.TaskStatusUpdatedV2, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.TaskStatusUpdatedV2), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	got := map[string]string{}

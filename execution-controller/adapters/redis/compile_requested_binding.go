@@ -81,7 +81,7 @@ func NewCompileRequestedBinding(
 		dedupKey := compileDedupKey(evt.ReleaseID)
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, streams.CompileRequestedV1, payload,
+			pkgredis.DedupMessageID(ctx, msg), streams.CompileRequestedV1, payload,
 			&dedupKey,
 		)
 		if err != nil {

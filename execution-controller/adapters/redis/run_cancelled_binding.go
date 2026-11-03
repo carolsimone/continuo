@@ -54,7 +54,7 @@ func NewRunCancelledBinding(
 
 		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
-			msg.ID, streams.RunCancelledV1, payload,
+			pkgredis.DedupMessageID(ctx, msg), streams.RunCancelledV1, payload,
 			messageprocessing.ExtractOutboxEntryID(msg.Values),
 		)
 		if err != nil {

@@ -109,6 +109,10 @@ if [ "$MODE" = bundled ]; then
   # to check — helm install succeeding IS the migration check there.)
   kubectl -n "$NS" wait --for=condition=complete \
     job -l app.kubernetes.io/name=db-init-migrate --timeout=60s
+  # streams-init is a regular Job with the bundled Redis too. (With a BYO
+  # Redis it is a hook that helm already blocked on and deleted.)
+  kubectl -n "$NS" wait --for=condition=complete \
+    job -l app.kubernetes.io/name=streams-init --timeout=60s
 fi
 
 # End-to-end health endpoints through port-forwards from this host: the same

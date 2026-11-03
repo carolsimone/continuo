@@ -1,4 +1,5 @@
 import logging
+import sys
 import threading
 import redis
 from config.config import (
@@ -97,8 +98,20 @@ def main() -> None:
         service_name=SERVICE_NAME,
     )
 
+    consumer_failures: list[BaseException] = []
+
+    def run_candidate_consumer() -> None:
+        # A consumer that cannot start (its group never appears, Redis is
+        # unreachable) ends its thread; recording the error lets main() log it
+        # and exit non-zero instead of returning as if it had been stopped.
+        try:
+            candidate_consumer.start()
+        except Exception as exc:
+            logger.exception("candidate consumer stopped")
+            consumer_failures.append(exc)
+
     candidate_thread = threading.Thread(
-        target=candidate_consumer.start, daemon=True, name="consumer-release-requested",
+        target=run_candidate_consumer, daemon=True, name="consumer-release-requested",
     )
     candidate_thread.start()
 
@@ -112,6 +125,8 @@ def main() -> None:
     # Park the main thread on the candidate consumer loop; on SIGTERM the
     # process exits and the daemon thread is abandoned.
     candidate_thread.join()
+    if consumer_failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

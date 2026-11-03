@@ -19,6 +19,7 @@ import (
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -31,12 +32,23 @@ func newRedis(t *testing.T) *goredis.Client {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	t.Cleanup(mr.Close)
-	return goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	createContractStreams(t, client)
+	return client
+}
+
+// createContractStreams creates every contract stream under its prefixed key, as
+// the streams-init step does: a publisher never creates a stream itself.
+func createContractStreams(t *testing.T, client *goredis.Client) {
+	t.Helper()
+	for stream := range streams.Groups {
+		require.NoError(t, client.XGroupCreateMkStream(context.Background(), pkgredis.Key(stream), "test-group", "$").Err())
+	}
 }
 
 func lastEntryFields(t *testing.T, r *goredis.Client, stream string) map[string]interface{} {
 	t.Helper()
-	res, err := r.XRange(context.Background(), stream, "-", "+").Result()
+	res, err := r.XRange(context.Background(), pkgredis.Key(stream), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	return res[0].Values

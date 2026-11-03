@@ -253,6 +253,20 @@ app.kubernetes.io/name: {{ .service }}
 {{- include "continuo.jobName" (dict "root" . "discriminator" "-db-init-migrate-creds" "revisioned" false) -}}
 {{- end -}}
 
+{{/* streams-init Job name: revision-suffixed when the bundled Redis makes it a
+     regular resource (a hook would run before Redis exists); stable when it is
+     a hook (BYO). */}}
+{{- define "continuo.streamsInitJobName" -}}
+{{- include "continuo.jobName" (dict "root" . "discriminator" "-streams-init" "revisioned" .Values.redis.enabled) -}}
+{{- end -}}
+
+{{/* Hook Secret carrying the streams-init hook's inline Redis password (see
+     templates/streams-init-job.yaml); stable-named, since it is deleted
+     (hook-succeeded) rather than accumulated across revisions. */}}
+{{- define "continuo.streamsInitHookSecretName" -}}
+{{- include "continuo.jobName" (dict "root" . "discriminator" "-streams-init-creds" "revisioned" false) -}}
+{{- end -}}
+
 {{/* ------- datastore names & endpoints ------- */}}
 
 {{- define "continuo.postgresql.fullname" -}}

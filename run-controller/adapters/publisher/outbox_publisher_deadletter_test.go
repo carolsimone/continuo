@@ -10,6 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -24,9 +25,19 @@ func newTestRedis(t *testing.T) (*goredis.Client, func()) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	createContractStreams(t, client)
 	return client, func() {
 		client.Close()
 		mr.Close()
+	}
+}
+
+// createContractStreams creates every contract stream under its prefixed key, as
+// the streams-init step does: a publisher never creates a stream itself.
+func createContractStreams(t *testing.T, client *goredis.Client) {
+	t.Helper()
+	for stream := range streams.Groups {
+		require.NoError(t, client.XGroupCreateMkStream(context.Background(), pkgredis.Key(stream), "test-group", "$").Err())
 	}
 }
 
@@ -60,7 +71,7 @@ func TestOutboxPublisher_PublishesDeadLetterRow(t *testing.T) {
 	}
 	require.NoError(t, p.Publish(context.Background(), entry))
 
-	res, err := rdb.XRange(context.Background(), streams.OutboxDeadLetterV1, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.OutboxDeadLetterV1), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, string(model.DeadLetterKindPermanent), res[0].Values["failure_kind"])
@@ -97,7 +108,7 @@ func TestOutboxPublisher_PublishBatch_PublishesDeadLetterRow(t *testing.T) {
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
 
-	res, err := rdb.XRange(context.Background(), streams.OutboxDeadLetterV1, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), pkgredis.Key(streams.OutboxDeadLetterV1), "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, string(model.DeadLetterKindTransientExhausted), res[0].Values["failure_kind"])

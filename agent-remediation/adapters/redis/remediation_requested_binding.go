@@ -42,12 +42,12 @@ func TriggerFromPayload(raw []byte) (handlers.Trigger, error) {
 // triggerFromRequested decodes a remediation.requested:v2 payload into a
 // handlers.Trigger and stamps it with the dedup identity of the Redis message
 // that delivered it.
-func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, error) {
+func triggerFromRequested(messageID string, msg goredis.XMessage, raw []byte) (handlers.Trigger, error) {
 	t, err := TriggerFromPayload(raw)
 	if err != nil {
 		return handlers.Trigger{}, err
 	}
-	t.MessageID = msg.ID
+	t.MessageID = messageID
 	t.OutboxEntryID = messageprocessing.ExtractOutboxEntryID(msg.Values)
 	return t, nil
 }
@@ -83,7 +83,7 @@ func newRemediationRequestedHandler(deps handlers.Deps) pkgredis.MessageHandler 
 		if !ok {
 			return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, streams.RemediationRequestedV2)
 		}
-		trigger, err := triggerFromRequested(msg, []byte(raw))
+		trigger, err := triggerFromRequested(pkgredis.DedupMessageID(ctx, msg), msg, []byte(raw))
 		if err != nil {
 			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV2, err)
 		}

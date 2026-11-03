@@ -60,12 +60,13 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	// Publish a message before the consumer starts.
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
@@ -81,7 +82,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 	consumer.SetService("pkg-redis-test")
 
 	// Ensure the consumer group exists so we can call readAndProcess-equivalent.
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	// Read + process the message once via the exported Start path. We run it for
 	// just long enough to process the single message then cancel.
@@ -95,7 +96,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 	assert.GreaterOrEqual(t, called.Load(), int32(1), "handler must have been called")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream,
+		Stream: key,
 		Group:  group,
 		Start:  "-",
 		End:    "+",
@@ -125,17 +126,18 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-reclaim-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	// Publish a message.
 	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	// First consumer: fails to process, leaves message in PEL.
 	var firstCalled atomic.Int32
@@ -155,7 +157,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 
 	// Verify message is stuck in PEL.
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	require.NotEmpty(t, pending, "message must be stuck in PEL after handler failure")
@@ -179,7 +181,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	assert.GreaterOrEqual(t, secondCalled.Load(), int32(1), "second consumer must have reprocessed the stuck message")
 
 	pending, err = rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "PEL must be empty after reclaimPending reprocessed the message")
@@ -198,16 +200,18 @@ func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-perm-read-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
+	redis.EnsureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	var called atomic.Int32
 	permHandler := func(_ context.Context, _ goredis.XMessage) error {
@@ -227,7 +231,7 @@ func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 	require.GreaterOrEqual(t, called.Load(), int32(1), "permanent handler must have been invoked")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error must have been ACKed → no entries in PEL")
@@ -239,16 +243,17 @@ func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-trans-read-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	transHandler := func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("k8s api timeout — transient")
@@ -264,7 +269,7 @@ func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -283,16 +288,18 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-perm-reclaim-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
+	redis.EnsureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -308,7 +315,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	time.Sleep(1500 * time.Millisecond)
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	require.NotEmpty(t, pending, "phase 1: message must remain in PEL")
@@ -326,7 +333,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	time.Sleep(2 * time.Second)
 
 	pending, err = rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error during reclaim must ACK → PEL empty")
@@ -352,16 +359,17 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-minidle-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -380,7 +388,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 
 	// Confirm the message is in the PEL with a small idle time.
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	require.NotEmpty(t, pending, "phase 1: message must be in PEL")
@@ -405,7 +413,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 
 	// Message still parked in PEL — neither A's no-ACK nor B's gated reclaim ACKed it.
 	pending, err = rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	found := false
@@ -427,16 +435,17 @@ func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-retry-success-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	var called atomic.Int32
 	handler := func(_ context.Context, _ goredis.XMessage) error {
@@ -462,7 +471,7 @@ func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing
 		"transient blip must be retried in-process and then succeed")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "successful in-process retry must ACK → PEL empty")
@@ -475,16 +484,18 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-perm-noretry-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
+	redis.EnsureDeadLetterStream(t, rc)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	_, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	var called atomic.Int32
 	handler := func(_ context.Context, _ goredis.XMessage) error {
@@ -505,7 +516,7 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 		"ErrPermanent must NOT trigger in-process retries")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error must still ACK → PEL empty")
@@ -521,16 +532,17 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-retry-exhaust-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	var called atomic.Int32
 	handler := func(_ context.Context, _ goredis.XMessage) error {
@@ -555,7 +567,7 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 		"transient errors must trigger in-process retries before giving up")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -574,16 +586,17 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-trans-reclaim-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -608,7 +621,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 
@@ -627,21 +640,22 @@ func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
 	ctx := context.Background()
 
 	stream := fmt.Sprintf("test-stream-trans-reclaim-single-shot-%d", time.Now().UnixNano())
+	key := redis.Key(stream)
 	group := "test-group"
-	t.Cleanup(func() { rc.Del(ctx, stream) })
+	t.Cleanup(func() { rc.Del(ctx, key) })
 
 	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{
-		Stream: stream,
+		Stream: key,
 		Values: map[string]interface{}{"k": "v"},
 	}).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	delivered, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group:    group,
 		Consumer: "abandoned-consumer",
-		Streams:  []string{stream, ">"},
+		Streams:  []string{key, ">"},
 		Count:    1,
 	}).Result()
 	require.NoError(t, err)
@@ -669,7 +683,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
 		"reclaim path must not run the read-path retry sleeps inline")
 
 	pending, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+		Stream: key, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 

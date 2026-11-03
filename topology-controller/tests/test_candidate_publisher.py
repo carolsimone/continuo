@@ -3,7 +3,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from adapters.redis.candidate_publisher import CandidateManifestPublisher, manifest_loaded_candidate_event_id
+from adapters.redis.keys import MissingStreamError, key
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeType, TopologyArtifactRef
 from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
@@ -29,7 +32,7 @@ def _make(producer="topology-controller", at=_AT):
 def _fields(redis_mock) -> dict:
     redis_mock.xadd.assert_called_once()
     stream, fields = redis_mock.xadd.call_args.args
-    assert stream == MANIFEST_LOADED_CANDIDATE_V2
+    assert stream == key(MANIFEST_LOADED_CANDIDATE_V2)
     return fields
 
 
@@ -200,3 +203,31 @@ def test_publish_does_not_cap_the_stream():
         assert "maxlen" not in call.kwargs
         assert "minid" not in call.kwargs
         assert "approximate" not in call.kwargs
+
+
+def test_publisher_writes_the_prefixed_key_without_creating_it():
+    """XADD names the prefixed key and carries NOMKSTREAM, so an append never
+    creates a stream the streams-init step has not."""
+    pub, redis_mock = _make()
+    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
+
+    assert redis_mock.xadd.call_count == 2
+    for call in redis_mock.xadd.call_args_list:
+        assert call.args[0] == "continuo:" + MANIFEST_LOADED_CANDIDATE_V2
+        assert call.kwargs["nomkstream"] is True
+
+
+def test_publisher_raises_when_the_stream_is_missing():
+    """Redis answers an XADD with NOMKSTREAM on a missing stream with nil. The
+    publisher raises, so the release's message is redelivered once the
+    streams-init step has created the stream."""
+    pub, redis_mock = _make()
+    redis_mock.xadd.return_value = None
+
+    with pytest.raises(MissingStreamError) as err:
+        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+    assert str(err.value) == f"stream continuo:{MANIFEST_LOADED_CANDIDATE_V2} does not exist; the streams-init step creates it"
+
+    with pytest.raises(MissingStreamError):
+        pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INTERNAL, detail="x")

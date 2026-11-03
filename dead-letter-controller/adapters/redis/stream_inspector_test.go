@@ -16,8 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// inspectorStream returns a Redis client and a stream named after the test, and
-// deletes the stream when the test ends.
+// inspectorStream returns a Redis client and a stream name named after the test,
+// and deletes the stream's prefixed and unprefixed keys when the test ends. The
+// test addresses the stream's key as pkgredis.Key(stream).
 func inspectorStream(t *testing.T) (*goredis.Client, string) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
@@ -27,8 +28,9 @@ func inspectorStream(t *testing.T) (*goredis.Client, string) {
 	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
 	t.Cleanup(func() { _ = rc.Close() })
 	stream := "test.trim." + strings.ToLower(t.Name()) + ":v1"
-	t.Cleanup(func() { _ = rc.Del(context.Background(), stream).Err() })
-	require.NoError(t, rc.Del(context.Background(), stream).Err())
+	keys := []string{pkgredis.Key(stream), pkgredis.LegacyKey(stream)}
+	t.Cleanup(func() { _ = rc.Del(context.Background(), keys...).Err() })
+	require.NoError(t, rc.Del(context.Background(), keys...).Err())
 	return rc, stream
 }
 
@@ -36,7 +38,7 @@ func xadd(t *testing.T, rc *goredis.Client, stream string, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
 		require.NoError(t, rc.XAdd(context.Background(), &goredis.XAddArgs{
-			Stream: stream, ID: id, Values: map[string]any{"k": "v" + id},
+			Stream: pkgredis.Key(stream), ID: id, Values: map[string]any{"k": "v" + id},
 		}).Err())
 	}
 }
@@ -53,8 +55,8 @@ func TestSnapshot_ContractGroupsOnly(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
 	xadd(t, rc, stream, "10-0", "20-0", "30-0")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "a", "20-0").Err())
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "orphan", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "a", "20-0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "orphan", "0").Err())
 
 	snap, unknown, exists, err := NewStreamInspector(rc).Snapshot(ctx, stream, []string{"a", "never"})
 	require.NoError(t, err)
@@ -69,9 +71,9 @@ func TestSnapshot_OldestPending(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
 	xadd(t, rc, stream, "10-0", "20-0")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "a", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "a", "0").Err())
 	require.NoError(t, rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: "a", Consumer: "c", Streams: []string{stream, ">"}, Count: 2,
+		Group: "a", Consumer: "c", Streams: []string{pkgredis.Key(stream), ">"}, Count: 2,
 	}).Err())
 
 	snap, _, exists, err := NewStreamInspector(rc).Snapshot(ctx, stream, []string{"a"})
@@ -96,11 +98,11 @@ func pendingFixture(t *testing.T, rc *goredis.Client, stream string) {
 	t.Helper()
 	ctx := context.Background()
 	xadd(t, rc, stream, "10-0", "20-0", "30-0", "40-0")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "a", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "a", "0").Err())
 	require.NoError(t, rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: "a", Consumer: "c", Streams: []string{stream, ">"}, Count: 2,
+		Group: "a", Consumer: "c", Streams: []string{pkgredis.Key(stream), ">"}, Count: 2,
 	}).Err())
-	require.NoError(t, rc.XAck(ctx, stream, "a", "20-0").Err())
+	require.NoError(t, rc.XAck(ctx, pkgredis.Key(stream), "a", "20-0").Err())
 }
 
 func TestNeededEntries_PendingAndUndeliveredBelowCutoff(t *testing.T) {
@@ -118,7 +120,7 @@ func TestNeededEntries_PendingAndUndeliveredBelowCutoff(t *testing.T) {
 func TestNeededEntries_SkipsPendingAlreadyTrimmed(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	pendingFixture(t, rc, stream)
-	require.NoError(t, rc.XTrimMinID(context.Background(), stream, "15-0").Err())
+	require.NoError(t, rc.XTrimMinID(context.Background(), pkgredis.Key(stream), "15-0").Err())
 
 	got, err := NewStreamInspector(rc).NeededEntries(context.Background(), stream, "a",
 		trim.StreamID{Ms: 20}, trim.StreamID{Ms: 35}, 10)
@@ -132,11 +134,11 @@ func TestNeededEntries_LimitCountsExistingPendingEntries(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
 	xadd(t, rc, stream, "10-0", "20-0", "30-0", "40-0")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "a", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "a", "0").Err())
 	require.NoError(t, rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group: "a", Consumer: "c", Streams: []string{stream, ">"}, Count: 4,
+		Group: "a", Consumer: "c", Streams: []string{pkgredis.Key(stream), ">"}, Count: 4,
 	}).Err())
-	require.NoError(t, rc.XTrimMinID(ctx, stream, "25-0").Err()) // 10-0 and 20-0 are gone but still pending
+	require.NoError(t, rc.XTrimMinID(ctx, pkgredis.Key(stream), "25-0").Err()) // 10-0 and 20-0 are gone but still pending
 
 	got, err := NewStreamInspector(rc).NeededEntries(ctx, stream, "a", trim.StreamID{Ms: 40}, trim.StreamID{Ms: 100}, 1)
 	require.NoError(t, err)
@@ -147,13 +149,13 @@ func TestTrimBefore_RemovesOnlyBelow(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
 	xadd(t, rc, stream, "10-0", "20-0", "30-0", "40-0", "50-0")
-	before, err := rc.XRange(ctx, stream, "-", "+").Result()
+	before, err := rc.XRange(ctx, pkgredis.Key(stream), "-", "+").Result()
 	require.NoError(t, err)
 
 	n, err := NewStreamInspector(rc).TrimBefore(ctx, stream, trim.StreamID{Ms: 30})
 	require.NoError(t, err)
 
-	after, err := rc.XRange(ctx, stream, "-", "+").Result()
+	after, err := rc.XRange(ctx, pkgredis.Key(stream), "-", "+").Result()
 	require.NoError(t, err)
 	remaining := map[string]bool{}
 	for _, m := range after {
@@ -166,9 +168,12 @@ func TestTrimBefore_RemovesOnlyBelow(t *testing.T) {
 	assert.EqualValues(t, 2, n)
 }
 
+// DeleteIfExists removes the unprefixed key of a stream removed from the
+// contract and leaves a prefixed key of the same name alone.
 func TestDeleteIfExists(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.LegacyKey(stream), ID: "10-0", Values: map[string]any{"k": "v"}}).Err())
 	xadd(t, rc, stream, "10-0")
 	ins := NewStreamInspector(rc)
 
@@ -178,6 +183,9 @@ func TestDeleteIfExists(t *testing.T) {
 	deleted, err = ins.DeleteIfExists(ctx, stream)
 	require.NoError(t, err)
 	assert.False(t, deleted)
+	n, err := rc.Exists(ctx, pkgredis.Key(stream)).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n, "the prefixed key is not a retired stream's key")
 }
 
 // A redriven entry addressed to another group is skipped by this group when it
@@ -191,12 +199,12 @@ func TestNeededEntries_SkipsEntriesTargetedToAnotherGroup(t *testing.T) {
 		for i := 0; i < len(extra); i += 2 {
 			values[extra[i].(string)] = extra[i+1]
 		}
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: values}).Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(stream), ID: id, Values: values}).Err())
 	}
 	add("10-0")
 	add("20-0", pkgredis.RedriveGroupField, "other")
 	add("30-0", pkgredis.RedriveGroupField, "mine")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "mine", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "mine", "0").Err())
 
 	got, err := NewStreamInspector(rc).NeededEntries(ctx, stream, "mine", trim.StreamID{}, trim.StreamID{Ms: 100}, 10)
 	require.NoError(t, err)
@@ -215,14 +223,14 @@ func TestNeededEntries_PagesPastEntriesTargetedToAnotherGroup(t *testing.T) {
 		for i := 0; i < len(extra); i += 2 {
 			values[extra[i].(string)] = extra[i+1]
 		}
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: values}).Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(stream), ID: id, Values: values}).Err())
 	}
 	add("10-0", pkgredis.RedriveGroupField, "other")
 	add("20-0", pkgredis.RedriveGroupField, "other")
 	add("30-0")
 	add("40-0", pkgredis.RedriveGroupField, "mine")
 	add("50-0")
-	require.NoError(t, rc.XGroupCreate(ctx, stream, "mine", "0").Err())
+	require.NoError(t, rc.XGroupCreate(ctx, pkgredis.Key(stream), "mine", "0").Err())
 	insp := NewStreamInspector(rc)
 
 	got, err := insp.NeededEntries(ctx, stream, "mine", trim.StreamID{}, trim.StreamID{Ms: 100}, 2)

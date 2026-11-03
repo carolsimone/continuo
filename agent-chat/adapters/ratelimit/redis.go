@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// keyPrefix namespaces the limiter's sorted sets so they never collide with
-// other Redis keys in the shared instance.
+// keyPrefix namespaces the limiter's sorted sets under the continuo: key prefix
+// (pkgredis.Key) so they never collide with other Redis keys in the shared
+// instance.
 const keyPrefix = "agent-chat:ratelimit:"
 
 // slidingWindow atomically trims expired entries, counts the window, and admits
@@ -62,7 +64,7 @@ func (r *Redis) Allow(ctx context.Context, userID string) (bool, error) {
 	member := fmt.Sprintf("%d:%s", nowMicro, uuid.NewString())
 	ttlMillis := r.window.Milliseconds()
 
-	res, err := slidingWindow.Run(ctx, r.client, []string{keyPrefix + userID},
+	res, err := slidingWindow.Run(ctx, r.client, []string{pkgredis.Key(keyPrefix + userID)},
 		nowMicro, windowStart, r.perMinute, member, ttlMillis).Int64()
 	if err != nil {
 		return false, fmt.Errorf("redis rate limit: %w", err)

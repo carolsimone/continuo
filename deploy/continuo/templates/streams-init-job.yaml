@@ -1,0 +1,139 @@
+{{- /* streams-init creates every Redis stream and consumer group of the release
+     under the `continuo:` key prefix, so no consumer or producer ever creates
+     one. It runs the /streams-init binary of the dead-letter-controller image.
+
+     With redis.enabled=false the Redis exists before the release, so the Job
+     is a pre-install/pre-upgrade hook ordered after the migrations: the
+     streams exist before the services roll. With the bundled Redis it is a
+     regular, revision-named Job instead, because pre-install hooks run before
+     ANY release resource exists, Redis included; the services wait up to five
+     minutes for their groups, so they need no ordering against it.
+
+     A hook cannot read a Secret the release creates as a regular resource,
+     and the shared ConfigMap is one too. So the Redis address is given
+     inline, and when the password resolves to the chart's OWN credentials
+     Secret (redis.enabled=false, no externalRedis.existingSecret) a small
+     dedicated hook Secret, created strictly before the Job, carries it, as
+     templates/db-init-migrate-hook-secret.yaml does for Postgres. */ -}}
+{{- $isHook := not .Values.redis.enabled }}
+{{- $usesHookSecret := and $isHook (not .Values.externalRedis.existingSecret) }}
+{{- $createStreams := true }}
+{{- if and .Values.redisInit (hasKey .Values.redisInit "createStreams") }}
+{{- $createStreams = .Values.redisInit.createStreams }}
+{{- end }}
+{{- if $usesHookSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "continuo.streamsInitHookSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: streams-init
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+type: Opaque
+stringData:
+  redis-password: {{ required "set externalRedis.password or externalRedis.existingSecret when redis.enabled=false" .Values.externalRedis.password | quote }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "continuo.streamsInitJobName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: streams-init
+  {{- if $isHook }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-4"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 6
+  {{- if $isHook }}
+  # Hook Job: helm's before-hook-creation/hook-succeeded delete policy already
+  # sweeps it on the next install and on success. This TTL is the backstop for
+  # a FAILED hook run, giving an hour to inspect logs before it is swept too.
+  ttlSecondsAfterFinished: 3600
+  {{- else }}
+  ttlSecondsAfterFinished: 86400
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" "streams-init") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        {{- include "continuo.podSecurityContext" . | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      {{- if not $isHook }}
+      initContainers:
+        # Bundled mode: Redis is a StatefulSet that may still be starting when
+        # this Job is scheduled; wait for it to answer PING first.
+        - name: wait-for-redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+            - name: REDIS_HOST
+              value: {{ include "continuo.redis.host" . | quote }}
+            - name: REDIS_PORT
+              value: {{ include "continuo.redis.port" . | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              tries=0
+              until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
+                tries=$((tries+1))
+                if [ "$tries" -gt 100 ]; then
+                  echo "FATAL: Redis at ${REDIS_HOST}:${REDIS_PORT} never became ready after $((100*3))s" >&2
+                  exit 1
+                fi
+                echo "waiting for redis ($tries)..."; sleep 3
+              done
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      {{- end }}
+      containers:
+        - name: streams-init
+          image: {{ include "continuo.image" (dict "root" $ "name" "dead-letter-controller") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          command: ["/streams-init"]
+          env:
+            - name: REDIS_ADDR
+              value: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if $usesHookSecret }}
+                  name: {{ include "continuo.streamsInitHookSecretName" . | quote }}
+                  key: redis-password
+                  {{- else }}
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+                  {{- end }}
+            - name: REDIS_INIT_CREATE_STREAMS
+              value: {{ $createStreams | quote }}
+            - name: LOG_LEVEL
+              value: {{ include "continuo.logLevel" . | quote }}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
