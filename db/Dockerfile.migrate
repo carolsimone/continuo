@@ -9,6 +9,7 @@ RUN apt-get update \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin migrate
 
 COPY migrate-all.sh /migrate-all.sh
+COPY logins /logins
 RUN chmod +x /migrate-all.sh
 
 COPY migration/run_controller /flyway/sql/run_controller

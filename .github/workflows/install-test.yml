@@ -27,6 +27,12 @@ on:
       - 'scripts/install-test/**'
       - 'deploy/redis-acl-rules.acl'
       - '.github/workflows/install-test.yml'
+      # The migrate job's login handling, which migrate-logins runs against
+      # throwaway Postgres containers.
+      - 'db/migrate-all.sh'
+      - 'db/logins/**'
+      - 'db/test/**'
+      - 'db/Dockerfile.migrate'
       # release.yml and the scripts it drives have no other CI gate — this
       # is the only workflow that parses and exercises them (run.sh sources
       # common.sh, and install-test is the callable gate release.yml runs
@@ -113,6 +119,26 @@ jobs:
 
       - name: Check datastore images are anonymously pullable
         run: bash scripts/install-test/check-datastore-images-anon-pullable.sh
+
+  migrate-logins:
+    # Runs the migrations image against throwaway Postgres containers: the
+    # connect rules, grants and catalog check for each service's login, a
+    # missing login, a login with too many rights, and the bundled
+    # quickstart's logins and warehouse handover.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        # Required by scripts/check-docker-state-isolation.sh: any job using
+        # Docker gets a private, empty DOCKER_CONFIG so it neither reads nor
+        # clobbers a sibling job's registry credentials on the shared runner.
+        uses: ./.github/actions/isolate-docker-state
+
+      - name: Test the migrate job's login handling
+        run: bash db/test/migrate-logins_test.sh
 
   install:
     runs-on: ubuntu-latest
