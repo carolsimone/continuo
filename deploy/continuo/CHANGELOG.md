@@ -12,6 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Every service signs in to Postgres as its own login.** run-controller, execution-controller, release-controller, remediation, agent-remediation, agent-chat and dead-letter-controller sign in as `continuo_run_controller`, `continuo_execution_controller`, `continuo_release_controller`, `continuo_remediation`, `continuo_agent_remediation`, `continuo_agent_chat` and `continuo_dead_letter_controller` (names in the new `credentials.postgres`). The migration login (`externalDatabase.username`) keeps owning every database. On every deploy the migrate job lets only each login connect to its own database, grants it read and write on its tables, and fails the deploy, naming the login, when a login is missing or has more rights (superuser, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, membership in the migration login, `CONNECT` on another continuo database). Upgrade note:
+  - **External Postgres:** create each login with `LOGIN` and a password and nothing else, a Secret holding its password, and set `credentials.postgres.<service>.existingSecret` (or give `POSTGRES_PASSWORD` in `credentials.files`). A values file without them fails the render, naming the first login. The migration login must own every continuo database. See `deploy/CREDENTIALS.md`.
+  - **Bundled Postgres:** nothing to do. The chart generates each login's password into the Secret `<release>-logins`, and the migrate job creates the logins.
+- **The warehouse login is the company's.** `validation.createWarehouseSecret: true` now needs the bundled Postgres; with an external Postgres it fails the render. Set `validation.createWarehouseSecret: false` and `validation.warehouseSecret` to your own Secret. With the bundled Postgres the warehouse Secret is `<release>-warehouse-validation` for the new login `continuo_warehouse` (`credentials.postgres.warehouse`), which the migrate job makes the owner of `validation.warehouseDatabase` and of every object in it. `databaseInit` creates the warehouse database only for the bundled Postgres.
+
 ### Added
 
 - **Credentials as files.** Every service reads each credential from `<VAR>` or from a file named by `<VAR>_FILE`. The Postgres and Redis passwords are read again for every new connection, so a rotated file needs no restart. `credentials.delivery: file` mounts each credential read-only under `/var/run/secrets/continuo` (one file per variable, from the same Secrets) and sets `<VAR>_FILE` instead of putting the value in the environment. The default, `env`, works as before. A service's `credentialDelivery` overrides it for that service.

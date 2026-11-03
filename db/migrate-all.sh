@@ -20,10 +20,12 @@ DB_SSLMODE="${DB_SSLMODE:-}"
 CONTINUO_PG_LOGINS="${CONTINUO_PG_LOGINS:-}"
 
 # Bundled quickstart only: the job creates each runtime login itself, with the
-# password in CONTINUO_PG_PASSWORD_<SHORT NAME IN CAPITALS>, and hands the
-# warehouse database CONTINUO_PG_WAREHOUSE_DB to the warehouse login
-# CONTINUO_PG_WAREHOUSE_LOGIN (password CONTINUO_PG_WAREHOUSE_PASSWORD).
+# password in CONTINUO_PG_PASSWORD_<SHORT NAME IN CAPITALS>. When
+# CONTINUO_PG_WAREHOUSE_LOGIN is set it also creates that login (password
+# CONTINUO_PG_WAREHOUSE_PASSWORD) and hands it the warehouse database
+# CONTINUO_PG_WAREHOUSE_DB and every object in it.
 CONTINUO_PG_CREATE_LOGINS="${CONTINUO_PG_CREATE_LOGINS:-false}"
+CONTINUO_PG_WAREHOUSE_LOGIN="${CONTINUO_PG_WAREHOUSE_LOGIN:-}"
 
 # Single source of truth: every database this job owns. The same list drives
 # the login lookup, the create loop, the Flyway loop and the check, so they
@@ -103,11 +105,12 @@ if [ "${CONTINUO_PG_CREATE_LOGINS}" = "true" ]; then
     echo "Creating login $(login_for "${db}")..."
     create_login "$(login_for "${db}")" "${password}"
   done
-  : "${CONTINUO_PG_WAREHOUSE_LOGIN:?CONTINUO_PG_WAREHOUSE_LOGIN is required when CONTINUO_PG_CREATE_LOGINS=true}"
-  : "${CONTINUO_PG_WAREHOUSE_PASSWORD:?CONTINUO_PG_WAREHOUSE_PASSWORD is required when CONTINUO_PG_CREATE_LOGINS=true}"
-  : "${CONTINUO_PG_WAREHOUSE_DB:?CONTINUO_PG_WAREHOUSE_DB is required when CONTINUO_PG_CREATE_LOGINS=true}"
-  echo "Creating login ${CONTINUO_PG_WAREHOUSE_LOGIN}..."
-  create_login "${CONTINUO_PG_WAREHOUSE_LOGIN}" "${CONTINUO_PG_WAREHOUSE_PASSWORD}"
+  if [ -n "${CONTINUO_PG_WAREHOUSE_LOGIN}" ]; then
+    : "${CONTINUO_PG_WAREHOUSE_PASSWORD:?CONTINUO_PG_WAREHOUSE_PASSWORD is required with CONTINUO_PG_WAREHOUSE_LOGIN}"
+    : "${CONTINUO_PG_WAREHOUSE_DB:?CONTINUO_PG_WAREHOUSE_DB is required with CONTINUO_PG_WAREHOUSE_LOGIN}"
+    echo "Creating login ${CONTINUO_PG_WAREHOUSE_LOGIN}..."
+    create_login "${CONTINUO_PG_WAREHOUSE_LOGIN}" "${CONTINUO_PG_WAREHOUSE_PASSWORD}"
+  fi
 fi
 
 # Every runtime login must exist before anything changes, so an upgrade with a
@@ -157,7 +160,7 @@ for db in ${DATABASES}; do
   CHECKED_DBS="${CHECKED_DBS:+${CHECKED_DBS},}continuo_${db}"
 done
 
-if [ "${CONTINUO_PG_CREATE_LOGINS}" = "true" ]; then
+if [ "${CONTINUO_PG_CREATE_LOGINS}" = "true" ] && [ -n "${CONTINUO_PG_WAREHOUSE_LOGIN}" ]; then
   wh_db="${CONTINUO_PG_WAREHOUSE_DB}"
   wh_login="${CONTINUO_PG_WAREHOUSE_LOGIN}"
   wh_exists="$(${PSQL} -d postgres -tA -v db="${wh_db}" <<'SQL'

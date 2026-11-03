@@ -151,13 +151,11 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* Name of the validation warehouse Secret execution-controller attaches via envFrom.
-     - createWarehouseSecret=true, bundled generated Postgres: the keys live on the
-       bundled Postgres Secret itself (postgresql/secret.yaml), so the password is
-       generated exactly once — name is that Secret.
-     - createWarehouseSecret=true, external Postgres with an inline password: the
-       chart creates a dedicated Secret (validation-warehouse-secret.yaml).
-     - createWarehouseSecret=true but the password is in an existingSecret: the chart
-       cannot read it — render fails, directing the operator to opt out.
+     - createWarehouseSecret=true: the bundled quickstart only. The chart creates
+       the Secret (postgresql/warehouse-secret.yaml) for the warehouse login
+       credentials.postgres.warehouse, named validation.warehouseSecret or
+       <release>-warehouse-validation. Any other engine, or an external
+       Postgres, fails the render: the warehouse and its login are the company's.
      - createWarehouseSecret=false: the operator supplies validation.warehouseSecret. */}}
 {{- define "continuo.validation.warehouseSecretName" -}}
 {{- $v := .Values -}}
@@ -166,13 +164,10 @@ app.kubernetes.io/name: {{ .service }}
   {{- if ne $eng "postgres" -}}
     {{- fail (printf "validation.createWarehouseSecret=true only works with validation.engine=postgres: the generated Secret carries POSTGRES_* keys, which the %q engine library does not read. Set validation.createWarehouseSecret=false and supply validation.warehouseSecret with that engine's keys (e.g. trino reads TRINO_HOST/TRINO_CATALOG)." $eng) -}}
   {{- end -}}
-  {{- if and $v.postgresql.enabled (not $v.postgresql.auth.existingSecret) -}}
-    {{- include "continuo.postgresql.fullname" . -}}
-  {{- else if and (not $v.postgresql.enabled) $v.externalDatabase.password (not $v.externalDatabase.existingSecret) -}}
-    {{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) $v.validation.warehouseSecret -}}
-  {{- else -}}
-    {{- fail "validation.createWarehouseSecret cannot build the warehouse Secret when the Postgres password lives in an existingSecret; set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
+  {{- if not $v.postgresql.enabled -}}
+    {{- fail "validation.createWarehouseSecret needs the bundled Postgres: set validation.warehouseSecret to your warehouse Secret and validation.createWarehouseSecret=false (deploy/CREDENTIALS.md)" -}}
   {{- end -}}
+  {{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) $v.validation.warehouseSecret -}}
 {{- else -}}
   {{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" $v.validation.warehouseSecret -}}
 {{- end -}}
@@ -1377,7 +1372,16 @@ capabilities:
      external existingSecret → chart credentials Secret (inline values). */}}
 {{- define "continuo.secretName" -}}
 {{- $v := .root.Values -}}
-{{- if eq .ref "postgres" -}}
+{{- if eq .ref "postgresLogin" -}}
+  {{- $login := include "continuo.postgres.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
+  {{- if $login.existingSecret -}}
+    {{- $login.existingSecret -}}
+  {{- else if $v.postgresql.enabled -}}
+    {{- include "continuo.loginsSecretName" .root -}}
+  {{- else -}}
+    {{- fail (printf "credentials.postgres.%s.existingSecret is required: create the login %s and a Secret holding its password (deploy/CREDENTIALS.md)" .svc.name $login.username) -}}
+  {{- end -}}
+{{- else if eq .ref "postgres" -}}
   {{- if $v.postgresql.enabled -}}
     {{- default (include "continuo.postgresql.fullname" .root) $v.postgresql.auth.existingSecret -}}
   {{- else if $v.externalDatabase.existingSecret -}}
@@ -1429,7 +1433,10 @@ capabilities:
 {{/* Which key inside that Secret. */}}
 {{- define "continuo.secretKey" -}}
 {{- $v := .root.Values -}}
-{{- if eq .ref "postgres" -}}
+{{- if eq .ref "postgresLogin" -}}
+  {{- $login := include "continuo.postgres.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
+  {{- if $login.existingSecret -}}{{ $login.key }}{{- else -}}{{ printf "postgres-%s" .svc.name }}{{- end -}}
+{{- else if eq .ref "postgres" -}}
   {{- if $v.postgresql.enabled -}}
     {{- if $v.postgresql.auth.existingSecret -}}{{ $v.postgresql.auth.existingSecretPasswordKey }}{{- else -}}password{{- end -}}
   {{- else if $v.externalDatabase.existingSecret -}}
@@ -1481,6 +1488,51 @@ capabilities:
 {{/* Directory a pod in file delivery mounts its credential files at, one file
      per variable, named after it. */}}
 {{- define "continuo.credentialDir" -}}/var/run/secrets/continuo{{- end -}}
+
+{{/* The continuo database each Postgres-backed service keeps, by its short
+     name in db/migrate-all.sh's DATABASES. Owned by the chart rather than read
+     from a service's env.POSTGRES_DB, which lives in the replaceable `services`
+     list: the migrate Job migrates, and grants on, every database, whether its
+     service is enabled or not. pkg/deploycheck pins it to DATABASES. JSON
+     object. */}}
+{{- define "continuo.postgres.serviceDatabases" -}}
+{"run-controller":"run_controller","execution-controller":"execution","release-controller":"release","remediation":"remediation","agent-remediation":"agent_remediation","agent-chat":"agent_chat","dead-letter-controller":"dead_letter"}
+{{- end -}}
+
+{{/* A service's Postgres login, credentials.postgres.<svc> over its defaults
+     (username continuo_<svc with - as _>, no existingSecret, key password),
+     which also cover a release with no credentials.postgres block (helm
+     upgrade --reuse-values from an older chart). JSON object {username,
+     existingSecret, key}.
+     Call: include "continuo.postgres.login" (dict "root" $ "svc" "<service>") */}}
+{{- define "continuo.postgres.login" -}}
+{{- $defaults := dict "username" (printf "continuo_%s" (.svc | replace "-" "_")) "existingSecret" "" "key" "password" -}}
+{{- $given := dig "postgres" .svc dict (.root.Values.credentials | default dict) | default dict -}}
+{{- toJson (merge (deepCopy $given) $defaults) -}}
+{{- end -}}
+
+{{/* CONTINUO_PG_LOGINS for the migrate Job: "<database short name>=<login>"
+     for every database, separated by spaces. */}}
+{{- define "continuo.postgres.loginsEnv" -}}
+{{- $root := . -}}
+{{- $pairs := list -}}
+{{- range $svc, $db := (include "continuo.postgres.serviceDatabases" . | fromJson) -}}
+{{- $pairs = append $pairs (printf "%s=%s" $db (include "continuo.postgres.login" (dict "root" $root "svc" $svc) | fromJson).username) -}}
+{{- end -}}
+{{- join " " $pairs -}}
+{{- end -}}
+
+{{/* The bundled quickstart's warehouse login, owner of
+     validation.warehouseDatabase. */}}
+{{- define "continuo.postgres.warehouseLogin" -}}
+{{- dig "postgres" "warehouse" "username" "continuo_warehouse" (.Values.credentials | default dict) -}}
+{{- end -}}
+
+{{/* The Secret the chart generates the bundled datastores' login passwords
+     into, kept across upgrades. */}}
+{{- define "continuo.loginsSecretName" -}}
+{{- printf "%s-logins" (include "continuo.fullname" .) -}}
+{{- end -}}
 
 {{/* credentials.files with an empty map for a service given none, or an
      empty map for a release without a credentials block (helm upgrade
@@ -1609,8 +1661,8 @@ capabilities:
 - name: {{ $as }}
   valueFrom:
     secretKeyRef:
-      name: {{ include "continuo.secretName" (dict "root" .root "ref" .ref) | quote }}
-      key: {{ include "continuo.secretKey" (dict "root" .root "ref" .ref) | quote }}
+      name: {{ include "continuo.secretName" (dict "root" .root "ref" .ref "svc" .svc) | quote }}
+      key: {{ include "continuo.secretKey" (dict "root" .root "ref" .ref "svc" .svc) | quote }}
 {{- end }}
 {{- end -}}
 
@@ -1655,13 +1707,17 @@ volumeMounts:
      pair for those services, which the template injects instead). */}}
 {{- define "continuo.credentialList" -}}
 {{- $needsS3 := has .svc.name (include "continuo.s3.credentialServices" .root | fromJsonArray) -}}
+{{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" .root | fromJson) .svc.name -}}
 {{- $list := list -}}
 {{- if $needsS3 -}}
 {{- $list = append $list (dict "name" "AWS_ACCESS_KEY_ID" "ref" "s3AccessKeyId") -}}
 {{- $list = append $list (dict "name" "AWS_SECRET_ACCESS_KEY" "ref" "s3SecretAccessKey") -}}
 {{- end -}}
+{{- if $needsPostgres -}}
+{{- $list = append $list (dict "name" "POSTGRES_PASSWORD" "ref" "postgresLogin") -}}
+{{- end -}}
 {{- range $secret := (.svc.secretEnv | default (list)) -}}
-{{- if not (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) -}}
+{{- if not (or (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) (and $needsPostgres (eq $secret.name "POSTGRES_PASSWORD"))) -}}
 {{- $list = append $list (dict "name" $secret.name "ref" $secret.ref) -}}
 {{- end -}}
 {{- end -}}
@@ -1686,8 +1742,9 @@ volumeMounts:
 {{/* Sources of the pod's projected continuo-credentials volume, as YAML list
      items with no indentation: one `secret` source per Secret, with an item per
      credential the pod reads as a file from it (path = the variable's name).
-     Covers the main container's credentials and, in bundled mode, the Redis
-     and Postgres passwords the wait init containers read. Empty when the pod
+     Covers the main container's credentials (the Postgres password among
+     them, which wait-for-migrations reads too) and, in bundled mode, the Redis
+     password wait-for-redis reads. Empty when the pod
      reads no credential file from a Secret.
      Call: include "continuo.credentialProjection" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.credentialProjection" -}}
@@ -1697,9 +1754,6 @@ volumeMounts:
 {{- if and $root.Values.redis.enabled (has $svc.name (include "continuo.redis.clientServices" $root | fromJsonArray)) -}}
 {{- $wanted = append $wanted (dict "name" "REDIS_PASSWORD" "ref" "redis") -}}
 {{- end -}}
-{{- if and $root.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB -}}
-{{- $wanted = append $wanted (dict "name" "POSTGRES_PASSWORD" "ref" "postgres") -}}
-{{- end -}}
 {{- $seen := dict -}}
 {{- $order := list -}}
 {{- $bySecret := dict -}}
@@ -1707,12 +1761,12 @@ volumeMounts:
 {{- $source := include "continuo.credentialSource" (dict "root" $root "svc" $svc "name" $c.name "ref" $c.ref) -}}
 {{- if and (eq $source "file") (not (hasKey $seen $c.name)) -}}
 {{- $_ := set $seen $c.name true -}}
-{{- $secret := include "continuo.secretName" (dict "root" $root "ref" $c.ref) -}}
+{{- $secret := include "continuo.secretName" (dict "root" $root "ref" $c.ref "svc" $svc) -}}
 {{- if not (hasKey $bySecret $secret) -}}
 {{- $order = append $order $secret -}}
 {{- $_ := set $bySecret $secret (list) -}}
 {{- end -}}
-{{- $_ := set $bySecret $secret (append (get $bySecret $secret) (dict "key" (include "continuo.secretKey" (dict "root" $root "ref" $c.ref)) "path" $c.name)) -}}
+{{- $_ := set $bySecret $secret (append (get $bySecret $secret) (dict "key" (include "continuo.secretKey" (dict "root" $root "ref" $c.ref "svc" $svc)) "path" $c.name)) -}}
 {{- end -}}
 {{- end -}}
 {{- range $secret := $order }}

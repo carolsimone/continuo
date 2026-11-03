@@ -186,8 +186,8 @@ spec:
             - name: PGPORT
               value: {{ include "continuo.postgresql.port" $ | quote }}
             - name: PGUSER
-              value: {{ include "continuo.postgresql.username" $ | quote }}
-            {{- $pgPassword := dict "root" $ "svc" $svc "name" "POSTGRES_PASSWORD" "ref" "postgres" "as" "PGPASSWORD" }}
+              value: {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
+            {{- $pgPassword := dict "root" $ "svc" $svc "name" "POSTGRES_PASSWORD" "ref" "postgresLogin" "as" "PGPASSWORD" }}
             {{- with include "continuo.credentialEnv" $pgPassword | trim }}{{ . | nindent 12 }}{{ end }}
             - name: PGDATABASE
               value: {{ $svc.env.POSTGRES_DB | quote }}
@@ -205,13 +205,18 @@ spec:
                 PGPASSWORD="$credential"; export PGPASSWORD
               fi
               tries=0
-              # Probe through the always-present maintenance database, then
-              # the service's own, using queries that cannot fail server-side:
-              # selecting from a database or table that does not exist yet
-              # would log a FATAL/ERROR on Postgres for every iteration.
+              # Signs in as the service's own login, so a wrong password stops
+              # the pod here. Probes through the always-present maintenance
+              # database, then the service's own, using queries that cannot
+              # fail server-side: connecting to a database the login may not
+              # connect to yet, or selecting from a table that does not exist
+              # yet, would log a FATAL/ERROR on Postgres for every iteration.
+              # The migrate Job grants the login SELECT on
+              # flyway_schema_history after Flyway, so holding it means the
+              # database is migrated and the grants are in place.
               migrated() {
-                [ "$(PGDATABASE=postgres psql -XAtqc "SELECT 1 FROM pg_database WHERE datname = '${PGDATABASE}'" 2>/dev/null)" = "1" ] || return 1
-                [ "$(psql -XAtqc "SELECT to_regclass('public.flyway_schema_history') IS NOT NULL" 2>/dev/null)" = "t" ] || return 1
+                [ "$(PGDATABASE=postgres psql -XAtqc "SELECT has_database_privilege(current_user, datname, 'CONNECT') FROM pg_database WHERE datname = '${PGDATABASE}'" 2>/dev/null)" = "t" ] || return 1
+                [ "$(psql -XAtqc "SELECT to_regclass('public.flyway_schema_history') IS NOT NULL AND has_table_privilege(current_user, 'public.flyway_schema_history', 'SELECT')" 2>/dev/null)" = "t" ] || return 1
                 [ "$(psql -XAtqc "SELECT 1 FROM public.flyway_schema_history LIMIT 1" 2>/dev/null)" = "1" ]
               }
               until migrated; do
@@ -237,7 +242,8 @@ spec:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
           {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
-          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") $isAgent $companyFiles }}
+          {{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" $ | fromJson) $svc.name }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 $needsPostgres (eq $svc.name "ui") $isAgent $companyFiles }}
           env:
             {{- /*
               Services that read or write object storage get their S3 credentials
@@ -249,14 +255,23 @@ spec:
               independent of that replaceable list.
             */}}
             {{- /*
+              The same holds for the Postgres login: a service that keeps a
+              continuo database signs in as its own login
+              (credentials.postgres), whatever its `secretEnv` entry says.
+              POSTGRES_USER here wins over the shared ConfigMap's, which names
+              the migration login.
+
               Every credential goes through "continuo.credentialEnv", which
               renders it as the service's delivery asks: a secretKeyRef
               variable, a <VAR>_FILE naming its projected file, or a
               <VAR>_FILE naming a company-provided file.
             */}}
-            {{- if $needsS3 }}
-            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" "AWS_ACCESS_KEY_ID" "ref" "s3AccessKeyId") | trim }}{{ . | nindent 12 }}{{ end }}
-            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" "AWS_SECRET_ACCESS_KEY" "ref" "s3SecretAccessKey") | trim }}{{ . | nindent 12 }}{{ end }}
+            {{- if $needsPostgres }}
+            - name: POSTGRES_USER
+              value: {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
+            {{- end }}
+            {{- range $c := (include "continuo.credentialList" (dict "root" $ "svc" $svc) | fromJsonArray) }}
+            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" $c.name "ref" $c.ref) | trim }}{{ . | nindent 12 }}{{ end }}
             {{- end }}
             {{- if eq $svc.name "ui" }}
             {{- /* Injected here rather than through the ui's `services` entry so
@@ -270,11 +285,6 @@ spec:
             {{- . | nindent 12 }}
             {{- end }}
             {{- end }}
-            {{- range $secret := ($svc.secretEnv | default (list)) }}
-            {{- if not (and $needsS3 (or (eq $secret.name "AWS_ACCESS_KEY_ID") (eq $secret.name "AWS_SECRET_ACCESS_KEY"))) }}
-            {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" $secret.name "ref" $secret.ref) | trim }}{{ . | nindent 12 }}{{ end }}
-            {{- end }}
-            {{- end }}
             {{- /* A company file reaches the service even when its entry does
                    not list the credential. */}}
             {{- range $name := (include "continuo.credentialExtraFiles" (dict "root" $ "svc" $svc) | fromJsonArray) }}
@@ -282,7 +292,9 @@ spec:
               value: {{ get $companyFiles $name | quote }}
             {{- end }}
           {{- if $svc.env }}
-            {{- range $key, $val := $svc.env }}
+            {{- /* The login above is the service's POSTGRES_USER; an env entry
+                   of that name is left out rather than set twice. */}}
+            {{- range $key, $val := (ternary (omit ($svc.env | default dict) "POSTGRES_USER") $svc.env $needsPostgres) }}
             - name: {{ $key }}
               {{- if and (eq $key "K8S_NAMESPACE") (eq $val "__RELEASE_NAMESPACE__") }}
               valueFrom:

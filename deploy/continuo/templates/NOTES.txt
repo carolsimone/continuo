@@ -88,6 +88,22 @@ grants it to catalog's role.
 To run no exports, set catalog.backup.enabled=false.
 {{- end }}
 
+{{- if and .Release.IsUpgrade (not .Values.postgresql.enabled) }}
+
+BREAKING: every service signs in to Postgres as its own login. Before this
+upgrade, create each login below with LOGIN and a password and nothing else,
+and a Secret holding its password, named in credentials.postgres.<service>.existingSecret
+(deploy/CREDENTIALS.md). The migrate job, signed in as {{ .Values.externalDatabase.username }},
+grants each login its rights and stops the upgrade, naming the login, when one
+is missing or has more rights than its own.
+{{- range $svc, $_ := (include "continuo.postgres.serviceDatabases" . | fromJson) }}
+  {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc) | fromJson).username }} ({{ $svc }})
+{{- end }}
+dbt and the validation runner sign in with the warehouse Secret
+validation.warehouseSecret, which is yours: the chart builds one only for the
+bundled Postgres.
+{{- end }}
+
 {{- if .Release.IsUpgrade }}
 
 Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.

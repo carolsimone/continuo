@@ -165,6 +165,37 @@ if deployment_env agent-chat "${tmp}/file-defaults.yaml" | grep -q '^LLM_API_KEY
   echo "FAIL: file delivery with an empty llm.apiKey must give agent-chat no LLM_API_KEY variable or file"; exit 1
 fi
 python3 scripts/install-test/assert-credential-delivery.py "${tmp}/file-defaults.yaml" file
+# Each service signs in to Postgres as its own login, read from that login's
+# Secret; the migrate Job grants each login its rights, and in the bundled
+# quickstart creates them.
+echo "--- Postgres: every service signs in as its own login"
+for f in defaults credential-files file-defaults; do
+  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" bundled
+done
+for f in byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" external 'continuo-pg-{service}'
+done
+# An external Postgres values file written before per-service logins (no
+# credentials.postgres block) fails the render, naming the login to create.
+python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-logins.yaml" <<'PY'
+import sys, yaml
+values = yaml.safe_load(open(sys.argv[1]))
+values.get("credentials", {}).pop("postgres", None)
+yaml.safe_dump(values, open(sys.argv[2], "w"))
+PY
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/byo-secret-no-logins.yaml" \
+     > /dev/null 2> "${tmp}/pglogins.err"; then
+  echo "FAIL: an external Postgres with no login Secrets must fail the render"; exit 1
+fi
+grep -qF 'credentials.postgres.run-controller.existingSecret is required: create the login continuo_run_controller' "${tmp}/pglogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
+# The chart builds the warehouse Secret only for the bundled Postgres.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-secret.yaml \
+     --set validation.createWarehouseSecret=true > /dev/null 2> "${tmp}/pglogins.err"; then
+  echo "FAIL: validation.createWarehouseSecret=true with an external Postgres must fail the render"; exit 1
+fi
+grep -qF 'validation.createWarehouseSecret needs the bundled Postgres' "${tmp}/pglogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
 # A credentials.files entry names a variable continuo reads as a credential;
 # anything else would never be read.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -445,6 +476,21 @@ catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWOR
 if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
 fi
+# An operator upgrading with an external Postgres is told once which logins to
+# create; one with the bundled Postgres, whose logins the chart creates, and
+# an installing one are told nothing.
+logins_note='BREAKING: every service signs in to Postgres as its own login.'
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
+  -f scripts/install-test/values-byo-secret.yaml --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade with an external Postgres failed"; exit 1; }
+[ "$(grep -cF "$logins_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
+  && grep -qE '^ +continuo_dead_letter_controller \(dead-letter-controller\)$' "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: the external-Postgres upgrade notes do not list the logins to create once"; exit 1; }
+for notes in upgrade install; do
+  if grep -qF "$logins_note" "${tmp}/notes-${notes}.txt"; then
+    echo "FAIL: the bundled ${notes} notes carry the Postgres logins note"; exit 1
+  fi
+done
 # An upgrading operator is told once that the services left the namespace's
 # default ServiceAccount, and what stops applying; an installing one is not.
 service_account_note='Every service now runs under its own ServiceAccount, named after it'
@@ -901,7 +947,8 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/netpol-off.yaml"
 # addresses take 443, 8080 and 8443. A datastore port that is not one fails the
 # render while the agents' egress policy renders, and only then.
 echo "--- egress: the agents reach an external datastore on its port; the proxy reaches private addresses on allowPrivate ports"
-egress_byo=(--set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
+pg_logins=(-f scripts/install-test/values-postgres-logins.yaml)
+egress_byo=("${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
   --set externalDatabase.password=probe --set redis.enabled=false
   --set externalRedis.host=redis.example.internal --set externalRedis.password=probe)
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" \
@@ -912,7 +959,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.
 # An external Postgres running as a pod of another namespace: the agents reach
 # the pods of every namespace on its port, which a network plugin that matches
 # no pod by ipBlock still admits.
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set postgresql.enabled=false \
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${pg_logins[@]}" --set postgresql.enabled=false \
   --set externalDatabase.host=pg-rw.databases.svc --set externalDatabase.password=probe > "${tmp}/egress-pg-pod.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod.yaml" continuo
 # An external Postgres or Redis whose host is an IP address outside the private
@@ -922,7 +969,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod
 # one at a cloud metadata or link-local address fails the render. The checker
 # reads the host and port from the shared ConfigMap.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
+  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
   --set redis.enabled=false --set 'externalRedis.host=2001:db8::5' --set externalRedis.port=6380 \
   --set externalRedis.password=probe > "${tmp}/egress-ds-public.yaml"
 grep -q '^            cidr: 203.0.113.5/32$' "${tmp}/egress-ds-public.yaml" \
@@ -934,14 +981,14 @@ grep -A1 'name: NO_PROXY' "${tmp}/egress-ds-public.yaml" | grep -q ',203\.0\.113
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-ds-public.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-public.yaml" continuo
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
+  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
   > "${tmp}/egress-ds-private.yaml"
 if grep -q 'cidr: 10.0.0.5/32' "${tmp}/egress-ds-private.yaml"; then
   echo "FAIL: an external Postgres at a private address is admitted by the private-range rule and needs no rule of its own"; exit 1
 fi
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-private.yaml" continuo
 refuse_render 'externalDatabase.host="100.100.100.200": its host 100.100.100.200 lies in' \
-  --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
+  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
 refuse_render 'externalRedis.host="169.254.169.254": its host 169.254.169.254 lies in' \
   --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
 refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0

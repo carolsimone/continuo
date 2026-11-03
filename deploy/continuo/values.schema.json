@@ -11,6 +11,16 @@
     "defaultResources", "services"
   ],
   "definitions": {
+    "credentialLogin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["username"],
+      "properties": {
+        "username": {"type": "string", "minLength": 1, "maxLength": 63, "description": "The login the service signs in as."},
+        "existingSecret": {"type": "string", "description": "Secret holding the login's password. Required for an enabled service on an external datastore unless credentials.files gives the service's password file; empty with the bundled datastore uses the generated <release>-logins Secret."},
+        "key": {"type": "string", "minLength": 1, "description": "Key of the password in existingSecret."}
+      }
+    },
     "imagePullSecrets": {
       "type": "array",
       "items": {
@@ -327,6 +337,28 @@
             "type": "object",
             "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]*$"},
             "additionalProperties": {"type": "string", "pattern": "^/"}
+          }
+        },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Postgres login each service signs in as, and the Secret holding its password.",
+          "properties": {
+            "run-controller": {"$ref": "#/definitions/credentialLogin"},
+            "execution-controller": {"$ref": "#/definitions/credentialLogin"},
+            "release-controller": {"$ref": "#/definitions/credentialLogin"},
+            "remediation": {"$ref": "#/definitions/credentialLogin"},
+            "agent-remediation": {"$ref": "#/definitions/credentialLogin"},
+            "agent-chat": {"$ref": "#/definitions/credentialLogin"},
+            "dead-letter-controller": {"$ref": "#/definitions/credentialLogin"},
+            "warehouse": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["username"],
+              "properties": {
+                "username": {"type": "string", "minLength": 1, "maxLength": 63, "description": "The login dbt and the validation runner sign in as in the bundled quickstart; it owns validation.warehouseDatabase."}
+              }
+            }
           }
         }
       }
