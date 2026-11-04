@@ -78,26 +78,35 @@ done
 
 # streams-init creates every Redis stream and consumer group before the
 # services need them. With a BYO Redis (it exists already) it is a pre-install
-# and pre-upgrade hook, so the streams exist before the services roll; with the
-# bundled Redis (no release resource exists while hooks run) it is a regular
-# Job. A hook cannot read a Secret the release creates as a regular resource,
-# so the BYO renders with inline credentials must give it a hook Secret.
+# and pre-upgrade hook ordered after the migrate hook, so the streams exist
+# before the services roll; with the bundled Redis (no release resource exists
+# while hooks run) it is a regular Job that waits for Redis. A hook cannot read
+# a Secret or ConfigMap the release creates as a regular resource, so a
+# shared-mode BYO render with an inline password must give it a hook Secret.
 # redisInit.createStreams reaches it as REDIS_INIT_CREATE_STREAMS, also when a
-# release has no redisInit values (helm upgrade --reuse-values).
+# release has no redisInit values (helm upgrade --reuse-values), and the Redis
+# ACL mode as REDIS_ACL_MODE.
 echo "--- streams-init Job: a hook with a BYO Redis, a regular Job with the bundled one, createStreams reaches it"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true
+python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true --acl-mode perService
 for f in byo-example byo-inline byo-secret; do
-  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true --acl-mode perService
+done
+python3 scripts/install-test/assert-streams-init.py "${tmp}/redis-shared.yaml" --mode job --create-streams true --acl-mode shared
+for f in byo-inline byo-secret; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "scripts/install-test/values-${f}.yaml" \
+    -f scripts/install-test/values-redis-shared.yaml > "${tmp}/streams-init-${f}-shared.yaml"
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-${f}-shared.yaml" --mode hook \
+    --create-streams true --acl-mode shared
 done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=false \
   > "${tmp}/streams-init-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false --acl-mode perService
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
   --set redisInit.createStreams=false > "${tmp}/streams-init-byo-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false --acl-mode perService
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit=null > "${tmp}/streams-init-null.yaml" \
   || { echo "FAIL: rendering with redisInit=null failed; values without a redisInit block must render"; exit 1; }
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true --acl-mode perService
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=maybe > /dev/null 2>&1; then
   echo "FAIL: redisInit.createStreams=maybe must fail the render"; exit 1
 fi
