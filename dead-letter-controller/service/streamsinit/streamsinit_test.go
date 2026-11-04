@@ -442,7 +442,9 @@ func existing(admin *fakeAdmin) {
 
 // No consumer of this release reads an unprefixed key, so one that still holds
 // entries a contract group has not finished stops the run, naming the key and
-// the group, once every other key has been dealt with.
+// the group. The run then deletes nothing: in a pre-upgrade hook the previous
+// release still runs and reads the unprefixed keys, and a rejected upgrade
+// leaves Redis as it found it.
 func TestRunFailsWhileAnUnprefixedKeyHoldsPendingEntries(t *testing.T) {
 	admin := newFakeAdmin()
 	existing(admin)
@@ -463,11 +465,13 @@ func TestRunFailsWhileAnUnprefixedKeyHoldsPendingEntries(t *testing.T) {
 			t.Errorf("err = %v\nwant it to contain %q", err, want)
 		}
 	}
-	if slices.Contains(admin.events, "delete "+streams.TaskDispatchV1) {
-		t.Fatal("the held key was deleted")
+	if i := eventIndex(admin.events, "delete "); i >= 0 {
+		t.Fatalf("event %q: a run that fails on a held key deletes nothing", admin.events[i])
 	}
-	if !slices.Contains(admin.deleted, streams.ReleasePromotedV2) || !slices.Contains(admin.deleted, streams.Retired[0]) {
-		t.Fatalf("deleted = %v, want the drained and the retired keys deleted before the run fails", admin.deleted)
+	for _, stream := range []string{streams.TaskDispatchV1, streams.ReleasePromotedV2} {
+		if !slices.Contains(admin.events, "read "+stream) {
+			t.Errorf("the unprefixed key of %s was not read: every key is checked before the run fails", stream)
+		}
 	}
 	if !strings.Contains(out.String(), `"unprefixed key kept"`) {
 		t.Fatalf("no line names the kept key:\n%s", out.String())

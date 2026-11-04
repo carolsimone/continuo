@@ -135,18 +135,19 @@ func refuseUnprefixedOnly(ctx context.Context, admin ports.StreamAdmin, names []
 	return nil
 }
 
-// deleteUnprefixedKeys deletes the unprefixed key of each stream of names
-// whose contract groups have all finished with it (see unprefixed.Held), and
-// the unprefixed key of each retired stream whatever it holds: nothing reads
-// it. A key a contract group has not finished with is kept and logged, and
-// once every other key is dealt with the run fails, naming each such key and
-// its groups: no consumer reads those entries. A key it cannot read or delete
-// (a login whose rule does not reach unprefixed keys answers NOPERM) is logged
-// and left, and does not fail the run. A cancelled ctx ends it with ctx's
-// error.
+// deleteUnprefixedKeys first reads the unprefixed key of each stream of names
+// and checks it with unprefixed.Held. When a contract group has not finished
+// with a key, the run fails, naming each such key and its groups, and deletes
+// nothing: no consumer reads those entries, and in a pre-upgrade hook the
+// previous release still runs and reads the unprefixed keys, so a rejected
+// upgrade leaves Redis as it found it. Otherwise it deletes every unprefixed
+// key it read, and the unprefixed key of each retired stream whatever it
+// holds: nothing reads it. A key it cannot read or delete (a login whose rule
+// does not reach unprefixed keys answers NOPERM) is logged and left, and does
+// not fail the run. A cancelled ctx ends it with ctx's error.
 func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []string, plan Plan, logger *slog.Logger) error {
 	const hint = "apply this release's rule of continuo_redis_migrate from deploy/redis-acl-rules.acl, or delete the key yourself"
-	var kept []string
+	var drained, kept []string
 	for _, stream := range names {
 		k, exists, err := admin.ReadUnprefixed(ctx, stream)
 		if err != nil {
@@ -164,19 +165,17 @@ func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []
 			kept = append(kept, fmt.Sprintf("%s (%s)", stream, strings.Join(held, "; ")))
 			continue
 		}
-		if err := deleteUnprefixed(ctx, admin, stream, hint, logger); err != nil {
-			return err
-		}
-	}
-	for _, stream := range plan.Retired {
-		if err := deleteUnprefixed(ctx, admin, stream, hint, logger); err != nil {
-			return err
-		}
+		drained = append(drained, stream)
 	}
 	if len(kept) > 0 {
-		return fmt.Errorf("unprefixed stream keys hold entries no consumer of this release reads: %s; "+
+		return fmt.Errorf("unprefixed stream keys hold entries no consumer of this release reads, so none was deleted: %s; "+
 			"let the release that reads them finish and deploy again, or discard the entries with DEL <key>",
 			strings.Join(kept, ", "))
+	}
+	for _, stream := range append(drained, plan.Retired...) {
+		if err := deleteUnprefixed(ctx, admin, stream, hint, logger); err != nil {
+			return err
+		}
 	}
 	return nil
 }

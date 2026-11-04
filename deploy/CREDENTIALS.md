@@ -301,7 +301,7 @@ During this release the step also deletes each stream's old key from before
 the prefix (`task.dispatch:v1`), which no service reads: once every consumer
 group of the release has read and acknowledged all of it, and at once for a
 stream the release retired. While an old key still holds entries, the step
-stops the deploy and names the key and the group: let the previous release
+stops the deploy, names the key and the group, and deletes no old key: let the previous release
 finish them and deploy again, or discard them with `DEL <key>`. It also stops
 the deploy, before it creates anything, when Redis holds a stream only under
 its old name: upgrade through the release that added the prefix first. A key
