@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/adapters/loginfiles"
 	redisadapter "github.com/carolsimone/continuo/dead-letter-controller/adapters/redis"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/streamsinit"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -57,7 +58,10 @@ func run() int {
 	}
 	defer func() { _ = client.Close() }()
 
-	plan := streamsinit.Plan{Groups: streams.Groups, CreateStreams: createStreams, LoginsDir: loginsDir}
+	plan := streamsinit.Plan{Groups: streams.Groups, CreateStreams: createStreams}
+	if loginsDir != "" {
+		plan.Logins = loginfiles.New(loginsDir)
+	}
 	if err := streamsinit.Run(ctx, redisadapter.NewStreamAdmin(client), plan, logger); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("Shutdown requested")

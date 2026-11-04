@@ -5,12 +5,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
@@ -215,13 +214,13 @@ func TestRunReturnsTheFirstErrorNamingStreamAndGroup(t *testing.T) {
 	}
 }
 
-// writeLogin writes a login file named username holding content.
-func writeLogin(t *testing.T, dir, username, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, username), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+// fakeLogins is a fixed list of Redis logins, or a listing error.
+type fakeLogins struct {
+	logins []ports.RedisLogin
+	err    error
 }
+
+func (f fakeLogins) Logins(context.Context) ([]ports.RedisLogin, error) { return f.logins, f.err }
 
 // loginEvents is the login checks among events.
 func loginEvents(events []string) []string {
@@ -235,12 +234,12 @@ func loginEvents(events []string) []string {
 }
 
 func TestRunChecksEveryLoginBeforeCreating(t *testing.T) {
-	dir := t.TempDir()
-	writeLogin(t, dir, "continuo_ui", "ui-password\n")
-	writeLogin(t, dir, "continuo_catalog", "catalog-password\r\n")
 	admin := newFakeAdmin()
 	plan := contractPlan()
-	plan.LoginsDir = dir
+	plan.Logins = fakeLogins{logins: []ports.RedisLogin{
+		{Username: "continuo_catalog", Password: "catalog-password"},
+		{Username: "continuo_ui", Password: "ui-password"},
+	}}
 	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
 		t.Fatal(err)
 	}
@@ -257,18 +256,18 @@ func TestRunChecksEveryLoginBeforeCreating(t *testing.T) {
 }
 
 func TestRunListsEveryFailedLogin(t *testing.T) {
-	dir := t.TempDir()
-	writeLogin(t, dir, "continuo_ui", "ui-password\n")
-	writeLogin(t, dir, "continuo_catalog", "wrong\n")
-	writeLogin(t, dir, "continuo_remediation", "\n")
-	writeLogin(t, dir, "continuo_run_controller", "rc-password")
 	admin := newFakeAdmin()
 	admin.loginErrs = map[string]error{
 		"continuo_catalog":        errors.New("WRONGPASS invalid username-password pair or user is disabled."),
 		"continuo_run_controller": errors.New("WRONGPASS invalid username-password pair or user is disabled."),
 	}
 	plan := contractPlan()
-	plan.LoginsDir = dir
+	plan.Logins = fakeLogins{logins: []ports.RedisLogin{
+		{Username: "continuo_catalog", Password: "wrong"},
+		{Username: "continuo_remediation", ReadErr: errors.New("REDIS_PASSWORD file is empty")},
+		{Username: "continuo_run_controller", Password: "rc-password"},
+		{Username: "continuo_ui", Password: "ui-password"},
+	}}
 	err := Run(context.Background(), admin, plan, discardLogger())
 	if err == nil {
 		t.Fatal("Run succeeded with failing logins")
@@ -276,7 +275,7 @@ func TestRunListsEveryFailedLogin(t *testing.T) {
 	for _, want := range []string{
 		"redis login continuo_catalog: WRONGPASS invalid username-password pair or user is disabled.; create it as described in deploy/CREDENTIALS.md",
 		"redis login continuo_run_controller: WRONGPASS invalid username-password pair or user is disabled.; create it as described in deploy/CREDENTIALS.md",
-		"redis login continuo_remediation: ",
+		"redis login continuo_remediation: REDIS_PASSWORD file is empty",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v\nwant it to contain %q", err, want)
@@ -290,39 +289,12 @@ func TestRunListsEveryFailedLogin(t *testing.T) {
 	}
 }
 
-// A Kubernetes Secret mounted as a directory holds each key as a symbolic link
-// into a hidden ..data directory: the links are the logins, the hidden entries
-// are not.
-func TestRunReadsAMountedSecretDirectory(t *testing.T) {
-	dir := t.TempDir()
-	data := filepath.Join(dir, "..2026_11_04_10_00_00.000000001")
-	if err := os.Mkdir(data, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeLogin(t, data, "continuo_ui", "ui-password\n")
-	if err := os.Symlink(filepath.Base(data), filepath.Join(dir, "..data")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join("..data", "continuo_ui"), filepath.Join(dir, "continuo_ui")); err != nil {
-		t.Fatal(err)
-	}
-	admin := newFakeAdmin()
-	plan := Plan{Groups: map[string][]string{}, CreateStreams: true, LoginsDir: dir}
-	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := loginEvents(admin.events), []string{"login continuo_ui ui-password"}; !slices.Equal(got, want) {
-		t.Fatalf("login checks = %v, want %v", got, want)
-	}
-}
-
 // Turning creation off leaves the streams to the operator; the logins are
 // still checked.
 func TestRunChecksLoginsWhenCreationIsTurnedOff(t *testing.T) {
-	dir := t.TempDir()
-	writeLogin(t, dir, "continuo_ui", "ui-password\n")
 	admin := newFakeAdmin()
-	plan := Plan{Groups: streams.Groups, CreateStreams: false, LoginsDir: dir}
+	plan := Plan{Groups: streams.Groups, CreateStreams: false,
+		Logins: fakeLogins{logins: []ports.RedisLogin{{Username: "continuo_ui", Password: "ui-password"}}}}
 	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +306,7 @@ func TestRunChecksLoginsWhenCreationIsTurnedOff(t *testing.T) {
 	}
 }
 
-func TestRunWithoutALoginsDirChecksNoLogin(t *testing.T) {
+func TestRunWithoutLoginsChecksNoLogin(t *testing.T) {
 	admin := newFakeAdmin()
 	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
 		t.Fatal(err)
@@ -344,10 +316,10 @@ func TestRunWithoutALoginsDirChecksNoLogin(t *testing.T) {
 	}
 }
 
-func TestRunFailsOnAnUnreadableLoginsDir(t *testing.T) {
+func TestRunFailsWhenTheLoginsCannotBeListed(t *testing.T) {
 	admin := newFakeAdmin()
 	plan := contractPlan()
-	plan.LoginsDir = filepath.Join(t.TempDir(), "missing")
+	plan.Logins = fakeLogins{err: errors.New("read the Redis logins of REDIS_LOGINS_DIR: no such directory")}
 	err := Run(context.Background(), admin, plan, discardLogger())
 	if err == nil || !strings.Contains(err.Error(), "REDIS_LOGINS_DIR") {
 		t.Fatalf("err = %v, want it to name REDIS_LOGINS_DIR", err)
