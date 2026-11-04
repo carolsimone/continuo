@@ -31,6 +31,11 @@ PERMISSION_PROBE_KEY = "continuo-permission-probe"
 SHARED = "shared"
 PER_SERVICE = "perService"
 
+# The clock the fence's waits read and sleep on. They are this module's own,
+# so a test can fake them without faking time.sleep for every thread.
+_monotonic = time.monotonic
+_sleep = time.sleep
+
 # How long the fence waits for a Redis it cannot reach yet, retrying after a
 # delay that starts at _STARTUP_INITIAL_DELAY_S and doubles up to
 # _STARTUP_MAX_DELAY_S: the same window the consumer waits for its group, since
@@ -61,7 +66,7 @@ def check_permission_fence(client: Redis, mode: str) -> None:
         raise PermissionFenceError(
             f"unknown REDIS_ACL_MODE {mode!r}: expected {SHARED} or {PER_SERVICE}"
         )
-    deadline = time.monotonic() + _STARTUP_TIMEOUT_S
+    deadline = _monotonic() + _STARTUP_TIMEOUT_S
     delay = _STARTUP_INITIAL_DELAY_S
     attempt = 0
     while True:
@@ -76,7 +81,7 @@ def check_permission_fence(client: Redis, mode: str) -> None:
         except (AuthenticationError, AuthorizationError):
             raise
         except (RedisConnectionError, RedisTimeoutError) as exc:
-            if time.monotonic() + delay > deadline:
+            if _monotonic() + delay > deadline:
                 logger.error(
                     "Redis still unreachable after %.0fs and %d attempts; giving up: %s",
                     _STARTUP_TIMEOUT_S, attempt, exc,
@@ -86,7 +91,7 @@ def check_permission_fence(client: Redis, mode: str) -> None:
                 "Redis not reachable yet (attempt %d), retrying in %.0fs: %s",
                 attempt, delay, exc,
             )
-            time.sleep(delay)
+            _sleep(delay)
             delay = min(delay * 2, _STARTUP_MAX_DELAY_S)
             continue
         break

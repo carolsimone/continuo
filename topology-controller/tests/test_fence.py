@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -92,8 +93,8 @@ def test_fence_names_the_login_its_credential_provider_signs_in_as():
 
 def test_fence_waits_out_a_redis_it_cannot_reach_yet(monkeypatch):
     clock = _Clock()
-    monkeypatch.setattr(fence.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(fence.time, "sleep", clock.sleep)
+    monkeypatch.setattr(fence, "_monotonic", clock.monotonic)
+    monkeypatch.setattr(fence, "_sleep", clock.sleep)
     client = _client(side_effect=[
         redis_exceptions.ConnectionError("Connection refused"),
         redis_exceptions.BusyLoadingError("Redis is loading the dataset in memory"),
@@ -106,8 +107,8 @@ def test_fence_waits_out_a_redis_it_cannot_reach_yet(monkeypatch):
 
 def test_fence_raises_the_connection_error_once_the_wait_is_spent(monkeypatch):
     clock = _Clock()
-    monkeypatch.setattr(fence.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(fence.time, "sleep", clock.sleep)
+    monkeypatch.setattr(fence, "_monotonic", clock.monotonic)
+    monkeypatch.setattr(fence, "_sleep", clock.sleep)
     refused = redis_exceptions.ConnectionError("Connection refused")
     client = _client(side_effect=refused)
     with pytest.raises(redis_exceptions.ConnectionError) as exc_info:
@@ -119,7 +120,7 @@ def test_fence_raises_the_connection_error_once_the_wait_is_spent(monkeypatch):
 
 def test_fence_does_not_wait_out_a_refused_sign_in(monkeypatch):
     clock = _Clock()
-    monkeypatch.setattr(fence.time, "sleep", clock.sleep)
+    monkeypatch.setattr(fence, "_sleep", clock.sleep)
     client = _client(side_effect=redis_exceptions.AuthenticationError(
         "invalid username-password pair or user is disabled."))
     with pytest.raises(redis_exceptions.AuthenticationError):
@@ -131,3 +132,25 @@ def test_the_fence_acts_on_exactly_the_modes_config_accepts():
     from config import config
     assert config._REDIS_ACL_MODES == (fence.SHARED, fence.PER_SERVICE)
 
+
+
+def test_the_fence_waits_through_its_own_clock_not_the_process_wide_one(monkeypatch):
+    """A test that fakes the fence's clock must not fake time.sleep for every thread.
+
+    Patching time.sleep would also catch the sleeps of threads other tests
+    leave running, which then land in this test's clock.
+    """
+    clock = _Clock()
+    monkeypatch.setattr(fence, "_monotonic", clock.monotonic)
+    monkeypatch.setattr(fence, "_sleep", clock.sleep)
+
+    def no_time_module_sleep(_seconds):
+        raise AssertionError("the fence slept through the time module")
+
+    # Only this module's reference to time is replaced; other threads keep
+    # the real one.
+    monkeypatch.setattr(fence, "time", SimpleNamespace(sleep=no_time_module_sleep, monotonic=clock.monotonic))
+    client = _client(side_effect=[redis_exceptions.ConnectionError("refused"),
+                                  redis_exceptions.NoPermissionError("No permissions to access a key")])
+    check_permission_fence(client, REDIS_ACL_MODE_PER_SERVICE)
+    assert clock.sleeps
