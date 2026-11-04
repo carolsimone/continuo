@@ -42,7 +42,7 @@ can grant rights.
 | Redis | `continuo_dead_letter_controller` | Read both dead-letter streams, write every stream it redrives to, trim streams, read `INFO memory` | dead-letter-controller |
 | Redis | `continuo_topology_controller` | Read its stream, write the streams it produces | topology-controller |
 | Redis | `continuo_ui` | Read and write the ui sessions (`continuo:uisession:*`) | ui |
-| Redis | `continuo_redis_migrate` | Create every stream and consumer group under `continuo:` | the `streams-init` Job |
+| Redis | `continuo_redis_migrate` | Create every stream and consumer group under `continuo:`, and delete the stream keys named before the prefix | the `streams-init` Job |
 
 Every name is a value: `credentials.postgres.<service>.username` and
 `credentials.redis.logins.<name>.username`. The names above are the defaults,
@@ -200,8 +200,9 @@ Every key continuo uses starts with `continuo:`: its streams
 agent-chat's rate-limit keys and agent-remediation's LLM cache. On a Redis
 shared with other applications, `~continuo:*` fences continuo away from their
 keys, and the per-login rules below fence each service away from the others'.
-During this release continuo also drains the stream names it used before the
-prefix (`task.dispatch:v1`), so the published rules name those too.
+During this release the `streams-init` step deletes the stream keys continuo
+used before the prefix (`task.dispatch:v1`), so the published rule of
+`continuo_redis_migrate` names those too. No service's rule names them.
 
 ### Create the logins
 
@@ -291,7 +292,15 @@ before the services roll, from ID `0` where one is missing, signed in as
 a stream or a group itself. To create them yourself, set
 `redisInit.createStreams: false` and run `/streams-init` from the
 dead-letter-controller image with a login that may, before the upgrade; the
-Job then creates nothing but still checks every login.
+Job then creates and deletes nothing but still checks every login.
+
+During this release the step also deletes each stream's key from before the
+prefix (`task.dispatch:v1`), which no service reads: once every consumer group
+of the release has read and acknowledged all of it, and at once for a stream
+the release retired. A key a group has not finished with is kept and logged as
+`unprefixed key kept`, naming the group. A key the login may not read or
+delete (its rule is from an earlier release) is logged and left; delete it
+yourself once drained, or apply this release's rule and upgrade again.
 
 ### What continuo checks
 

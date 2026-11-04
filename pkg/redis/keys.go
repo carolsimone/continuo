@@ -13,12 +13,6 @@ import (
 // by the name. Every stream the system reads or writes lives under it.
 func Key(name string) string { return streams.KeyPrefix + name }
 
-// LegacyKey is the unprefixed Redis key of the contract stream name. A consumer
-// reads it beside Key(name) while streams.LegacyKeys is true and the key holds
-// the consumer's group, so the entries written there before the prefix are
-// still delivered.
-func LegacyKey(name string) string { return name }
-
 // MissingStreamError maps the reply of an XADD that carried NOMKSTREAM to the
 // error a producer returns. Redis answers such an XADD with a nil reply when
 // the stream does not exist, which go-redis reports as redis.Nil; the producer

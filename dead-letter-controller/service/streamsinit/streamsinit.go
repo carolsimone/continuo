@@ -1,5 +1,6 @@
 // Package streamsinit creates every Redis stream and consumer group the
-// release declares, so that no consumer or producer ever creates one.
+// release declares, so that no consumer or producer ever creates one, and
+// deletes the unprefixed keys of the streams that no consumer reads.
 package streamsinit
 
 import (
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/unprefixed"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
 )
 
@@ -24,6 +26,13 @@ type Plan struct {
 	// Logins are the Redis logins Run signs in as before it creates anything;
 	// nil checks no login.
 	Logins ports.RedisLogins
+	// DeleteUnprefixedKeys turns on deleting the unprefixed keys of the
+	// streams once creation is done: the key of each stream of Groups once its
+	// groups have finished with it, and the key of each stream of Retired.
+	DeleteUnprefixedKeys bool
+	// Retired lists the streams removed from the contract. Nothing reads or
+	// writes them.
+	Retired []string
 }
 
 // Run first signs in as every login of plan.Logins and fails, before it
@@ -33,7 +42,9 @@ type Plan struct {
 // contract name; the admin maps the name to the key it stores it under. It
 // writes one log line per stream with the number of groups it created (or 1 for
 // a stream with no group that it created), and returns the first error with the
-// stream, and the group, named.
+// stream, and the group, named. Once every stream exists it deletes the
+// unprefixed keys (see deleteUnprefixedKeys) when plan.DeleteUnprefixedKeys is
+// set; with creation turned off it deletes nothing.
 func Run(ctx context.Context, admin ports.StreamAdmin, plan Plan, logger *slog.Logger) error {
 	if err := checkLogins(ctx, admin, plan.Logins, logger); err != nil {
 		return err
@@ -72,7 +83,50 @@ func Run(ctx context.Context, admin ports.StreamAdmin, plan Plan, logger *slog.L
 		}
 		logger.Info("stream ready", "stream", stream, "groups", len(groups), "created", created)
 	}
+	if plan.DeleteUnprefixedKeys {
+		deleteUnprefixedKeys(ctx, admin, names, plan, logger)
+	}
 	return nil
+}
+
+// deleteUnprefixedKeys deletes the unprefixed key of each stream of names
+// whose contract groups have all finished with it (see unprefixed.Held), and
+// keeps, with a warning naming each group that holds it, one they have not. It
+// deletes the unprefixed key of each retired stream whatever it holds: nothing
+// reads it. A key it cannot read or delete (a login whose rule predates this
+// release answers NOPERM) is logged and left, and the run goes on: the keys
+// it leaves are read by no consumer.
+func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []string, plan Plan, logger *slog.Logger) {
+	const hint = "apply this release's rule of continuo_redis_migrate from deploy/redis-acl-rules.acl, or delete the key yourself"
+	for _, stream := range names {
+		k, exists, err := admin.ReadUnprefixed(ctx, stream)
+		if err != nil {
+			logger.Warn("unprefixed key not read, kept", "stream", stream, "error", err, "hint", hint)
+			continue
+		}
+		if !exists {
+			continue
+		}
+		if held := unprefixed.Held(k, plan.Groups[stream]); len(held) > 0 {
+			logger.Warn("unprefixed key kept", "stream", stream, "held_by", held)
+			continue
+		}
+		deleteUnprefixed(ctx, admin, stream, hint, logger)
+	}
+	for _, stream := range plan.Retired {
+		deleteUnprefixed(ctx, admin, stream, hint, logger)
+	}
+}
+
+// deleteUnprefixed deletes the unprefixed key of stream and logs what it did.
+func deleteUnprefixed(ctx context.Context, admin ports.StreamAdmin, stream, hint string, logger *slog.Logger) {
+	deleted, err := admin.DeleteUnprefixed(ctx, stream)
+	switch {
+	case err != nil:
+		logger.Warn("unprefixed key not deleted", "stream", stream, "error", err, "hint", hint)
+	case deleted:
+		logger.Info("unprefixed key deleted", "stream", stream)
+	}
 }
 
 // checkLogins signs in as each login of source, in username order, and

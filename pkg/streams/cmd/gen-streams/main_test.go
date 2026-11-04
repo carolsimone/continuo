@@ -1239,12 +1239,23 @@ func TestEmit_LegacyKeysFalse(t *testing.T) {
 	if !strings.Contains(goSrc, "const LegacyKeys = false") {
 		t.Errorf("Go output lacks LegacyKeys = false:\n%s", goSrc)
 	}
-	pySrc, err := emitPythonStreams(c, "topology-controller")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(pySrc, "LEGACY_KEYS = False") {
-		t.Errorf("Python output lacks LEGACY_KEYS = False:\n%s", pySrc)
+}
+
+// TestEmitPython_HasNoLegacyKeys: no Python code reads the unprefixed keys, so
+// the Python bindings carry no legacy_keys constant, whatever its value.
+func TestEmitPython_HasNoLegacyKeys(t *testing.T) {
+	for _, legacy := range []string{"true", "false"} {
+		c, err := loadAndValidate(strings.NewReader("key_prefix: \"continuo:\"\nlegacy_keys: " + legacy + "\nstreams: []\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pySrc, err := emitPythonStreams(c, "topology-controller")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(pySrc, "LEGACY_KEYS") {
+			t.Errorf("legacy_keys: %s: Python output carries LEGACY_KEYS:\n%s", legacy, pySrc)
+		}
 	}
 }
 

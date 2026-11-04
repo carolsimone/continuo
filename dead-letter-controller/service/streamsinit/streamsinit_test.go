@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/trim"
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/unprefixed"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
@@ -24,10 +26,18 @@ type fakeAdmin struct {
 	failOn   string // "<stream> <group>" whose EnsureGroup errors
 	failWith error
 	// events is every call in order: "login <user> <password>",
-	// "group <stream> <group>" or "stream <stream>".
+	// "group <stream> <group>", "stream <stream>", "read <stream>" or
+	// "delete <stream>".
 	events []string
 	// loginErrs is the error CheckLogin returns for a username.
 	loginErrs map[string]error
+	// unprefixed holds the unprefixed key of each stream that has one.
+	unprefixed map[string]unprefixed.Key
+	// readErrs and deleteErrs are the errors ReadUnprefixed and
+	// DeleteUnprefixed return for a stream.
+	readErrs, deleteErrs map[string]error
+	// deleted is every unprefixed key DeleteUnprefixed deleted, in order.
+	deleted []string
 }
 
 func newFakeAdmin() *fakeAdmin {
@@ -67,6 +77,30 @@ func (f *fakeAdmin) EnsureStream(_ context.Context, stream string) (bool, error)
 	return true, nil
 }
 
+func (f *fakeAdmin) ReadUnprefixed(_ context.Context, stream string) (unprefixed.Key, bool, error) {
+	f.calls++
+	f.events = append(f.events, "read "+stream)
+	if err := f.readErrs[stream]; err != nil {
+		return unprefixed.Key{}, false, err
+	}
+	k, ok := f.unprefixed[stream]
+	return k, ok, nil
+}
+
+func (f *fakeAdmin) DeleteUnprefixed(_ context.Context, stream string) (bool, error) {
+	f.calls++
+	f.events = append(f.events, "delete "+stream)
+	if err := f.deleteErrs[stream]; err != nil {
+		return false, err
+	}
+	if _, ok := f.unprefixed[stream]; !ok {
+		return false, nil
+	}
+	delete(f.unprefixed, stream)
+	f.deleted = append(f.deleted, stream)
+	return true, nil
+}
+
 // seen is every stream name the admin was asked about.
 func (f *fakeAdmin) seen() map[string]bool {
 	out := map[string]bool{}
@@ -81,7 +115,20 @@ func (f *fakeAdmin) seen() map[string]bool {
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)) }
 
-func contractPlan() Plan { return Plan{Groups: streams.Groups, CreateStreams: true} }
+func contractPlan() Plan {
+	return Plan{Groups: streams.Groups, CreateStreams: true, Retired: streams.Retired, DeleteUnprefixedKeys: true}
+}
+
+// drained is the unprefixed key of stream once every contract group of it has
+// read and acknowledged its last entry.
+func drained(stream string) unprefixed.Key {
+	last := trim.StreamID{Ms: 9}
+	k := unprefixed.Key{Last: &last}
+	for _, g := range streams.Groups[stream] {
+		k.Groups = append(k.Groups, unprefixed.Group{Name: g, LastDelivered: last})
+	}
+	return k
+}
 
 func TestRunCreatesEveryGroupOfTheContract(t *testing.T) {
 	admin := newFakeAdmin()
@@ -188,7 +235,9 @@ func TestRunCreatesNothingWhenTurnedOff(t *testing.T) {
 	admin := newFakeAdmin()
 	var out bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
-	plan := Plan{Groups: streams.Groups, CreateStreams: false}
+	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: drained(streams.TaskDispatchV1)}
+	plan := contractPlan()
+	plan.CreateStreams = false
 	if err := Run(context.Background(), admin, plan, logger); err != nil {
 		t.Fatal(err)
 	}
@@ -326,5 +375,135 @@ func TestRunFailsWhenTheLoginsCannotBeListed(t *testing.T) {
 	}
 	if admin.calls != 0 {
 		t.Fatalf("%d streams or groups were asked for", admin.calls)
+	}
+}
+
+// eventIndex is the position of the first event with prefix, or -1.
+func eventIndex(events []string, prefix string) int {
+	return slices.IndexFunc(events, func(e string) bool { return strings.HasPrefix(e, prefix) })
+}
+
+// lastEventIndex is the position of the last event with prefix, or -1.
+func lastEventIndex(events []string, prefix string) int {
+	for i := len(events) - 1; i >= 0; i-- {
+		if strings.HasPrefix(events[i], prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestRunDeletesADrainedUnprefixedKeyAfterCreating(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: drained(streams.TaskDispatchV1)}
+	var out bytes.Buffer
+	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(admin.deleted, []string{streams.TaskDispatchV1}) {
+		t.Fatalf("deleted = %v, want only %s", admin.deleted, streams.TaskDispatchV1)
+	}
+	for stream := range streams.Groups {
+		if !slices.Contains(admin.events, "read "+stream) {
+			t.Errorf("the unprefixed key of %s was not read", stream)
+		}
+	}
+	if first, last := eventIndex(admin.events, "read "), max(lastEventIndex(admin.events, "group "), lastEventIndex(admin.events, "stream ")); first < last {
+		t.Fatalf("an unprefixed key was read (event %d) before every stream and group was created (event %d)", first, last)
+	}
+	if !strings.Contains(out.String(), `"unprefixed key deleted"`) || !strings.Contains(out.String(), `"stream":"`+streams.TaskDispatchV1+`"`) {
+		t.Fatalf("no line names the deleted key:\n%s", out.String())
+	}
+}
+
+func TestRunKeepsAnUnprefixedKeyWithPendingEntries(t *testing.T) {
+	admin := newFakeAdmin()
+	k := drained(streams.TaskDispatchV1)
+	k.Groups[0].Pending = 2
+	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: k}
+	var out bytes.Buffer
+	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if len(admin.deleted) != 0 || slices.Contains(admin.events, "delete "+streams.TaskDispatchV1) {
+		t.Fatalf("deleted %v: the key still has entries pending", admin.deleted)
+	}
+	for _, want := range []string{`"level":"WARN"`, `"unprefixed key kept"`, streams.TaskDispatchV1, streams.ExecutionControllerTaskDispatch + `: 2 pending`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the log lacks %s:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunKeepsAnUnprefixedKeyWithUndeliveredEntries(t *testing.T) {
+	admin := newFakeAdmin()
+	k := drained(streams.TaskDispatchV1)
+	k.Groups[0].LastDelivered = trim.StreamID{Ms: 5}
+	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: k}
+	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
+		t.Fatal(err)
+	}
+	if len(admin.deleted) != 0 {
+		t.Fatalf("deleted %v: a group has not been delivered the last entry", admin.deleted)
+	}
+}
+
+func TestRunDeletesTheUnprefixedKeyOfEveryRetiredStream(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.unprefixed = map[string]unprefixed.Key{streams.Retired[0]: {}}
+	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
+		t.Fatal(err)
+	}
+	for _, retired := range streams.Retired {
+		if !slices.Contains(admin.events, "delete "+retired) {
+			t.Errorf("the unprefixed key of the retired stream %s was not deleted", retired)
+		}
+		if slices.Contains(admin.events, "read "+retired) {
+			t.Errorf("the retired stream %s was read: nothing consumes it, so it is deleted whatever it holds", retired)
+		}
+	}
+	if !slices.Equal(admin.deleted, []string{streams.Retired[0]}) {
+		t.Fatalf("deleted = %v", admin.deleted)
+	}
+}
+
+// Deleting the unprefixed keys only removes what no consumer reads, so a key
+// that cannot be read or deleted is logged and left, and the run still succeeds.
+func TestRunKeepsGoingWhenAnUnprefixedKeyCannotBeDeleted(t *testing.T) {
+	admin := newFakeAdmin()
+	noperm := errors.New("NOPERM User continuo_redis_migrate has no permissions to access the 'task.dispatch:v1' key")
+	admin.readErrs = map[string]error{streams.TaskDispatchV1: noperm}
+	admin.deleteErrs = map[string]error{streams.Retired[0]: noperm}
+	admin.unprefixed = map[string]unprefixed.Key{
+		streams.ReleasePromotedV2: drained(streams.ReleasePromotedV2),
+		streams.Retired[1]:        {},
+	}
+	var out bytes.Buffer
+	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
+		t.Fatalf("Run = %v, want nil: an unprefixed key it cannot delete does not fail the step", err)
+	}
+	if !slices.Contains(admin.deleted, streams.ReleasePromotedV2) || !slices.Contains(admin.deleted, streams.Retired[1]) {
+		t.Fatalf("deleted = %v, want the keys after the failing ones deleted too", admin.deleted)
+	}
+	for _, want := range []string{streams.TaskDispatchV1, streams.Retired[0], "NOPERM", "deploy/redis-acl-rules.acl"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the log lacks %s:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunLeavesTheUnprefixedKeysWhenTold(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: drained(streams.TaskDispatchV1)}
+	plan := contractPlan()
+	plan.DeleteUnprefixedKeys = false
+	if err := Run(context.Background(), admin, plan, discardLogger()); err != nil {
+		t.Fatal(err)
+	}
+	if i := eventIndex(admin.events, "read "); i >= 0 {
+		t.Fatalf("event %q: the unprefixed keys are read with DeleteUnprefixedKeys off", admin.events[i])
+	}
+	if i := eventIndex(admin.events, "delete "); i >= 0 {
+		t.Fatalf("event %q: an unprefixed key is deleted with DeleteUnprefixedKeys off", admin.events[i])
 	}
 }

@@ -186,12 +186,13 @@ func TestTrimLoop_MissingGroupKeepsRecentEntries(t *testing.T) {
 func TestTrimLoop_RetiredStreamDeleted(t *testing.T) {
 	e := newTrimEnv(t)
 	retired := e.stream + ".retired"
-	t.Cleanup(func() { _ = e.rc.Del(context.Background(), retired).Err() })
-	require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{Stream: retired, ID: "10-0", Values: map[string]any{"k": "v"}}).Err())
+	key := pkgredis.Key(retired)
+	t.Cleanup(func() { _ = e.rc.Del(context.Background(), key).Err() })
+	require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{Stream: key, ID: "10-0", Values: map[string]any{"k": "v"}}).Err())
 
 	require.NoError(t, e.trimmer(nil, retired).RunOnce(context.Background()))
 
-	n, err := e.rc.Exists(context.Background(), retired).Result()
+	n, err := e.rc.Exists(context.Background(), key).Result()
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }

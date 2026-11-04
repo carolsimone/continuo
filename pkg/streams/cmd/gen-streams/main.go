@@ -37,8 +37,10 @@ import (
 type Contract struct {
 	// KeyPrefix leads the name of every Redis key the system owns.
 	KeyPrefix string `yaml:"key_prefix"`
-	// LegacyKeys reports whether the unprefixed key of a stream is still read
-	// beside its prefixed key.
+	// LegacyKeys reports whether the unprefixed keys of the streams are kept:
+	// the services' rules still reach them. When false, the streams-init step
+	// deletes each one once its consumer groups have finished with it, and the
+	// migration login's rule allows that.
 	LegacyKeys     bool            `yaml:"legacy_keys"`
 	Streams        []Stream        `yaml:"streams"`
 	RetiredStreams []RetiredStream `yaml:"retired_streams"`
@@ -297,8 +299,9 @@ package streams
 // contract stream "<stream>" is KeyPrefix + "<stream>".
 const KeyPrefix = "{{ .KeyPrefix }}"
 
-// LegacyKeys reports whether the unprefixed key of a stream is still read
-// beside its prefixed key.
+// LegacyKeys reports whether the unprefixed keys of the streams are kept. When
+// false, the streams-init step deletes each one once its consumer groups have
+// finished with it.
 const LegacyKeys = {{ .LegacyKeys }}
 
 // Stream names.
@@ -782,9 +785,6 @@ func emitPythonStreams(c *Contract, service string) (string, error) {
 KEY_PREFIX = "{{ .KeyPrefix }}"
 """Leads the name of every Redis key the system owns."""
 
-LEGACY_KEYS = {{ if .LegacyKeys }}True{{ else }}False{{ end }}
-"""Whether the unprefixed key of a stream is still read beside its prefixed key."""
-
 {{ range .Streams }}{{ .Const }} = "{{ .Name }}"
 """{{ .Description }}"""
 
@@ -799,12 +799,11 @@ LEGACY_KEYS = {{ if .LegacyKeys }}True{{ else }}False{{ end }}
 	}
 	var buf strings.Builder
 	if err := t.Execute(&buf, struct {
-		Service    string
-		KeyPrefix  string
-		LegacyKeys bool
-		Streams    []streamRow
-		Groups     []groupRow
-	}{service, c.KeyPrefix, c.LegacyKeys, streams, groups}); err != nil {
+		Service   string
+		KeyPrefix string
+		Streams   []streamRow
+		Groups    []groupRow
+	}{service, c.KeyPrefix, streams, groups}); err != nil {
 		return "", err
 	}
 	out := strings.TrimRight(buf.String(), "\n") + "\n"

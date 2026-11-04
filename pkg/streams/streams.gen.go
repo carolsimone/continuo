@@ -6,9 +6,10 @@ package streams
 // contract stream "<stream>" is KeyPrefix + "<stream>".
 const KeyPrefix = "continuo:"
 
-// LegacyKeys reports whether the unprefixed key of a stream is still read
-// beside its prefixed key.
-const LegacyKeys = true
+// LegacyKeys reports whether the unprefixed keys of the streams are kept. When
+// false, the streams-init step deletes each one once its consumer groups have
+// finished with it.
+const LegacyKeys = false
 
 // Stream names.
 const (

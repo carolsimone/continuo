@@ -17,8 +17,9 @@ import (
 )
 
 // inspectorStream returns a Redis client and a stream name named after the test,
-// and deletes the stream's prefixed and unprefixed keys when the test ends. The
-// test addresses the stream's key as pkgredis.Key(stream).
+// and deletes the stream's prefixed key, and its unprefixed key (the bare
+// name), when the test ends. The test addresses the stream's key as
+// pkgredis.Key(stream).
 func inspectorStream(t *testing.T) (*goredis.Client, string) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
@@ -28,7 +29,7 @@ func inspectorStream(t *testing.T) (*goredis.Client, string) {
 	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
 	t.Cleanup(func() { _ = rc.Close() })
 	stream := "test.trim." + strings.ToLower(t.Name()) + ":v1"
-	keys := []string{pkgredis.Key(stream), pkgredis.LegacyKey(stream)}
+	keys := []string{pkgredis.Key(stream), stream}
 	t.Cleanup(func() { _ = rc.Del(context.Background(), keys...).Err() })
 	require.NoError(t, rc.Del(context.Background(), keys...).Err())
 	return rc, stream
@@ -168,12 +169,12 @@ func TestTrimBefore_RemovesOnlyBelow(t *testing.T) {
 	assert.EqualValues(t, 2, n)
 }
 
-// DeleteIfExists removes the unprefixed key of a stream removed from the
-// contract and leaves a prefixed key of the same name alone.
+// DeleteIfExists removes the key of a stream removed from the contract, its
+// prefixed key, and leaves an unprefixed key of the same name to streams-init.
 func TestDeleteIfExists(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.LegacyKey(stream), ID: "10-0", Values: map[string]any{"k": "v"}}).Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: "10-0", Values: map[string]any{"k": "v"}}).Err())
 	xadd(t, rc, stream, "10-0")
 	ins := NewStreamInspector(rc)
 
@@ -185,7 +186,10 @@ func TestDeleteIfExists(t *testing.T) {
 	assert.False(t, deleted)
 	n, err := rc.Exists(ctx, pkgredis.Key(stream)).Result()
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, n, "the prefixed key is not a retired stream's key")
+	assert.Zero(t, n, "the retired stream's key is deleted")
+	n, err = rc.Exists(ctx, stream).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n, "the unprefixed key is streams-init's to delete")
 }
 
 // A redriven entry addressed to another group is skipped by this group when it

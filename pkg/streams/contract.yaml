@@ -12,9 +12,12 @@
 # the stream `task.dispatch:v1` lives at `continuo:task.dispatch:v1`.
 key_prefix: "continuo:"
 
-# While true, consumers also read the unprefixed key of a stream that still
-# holds their group.
-legacy_keys: true
+# Whether the unprefixed keys of the streams (the stream names without
+# key_prefix) are kept. Consumers read only the prefixed keys. While false, the
+# streams-init step deletes each unprefixed key once its consumer groups have
+# finished with it, and the unprefixed key of each retired stream, and the
+# streams-init login's Redis rule allows that.
+legacy_keys: false
 
 streams:
   # ---------------- run lifecycle streams ----------------

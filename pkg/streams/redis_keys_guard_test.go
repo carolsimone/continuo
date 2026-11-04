@@ -59,11 +59,10 @@ func redisKeysGuardRoots(t *testing.T, root string) []string {
 }
 
 // TestRedisKeysCarryThePrefix fails for every production Go site that hands a
-// Redis command an unprefixed key: an XAddArgs whose Stream is not a Key or
-// LegacyKey call, or a key command whose key is a streams constant, a string
-// literal or a concatenation that starts with one. Every key lives under
-// streams.KeyPrefix, built only by pkg/redis.Key (and LegacyKey for the
-// unprefixed keys a consumer still drains or the trim loop deletes).
+// Redis command an unprefixed key: an XAddArgs whose Stream is not a Key call,
+// or a key command whose key is a streams constant, a string literal or a
+// concatenation that starts with one. Every key lives under streams.KeyPrefix,
+// built only by pkg/redis.Key.
 func TestRedisKeysCarryThePrefix(t *testing.T) {
 	root := repoRootFromTest(t)
 	exempt := filepath.Join(root, "pkg", "redis", "keys.go")
@@ -118,7 +117,7 @@ func TestRedisKeyGuardFlagsAnUnprefixedKey(t *testing.T) {
 		{"XAddArgs with a variable", `func f(name string) any { return &goredis.XAddArgs{Stream: name} }`, 1},
 		{"XAddArgs without a stream", `var _ = goredis.XAddArgs{}`, 1},
 		{"XAddArgs with Key", `var _ = &goredis.XAddArgs{Stream: pkgredis.Key(streams.TaskDispatchV1)}`, 0},
-		{"XAddArgs with LegacyKey", `var _ = &goredis.XAddArgs{Stream: pkgredis.LegacyKey(streams.TaskDispatchV1)}`, 0},
+		{"XAddArgs with a helper other than Key", `var _ = &goredis.XAddArgs{Stream: pkgredis.LegacyKey(streams.TaskDispatchV1)}`, 1},
 		{"XAddArgs with a bare Key call", `var _ = &goredis.XAddArgs{Stream: Key("x")}`, 0},
 		{"XAck with a streams constant", `func f(c *goredis.Client) { c.XAck(nil, streams.TaskDispatchV1, "g", "1") }`, 1},
 		{"XAck with a Key variable", `func f(c *goredis.Client, key string) { c.XAck(nil, key, "g", "1") }`, 0},
@@ -309,8 +308,8 @@ func fieldValue(lit *ast.CompositeLit, field string) ast.Expr {
 	return nil
 }
 
-// isKeyCall reports whether expr is a call of Key or LegacyKey, bare or through
-// a package qualifier.
+// isKeyCall reports whether expr is a call of Key, bare or through a package
+// qualifier.
 func isKeyCall(expr ast.Expr) bool {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
@@ -323,13 +322,13 @@ func isKeyCall(expr ast.Expr) bool {
 	case *ast.SelectorExpr:
 		name = fn.Sel.Name
 	}
-	return name == "Key" || name == "LegacyKey"
+	return name == "Key"
 }
 
 // unprefixed reports whether expr is a key built from a contract constant or a
 // string literal: a `streams.` selector, a string literal, a package-level
 // string constant, or a `+` expression whose first operand is one of those. A
-// call (Key, LegacyKey, any helper) and a variable are never flagged.
+// call (Key, any helper) and a variable are never flagged.
 func unprefixed(expr ast.Expr, consts map[string]bool) bool {
 	switch e := expr.(type) {
 	case *ast.ParenExpr:

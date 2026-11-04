@@ -199,11 +199,11 @@ func (s *StreamInspector) TrimBefore(ctx context.Context, stream string, minID t
 	return n, nil
 }
 
-// DeleteIfExists deletes the unprefixed key of stream and reports whether it
-// existed. Only the streams removed from the contract are deleted, and those
-// were never written under the prefix.
+// DeleteIfExists deletes the prefixed key of stream and reports whether it
+// existed. Only the streams removed from the contract are deleted. Their
+// unprefixed keys are the streams-init step's to delete.
 func (s *StreamInspector) DeleteIfExists(ctx context.Context, stream string) (bool, error) {
-	n, err := s.rdb.Del(ctx, pkgredis.LegacyKey(stream)).Result()
+	n, err := s.rdb.Del(ctx, pkgredis.Key(stream)).Result()
 	if err != nil {
 		return false, fmt.Errorf("del %s: %w", stream, err)
 	}

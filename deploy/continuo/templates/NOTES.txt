@@ -134,8 +134,9 @@ hook Job that runs before the services roll. With the bundled Redis it is a Job
 of the release, which the services wait for (up to five minutes). The ui keeps
 its sessions under continuo:uisession:, so every ui user signs in once more
 after this upgrade, and agent-chat's rate-limit counters and agent-remediation's
-LLM cache start empty. Keys under the old names stay in Redis and are not
-deleted.
+LLM cache start empty. Services read only the keys under continuo:. The
+streams-init step deletes a stream key under an old name once every consumer
+group has read and acknowledged all of it, and logs one it keeps.
 streams-init needs a Redis login that may create streams (XGROUP CREATE with
 MKSTREAM). If yours may not, have the Redis owner create the streams by running
 /streams-init from the dead-letter-controller image with a login that may, and

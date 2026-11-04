@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,12 +18,13 @@ import (
 // second, so a test of the wait does not take the default five minutes.
 var shortStartup = StartupPolicy{Timeout: time.Second, InitialDelay: 100 * time.Millisecond, MaxDelay: 200 * time.Millisecond}
 
-// keysTestStream returns a contract name unique to the test and deletes both of
-// its keys when the test ends.
+// keysTestStream returns a contract name unique to the test and deletes its
+// key, and the unprefixed key named by the bare contract name, when the test
+// ends.
 func keysTestStream(t *testing.T, rc *goredis.Client, label string) string {
 	t.Helper()
 	stream := fmt.Sprintf("test-%s-%d", label, time.Now().UnixNano())
-	t.Cleanup(func() { rc.Del(context.Background(), Key(stream), LegacyKey(stream)) })
+	t.Cleanup(func() { rc.Del(context.Background(), Key(stream), stream) })
 	return stream
 }
 
@@ -56,7 +55,7 @@ func TestConsumerNeverCreatesItsGroup(t *testing.T) {
 		t.Fatal("Start did not give up on a missing group within its startup policy")
 	}
 	assert.Equal(t, int64(0), rc.Exists(ctx, Key(stream)).Val(), "Start must not create the prefixed key")
-	assert.Equal(t, int64(0), rc.Exists(ctx, LegacyKey(stream)).Val(), "Start must not create the legacy key")
+	assert.Equal(t, int64(0), rc.Exists(ctx, stream).Val(), "Start must not create the unprefixed key")
 }
 
 func TestConsumerWaitsForItsGroup(t *testing.T) {
@@ -91,92 +90,23 @@ func TestConsumerWaitsForItsGroup(t *testing.T) {
 	assert.NoError(t, <-done)
 }
 
-func TestConsumerReadsTheLegacyKeyWhileItHoldsTheGroup(t *testing.T) {
+// The unprefixed key of a stream is never read, even when it holds the
+// consumer's group: its entry stays undelivered and no consumer joins the group
+// there.
+func TestConsumerReadsOnlyThePrefixedKey(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream := keysTestStream(t, rc, "legacy")
+	stream := keysTestStream(t, rc, "prefixed-only")
 	group := "test-group"
-	for _, key := range []string{Key(stream), LegacyKey(stream)} {
+	for _, key := range []string{Key(stream), stream} {
 		require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"from": key}}).Err())
 	}
 
-	var mu sync.Mutex
-	var from []string
-	c := NewStreamConsumer(rc, stream, group, func(_ context.Context, m goredis.XMessage) error {
-		mu.Lock()
-		defer mu.Unlock()
-		from = append(from, m.Values["from"].(string))
-		return nil
-	}, discardLog())
-	c.SetService("pkg-redis-test")
-	c.startup = shortStartup
-	done := startConsumer(ctx, c)
-
-	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(from) == 2
-	}, 5*time.Second, 20*time.Millisecond, "the handler sees the entry of each key")
-	mu.Lock()
-	assert.ElementsMatch(t, []string{Key(stream), LegacyKey(stream)}, from)
-	mu.Unlock()
-	for _, key := range []string{Key(stream), LegacyKey(stream)} {
-		require.Eventually(t, func() bool {
-			p, err := rc.XPending(ctx, key, group).Result()
-			return err == nil && p.Count == 0
-		}, 5*time.Second, 20*time.Millisecond, "each entry is acknowledged on the key it came from: %s", key)
-	}
-	assert.NoError(t, c.Healthy(time.Minute), "both loops are alive")
-	cancel()
-	assert.NoError(t, <-done)
-}
-
-func TestConsumerIgnoresAMissingLegacyKey(t *testing.T) {
-	rc := internalRedisClient(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stream := keysTestStream(t, rc, "no-legacy")
-	group := "test-group"
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, Key(stream), group, "0").Err())
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: Key(stream), Values: map[string]any{"k": "v"}}).Err())
-
-	seen := make(chan struct{}, 1)
-	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error {
-		seen <- struct{}{}
-		return nil
-	}, discardLog())
-	c.SetService("pkg-redis-test")
-	c.startup = shortStartup
-	done := startConsumer(ctx, c)
-
-	select {
-	case <-seen:
-	case err := <-done:
-		t.Fatalf("Start returned instead of reading the prefixed key: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("the consumer never read the prefixed key")
-	}
-	assert.Equal(t, int64(0), rc.Exists(ctx, LegacyKey(stream)).Val(), "the legacy key is never created")
-	cancel()
-	assert.NoError(t, <-done)
-}
-
-func TestConsumerIgnoresALegacyKeyWithoutItsGroup(t *testing.T) {
-	rc := internalRedisClient(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stream := keysTestStream(t, rc, "legacy-other-group")
-	group := "test-group"
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, Key(stream), group, "0").Err())
-	require.NoError(t, rc.XGroupCreateMkStream(ctx, LegacyKey(stream), "another-group", "0").Err())
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: LegacyKey(stream), Values: map[string]any{"k": "legacy"}}).Err())
-	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: Key(stream), Values: map[string]any{"k": "prefixed"}}).Err())
-
 	seen := make(chan string, 2)
 	c := NewStreamConsumer(rc, stream, group, func(_ context.Context, m goredis.XMessage) error {
-		seen <- m.Values["k"].(string)
+		seen <- m.Values["from"].(string)
 		return nil
 	}, discardLog())
 	c.SetService("pkg-redis-test")
@@ -185,7 +115,7 @@ func TestConsumerIgnoresALegacyKeyWithoutItsGroup(t *testing.T) {
 
 	select {
 	case v := <-seen:
-		assert.Equal(t, "prefixed", v)
+		assert.Equal(t, Key(stream), v)
 	case err := <-done:
 		t.Fatalf("Start returned instead of reading the prefixed key: %v", err)
 	case <-time.After(5 * time.Second):
@@ -193,13 +123,15 @@ func TestConsumerIgnoresALegacyKeyWithoutItsGroup(t *testing.T) {
 	}
 	select {
 	case v := <-seen:
-		t.Fatalf("the consumer read %q from a legacy key that does not hold its group", v)
+		t.Fatalf("the consumer read the entry of %q", v)
 	case <-time.After(1500 * time.Millisecond):
 	}
-	groups, err := rc.XInfoGroups(ctx, LegacyKey(stream)).Result()
+	groups, err := rc.XInfoGroups(ctx, stream).Result()
 	require.NoError(t, err)
-	require.Len(t, groups, 1, "no group is created on the legacy key")
-	assert.Equal(t, "another-group", groups[0].Name)
+	require.Len(t, groups, 1)
+	assert.Equal(t, "0-0", groups[0].LastDeliveredID, "nothing was delivered from the unprefixed key")
+	assert.Zero(t, groups[0].Consumers, "no consumer joined the group on the unprefixed key")
+	assert.NoError(t, c.Healthy(time.Minute))
 	cancel()
 	assert.NoError(t, <-done)
 }
@@ -290,146 +222,41 @@ func TestXaddDeadLetter_NeverCreatesTheDeadLetterStream(t *testing.T) {
 	assert.Equal(t, int64(0), rc.Exists(ctx, dlq).Val())
 }
 
-// peakHandler returns a handler that sleeps briefly and the peak number of
-// its invocations that overlapped.
-func peakHandler() (MessageHandler, *atomic.Int32) {
-	var running, peak atomic.Int32
-	return func(context.Context, goredis.XMessage) error {
-		n := running.Add(1)
-		defer running.Add(-1)
-		for {
-			p := peak.Load()
-			if n <= p || peak.CompareAndSwap(p, n) {
-				break
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-		return nil
-	}, &peak
-}
-
-// invokeOnBoth runs safeInvoke five times on each loop, the loops in parallel.
-func invokeOnBoth(a, b *StreamConsumer) {
-	var wg sync.WaitGroup
-	for _, l := range []*StreamConsumer{a, b} {
-		wg.Go(func() {
-			for range 5 {
-				_, _ = l.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
-			}
-		})
-	}
-	wg.Wait()
-}
-
-func TestOnKey_CopiesTheConfigWithItsOwnKey(t *testing.T) {
-	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", nil, discardLog(), WithHandlerTimeout(time.Second), WithWorkerPool(3, "id"))
-	c.SetService("pkg-redis-test")
-	l := c.onKey(LegacyKey("orders:v1"))
-	assert.Equal(t, Key("orders:v1"), c.key)
-	assert.Equal(t, "orders:v1", l.key)
-	assert.Equal(t, time.Second, l.handlerTimeout)
-	assert.Equal(t, 3, l.workerCount)
-	assert.Equal(t, "pkg-redis-test", l.service)
-	assert.Equal(t, c.consumerName, l.consumerName)
-	assert.NoError(t, l.Healthy(time.Minute), "a new loop starts with a fresh heartbeat")
-}
-
-func TestOnKey_SerializesTheHandlerOfASerialConsumer(t *testing.T) {
-	handler, peak := peakHandler()
-	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", handler, discardLog())
-	c.handlerMu = &sync.Mutex{}
-	invokeOnBoth(c, c.onKey(LegacyKey("orders:v1")))
-	assert.Equal(t, int32(1), peak.Load(), "the loops of a serial consumer never run its handler at once")
-}
-
-func TestOnKey_LeavesAWorkerPoolParallel(t *testing.T) {
-	handler, peak := peakHandler()
-	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", handler, discardLog(), WithWorkerPool(2, "id"))
-	invokeOnBoth(c, c.onKey(LegacyKey("orders:v1")))
-	assert.Equal(t, int32(2), peak.Load(), "a worker-pool consumer's handler already runs concurrently")
-}
-
-func TestHealthy_ReportsAStalledKeyLoop(t *testing.T) {
-	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", nil, discardLog())
-	l := c.onKey(LegacyKey("orders:v1"))
-	c.keyLoops.Store(&[]*StreamConsumer{l})
-	require.NoError(t, c.Healthy(time.Minute))
-	l.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	err := c.Healthy(time.Minute)
-	require.Error(t, err, "a stalled loop of the legacy key makes the consumer unhealthy")
-	assert.Contains(t, err.Error(), `on "orders:v1"`)
-}
-
-func TestSafeInvoke_AdvancesTheHeartbeatWhileWaitingForTheHandlerLock(t *testing.T) {
-	c := NewStreamConsumer(nil, "orders:v1", "svc-orders",
-		func(context.Context, goredis.XMessage) error { return nil }, discardLog(), WithHandlerTimeout(time.Minute))
-	c.handlerMu = &sync.Mutex{}
-	// The other key's loop holds the lock for a whole handler invocation.
-	c.handlerMu.Lock()
-	stale := time.Now().Add(-time.Hour).UnixNano()
-	c.lastActivity.Store(stale)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
-	}()
-
-	require.Eventually(t, func() bool { return c.lastActivity.Load() != stale }, 2*time.Second, 5*time.Millisecond,
-		"a loop waiting for the handler lock advances its heartbeat before it blocks")
-	select {
-	case <-done:
-		t.Fatal("safeInvoke ran the handler while the other loop held the lock")
-	default:
-	}
-	assert.NoError(t, c.Healthy(c.handlerTimeout), "the waiting loop reads healthy within one handler timeout")
-
-	c.handlerMu.Unlock()
-	<-done
-}
-
 func TestDedupMessageIDKeepsTheEntryIDWithoutAConsumer(t *testing.T) {
 	assert.Equal(t, "5-0", DedupMessageID(context.Background(), goredis.XMessage{ID: "5-0"}))
 }
 
-// Two keys number their entries independently, so a legacy entry and a prefixed
-// entry can carry the same ID. The handler must see two identities: the legacy
-// entry's own ID, which an earlier release recorded, and the prefixed entry's ID
-// qualified by its key.
-func TestConsumerGivesEntriesOfTwoKeysWithOneIDTwoDedupIdentities(t *testing.T) {
+// A handler dedups an entry under its ID qualified by the key it was read
+// from, so the identity an entry was recorded under stays the same across
+// releases.
+func TestConsumerQualifiesTheDedupIdentityByItsKey(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := keysTestStream(t, rc, "dedup-id")
 	group := "test-group"
-	const sharedID = "1700000000000-0"
-	for _, key := range []string{Key(stream), LegacyKey(stream)} {
-		require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
-		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, ID: sharedID, Values: map[string]any{"from": key}}).Err())
-	}
+	const entryID = "1700000000000-0"
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, Key(stream), group, "0").Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: Key(stream), ID: entryID, Values: map[string]any{"k": "v"}}).Err())
 
-	var mu sync.Mutex
-	identities := map[string]string{}
+	identity := make(chan string, 1)
 	c := NewStreamConsumer(rc, stream, group, func(ctx context.Context, m goredis.XMessage) error {
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Equal(t, sharedID, m.ID, "the entry keeps its own ID, which acknowledgement uses")
-		identities[m.Values["from"].(string)] = DedupMessageID(ctx, m)
+		assert.Equal(t, entryID, m.ID, "the entry keeps its own ID, which acknowledgement uses")
+		identity <- DedupMessageID(ctx, m)
 		return nil
 	}, discardLog())
 	c.SetService("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 
-	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(identities) == 2
-	}, 5*time.Second, 20*time.Millisecond)
-	mu.Lock()
-	assert.Equal(t, sharedID, identities[LegacyKey(stream)], "a legacy entry keeps the identity earlier releases recorded")
-	assert.Equal(t, sharedID+"@"+Key(stream), identities[Key(stream)])
-	mu.Unlock()
+	select {
+	case id := <-identity:
+		assert.Equal(t, entryID+"@"+Key(stream), id)
+	case err := <-done:
+		t.Fatalf("Start returned before the handler ran: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler never ran")
+	}
 	cancel()
 	assert.NoError(t, <-done)
 }

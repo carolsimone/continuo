@@ -23,7 +23,7 @@ func createStream(t *testing.T, rc *goredis.Client, stream string) {
 	t.Helper()
 	ctx := context.Background()
 	key := pkgredis.Key(stream)
-	t.Cleanup(func() { rc.Del(ctx, key, pkgredis.LegacyKey(stream)) })
+	t.Cleanup(func() { rc.Del(ctx, key, stream) })
 	if err := rc.XGroupCreateMkStream(ctx, key, "test-group", "$").Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestRedrivePublisher_PublishRefusesAMissingStream(t *testing.T) {
 	t.Cleanup(func() { _ = rc.Close() })
 	ctx := context.Background()
 	stream := "test.redrive.missing:" + uuid.NewString()
-	t.Cleanup(func() { rc.Del(ctx, pkgredis.Key(stream), pkgredis.LegacyKey(stream)) })
+	t.Cleanup(func() { rc.Del(ctx, pkgredis.Key(stream), stream) })
 
 	dl := deadletter.DeadLetter{ID: uuid.New(), Source: deadletter.SourceConsumer, Group: "g", Fields: map[string]string{"k": "v"}}
 	body, _ := serialization.EncodeRedrive(dl)
@@ -117,7 +117,7 @@ func TestRedrivePublisher_PublishRefusesAMissingStream(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not exist; the streams-init step creates it") {
 		t.Fatalf("Publish = %v, want the missing-stream error", err)
 	}
-	if n, _ := rc.Exists(ctx, pkgredis.Key(stream), pkgredis.LegacyKey(stream)).Result(); n != 0 {
+	if n, _ := rc.Exists(ctx, pkgredis.Key(stream), stream).Result(); n != 0 {
 		t.Fatalf("a redrive created a stream: %d keys exist", n)
 	}
 }
