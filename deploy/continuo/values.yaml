@@ -603,9 +603,11 @@ maintenance:
   enabled: false
 
 databaseInit:
-  # Idempotently creates all 8 databases (including continuo_dbt) before the
-  # Flyway migrations run. Disable when a DBA pre-creates databases; the
-  # connecting user then no longer needs CREATEDB.
+  # Idempotently creates the 7 service databases, and with the bundled Postgres
+  # the warehouse (validation.warehouseDatabase), before the Flyway migrations
+  # run, owned by the migration login. Disable when a DBA pre-creates the
+  # databases and makes the migration login their owner; it then no longer
+  # needs CREATEDB.
   enabled: true
 
 database:

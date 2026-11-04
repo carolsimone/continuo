@@ -177,6 +177,11 @@ spec:
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
                   {{- end }}
             {{- end }}
+            # A hook reads no ConfigMap of the release, so the Job carries the
+            # mode itself; in perService it refuses to run when its own login
+            # reaches keys outside continuo:.
+            - name: REDIS_ACL_MODE
+              value: {{ include "continuo.redis.mode" . | quote }}
             - name: REDIS_INIT_CREATE_STREAMS
               value: {{ $createStreams | quote }}
             - name: LOG_LEVEL

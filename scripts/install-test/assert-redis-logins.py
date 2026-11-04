@@ -7,7 +7,8 @@ perService (credentials.redis.mode):
     that login's Secret; its wait-for-redis init container, when rendered,
     signs in as the same login;
   - the shared ConfigMap says REDIS_ACL_MODE=perService;
-  - the streams-init Job signs in as continuo_redis_migrate and mounts the
+  - the streams-init Job signs in as continuo_redis_migrate, checks its own
+    login's reach (REDIS_ACL_MODE=perService), and mounts the
     password of every other login it can reach under
     /var/run/secrets/continuo/redis-logins/<username> (REDIS_LOGINS_DIR);
   - bundled: Redis starts from an ACL file (--aclfile, no --requirepass) with
@@ -140,6 +141,8 @@ def main() -> int:
                 problems.append(f"streams-init signs in as {value(env, 'REDIS_USERNAME')!r}")
             if secret_ref(env, "REDIS_PASSWORD") != want_secret(STREAMS_INIT):
                 problems.append(f"streams-init reads REDIS_PASSWORD from {secret_ref(env, 'REDIS_PASSWORD')}")
+            if value(env, "REDIS_ACL_MODE") != "perService":
+                problems.append(f"streams-init REDIS_ACL_MODE is {value(env, 'REDIS_ACL_MODE')!r}, want 'perService'")
             if value(env, "REDIS_LOGINS_DIR") != LOGINS_DIR:
                 problems.append(f"streams-init REDIS_LOGINS_DIR is {value(env, 'REDIS_LOGINS_DIR')!r}")
             mounts = {m["name"]: m["mountPath"] for m in main.get("volumeMounts") or []}
