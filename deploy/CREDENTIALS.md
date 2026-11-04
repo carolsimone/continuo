@@ -202,10 +202,9 @@ shared with other applications, `~continuo:*` fences continuo away from their
 keys, and the per-login rules below fence each service away from the others'.
 During this release the `streams-init` step deletes the stream keys continuo
 used before the prefix (`task.dispatch:v1`), so the published rule of
-`continuo_redis_migrate` names those too. No service's rule names them: apply
-the rule of `continuo_redis_migrate` before upgrading, and the service rules
-once the upgrade has rolled, since a pod of the previous release still reads
-the old keys when it starts.
+`continuo_redis_migrate` names those too. No service's rule names them. Apply
+the new rules before or with the upgrade: the services of 0.19.0 keep running
+under them.
 
 ### Create the logins
 
