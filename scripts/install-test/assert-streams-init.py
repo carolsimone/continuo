@@ -265,8 +265,8 @@ def check_job(docs, mode, create_streams, acl_mode):
                 failures.append(f"wait-for-redis waits for {target}, the Job connects to "
                                 f"{(env.get('REDIS_ADDR') or {}).get('value')!r}")
             if key_ref(wenv.get("REDISCLI_AUTH")) != login_ref:
-                failures.append(f"wait-for-redis signs in with {secret_ref(wenv.get('REDISCLI_AUTH'))}, "
-                                f"the Job with {password_ref}")
+                failures.append(f"wait-for-redis signs in with {key_ref(wenv.get('REDISCLI_AUTH'))}, "
+                                f"the Job with {login_ref}")
             redis = [d for d in docs if d.get("kind") == "StatefulSet"
                      and (d["metadata"].get("labels") or {}).get("app.kubernetes.io/name") == "redis"]
             if len(redis) != 1:
@@ -288,29 +288,29 @@ def check_job(docs, mode, create_streams, acl_mode):
             if ref_source is None:
                 continue
             if "pre-install" not in annotations_of(ref_source).get(HOOK, ""):
-                failures.append(f"the hook reads the Secret {secret_name!r} ({where}), a regular resource Helm "
+                failures.append(f"the hook reads the Secret {ref_name!r} ({where}), a regular resource Helm "
                                 "creates only after pre-install hooks: the pod would never start")
             elif hook_weight(ref_source) >= hook_weight(job):
-                failures.append(f"the hook's Secret {secret_name!r} ({where}) is not created before the Job: "
+                failures.append(f"the hook's Secret {ref_name!r} ({where}) is not created before the Job: "
                                 "its hook weight must be lower")
             elif key is not None and key not in (ref_source.get("stringData") or {}) | (ref_source.get("data") or {}):
-                failures.append(f"the hook's Secret {secret_name!r} lacks the key {key!r} ({where})")
+                failures.append(f"the hook's Secret {ref_name!r} lacks the key {key!r} ({where})")
     hook_refs = labelled(docs, "Secret", JOB_NAME)
     reads_render_login = login_ref is not None and login_ref.get("name") in ref_docs
     if mode == "hook" and acl_mode == "shared" and reads_render_login:
         if len(hook_refs) != 1 or hook_refs[0]["metadata"]["name"] != login_ref["name"]:
-            failures.append(f"the shared-mode hook reads its password from {password_ref['name']!r}, "
-                            f"which is not the one streams-init hook Secret {[s['metadata']['name'] for s in hook_secrets]}")
+            failures.append(f"the shared-mode hook reads its password from {login_ref['name']!r}, "
+                            f"which is not the one streams-init hook Secret {[s['metadata']['name'] for s in hook_refs]}")
         else:
             ref_source = hook_refs[0]
             if annotations_of(ref_source) != HOOK_REF_ANNOTATIONS:
-                failures.append(f"the hook Secret's annotations are {annotations_of(secret)}, "
-                                f"want exactly {HOOK_SECRET_ANNOTATIONS}")
+                failures.append(f"the hook Secret's annotations are {annotations_of(ref_source)}, "
+                                f"want exactly {HOOK_REF_ANNOTATIONS}")
             if sorted((ref_source.get("stringData") or {}) | (ref_source.get("data") or {})) != ["redis-password"] \
                     or login_ref.get("key") != "redis-password":
                 failures.append("the hook Secret must hold exactly redis-password, the key the Job reads")
     elif hook_refs:
-        failures.append(f"the render holds the streams-init Secret {[s['metadata']['name'] for s in hook_secrets]}, "
+        failures.append(f"the render holds the streams-init Secret {[s['metadata']['name'] for s in hook_refs]}, "
                         "which only a shared-mode hook whose password the chart holds reads")
     return failures
 

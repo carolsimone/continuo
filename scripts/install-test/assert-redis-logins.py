@@ -114,7 +114,7 @@ def main() -> int:
             problems.append(f"{name}: REDIS_USERNAME is {value(env, 'REDIS_USERNAME')!r}, want {login!r}")
         got = credential_ref(spec, main, "REDIS_PASSWORD")
         if got != want_ref(name):
-            problems.append(f"{name}: REDIS_PASSWORD comes from {got}, want {want_secret(name)}")
+            problems.append(f"{name}: REDIS_PASSWORD comes from {got}, want {want_ref(name)}")
         if sum(1 for e in main.get("env") or [] if e["name"].startswith("REDIS_PASSWORD")) != 1:
             problems.append(f"{name}: REDIS_PASSWORD is set more than once")
         for wait in [c for c in spec.get("initContainers") or [] if c["name"] == "wait-for-redis"]:
@@ -123,7 +123,7 @@ def main() -> int:
                 problems.append(f"{name}: wait-for-redis signs in as {value(wenv, 'REDIS_USERNAME')!r}, want {login!r}")
             got = credential_ref(spec, wait, "REDISCLI_AUTH")
             if got != want_ref(name):
-                problems.append(f"{name}: wait-for-redis reads REDISCLI_AUTH from {got}, want {want_secret(name)}")
+                problems.append(f"{name}: wait-for-redis reads REDISCLI_AUTH from {got}, want {want_ref(name)}")
     if mode == "perService":
         missing = {s for s in login_of if s != STREAMS_INIT} - seen
         if missing:
@@ -140,7 +140,7 @@ def main() -> int:
             if value(env, "REDIS_USERNAME") != login_of[STREAMS_INIT]:
                 problems.append(f"streams-init signs in as {value(env, 'REDIS_USERNAME')!r}")
             if key_ref(env, "REDIS_PASSWORD") != want_ref(STREAMS_INIT):
-                problems.append(f"streams-init reads REDIS_PASSWORD from {secret_ref(env, 'REDIS_PASSWORD')}")
+                problems.append(f"streams-init reads REDIS_PASSWORD from {key_ref(env, 'REDIS_PASSWORD')}")
             if value(env, "REDIS_ACL_MODE") != "perService":
                 problems.append(f"streams-init REDIS_ACL_MODE is {value(env, 'REDIS_ACL_MODE')!r}, want 'perService'")
             if value(env, "REDIS_LOGINS_DIR") != LOGINS_DIR:
