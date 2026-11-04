@@ -234,3 +234,31 @@ def test_validate_rejects_a_url_with_credentials(monkeypatch, url):
     assert str(exc_info.value) == (
         "REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD"
     )
+
+
+def test_redis_acl_mode_defaults_to_shared(monkeypatch):
+    monkeypatch.delenv("REDIS_ACL_MODE", raising=False)
+    from config.config import REDIS_ACL_MODE_SHARED, redis_acl_mode
+    assert redis_acl_mode() == REDIS_ACL_MODE_SHARED
+
+
+def test_redis_acl_mode_reads_per_service(monkeypatch):
+    monkeypatch.setenv("REDIS_ACL_MODE", "perService")
+    from config.config import REDIS_ACL_MODE_PER_SERVICE, redis_acl_mode
+    assert redis_acl_mode() == REDIS_ACL_MODE_PER_SERVICE
+
+
+def test_validate_rejects_an_unknown_redis_acl_mode(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("REDIS_ACL_MODE", "perservice")
+
+    from config.config import validate
+    with pytest.raises(RuntimeError, match="REDIS_ACL_MODE 'perservice'"):
+        validate()

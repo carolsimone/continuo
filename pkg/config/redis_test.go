@@ -8,7 +8,7 @@ func clearRedisEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"REDIS_HOST", "REDIS_PORT", "REDIS_ADDR", "REDIS_USERNAME",
-		"REDIS_PASSWORD", "REDIS_PASSWORD_FILE",
+		"REDIS_PASSWORD", "REDIS_PASSWORD_FILE", "REDIS_ACL_MODE",
 	} {
 		t.Setenv(key, "")
 	}
@@ -205,5 +205,49 @@ func TestLoadOptionalRedis_set_addr_requires_the_password(t *testing.T) {
 	}
 	if !containsEntry(v.Missing(), "REDIS_PASSWORD") {
 		t.Fatalf("missing = %v; want REDIS_PASSWORD", v.Missing())
+	}
+}
+
+func TestLoadRedis_acl_mode_defaults_to_shared(t *testing.T) {
+	clearRedisEnv(t)
+	t.Setenv("REDIS_HOST", "redishost")
+	t.Setenv("REDIS_PORT", "6379")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	v := &Validator{}
+	cfg := LoadRedis(v)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no missing, got %v", v.Missing())
+	}
+	if cfg.ACLMode != RedisACLModeShared {
+		t.Fatalf("ACLMode = %q; want %q", cfg.ACLMode, RedisACLModeShared)
+	}
+}
+
+func TestLoadRedisFromAddr_reads_the_acl_mode(t *testing.T) {
+	clearRedisEnv(t)
+	t.Setenv("REDIS_ADDR", "redishost:6379")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	t.Setenv("REDIS_ACL_MODE", "perService")
+	v := &Validator{}
+	cfg := LoadRedisFromAddr(v)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no missing, got %v", v.Missing())
+	}
+	if cfg.ACLMode != RedisACLModePerService {
+		t.Fatalf("ACLMode = %q; want %q", cfg.ACLMode, RedisACLModePerService)
+	}
+}
+
+func TestLoadRedis_unknown_acl_mode_is_reported(t *testing.T) {
+	clearRedisEnv(t)
+	t.Setenv("REDIS_HOST", "redishost")
+	t.Setenv("REDIS_PORT", "6379")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	t.Setenv("REDIS_ACL_MODE", "perservice")
+	v := &Validator{}
+	LoadRedis(v)
+	want := `REDIS_ACL_MODE (invalid value "perservice": expected shared or perService)`
+	if !containsEntry(v.Missing(), want) {
+		t.Fatalf("missing = %v; want %q", v.Missing(), want)
 	}
 }

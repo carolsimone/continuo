@@ -1,5 +1,6 @@
 import type { Role } from './types';
 import { readSecret } from '../secrets';
+import { REDIS_ACL_MODES, type RedisAclMode } from './redis-fence';
 
 export interface OidcAuthConfig {
   mode: 'oidc';
@@ -17,6 +18,9 @@ export interface OidcAuthConfig {
   sessionMaxTtlSeconds: number;
   redisUrl: string; // carries no credentials
   redisUsername?: string;
+  // REDIS_ACL_MODE: in perService mode the ui refuses to start when its Redis
+  // login can read keys outside its own (see checkPermissionFence).
+  redisAclMode: RedisAclMode;
 }
 
 export interface DevAuthConfig {
@@ -82,6 +86,16 @@ function redisUrlWithoutCredentials(env: NodeJS.ProcessEnv): string {
   return raw;
 }
 
+// REDIS_ACL_MODE, shared when unset. Any other value than the two modes is
+// refused, so a mode the ui cannot honour stops it at startup.
+function redisAclMode(env: NodeJS.ProcessEnv): RedisAclMode {
+  const raw = env.REDIS_ACL_MODE || 'shared';
+  if (!(REDIS_ACL_MODES as readonly string[]).includes(raw)) {
+    throw new Error(`REDIS_ACL_MODE must be "shared" or "perService", got "${raw}"`);
+  }
+  return raw as RedisAclMode;
+}
+
 // The ui's public base URL from AUTH_PUBLIC_URL, without trailing slashes, or
 // undefined when it is unset or blank. It is the single parse of the setting:
 // the login redirect, the CSRF origin and the cookie Secure flag (through
@@ -120,5 +134,6 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
     sessionMaxTtlSeconds: parseDuration(env.AUTH_SESSION_MAX_TTL ?? '24h', 'AUTH_SESSION_MAX_TTL'),
     redisUrl: redisUrlWithoutCredentials(env),
     redisUsername: env.REDIS_USERNAME || undefined,
+    redisAclMode: redisAclMode(env),
   };
 }

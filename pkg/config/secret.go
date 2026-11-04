@@ -67,7 +67,7 @@ func (s Secret) Value() (string, error) {
 	if s.file == "" {
 		return s.value, nil
 	}
-	return readSecretFile(s.file)
+	return ReadSecretFile(s.file)
 }
 
 // RequireSecret reads a credential that must be given. It records a problem
@@ -111,7 +111,7 @@ func (v *Validator) loadSecret(name string) Secret {
 		v.Add(fmt.Sprintf("%s: set %s or %s, not both", name, name, fileVar))
 		return Secret{name: name}
 	case path != "":
-		content, err := readSecretFile(path)
+		content, err := ReadSecretFile(path)
 		if err != nil {
 			v.Add(fmt.Sprintf("%s: %s", fileVar, err))
 			return Secret{name: name}
@@ -132,11 +132,12 @@ func (v *Validator) reported(name string) bool {
 	return false
 }
 
-// readSecretFile returns the content of path with one trailing newline ("\n"
+// ReadSecretFile returns the content of path with one trailing newline ("\n"
 // or "\r\n") removed. A file that is empty after that is an error. The path
-// is the operator's <NAME>_FILE setting, so any file the process can read is
-// a valid choice.
-func readSecretFile(path string) (string, error) {
+// is an operator's setting (a <NAME>_FILE variable, or a file in a directory
+// of credentials the operator names), so any file the process can read is a
+// valid choice.
+func ReadSecretFile(path string) (string, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", err

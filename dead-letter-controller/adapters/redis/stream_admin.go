@@ -62,4 +62,32 @@ func (a *StreamAdmin) EnsureStream(ctx context.Context, stream string) (bool, er
 	return true, nil
 }
 
+// CheckLogin opens a client of its own to the admin's Redis that signs in as
+// username with password, sends PING and closes it. A NOPERM answer to the
+// PING still means the sign-in succeeded: the login's rule only refuses the
+// command.
+func (a *StreamAdmin) CheckLogin(ctx context.Context, username, password string) error {
+	base := a.rdb.Options()
+	client := goredis.NewClient(&goredis.Options{
+		Network:      base.Network,
+		Addr:         base.Addr,
+		Dialer:       base.Dialer,
+		TLSConfig:    base.TLSConfig,
+		Protocol:     base.Protocol,
+		DialTimeout:  base.DialTimeout,
+		ReadTimeout:  base.ReadTimeout,
+		WriteTimeout: base.WriteTimeout,
+		Username:     username,
+		Password:     password,
+		PoolSize:     1,
+		MaxRetries:   -1,
+	})
+	defer func() { _ = client.Close() }()
+	err := client.Ping(ctx).Err()
+	if err != nil && strings.HasPrefix(err.Error(), "NOPERM") {
+		return nil
+	}
+	return err
+}
+
 func isBusyGroup(err error) bool { return strings.HasPrefix(err.Error(), "BUSYGROUP") }

@@ -22,6 +22,7 @@ function cfgFor(issuer: string): OidcAuthConfig {
     sessionIdleTtlSeconds: 3600,
     sessionMaxTtlSeconds: 7200,
     redisUrl: 'redis://unused',
+    redisAclMode: 'shared',
   };
 }
 

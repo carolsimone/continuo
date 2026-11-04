@@ -5,6 +5,7 @@ package redis
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -91,5 +92,53 @@ func TestEnsureStreamCreatesAStreamWithNoGroup(t *testing.T) {
 	again, err := admin.EnsureStream(ctx, stream)
 	if err != nil || again {
 		t.Fatalf("second EnsureStream = %v, %v; want false, nil", again, err)
+	}
+}
+
+// CheckLogin signs in on a connection of its own: a login that exists with
+// that password signs in, a wrong password or an unknown login is refused, and
+// the admin's own connection keeps its sign-in throughout.
+func TestCheckLoginSignsInAsTheLogin(t *testing.T) {
+	rc, _, _ := adminClient(t)
+	ctx := context.Background()
+	user := "continuo-check-login-test-" + uuid.NewString()
+	const password = "check-login-password"
+	if err := rc.Do(ctx, "ACL", "SETUSER", user, "reset", "on", ">"+password, "-@all", "+ping", "+hello", "+client|setinfo").Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rc.Do(context.Background(), "ACL", "DELUSER", user).Err() })
+	admin := NewStreamAdmin(rc)
+
+	if err := admin.CheckLogin(ctx, user, password); err != nil {
+		t.Fatalf("CheckLogin with the login's password = %v, want nil", err)
+	}
+	err := admin.CheckLogin(ctx, user, "another-password")
+	if err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
+		t.Fatalf("CheckLogin with another password = %v, want WRONGPASS", err)
+	}
+	if strings.Contains(err.Error(), "another-password") {
+		t.Fatalf("the error %q carries the password", err)
+	}
+	if err := admin.CheckLogin(ctx, user+"-missing", password); err == nil {
+		t.Fatal("CheckLogin of a login that does not exist = nil, want an error")
+	}
+	if err := rc.Ping(ctx).Err(); err != nil {
+		t.Fatalf("the admin's own connection: %v", err)
+	}
+}
+
+// A login whose rule refuses PING still signs in: CheckLogin checks the
+// sign-in, not the login's commands.
+func TestCheckLoginAcceptsALoginThatMayNotPing(t *testing.T) {
+	rc, _, _ := adminClient(t)
+	ctx := context.Background()
+	user := "continuo-check-login-test-" + uuid.NewString()
+	const password = "check-login-password"
+	if err := rc.Do(ctx, "ACL", "SETUSER", user, "reset", "on", ">"+password, "-@all").Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rc.Do(context.Background(), "ACL", "DELUSER", user).Err() })
+	if err := NewStreamAdmin(rc).CheckLogin(ctx, user, password); err != nil {
+		t.Fatalf("CheckLogin = %v, want nil", err)
 	}
 }

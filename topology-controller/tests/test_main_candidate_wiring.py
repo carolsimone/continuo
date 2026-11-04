@@ -7,6 +7,7 @@ import pytest
 
 import main
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
+from adapters.redis.fence import PermissionFenceError
 from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import SERVICE_NAME
 from config.secrets import EnvOrFileCredentialProvider
@@ -392,3 +393,32 @@ def test_main_hands_boto3_the_keys_read_through_read_secret(monkeypatch, tmp_pat
 
     assert clients[0]["aws_access_key_id"] == "file-key"
     assert clients[0]["aws_secret_access_key"] == "secret"
+
+
+def test_main_runs_the_permission_fence_on_its_redis_client_before_consuming(monkeypatch):
+    """main checks the Redis login it signs in as, in the REDIS_ACL_MODE the
+    install declares, before any consumer starts."""
+    _common_monkeypatches(monkeypatch)
+    client = object()
+    monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: client)
+    monkeypatch.setenv("REDIS_ACL_MODE", "perService")
+    calls = []
+
+    def _fence(redis_client, mode):
+        calls.append((redis_client, mode, len(_RecordingConsumer.instances)))
+
+    monkeypatch.setattr(main, "check_permission_fence", _fence)
+    main.main()
+    assert calls == [(client, "perService", 0)]
+
+
+def test_main_stops_when_the_permission_fence_refuses_the_login(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+
+    def _fence(redis_client, mode):
+        raise PermissionFenceError("redis login keywide can read keys outside its own")
+
+    monkeypatch.setattr(main, "check_permission_fence", _fence)
+    with pytest.raises(PermissionFenceError):
+        main.main()
+    assert _RecordingConsumer.instances == []

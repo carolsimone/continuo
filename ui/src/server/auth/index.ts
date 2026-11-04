@@ -17,6 +17,7 @@ import {
 import { createAuthRouter, createDevAuthRouter } from './routes';
 import { SessionStore, toAuthUser } from './session';
 import { watchRedisCredentials } from './redis-credentials';
+import { checkPermissionFence } from './redis-fence';
 import { readSecret } from '../secrets';
 import { DEV_USER, SESSION_COOKIE, type AppAuth, type AuthUser } from './types';
 
@@ -73,6 +74,9 @@ export async function buildAuth(cfg: AuthConfig, configuredCi: CiAuthConfig | nu
     password: readSecret(process.env, 'REDIS_PASSWORD'),
   });
   watchRedisCredentials(redis, process.env, console);
+  // In perService mode the ui's login must be fenced to its own keys; a login
+  // that reaches others stops the boot here.
+  await checkPermissionFence(redis, cfg.redisAclMode);
   const sessions = new SessionStore(redis, cfg.sessionIdleTtlSeconds, cfg.sessionMaxTtlSeconds);
   const flow = await discoverOidc(cfg);
   const origin = new URL(cfg.publicUrl).origin;

@@ -3,10 +3,17 @@ package ports
 import "context"
 
 // StreamAdmin creates the Redis streams and consumer groups the system reads
-// and writes. Every call takes the contract name of the stream (for example
+// and writes, and checks that the Redis logins of the services sign in. Every
+// stream call takes the contract name of the stream (for example
 // streams.TaskDispatchV1); the implementation maps it to the key it stores the
-// stream under. Both calls are idempotent: a second call creates nothing.
+// stream under. Both stream calls are idempotent: a second call creates
+// nothing.
 type StreamAdmin interface {
+	// CheckLogin opens a new connection to the same Redis, signs in as
+	// username with password and closes it. It returns Redis's answer when the
+	// sign-in is refused (the login does not exist, is turned off, or has
+	// another password) or when Redis cannot be reached.
+	CheckLogin(ctx context.Context, username, password string) error
 	// EnsureGroup creates the stream, when it does not exist, and the group on
 	// it, reading from the start of the stream. created is false when the group
 	// already exists.
