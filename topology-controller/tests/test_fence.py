@@ -130,3 +130,39 @@ def test_fence_does_not_wait_out_a_refused_sign_in(monkeypatch):
 def test_the_fence_acts_on_exactly_the_modes_config_accepts():
     from config import config
     assert config._REDIS_ACL_MODES == (fence.SHARED, fence.PER_SERVICE)
+
+
+def _chart_file(*parts):
+    import pathlib
+
+    return pathlib.Path(__file__).resolve().parents[2].joinpath("deploy", "continuo", *parts)
+
+
+def test_redis_acl_modes_match_the_chart():
+    """The modes config accepts, the fence acts on and the chart's schema allows agree.
+
+    The chart's credentials.redis.mode reaches this service as REDIS_ACL_MODE;
+    a mode the chart allows but this service refuses would crash it at boot.
+    """
+    import json
+
+    from config.config import _REDIS_ACL_MODES
+
+    schema = json.loads(_chart_file("values.schema.json").read_text())
+    chart = set(schema["properties"]["credentials"]["properties"]["redis"]["properties"]["mode"]["enum"])
+    assert set(_REDIS_ACL_MODES) == chart
+    assert {fence.SHARED, fence.PER_SERVICE} == chart
+
+
+def test_permission_probe_key_is_outside_every_generated_rule():
+    """No generated login's key pattern covers the probe key, or its fence would fail."""
+    import fnmatch
+    import json
+
+    rules = json.loads(_chart_file("files", "redis-acl-rules.json").read_text())
+    for login in rules["logins"]:
+        for token in login["rule"].split():
+            if "~" not in token:
+                continue
+            pattern = token.split("~", 1)[1]
+            assert not fnmatch.fnmatchcase(fence.PERMISSION_PROBE_KEY, pattern), (login["username"], pattern)

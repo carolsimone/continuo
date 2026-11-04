@@ -99,3 +99,37 @@ describe('checkPermissionFence', () => {
     expect(clock.sleeps).toEqual([]);
   });
 });
+
+// The chart's credentials.redis.mode reaches ui as REDIS_ACL_MODE: a mode the
+// chart allows but ui refuses would stop it at boot.
+describe('REDIS_ACL_MODES', () => {
+  it('match values.schema.json credentials.redis.mode', async () => {
+    const { readFileSync } = await import('fs');
+    const path = await import('path');
+    const { REDIS_ACL_MODES } = await import('../../src/server/auth/redis-fence');
+    const schema = JSON.parse(readFileSync(path.resolve(__dirname, '../../../deploy/continuo/values.schema.json'), 'utf8'));
+    expect([...REDIS_ACL_MODES].sort()).toEqual([...schema.properties.credentials.properties.redis.properties.mode.enum].sort());
+  });
+});
+
+// The key the fence probes must lie outside every generated login's key
+// patterns, or a correctly configured login would fail its own fence.
+describe('the permission probe key', () => {
+  it('matches no key pattern of the generated Redis rules', async () => {
+    const { readFileSync } = await import('fs');
+    const path = await import('path');
+    const redis = fakeRedis([new ReplyError('NOPERM No permissions to access a key')]);
+    await checkPermissionFence(redis as never, 'perService');
+    const key = String(redis.call.mock.calls[0].at(-1));
+    expect(key).toMatch(/^continuo-/);
+    const rules = JSON.parse(readFileSync(path.resolve(__dirname, '../../../deploy/continuo/files/redis-acl-rules.json'), 'utf8'));
+    const glob = (pattern: string) =>
+      new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+    for (const login of rules.logins as { username: string; rule: string }[]) {
+      for (const token of login.rule.split(' ').filter((t) => t.includes('~'))) {
+        const pattern = token.slice(token.indexOf('~') + 1);
+        expect(glob(pattern).test(key), `${login.username} ${pattern} covers ${key}`).toBe(false);
+      }
+    }
+  });
+});
