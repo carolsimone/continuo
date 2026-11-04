@@ -54,6 +54,11 @@ type StreamConsumer struct {
 	// can check their heartbeats too. It is nil until Start finds such a key.
 	keyLoops atomic.Pointer[[]*StreamConsumer]
 
+	// ended reports that this loop stopped because its unprefixed key can no
+	// longer be read (deleted, or refused by the login's rule). Healthy skips
+	// an ended loop.
+	ended atomic.Bool
+
 	// handlerMu, when set, serializes handler invocations across the loops of
 	// a consumer that processes strictly serially (workerCount 1), so reading
 	// a second key never runs its handler concurrently with itself. Start sets
@@ -867,6 +872,15 @@ func (c *StreamConsumer) consume(ctx context.Context) error {
 			c.cleanupStaleConsumers(ctx, staleConsumerIdle)
 		default:
 			err := c.readAndProcess(ctx)
+			if c.readsUnprefixedKey() && (errors.Is(err, errGroupGone) || isNoPerm(err)) {
+				// The unprefixed key was deleted or its group removed once
+				// drained, or the login's rule no longer reaches it: this
+				// loop ends, and the loop of the prefixed key goes on.
+				c.logger.Info("Unprefixed key no longer readable — reading only the prefixed key",
+					"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "reason", err)
+				c.ended.Store(true)
+				return nil
+			}
 			if errors.Is(err, errGroupGone) {
 				c.logger.Error("Consumer group no longer exists — stopping the consumer",
 					"stream", c.streamName, "key", c.key, "group", c.consumerGroup, "error", err)
@@ -931,7 +945,8 @@ func (c *StreamConsumer) waitForGroups(ctx context.Context) ([]string, error) {
 }
 
 // groupKeys reports the keys that hold the consumer group, Key(streamName)
-// first; it returns none while that key does not hold it.
+// first; it returns none while that key does not hold it. An unprefixed key
+// the login may not read (NOPERM) is left out, as one that does not exist is.
 func (c *StreamConsumer) groupKeys(ctx context.Context) ([]string, error) {
 	held, err := c.holdsGroup(ctx, c.key)
 	if err != nil || !held {
@@ -943,6 +958,11 @@ func (c *StreamConsumer) groupKeys(ctx context.Context) ([]string, error) {
 	}
 	legacy := LegacyKey(c.streamName)
 	held, err = c.holdsGroup(ctx, legacy)
+	if isNoPerm(err) {
+		c.logger.Info("The login may not read the unprefixed key — reading only the prefixed key",
+			"stream", c.streamName, "key", legacy, "group", c.consumerGroup)
+		return keys, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -951,6 +971,14 @@ func (c *StreamConsumer) groupKeys(ctx context.Context) ([]string, error) {
 	}
 	return keys, nil
 }
+
+// readsUnprefixedKey reports whether this loop reads the unprefixed key of the
+// stream.
+func (c *StreamConsumer) readsUnprefixedKey() bool { return c.key == LegacyKey(c.streamName) }
+
+// isNoPerm reports whether err carries a NOPERM reply: the login's rule does
+// not reach the key or the command.
+func isNoPerm(err error) bool { return err != nil && strings.Contains(err.Error(), "NOPERM") }
 
 // holdsGroup reports whether key holds the consumer group. A missing key holds
 // none.
@@ -991,6 +1019,9 @@ func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
 	}
 	if others := c.keyLoops.Load(); others != nil {
 		for _, l := range *others {
+			if l.ended.Load() {
+				continue
+			}
 			if err := l.heartbeatFresh(maxStale); err != nil {
 				return err
 			}
