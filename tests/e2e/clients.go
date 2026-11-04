@@ -90,10 +90,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to dead-letter-controller service")
 
-	// Setup Redis client
+	// Setup Redis client. The harness signs in as Redis's default user, which
+	// reads every stream (compose/redis-users.acl); E2E_REDIS_PASSWORD, not
+	// REDIS_PASSWORD, which inside the catalog container is catalog's login.
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     fmt.Sprintf("%s:6379", redisHost),
-		Password: getEnv("REDIS_PASSWORD", ""),
+		Password: getEnv("E2E_REDIS_PASSWORD", "continuo"),
 		DB:       0,
 	})
 	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
@@ -111,7 +113,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// and the validation runner sign in as, so every table the harness creates
 	// there belongs to the login that may replace it.
 	migrationLogin := func(db string) *sqlx.DB {
-		return connectPostgres(t, pgHost, db, "continuo_svc", getEnv("POSTGRES_PASSWORD", "continuo"))
+		return connectPostgres(t, pgHost, db, "continuo_svc", getEnv("E2E_POSTGRES_PASSWORD", "continuo"))
 	}
 	executionDB := migrationLogin("continuo_execution")
 	runControllerDB := migrationLogin("continuo_run_controller")

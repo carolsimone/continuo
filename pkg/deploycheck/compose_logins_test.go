@@ -2,6 +2,9 @@ package deploycheck
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -141,4 +144,27 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 		want = append(want, strings.TrimPrefix(db, "continuo_")+"="+login)
 	}
 	assertSameSet(t, "docker-compose.yml migrations CONTINUO_PG_LOGINS", got, want)
+}
+
+// TestE2EHarnessReadsNoServiceCredential: the e2e harness runs inside the
+// catalog container, whose REDIS_* and POSTGRES_* variables are catalog's own
+// login. The harness signs in as the migration login and Redis's default user,
+// so it reads its credentials from E2E_* variables and never from the
+// service's.
+func TestE2EHarnessReadsNoServiceCredential(t *testing.T) {
+	root := repoRoot(t)
+	files, err := filepath.Glob(filepath.Join(root, "tests", "e2e", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := regexp.MustCompile(`getEnv\("(REDIS_PASSWORD|REDIS_USERNAME|POSTGRES_PASSWORD|POSTGRES_USER)"`)
+	for _, f := range files {
+		raw, err := os.ReadFile(f) //nolint:gosec // G304: f is a glob match under repoRoot(t), not external input
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range read.FindAllStringSubmatch(string(raw), -1) {
+			t.Errorf("%s reads %s, which inside the catalog container is catalog's own login: read an E2E_ variable instead", filepath.Base(f), m[1])
+		}
+	}
 }
