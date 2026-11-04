@@ -41,6 +41,15 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   `credentials.files` points a service at files a secret manager writes
   (the Vault Agent injector, a Secrets Store CSI volume). The Postgres and
   Redis passwords are read again for every new connection.
+- **One login per service.** Each service signs in to Postgres and Redis as
+  its own login, so a leaked credential reaches one service's database and
+  one service's streams and keys. The migrate Job revokes `CONNECT` from
+  `PUBLIC` on every continuo database, grants each login only its own, and
+  fails the deploy when a login holds more (superuser, `CREATEDB`,
+  `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, another database). Each Redis
+  login's rule comes from the stream contract, and a service refuses to start
+  when its login reaches keys outside its own. `credentials.redis.mode:
+  shared`, for a Redis with no ACL users, gives this up for Redis.
 
 ## What the operator owns
 
@@ -49,9 +58,16 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
 - **Encryption in transit inside the cluster** — run a service mesh or an
   encrypting CNI; the chart is mesh-compatible and configures no app-level
   mTLS.
-- **Secret storage and rotation** — the chart consumes Secrets or files a
-  secret manager writes; creating them (via `existingSecret` or
-  `credentials.files`) and rotating them is operator process.
+- **Logins and secret storage** — with your own Postgres and Redis you create
+  each service's login, its password and the Secret or file holding it
+  ([CREDENTIALS.md](CREDENTIALS.md)); the chart consumes Secrets or files a
+  secret manager writes (via `existingSecret` or `credentials.files`), and
+  rotating them is operator process. continuo grants each Postgres login its
+  rights and checks them; it never creates a login on your datastores, and
+  never runs `ACL SETUSER` on your Redis.
+- **The warehouse login** — dbt and validation Job pods sign in to your
+  warehouse with the Secret you name (`validation.warehouseSecret`); continuo
+  builds that Secret only for the bundled Postgres.
 - **Datastore hardening and backups** — bundled datastores are
   quickstart-grade (single instance, no backups); production datastores,
   their TLS, HA, and backup story are yours.

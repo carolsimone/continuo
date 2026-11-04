@@ -13,6 +13,7 @@ reference.
 | Try continuo on any cluster with zero external accounts | [Quickstart](continuo/README.md#1-quickstart-bundled-everything) — one `helm install`, bundled datastores, demo login |
 | Install from the published chart without cloning this repo | [OCI install](continuo/README.md#continuo-helm-chart) — `helm install continuo oci://ghcr.io/carolsimone/charts/continuo --version <X.Y.Z>` |
 | Run it in production with my own Postgres/Redis/Neo4j/S3/OIDC | [Production (BYO datastores)](continuo/README.md#2-production-bring-your-own-datastores) + [`values-byo.yaml.example`](continuo/values-byo.yaml.example) |
+| Create the Postgres and Redis logins continuo signs in with, and hand their passwords to the pods | [CREDENTIALS.md](CREDENTIALS.md) — every login, its rights, the statements and rules that create it, and env, file and Vault/CSI delivery |
 | Understand the security posture before adopting | [SECURITY.md](SECURITY.md) and the chart's [Security defaults](continuo/README.md#3-security-defaults) |
 | Configure real OIDC authentication | [AUTH.md](AUTH.md) |
 | Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
@@ -512,6 +513,11 @@ the agents' `env`.
 - PostgreSQL only, today. The `externalDatabase.*` keys are deliberately
   engine-agnostic, but every migration and query assumes Postgres; MySQL is
   a roadmap item, not a supported option.
+- One Postgres login per service plus a migration login that owns every
+  continuo database (no superuser, no `CREATEROLE`), and one Redis ACL user per
+  service plus one for `streams-init` (Redis 7 or later; a Redis with no ACL
+  users runs `credentials.redis.mode: shared`). See
+  [CREDENTIALS.md](CREDENTIALS.md).
 - In-cluster encryption is the operator's: the chart configures no mTLS; run
   a service mesh (Istio, Linkerd) or CNI-level encryption if you need
   encrypted pod-to-pod traffic. External datastore connections use whatever

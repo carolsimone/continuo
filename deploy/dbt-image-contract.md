@@ -53,15 +53,19 @@ that connects using the environment below.
 
 ## Environment your container receives
 
-Database (every Job): the operator-owned warehouse Secret is attached to your
-container verbatim via `envFrom`, so your `profiles.yml` reads the deployment
-engine's native keys and your image bakes that engine's dbt adapter.
+Database (every Job): the operator-owned warehouse Secret
+(`validation.warehouseSecret`) is attached to your container verbatim via
+`envFrom`, so your `profiles.yml` reads the deployment engine's native keys and
+your image bakes that engine's dbt adapter. It carries the company's warehouse
+login, never a login of continuo's own services; in the bundled quickstart it
+is the chart's `<release>-warehouse-validation`, for the login
+`continuo_warehouse`, which owns the warehouse database.
 
 | Variable (postgres engine) | Meaning |
 |---|---|
 | `POSTGRES_HOST` / `POSTGRES_PORT` | warehouse Postgres endpoint |
 | `POSTGRES_DB` | warehouse database (`continuo_dbt`) |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` | warehouse credentials |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | the warehouse login and its password |
 
 On a non-postgres deployment the Secret carries that engine's keys instead
 (e.g. trino: `TRINO_HOST`, `TRINO_CATALOG`, optional `TRINO_PORT`/`TRINO_USER`/

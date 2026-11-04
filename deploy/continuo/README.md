@@ -129,6 +129,15 @@ helm install continuo deploy/continuo -n continuo --create-namespace \
 
 Notes that matter before you commit to this path:
 
+- **Every service signs in as its own Postgres and Redis login.** Before the
+  install, your platform team creates each login and a Secret holding its
+  password, and the values name the Secrets (`credentials.postgres`,
+  `credentials.redis`). [CREDENTIALS.md](../CREDENTIALS.md) lists every login,
+  its rights and the statements and rules that create it. The migration login
+  (`externalDatabase.username`) owns every continuo database, needs no
+  superuser, and grants each runtime login its rights on every deploy. The
+  warehouse dbt and the validation runner sign in to is yours: set
+  `validation.createWarehouseSecret: false` and `validation.warehouseSecret`.
 - **PostgreSQL only, today.** `externalDatabase.*` uses database-agnostic key
   names on purpose, but every SQL statement the chart and the services emit
   assumes Postgres. Another engine (MySQL is the only one planned) needs its
@@ -160,12 +169,12 @@ Notes that matter before you commit to this path:
   Postgres).
 - **`databaseInit` needs `CREATEDB`.** With `enabled: true` (the default), an
   init container connects as `externalDatabase.username` and idempotently
-  creates all 8 databases: the 7 Flyway-migrated service databases (including
-  `continuo_dead_letter`, which dead-letter-controller owns) and `continuo_dbt`
-  (the dbt warehouse — the one database no Flyway migration directory owns).
-  catalog keeps its graph in Neo4j and has no database here. If your DBA provisions
-  databases out-of-band, set `databaseInit.enabled: false` and drop `CREATEDB`
-  from the connecting user's grants.
+  creates the 7 Flyway-migrated service databases (including
+  `continuo_dead_letter`, which dead-letter-controller owns); the migration
+  login owns what it creates. catalog keeps its graph in Neo4j and has no
+  database here, and the warehouse is yours. If your DBA provisions databases
+  out-of-band, set `databaseInit.enabled: false`, make the migration login
+  their owner, and drop `CREATEDB` from its grants.
 - **How migrations run depends on the Postgres mode.** With
   `postgresql.enabled: false`, the migration Job is a Helm
   `pre-install,pre-upgrade` hook: your database already exists before the
@@ -175,10 +184,11 @@ Notes that matter before you commit to this path:
   hasn't created yet. That path runs the migration as a regular,
   revision-suffixed resource, with Postgres-backed services gating on it via an
   init container. In bundled mode, expect new pods to briefly crashloop on an
-  upgrade: the `wait-for-migrations` init container only checks that the
-  target database has a non-empty `flyway_schema_history`, not that the
-  upgrade's specific migration has been applied, so a pod can start before the
-  migration Job finishes.
+  upgrade: the `wait-for-migrations` init container, signed in as the
+  service's own login, checks that the login may read the target database's
+  non-empty `flyway_schema_history` (the migrate Job grants it after Flyway),
+  not that the upgrade's specific migration has been applied, so a pod can
+  start before the migration Job finishes.
 
 ## 3. Security defaults
 
@@ -215,6 +225,14 @@ Every container in this chart, bundled or not, gets:
   decides what happens next, also reach the outside world only through
   egress-proxy, which admits the hosts on its allowlist
   ([Outbound traffic](https://github.com/carolsimone/continuo/blob/main/deploy/README.md#outbound-traffic)).
+- **One login per service.** Each service signs in to Postgres and to Redis
+  as its own login. A Postgres login can connect only to its service's
+  database and read and write only its tables; a Redis login reaches only its
+  service's streams and keys, under rules generated from the stream contract
+  (`deploy/redis-acl-rules.acl`). The migrate Job checks every Postgres
+  login's rights on every deploy, `streams-init` signs in as every Redis login
+  before the services roll, and each service refuses to start when its Redis
+  login reaches keys outside its own. See [CREDENTIALS.md](../CREDENTIALS.md).
 - **No committed credentials.** Every credential value in `values.yaml`
   defaults to an empty string. Bundled datastores auto-generate a password on
   first install via a Helm `lookup` against the live Secret, so upgrades reuse
@@ -239,8 +257,10 @@ Every container in this chart, bundled or not, gets:
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
 | `externalDatabase.*` / `externalRedis.*` / `externalNeo4j.*` / `s3.*` / `auth.*` (issuer/client fields) | Connection details used when the matching `*.enabled` above is `false`. |
-| `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
-| `databaseInit.enabled` | Idempotently creates all 8 databases (the 7 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
+| `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the migration login's Postgres password, instead of `externalDatabase.password` inline (each service's own login is `credentials.postgres`; the Redis password here is the one of `credentials.redis.mode=shared`). Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
+| `databaseInit.enabled` | Idempotently creates the 7 Flyway-migrated service databases, and with the bundled Postgres the warehouse (`validation.warehouseDatabase`), before migrations run. Requires the migration login to have `CREATEDB`; disable when a DBA pre-creates them and makes the migration login their owner. |
+| `credentials.postgres.<service>` (`username`, `existingSecret`, `key`) | The Postgres login each of run-controller, execution-controller, release-controller, remediation, agent-remediation, agent-chat and dead-letter-controller signs in as (`POSTGRES_USER`), and the Secret and key holding its password (default `continuo_<service>`, key `password`). The migrate Job grants each login its rights on every deploy and fails the deploy, naming the login, when one is missing or has more. With an external Postgres an enabled service's login needs `existingSecret` or a `POSTGRES_PASSWORD` entry in `credentials.files`, or the render fails; with the bundled one the chart generates the passwords into `<release>-logins` and the migrate Job creates the logins. `credentials.postgres.warehouse.username` (default `continuo_warehouse`) is the bundled quickstart's warehouse login. See [CREDENTIALS.md](../CREDENTIALS.md). |
+| `credentials.redis.mode` / `credentials.redis.logins.<name>` | `perService` (default): each Redis service signs in as its own login (`REDIS_USERNAME`), `streams-init` as `continuo_redis_migrate`, each with the password in its login's `existingSecret` (key `key`, default `password`), and the rule published in `deploy/redis-acl-rules.acl` and `files/redis-acl-rules.json`; with the bundled Redis the chart generates every password and starts Redis with the rules, its `default` user off. `shared`: every service signs in with the one Redis password, for a Redis with no ACL users. `REDIS_ACL_MODE` on the shared ConfigMap. With an external Redis in `perService` an enabled service's login, and `streams-init`'s, needs `existingSecret` (or a `REDIS_PASSWORD` entry in `credentials.files`), or the render fails. |
 | `redisInit.createStreams` | `true` (default) runs `streams-init`, which creates every Redis stream and consumer group under the `continuo:` prefix (a `pre-install,pre-upgrade` hook Job with `redis.enabled=false`, a Job of the release with the bundled Redis); no service creates one. Set it to `false` when the Redis login the chart uses may not create streams (`XGROUP CREATE` with `MKSTREAM`): the Redis owner then runs `/streams-init` from the dead-letter-controller image with a login that may. After Redis loses its data (a failover without persistence, a flush, a restore), run `streams-init` again with `helm upgrade` or by running the Job; consumers stop with "consumer group ... does not exist" until it has run. |
 | `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service that keeps a Postgres database (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`; catalog and egress-proxy keep none). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 117 pooled connections plus nine `LISTEN` connections outside the pools (one per pod of the six services that run an outbox relay: run-controller, execution-controller, release-controller, remediation, agent-remediation and dead-letter-controller; one more in execution-controller and two more in run-controller), 126 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` replaces the default of every one of those services at once, the largest of which is execution-controller's 30: a lower value can leave a service's handlers waiting for a connection. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
 | `maintenance.enabled` | Refuse new work while letting running work finish. When enabled (default false), ui, the public release API and the CLI refuse new runs, triggers, releases, remediation retries, schedule edits (a cron saved, paused, resumed or removed) and dead-letter redrives with HTTP 503 / gRPC `UNAVAILABLE` and the message "continuo is in maintenance mode"; run-controller consumes each cron slot that comes due with no run (it is not caught up afterwards); release-controller activates no queued release; agent-remediation records each fix attempt that comes due as skipped, and **Retry remediation** in the UI starts it once maintenance is off. Runs, releases and fix verifications already in progress complete. Changing it restarts every continuo service (the shared ConfigMap changes); turn it on with `helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true` and off again with `--set maintenance.enabled=false`. Five services (`run-controller`, `release-controller`, `agent-remediation`, `dead-letter-controller`, `ui`) refuse to start unless `MAINTENANCE_ENABLED` is exactly `true` or `false`. The chart always sets it; a deployment that does not use the chart must set it. |
