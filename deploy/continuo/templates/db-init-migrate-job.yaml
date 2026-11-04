@@ -54,9 +54,11 @@ spec:
         runAsGroup: 65532
       {{- if .Values.databaseInit.enabled }}
       initContainers:
-        # Idempotently creates every continuo database (the 7 Flyway-migrated
-        # service DBs plus continuo_dbt, the dbt warehouse: 8 in all). Requires CREATEDB;
-        # disable databaseInit when a DBA pre-creates the databases.
+        # Idempotently creates every continuo database: the 7 Flyway-migrated
+        # service databases and, with the bundled Postgres, the dbt warehouse
+        # (validation.warehouseDatabase). An external Postgres's warehouse is
+        # the company's. Requires CREATEDB; disable databaseInit when a DBA
+        # pre-creates the databases and makes the migration login their owner.
         - name: db-init
           image: {{ include "continuo.image" (dict "root" $ "name" "migrations") | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
@@ -97,18 +99,26 @@ spec:
                 [ "$tries" -gt 100 ] && echo "postgres never became reachable" && exit 1
                 echo "waiting for postgres ($tries)..."; sleep 3
               done
+              ensure_database() {
+                if psql -tc "SELECT 1 FROM pg_database WHERE datname = '${1}'" | grep -q 1; then
+                  echo "database ${1} already exists"
+                else
+                  echo "creating database ${1}"
+                  psql -c "CREATE DATABASE \"${1}\""
+                fi
+              }
               for db in continuo_run_controller continuo_execution \
                         continuo_release continuo_agent_chat \
                         continuo_remediation continuo_agent_remediation \
-                        continuo_dead_letter continuo_dbt; do
-                if psql -tc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
-                  echo "database ${db} already exists"
-                else
-                  echo "creating database ${db}"
-                  psql -c "CREATE DATABASE \"${db}\""
-                fi
+                        continuo_dead_letter; do
+                ensure_database "${db}"
                 psql -d "${db}" -c "GRANT ALL ON SCHEMA public TO \"${PGUSER}\""
               done
+              {{- if .Values.postgresql.enabled }}
+              # The bundled quickstart's dbt warehouse; the migrate container
+              # hands it to the warehouse login.
+              ensure_database {{ .Values.validation.warehouseDatabase | quote }}
+              {{- end }}
           resources:
             requests: {cpu: 25m, memory: 32Mi}
             limits: {cpu: 100m, memory: 64Mi}
@@ -140,6 +150,35 @@ spec:
                   {{- end }}
             - name: DB_SSLMODE
               value: {{ include "continuo.db.sslMode" . | quote }}
+            # Each database's runtime login, which the job grants its rights
+            # and checks (credentials.postgres).
+            - name: CONTINUO_PG_LOGINS
+              value: {{ include "continuo.postgres.loginsEnv" . | quote }}
+            {{- if .Values.postgresql.enabled }}
+            # Bundled quickstart: the job creates each login with its password.
+            - name: CONTINUO_PG_CREATE_LOGINS
+              value: "true"
+            {{- range $svc, $db := (include "continuo.postgres.serviceDatabases" . | fromJson) }}
+            {{- $login := dict "root" $ "ref" "postgresLogin" "svc" (dict "name" $svc) }}
+            - name: {{ printf "CONTINUO_PG_PASSWORD_%s" (upper $db) }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" $login | quote }}
+                  key: {{ include "continuo.secretKey" $login | quote }}
+            {{- end }}
+            {{- if .Values.validation.createWarehouseSecret }}
+            # ... and hands the warehouse database to the warehouse login.
+            - name: CONTINUO_PG_WAREHOUSE_LOGIN
+              value: {{ include "continuo.postgres.warehouseLogin" . | quote }}
+            - name: CONTINUO_PG_WAREHOUSE_DB
+              value: {{ .Values.validation.warehouseDatabase | quote }}
+            - name: CONTINUO_PG_WAREHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.validation.warehouseSecretName" . | quote }}
+                  key: POSTGRES_PASSWORD
+            {{- end }}
+            {{- end }}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: 500m, memory: 512Mi}

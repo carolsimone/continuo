@@ -56,8 +56,10 @@ bypasses that sole write sink.
 | `TABLE_NAME` | The target table. Must match the selected node's `table`. |
 | `TARGET_SCHEMA` | The target schema. Must match the selected node's `schema`. There is **no fallback** — `SCHEMA` and `DBT_TARGET_SCHEMA` are dbt names and are deliberately not set. |
 
-Plus the warehouse connection: the operator-owned warehouse Secret is attached
-to your container verbatim via `envFrom`, exactly as for dbt images, so the
+Plus the warehouse connection: the operator-owned warehouse Secret
+(`validation.warehouseSecret`, the company's warehouse login; in the bundled
+quickstart the login `continuo_warehouse`) is attached to your container
+verbatim via `envFrom`, exactly as for dbt images, so the
 runtime adapter baked into your image reads the deployment engine's native keys
 (`POSTGRES_HOST` / `POSTGRES_DB` / `POSTGRES_USER` / …, or that engine's
 equivalents). A missing one fails the node with a `LoadError`.

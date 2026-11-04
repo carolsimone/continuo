@@ -124,17 +124,14 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(DOCKER_COMPOSE) up -d
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
-	@echo "Waiting for flyway migrations to complete..."
-	@for svc in $(FLYWAY_JOBS); do \
-		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
-		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
-	done
-	@echo "Flyway migrations done."
-	@echo "Waiting for streams-init to create the Redis streams and groups..."
-	@cid=$$($(DOCKER_COMPOSE) ps -aq streams-init); \
+	@echo "Waiting for the migrations and streams-init jobs to finish..."
+	@for svc in $(MIGRATION_JOBS); do \
+		cid=$$($(DOCKER_COMPOSE) ps -aq $$svc); \
 		if [ -z "$$cid" ] || [ "$$(docker wait $$cid)" != 0 ]; then \
-			echo "streams-init did not exit 0"; exit 1; \
-		fi
+			echo "$$svc did not exit 0"; $(DOCKER_COMPOSE) logs $$svc; exit 1; \
+		fi; \
+	done
+	@echo "Migrations, grants and streams done."
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
@@ -147,9 +144,10 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := run-controller catalog execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-FLYWAY_JOBS := flyway-run-controller flyway-execution flyway-release \
-               flyway-agent-chat flyway-remediation flyway-agent-remediation \
-               flyway-dead-letter
+# One-shot jobs the stack needs before the services: migrations runs every
+# Flyway migration and grants each service's login its rights; streams-init
+# creates every Redis stream and consumer group.
+MIGRATION_JOBS := migrations streams-init
 
 # Where the compose stack's published ports are reachable from THIS host. On a
 # kind lane of the self-hosted runner, the lane's own Docker daemon publishes
@@ -167,20 +165,16 @@ test-deps-up:
 	@# attaches to an existing container and waits for it to exit, so a job left
 	@# Running by an interrupted earlier invocation makes this loop block until
 	@# the caller's own timeout fires, with no output naming the cause.
-	@# Recreating gives every run a container that is guaranteed to terminate.
-	@for f in $(FLYWAY_JOBS); do \
+	@# Recreating gives every run a container that is guaranteed to terminate,
+	@# and `up --exit-code-from` exits non-zero unless the job exited 0.
+	@for f in $(MIGRATION_JOBS); do \
 	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
-	  $(DOCKER_COMPOSE) up $$f || exit 1; \
+	  $(DOCKER_COMPOSE) up --exit-code-from $$f --abort-on-container-exit $$f || exit 1; \
 	done
-	@# streams-init creates the streams and consumer groups once Redis is
-	@# healthy. It is recreated like the Flyway jobs, and `up` exits non-zero
-	@# unless the container exited 0.
-	@$(DOCKER_COMPOSE) rm -fsv streams-init >/dev/null 2>&1 || true
-	@$(DOCKER_COMPOSE) up --exit-code-from streams-init --abort-on-container-exit streams-init
 
 .PHONY: test-deps-down
 test-deps-down:
-	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis streams-init $(FLYWAY_JOBS) 2>/dev/null || true
+	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis $(MIGRATION_JOBS) 2>/dev/null || true
 
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
 # DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The

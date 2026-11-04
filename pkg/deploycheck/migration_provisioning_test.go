@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoRoot walks up from the test working directory until it finds go.work.
@@ -181,9 +183,8 @@ func TestMigrateAllProvisionsEveryDatabaseItMigrates(t *testing.T) {
 	// Every migrated database must also be provisioned by the chart's db-init
 	// initContainer, so fresh clusters and the migration job stay consistent.
 	// db-init-migrate-job.yaml's `for db in ...; do` loop is its own hardcoded
-	// list (not derived from db/migrate-all.sh — it also provisions
-	// continuo_dbt, the dbt warehouse database that Flyway never migrates), so
-	// it can drift independently and needs its own cross-check.
+	// list (not derived from db/migrate-all.sh), so it can drift independently
+	// and needs its own cross-check.
 	jobPath := filepath.Join(root, "deploy", "continuo", "templates", "db-init-migrate-job.yaml")
 	jobRaw, err := os.ReadFile(jobPath) //nolint:gosec // G304: jobPath is repoRoot(t) joined with fixed literal segments, not external input
 	if err != nil {
@@ -282,7 +283,7 @@ func withoutPrefix(t *testing.T, where string, tokens []string, prefix string) [
 // TestProvisioning_ListsExactlyTheServicesThatKeepPostgres pins every place a
 // database is provisioned to one list: the migration job's DATABASES, the
 // migration image's COPY lines, the migration directories, the Postgres
-// initdb script, the chart's db-init loop and the compose Flyway jobs. A
+// initdb script, the chart's db-init loop and the compose migrations job's logins. A
 // service that keeps no Postgres appears in none of them, so no install creates
 // a database nothing connects to.
 func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
@@ -329,15 +330,25 @@ func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
 	assertSameSet(t, "db/init-databases.sh CREATE DATABASE",
 		withoutPrefix(t, "db/init-databases.sh", created, "continuo_"), withWarehouse)
 
-	jobDBs := dbInitLoopDatabases(t, read("deploy/continuo/templates/db-init-migrate-job.yaml"),
-		"deploy/continuo/templates/db-init-migrate-job.yaml")
+	job := read("deploy/continuo/templates/db-init-migrate-job.yaml")
+	jobDBs := dbInitLoopDatabases(t, job, "deploy/continuo/templates/db-init-migrate-job.yaml")
 	assertSameSet(t, "deploy/continuo/templates/db-init-migrate-job.yaml db-init loop",
-		withoutPrefix(t, "deploy/continuo/templates/db-init-migrate-job.yaml", jobDBs, "continuo_"), withWarehouse)
-
-	var flyway []string
-	for _, m := range regexp.MustCompile(`-url=jdbc:postgresql://postgres:5432/continuo_(\w+)`).
-		FindAllStringSubmatch(read("docker-compose.yml"), -1) {
-		flyway = append(flyway, m[1])
+		withoutPrefix(t, "deploy/continuo/templates/db-init-migrate-job.yaml", jobDBs, "continuo_"), want)
+	// The warehouse belongs to the company with an external Postgres; db-init
+	// creates it only for the bundled one.
+	if !regexp.MustCompile(`(?s)\{\{- if \.Values\.postgresql\.enabled \}\}\s*#[^\n]*\n(\s*#[^\n]*\n)*\s*ensure_database \{\{ \.Values\.validation\.warehouseDatabase \| quote \}\}`).MatchString(job) {
+		t.Error("deploy/continuo/templates/db-init-migrate-job.yaml db-init must create " +
+			"validation.warehouseDatabase only when postgresql.enabled")
 	}
-	assertSameSet(t, "docker-compose.yml Flyway jobs", flyway, want)
+
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(read("docker-compose.yml")), &compose); err != nil {
+		t.Fatalf("parse docker-compose.yml: %v", err)
+	}
+	var migrated []string
+	for _, pair := range strings.Fields(compose.Services["migrations"].Environment["CONTINUO_PG_LOGINS"]) {
+		db, _, _ := strings.Cut(pair, "=")
+		migrated = append(migrated, db)
+	}
+	assertSameSet(t, "docker-compose.yml migrations CONTINUO_PG_LOGINS databases", migrated, want)
 }

@@ -283,11 +283,14 @@ echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"
 echo "Starting docker-compose in background..."
 docker compose up -d
 
-# streams-init is a one-shot container that creates every Redis stream and
-# consumer group; the services wait for their groups, so a failure is reported here.
-streams_init_cid=$(docker compose ps -aq streams-init)
-if [ -z "$streams_init_cid" ] || [ "$(docker wait "$streams_init_cid")" != 0 ]; then
-    echo "Error: streams-init did not exit 0" >&2
-    docker compose logs streams-init >&2 || true
-    exit 1
-fi
+# migrations (Flyway, then each service login's grants and check) and
+# streams-init (every Redis stream and consumer group) are one-shot containers
+# the services need; a failure of either is reported here.
+for job in migrations streams-init; do
+    job_cid=$(docker compose ps -aq "$job")
+    if [ -z "$job_cid" ] || [ "$(docker wait "$job_cid")" != 0 ]; then
+        echo "Error: $job did not exit 0" >&2
+        docker compose logs "$job" >&2 || true
+        exit 1
+    fi
+done

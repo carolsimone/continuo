@@ -10,7 +10,7 @@ postgresql:
 externalDatabase:
   host: postgres.internal.example.com
   port: 5432
-  username: continuo
+  username: continuo                    # the migration login: owns every continuo database
   existingSecret: continuo-datastores   # key: postgres-password (override with existingSecretPasswordKey)
   existingSecretPasswordKey: postgres-password
   sslMode: require
@@ -50,7 +50,38 @@ auth:
   viewerEmails: team@example.com
 
 databaseInit:
-  enabled: true    # set false if your DBA pre-creates the 8 databases
+  enabled: true    # set false if your DBA pre-creates the 7 databases (owned by the migration login)
+
+credentials:
+  # Each service signs in to Postgres as its own login: create each with LOGIN
+  # and a password and nothing else, and a Secret holding its password under
+  # `password` (deploy/CREDENTIALS.md). The migrate job grants each login its
+  # rights on every deploy.
+  postgres:
+    run-controller: {existingSecret: continuo-pg-run-controller}
+    execution-controller: {existingSecret: continuo-pg-execution-controller}
+    release-controller: {existingSecret: continuo-pg-release-controller}
+    remediation: {existingSecret: continuo-pg-remediation}
+    agent-remediation: {existingSecret: continuo-pg-agent-remediation}
+    agent-chat: {existingSecret: continuo-pg-agent-chat}
+    dead-letter-controller: {existingSecret: continuo-pg-dead-letter-controller}
+  # Each service signs in to Redis as its own login: create each with its rule
+  # from deploy/redis-acl-rules.acl and a password, and a Secret holding the
+  # password under `password` (deploy/CREDENTIALS.md).
+  redis:
+    mode: perService
+    logins:
+      streams-init: {existingSecret: continuo-redis-streams-init}
+      run-controller: {existingSecret: continuo-redis-run-controller}
+      catalog: {existingSecret: continuo-redis-catalog}
+      agent-chat: {existingSecret: continuo-redis-agent-chat}
+      execution-controller: {existingSecret: continuo-redis-execution-controller}
+      ui: {existingSecret: continuo-redis-ui}
+      topology-controller: {existingSecret: continuo-redis-topology-controller}
+      release-controller: {existingSecret: continuo-redis-release-controller}
+      remediation: {existingSecret: continuo-redis-remediation}
+      agent-remediation: {existingSecret: continuo-redis-agent-remediation}
+      dead-letter-controller: {existingSecret: continuo-redis-dead-letter-controller}
 
 ingress:
   enabled: true
@@ -60,6 +91,7 @@ ingress:
     cert-manager.io/cluster-issuer: letsencrypt
 
 validation:
-  # externalDatabase.existingSecret holds the password; supply your own warehouse Secret.
+  # The warehouse and its login are yours: supply the Secret dbt and the
+  # validation runner sign in with.
   createWarehouseSecret: false
   warehouseSecret: continuo-warehouse-validation

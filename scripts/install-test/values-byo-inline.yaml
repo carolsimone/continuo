@@ -24,3 +24,35 @@ externalNeo4j:
   uri: bolt://byo-neo4j:7687
   username: neo4j
   password: ci-neo4j-pw
+
+credentials:
+  # One Postgres login per service, each with a Secret holding its password
+  # under the key `password` (deploy/CREDENTIALS.md).
+  postgres:
+    run-controller: {existingSecret: continuo-pg-run-controller}
+    execution-controller: {existingSecret: continuo-pg-execution-controller}
+    release-controller: {existingSecret: continuo-pg-release-controller}
+    remediation: {existingSecret: continuo-pg-remediation}
+    agent-remediation: {existingSecret: continuo-pg-agent-remediation}
+    agent-chat: {existingSecret: continuo-pg-agent-chat}
+    dead-letter-controller: {existingSecret: continuo-pg-dead-letter-controller}
+  redis:
+    mode: perService
+    logins:
+      streams-init: {existingSecret: continuo-redis-streams-init}
+      run-controller: {existingSecret: continuo-redis-run-controller}
+      catalog: {existingSecret: continuo-redis-catalog}
+      agent-chat: {existingSecret: continuo-redis-agent-chat}
+      execution-controller: {existingSecret: continuo-redis-execution-controller}
+      ui: {existingSecret: continuo-redis-ui}
+      topology-controller: {existingSecret: continuo-redis-topology-controller}
+      release-controller: {existingSecret: continuo-redis-release-controller}
+      remediation: {existingSecret: continuo-redis-remediation}
+      agent-remediation: {existingSecret: continuo-redis-agent-remediation}
+      dead-letter-controller: {existingSecret: continuo-redis-dead-letter-controller}
+
+validation:
+  # The warehouse and its login belong to the company with an external
+  # Postgres; run.sh creates this Secret for the continuo_warehouse login.
+  createWarehouseSecret: false
+  warehouseSecret: continuo-warehouse-validation

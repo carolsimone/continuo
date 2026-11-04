@@ -88,6 +88,38 @@ grants it to catalog's role.
 To run no exports, set catalog.backup.enabled=false.
 {{- end }}
 
+{{- if and .Release.IsUpgrade (not .Values.postgresql.enabled) }}
+
+BREAKING: every service signs in to Postgres as its own login. Before this
+upgrade, create each login below with LOGIN and a password and nothing else,
+and a Secret holding its password, named in credentials.postgres.<service>.existingSecret
+(deploy/CREDENTIALS.md). The migrate job, signed in as {{ .Values.externalDatabase.username }},
+grants each login its rights and stops the upgrade, naming the login, when one
+is missing or has more rights than its own.
+{{- range $svc, $_ := (include "continuo.postgres.serviceDatabases" . | fromJson) }}
+  {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc) | fromJson).username }} ({{ $svc }})
+{{- end }}
+dbt and the validation runner sign in with the warehouse Secret
+validation.warehouseSecret, which is yours: the chart builds one only for the
+bundled Postgres.
+{{- end }}
+
+{{- if and .Release.IsUpgrade (not .Values.redis.enabled) (eq (include "continuo.redis.mode" .) "perService") }}
+
+BREAKING: every service signs in to Redis as its own login. Before this
+upgrade, create each login below with its rule from deploy/redis-acl-rules.acl
+(or deploy/continuo/files/redis-acl-rules.json) and a password, and a Secret
+holding its password, named in credentials.redis.logins.<name>.existingSecret
+(deploy/CREDENTIALS.md). The streams-init hook signs in as each of them before
+any service rolls and stops the upgrade, naming the login, when one is missing
+or its password is wrong; a service refuses to start when its login reaches
+keys outside its own. A Redis with no ACL users runs with
+credentials.redis.mode=shared instead.
+{{- range $name := (include "continuo.redis.loginNames" . | fromJsonArray) }}
+  {{ (include "continuo.redis.login" (dict "root" $ "svc" $name) | fromJson).username }} ({{ $name }})
+{{- end }}
+{{- end }}
+
 {{- if .Release.IsUpgrade }}
 
 Every service now runs under its own ServiceAccount, named after it, not the namespace's default one.

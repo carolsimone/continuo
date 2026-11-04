@@ -90,10 +90,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to dead-letter-controller service")
 
-	// Setup Redis client
+	// Setup Redis client. The harness signs in as Redis's default user, which
+	// reads every stream (compose/redis-users.acl); E2E_REDIS_PASSWORD, not
+	// REDIS_PASSWORD, which inside the catalog container is catalog's login.
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     fmt.Sprintf("%s:6379", redisHost),
-		Password: getEnv("REDIS_PASSWORD", ""),
+		Password: getEnv("E2E_REDIS_PASSWORD", "continuo"),
 		DB:       0,
 	})
 	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
@@ -106,13 +108,21 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	require.NoError(t, err, "Failed to connect to Neo4j")
 
 	// Setup PostgreSQL connections for each database
-	executionDB := connectPostgres(t, pgHost, "continuo_execution")
-	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller")
-	releaseDB := connectPostgres(t, pgHost, "continuo_release")
-	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
-	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
-	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
-	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
+	// The services' databases are read as the migration login, which owns
+	// them; the warehouse is read and written as its own login, the one dbt
+	// and the validation runner sign in as, so every table the harness creates
+	// there belongs to the login that may replace it.
+	migrationLogin := func(db string) *sqlx.DB {
+		return connectPostgres(t, pgHost, db, "continuo_svc", getEnv("E2E_POSTGRES_PASSWORD", "continuo"))
+	}
+	executionDB := migrationLogin("continuo_execution")
+	runControllerDB := migrationLogin("continuo_run_controller")
+	releaseDB := migrationLogin("continuo_release")
+	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"),
+		getEnv("E2E_WAREHOUSE_USER", "continuo_warehouse"), getEnv("E2E_WAREHOUSE_PASSWORD", "local-continuo_warehouse"))
+	remediationDB := migrationLogin("continuo_remediation")
+	agentRemediationDB := migrationLogin("continuo_agent_remediation")
+	deadLetterDB := migrationLogin("continuo_dead_letter")
 
 	clients := &testClients{
 		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
@@ -158,12 +168,11 @@ func newMinioS3Client() *s3.Client {
 	})
 }
 
-// connectPostgres establishes a PostgreSQL connection
-func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
-	pgPassword := getEnv("POSTGRES_PASSWORD", "continuo")
+// connectPostgres opens a connection to database as user.
+func connectPostgres(t *testing.T, host, database, user, password string) *sqlx.DB {
 	connStr := fmt.Sprintf(
-		"host=%s port=5432 dbname=%s user=continuo_svc password=%s sslmode=disable",
-		host, database, pgPassword,
+		"host=%s port=5432 dbname=%s user=%s password=%s sslmode=disable",
+		host, database, user, password,
 	)
 	db, err := sqlx.Connect("postgres", connStr)
 	require.NoError(t, err, "Failed to connect to PostgreSQL database: %s", database)

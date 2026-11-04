@@ -57,7 +57,10 @@ where continuo proposes a fix for a failure as a pull request against your
 fork.
 
 **Credentials: none to install.** The install itself needs no secrets, and so
-does every step of the walkthrough except the LLM-backed extras below. An LLM API
+does every step of the walkthrough except the LLM-backed extras below. The
+chart generates every datastore password itself, including a Postgres and a
+Redis login of its own for each continuo service; against your own datastores,
+your team creates those logins instead ([deploy/CREDENTIALS.md](../deploy/CREDENTIALS.md)). An LLM API
 key unlocks two optional things: the in-UI **assistant** (section 3) and
 **chapter 8 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
 guide**, where an LLM proposes a fix for a model you broke.

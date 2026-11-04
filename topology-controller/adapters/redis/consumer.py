@@ -39,6 +39,18 @@ _STARTUP_TIMEOUT_S = 300.0
 _STARTUP_INITIAL_DELAY_S = 1.0
 _STARTUP_MAX_DELAY_S = 10.0
 
+# The error replies that end the wait for the consumer group at once: the key
+# holds another type, or the server does not have the command. Every other
+# reply, a NOPERM included, is waited out within the startup window.
+# redis-py drops the ERR code from the text of the error it raises.
+_PERMANENT_BOOTSTRAP_PREFIXES = ("WRONGTYPE", "unknown command", "unknown subcommand")
+
+
+def _is_permanent_bootstrap_reply(exc: RedisResponseError) -> bool:
+    text = str(exc).removeprefix("ERR ")
+    return text.startswith(_PERMANENT_BOOTSTRAP_PREFIXES)
+
+
 # A message whose handler still fails transiently on this delivery is
 # dead-lettered. The count is the pending entry's delivery counter.
 _MAX_DELIVERIES = 5
@@ -100,12 +112,13 @@ class Consumer:
         The consumer never creates the group. It polls until the prefixed key
         of its stream holds the group, advancing the heartbeat on every poll,
         and returns that key, followed by the unprefixed key while LEGACY_KEYS
-        is true and that key holds the group too. A Redis it cannot reach is
-        waited out like a missing group, and the connection error is raised
-        once the window is spent. Any other error (a key of the wrong type) is
-        permanent, so it is raised on the first attempt instead of burning the
-        window on something no amount of waiting will fix. A group still
-        missing at the end raises RuntimeError.
+        is true and that key holds the group too. A Redis it cannot reach, or
+        any other error reply (a NOPERM while the login's rule is still being
+        applied), is waited out like a missing group, and that error is raised
+        once the window is spent. A reply no amount of waiting will fix (a key
+        of the wrong type, a command the server does not have) is raised on the
+        first attempt instead of burning the window, as in pkg/redis's
+        StreamConsumer. A group still missing at the end raises RuntimeError.
         """
         deadline = time.monotonic() + _STARTUP_TIMEOUT_S
         delay = _STARTUP_INITIAL_DELAY_S
@@ -118,12 +131,16 @@ class Consumer:
                 found = self._group_keys()
             except (RedisConnectionError, RedisTimeoutError) as e:
                 found, unreachable = [], e
+            except RedisResponseError as e:
+                if _is_permanent_bootstrap_reply(e):
+                    raise
+                found, unreachable = [], e
             if found:
                 return found
             if time.monotonic() + delay > deadline:
                 if unreachable is not None:
                     logger.error(
-                        "Redis still unreachable after %.0fs and %d attempts; giving up: %s",
+                        "Could not read the consumer groups after %.0fs and %d attempts; giving up: %s",
                         _STARTUP_TIMEOUT_S, attempt, unreachable,
                     )
                     raise unreachable
@@ -133,7 +150,7 @@ class Consumer:
                 )
             if unreachable is not None:
                 logger.warning(
-                    "Redis not reachable yet (attempt %d), retrying in %.0fs: %s",
+                    "Could not read the consumer groups (attempt %d), retrying in %.0fs: %s",
                     attempt, delay, unreachable,
                 )
             else:

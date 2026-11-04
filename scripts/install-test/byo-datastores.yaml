@@ -47,16 +47,18 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # The company's superuser; run.sh signs in as it to create the
+          # migration login and each service's login, as a platform team would.
           env:
             - name: POSTGRES_USER
-              value: continuo
+              value: postgres
             - name: POSTGRES_PASSWORD
-              value: ci-postgres-pw
+              value: ci-postgres-superuser-pw
           ports:
             - containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "continuo"]
+              command: ["pg_isready", "-U", "postgres"]
             initialDelaySeconds: 5
             periodSeconds: 3
           volumeMounts:

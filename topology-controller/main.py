@@ -11,6 +11,7 @@ from config.config import (
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
+    redis_acl_mode,
     validate,
     warehouse_dialect,
 )
@@ -21,6 +22,7 @@ from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.redis.error_class import is_infrastructure
+from adapters.redis.fence import check_permission_fence
 from adapters.redis.release_requested_binding import parse_release_requested
 from adapters.sources.s3 import S3Source
 from adapters.topology_artifact_writer import TopologyArtifactWriter
@@ -61,6 +63,10 @@ def main() -> None:
         decode_responses=False,
         credential_provider=EnvOrFileCredentialProvider(),
     )
+    # In perService mode the login must be fenced to its own keys; a login
+    # that reaches others raises PermissionFenceError here, which stops the
+    # process before anything consumes.
+    check_permission_fence(redis_client, redis_acl_mode())
 
     # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
     candidate_publisher = CandidateManifestPublisher(

@@ -148,7 +148,7 @@ func TestAuthOIDC(t *testing.T) {
 		defer cancel()
 		rdb := goredis.NewClient(&goredis.Options{
 			Addr:     getEnv("REDIS_HOST", "redis") + ":6379",
-			Password: getEnv("REDIS_PASSWORD", "continuo"),
+			Password: getEnv("E2E_REDIS_PASSWORD", "continuo"),
 		})
 		defer rdb.Close()
 		iter := rdb.Scan(ctx, 0, pkgredis.Key("uisession:*"), 100).Iterator()

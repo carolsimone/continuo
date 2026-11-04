@@ -44,7 +44,12 @@ type InfraClassifier func(error) bool
 
 // Classify returns the class of a handler error. A permanent error wins over
 // every other signal in the chain, so a handler that gives up explicitly is
-// never retried.
+// never retried. A NOPERM reply (a key or command the login's rule does not
+// grant) is transient: retrying it forever would stall the stream behind a
+// rule only an operator can fix, and dead-lettering it at once would drop a
+// message on a grant that is still being applied, so it is retried within
+// maxDeliveries and then dead-lettered, ready for a redrive once the rule is
+// fixed.
 func Classify(err error, extra ...InfraClassifier) ErrorClass {
 	if errors.Is(err, events.ErrPermanent) {
 		return ClassPermanent

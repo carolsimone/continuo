@@ -16,68 +16,24 @@ services:
     volumes:
       - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
 
-  flyway-run-controller:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_run_controller -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/run_controller:/flyway/sql
+  # One-shot: runs every service's Flyway migrations as the migration login
+  # continuo_svc, then lets each service's login connect to its own database,
+  # grants it read and write on its tables and checks it holds nothing more.
+  # The same image and script (db/migrate-all.sh) as the chart's migrate job;
+  # db/init-databases.sh creates the logins with their local passwords.
+  migrations:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.migrate
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=continuo_svc
+      - POSTGRES_PASSWORD=continuo
+      - CONTINUO_PG_LOGINS=run_controller=continuo_run_controller execution=continuo_execution_controller release=continuo_release_controller agent_chat=continuo_agent_chat remediation=continuo_remediation agent_remediation=continuo_agent_remediation dead_letter=continuo_dead_letter_controller
     depends_on:
       - postgres
-    tty: true
-
-  flyway-execution:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_execution -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/execution:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-release:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_release -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/release:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-agent-chat:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent_chat -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/agent_chat:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-remediation:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_remediation -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/remediation:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-agent-remediation:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent_remediation -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/agent_remediation:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-dead-letter:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dead_letter -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/dead_letter:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
+    restart: "no"
 
   redis:
     image: redis:7.2-alpine
@@ -85,7 +41,13 @@ services:
       - "6379:6379"
     # Disable all persistence (both RDB snapshots and AOF) to avoid
     # "No space left on device" errors when Colima's virtual disk is tight.
-    command: redis-server --appendonly no --save "" --requirepass continuo
+    # Each service signs in as its own login, from the ACL file the streams
+    # generator writes (compose/redis-users.acl): every login has the local
+    # password local-<login>, and the default user keeps the password
+    # continuo for the test suites and the e2e harness.
+    command: redis-server --appendonly no --save "" --aclfile /c/redis-users.acl
+    volumes:
+      - ./compose:/c:ro
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "continuo", "ping"]
       interval: 10s
@@ -120,6 +82,8 @@ services:
     depends_on:
       postgres:
         condition: service_started
+      migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       minio-init:
@@ -132,8 +96,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - POSTGRES_DB=continuo_run_controller
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_run_controller
+      - POSTGRES_PASSWORD=local-continuo_run_controller
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - DB_SSLMODE=disable
@@ -142,7 +106,9 @@ services:
       - HEALTH_PORT=8082
       - GRPC_PORT=50051
       - REDIS_ADDR=redis:6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_run_controller
+      - REDIS_PASSWORD=local-continuo_run_controller
+      - REDIS_ACL_MODE=perService
       - MAINTENANCE_ENABLED=false
       # The chart's runs.taskMaxRetries and runs.taskTimeoutHours defaults.
       - TASK_MAX_RETRIES=2
@@ -173,6 +139,8 @@ services:
     depends_on:
       postgres:
         condition: service_started
+      migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       minio-init:
@@ -182,13 +150,15 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_execution_controller
+      - REDIS_PASSWORD=local-continuo_execution_controller
+      - REDIS_ACL_MODE=perService
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_execution
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_execution_controller
+      - POSTGRES_PASSWORD=local-continuo_execution_controller
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
@@ -270,7 +240,9 @@ services:
       # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_catalog
+      - REDIS_PASSWORD=local-continuo_catalog
+      - REDIS_ACL_MODE=perService
       # Object storage — the version-ingestion consumer reads each release's
       # code-bundle document
       - S3_ENDPOINT_URL=http://minio:9000
@@ -319,20 +291,22 @@ services:
         condition: service_started
       redis:
         condition: service_started
-      flyway-release:
-        condition: service_started
+      migrations:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
     environment:
       - METRICS_PORT=9464
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_release_controller
+      - POSTGRES_PASSWORD=local-continuo_release_controller
       - POSTGRES_DB=continuo_release
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_release_controller
+      - REDIS_PASSWORD=local-continuo_release_controller
+      - REDIS_ACL_MODE=perService
       - RELEASE_CONTROLLER_HTTP_PORT=8088
       - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
@@ -357,20 +331,22 @@ services:
         condition: service_started
       redis:
         condition: service_started
-      flyway-remediation:
-        condition: service_started
+      migrations:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
     environment:
       - METRICS_PORT=9464
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_remediation
+      - POSTGRES_PASSWORD=local-continuo_remediation
       - POSTGRES_DB=continuo_remediation
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_remediation
+      - REDIS_PASSWORD=local-continuo_remediation
+      - REDIS_ACL_MODE=perService
       - REMEDIATION_HTTP_PORT=8090
       - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
@@ -395,8 +371,8 @@ services:
         condition: service_started
       redis:
         condition: service_started
-      flyway-agent-remediation:
-        condition: service_started
+      migrations:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
       stub-llm:
@@ -411,12 +387,14 @@ services:
       - METRICS_PORT=9464
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_agent_remediation
+      - POSTGRES_PASSWORD=local-continuo_agent_remediation
       - POSTGRES_DB=continuo_agent_remediation
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_agent_remediation
+      - REDIS_PASSWORD=local-continuo_agent_remediation
+      - REDIS_ACL_MODE=perService
       - AGENT_REMEDIATION_HTTP_PORT=8092
       - AGENT_REMEDIATION_GRPC_PORT=50054
       - AGENT_REMEDIATION_MAX_ATTEMPTS=3
@@ -479,18 +457,20 @@ services:
         condition: service_started
       redis:
         condition: service_started
-      flyway-dead-letter:
-        condition: service_started
+      migrations:
+        condition: service_completed_successfully
     environment:
       - METRICS_PORT=9464
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_dead_letter_controller
+      - POSTGRES_PASSWORD=local-continuo_dead_letter_controller
       - POSTGRES_DB=continuo_dead_letter
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_dead_letter_controller
+      - REDIS_PASSWORD=local-continuo_dead_letter_controller
+      - REDIS_ACL_MODE=perService
       - DEAD_LETTER_HTTP_PORT=8096
       - DEAD_LETTER_GRPC_PORT=50055
       - LOG_LEVEL=INFO
@@ -519,7 +499,9 @@ services:
         condition: service_healthy
     environment:
       - REDIS_ADDR=redis:6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_redis_migrate
+      - REDIS_PASSWORD=local-continuo_redis_migrate
+      - REDIS_ACL_MODE=perService
       - LOG_LEVEL=INFO
     restart: "no"
     networks:
@@ -575,18 +557,25 @@ services:
       dockerfile: agent-chat/Dockerfile.dev
     container_name: agent-chat
     depends_on:
-      - postgres
-      - flyway-agent-chat
-      - run-controller
-      - catalog
-      - stub-llm
-      - redis
-      - egress-proxy
+      postgres:
+        condition: service_started
+      migrations:
+        condition: service_completed_successfully
+      run-controller:
+        condition: service_started
+      catalog:
+        condition: service_started
+      stub-llm:
+        condition: service_started
+      redis:
+        condition: service_started
+      egress-proxy:
+        condition: service_started
     environment:
       - METRICS_PORT=9464
       - POSTGRES_DB=continuo_agent_chat
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_agent_chat
+      - POSTGRES_PASSWORD=local-continuo_agent_chat
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - DB_SSLMODE=disable
@@ -596,7 +585,9 @@ services:
       - CONTINUO_CATALOG_ADDR=catalog:50052
       - CONTINUO_DEAD_LETTER_ADDR=dead-letter-controller:50055
       - REDIS_ADDR=redis:6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_agent_chat
+      - REDIS_PASSWORD=local-continuo_agent_chat
+      - REDIS_ACL_MODE=perService
       - CHAT_MAX_CONCURRENT_SESSIONS=100
       - LOG_LEVEL=INFO
       - ENV=local
@@ -766,7 +757,9 @@ services:
       - AUTH_OPERATOR_EMAILS=operator@example.com
       - AUTH_VIEWER_EMAILS=viewer@example.com
       - REDIS_URL=redis://redis:6379
-      - REDIS_PASSWORD=continuo
+      - REDIS_USERNAME=continuo_ui
+      - REDIS_PASSWORD=local-continuo_ui
+      - REDIS_ACL_MODE=perService
       - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
       - CI_AUTH_ALLOW_INSECURE_ISSUER=true
       - MAINTENANCE_ENABLED=false
@@ -833,7 +826,9 @@ services:
     container_name: topology-controller
     environment:
       REDIS_URL: redis://redis:6379
-      REDIS_PASSWORD: continuo
+      REDIS_USERNAME: continuo_topology_controller
+      REDIS_PASSWORD: local-continuo_topology_controller
+      REDIS_ACL_MODE: perService
       S3_ENDPOINT_URL: http://minio:9000
       S3_BUCKET: continuo
       S3_ENV: local
@@ -870,8 +865,8 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=continuo_dbt
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_USER=continuo_warehouse
+      - POSTGRES_PASSWORD=local-continuo_warehouse
       # Per-service image tags recorded in compiled manifests. The e2e resolves
       # the dbt job image_tag from the release-controller service_prod table (seeded
       # by setup.sh / provision-k8s-test-env.sh with the real content-hash tags), so

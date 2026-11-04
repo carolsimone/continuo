@@ -202,7 +202,7 @@ describe('buildAuth', () => {
     await expect(buildAuth({
       mode: 'oidc', issuerUrl: 'https://idp.example.com', clientId: 'c', clientSecret: 's', publicUrl: 'https://x', scopes: 'openid',
       groupsClaim: 'groups', roleMapping: new Map(), operatorEmails: new Set(), viewerEmails: new Set(), defaultRole: 'none',
-      sessionIdleTtlSeconds: 1, sessionMaxTtlSeconds: 2, redisUrl: 'redis://unused',
+      sessionIdleTtlSeconds: 1, sessionMaxTtlSeconds: 2, redisUrl: 'redis://unused', redisAclMode: 'shared',
     }, ci)).rejects.toThrow(/must differ/);
   });
 });

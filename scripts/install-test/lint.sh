@@ -39,6 +39,7 @@ renders=(
   "byo-secret:scripts/install-test/values-byo-secret.yaml"
   "credential-files:scripts/install-test/values-credential-files.yaml"
   "company-files:scripts/install-test/values-company-files.yaml"
+  "redis-shared:scripts/install-test/values-redis-shared.yaml"
 )
 
 tmp="$(mktemp -d)"
@@ -77,26 +78,35 @@ done
 
 # streams-init creates every Redis stream and consumer group before the
 # services need them. With a BYO Redis (it exists already) it is a pre-install
-# and pre-upgrade hook, so the streams exist before the services roll; with the
-# bundled Redis (no release resource exists while hooks run) it is a regular
-# Job. A hook cannot read a Secret the release creates as a regular resource,
-# so the BYO renders with inline credentials must give it a hook Secret.
+# and pre-upgrade hook ordered after the migrate hook, so the streams exist
+# before the services roll; with the bundled Redis (no release resource exists
+# while hooks run) it is a regular Job that waits for Redis. A hook cannot read
+# a Secret or ConfigMap the release creates as a regular resource, so a
+# shared-mode BYO render with an inline password must give it a hook Secret.
 # redisInit.createStreams reaches it as REDIS_INIT_CREATE_STREAMS, also when a
-# release has no redisInit values (helm upgrade --reuse-values).
+# release has no redisInit values (helm upgrade --reuse-values), and the Redis
+# ACL mode as REDIS_ACL_MODE.
 echo "--- streams-init Job: a hook with a BYO Redis, a regular Job with the bundled one, createStreams reaches it"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true
+python3 scripts/install-test/assert-streams-init.py "${tmp}/defaults.yaml" --mode job --create-streams true --acl-mode perService
 for f in byo-example byo-inline byo-secret; do
-  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/${f}.yaml" --mode hook --create-streams true --acl-mode perService
+done
+python3 scripts/install-test/assert-streams-init.py "${tmp}/redis-shared.yaml" --mode job --create-streams true --acl-mode shared
+for f in byo-inline byo-secret; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "scripts/install-test/values-${f}.yaml" \
+    -f scripts/install-test/values-redis-shared.yaml > "${tmp}/streams-init-${f}-shared.yaml"
+  python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-${f}-shared.yaml" --mode hook \
+    --create-streams true --acl-mode shared
 done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=false \
   > "${tmp}/streams-init-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-off.yaml" --mode job --create-streams false --acl-mode perService
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-inline.yaml \
   --set redisInit.createStreams=false > "${tmp}/streams-init-byo-off.yaml"
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-byo-off.yaml" --mode hook --create-streams false --acl-mode perService
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit=null > "${tmp}/streams-init-null.yaml" \
   || { echo "FAIL: rendering with redisInit=null failed; values without a redisInit block must render"; exit 1; }
-python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true
+python3 scripts/install-test/assert-streams-init.py "${tmp}/streams-init-null.yaml" --mode job --create-streams true --acl-mode perService
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set redisInit.createStreams=maybe > /dev/null 2>&1; then
   echo "FAIL: redisInit.createStreams=maybe must fail the render"; exit 1
 fi
@@ -130,9 +140,10 @@ python3 scripts/install-test/assert-redis-gate.py . "${tmp}/defaults.yaml" \
 # ServiceAccount of its own in each. The file render is compared with the same
 # values in env delivery, so a credential cannot get lost between the two.
 echo "--- credential delivery: env, file and company-provided files"
-for f in defaults byo-example byo-inline byo-secret; do
+for f in defaults byo-example byo-inline; do
   python3 scripts/install-test/assert-credential-delivery.py "${tmp}/${f}.yaml" env
 done
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/byo-secret.yaml" file
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   -f scripts/install-test/values-credential-files.yaml --set credentials.delivery=env > "${tmp}/credential-files-env.yaml"
 python3 scripts/install-test/assert-credential-delivery.py "${tmp}/credential-files.yaml" file "${tmp}/credential-files-env.yaml"
@@ -165,6 +176,97 @@ if deployment_env agent-chat "${tmp}/file-defaults.yaml" | grep -q '^LLM_API_KEY
   echo "FAIL: file delivery with an empty llm.apiKey must give agent-chat no LLM_API_KEY variable or file"; exit 1
 fi
 python3 scripts/install-test/assert-credential-delivery.py "${tmp}/file-defaults.yaml" file
+# Each service signs in to Postgres as its own login, read from that login's
+# Secret; the migrate Job grants each login its rights, and in the bundled
+# quickstart creates them.
+echo "--- Postgres: every service signs in as its own login"
+for f in defaults credential-files file-defaults; do
+  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" bundled
+done
+for f in byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-postgres-logins.py "${tmp}/${f}.yaml" external 'continuo-pg-{service}'
+done
+# An external Postgres values file written before per-service logins (no
+# credentials.postgres block) fails the render, naming the login to create.
+python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-logins.yaml" <<'PY'
+import sys, yaml
+values = yaml.safe_load(open(sys.argv[1]))
+values.get("credentials", {}).pop("postgres", None)
+yaml.safe_dump(values, open(sys.argv[2], "w"))
+PY
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/byo-secret-no-logins.yaml" \
+     > /dev/null 2> "${tmp}/pglogins.err"; then
+  echo "FAIL: an external Postgres with no login Secrets must fail the render"; exit 1
+fi
+grep -qF 'credentials.postgres.run-controller.existingSecret is required: create the login continuo_run_controller' "${tmp}/pglogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
+# The chart builds the warehouse Secret only for the bundled Postgres.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-secret.yaml \
+     --set validation.createWarehouseSecret=true > /dev/null 2> "${tmp}/pglogins.err"; then
+  echo "FAIL: validation.createWarehouseSecret=true with an external Postgres must fail the render"; exit 1
+fi
+grep -qF 'validation.createWarehouseSecret needs the bundled Postgres' "${tmp}/pglogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
+# Each Redis service signs in as its own login, with the rule the streams
+# generator wrote for it; the bundled Redis starts from an ACL file of those
+# rules with the default user off, and streams-init signs in as every login it
+# can reach before it creates the streams. A Redis with no ACL users runs in
+# shared mode, with one password.
+echo "--- Redis: every service signs in as its own login (perService), or with the one password (shared)"
+for f in defaults credential-files file-defaults; do
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService bundled
+done
+for f in byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService external 'continuo-redis-{service}'
+done
+python3 scripts/install-test/assert-redis-logins.py "${tmp}/redis-shared.yaml" shared
+# A login whose password reaches its service only as a company file is checked
+# when that service starts, not by streams-init; with every login given that
+# way streams-init mounts no login file and gets no REDIS_LOGINS_DIR, which
+# would name a directory that does not exist.
+files_args=()
+for svc in run-controller catalog agent-chat execution-controller ui topology-controller \
+           release-controller remediation agent-remediation dead-letter-controller; do
+  files_args+=(--set "credentials.files.${svc}.REDIS_PASSWORD=/vault/secrets/redis")
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-secret.yaml \
+  "${files_args[@]}" > "${tmp}/redis-company-files.yaml"
+python3 - "${tmp}/redis-company-files.yaml" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if d and d.get("kind") == "Job" and d["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "streams-init":
+        spec = d["spec"]["template"]["spec"]
+        env = {e["name"] for c in spec["containers"] for e in c.get("env") or []}
+        vols = {v["name"] for v in spec.get("volumes") or []}
+        if "REDIS_LOGINS_DIR" in env or "redis-logins" in vols:
+            sys.exit(f"FAIL: with every Redis password a company file, streams-init sets REDIS_LOGINS_DIR={'REDIS_LOGINS_DIR' in env} and mounts redis-logins={'redis-logins' in vols}; want neither")
+        print("streams-init checks no login file when every Redis password is a company file")
+        break
+else:
+    sys.exit("FAIL: no streams-init Job rendered")
+PY
+# Redis reads its ACL file only when it starts, so any change to the rendered
+# file (a rule, a login's name, its password) restarts the bundled Redis.
+redis_acl_checksum() {
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" --show-only templates/redis/statefulset.yaml \
+    | python3 -c 'import sys, yaml; d = yaml.safe_load(sys.stdin); print(d["spec"]["template"]["metadata"]["annotations"]["checksum/redis-acl"])'
+}
+[ "$(redis_acl_checksum)" = "$(redis_acl_checksum)" ] \
+  || { echo "FAIL: the bundled Redis's ACL checksum must be the same on two renders of the same values"; exit 1; }
+[ "$(redis_acl_checksum)" != "$(redis_acl_checksum --set credentials.redis.logins.ui.username=continuo_ui_renamed)" ] \
+  || { echo "FAIL: renaming a Redis login must change the bundled Redis's ACL checksum"; exit 1; }
+python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-redis-logins.yaml" <<'PY'
+import sys, yaml
+values = yaml.safe_load(open(sys.argv[1]))
+values.get("credentials", {}).pop("redis", None)
+yaml.safe_dump(values, open(sys.argv[2], "w"))
+PY
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/byo-secret-no-redis-logins.yaml" \
+     > /dev/null 2> "${tmp}/redislogins.err"; then
+  echo "FAIL: an external Redis in perService mode with no login Secrets must fail the render"; exit 1
+fi
+grep -qF 'credentials.redis.logins.run-controller.existingSecret is required: create the login continuo_run_controller' "${tmp}/redislogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/redislogins.err"; exit 1; }
 # A credentials.files entry names a variable continuo reads as a credential;
 # anything else would never be read.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -445,6 +547,36 @@ catalog_postgres_note='entry catalog and delete POSTGRES_DB and POSTGRES_PASSWOR
 if grep -qF "$catalog_postgres_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the catalog Postgres upgrade note"; exit 1
 fi
+# An operator upgrading with an external Postgres is told once which logins to
+# create; one with the bundled Postgres, whose logins the chart creates, and
+# an installing one are told nothing.
+logins_note='BREAKING: every service signs in to Postgres as its own login.'
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
+  -f scripts/install-test/values-byo-secret.yaml --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade with an external Postgres failed"; exit 1; }
+[ "$(grep -cF "$logins_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
+  && grep -qE '^ +continuo_dead_letter_controller \(dead-letter-controller\)$' "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: the external-Postgres upgrade notes do not list the logins to create once"; exit 1; }
+for notes in upgrade install; do
+  if grep -qF "$logins_note" "${tmp}/notes-${notes}.txt"; then
+    echo "FAIL: the bundled ${notes} notes carry the Postgres logins note"; exit 1
+  fi
+done
+# The same for an external Redis in perService mode, which lists the Redis
+# logins; a shared-mode Redis has none to create.
+redis_logins_note='BREAKING: every service signs in to Redis as its own login.'
+[ "$(grep -cF "$redis_logins_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
+  && grep -qE '^ +continuo_redis_migrate \(streams-init\)$' "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: the external-Redis upgrade notes do not list the Redis logins to create once"; exit 1; }
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
+  -f scripts/install-test/values-byo-secret.yaml --set credentials.redis.mode=shared \
+  --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo-shared.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade with a shared external Redis failed"; exit 1; }
+for notes in upgrade install upgrade-byo-shared; do
+  if grep -qF "$redis_logins_note" "${tmp}/notes-${notes}.txt"; then
+    echo "FAIL: the ${notes} notes carry the Redis logins note"; exit 1
+  fi
+done
 # An upgrading operator is told once that the services left the namespace's
 # default ServiceAccount, and what stops applying; an installing one is not.
 service_account_note='Every service now runs under its own ServiceAccount, named after it'
@@ -901,7 +1033,8 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/netpol-off.yaml"
 # addresses take 443, 8080 and 8443. A datastore port that is not one fails the
 # render while the agents' egress policy renders, and only then.
 echo "--- egress: the agents reach an external datastore on its port; the proxy reaches private addresses on allowPrivate ports"
-egress_byo=(--set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
+ext_logins=(-f scripts/install-test/values-external-logins.yaml)
+egress_byo=("${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
   --set externalDatabase.password=probe --set redis.enabled=false
   --set externalRedis.host=redis.example.internal --set externalRedis.password=probe)
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" \
@@ -912,7 +1045,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.
 # An external Postgres running as a pod of another namespace: the agents reach
 # the pods of every namespace on its port, which a network plugin that matches
 # no pod by ipBlock still admits.
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set postgresql.enabled=false \
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${ext_logins[@]}" --set postgresql.enabled=false \
   --set externalDatabase.host=pg-rw.databases.svc --set externalDatabase.password=probe > "${tmp}/egress-pg-pod.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod.yaml" continuo
 # An external Postgres or Redis whose host is an IP address outside the private
@@ -922,7 +1055,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod
 # one at a cloud metadata or link-local address fails the render. The checker
 # reads the host and port from the shared ConfigMap.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
   --set redis.enabled=false --set 'externalRedis.host=2001:db8::5' --set externalRedis.port=6380 \
   --set externalRedis.password=probe > "${tmp}/egress-ds-public.yaml"
 grep -q '^            cidr: 203.0.113.5/32$' "${tmp}/egress-ds-public.yaml" \
@@ -934,16 +1067,16 @@ grep -A1 'name: NO_PROXY' "${tmp}/egress-ds-public.yaml" | grep -q ',203\.0\.113
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-ds-public.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-public.yaml" continuo
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
   > "${tmp}/egress-ds-private.yaml"
 if grep -q 'cidr: 10.0.0.5/32' "${tmp}/egress-ds-private.yaml"; then
   echo "FAIL: an external Postgres at a private address is admitted by the private-range rule and needs no rule of its own"; exit 1
 fi
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-private.yaml" continuo
 refuse_render 'externalDatabase.host="100.100.100.200": its host 100.100.100.200 lies in' \
-  --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
 refuse_render 'externalRedis.host="169.254.169.254": its host 169.254.169.254 lies in' \
-  --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
+  "${ext_logins[@]}" --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
 refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0
 refuse_render 'externalRedis.port=70000 is not a port' "${egress_byo[@]}" --set externalRedis.port=70000
 refuse_render 'externalDatabase.port="5432" is not a port' --skip-schema-validation "${egress_byo[@]}" \

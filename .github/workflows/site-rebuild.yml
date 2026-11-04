@@ -10,6 +10,7 @@ on:
       - docs/instantiate-continuo.md
       - docs/run-projects-in-continuo.md
       - deploy/README.md
+      - deploy/CREDENTIALS.md
       - docs/roadmap.md
   workflow_dispatch:
 

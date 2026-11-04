@@ -101,7 +101,9 @@ redis:
     repository: redis
     tag: "8.6.4"
   auth:
-    # Optional pre-created Secret holding the bundled instance's password.
+    # Optional pre-created Secret holding the bundled instance's password,
+    # which every service signs in with in credentials.redis.mode=shared (in
+    # perService mode each login has its own, generated password).
     # Empty = the chart generates one and keeps it stable across upgrades.
     existingSecret: ""
     existingSecretPasswordKey: password
@@ -117,8 +119,10 @@ redis:
 externalRedis:
   host: ""
   port: 6379
-  # ui and topology-controller get REDIS_URL=redis://host:port, which carries
-  # no password; every service reads the password on its own, as
+  # The one password every service signs in with in
+  # credentials.redis.mode=shared; perService mode reads each login's own
+  # Secret instead. ui and topology-controller get REDIS_URL=redis://host:port,
+  # which carries no password; every service reads the password on its own, as
   # REDIS_PASSWORD (or REDIS_PASSWORD_FILE), so any character is fine in it.
   password: ""
   existingSecret: ""
@@ -332,6 +336,68 @@ credentials:
   #     agent-chat:
   #       LLM_API_KEY: /vault/secrets/llm
   files: {}
+  # The Postgres login each service signs in as. It reaches the service as
+  # POSTGRES_USER, and its password as POSTGRES_PASSWORD (or a file, as
+  # `delivery` says) from `key` in the Secret `existingSecret`. The migrate Job
+  # signs in as the migration login (externalDatabase.username, or
+  # postgresql.auth.username when bundled), which owns every continuo database,
+  # and on every deploy gives each login CONNECT on its own database and read
+  # and write on its tables, then fails the deploy if a login has any other
+  # right. It stops before any change when a login does not exist.
+  #   - External Postgres: create each login with LOGIN and a password and
+  #     nothing else, and a Secret holding its password (deploy/CREDENTIALS.md).
+  #     An enabled service whose login has no existingSecret, and no
+  #     credentials.files entry for POSTGRES_PASSWORD, fails the render.
+  #   - Bundled Postgres: the chart generates every password into the Secret
+  #     <release>-logins (kept across upgrades), and the migrate Job creates
+  #     the logins; existingSecret, when set, is used instead.
+  # `warehouse` is the login dbt and the validation runner sign in as in the
+  # bundled quickstart, owner of validation.warehouseDatabase. With an external
+  # Postgres the warehouse belongs to the company: set
+  # validation.warehouseSecret to its Secret.
+  postgres:
+    run-controller: {username: continuo_run_controller, existingSecret: "", key: password}
+    execution-controller: {username: continuo_execution_controller, existingSecret: "", key: password}
+    release-controller: {username: continuo_release_controller, existingSecret: "", key: password}
+    remediation: {username: continuo_remediation, existingSecret: "", key: password}
+    agent-remediation: {username: continuo_agent_remediation, existingSecret: "", key: password}
+    agent-chat: {username: continuo_agent_chat, existingSecret: "", key: password}
+    dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
+    warehouse: {username: continuo_warehouse}
+  # How each service signs in to Redis.
+  #   perService: each Redis service signs in as its own login (REDIS_USERNAME),
+  #     with its password from `key` in the Secret `existingSecret`. Each login's
+  #     rule is published in deploy/redis-acl-rules.acl and, one entry per
+  #     login, in files/redis-acl-rules.json; a service refuses to start when
+  #     its login reaches keys outside its own. streams-init signs in as
+  #     `streams-init`'s login and, before it creates the streams, as every
+  #     other login whose password is in a Secret, and stops the deploy when
+  #     one is missing or its password is wrong.
+  #     - External Redis: create each login with its rule and a password, and a
+  #       Secret holding the password (deploy/CREDENTIALS.md). An enabled
+  #       service whose login has no existingSecret, and no credentials.files
+  #       entry for REDIS_PASSWORD, fails the render, and so does streams-init's
+  #       login without one.
+  #     - Bundled Redis: the chart generates every password into
+  #       <release>-logins and starts Redis with the rules, its default user
+  #       off; existingSecret is not used.
+  #   shared: every service signs in with the one Redis password
+  #     (redis.auth / externalRedis), for a Redis with no ACL users. Any
+  #     service's credential then reaches every key of the Redis.
+  redis:
+    mode: perService
+    logins:
+      streams-init: {username: continuo_redis_migrate, existingSecret: "", key: password}
+      run-controller: {username: continuo_run_controller, existingSecret: "", key: password}
+      catalog: {username: continuo_catalog, existingSecret: "", key: password}
+      agent-chat: {username: continuo_agent_chat, existingSecret: "", key: password}
+      execution-controller: {username: continuo_execution_controller, existingSecret: "", key: password}
+      ui: {username: continuo_ui, existingSecret: "", key: password}
+      topology-controller: {username: continuo_topology_controller, existingSecret: "", key: password}
+      release-controller: {username: continuo_release_controller, existingSecret: "", key: password}
+      remediation: {username: continuo_remediation, existingSecret: "", key: password}
+      agent-remediation: {username: continuo_agent_remediation, existingSecret: "", key: password}
+      dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
 
 # service_name -> project root within that service's repo, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.
@@ -537,9 +603,11 @@ maintenance:
   enabled: false
 
 databaseInit:
-  # Idempotently creates all 8 databases (including continuo_dbt) before the
-  # Flyway migrations run. Disable when a DBA pre-creates databases; the
-  # connecting user then no longer needs CREATEDB.
+  # Idempotently creates the 7 service databases, and with the bundled Postgres
+  # the warehouse (validation.warehouseDatabase), before the Flyway migrations
+  # run, owned by the migration login. Disable when a DBA pre-creates the
+  # databases and makes the migration login their owner; it then no longer
+  # needs CREATEDB.
   enabled: true
 
 database:

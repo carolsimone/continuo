@@ -89,6 +89,33 @@ def log_level() -> int:
             f"unsupported LOG_LEVEL {raw!r}: expected one of {', '.join(_LOG_LEVELS)}"
         ) from None
 
+# REDIS_ACL_MODE (the chart's Redis login mode, injected through the shared
+# ConfigMap): in perService mode each service signs in as its own Redis login,
+# whose rule fences it to its own keys, and the service refuses to start when
+# its login reaches keys outside them (adapters.redis.fence). In shared mode
+# every service signs in with the same password and nothing is checked. These
+# are the values pkg/config accepts for the Go services. Unset is shared.
+REDIS_ACL_MODE_SHARED = "shared"
+REDIS_ACL_MODE_PER_SERVICE = "perService"
+_REDIS_ACL_MODES = (REDIS_ACL_MODE_SHARED, REDIS_ACL_MODE_PER_SERVICE)
+
+
+def redis_acl_mode() -> str:
+    """Return the REDIS_ACL_MODE this install declares.
+
+    Raises RuntimeError for any other value than the two modes, so a mode this
+    service cannot honour stops it at startup instead of skipping the check.
+    """
+    raw = os.environ.get("REDIS_ACL_MODE", "")
+    if not raw:
+        return REDIS_ACL_MODE_SHARED
+    if raw not in _REDIS_ACL_MODES:
+        raise RuntimeError(
+            f"unsupported REDIS_ACL_MODE {raw!r}: expected one of {', '.join(_REDIS_ACL_MODES)}"
+        )
+    return raw
+
+
 # Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v2.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
 RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
@@ -114,8 +141,8 @@ def validate() -> None:
     empty file, raises read_secret's error. Also rejects a REDIS_URL that
     carries credentials (they come from REDIS_USERNAME and REDIS_PASSWORD), an
     unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
-    this service has a SQL dialect for, and a LOG_LEVEL that names no level
-    this service logs at.
+    this service has a SQL dialect for, a LOG_LEVEL that names no level this
+    service logs at, and a REDIS_ACL_MODE other than shared or perService.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]
@@ -127,3 +154,4 @@ def validate() -> None:
         )
     warehouse_dialect()
     log_level()
+    redis_acl_mode()

@@ -16,7 +16,31 @@
      dedicated hook Secret, created strictly before the Job, carries it, as
      templates/db-init-migrate-hook-secret.yaml does for Postgres. */ -}}
 {{- $isHook := not .Values.redis.enabled }}
-{{- $usesHookSecret := and $isHook (not .Values.externalRedis.existingSecret) }}
+{{- $perService := eq (include "continuo.redis.mode" .) "perService" }}
+{{- $usesHookSecret := and $isHook (not $perService) (not .Values.externalRedis.existingSecret) }}
+{{- /* perService: streams-init signs in as its own login, and mounts the
+     password of every other login whose password is in a Secret, one file
+     per login named after its username, for the sign-in check it runs before
+     creating any stream. A login whose password the company puts in its
+     service's pod as a file (credentials.files) is out of its reach and is
+     checked when that service starts. */ -}}
+{{- $self := dict "root" $ "ref" "redisLogin" "svc" (dict "name" "streams-init") }}
+{{- $loginFiles := dict }}
+{{- $loginOrder := list }}
+{{- if $perService }}
+{{- $files := include "continuo.credentialFiles" . | fromJson }}
+{{- range $name := (include "continuo.redis.clientServices" . | fromJsonArray) }}
+{{- if not (dig $name "REDIS_PASSWORD" "" $files) }}
+{{- $ref := dict "root" $ "ref" "redisLogin" "svc" (dict "name" $name) }}
+{{- $secret := include "continuo.secretName" $ref }}
+{{- if not (hasKey $loginFiles $secret) }}
+{{- $loginOrder = append $loginOrder $secret }}
+{{- $_ := set $loginFiles $secret (list) }}
+{{- end }}
+{{- $_ := set $loginFiles $secret (append (get $loginFiles $secret) (dict "key" (include "continuo.secretKey" $ref) "path" (include "continuo.redis.login" (dict "root" $ "svc" $name) | fromJson).username)) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- $createStreams := true }}
 {{- if and .Values.redisInit (hasKey .Values.redisInit "createStreams") }}
 {{- $createStreams = .Values.redisInit.createStreams }}
@@ -86,8 +110,17 @@ spec:
             - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
+                  {{- if $perService }}
+                  name: {{ include "continuo.secretName" $self | quote }}
+                  key: {{ include "continuo.secretKey" $self | quote }}
+                  {{- else }}
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+                  {{- end }}
+            {{- if $perService }}
+            - name: REDIS_USERNAME
+              value: {{ (include "continuo.redis.login" (dict "root" $ "svc" "streams-init") | fromJson).username | quote }}
+            {{- end }}
             - name: REDIS_HOST
               value: {{ include "continuo.redis.host" . | quote }}
             - name: REDIS_PORT
@@ -98,7 +131,9 @@ spec:
             - |
               set -eu
               tries=0
-              until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
+              set -- -h "$REDIS_HOST" -p "$REDIS_PORT"
+              if [ -n "${REDIS_USERNAME:-}" ]; then set -- "$@" --user "$REDIS_USERNAME"; fi
+              until [ "$(redis-cli "$@" ping 2>/dev/null)" = "PONG" ]; do
                 tries=$((tries+1))
                 if [ "$tries" -gt 100 ]; then
                   echo "FATAL: Redis at ${REDIS_HOST}:${REDIS_PORT} never became ready after $((100*3))s" >&2
@@ -120,6 +155,21 @@ spec:
           env:
             - name: REDIS_ADDR
               value: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
+            {{- if $perService }}
+            - name: REDIS_USERNAME
+              value: {{ (include "continuo.redis.login" (dict "root" $ "svc" "streams-init") | fromJson).username | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" $self | quote }}
+                  key: {{ include "continuo.secretKey" $self | quote }}
+            {{- if $loginOrder }}
+            # Only with a login file to check: a login given only as a company
+            # file is checked when its service starts.
+            - name: REDIS_LOGINS_DIR
+              value: {{ printf "%s/redis-logins" (include "continuo.credentialDir" .) | quote }}
+            {{- end }}
+            {{- else }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -130,10 +180,37 @@ spec:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
                   {{- end }}
+            {{- end }}
+            # A hook reads no ConfigMap of the release, so the Job carries the
+            # mode itself; in perService it refuses to run when its own login
+            # reaches keys outside continuo:.
+            - name: REDIS_ACL_MODE
+              value: {{ include "continuo.redis.mode" . | quote }}
             - name: REDIS_INIT_CREATE_STREAMS
               value: {{ $createStreams | quote }}
             - name: LOG_LEVEL
               value: {{ include "continuo.logLevel" . | quote }}
+          {{- if $loginOrder }}
+          volumeMounts:
+            - name: redis-logins
+              mountPath: {{ printf "%s/redis-logins" (include "continuo.credentialDir" .) | quote }}
+              readOnly: true
+          {{- end }}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 250m, memory: 128Mi}
+      {{- if $loginOrder }}
+      volumes:
+        - name: redis-logins
+          projected:
+            sources:
+              {{- range $secret := $loginOrder }}
+              - secret:
+                  name: {{ $secret | quote }}
+                  items:
+                    {{- range $item := get $loginFiles $secret }}
+                    - key: {{ $item.key | quote }}
+                      path: {{ $item.path | quote }}
+                    {{- end }}
+              {{- end }}
+      {{- end }}
