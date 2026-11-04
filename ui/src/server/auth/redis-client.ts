@@ -1,6 +1,6 @@
 import type { RedisOptions } from 'ioredis';
 import { readSecret } from '../secrets';
-import type { AuthConfig } from './config';
+import type { OidcAuthConfig } from './config';
 
 // The options ui opens its Redis connection with. ioredis's ready check sends
 // INFO, which the generated continuo_ui rule does not grant: in perService mode
@@ -9,7 +9,7 @@ import type { AuthConfig } from './config';
 // while it replays its AOF. In shared mode the login may run INFO, so the
 // check holds commands back until Redis has loaded its data.
 export function redisClientOptions(
-  cfg: Pick<AuthConfig, 'redisUsername' | 'redisAclMode'>,
+  cfg: Pick<OidcAuthConfig, 'redisUsername' | 'redisAclMode'>,
   env: NodeJS.ProcessEnv,
 ): RedisOptions {
   return {
