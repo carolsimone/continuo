@@ -22,6 +22,12 @@ const MAX_DELAY_MS = 10_000;
 // and which say nothing about the login's keys.
 const SIGN_IN_REFUSED = /^(WRONGPASS|NOAUTH)\b/;
 
+// Reply errors a Redis sends while it cannot serve yet but will without any
+// change on the client's side (the list pkg/redis retries): LOADING while it
+// replays its AOF, among others. The fence waits them out like a Redis it
+// cannot reach.
+const NOT_SERVING_YET = /^(LOADING|BUSY|MASTERDOWN|TRYAGAIN|CLUSTERDOWN) |^ERR max number of clients reached/;
+
 interface FenceRedis {
   call(command: string, ...args: string[]): Promise<unknown>;
   options: { username?: string };
@@ -44,9 +50,10 @@ const realTiming: FenceTiming = {
 // every generated rule allows that command, so a NOPERM answer can only mean
 // the key is outside the login's patterns, and any other answer (the key's
 // groups, "no such key", another error reply) rejects naming the login. A
-// refused sign-in rejects with Redis's answer. A Redis it cannot reach yet is
-// waited out for up to STARTUP_TIMEOUT_MS, after which it rejects with the
-// connection error, not as a fence violation. In shared mode it checks
+// refused sign-in rejects with Redis's answer. A Redis it cannot reach yet, or
+// one that answers NOT_SERVING_YET (LOADING while it replays its AOF), is
+// waited out for up to STARTUP_TIMEOUT_MS, after which it rejects with that
+// error, not as a fence violation. In shared mode it checks
 // nothing; an unknown mode rejects.
 export async function checkPermissionFence(
   redis: FenceRedis,
@@ -65,7 +72,7 @@ export async function checkPermissionFence(
       await redis.call('XINFO', 'GROUPS', PERMISSION_PROBE_KEY);
     } catch (err) {
       const message = (err as Error).message;
-      if (err instanceof ReplyError) {
+      if (err instanceof ReplyError && !NOT_SERVING_YET.test(message)) {
         if (message.startsWith('NOPERM')) return;
         if (SIGN_IN_REFUSED.test(message)) throw new Error(`redis login ${login} could not sign in: ${message}`);
         break;
@@ -73,7 +80,7 @@ export async function checkPermissionFence(
       if (timing.now() + delay > deadline) {
         throw new Error(`check the permissions of redis login ${login}: ${message}`);
       }
-      timing.log.warn(`redis: not reachable yet (attempt ${attempt}), retrying in ${delay / 1000}s: ${message}`);
+      timing.log.warn(`redis: not serving yet (attempt ${attempt}), retrying in ${delay / 1000}s: ${message}`);
       await timing.sleep(delay);
       delay = Math.min(delay * 2, MAX_DELAY_MS);
       continue;

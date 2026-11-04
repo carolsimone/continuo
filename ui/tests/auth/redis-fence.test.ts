@@ -92,6 +92,29 @@ describe('checkPermissionFence', () => {
     expect(clock.now).toBeLessThanOrEqual(300_000);
   });
 
+  it.each([
+    'LOADING Redis is loading the dataset in memory',
+    'BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.',
+    'MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to no.',
+    'TRYAGAIN Multiple keys request during rehashing of slot',
+    'CLUSTERDOWN The cluster is down',
+    'ERR max number of clients reached',
+  ])('waits out a Redis that answers %s, as one it cannot reach', async (reply) => {
+    const { clock, timing } = fakeClock();
+    const redis = fakeRedis([new ReplyError(reply), new ReplyError('NOPERM No permissions to access a key')]);
+    await expect(checkPermissionFence(redis, 'perService', timing)).resolves.toBeUndefined();
+    expect(redis.call).toHaveBeenCalledTimes(2);
+    expect(clock.sleeps).toEqual([1000]);
+  });
+
+  it('gives up on a Redis that stays loading without calling it a fence violation', async () => {
+    const { timing } = fakeClock();
+    const redis = fakeRedis([new ReplyError('LOADING Redis is loading the dataset in memory')]);
+    await expect(checkPermissionFence(redis, 'perService', timing)).rejects.toThrow(
+      'check the permissions of redis login continuo_ui: LOADING Redis is loading the dataset in memory',
+    );
+  });
+
   it('does not wait out a refused sign-in', async () => {
     const { clock, timing } = fakeClock();
     const redis = fakeRedis([new ReplyError('WRONGPASS invalid username-password pair or user is disabled.')]);
