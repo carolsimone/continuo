@@ -1,0 +1,6 @@
+# Lint fixture: a Redis with no ACL users (credentials.redis.mode: shared).
+# Every service signs in with the one Redis password, as the default user, and
+# no service checks its login's reach.
+credentials:
+  redis:
+    mode: shared

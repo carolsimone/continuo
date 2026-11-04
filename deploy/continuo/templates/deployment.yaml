@@ -137,9 +137,14 @@ spec:
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           securityContext:
             {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
-          {{- $redisAuth := dict "root" $ "svc" $svc "name" "REDIS_PASSWORD" "ref" "redis" "as" "REDISCLI_AUTH" }}
+          {{- $redisPerService := eq (include "continuo.redis.mode" $) "perService" }}
+          {{- $redisAuth := dict "root" $ "svc" $svc "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" $redisPerService) "as" "REDISCLI_AUTH" }}
           env:
             {{- with include "continuo.credentialEnv" $redisAuth | trim }}{{ . | nindent 12 }}{{ end }}
+            {{- if $redisPerService }}
+            - name: REDIS_USERNAME
+              value: {{ (include "continuo.redis.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
+            {{- end }}
             - name: REDIS_HOST
               value: {{ include "continuo.redis.host" $ | quote }}
             - name: REDIS_PORT
@@ -158,7 +163,11 @@ spec:
                 REDISCLI_AUTH="$credential"; export REDISCLI_AUTH
               fi
               tries=0
-              until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
+              # Signs in as the service's own login when it has one, so a
+              # wrong password stops the pod here.
+              set -- -h "$REDIS_HOST" -p "$REDIS_PORT"
+              if [ -n "${REDIS_USERNAME:-}" ]; then set -- "$@" --user "$REDIS_USERNAME"; fi
+              until [ "$(redis-cli "$@" ping 2>/dev/null)" = "PONG" ]; do
                 tries=$((tries+1))
                 if [ "$tries" -gt 100 ]; then
                   echo "FATAL: Redis at ${REDIS_HOST}:${REDIS_PORT} never became ready after $((100*3))s" >&2
@@ -243,7 +252,8 @@ spec:
                 name: {{ include "continuo.configMapName" $ }}
           {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
           {{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" $ | fromJson) $svc.name }}
-          {{- if or $svc.secretEnv $svc.env $needsS3 $needsPostgres (eq $svc.name "ui") $isAgent $companyFiles }}
+          {{- $needsRedisLogin := and (has $svc.name (include "continuo.redis.clientServices" $ | fromJsonArray)) (eq (include "continuo.redis.mode" $) "perService") }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 $needsPostgres $needsRedisLogin (eq $svc.name "ui") $isAgent $companyFiles }}
           env:
             {{- /*
               Services that read or write object storage get their S3 credentials
@@ -270,6 +280,10 @@ spec:
             - name: POSTGRES_USER
               value: {{ (include "continuo.postgres.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
             {{- end }}
+            {{- if $needsRedisLogin }}
+            - name: REDIS_USERNAME
+              value: {{ (include "continuo.redis.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
+            {{- end }}
             {{- range $c := (include "continuo.credentialList" (dict "root" $ "svc" $svc) | fromJsonArray) }}
             {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" $c.name "ref" $c.ref) | trim }}{{ . | nindent 12 }}{{ end }}
             {{- end }}
@@ -292,9 +306,13 @@ spec:
               value: {{ get $companyFiles $name | quote }}
             {{- end }}
           {{- if $svc.env }}
-            {{- /* The login above is the service's POSTGRES_USER; an env entry
-                   of that name is left out rather than set twice. */}}
-            {{- range $key, $val := (ternary (omit ($svc.env | default dict) "POSTGRES_USER") $svc.env $needsPostgres) }}
+            {{- /* The logins above are the service's POSTGRES_USER and
+                   REDIS_USERNAME; an env entry of either name is left out
+                   rather than set twice. */}}
+            {{- $ownEnv := $svc.env | default dict }}
+            {{- if $needsPostgres }}{{ $ownEnv = omit $ownEnv "POSTGRES_USER" }}{{ end }}
+            {{- if $needsRedisLogin }}{{ $ownEnv = omit $ownEnv "REDIS_USERNAME" }}{{ end }}
+            {{- range $key, $val := $ownEnv }}
             - name: {{ $key }}
               {{- if and (eq $key "K8S_NAMESPACE") (eq $val "__RELEASE_NAMESPACE__") }}
               valueFrom:

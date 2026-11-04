@@ -1372,7 +1372,18 @@ capabilities:
      external existingSecret → chart credentials Secret (inline values). */}}
 {{- define "continuo.secretName" -}}
 {{- $v := .root.Values -}}
-{{- if eq .ref "postgresLogin" -}}
+{{- if eq .ref "redisLogin" -}}
+  {{- $login := include "continuo.redis.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
+  {{- if $v.redis.enabled -}}
+    {{- /* The bundled Redis's ACL file holds the hash of each password, so
+           the chart generates them all; existingSecret is not used. */ -}}
+    {{- include "continuo.loginsSecretName" .root -}}
+  {{- else if $login.existingSecret -}}
+    {{- $login.existingSecret -}}
+  {{- else -}}
+    {{- fail (printf "credentials.redis.logins.%s.existingSecret is required: create the login %s with its rule from deploy/redis-acl-rules.acl and a Secret holding its password (deploy/CREDENTIALS.md)" .svc.name $login.username) -}}
+  {{- end -}}
+{{- else if eq .ref "postgresLogin" -}}
   {{- $login := include "continuo.postgres.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
   {{- if $login.existingSecret -}}
     {{- $login.existingSecret -}}
@@ -1433,7 +1444,10 @@ capabilities:
 {{/* Which key inside that Secret. */}}
 {{- define "continuo.secretKey" -}}
 {{- $v := .root.Values -}}
-{{- if eq .ref "postgresLogin" -}}
+{{- if eq .ref "redisLogin" -}}
+  {{- $login := include "continuo.redis.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
+  {{- if $v.redis.enabled -}}{{ printf "redis-%s" .svc.name }}{{- else -}}{{ $login.key }}{{- end -}}
+{{- else if eq .ref "postgresLogin" -}}
   {{- $login := include "continuo.postgres.login" (dict "root" .root "svc" .svc.name) | fromJson -}}
   {{- if $login.existingSecret -}}{{ $login.key }}{{- else -}}{{ printf "postgres-%s" .svc.name }}{{- end -}}
 {{- else if eq .ref "postgres" -}}
@@ -1526,6 +1540,59 @@ capabilities:
      validation.warehouseDatabase. */}}
 {{- define "continuo.postgres.warehouseLogin" -}}
 {{- dig "postgres" "warehouse" "username" "continuo_warehouse" (.Values.credentials | default dict) -}}
+{{- end -}}
+
+{{/* How services sign in to Redis: "perService" (each its own login) or
+     "shared" (the one Redis password), from credentials.redis.mode;
+     perService for a release with no such key. Fails the render on any other
+     value. */}}
+{{- define "continuo.redis.mode" -}}
+{{- $mode := dig "redis" "mode" "perService" (.Values.credentials | default dict) -}}
+{{- if not (has $mode (list "perService" "shared")) -}}
+{{- fail (printf "credentials.redis.mode is %q: it must be perService or shared" (toString $mode)) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/* The Redis logins in perService mode: streams-init and every service in
+     "continuo.redis.clientServices". JSON list of names. */}}
+{{- define "continuo.redis.loginNames" -}}
+{{- toJson (prepend (include "continuo.redis.clientServices" . | fromJsonArray) "streams-init") -}}
+{{- end -}}
+
+{{/* A Redis login, credentials.redis.logins.<name> over its defaults
+     (username continuo_<name with - as _>, continuo_redis_migrate for
+     streams-init; no existingSecret; key password). JSON object {username,
+     existingSecret, key}.
+     Call: include "continuo.redis.login" (dict "root" $ "svc" "<name>") */}}
+{{- define "continuo.redis.login" -}}
+{{- $username := printf "continuo_%s" (.svc | replace "-" "_") -}}
+{{- if eq .svc "streams-init" -}}{{- $username = "continuo_redis_migrate" -}}{{- end -}}
+{{- $defaults := dict "username" $username "existingSecret" "" "key" "password" -}}
+{{- $given := dig "redis" "logins" .svc dict (.root.Values.credentials | default dict) | default dict -}}
+{{- toJson (merge (deepCopy $given) $defaults) -}}
+{{- end -}}
+
+{{/* The bundled Redis's ACL file: the default user off, and one line per
+     login with the SHA-256 of its password and its rule from
+     files/redis-acl-rules.json.
+     Call: include "continuo.redis.aclFile" (dict "root" $ "passwords" <name -> password>) */}}
+{{- define "continuo.redis.aclFile" -}}
+{{- $rules := dict -}}
+{{- range $l := (.root.Files.Get "files/redis-acl-rules.json" | fromJson).logins -}}
+{{- $_ := set $rules $l.service $l.rule -}}
+{{- end -}}
+user default off
+{{- range $name := (include "continuo.redis.loginNames" .root | fromJsonArray) }}
+{{- $login := include "continuo.redis.login" (dict "root" $.root "svc" $name) | fromJson }}
+{{- $rule := required (printf "files/redis-acl-rules.json has no rule for %s" $name) (get $rules $name) }}
+user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule }}
+{{- end }}
+{{- end -}}
+
+{{/* The Secret holding the bundled Redis's ACL file (perService mode). */}}
+{{- define "continuo.redis.aclSecretName" -}}
+{{- printf "%s-redis-acl" (include "continuo.fullname" .) -}}
 {{- end -}}
 
 {{/* The Secret the chart generates the bundled datastores' login passwords
@@ -1703,8 +1770,11 @@ volumeMounts:
 
 {{/* The credentials a service's main container gets, as a JSON list of
      {name, ref}: the S3 key pair for the services in
-     "continuo.s3.credentialServices", then its secretEnv entries (less the S3
-     pair for those services, which the template injects instead). */}}
+     "continuo.s3.credentialServices", the Postgres login's password for the
+     services in "continuo.postgres.serviceDatabases", the Redis password (its
+     own login's in perService mode) for the services in
+     "continuo.redis.clientServices", then its secretEnv entries less those,
+     which the template injects instead. */}}
 {{- define "continuo.credentialList" -}}
 {{- $needsS3 := has .svc.name (include "continuo.s3.credentialServices" .root | fromJsonArray) -}}
 {{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" .root | fromJson) .svc.name -}}
@@ -1716,8 +1786,12 @@ volumeMounts:
 {{- if $needsPostgres -}}
 {{- $list = append $list (dict "name" "POSTGRES_PASSWORD" "ref" "postgresLogin") -}}
 {{- end -}}
+{{- $needsRedis := has .svc.name (include "continuo.redis.clientServices" .root | fromJsonArray) -}}
+{{- if $needsRedis -}}
+{{- $list = append $list (dict "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" (eq (include "continuo.redis.mode" .root) "perService"))) -}}
+{{- end -}}
 {{- range $secret := (.svc.secretEnv | default (list)) -}}
-{{- if not (or (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) (and $needsPostgres (eq $secret.name "POSTGRES_PASSWORD"))) -}}
+{{- if not (or (and $needsS3 (has $secret.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY"))) (and $needsPostgres (eq $secret.name "POSTGRES_PASSWORD")) (and $needsRedis (eq $secret.name "REDIS_PASSWORD"))) -}}
 {{- $list = append $list (dict "name" $secret.name "ref" $secret.ref) -}}
 {{- end -}}
 {{- end -}}
@@ -1742,18 +1816,15 @@ volumeMounts:
 {{/* Sources of the pod's projected continuo-credentials volume, as YAML list
      items with no indentation: one `secret` source per Secret, with an item per
      credential the pod reads as a file from it (path = the variable's name).
-     Covers the main container's credentials (the Postgres password among
-     them, which wait-for-migrations reads too) and, in bundled mode, the Redis
-     password wait-for-redis reads. Empty when the pod
+     Covers the main container's credentials, the Postgres and Redis
+     passwords among them, which wait-for-migrations and wait-for-redis read
+     too. Empty when the pod
      reads no credential file from a Secret.
      Call: include "continuo.credentialProjection" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.credentialProjection" -}}
 {{- $root := .root -}}
 {{- $svc := .svc -}}
 {{- $wanted := include "continuo.credentialList" . | fromJsonArray -}}
-{{- if and $root.Values.redis.enabled (has $svc.name (include "continuo.redis.clientServices" $root | fromJsonArray)) -}}
-{{- $wanted = append $wanted (dict "name" "REDIS_PASSWORD" "ref" "redis") -}}
-{{- end -}}
 {{- $seen := dict -}}
 {{- $order := list -}}
 {{- $bySecret := dict -}}

@@ -65,6 +65,23 @@ credentials:
     agent-remediation: {existingSecret: continuo-pg-agent-remediation}
     agent-chat: {existingSecret: continuo-pg-agent-chat}
     dead-letter-controller: {existingSecret: continuo-pg-dead-letter-controller}
+  # Each service signs in to Redis as its own login: create each with its rule
+  # from deploy/redis-acl-rules.acl and a password, and a Secret holding the
+  # password under `password` (deploy/CREDENTIALS.md).
+  redis:
+    mode: perService
+    logins:
+      streams-init: {existingSecret: continuo-redis-streams-init}
+      run-controller: {existingSecret: continuo-redis-run-controller}
+      catalog: {existingSecret: continuo-redis-catalog}
+      agent-chat: {existingSecret: continuo-redis-agent-chat}
+      execution-controller: {existingSecret: continuo-redis-execution-controller}
+      ui: {existingSecret: continuo-redis-ui}
+      topology-controller: {existingSecret: continuo-redis-topology-controller}
+      release-controller: {existingSecret: continuo-redis-release-controller}
+      remediation: {existingSecret: continuo-redis-remediation}
+      agent-remediation: {existingSecret: continuo-redis-agent-remediation}
+      dead-letter-controller: {existingSecret: continuo-redis-dead-letter-controller}
 
 ingress:
   enabled: true

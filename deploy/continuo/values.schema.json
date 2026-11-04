@@ -360,6 +360,32 @@
               }
             }
           }
+        },
+        "redis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How each service signs in to Redis: perService (its own login, with the published rule) or shared (the one Redis password, for a Redis with no ACL users).",
+          "properties": {
+            "mode": {"type": "string", "enum": ["perService", "shared"]},
+            "logins": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The Redis login of each service and of streams-init, and the Secret holding its password (perService mode).",
+              "properties": {
+                "streams-init": {"$ref": "#/definitions/credentialLogin"},
+                "run-controller": {"$ref": "#/definitions/credentialLogin"},
+                "catalog": {"$ref": "#/definitions/credentialLogin"},
+                "agent-chat": {"$ref": "#/definitions/credentialLogin"},
+                "execution-controller": {"$ref": "#/definitions/credentialLogin"},
+                "ui": {"$ref": "#/definitions/credentialLogin"},
+                "topology-controller": {"$ref": "#/definitions/credentialLogin"},
+                "release-controller": {"$ref": "#/definitions/credentialLogin"},
+                "remediation": {"$ref": "#/definitions/credentialLogin"},
+                "agent-remediation": {"$ref": "#/definitions/credentialLogin"},
+                "dead-letter-controller": {"$ref": "#/definitions/credentialLogin"}
+              }
+            }
+          }
         }
       }
     },

@@ -101,7 +101,9 @@ redis:
     repository: redis
     tag: "8.6.4"
   auth:
-    # Optional pre-created Secret holding the bundled instance's password.
+    # Optional pre-created Secret holding the bundled instance's password,
+    # which every service signs in with in credentials.redis.mode=shared (in
+    # perService mode each login has its own, generated password).
     # Empty = the chart generates one and keeps it stable across upgrades.
     existingSecret: ""
     existingSecretPasswordKey: password
@@ -117,8 +119,10 @@ redis:
 externalRedis:
   host: ""
   port: 6379
-  # ui and topology-controller get REDIS_URL=redis://host:port, which carries
-  # no password; every service reads the password on its own, as
+  # The one password every service signs in with in
+  # credentials.redis.mode=shared; perService mode reads each login's own
+  # Secret instead. ui and topology-controller get REDIS_URL=redis://host:port,
+  # which carries no password; every service reads the password on its own, as
   # REDIS_PASSWORD (or REDIS_PASSWORD_FILE), so any character is fine in it.
   password: ""
   existingSecret: ""
@@ -360,6 +364,40 @@ credentials:
     agent-chat: {username: continuo_agent_chat, existingSecret: "", key: password}
     dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
     warehouse: {username: continuo_warehouse}
+  # How each service signs in to Redis.
+  #   perService: each Redis service signs in as its own login (REDIS_USERNAME),
+  #     with its password from `key` in the Secret `existingSecret`. Each login's
+  #     rule is published in deploy/redis-acl-rules.acl and, one entry per
+  #     login, in files/redis-acl-rules.json; a service refuses to start when
+  #     its login reaches keys outside its own. streams-init signs in as
+  #     `streams-init`'s login and, before it creates the streams, as every
+  #     other login whose password is in a Secret, and stops the deploy when
+  #     one is missing or its password is wrong.
+  #     - External Redis: create each login with its rule and a password, and a
+  #       Secret holding the password (deploy/CREDENTIALS.md). An enabled
+  #       service whose login has no existingSecret, and no credentials.files
+  #       entry for REDIS_PASSWORD, fails the render, and so does streams-init's
+  #       login without one.
+  #     - Bundled Redis: the chart generates every password into
+  #       <release>-logins and starts Redis with the rules, its default user
+  #       off; existingSecret is not used.
+  #   shared: every service signs in with the one Redis password
+  #     (redis.auth / externalRedis), for a Redis with no ACL users. Any
+  #     service's credential then reaches every key of the Redis.
+  redis:
+    mode: perService
+    logins:
+      streams-init: {username: continuo_redis_migrate, existingSecret: "", key: password}
+      run-controller: {username: continuo_run_controller, existingSecret: "", key: password}
+      catalog: {username: continuo_catalog, existingSecret: "", key: password}
+      agent-chat: {username: continuo_agent_chat, existingSecret: "", key: password}
+      execution-controller: {username: continuo_execution_controller, existingSecret: "", key: password}
+      ui: {username: continuo_ui, existingSecret: "", key: password}
+      topology-controller: {username: continuo_topology_controller, existingSecret: "", key: password}
+      release-controller: {username: continuo_release_controller, existingSecret: "", key: password}
+      remediation: {username: continuo_remediation, existingSecret: "", key: password}
+      agent-remediation: {username: continuo_agent_remediation, existingSecret: "", key: password}
+      dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
 
 # service_name -> project root within that service's repo, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.

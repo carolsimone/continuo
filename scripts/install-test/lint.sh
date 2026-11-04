@@ -39,6 +39,7 @@ renders=(
   "byo-secret:scripts/install-test/values-byo-secret.yaml"
   "credential-files:scripts/install-test/values-credential-files.yaml"
   "company-files:scripts/install-test/values-company-files.yaml"
+  "redis-shared:scripts/install-test/values-redis-shared.yaml"
 )
 
 tmp="$(mktemp -d)"
@@ -196,6 +197,31 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/ins
 fi
 grep -qF 'validation.createWarehouseSecret needs the bundled Postgres' "${tmp}/pglogins.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/pglogins.err"; exit 1; }
+# Each Redis service signs in as its own login, with the rule the streams
+# generator wrote for it; the bundled Redis starts from an ACL file of those
+# rules with the default user off, and streams-init signs in as every login it
+# can reach before it creates the streams. A Redis with no ACL users runs in
+# shared mode, with one password.
+echo "--- Redis: every service signs in as its own login (perService), or with the one password (shared)"
+for f in defaults credential-files file-defaults; do
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService bundled
+done
+for f in byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService external 'continuo-redis-{service}'
+done
+python3 scripts/install-test/assert-redis-logins.py "${tmp}/redis-shared.yaml" shared
+python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-redis-logins.yaml" <<'PY'
+import sys, yaml
+values = yaml.safe_load(open(sys.argv[1]))
+values.get("credentials", {}).pop("redis", None)
+yaml.safe_dump(values, open(sys.argv[2], "w"))
+PY
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f "${tmp}/byo-secret-no-redis-logins.yaml" \
+     > /dev/null 2> "${tmp}/redislogins.err"; then
+  echo "FAIL: an external Redis in perService mode with no login Secrets must fail the render"; exit 1
+fi
+grep -qF 'credentials.redis.logins.run-controller.existingSecret is required: create the login continuo_run_controller' "${tmp}/redislogins.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/redislogins.err"; exit 1; }
 # A credentials.files entry names a variable continuo reads as a credential;
 # anything else would never be read.
 if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
@@ -489,6 +515,21 @@ helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrad
 for notes in upgrade install; do
   if grep -qF "$logins_note" "${tmp}/notes-${notes}.txt"; then
     echo "FAIL: the bundled ${notes} notes carry the Postgres logins note"; exit 1
+  fi
+done
+# The same for an external Redis in perService mode, which lists the Redis
+# logins; a shared-mode Redis has none to create.
+redis_logins_note='BREAKING: every service signs in to Redis as its own login.'
+[ "$(grep -cF "$redis_logins_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
+  && grep -qE '^ +continuo_redis_migrate \(streams-init\)$' "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: the external-Redis upgrade notes do not list the Redis logins to create once"; exit 1; }
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
+  -f scripts/install-test/values-byo-secret.yaml --set credentials.redis.mode=shared \
+  --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo-shared.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade with a shared external Redis failed"; exit 1; }
+for notes in upgrade install upgrade-byo-shared; do
+  if grep -qF "$redis_logins_note" "${tmp}/notes-${notes}.txt"; then
+    echo "FAIL: the ${notes} notes carry the Redis logins note"; exit 1
   fi
 done
 # An upgrading operator is told once that the services left the namespace's
@@ -947,8 +988,8 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/netpol-off.yaml"
 # addresses take 443, 8080 and 8443. A datastore port that is not one fails the
 # render while the agents' egress policy renders, and only then.
 echo "--- egress: the agents reach an external datastore on its port; the proxy reaches private addresses on allowPrivate ports"
-pg_logins=(-f scripts/install-test/values-postgres-logins.yaml)
-egress_byo=("${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
+ext_logins=(-f scripts/install-test/values-external-logins.yaml)
+egress_byo=("${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
   --set externalDatabase.password=probe --set redis.enabled=false
   --set externalRedis.host=redis.example.internal --set externalRedis.password=probe)
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" \
@@ -959,7 +1000,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.
 # An external Postgres running as a pod of another namespace: the agents reach
 # the pods of every namespace on its port, which a network plugin that matches
 # no pod by ipBlock still admits.
-helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${pg_logins[@]}" --set postgresql.enabled=false \
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${ext_logins[@]}" --set postgresql.enabled=false \
   --set externalDatabase.host=pg-rw.databases.svc --set externalDatabase.password=probe > "${tmp}/egress-pg-pod.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod.yaml" continuo
 # An external Postgres or Redis whose host is an IP address outside the private
@@ -969,7 +1010,7 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod
 # one at a cloud metadata or link-local address fails the render. The checker
 # reads the host and port from the shared ConfigMap.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
   --set redis.enabled=false --set 'externalRedis.host=2001:db8::5' --set externalRedis.port=6380 \
   --set externalRedis.password=probe > "${tmp}/egress-ds-public.yaml"
 grep -q '^            cidr: 203.0.113.5/32$' "${tmp}/egress-ds-public.yaml" \
@@ -981,16 +1022,16 @@ grep -A1 'name: NO_PROXY' "${tmp}/egress-ds-public.yaml" | grep -q ',203\.0\.113
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-ds-public.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-public.yaml" continuo
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
-  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
   > "${tmp}/egress-ds-private.yaml"
 if grep -q 'cidr: 10.0.0.5/32' "${tmp}/egress-ds-private.yaml"; then
   echo "FAIL: an external Postgres at a private address is admitted by the private-range rule and needs no rule of its own"; exit 1
 fi
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-private.yaml" continuo
 refuse_render 'externalDatabase.host="100.100.100.200": its host 100.100.100.200 lies in' \
-  "${pg_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
+  "${ext_logins[@]}" --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
 refuse_render 'externalRedis.host="169.254.169.254": its host 169.254.169.254 lies in' \
-  --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
+  "${ext_logins[@]}" --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
 refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0
 refuse_render 'externalRedis.port=70000 is not a port' "${egress_byo[@]}" --set externalRedis.port=70000
 refuse_render 'externalDatabase.port="5432" is not a port' --skip-schema-validation "${egress_byo[@]}" \

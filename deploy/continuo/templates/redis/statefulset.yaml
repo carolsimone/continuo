@@ -1,4 +1,5 @@
 {{- if .Values.redis.enabled }}
+{{- $perService := eq (include "continuo.redis.mode" .) "perService" }}
 # Quickstart Redis: single instance, AOF persistence, noeviction (this Redis
 # holds event streams and auth sessions — data loss on eviction is worse than
 # a full-memory error; streams are bounded by dead-letter-controller's trim loop).
@@ -20,6 +21,12 @@ spec:
     metadata:
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" "redis") | nindent 8 }}
+      {{- if $perService }}
+      annotations:
+        # Redis reads its ACL file only when it starts: a release that changes
+        # a login's rule restarts it.
+        checksum/redis-acl-rules: {{ .Files.Get "files/redis-acl-rules.json" | sha256sum }}
+      {{- end }}
     spec:
       securityContext:
         {{- include "continuo.podSecurityContext" . | nindent 8 }}
@@ -32,6 +39,41 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          {{- if $perService }}
+          # perService: every login, with its rule and the hash of its password,
+          # comes from the ACL file, and the default user is off. The probes
+          # sign in as streams-init's login.
+          {{- $probe := dict "root" $ "ref" "redisLogin" "svc" (dict "name" "streams-init") }}
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" $probe | quote }}
+                  key: {{ include "continuo.secretKey" $probe | quote }}
+            - name: REDIS_PROBE_USER
+              value: {{ (include "continuo.redis.login" (dict "root" $ "svc" "streams-init") | fromJson).username | quote }}
+          args:
+            - redis-server
+            - --aclfile
+            - /etc/redis/users.acl
+            - --appendonly
+            - "yes"
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "redis-cli --user \"$REDIS_PROBE_USER\" ping | grep -q PONG"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "redis-cli --user \"$REDIS_PROBE_USER\" ping | grep -q PONG"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          {{- else }}
           env:
             - name: REDIS_PASSWORD
               valueFrom:
@@ -59,11 +101,23 @@ spec:
               command: ["/bin/sh", "-c", "redis-cli -a $REDIS_PASSWORD ping | grep -q PONG"]
             initialDelaySeconds: 20
             periodSeconds: 10
+          {{- end }}
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if $perService }}
+            - name: acl
+              mountPath: /etc/redis
+              readOnly: true
+            {{- end }}
+      {{- if $perService }}
+      volumes:
+        - name: acl
+          secret:
+            secretName: {{ include "continuo.redis.aclSecretName" . }}
+      {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data
