@@ -131,9 +131,10 @@ python3 scripts/install-test/assert-redis-gate.py . "${tmp}/defaults.yaml" \
 # ServiceAccount of its own in each. The file render is compared with the same
 # values in env delivery, so a credential cannot get lost between the two.
 echo "--- credential delivery: env, file and company-provided files"
-for f in defaults byo-example byo-inline byo-secret; do
+for f in defaults byo-example byo-inline; do
   python3 scripts/install-test/assert-credential-delivery.py "${tmp}/${f}.yaml" env
 done
+python3 scripts/install-test/assert-credential-delivery.py "${tmp}/byo-secret.yaml" file
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   -f scripts/install-test/values-credential-files.yaml --set credentials.delivery=env > "${tmp}/credential-files-env.yaml"
 python3 scripts/install-test/assert-credential-delivery.py "${tmp}/credential-files.yaml" file "${tmp}/credential-files-env.yaml"

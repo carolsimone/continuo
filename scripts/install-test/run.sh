@@ -53,22 +53,47 @@ case "$MODE" in
     kubectl -n "$NS" rollout status deployment/byo-postgres --timeout=180s
     kubectl -n "$NS" rollout status deployment/byo-redis --timeout=180s
     kubectl -n "$NS" rollout status deployment/byo-neo4j --timeout=300s
+    # Act as the company: create the migration login (CREATEDB, no
+    # superuser), each service's Postgres login with LOGIN and a password and
+    # nothing else, the warehouse login owning its own database, each Redis
+    # login with the rule continuo publishes, and one Secret per login.
+    pg_super() {
+      kubectl -n "$NS" exec deploy/byo-postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres -qc "$1"
+    }
+    pg_super "CREATE ROLE continuo LOGIN CREATEDB PASSWORD 'ci-postgres-pw'"
+    for svc in run-controller execution-controller release-controller remediation \
+               agent-remediation agent-chat dead-letter-controller; do
+      login="continuo_${svc//-/_}"
+      pg_super "CREATE ROLE ${login} LOGIN PASSWORD 'ci-${login}'"
+      kubectl -n "$NS" create secret generic "continuo-pg-${svc}" \
+        --from-literal=password="ci-${login}" --dry-run=client -o yaml | kubectl apply -f -
+    done
+    pg_super "CREATE ROLE continuo_warehouse LOGIN PASSWORD 'ci-continuo_warehouse'"
+    pg_super "CREATE DATABASE continuo_dbt OWNER continuo_warehouse"
+    pg_super "REVOKE CONNECT ON DATABASE continuo_dbt FROM PUBLIC"
+    # The chart builds no warehouse Secret for an external Postgres: the
+    # postgres runner and dbt Job pods read these POSTGRES_* keys.
+    kubectl -n "$NS" create secret generic continuo-warehouse-validation \
+      --from-literal=POSTGRES_HOST=byo-postgres \
+      --from-literal=POSTGRES_PORT=5432 \
+      --from-literal=POSTGRES_DB=continuo_dbt \
+      --from-literal=POSTGRES_USER=continuo_warehouse \
+      --from-literal=POSTGRES_PASSWORD=ci-continuo_warehouse \
+      --dry-run=client -o yaml | kubectl apply -f -
+    while read -r name username rule; do
+      # shellcheck disable=SC2086 # the rule is a list of ACL tokens
+      kubectl -n "$NS" exec deploy/byo-redis -- redis-cli --no-auth-warning -a ci-redis-pw \
+        ACL SETUSER "$username" reset on ">ci-${username}" $rule >/dev/null
+      kubectl -n "$NS" create secret generic "continuo-redis-${name}" \
+        --from-literal=password="ci-${username}" --dry-run=client -o yaml | kubectl apply -f -
+    done < <(python3 -c 'import json, sys
+for login in json.load(open(sys.argv[1]))["logins"]:
+    print(login["service"], login["username"], login["rule"])' deploy/continuo/files/redis-acl-rules.json)
     if [ "$MODE" = byo-secret ]; then
       kubectl -n "$NS" create secret generic continuo-datastores \
         --from-literal=postgres-password=ci-postgres-pw \
         --from-literal=redis-password=ci-redis-pw \
         --from-literal=neo4j-password=ci-neo4j-pw \
-        --dry-run=client -o yaml | kubectl apply -f -
-      # values-byo-secret sets validation.createWarehouseSecret=false, so the chart
-      # does not create this — the operator (here, the fixture) provides it with the
-      # postgres runner's POSTGRES_* keys, or the first validation pod would fail with
-      # CreateContainerConfigError.
-      kubectl -n "$NS" create secret generic continuo-warehouse-validation \
-        --from-literal=POSTGRES_HOST=byo-postgres \
-        --from-literal=POSTGRES_PORT=5432 \
-        --from-literal=POSTGRES_DB=continuo_dbt \
-        --from-literal=POSTGRES_USER=continuo \
-        --from-literal=POSTGRES_PASSWORD=ci-postgres-pw \
         --dry-run=client -o yaml | kubectl apply -f -
       helm_args+=(-f "${FIXTURES}/values-byo-secret.yaml")
     else
