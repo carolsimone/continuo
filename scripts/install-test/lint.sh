@@ -220,6 +220,31 @@ for f in byo-example byo-inline byo-secret; do
   python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService external 'continuo-redis-{service}'
 done
 python3 scripts/install-test/assert-redis-logins.py "${tmp}/redis-shared.yaml" shared
+# A login whose password reaches its service only as a company file is checked
+# when that service starts, not by streams-init; with every login given that
+# way streams-init mounts no login file and gets no REDIS_LOGINS_DIR, which
+# would name a directory that does not exist.
+files_args=()
+for svc in run-controller catalog agent-chat execution-controller ui topology-controller \
+           release-controller remediation agent-remediation dead-letter-controller; do
+  files_args+=(--set "credentials.files.${svc}.REDIS_PASSWORD=/vault/secrets/redis")
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-byo-secret.yaml \
+  "${files_args[@]}" > "${tmp}/redis-company-files.yaml"
+python3 - "${tmp}/redis-company-files.yaml" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if d and d.get("kind") == "Job" and d["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "streams-init":
+        spec = d["spec"]["template"]["spec"]
+        env = {e["name"] for c in spec["containers"] for e in c.get("env") or []}
+        vols = {v["name"] for v in spec.get("volumes") or []}
+        if "REDIS_LOGINS_DIR" in env or "redis-logins" in vols:
+            sys.exit(f"FAIL: with every Redis password a company file, streams-init sets REDIS_LOGINS_DIR={'REDIS_LOGINS_DIR' in env} and mounts redis-logins={'redis-logins' in vols}; want neither")
+        print("streams-init checks no login file when every Redis password is a company file")
+        break
+else:
+    sys.exit("FAIL: no streams-init Job rendered")
+PY
 # Redis reads its ACL file only when it starts, so any change to the rendered
 # file (a rule, a login's name, its password) restarts the bundled Redis.
 redis_acl_checksum() {

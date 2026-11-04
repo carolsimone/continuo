@@ -163,8 +163,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" $self | quote }}
                   key: {{ include "continuo.secretKey" $self | quote }}
+            {{- if $loginOrder }}
+            # Only with a login file to check: a login given only as a company
+            # file is checked when its service starts.
             - name: REDIS_LOGINS_DIR
               value: {{ printf "%s/redis-logins" (include "continuo.credentialDir" .) | quote }}
+            {{- end }}
             {{- else }}
             - name: REDIS_PASSWORD
               valueFrom:
