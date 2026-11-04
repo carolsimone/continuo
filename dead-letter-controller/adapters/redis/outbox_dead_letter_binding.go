@@ -29,7 +29,7 @@ func (b *OutboxDeadLetterBinding) Handle(ctx context.Context, msg goredis.XMessa
 	now := b.clock.Now()
 	p, original, err := outbox.DecodeDeadLetterFields(stringFields(msg.Values))
 	if err != nil {
-		return b.rec.Record(ctx, unreadable(deadletter.SourceOutbox, streams.OutboxDeadLetterV1,
+		return b.rec.Record(ctx, unreadable(ctx, deadletter.SourceOutbox, streams.OutboxDeadLetterV1,
 			streams.DeadLetterControllerOutboxDeadLetters, msg, err, now))
 	}
 	originalAt := idTimeOr(msg.ID, now)

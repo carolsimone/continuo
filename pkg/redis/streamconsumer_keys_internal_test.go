@@ -433,3 +433,50 @@ func TestConsumerGivesEntriesOfTwoKeysWithOneIDTwoDedupIdentities(t *testing.T) 
 	cancel()
 	assert.NoError(t, <-done)
 }
+
+func TestConsumerDeadLettersOfTwoKeysWithOneIDCarryTheHandlersDedupIdentity(t *testing.T) {
+	rc := internalRedisClient(t)
+	ensureDeadLetterStream(t, rc)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := keysTestStream(t, rc, "dead-letter-identity")
+	group := "test-group"
+	const sharedID = "1700000000000-0"
+	for _, key := range []string{Key(stream), LegacyKey(stream)} {
+		require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, ID: sharedID, Values: map[string]any{"from": key}}).Err())
+	}
+
+	var mu sync.Mutex
+	identities := map[string]string{}
+	c := NewStreamConsumer(rc, stream, group, func(ctx context.Context, m goredis.XMessage) error {
+		mu.Lock()
+		defer mu.Unlock()
+		identities[m.Values["from"].(string)] = DedupMessageID(ctx, m)
+		return fmt.Errorf("%w: every entry fails", events.ErrPermanent)
+	}, discardLog())
+	c.SetService("pkg-redis-test")
+	c.startup = shortStartup
+	done := startConsumer(ctx, c)
+
+	require.Eventually(t, func() bool {
+		dl, err := deadLettersIn(ctx, rc, stream)
+		return err == nil && len(dl) == 2
+	}, 5*time.Second, 20*time.Millisecond, "both entries are dead-lettered")
+	dls := deadLettersFor(t, rc, stream)
+	eventIDs := map[string]bool{}
+	mu.Lock()
+	for _, dl := range dls {
+		var p events.ConsumerDeadLetter
+		require.NoError(t, json.Unmarshal([]byte(dl.Values["payload"].(string)), &p))
+		from := p.Fields["from"]
+		assert.Equal(t, from, p.OriginalKey, "the dead letter names the key its entry was read from")
+		assert.Equal(t, sharedID, p.OriginalMessageID, "the dead letter names the entry by its own ID")
+		assert.Equal(t, identities[from], p.DedupMessageID(), "the dead letter's identity is the one its handler deduplicated under")
+		eventIDs[dl.Values["event_id"].(string)] = true
+	}
+	mu.Unlock()
+	assert.Len(t, eventIDs, 2, "the two dead letters are two events")
+	cancel()
+	assert.NoError(t, <-done)
+}

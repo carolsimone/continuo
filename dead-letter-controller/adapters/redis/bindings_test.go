@@ -60,6 +60,39 @@ func TestConsumerDeadLetterBinding_StoresAPublishableRow(t *testing.T) {
 	}
 }
 
+func TestConsumerDeadLetterBinding_DedupKeyNamesAnyKeyButTheLegacyOne(t *testing.T) {
+	cases := []struct {
+		name, key, wantID string
+	}{
+		{"a producer that names no key", "", "1759665600000-0"},
+		{"the legacy key", "orders.changed:v1", "1759665600000-0"},
+		{"the prefixed key", "continuo:orders.changed:v1", "1759665600000-0@continuo:orders.changed:v1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			values, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
+				TenantID: "default", Producer: "run-controller", OccurredAt: at, Stream: "orders.changed:v1", Group: "billing",
+				MessageID: "1759665600000-0", Key: tc.key, Fields: map[string]string{"k": "v"},
+				FailureKind: model.DeadLetterKindPermanent, Error: "x", DeliveryCount: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := &fakeRecorder{}
+			if err := NewConsumerDeadLetterBinding(rec, fixedClock{at}).Handle(context.Background(), xmsg("9-0", values)); err != nil {
+				t.Fatal(err)
+			}
+			dl := rec.got[0]
+			if want := deadletter.ConsumerKey("orders.changed:v1", "billing", tc.wantID); dl.DedupKey != want {
+				t.Fatalf("dedup key = %q, want %q", dl.DedupKey, want)
+			}
+			if dl.OriginalMessageID != "1759665600000-0" {
+				t.Fatalf("original message id = %q, want the entry's own ID", dl.OriginalMessageID)
+			}
+		})
+	}
+}
+
 func TestConsumerDeadLetterBinding_UnreadableStoredNotPublishable(t *testing.T) {
 	rec := &fakeRecorder{}
 	b := NewConsumerDeadLetterBinding(rec, fixedClock{at})

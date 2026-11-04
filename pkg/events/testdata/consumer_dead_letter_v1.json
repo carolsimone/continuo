@@ -6,6 +6,7 @@
     "original_stream": "example.stream:v1",
     "original_group": "example-group",
     "original_message_id": "1759494896789-0",
+    "original_key": "example.stream:v1",
     "fields": {
       "outbox_entry_id": "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10",
       "status": "BOGUS",
@@ -25,6 +26,7 @@
       "original_stream": "example.stream:v1",
       "original_group": "example-group",
       "original_message_id": "1759494896789-0",
+      "original_key": "example.stream:v1",
       "fields": {
         "outbox_entry_id": "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10",
         "status": "BOGUS",

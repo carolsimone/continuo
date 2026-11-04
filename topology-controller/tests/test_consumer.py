@@ -818,6 +818,23 @@ def test_dead_letter_carries_the_message_tenant_and_ids_as_text(monkeypatch):
     r.xack.assert_called_once_with(_KEY, _GROUP, b"7-1")
 
 
+def test_dead_letters_of_two_keys_with_one_id_name_their_key(monkeypatch):
+    """The legacy and the prefixed key number their entries independently, so
+    each dead letter names its key and is its own event."""
+    _defang_sleep(monkeypatch)
+    written = {}
+    for read_from in (_KEY, legacy_key(_STREAM)):
+        r = MagicMock()
+        r.xpending_range.return_value = [{"times_delivered": 1}]
+        _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(read_from, b"7-1", {b"payload": b"{}"})
+        _, fields = r.xadd.call_args[0]
+        written[read_from] = fields
+        payload = json.loads(fields["payload"])
+        assert payload["original_key"] == read_from
+        assert payload["original_message_id"] == "7-1"
+    assert written[_KEY]["event_id"] != written[legacy_key(_STREAM)]["event_id"]
+
+
 def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
     from datetime import datetime, timezone
     _defang_sleep(monkeypatch)
