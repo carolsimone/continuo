@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -504,4 +505,46 @@ func TestTopologyRepository_SaveReleaseRefreshesThePlannerStatistics(t *testing.
 	require.Len(t, plans, 1)
 	assert.Greater(t, plans[0].Plan.Rows, float64(len(rel.Edges))/2,
 		"estimated %v of the release's %d edges", plans[0].Plan.Rows, len(rel.Edges))
+}
+
+// runtimeLoginDB opens the run-controller database as the service's own login,
+// which owns no table, as every deployment runs it. The password is the local
+// one db/init-databases.sh gives it, or RUN_CONTROLLER_LOGIN_TEST_PASSWORD.
+func runtimeLoginDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	password := os.Getenv("RUN_CONTROLLER_LOGIN_TEST_PASSWORD")
+	if password == "" {
+		password = "local-" + "continuo_run_controller"
+	}
+	t.Setenv("POSTGRES_USER", "continuo_run_controller")
+	t.Setenv("POSTGRES_PASSWORD", password)
+	return newTestDB(t)
+}
+
+// analyzeCount is how many times Postgres has analysed topology_nodes.
+func analyzeCount(t *testing.T, db *sqlx.DB) int64 {
+	t.Helper()
+	var n int64
+	_, err := db.Exec(`SELECT pg_stat_clear_snapshot()`)
+	require.NoError(t, err)
+	require.NoError(t, db.Get(&n, `SELECT analyze_count FROM pg_stat_user_tables WHERE relname = 'topology_nodes'`))
+	return n
+}
+
+// A loaded release refreshes the planner's statistics on the topology tables
+// even though the service's login does not own them: Postgres skips an
+// ANALYZE by a non-owner with only a warning.
+func TestTopologyRepository_SaveReleaseAnalyzesAsTheServiceLogin(t *testing.T) {
+	owner := newTestDB(t)
+	tenant := newTopoTenant(t, owner)
+	before := analyzeCount(t, owner)
+
+	login := runtimeLoginDB(t)
+	loaded, err := saveTopoRelease(t, login, topoRelease(t, tenant, "rel-analyze", 1, "an",
+		topoSpec("raw", "orders", "dbt-seed", "h1")))
+	require.NoError(t, err)
+	require.True(t, loaded)
+
+	assert.Eventually(t, func() bool { return analyzeCount(t, owner) > before }, 10*time.Second, 200*time.Millisecond,
+		"saving a release as continuo_run_controller must analyze topology_nodes")
 }
