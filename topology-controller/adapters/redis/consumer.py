@@ -329,7 +329,7 @@ class Consumer:
         # is just "'s3_uri'".
         error = f"{type(exc).__name__}: {exc}"
         fields = build_fields(tenant_id=tenant_of(msg_fields), producer=self._service, occurred_at=self._now(),
-                              stream=self._stream, group=self._group, message_id=text_id, fields=msg_fields,
+                              stream=self._stream, group=self._group, message_id=text_id, key=key, fields=msg_fields,
                               failure_kind=kind, error=error, delivery_count=deliveries)
         writes = 0
         while True:

@@ -86,6 +86,21 @@ func TestDecodeConsumerDeadLetter_GoldenFixture(t *testing.T) {
 	}
 }
 
+func TestDecodeConsumerDeadLetter_APayloadWithNoKeyDedupsAsTheLegacyKey(t *testing.T) {
+	_, dl, err := DecodeConsumerDeadLetter(map[string]string{
+		"event_id": "x", "tenant_id": "default", "occurred_at": "2026-10-05T12:00:00.000000Z", "producer": "run-controller",
+		"schema_version": "1",
+		"payload": `{"original_stream":"orders:v1","original_group":"g","original_message_id":"1-0","fields":{},` +
+			`"failure_kind":"permanent","error":"boom","delivery_count":1}`,
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dl.OriginalKey != "" || dl.DedupMessageID() != "1-0" {
+		t.Fatalf("original_key = %q, dedup id = %q; want no key and the raw entry ID", dl.OriginalKey, dl.DedupMessageID())
+	}
+}
+
 func TestDecodeConsumerDeadLetter_MissingPayloadIsMalformed(t *testing.T) {
 	_, _, err := DecodeConsumerDeadLetter(map[string]string{"event_id": "x", "schema_version": "1"})
 	if !errors.Is(err, ErrMalformedEnvelope) {

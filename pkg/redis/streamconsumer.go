@@ -677,7 +677,7 @@ func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]a
 func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMessage, kind model.DeadLetterKind, cause error, deliveries int64) {
 	values, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
 		TenantID: tenantOf(msg), Producer: c.service, OccurredAt: c.nowFn(),
-		Stream: c.streamName, Group: c.consumerGroup, MessageID: msg.ID,
+		Stream: c.streamName, Group: c.consumerGroup, MessageID: msg.ID, Key: c.key,
 		Fields: stringFields(msg.Values), FailureKind: kind, Error: cause.Error(), DeliveryCount: deliveries,
 	})
 	if err != nil {

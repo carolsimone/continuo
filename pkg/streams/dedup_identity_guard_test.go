@@ -15,10 +15,11 @@ import (
 var dedupCalls = map[string]bool{"Dedup": true, "DedupWithOutboxEntryID": true, "Handle": true}
 
 // TestDedupIdentityComesFromDedupMessageID fails for every consumer binding
-// that hands a deduplication call or a trigger's MessageID the raw entry ID
-// (msg.ID) of a stream message. A consumer reads the legacy and the prefixed
-// key of one stream side by side, and their entries can share an ID, so a
-// binding names its dedup identity with pkgredis.DedupMessageID(ctx, msg).
+// that hands a deduplication call, a trigger's MessageID or a stored record's
+// DedupKey the raw entry ID (msg.ID) of a stream message. A consumer reads the
+// legacy and the prefixed key of one stream side by side, and their entries can
+// share an ID, so a binding names its dedup identity with
+// pkgredis.DedupMessageID(ctx, msg).
 func TestDedupIdentityComesFromDedupMessageID(t *testing.T) {
 	root := repoRootFromTest(t)
 	var violations []string
@@ -73,6 +74,8 @@ func TestDedupIdentityGuardFlagsTheRawEntryID(t *testing.T) {
 		{"DedupWithOutboxEntryID with DedupMessageID", `messageprocessing.DedupWithOutboxEntryID(ctx, r, l, pkgredis.DedupMessageID(ctx, msg), "s", nil, nil)`, 0},
 		{"a log line with msg.ID", `logger.Error("x", "message_id", msg.ID)`, 0},
 		{"MessageID from DedupMessageID", `t.MessageID = pkgredis.DedupMessageID(ctx, msg)`, 0},
+		{"DedupKey built from msg.ID", `_ = D{DedupKey: deadletter.UnreadableKey("s", msg.ID), OriginalMessageID: msg.ID}`, 1},
+		{"DedupKey built from DedupMessageID", `_ = D{DedupKey: deadletter.UnreadableKey("s", pkgredis.DedupMessageID(ctx, msg)), OriginalMessageID: msg.ID}`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,9 +87,9 @@ func TestDedupIdentityGuardFlagsTheRawEntryID(t *testing.T) {
 	}
 }
 
-// scanDedupIdentity returns one message per dedup call or MessageID assignment
-// in the Go file at path (or in src when it is not nil) that uses the raw entry
-// ID msg.ID.
+// scanDedupIdentity returns one message per dedup call, MessageID assignment or
+// DedupKey field in the Go file at path (or in src when it is not nil) that uses
+// the raw entry ID msg.ID.
 func scanDedupIdentity(t *testing.T, root, path string, src []byte) []string {
 	t.Helper()
 	var source any
@@ -133,10 +136,28 @@ func scanDedupIdentity(t *testing.T, root, path string, src []byte) []string {
 					flag(n.Rhs[i].Pos(), "MessageID")
 				}
 			}
+		case *ast.KeyValueExpr:
+			if key, ok := n.Key.(*ast.Ident); ok && key.Name == "DedupKey" {
+				if raw := rawEntryIDIn(n.Value); raw != nil {
+					flag(raw.Pos(), "DedupKey")
+				}
+			}
 		}
 		return true
 	})
 	return found
+}
+
+// rawEntryIDIn returns the first msg.ID selector within expr, or nil.
+func rawEntryIDIn(expr ast.Expr) ast.Expr {
+	var raw ast.Expr
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if e, ok := n.(ast.Expr); ok && raw == nil && isRawEntryID(e) {
+			raw = e
+		}
+		return raw == nil
+	})
+	return raw
 }
 
 // isRawEntryID reports whether expr is the selector msg.ID.

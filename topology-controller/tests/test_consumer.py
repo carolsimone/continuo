@@ -720,6 +720,23 @@ def test_dead_letter_carries_the_message_tenant_and_ids_as_text(monkeypatch):
     r.xack.assert_called_once_with(_KEY, _GROUP, b"7-1")
 
 
+def test_dead_letters_of_two_keys_with_one_id_name_their_key(monkeypatch):
+    """The unprefixed and the prefixed key of a stream number their entries
+    independently, so each dead letter names its key and is its own event."""
+    _defang_sleep(monkeypatch)
+    written = {}
+    for read_from in (_KEY, _STREAM):
+        r = MagicMock()
+        r.xpending_range.return_value = [{"times_delivered": 1}]
+        _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(read_from, b"7-1", {b"payload": b"{}"})
+        _, fields = r.xadd.call_args[0]
+        written[read_from] = fields
+        payload = json.loads(fields["payload"])
+        assert payload["original_key"] == read_from
+        assert payload["original_message_id"] == "7-1"
+    assert written[_KEY]["event_id"] != written[_STREAM]["event_id"]
+
+
 def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
     from datetime import datetime, timezone
     _defang_sleep(monkeypatch)
@@ -1071,3 +1088,19 @@ def test_dispatch_acks_empty_entry_without_handler(msg_id, fields):
     c._dispatch(_KEY, msg_id, fields)
     handler.assert_not_called()
     r.xack.assert_called_once_with(_KEY, _GROUP, msg_id)
+
+
+# --- losing the group ------------------------------------------------------
+
+
+def test_consumer_stops_when_the_prefixed_key_loses_its_group(monkeypatch):
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    _holding(redis_mock, _GROUP, _KEY)
+    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
+    redis_mock.xreadgroup.side_effect = redis_exceptions.ResponseError(
+        f"NOGROUP No such key '{_KEY}' or consumer group '{_GROUP}' in XREADGROUP with GROUP option")
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(redis_exceptions.ResponseError, match="NOGROUP"):
+        c.start()

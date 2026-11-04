@@ -47,6 +47,22 @@ type trimEnv struct {
 
 func newTrimEnv(t *testing.T) *trimEnv {
 	t.Helper()
+	rc, db := integrationDeps(t)
+	e := &trimEnv{rc: rc, db: db, stream: "test.trim." + strings.ToLower(t.Name()) + ":v1"}
+	e.key = pkgredis.Key(e.stream)
+	cleanup := func() {
+		_ = rc.Del(context.Background(), e.key).Err()
+		_, _ = db.Exec(`DELETE FROM dead_letters WHERE stream = $1`, e.stream)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	return e
+}
+
+// integrationDeps connects to the real Redis and to the dead-letter Postgres
+// the Flyway migrations built, and closes both when the test ends.
+func integrationDeps(t *testing.T) (*goredis.Client, *sqlx.DB) {
+	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
 		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
@@ -64,19 +80,11 @@ func newTrimEnv(t *testing.T) *trimEnv {
 		testdeps.Unavailable(t, "Postgres unreachable: %v", err)
 	}
 	var exists bool
+	t.Cleanup(func() { _ = db.Close() })
 	if err := db.Get(&exists, `SELECT to_regclass('public.dead_letters') IS NOT NULL`); err != nil || !exists {
 		t.Fatalf("dead_letters is missing: run the Flyway migrations (make test-deps-up)")
 	}
-
-	e := &trimEnv{rc: rc, db: db, stream: "test.trim." + strings.ToLower(t.Name()) + ":v1"}
-	e.key = pkgredis.Key(e.stream)
-	cleanup := func() {
-		_ = rc.Del(context.Background(), e.key).Err()
-		_, _ = db.Exec(`DELETE FROM dead_letters WHERE stream = $1`, e.stream)
-	}
-	cleanup()
-	t.Cleanup(func() { cleanup(); _ = db.Close() })
-	return e
+	return rc, db
 }
 
 func (e *trimEnv) trimmer(groups []string, retired ...string) *trimmer.Trimmer {

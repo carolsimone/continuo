@@ -260,3 +260,38 @@ func TestConsumerQualifiesTheDedupIdentityByItsKey(t *testing.T) {
 	cancel()
 	assert.NoError(t, <-done)
 }
+
+// A dead letter names the key its entry was read from and carries the identity
+// the handler deduplicated the entry under.
+func TestConsumerDeadLetterCarriesTheHandlersDedupIdentity(t *testing.T) {
+	rc := internalRedisClient(t)
+	ensureDeadLetterStream(t, rc)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := keysTestStream(t, rc, "dead-letter-identity")
+	group := "test-group"
+	const entryID = "1700000000000-0"
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, Key(stream), group, "0").Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: Key(stream), ID: entryID, Values: map[string]any{"k": "v"}}).Err())
+
+	identity := make(chan string, 1)
+	c := NewStreamConsumer(rc, stream, group, func(ctx context.Context, m goredis.XMessage) error {
+		identity <- DedupMessageID(ctx, m)
+		return fmt.Errorf("%w: the entry fails", events.ErrPermanent)
+	}, discardLog())
+	c.SetService("pkg-redis-test")
+	c.startup = shortStartup
+	done := startConsumer(ctx, c)
+
+	require.Eventually(t, func() bool {
+		dl, err := deadLettersIn(ctx, rc, stream)
+		return err == nil && len(dl) == 1
+	}, 5*time.Second, 20*time.Millisecond, "the entry is dead-lettered")
+	var p events.ConsumerDeadLetter
+	require.NoError(t, json.Unmarshal([]byte(deadLettersFor(t, rc, stream)[0].Values["payload"].(string)), &p))
+	assert.Equal(t, Key(stream), p.OriginalKey, "the dead letter names the key its entry was read from")
+	assert.Equal(t, entryID, p.OriginalMessageID, "the dead letter names the entry by its own ID")
+	assert.Equal(t, <-identity, p.DedupMessageID(), "the dead letter's identity is the one its handler deduplicated under")
+	cancel()
+	assert.NoError(t, <-done)
+}
