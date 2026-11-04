@@ -110,15 +110,17 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// them; the warehouse is read and written as its own login, the one dbt
 	// and the validation runner sign in as, so every table the harness creates
 	// there belongs to the login that may replace it.
-	svcUser, svcPassword := "continuo_svc", getEnv("POSTGRES_PASSWORD", "continuo")
-	executionDB := connectPostgres(t, pgHost, "continuo_execution", svcUser, svcPassword)
-	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller", svcUser, svcPassword)
-	releaseDB := connectPostgres(t, pgHost, "continuo_release", svcUser, svcPassword)
+	migrationLogin := func(db string) *sqlx.DB {
+		return connectPostgres(t, pgHost, db, "continuo_svc", getEnv("POSTGRES_PASSWORD", "continuo"))
+	}
+	executionDB := migrationLogin("continuo_execution")
+	runControllerDB := migrationLogin("continuo_run_controller")
+	releaseDB := migrationLogin("continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"),
 		getEnv("E2E_WAREHOUSE_USER", "continuo_warehouse"), getEnv("E2E_WAREHOUSE_PASSWORD", "local-continuo_warehouse"))
-	remediationDB := connectPostgres(t, pgHost, "continuo_remediation", svcUser, svcPassword)
-	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation", svcUser, svcPassword)
-	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter", svcUser, svcPassword)
+	remediationDB := migrationLogin("continuo_remediation")
+	agentRemediationDB := migrationLogin("continuo_agent_remediation")
+	deadLetterDB := migrationLogin("continuo_dead_letter")
 
 	clients := &testClients{
 		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
