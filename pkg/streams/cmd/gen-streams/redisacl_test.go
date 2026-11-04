@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -132,9 +133,10 @@ func TestACLRulesAreDeterministic(t *testing.T) {
 	}
 }
 
-// TestEveryRedisServiceHasALogin: every service the contract knows, except the
-// ones that never open a Redis connection, has a login, and the migration login
-// of streams-init is there too.
+// TestEveryRedisServiceHasALogin: every service the contract names (a
+// consumer, a producer or a redis_access entry) has a login, the migration
+// login of streams-init is there too, and nothing else is. egress-proxy, which
+// the contract never names, has none.
 func TestEveryRedisServiceHasALogin(t *testing.T) {
 	c := loadRealContract(t)
 	logins, err := redisLogins(c)
@@ -145,31 +147,94 @@ func TestEveryRedisServiceHasALogin(t *testing.T) {
 	for _, l := range logins {
 		have[l.Service] = l.Username
 	}
-	redisServices := 0
-	for _, svc := range knownServiceNames() {
-		if svc == "egress-proxy" {
-			if _, ok := have[svc]; ok {
-				t.Errorf("egress-proxy never opens a Redis connection, but has the login %q", have[svc])
-			}
-			continue
-		}
-		redisServices++
+	services := contractServices(c)
+	for _, svc := range services {
 		want := "continuo_" + strings.ReplaceAll(svc, "-", "_")
 		if have[svc] != want {
 			t.Errorf("service %s: login %q, want %q", svc, have[svc], want)
 		}
 	}
-	if redisServices != 10 {
-		t.Errorf("the contract knows %d Redis services, want 10", redisServices)
+	for _, svc := range []string{"run-controller", "topology-controller", "ui", "agent-chat"} {
+		if !slices.Contains(services, svc) {
+			t.Errorf("the contract does not name %s", svc)
+		}
+	}
+	if login, ok := have["egress-proxy"]; ok {
+		t.Errorf("egress-proxy never opens a Redis connection, but has the login %q", login)
 	}
 	if have["streams-init"] != "continuo_redis_migrate" {
 		t.Errorf("streams-init login: got %q, want continuo_redis_migrate", have["streams-init"])
 	}
-	if len(logins) != redisServices+1 {
-		t.Errorf("got %d logins, want %d", len(logins), redisServices+1)
+	if len(logins) != len(services)+1 {
+		t.Errorf("got %d logins, want %d", len(logins), len(services)+1)
 	}
 	if !slices.IsSortedFunc(logins, func(a, b redisLogin) int { return strings.Compare(a.Service, b.Service) }) {
 		t.Errorf("logins are not sorted by service: %+v", logins)
+	}
+}
+
+// TestANewServiceGetsALogin: a service the contract names for the first time,
+// as a producer, a consumer or a redis_access entry, gets its login from the
+// contract alone.
+func TestANewServiceGetsALogin(t *testing.T) {
+	y := strings.Replace(aclFixtureYAML, "producers: [run-controller]\n", "producers: [run-controller, billing-controller]\n", 1)
+	y = strings.Replace(y, "      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n",
+		"      - service: execution-controller\n        group: execution-controller-task-dispatch\n        const: ExecutionControllerTaskDispatch\n"+
+			"      - service: billing-reader\n        group: billing-reader-task-dispatch\n        const: BillingReaderTaskDispatch\n", 1)
+	y += "  - service: billing-ui\n    keys: [billing:]\n    commands: [get]\n"
+	c := mustLoad(t, y)
+	logins, err := redisLogins(c)
+	if err != nil {
+		t.Fatalf("redisLogins: %v", err)
+	}
+	have := map[string]string{}
+	for _, l := range logins {
+		have[l.Service] = l.Rule
+	}
+	want := map[string]string{
+		"billing-controller": "%W~continuo:task.dispatch:v1",
+		"billing-reader":     "~continuo:task.dispatch:v1",
+		"billing-ui":         "~continuo:billing:*",
+	}
+	for svc, pattern := range want {
+		if !strings.HasPrefix(have[svc], pattern+" ") {
+			t.Errorf("%s: rule %q, want it to start with %q", svc, have[svc], pattern)
+		}
+	}
+}
+
+// TestContractServicesAreRepositoryDirectories: the generator refuses a
+// contract that names a service with no top-level directory of its own, so a
+// misspelt service name gets no login.
+func TestContractServicesAreRepositoryDirectories(t *testing.T) {
+	c := mustLoad(t, aclFixtureYAML)
+	root := t.TempDir()
+	for _, svc := range []string{"run-controller", "execution-controller", "dead-letter-controller", "ui"} {
+		if err := os.Mkdir(filepath.Join(root, svc), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := checkServiceDirectories(c, root); err != nil {
+		t.Fatalf("every service has its directory: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "ui")); err != nil {
+		t.Fatal(err)
+	}
+	err := checkServiceDirectories(c, root)
+	if err == nil || !strings.Contains(err.Error(), `"ui"`) {
+		t.Fatalf("expected an error naming ui, got %v", err)
+	}
+}
+
+// TestRealContractServicesAreRepositoryDirectories runs the same check on the
+// real contract and this repository.
+func TestRealContractServicesAreRepositoryDirectories(t *testing.T) {
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("findRepoRoot: %v", err)
+	}
+	if err := checkServiceDirectories(loadRealContract(t), root); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -215,7 +280,8 @@ func TestRedisAccessRejectsDangerousCommands(t *testing.T) {
 
 func TestRedisAccessValidation(t *testing.T) {
 	cases := map[string]string{
-		"unknown service":               strings.Replace(aclFixtureYAML, "service: ui", "service: nobody", 1),
+		"malformed service name":        strings.Replace(aclFixtureYAML, "service: ui", "service: UI_service", 1),
+		"malformed producer name":       strings.Replace(aclFixtureYAML, "producers: [run-controller]", "producers: [run_controller]", 1),
 		"key prefix without a colon":    strings.Replace(aclFixtureYAML, "[uisession:]", "[uisession]", 1),
 		"key prefix that is a wildcard": strings.Replace(aclFixtureYAML, "[uisession:]", `["*"]`, 1),
 		"duplicate service":             aclFixtureYAML + "  - service: ui\n    keys: [other:]\n    commands: [get]\n",

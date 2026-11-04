@@ -131,6 +131,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
 	}
+	if err := checkServiceDirectories(c, root); err != nil {
+		return fmt.Errorf("load contract: %w", err)
+	}
 
 	goSrc, err := emitGo(c)
 	if err != nil {
@@ -1171,10 +1174,6 @@ func validate(c *Contract) error {
 	}
 	groupRe := regexp.MustCompile(`^[a-z][a-z0-9-]+$`)
 	identRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	knownServices := map[string]struct{}{}
-	for _, name := range knownServiceNames() {
-		knownServices[name] = struct{}{}
-	}
 
 	streamNames := map[string]int{}
 	streamConsts := map[string]int{}
@@ -1195,9 +1194,6 @@ func validate(c *Contract) error {
 		streamConsts[s.Const] = i
 
 		for j, cons := range s.Consumers {
-			if _, ok := knownServices[cons.Service]; !ok {
-				return fmt.Errorf("stream %q consumer[%d]: unknown service %q", s.Name, j, cons.Service)
-			}
 			if !groupRe.MatchString(cons.Group) {
 				return fmt.Errorf("stream %q consumer[%d]: group %q must match %s", s.Name, j, cons.Group, groupRe.String())
 			}
@@ -1280,6 +1276,9 @@ func validate(c *Contract) error {
 		}
 	}
 
+	if err := validateServiceNames(c); err != nil {
+		return err
+	}
 	if err := validateRedisAccess(c); err != nil {
 		return err
 	}

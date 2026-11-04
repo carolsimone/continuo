@@ -151,7 +151,10 @@ streams:
 	}
 }
 
-func TestValidate_UnknownService(t *testing.T) {
+// TestValidate_MalformedServiceName: a service name that is not lowercase
+// words joined by hyphens is refused. A well-formed name with no directory of
+// its own is refused by checkServiceDirectories.
+func TestValidate_MalformedServiceName(t *testing.T) {
 	y := `
 key_prefix: "continuo:"
 legacy_keys: true
@@ -160,13 +163,13 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: nope-controller
+      - service: Nope_Controller
         group: nope-group
         const: NopeGroup
 `
 	_, err := loadAndValidate(strings.NewReader(y))
-	if err == nil || !strings.Contains(err.Error(), "unknown service") {
-		t.Fatalf("expected unknown service error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `service "Nope_Controller" must match`) {
+		t.Fatalf("expected a malformed service name error, got %v", err)
 	}
 }
 

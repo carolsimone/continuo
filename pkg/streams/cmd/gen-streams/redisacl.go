@@ -54,24 +54,56 @@ const (
 	redisMigrationCommands = "-@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"
 )
 
-// nonRedisServices never open a Redis connection and get no login.
-var nonRedisServices = []string{"egress-proxy"}
+// serviceNameRe is the shape of a service name: lowercase words joined by
+// hyphens, the name of the service's top-level directory.
+var serviceNameRe = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
-// knownServiceNames lists every service of the system, sorted.
-func knownServiceNames() []string {
-	return []string{
-		"agent-chat",
-		"agent-remediation",
-		"catalog",
-		"dead-letter-controller",
-		"egress-proxy",
-		"execution-controller",
-		"release-controller",
-		"remediation",
-		"run-controller",
-		"topology-controller",
-		"ui",
+// contractServices lists, sorted, every service the contract names: the
+// producers and consumers of its streams and the services of its redis_access
+// list. Each of them signs in to Redis as its own login; a service the
+// contract never names (egress-proxy) opens no Redis connection.
+func contractServices(c *Contract) []string {
+	services := map[string]struct{}{}
+	for _, s := range c.Streams {
+		for _, p := range s.Producers {
+			services[p] = struct{}{}
+		}
+		for _, cons := range s.Consumers {
+			services[cons.Service] = struct{}{}
+		}
 	}
+	for _, a := range c.RedisAccess {
+		services[a.Service] = struct{}{}
+	}
+	return sortedKeys(services)
+}
+
+// validateServiceNames checks that every service the contract names has the
+// shape of a service name, so each login name derived from it is well formed.
+func validateServiceNames(c *Contract) error {
+	for _, svc := range contractServices(c) {
+		if !serviceNameRe.MatchString(svc) {
+			return fmt.Errorf("service %q must match %s", svc, serviceNameRe.String())
+		}
+	}
+	return nil
+}
+
+// checkServiceDirectories checks that every service the contract names is a
+// top-level directory under root, so a misspelt service name fails the
+// generator instead of getting a login no process signs in as.
+func checkServiceDirectories(c *Contract, root string) error {
+	var missing []string
+	for _, svc := range contractServices(c) {
+		info, err := os.Stat(filepath.Join(root, svc))
+		if err != nil || !info.IsDir() {
+			missing = append(missing, fmt.Sprintf("%q", svc))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the contract names services with no directory under %s: %s", root, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 var (
@@ -80,15 +112,12 @@ var (
 	redisForbiddenCmd = []string{"keys", "flushall", "flushdb", "config", "acl", "debug", "shutdown", "monitor", "save", "bgsave", "bgrewriteaof", "replicaof", "slaveof", "migrate", "module", "script"}
 )
 
-// validateRedisAccess checks the redis_access list: each entry names a known
-// Redis service once, grants something, and names only plain commands that are
-// not administrative or whole-keyspace commands.
+// validateRedisAccess checks the redis_access list: each entry names a
+// service once, grants something, and names only plain commands that are not
+// administrative or whole-keyspace commands.
 func validateRedisAccess(c *Contract) error {
 	seen := map[string]struct{}{}
 	for i, a := range c.RedisAccess {
-		if !slices.Contains(knownServiceNames(), a.Service) || slices.Contains(nonRedisServices, a.Service) {
-			return fmt.Errorf("redis_access[%d]: %q is not a service that uses Redis", i, a.Service)
-		}
 		if _, dup := seen[a.Service]; dup {
 			return fmt.Errorf("redis_access[%d]: duplicate service %q", i, a.Service)
 		}
@@ -129,8 +158,8 @@ func redisUsername(service string) string {
 	return "continuo_" + strings.ReplaceAll(service, "-", "_")
 }
 
-// redisLogins returns the login of every Redis service plus the migration
-// login, sorted by service.
+// redisLogins returns the login of every service the contract names plus the
+// migration login, sorted by service.
 func redisLogins(c *Contract) ([]redisLogin, error) {
 	var consumerDL, outboxDL *Stream
 	for i := range c.Streams {
@@ -145,21 +174,9 @@ func redisLogins(c *Contract) ([]redisLogin, error) {
 		return nil, fmt.Errorf("the contract must declare %s and %s: every service writes its dead letters there", consumerDeadLetterStream, outboxDeadLetterStream)
 	}
 
-	services := map[string]struct{}{}
-	for _, s := range c.Streams {
-		for _, p := range s.Producers {
-			services[p] = struct{}{}
-		}
-		for _, cons := range s.Consumers {
-			services[cons.Service] = struct{}{}
-		}
-	}
-	for _, a := range c.RedisAccess {
-		services[a.Service] = struct{}{}
-	}
-
+	services := contractServices(c)
 	logins := make([]redisLogin, 0, len(services)+1)
-	for svc := range services {
+	for _, svc := range services {
 		logins = append(logins, redisLogin{Service: svc, Username: redisUsername(svc), Rule: redisRule(c, svc)})
 	}
 	logins = append(logins, redisLogin{
