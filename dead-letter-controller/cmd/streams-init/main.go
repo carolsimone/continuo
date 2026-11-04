@@ -1,7 +1,7 @@
 // Command streams-init signs in as every Redis login of REDIS_LOGINS_DIR, then
 // creates every Redis stream and consumer group of the release under its
-// prefixed key, deletes the unprefixed keys of the streams that no consumer
-// reads any more, and exits. It is the one step that creates streams and
+// prefixed key, deletes the unprefixed keys of the streams, which no consumer
+// reads, and exits. It is the one step that creates streams and
 // groups: consumers wait for their group and producers never create a stream.
 // Its own login passes the permission fence of REDIS_ACL_MODE before it does
 // any of it.

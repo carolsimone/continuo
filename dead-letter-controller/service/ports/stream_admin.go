@@ -28,9 +28,9 @@ type StreamAdmin interface {
 	EnsureStream(ctx context.Context, stream string) (created bool, err error)
 	// StreamExists reports whether the key the stream is stored under exists.
 	StreamExists(ctx context.Context, stream string) (bool, error)
-	// ReadUnprefixed reads the unprefixed key of stream, the key named by the
-	// bare contract name: every consumer group it holds and its last entry.
-	// exists is false when the key does not exist.
+	// ReadUnprefixed reads the unprefixed key of stream: every consumer group
+	// it holds and its last entry. exists is false when the key does not
+	// exist.
 	ReadUnprefixed(ctx context.Context, stream string) (k unprefixed.Key, exists bool, err error)
 	// DeleteUnprefixed deletes the unprefixed key of stream and reports whether
 	// it existed. It never touches the stream's prefixed key.

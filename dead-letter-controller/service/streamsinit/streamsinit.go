@@ -45,10 +45,10 @@ type Plan struct {
 // a stream with no group that it created), and returns the first error with the
 // stream, and the group, named.
 //
-// When plan.DeleteUnprefixedKeys is set, it first refuses a Redis a release
-// before the key prefix last used (see refuseUnprefixedOnly), and once every
-// stream exists it deletes the unprefixed keys (see deleteUnprefixedKeys).
-// With creation turned off it does neither.
+// When plan.DeleteUnprefixedKeys is set, it first fails when Redis holds a
+// stream only under its unprefixed key (see refuseUnprefixedOnly), and once
+// every stream exists it deletes the unprefixed keys (see
+// deleteUnprefixedKeys). With creation turned off it does neither.
 func Run(ctx context.Context, admin ports.StreamAdmin, plan Plan, logger *slog.Logger) error {
 	if err := checkLogins(ctx, admin, plan.Logins, logger); err != nil {
 		return err
@@ -101,11 +101,10 @@ func Run(ctx context.Context, admin ports.StreamAdmin, plan Plan, logger *slog.L
 
 // refuseUnprefixedOnly fails, before anything is created, when a stream of
 // names has no key under the prefix while its unprefixed key holds one of the
-// stream's contract groups. Redis then holds the streams of a release before
-// the key prefix, which this release never reads: the release that added the
-// prefix reads both keys and must run first. An unprefixed key it cannot read
-// (a login whose rule predates this release answers NOPERM) is logged and not
-// counted.
+// stream's contract groups: no consumer reads the unprefixed key, so the
+// entries a consumer group had still to read there would never be read. An
+// unprefixed key it cannot read (a login whose rule does not reach unprefixed
+// keys answers NOPERM) is logged and not counted.
 func refuseUnprefixedOnly(ctx context.Context, admin ports.StreamAdmin, names []string, plan Plan, logger *slog.Logger) error {
 	var found []string
 	for _, stream := range names {
@@ -141,10 +140,10 @@ func refuseUnprefixedOnly(ctx context.Context, admin ports.StreamAdmin, names []
 // the unprefixed key of each retired stream whatever it holds: nothing reads
 // it. A key a contract group has not finished with is kept and logged, and
 // once every other key is dealt with the run fails, naming each such key and
-// its groups: no consumer of this release reads those entries. A key it cannot
-// read or delete (a login whose rule predates this release answers NOPERM) is
-// logged and left, and does not fail the run. A cancelled ctx ends it with
-// ctx's error.
+// its groups: no consumer reads those entries. A key it cannot read or delete
+// (a login whose rule does not reach unprefixed keys answers NOPERM) is logged
+// and left, and does not fail the run. A cancelled ctx ends it with ctx's
+// error.
 func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []string, plan Plan, logger *slog.Logger) error {
 	const hint = "apply this release's rule of continuo_redis_migrate from deploy/redis-acl-rules.acl, or delete the key yourself"
 	var kept []string

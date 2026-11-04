@@ -38,7 +38,7 @@ type Contract struct {
 	// KeyPrefix leads the name of every Redis key the system owns.
 	KeyPrefix string `yaml:"key_prefix"`
 	// LegacyKeys reports whether the unprefixed keys of the streams are kept:
-	// the services' rules still reach them. When false, the streams-init step
+	// the services' rules reach them. When false, the streams-init step
 	// deletes each one once its consumer groups have finished with it, and the
 	// migration login's rule allows that.
 	LegacyKeys     bool            `yaml:"legacy_keys"`

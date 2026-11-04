@@ -62,7 +62,10 @@ func redisKeysGuardRoots(t *testing.T, root string) []string {
 // Redis command an unprefixed key: an XAddArgs whose Stream is not a Key call,
 // or a key command whose key is a streams constant, a string literal or a
 // concatenation that starts with one. Every key lives under streams.KeyPrefix,
-// built only by pkg/redis.Key.
+// built only by pkg/redis.Key. The one exception is dead-letter-controller's
+// streams-init admin (adapters/redis/stream_admin.go, unprefixedKey), which
+// reads and deletes the unprefixed key of a stream through a variable, a shape
+// this guard does not flag.
 func TestRedisKeysCarryThePrefix(t *testing.T) {
 	root := repoRootFromTest(t)
 	exempt := filepath.Join(root, "pkg", "redis", "keys.go")

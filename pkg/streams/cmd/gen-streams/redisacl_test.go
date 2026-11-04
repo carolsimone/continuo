@@ -393,7 +393,7 @@ func TestMigrationLoginRule(t *testing.T) {
 	if got != want {
 		t.Errorf("streams-init rule without legacy keys:\n got: %s\nwant: %s", got, want)
 	}
-	for _, name := range []string{"task.dispatch:v1", "task.failed:v1"} {
+	for _, name := range []string{c.Streams[0].Name, c.RetiredStreams[0].Name} {
 		if !slices.Contains(strings.Fields(got), "~"+name) {
 			t.Errorf("streams-init rule does not reach the unprefixed %s: %s", name, got)
 		}

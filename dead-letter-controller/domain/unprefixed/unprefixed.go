@@ -54,8 +54,7 @@ func Held(k Key, contractGroups []string) []string {
 	return held
 }
 
-// HoldsGroupOf reports whether k holds a group of contractGroups: a consumer
-// of a release that read k created it there.
+// HoldsGroupOf reports whether k holds a group of contractGroups.
 func HoldsGroupOf(k Key, contractGroups []string) bool {
 	return slices.ContainsFunc(k.Groups, func(g Group) bool { return slices.Contains(contractGroups, g.Name) })
 }
