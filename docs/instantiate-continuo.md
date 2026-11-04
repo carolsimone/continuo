@@ -107,7 +107,7 @@ kind create cluster --name continuo
 
 # continuo itself, from the published chart
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.18.0 -n continuo --create-namespace
+  --version 0.19.0 -n continuo --create-namespace
 
 # Wait for everything to come up (5-10 minutes on a first install)
 kubectl -n continuo get pods -w
@@ -162,7 +162,7 @@ Set the key and restart the chat service:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.18.0 -n continuo --reuse-values \
+  --version 0.19.0 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>'
 
 kubectl -n continuo rollout restart deploy/agent-chat

@@ -17,6 +17,24 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.19.0 · 2026-11-04 · `MINOR`
+
+**TL;DR**
+
+- Every service now signs in to Postgres and to Redis as its own login. With your own Postgres or Redis, create the logins and their Secrets **before you upgrade**: follow the steps in the changelog and `deploy/CREDENTIALS.md`. The bundled Postgres and Redis need nothing.
+- Redis keys move under `continuo:`, and a new `streams-init` step creates every stream. ui users sign in once more.
+- Upgrade through this release: the next one reads only the `continuo:` keys.
+
+What else is new:
+
+- **Credentials as files.** Every credential can be an environment variable or a file named by `<VAR>_FILE`. The Postgres and Redis passwords are read again for every new connection, so a rotated file needs no restart. `credentials.delivery: file` mounts the chart's Secrets as files, and `credentials.files` takes files your company provides (Vault Agent, a CSI volume).
+- **A ServiceAccount per service.** Pull secrets go in `imagePullSecrets`, and cloud roles in `services[].serviceAccount.annotations`.
+- **A credentials guide.** `deploy/CREDENTIALS.md` lists every login, its rights and how to create it.
+- Finished Jobs are deleted after 30 minutes (`execution.jobTTLMinutes`), and validation runs on continuo-python-runtime 0.11.0.
+- The changes are breaking, and while continuo is in beta they ship as a `MINOR`.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0190---2026-11-04) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.19.0)
+
 ## 0.18.0 · 2026-11-01 · `MINOR`
 
 **TL;DR**
