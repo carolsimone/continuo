@@ -12,6 +12,25 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-04
+
+**TL;DR**
+
+- Every service now signs in to Postgres and to Redis as its own login. With your own Postgres or Redis, create the logins and their Secrets **before you upgrade** (steps below and `deploy/CREDENTIALS.md`). The bundled Postgres and Redis need nothing.
+- Redis keys move under `continuo:`, and a new `streams-init` step creates every stream and consumer group. ui users sign in once more.
+- Credentials can also be given as files (`<VAR>_FILE`), and every service runs under its own ServiceAccount.
+- Upgrade through this release: the next release reads only the `continuo:` keys.
+
+### Upgrade steps
+
+1. **Your own Postgres:** create one login per service (`LOGIN` and a password, nothing else), a Secret holding each password, and set `credentials.postgres.<service>.existingSecret`. The migration login (`externalDatabase.username`) must own every continuo database. Then set `validation.createWarehouseSecret: false` and `validation.warehouseSecret` to your own warehouse Secret.
+2. **Your own Redis:** create one login per service with its rule from `deploy/redis-acl-rules.acl`, a Secret holding each password, and set `credentials.redis.logins.<name>.existingSecret`. A Redis with no ACL users sets `credentials.redis.mode: shared` instead.
+3. **The namespace's `default` ServiceAccount:** move what you attached to it (image pull secrets, RoleBindings, cloud roles) to `imagePullSecrets`, `services[].serviceAccount.annotations` and the new per-service accounts.
+4. **Upgrade.** Before any service rolls, the migrate job checks every Postgres login and `streams-init` signs in as every Redis login; either stops the deploy, naming the login, when one is missing or wrong.
+5. **Stay on this release until its services have run for a while.** They read the old unprefixed Redis keys beside the `continuo:` ones; the next release no longer does.
+
+This is a breaking release. While continuo is in beta it ships as a `MINOR`.
+
 ### Breaking
 
 - **Every service signs in to Postgres as its own login.** run-controller, execution-controller, release-controller, remediation, agent-remediation, agent-chat and dead-letter-controller sign in as `continuo_run_controller`, `continuo_execution_controller`, `continuo_release_controller`, `continuo_remediation`, `continuo_agent_remediation`, `continuo_agent_chat` and `continuo_dead_letter_controller` (names in the new `credentials.postgres`). The migration login (`externalDatabase.username`) keeps owning every database. On every deploy the migrate job lets only each login connect to its own database, grants it read and write on its tables, and fails the deploy, naming the login, when a login is missing or has more rights (superuser, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, membership in the migration login, `CONNECT` on another continuo database). Upgrade note:
