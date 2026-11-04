@@ -62,6 +62,10 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: object())
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    # The fake Redis client answers no command, so the permission fence stays
+    # off whatever REDIS_ACL_MODE the test process inherits (the compose
+    # container sets perService); the fence's own test sets it.
+    monkeypatch.setenv("REDIS_ACL_MODE", "shared")
     monkeypatch.setitem(
         sys.modules, "boto3",
         SimpleNamespace(client=lambda *a, **kw: object()),
