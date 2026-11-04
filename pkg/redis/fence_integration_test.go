@@ -75,7 +75,13 @@ func startFenceRedis() {
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        fenceRedisImage,
 			ExposedPorts: []string{"6379/tcp"},
-			WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(time.Minute),
+			// The log line says Redis listens inside the container; the
+			// listening-port wait also dials the mapped host port, which a VM's
+			// port forward (colima, Docker Desktop) can open later.
+			WaitingFor: wait.ForAll(
+				wait.ForLog("Ready to accept connections"),
+				wait.ForListeningPort("6379/tcp"),
+			).WithDeadline(time.Minute),
 		},
 		Started: true,
 	})
