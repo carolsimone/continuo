@@ -361,7 +361,7 @@ colima start --disk 100  # 100GB
 - Re-run provisioning: `bash tests/e2e/provision-k8s-test-env.sh`
 
 **Test fails with "table does not exist":**
-- Verify flyway migrations completed: `docker compose logs flyway-execution`
+- Verify the migrations job completed (Flyway, then each login's grants and check): `docker compose logs migrations`
 - Check the execution outbox table exists: `docker compose exec postgres psql -U continuo_svc -d continuo_execution -c '\dt execution_outbox'`
 
 **Services not starting:**
@@ -414,6 +414,6 @@ docker-compose rm -f neo4j
 docker-compose up -d --force-recreate neo4j
 ```
 
-`E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables.
+`E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables; it signs in there as `E2E_WAREHOUSE_USER` (default `continuo_warehouse`) with `E2E_WAREHOUSE_PASSWORD` (default `local-continuo_warehouse`).
 
 **Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `run-controller` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run .` with the flag overridden; each service's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both services with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart run-controller release-controller && bash tests/e2e/start-services.sh`.

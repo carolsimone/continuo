@@ -25,26 +25,24 @@ db/migration/
 
 ## Running Migrations
 
-The consolidated migration image added in `db/Dockerfile.migrate` bakes all service migration trees into one artifact and runs them sequentially via `db/migrate-all.sh`:
+One image, built from `db/Dockerfile.migrate`, holds every service's migrations and runs them in turn through `db/migrate-all.sh`, signed in as the migration login, which owns every continuo database. For each database it then lets only that service's login connect (`CONTINUO_PG_LOGINS`), grants it read and write on its tables and sequences (`db/logins/grant.sql`), and reads the catalog back to refuse a login with any other right (`db/logins/check.sql`). It stops before any change when a login does not exist.
 
 ```bash
 DOCKER_BUILDKIT=1 docker build -t continuo-migrations:test -f db/Dockerfile.migrate db/
+bash db/test/migrate-logins_test.sh   # runs the image against throwaway Postgres containers
 ```
 
-The existing per-service Flyway examples remain available for the current `docker-compose` setup:
+docker-compose runs the same image as the one-shot `migrations` service; `db/init-databases.sh` creates the databases and the logins first, each with the password `local-<login>`:
 
 ```bash
-docker-compose up -d postgres          # Start Postgres
-docker-compose up flyway-run-controller  # Run run-controller migrations
-docker-compose up flyway-execution     # Run execution migrations
-docker-compose up flyway-dependency    # Run dependency migrations
-docker-compose up flyway-dead-letter   # Run dead-letter migrations
+docker compose up -d postgres
+docker compose up --exit-code-from migrations migrations
 ```
 
 Or run all services:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Naming Convention

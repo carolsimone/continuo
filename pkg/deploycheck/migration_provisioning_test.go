@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoRoot walks up from the test working directory until it finds go.work.
@@ -281,7 +283,7 @@ func withoutPrefix(t *testing.T, where string, tokens []string, prefix string) [
 // TestProvisioning_ListsExactlyTheServicesThatKeepPostgres pins every place a
 // database is provisioned to one list: the migration job's DATABASES, the
 // migration image's COPY lines, the migration directories, the Postgres
-// initdb script, the chart's db-init loop and the compose Flyway jobs. A
+// initdb script, the chart's db-init loop and the compose migrations job's logins. A
 // service that keeps no Postgres appears in none of them, so no install creates
 // a database nothing connects to.
 func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
@@ -339,10 +341,14 @@ func TestProvisioning_ListsExactlyTheServicesThatKeepPostgres(t *testing.T) {
 			"validation.warehouseDatabase only when postgresql.enabled")
 	}
 
-	var flyway []string
-	for _, m := range regexp.MustCompile(`-url=jdbc:postgresql://postgres:5432/continuo_(\w+)`).
-		FindAllStringSubmatch(read("docker-compose.yml"), -1) {
-		flyway = append(flyway, m[1])
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(read("docker-compose.yml")), &compose); err != nil {
+		t.Fatalf("parse docker-compose.yml: %v", err)
 	}
-	assertSameSet(t, "docker-compose.yml Flyway jobs", flyway, want)
+	var migrated []string
+	for _, pair := range strings.Fields(compose.Services["migrations"].Environment["CONTINUO_PG_LOGINS"]) {
+		db, _, _ := strings.Cut(pair, "=")
+		migrated = append(migrated, db)
+	}
+	assertSameSet(t, "docker-compose.yml migrations CONTINUO_PG_LOGINS databases", migrated, want)
 }

@@ -121,8 +121,12 @@ spec:
               value: "${DOCKER_BRIDGE_IP}"
             - name: REDIS_PORT
               value: "6379"
+            - name: REDIS_USERNAME
+              value: "continuo_execution_controller"
             - name: REDIS_PASSWORD
-              value: "continuo"
+              value: "local-continuo_execution_controller"
+            - name: REDIS_ACL_MODE
+              value: "perService"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
@@ -130,9 +134,9 @@ spec:
             - name: POSTGRES_DB
               value: "continuo_execution"
             - name: POSTGRES_USER
-              value: "continuo_svc"
+              value: "continuo_execution_controller"
             - name: POSTGRES_PASSWORD
-              value: "continuo"
+              value: "local-continuo_execution_controller"
             - name: K8S_NAMESPACE
               value: "default"
             - name: MAX_CONCURRENT_JOBS

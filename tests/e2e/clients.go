@@ -106,13 +106,19 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	require.NoError(t, err, "Failed to connect to Neo4j")
 
 	// Setup PostgreSQL connections for each database
-	executionDB := connectPostgres(t, pgHost, "continuo_execution")
-	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller")
-	releaseDB := connectPostgres(t, pgHost, "continuo_release")
-	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
-	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
-	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
-	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
+	// The services' databases are read as the migration login, which owns
+	// them; the warehouse is read and written as its own login, the one dbt
+	// and the validation runner sign in as, so every table the harness creates
+	// there belongs to the login that may replace it.
+	svcUser, svcPassword := "continuo_svc", getEnv("POSTGRES_PASSWORD", "continuo")
+	executionDB := connectPostgres(t, pgHost, "continuo_execution", svcUser, svcPassword)
+	runControllerDB := connectPostgres(t, pgHost, "continuo_run_controller", svcUser, svcPassword)
+	releaseDB := connectPostgres(t, pgHost, "continuo_release", svcUser, svcPassword)
+	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"),
+		getEnv("E2E_WAREHOUSE_USER", "continuo_warehouse"), getEnv("E2E_WAREHOUSE_PASSWORD", "local-continuo_warehouse"))
+	remediationDB := connectPostgres(t, pgHost, "continuo_remediation", svcUser, svcPassword)
+	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation", svcUser, svcPassword)
+	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter", svcUser, svcPassword)
 
 	clients := &testClients{
 		catalogClient:          catalogv1.NewCatalogQueryClient(catalogConn),
@@ -158,12 +164,11 @@ func newMinioS3Client() *s3.Client {
 	})
 }
 
-// connectPostgres establishes a PostgreSQL connection
-func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
-	pgPassword := getEnv("POSTGRES_PASSWORD", "continuo")
+// connectPostgres opens a connection to database as user.
+func connectPostgres(t *testing.T, host, database, user, password string) *sqlx.DB {
 	connStr := fmt.Sprintf(
-		"host=%s port=5432 dbname=%s user=continuo_svc password=%s sslmode=disable",
-		host, database, pgPassword,
+		"host=%s port=5432 dbname=%s user=%s password=%s sslmode=disable",
+		host, database, user, password,
 	)
 	db, err := sqlx.Connect("postgres", connStr)
 	require.NoError(t, err, "Failed to connect to PostgreSQL database: %s", database)
