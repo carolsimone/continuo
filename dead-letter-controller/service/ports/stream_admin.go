@@ -26,6 +26,8 @@ type StreamAdmin interface {
 	// left on it: the stream a producer adds to without creating it. created is
 	// false when the stream already exists.
 	EnsureStream(ctx context.Context, stream string) (created bool, err error)
+	// StreamExists reports whether the key the stream is stored under exists.
+	StreamExists(ctx context.Context, stream string) (bool, error)
 	// ReadUnprefixed reads the unprefixed key of stream, the key named by the
 	// bare contract name: every consumer group it holds and its last entry.
 	// exists is false when the key does not exist.

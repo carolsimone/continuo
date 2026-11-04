@@ -77,9 +77,17 @@ func (f *fakeAdmin) EnsureStream(_ context.Context, stream string) (bool, error)
 	return true, nil
 }
 
-func (f *fakeAdmin) ReadUnprefixed(_ context.Context, stream string) (unprefixed.Key, bool, error) {
+func (f *fakeAdmin) StreamExists(_ context.Context, stream string) (bool, error) {
+	f.events = append(f.events, "exists "+stream)
+	return len(f.groups[stream]) > 0 || f.streams[stream], nil
+}
+
+func (f *fakeAdmin) ReadUnprefixed(ctx context.Context, stream string) (unprefixed.Key, bool, error) {
 	f.calls++
 	f.events = append(f.events, "read "+stream)
+	if err := ctx.Err(); err != nil {
+		return unprefixed.Key{}, false, err
+	}
 	if err := f.readErrs[stream]; err != nil {
 		return unprefixed.Key{}, false, err
 	}
@@ -395,6 +403,7 @@ func lastEventIndex(events []string, prefix string) int {
 
 func TestRunDeletesADrainedUnprefixedKeyAfterCreating(t *testing.T) {
 	admin := newFakeAdmin()
+	existing(admin)
 	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: drained(streams.TaskDispatchV1)}
 	var out bytes.Buffer
 	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
@@ -416,35 +425,129 @@ func TestRunDeletesADrainedUnprefixedKeyAfterCreating(t *testing.T) {
 	}
 }
 
-func TestRunKeepsAnUnprefixedKeyWithPendingEntries(t *testing.T) {
-	admin := newFakeAdmin()
-	k := drained(streams.TaskDispatchV1)
-	k.Groups[0].Pending = 2
-	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: k}
-	var out bytes.Buffer
-	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
-		t.Fatal(err)
-	}
-	if len(admin.deleted) != 0 || slices.Contains(admin.events, "delete "+streams.TaskDispatchV1) {
-		t.Fatalf("deleted %v: the key still has entries pending", admin.deleted)
-	}
-	for _, want := range []string{`"level":"WARN"`, `"unprefixed key kept"`, streams.TaskDispatchV1, streams.ExecutionControllerTaskDispatch + `: 2 pending`} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the log lacks %s:\n%s", want, out.String())
+// existing marks every stream of the contract as created under the prefix, as
+// a run of the release that added the prefix leaves Redis.
+func existing(admin *fakeAdmin) {
+	for stream, groups := range streams.Groups {
+		if len(groups) == 0 {
+			admin.streams[stream] = true
+			continue
+		}
+		admin.groups[stream] = map[string]bool{}
+		for _, g := range groups {
+			admin.groups[stream][g] = true
 		}
 	}
 }
 
-func TestRunKeepsAnUnprefixedKeyWithUndeliveredEntries(t *testing.T) {
+// No consumer of this release reads an unprefixed key, so one that still holds
+// entries a contract group has not finished stops the run, naming the key and
+// the group, once every other key has been dealt with.
+func TestRunFailsWhileAnUnprefixedKeyHoldsPendingEntries(t *testing.T) {
 	admin := newFakeAdmin()
+	existing(admin)
+	k := drained(streams.TaskDispatchV1)
+	k.Groups[0].Pending = 2
+	admin.unprefixed = map[string]unprefixed.Key{
+		streams.TaskDispatchV1:    k,
+		streams.ReleasePromotedV2: drained(streams.ReleasePromotedV2),
+		streams.Retired[0]:        {},
+	}
+	var out bytes.Buffer
+	err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil)))
+	if err == nil {
+		t.Fatal("Run succeeded while an unprefixed key still holds pending entries")
+	}
+	for _, want := range []string{streams.TaskDispatchV1, streams.ExecutionControllerTaskDispatch + ": 2 pending", "DEL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v\nwant it to contain %q", err, want)
+		}
+	}
+	if slices.Contains(admin.events, "delete "+streams.TaskDispatchV1) {
+		t.Fatal("the held key was deleted")
+	}
+	if !slices.Contains(admin.deleted, streams.ReleasePromotedV2) || !slices.Contains(admin.deleted, streams.Retired[0]) {
+		t.Fatalf("deleted = %v, want the drained and the retired keys deleted before the run fails", admin.deleted)
+	}
+	if !strings.Contains(out.String(), `"unprefixed key kept"`) {
+		t.Fatalf("no line names the kept key:\n%s", out.String())
+	}
+}
+
+func TestRunFailsWhileAnUnprefixedKeyHoldsUndeliveredEntries(t *testing.T) {
+	admin := newFakeAdmin()
+	existing(admin)
 	k := drained(streams.TaskDispatchV1)
 	k.Groups[0].LastDelivered = trim.StreamID{Ms: 5}
 	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: k}
-	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
-		t.Fatal(err)
+	err := Run(context.Background(), admin, contractPlan(), discardLogger())
+	if err == nil || !strings.Contains(err.Error(), "delivered up to 5-0") {
+		t.Fatalf("Run = %v, want an error naming what the group has not been delivered", err)
 	}
 	if len(admin.deleted) != 0 {
 		t.Fatalf("deleted %v: a group has not been delivered the last entry", admin.deleted)
+	}
+}
+
+// A Redis a release before the prefix last used holds the streams' unprefixed
+// keys, with their groups, and none of their prefixed keys. This release never
+// reads those keys, so the run stops before it creates anything.
+func TestRunRefusesARedisLastUsedBeforeThePrefix(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.unprefixed = map[string]unprefixed.Key{
+		streams.TaskDispatchV1:    drained(streams.TaskDispatchV1),
+		streams.ReleasePromotedV2: drained(streams.ReleasePromotedV2),
+	}
+	err := Run(context.Background(), admin, contractPlan(), discardLogger())
+	if err == nil {
+		t.Fatal("Run succeeded on a Redis that holds only the unprefixed keys")
+	}
+	for _, want := range []string{streams.TaskDispatchV1, streams.ReleasePromotedV2, "upgrade through the release that added the continuo: key prefix"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v\nwant it to contain %q", err, want)
+		}
+	}
+	if admin.created != 0 || len(admin.deleted) != 0 || eventIndex(admin.events, "delete ") >= 0 {
+		t.Fatalf("created %d, deleted %v: the run must change nothing", admin.created, admin.deleted)
+	}
+}
+
+// The check needs a contract group on the unprefixed key: a stream new to this
+// release has no key at all, and an unprefixed key that holds only a group the
+// contract does not declare holds nothing this release would have read.
+func TestRunCreatesAStreamWhoseUnprefixedKeyHoldsNoContractGroup(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.unprefixed = map[string]unprefixed.Key{
+		streams.TaskDispatchV1: {Groups: []unprefixed.Group{{Name: "renamed-group"}}},
+	}
+	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(admin.deleted, []string{streams.TaskDispatchV1}) {
+		t.Fatalf("deleted = %v", admin.deleted)
+	}
+}
+
+// A login whose rule predates the drain answers NOPERM on an unprefixed key; the
+// check cannot tell what it holds and lets the run go on.
+func TestRunGoesOnWhenItCannotReadAnUnprefixedKeyBeforeCreating(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.readErrs = map[string]error{streams.TaskDispatchV1: errors.New("NOPERM No permissions to access a key")}
+	if err := Run(context.Background(), admin, contractPlan(), discardLogger()); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if admin.created == 0 {
+		t.Fatal("nothing was created")
+	}
+}
+
+func TestRunReturnsTheContextErrorWhenCancelled(t *testing.T) {
+	admin := newFakeAdmin()
+	existing(admin)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Run(ctx, admin, contractPlan(), discardLogger()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
 	}
 }
 
@@ -471,6 +574,7 @@ func TestRunDeletesTheUnprefixedKeyOfEveryRetiredStream(t *testing.T) {
 // that cannot be read or deleted is logged and left, and the run still succeeds.
 func TestRunKeepsGoingWhenAnUnprefixedKeyCannotBeDeleted(t *testing.T) {
 	admin := newFakeAdmin()
+	existing(admin)
 	noperm := errors.New("NOPERM User continuo_redis_migrate has no permissions to access the 'task.dispatch:v1' key")
 	admin.readErrs = map[string]error{streams.TaskDispatchV1: noperm}
 	admin.deleteErrs = map[string]error{streams.Retired[0]: noperm}
@@ -494,6 +598,7 @@ func TestRunKeepsGoingWhenAnUnprefixedKeyCannotBeDeleted(t *testing.T) {
 
 func TestRunLeavesTheUnprefixedKeysWhenTold(t *testing.T) {
 	admin := newFakeAdmin()
+	existing(admin)
 	admin.unprefixed = map[string]unprefixed.Key{streams.TaskDispatchV1: drained(streams.TaskDispatchV1)}
 	plan := contractPlan()
 	plan.DeleteUnprefixedKeys = false

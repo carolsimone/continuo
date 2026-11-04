@@ -134,14 +134,23 @@ hook Job that runs before the services roll. With the bundled Redis it is a Job
 of the release, which the services wait for (up to five minutes). The ui keeps
 its sessions under continuo:uisession:, so every ui user signs in once more
 after this upgrade, and agent-chat's rate-limit counters and agent-remediation's
-LLM cache start empty. Services read only the keys under continuo:. The
-streams-init step deletes a stream key under an old name once every consumer
-group has read and acknowledged all of it, and logs one it keeps.
+LLM cache start empty.
 streams-init needs a Redis login that may create streams (XGROUP CREATE with
 MKSTREAM). If yours may not, have the Redis owner create the streams by running
 /streams-init from the dead-letter-controller image with a login that may, and
 set redisInit.createStreams=false. Until the streams exist, consumers wait for
 their groups and producers retry.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
+Services read only the Redis keys under continuo:. streams-init deletes each
+stream's old key (task.dispatch:v1) once every consumer group has read and
+acknowledged all of it, and stops the deploy, naming the key, while one still
+holds entries: let the previous release finish them and deploy again, or
+discard them with DEL <key>. Upgrading from 0.18.0 or earlier? Upgrade through
+the release that added the continuo: prefix first: streams-init stops the
+deploy while Redis holds streams only under their old names.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

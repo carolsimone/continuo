@@ -109,10 +109,9 @@ class Consumer:
 
         The consumer never creates the group. It polls until the prefixed key
         of its stream holds the group, advancing the heartbeat on every poll.
-        A Redis it cannot reach, or
-        any other error reply (a NOPERM while the login's rule is still being
-        applied), is waited out like a missing group, and that error is raised
-        once the window is spent. A reply no amount of waiting will fix (a key
+        A Redis it cannot reach, or any other error reply (a NOPERM while the
+        login's rule is still being applied), is waited out like a missing
+        group, and that error is raised once the window is spent. A reply no amount of waiting will fix (a key
         of the wrong type, a command the server does not have) is raised on the
         first attempt instead of burning the window, as in pkg/redis's
         StreamConsumer. A group still missing at the end raises RuntimeError.

@@ -133,9 +133,9 @@ externalRedis:
 # With redis.enabled=false it runs as a pre-install/pre-upgrade hook, so the
 # streams exist before the services roll; with the bundled Redis it is a
 # regular Job. Consumers wait up to five minutes for their group, and a
-# producer never creates a stream. It then deletes each stream's key from before
-# the prefix (task.dispatch:v1) once every consumer group has read and
-# acknowledged all of it.
+# producer never creates a stream. It then deletes each stream's old key from
+# before the prefix (task.dispatch:v1) once every consumer group has read and
+# acknowledged all of it, and fails while one still holds entries.
 redisInit:
   # Set false when the Redis login the release is given may not create streams
   # (a BYO Redis whose ACL grants no XGROUP CREATE ... MKSTREAM): the Job then

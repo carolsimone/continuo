@@ -94,6 +94,15 @@ func (a *StreamAdmin) CheckLogin(ctx context.Context, username, password string)
 	return err
 }
 
+// StreamExists runs EXISTS on the key of the contract stream name.
+func (a *StreamAdmin) StreamExists(ctx context.Context, stream string) (bool, error) {
+	n, err := a.rdb.Exists(ctx, pkgredis.Key(stream)).Result()
+	if err != nil {
+		return false, fmt.Errorf("exists %s: %w", stream, err)
+	}
+	return n > 0, nil
+}
+
 // ReadUnprefixed reads the unprefixed key of stream with XINFO GROUPS and
 // XINFO STREAM.
 func (a *StreamAdmin) ReadUnprefixed(ctx context.Context, stream string) (unprefixed.Key, bool, error) {

@@ -230,6 +230,26 @@ func TestReadUnprefixedOfAKeyWithNoEntry(t *testing.T) {
 	}
 }
 
+// StreamExists asks about the prefixed key only: an unprefixed key of the same
+// name does not make the stream exist.
+func TestStreamExistsChecksThePrefixedKey(t *testing.T) {
+	rc, stream := unprefixedStream(t)
+	ctx := context.Background()
+	admin := NewStreamAdmin(rc)
+	if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := admin.StreamExists(ctx, stream); err != nil || exists {
+		t.Fatalf("StreamExists with only the unprefixed key = %v, %v; want false, nil", exists, err)
+	}
+	if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(stream), Values: map[string]any{"k": "v"}}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := admin.StreamExists(ctx, stream); err != nil || !exists {
+		t.Fatalf("StreamExists = %v, %v; want true, nil", exists, err)
+	}
+}
+
 func TestDeleteUnprefixedDeletesOnlyTheUnprefixedKey(t *testing.T) {
 	rc, stream := unprefixedStream(t)
 	ctx := context.Background()
@@ -275,6 +295,9 @@ func TestTheMigrationLoginMayReadAndDeleteTheUnprefixedKeys(t *testing.T) {
 	t.Cleanup(func() { _ = migrate.Close() })
 	admin := NewStreamAdmin(migrate)
 
+	if _, err := admin.StreamExists(ctx, live); err != nil {
+		t.Fatalf("StreamExists(%s) as continuo_redis_migrate = %v", live, err)
+	}
 	if _, exists, err := admin.ReadUnprefixed(ctx, live); err != nil || !exists {
 		t.Fatalf("ReadUnprefixed(%s) as continuo_redis_migrate = exists %v, %v; want true, nil", live, exists, err)
 	}

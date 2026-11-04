@@ -72,13 +72,26 @@ func TestHeldIgnoresAGroupOutsideTheContract(t *testing.T) {
 	}
 }
 
+// A key with no entry holds nothing a consumer could still read: a pending
+// count left there names entries already gone from the stream.
 func TestHeldOfAKeyWithNoEntry(t *testing.T) {
 	if held := Held(Key{Groups: []Group{{Name: "svc-a"}}}, contract); len(held) != 0 {
 		t.Fatalf("Held = %v, want none for an empty key", held)
 	}
-	// Entries trimmed while pending still count until the group acknowledges them.
-	held := Held(Key{Groups: []Group{{Name: "svc-a", Pending: 1}}}, contract)
-	if !slices.Equal(held, []string{"svc-a: 1 pending"}) {
-		t.Fatalf("Held = %v", held)
+	if held := Held(Key{Groups: []Group{{Name: "svc-a", Pending: 1}}}, contract); len(held) != 0 {
+		t.Fatalf("Held = %v, want none: the pending entries are gone from the stream", held)
+	}
+}
+
+func TestHoldsGroupOf(t *testing.T) {
+	k := Key{Groups: []Group{{Name: "renamed-group"}, {Name: "svc-b"}}}
+	if !HoldsGroupOf(k, contract) {
+		t.Fatal("HoldsGroupOf = false, want true: the key holds svc-b")
+	}
+	if HoldsGroupOf(Key{Groups: []Group{{Name: "renamed-group"}}}, contract) {
+		t.Fatal("HoldsGroupOf = true for a key that holds no contract group")
+	}
+	if HoldsGroupOf(Key{}, contract) {
+		t.Fatal("HoldsGroupOf = true for a key with no group")
 	}
 }

@@ -1,8 +1,7 @@
-// Package unprefixed decides when the unprefixed key of a stream may be
-// deleted. That key is the bare contract name (task.dispatch:v1), the key a
-// stream had before every key moved under the continuo: prefix; no consumer
-// reads it, and it may be deleted once its consumer groups have finished with
-// it.
+// Package unprefixed decides what to do with the unprefixed key of a stream:
+// the bare contract name (task.dispatch:v1), next to the stream's key under the
+// continuo: prefix. No consumer reads it. It may be deleted once its consumer
+// groups have finished with it.
 package unprefixed
 
 import (
@@ -33,8 +32,13 @@ type Key struct {
 // Held returns, for each group of contractGroups that has not finished with k,
 // why: it has entries pending, or it was not delivered k's last entry. A group
 // k holds that contractGroups does not name is ignored: no consumer reads it,
-// so it never finishes. An empty result means k may be deleted.
+// so it never finishes. A key with no entry holds nothing back: what its
+// groups have pending is gone from the stream. An empty result means k may be
+// deleted.
 func Held(k Key, contractGroups []string) []string {
+	if k.Last == nil {
+		return nil
+	}
 	var held []string
 	for _, g := range k.Groups {
 		if !slices.Contains(contractGroups, g.Name) {
@@ -43,9 +47,15 @@ func Held(k Key, contractGroups []string) []string {
 		switch {
 		case g.Pending > 0:
 			held = append(held, fmt.Sprintf("%s: %d pending", g.Name, g.Pending))
-		case k.Last != nil && g.LastDelivered.Less(*k.Last):
+		case g.LastDelivered.Less(*k.Last):
 			held = append(held, fmt.Sprintf("%s: delivered up to %s, the last entry is %s", g.Name, g.LastDelivered, *k.Last))
 		}
 	}
 	return held
+}
+
+// HoldsGroupOf reports whether k holds a group of contractGroups: a consumer
+// of a release that read k created it there.
+func HoldsGroupOf(k Key, contractGroups []string) bool {
+	return slices.ContainsFunc(k.Groups, func(g Group) bool { return slices.Contains(contractGroups, g.Name) })
 }
