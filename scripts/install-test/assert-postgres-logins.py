@@ -47,7 +47,7 @@ def env_of(container: dict) -> dict:
     return {e["name"]: e for e in container.get("env") or []}
 
 
-def password_source(pod_spec: dict, container: dict, var: str):
+def credential_ref(pod_spec: dict, container: dict, var: str):
     """(secret name, key) a container reads credential var from, or None."""
     env = env_of(container)
     if var in env:
@@ -58,12 +58,12 @@ def password_source(pod_spec: dict, container: dict, var: str):
         item_path = path.rsplit("/", 1)[-1]
         for vol in pod_spec.get("volumes") or []:
             for src in (vol.get("projected") or {}).get("sources") or []:
-                secret = src.get("secret")
-                if not secret:
+                ref_source = src.get("secret")
+                if not ref_source:
                     continue
-                for item in secret.get("items") or []:
+                for item in ref_source.get("items") or []:
                     if item["path"] == item_path:
-                        return (secret["name"], item["key"])
+                        return (ref_source["name"], item["key"])
     return None
 
 
@@ -73,7 +73,7 @@ def main() -> int:
         logger.error(__doc__)
         return 2
     path, mode = sys.argv[1], sys.argv[2]
-    secret_format = sys.argv[3] if mode == "external" else None
+    ref_name_format = sys.argv[3] if mode == "external" else None
     rendered = docs(path)
     problems = []
 
@@ -96,8 +96,8 @@ def main() -> int:
         if user != login:
             problems.append(f"{name}: POSTGRES_USER is {user!r}, want {login!r}")
         want = (f"{RELEASE}-logins", f"postgres-{name}") if mode == "bundled" \
-            else (secret_format.format(service=name), "password")
-        got = password_source(spec, main, "POSTGRES_PASSWORD")
+            else (ref_name_format.format(service=name), "password")
+        got = credential_ref(spec, main, "POSTGRES_PASSWORD")
         if got != want:
             problems.append(f"{name}: POSTGRES_PASSWORD comes from {got}, want {want}")
         if sum(1 for e in main.get("env") or [] if e["name"].startswith("POSTGRES_PASSWORD")) != 1:
@@ -110,7 +110,7 @@ def main() -> int:
                 wait_user = env_of(waits[0]).get("PGUSER", {}).get("value")
                 if wait_user != login:
                     problems.append(f"{name}: wait-for-migrations signs in as {wait_user!r}, want {login!r}")
-                got = password_source(spec, waits[0], "PGPASSWORD")
+                got = credential_ref(spec, waits[0], "PGPASSWORD")
                 if got != want:
                     problems.append(f"{name}: wait-for-migrations reads PGPASSWORD from {got}, want {want}")
     missing = set(LOGINS) - seen
@@ -146,9 +146,9 @@ def main() -> int:
                            for k in menv):
             problems.append("external migrate Job must create no login and read no runtime password")
 
-    secrets = {d["metadata"]["name"]: d for d in rendered if d.get("kind") == "Secret"}
+    ref_docs = {d["metadata"]["name"]: d for d in rendered if d.get("kind") == "Secret"}
     if mode == "bundled":
-        logins = secrets.get(f"{RELEASE}-logins")
+        logins = ref_docs.get(f"{RELEASE}-logins")
         if not logins:
             problems.append(f"bundled render has no {RELEASE}-logins Secret")
         else:
@@ -156,14 +156,14 @@ def main() -> int:
             want_keys = {f"postgres-{svc}" for svc in LOGINS}
             if not want_keys <= keys:
                 problems.append(f"{RELEASE}-logins lacks {sorted(want_keys - keys)}")
-        warehouse = [s for s in secrets.values()
+        warehouse = [s for s in ref_docs.values()
                      if (s.get("stringData") or {}).get("POSTGRES_USER") == WAREHOUSE_LOGIN]
         if len(warehouse) != 1:
             problems.append("bundled render has no warehouse Secret for continuo_warehouse")
         elif "password" in (warehouse[0].get("stringData") or {}):
             problems.append("the warehouse Secret carries another password besides POSTGRES_PASSWORD")
-    elif f"{RELEASE}-logins" in secrets and any(
-            k.startswith("postgres-") for k in (secrets[f"{RELEASE}-logins"].get("stringData") or {})):
+    elif f"{RELEASE}-logins" in ref_docs and any(
+            k.startswith("postgres-") for k in (ref_docs[f"{RELEASE}-logins"].get("stringData") or {})):
         problems.append("external render must not generate Postgres login passwords")
 
     for p in problems:

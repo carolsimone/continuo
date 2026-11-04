@@ -49,23 +49,23 @@ def value(env: dict, name: str):
     return (env.get(name) or {}).get("value")
 
 
-def secret_ref(env: dict, name: str):
+def key_ref(env: dict, name: str):
     ref = ((env.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef")
     return (ref["name"], ref["key"]) if ref else None
 
 
-def password_source(pod_spec: dict, container: dict, var: str):
+def credential_ref(pod_spec: dict, container: dict, var: str):
     env = env_of(container)
     if var in env:
-        return secret_ref(env, var)
+        return key_ref(env, var)
     if f"{var}_FILE" in env:
         item_path = value(env, f"{var}_FILE").rsplit("/", 1)[-1]
         for vol in pod_spec.get("volumes") or []:
             for src in (vol.get("projected") or {}).get("sources") or []:
-                secret = src.get("secret")
-                for item in (secret or {}).get("items") or []:
+                ref_source = src.get("secret")
+                for item in (ref_source or {}).get("items") or []:
                     if item["path"] == item_path:
-                        return (secret["name"], item["key"])
+                        return (ref_source["name"], item["key"])
     return None
 
 
@@ -77,7 +77,7 @@ def main() -> int:
         return 2
     path, mode = args[0], args[1]
     where = args[2] if mode == "perService" else None
-    secret_format = args[3] if where == "external" else None
+    ref_name_format = args[3] if where == "external" else None
     with open(path) as fh:
         rendered = [d for d in yaml.safe_load_all(fh) if d]
     rules = json.loads(RULES.read_text())
@@ -85,10 +85,10 @@ def main() -> int:
     rule_of = {l["username"]: l["rule"] for l in rules["logins"]}
     problems = []
 
-    def want_secret(svc: str):
+    def want_ref(svc: str):
         if where == "bundled":
             return (f"{RELEASE}-logins", f"redis-{svc}")
-        return (secret_format.format(service=svc), "password")
+        return (ref_name_format.format(service=svc), "password")
 
     cm = next(d for d in rendered if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{RELEASE}-config")
     if cm["data"].get("REDIS_ACL_MODE") != mode:
@@ -112,8 +112,8 @@ def main() -> int:
         env = env_of(main)
         if value(env, "REDIS_USERNAME") != login:
             problems.append(f"{name}: REDIS_USERNAME is {value(env, 'REDIS_USERNAME')!r}, want {login!r}")
-        got = password_source(spec, main, "REDIS_PASSWORD")
-        if got != want_secret(name):
+        got = credential_ref(spec, main, "REDIS_PASSWORD")
+        if got != want_ref(name):
             problems.append(f"{name}: REDIS_PASSWORD comes from {got}, want {want_secret(name)}")
         if sum(1 for e in main.get("env") or [] if e["name"].startswith("REDIS_PASSWORD")) != 1:
             problems.append(f"{name}: REDIS_PASSWORD is set more than once")
@@ -121,8 +121,8 @@ def main() -> int:
             wenv = env_of(wait)
             if value(wenv, "REDIS_USERNAME") != login:
                 problems.append(f"{name}: wait-for-redis signs in as {value(wenv, 'REDIS_USERNAME')!r}, want {login!r}")
-            got = password_source(spec, wait, "REDISCLI_AUTH")
-            if got != want_secret(name):
+            got = credential_ref(spec, wait, "REDISCLI_AUTH")
+            if got != want_ref(name):
                 problems.append(f"{name}: wait-for-redis reads REDISCLI_AUTH from {got}, want {want_secret(name)}")
     if mode == "perService":
         missing = {s for s in login_of if s != STREAMS_INIT} - seen
@@ -139,7 +139,7 @@ def main() -> int:
             env = env_of(main)
             if value(env, "REDIS_USERNAME") != login_of[STREAMS_INIT]:
                 problems.append(f"streams-init signs in as {value(env, 'REDIS_USERNAME')!r}")
-            if secret_ref(env, "REDIS_PASSWORD") != want_secret(STREAMS_INIT):
+            if key_ref(env, "REDIS_PASSWORD") != want_ref(STREAMS_INIT):
                 problems.append(f"streams-init reads REDIS_PASSWORD from {secret_ref(env, 'REDIS_PASSWORD')}")
             if value(env, "REDIS_ACL_MODE") != "perService":
                 problems.append(f"streams-init REDIS_ACL_MODE is {value(env, 'REDIS_ACL_MODE')!r}, want 'perService'")
@@ -151,10 +151,10 @@ def main() -> int:
                 if mounts.get(vol["name"]) != LOGINS_DIR:
                     continue
                 for src in (vol.get("projected") or {}).get("sources") or []:
-                    secret = src.get("secret") or {}
-                    for item in secret.get("items") or []:
-                        items[item["path"]] = (secret["name"], item["key"])
-            want_items = {login_of[s]: want_secret(s) for s in login_of if s != STREAMS_INIT}
+                    ref_source = src.get("secret") or {}
+                    for item in ref_source.get("items") or []:
+                        items[item["path"]] = (ref_source["name"], item["key"])
+            want_items = {login_of[s]: want_ref(s) for s in login_of if s != STREAMS_INIT}
             if items != want_items:
                 problems.append(f"streams-init mounts {items}, want {want_items}")
 
@@ -165,9 +165,9 @@ def main() -> int:
         if mode == "perService":
             if "--aclfile" not in redis_args or "--requirepass" in redis_args:
                 problems.append(f"bundled Redis args {redis_args}: want --aclfile and no --requirepass")
-            secrets = {d["metadata"]["name"]: d for d in rendered if d.get("kind") == "Secret"}
-            acl = secrets.get(f"{RELEASE}-redis-acl")
-            passwords = (secrets.get(f"{RELEASE}-logins") or {}).get("stringData") or {}
+            ref_docs = {d["metadata"]["name"]: d for d in rendered if d.get("kind") == "Secret"}
+            acl = ref_docs.get(f"{RELEASE}-redis-acl")
+            generated_values = (ref_docs.get(f"{RELEASE}-logins") or {}).get("stringData") or {}
             if not acl:
                 problems.append(f"no {RELEASE}-redis-acl Secret")
             else:
@@ -185,8 +185,8 @@ def main() -> int:
                     parts = users.get(login)
                     if not parts:
                         continue
-                    pw = passwords.get(f"redis-{svc}", "")
-                    want_hash = "#" + hashlib.sha256(pw.encode()).hexdigest()
+                    stored = generated_values.get(f"redis-{svc}", "")
+                    want_hash = "#" + hashlib.sha256(stored.encode()).hexdigest()
                     if parts[2] != "on" or parts[3] != want_hash or parts[4] != rule_of[login]:
                         problems.append(f"users.acl line for {login} does not match its rule and password")
         elif "--requirepass" not in redis_args:

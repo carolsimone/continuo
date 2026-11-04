@@ -52,7 +52,7 @@ HOOK_ANNOTATIONS = {
     WEIGHT: "-4",
     DELETE_POLICY: "before-hook-creation,hook-succeeded",
 }
-HOOK_SECRET_ANNOTATIONS = {
+HOOK_REF_ANNOTATIONS = {
     HOOK: "pre-install,pre-upgrade",
     WEIGHT: "-10",
     DELETE_POLICY: "before-hook-creation,hook-succeeded",
@@ -95,7 +95,7 @@ def env_list_names(container):
     return [e["name"] for e in container.get("env") or []]
 
 
-def secret_ref(entry):
+def key_ref(entry):
     return ((entry or {}).get("valueFrom") or {}).get("secretKeyRef")
 
 
@@ -110,24 +110,24 @@ def check_env_names(failures, where, container, want):
         failures.append(f"{where}: envFrom is set; the Job's env must be exactly {sorted(want)}")
 
 
-def secret_reads(pod):
+def key_reads(pod):
     """Every (secret name, key) the pod reads: env secretKeyRefs of every
     container and the items of its secret and projected-secret volumes (key
     None for a whole-Secret volume)."""
     reads = []
     for c in list(pod.get("initContainers") or []) + list(pod.get("containers") or []):
         for e in c.get("env") or []:
-            ref = secret_ref(e)
+            ref = key_ref(e)
             if ref:
                 reads.append((ref["name"], ref["key"], f"{c['name']} env {e['name']}"))
     for vol in pod.get("volumes") or []:
         sources = [{"secret": vol["secret"]}] if "secret" in vol else (vol.get("projected") or {}).get("sources") or []
         for src in sources:
-            secret = src.get("secret")
-            if not secret:
+            ref_source = src.get("secret")
+            if not ref_source:
                 continue
-            name = secret.get("name") or secret.get("secretName")
-            items = secret.get("items") or [{"key": None}]
+            name = ref_source.get("name") or ref_source.get("secretName")
+            items = ref_source.get("items") or [{"key": None}]
             for item in items:
                 reads.append((name, item["key"], f"volume {vol['name']}"))
     return reads
@@ -164,7 +164,7 @@ def check_job(docs, mode, create_streams, acl_mode):
         return [f"the {JOB_NAME} pod must hold one container named {JOB_NAME}, it holds "
                 f"{[c['name'] for c in containers]}"]
     container = containers[0]
-    secrets = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Secret"}
+    ref_docs = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Secret"}
     configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
     config = (configmaps.get(CONFIGMAP) or {}).get("data") or {}
     dlc = [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dead-letter-controller"]
@@ -241,8 +241,8 @@ def check_job(docs, mode, create_streams, acl_mode):
             failures.append(f"the {CONFIGMAP} ConfigMap has no {var} to compare the Job's with")
         elif got != want:
             failures.append(f"{var} is {got!r}, want {want!r}")
-    password_ref = secret_ref(env.get("REDIS_PASSWORD"))
-    if not password_ref or not password_ref.get("name") or not password_ref.get("key"):
+    login_ref = key_ref(env.get("REDIS_PASSWORD"))
+    if not login_ref or not login_ref.get("name") or not login_ref.get("key"):
         failures.append("REDIS_PASSWORD is not a secretKeyRef")
 
     mounts = sorted(m["name"] for m in container.get("volumeMounts") or [])
@@ -264,7 +264,7 @@ def check_job(docs, mode, create_streams, acl_mode):
             if target != (env.get("REDIS_ADDR") or {}).get("value"):
                 failures.append(f"wait-for-redis waits for {target}, the Job connects to "
                                 f"{(env.get('REDIS_ADDR') or {}).get('value')!r}")
-            if secret_ref(wenv.get("REDISCLI_AUTH")) != password_ref:
+            if key_ref(wenv.get("REDISCLI_AUTH")) != login_ref:
                 failures.append(f"wait-for-redis signs in with {secret_ref(wenv.get('REDISCLI_AUTH'))}, "
                                 f"the Job with {password_ref}")
             redis = [d for d in docs if d.get("kind") == "StatefulSet"
@@ -283,33 +283,33 @@ def check_job(docs, mode, create_streams, acl_mode):
             if cm_name in configmaps:
                 failures.append(f"the hook reads the ConfigMap {cm_name!r} ({where}), a regular resource Helm "
                                 "creates only after pre-install hooks: the pod would never start")
-        for secret_name, key, where in secret_reads(pod):
-            secret = secrets.get(secret_name)
-            if secret is None:
+        for ref_name, key, where in key_reads(pod):
+            ref_source = ref_docs.get(ref_name)
+            if ref_source is None:
                 continue
-            if "pre-install" not in annotations_of(secret).get(HOOK, ""):
+            if "pre-install" not in annotations_of(ref_source).get(HOOK, ""):
                 failures.append(f"the hook reads the Secret {secret_name!r} ({where}), a regular resource Helm "
                                 "creates only after pre-install hooks: the pod would never start")
-            elif hook_weight(secret) >= hook_weight(job):
+            elif hook_weight(ref_source) >= hook_weight(job):
                 failures.append(f"the hook's Secret {secret_name!r} ({where}) is not created before the Job: "
                                 "its hook weight must be lower")
-            elif key is not None and key not in (secret.get("stringData") or {}) | (secret.get("data") or {}):
+            elif key is not None and key not in (ref_source.get("stringData") or {}) | (ref_source.get("data") or {}):
                 failures.append(f"the hook's Secret {secret_name!r} lacks the key {key!r} ({where})")
-    hook_secrets = labelled(docs, "Secret", JOB_NAME)
-    reads_render_password = password_ref is not None and password_ref.get("name") in secrets
-    if mode == "hook" and acl_mode == "shared" and reads_render_password:
-        if len(hook_secrets) != 1 or hook_secrets[0]["metadata"]["name"] != password_ref["name"]:
+    hook_refs = labelled(docs, "Secret", JOB_NAME)
+    reads_render_login = login_ref is not None and login_ref.get("name") in ref_docs
+    if mode == "hook" and acl_mode == "shared" and reads_render_login:
+        if len(hook_refs) != 1 or hook_refs[0]["metadata"]["name"] != login_ref["name"]:
             failures.append(f"the shared-mode hook reads its password from {password_ref['name']!r}, "
                             f"which is not the one streams-init hook Secret {[s['metadata']['name'] for s in hook_secrets]}")
         else:
-            secret = hook_secrets[0]
-            if annotations_of(secret) != HOOK_SECRET_ANNOTATIONS:
+            ref_source = hook_refs[0]
+            if annotations_of(ref_source) != HOOK_REF_ANNOTATIONS:
                 failures.append(f"the hook Secret's annotations are {annotations_of(secret)}, "
                                 f"want exactly {HOOK_SECRET_ANNOTATIONS}")
-            if sorted((secret.get("stringData") or {}) | (secret.get("data") or {})) != ["redis-password"] \
-                    or password_ref.get("key") != "redis-password":
+            if sorted((ref_source.get("stringData") or {}) | (ref_source.get("data") or {})) != ["redis-password"] \
+                    or login_ref.get("key") != "redis-password":
                 failures.append("the hook Secret must hold exactly redis-password, the key the Job reads")
-    elif hook_secrets:
+    elif hook_refs:
         failures.append(f"the render holds the streams-init Secret {[s['metadata']['name'] for s in hook_secrets]}, "
                         "which only a shared-mode hook whose password the chart holds reads")
     return failures
