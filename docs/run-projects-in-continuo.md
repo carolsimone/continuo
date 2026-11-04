@@ -520,7 +520,7 @@ runtime CLI the release gate uses (a service's image base must be on the same
 runtime release or later to run a contract that declares `timeout_minutes`):
 
 ```bash
-uv tool install continuo-python-runtime==0.10.0
+uv tool install continuo-python-runtime==0.11.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 
