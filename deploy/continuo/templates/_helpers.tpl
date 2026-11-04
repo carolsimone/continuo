@@ -1590,6 +1590,20 @@ user {{ $login.username }} on #{{ get $.passwords $name | sha256sum }} {{ $rule 
 {{- end }}
 {{- end -}}
 
+{{/* The SHA-256 of the bundled Redis's ACL file, rendered with the passwords
+     <release>-logins holds in the cluster (empty before the first install, and
+     in `helm template`, which cannot look it up), so it changes with a rule, a
+     login's name or a password, and is the same on every render of the same
+     release. */}}
+{{- define "continuo.redis.aclChecksum" -}}
+{{- $stored := (lookup "v1" "Secret" .Release.Namespace (include "continuo.loginsSecretName" .)).data | default dict -}}
+{{- $passwords := dict -}}
+{{- range $name := (include "continuo.redis.loginNames" . | fromJsonArray) -}}
+{{- $_ := set $passwords $name (get $stored (printf "redis-%s" $name) | default "" | b64dec) -}}
+{{- end -}}
+{{- include "continuo.redis.aclFile" (dict "root" . "passwords" $passwords) | sha256sum -}}
+{{- end -}}
+
 {{/* The Secret holding the bundled Redis's ACL file (perService mode). */}}
 {{- define "continuo.redis.aclSecretName" -}}
 {{- printf "%s-redis-acl" (include "continuo.fullname" .) -}}

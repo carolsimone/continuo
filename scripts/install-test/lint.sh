@@ -211,6 +211,16 @@ for f in byo-example byo-inline byo-secret; do
   python3 scripts/install-test/assert-redis-logins.py "${tmp}/${f}.yaml" perService external 'continuo-redis-{service}'
 done
 python3 scripts/install-test/assert-redis-logins.py "${tmp}/redis-shared.yaml" shared
+# Redis reads its ACL file only when it starts, so any change to the rendered
+# file (a rule, a login's name, its password) restarts the bundled Redis.
+redis_acl_checksum() {
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" --show-only templates/redis/statefulset.yaml \
+    | python3 -c 'import sys, yaml; d = yaml.safe_load(sys.stdin); print(d["spec"]["template"]["metadata"]["annotations"]["checksum/redis-acl"])'
+}
+[ "$(redis_acl_checksum)" = "$(redis_acl_checksum)" ] \
+  || { echo "FAIL: the bundled Redis's ACL checksum must be the same on two renders of the same values"; exit 1; }
+[ "$(redis_acl_checksum)" != "$(redis_acl_checksum --set credentials.redis.logins.ui.username=continuo_ui_renamed)" ] \
+  || { echo "FAIL: renaming a Redis login must change the bundled Redis's ACL checksum"; exit 1; }
 python3 - scripts/install-test/values-byo-secret.yaml "${tmp}/byo-secret-no-redis-logins.yaml" <<'PY'
 import sys, yaml
 values = yaml.safe_load(open(sys.argv[1]))

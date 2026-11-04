@@ -176,6 +176,11 @@ it every schema, table, view, sequence and routine there that it does not own.
 
 ### Managed Postgres
 
+- **A hardened `postgres` database.** A service's `wait-for-migrations` init
+  container (bundled Postgres only) and the migrate Job's checks connect to
+  the `postgres` maintenance database. Where `CONNECT` on it is revoked from
+  `PUBLIC`, grant it to each runtime login.
+
 - **Cloud SQL:** a user created through the Cloud SQL API or console gets
   `CREATEDB` and `CREATEROLE` and joins `cloudsqlsuperuser`, so the migrate
   Job's check refuses it. Create each runtime login in SQL instead,

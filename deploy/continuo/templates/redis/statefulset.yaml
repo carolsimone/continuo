@@ -23,9 +23,9 @@ spec:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" "redis") | nindent 8 }}
       {{- if $perService }}
       annotations:
-        # Redis reads its ACL file only when it starts: a release that changes
-        # a login's rule restarts it.
-        checksum/redis-acl-rules: {{ .Files.Get "files/redis-acl-rules.json" | sha256sum }}
+        # Redis reads its ACL file only when it starts: a change to the
+        # rendered file (a rule, a login's name or password) restarts it.
+        checksum/redis-acl: {{ include "continuo.redis.aclChecksum" . }}
       {{- end }}
     spec:
       securityContext:
