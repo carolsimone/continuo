@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -42,10 +43,12 @@ func idTimeOr(id string, fallback time.Time) time.Time {
 }
 
 // unreadable is the stored form of a dead-letter stream entry that could not be
-// decoded: its raw fields, kept for inspection and never redriven.
-func unreadable(source deadletter.Source, stream, group string, msg goredis.XMessage, cause error, now time.Time) deadletter.DeadLetter {
+// decoded: its raw fields, kept for inspection and never redriven. It is keyed
+// by the entry's dedup identity, so unreadable entries of the legacy and the
+// prefixed key of the dead-letter stream that share an ID are stored apart.
+func unreadable(ctx context.Context, source deadletter.Source, stream, group string, msg goredis.XMessage, cause error, now time.Time) deadletter.DeadLetter {
 	return deadletter.DeadLetter{
-		ID: uuid.New(), DedupKey: deadletter.UnreadableKey(stream, msg.ID), Source: source,
+		ID: uuid.New(), DedupKey: deadletter.UnreadableKey(stream, pkgredis.DedupMessageID(ctx, msg)), Source: source,
 		FailureKind: model.DeadLetterKindPermanent, Stream: stream, Group: group, OriginalMessageID: msg.ID,
 		Error: "unreadable dead letter: " + cause.Error(), Fields: stringFields(msg.Values), Publishable: false,
 		OriginalAt: idTimeOr(msg.ID, now), RecordedAt: now, Status: deadletter.StatusOpen,

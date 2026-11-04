@@ -36,11 +36,11 @@ func (b *ConsumerDeadLetterBinding) Handle(ctx context.Context, msg goredis.XMes
 		err = fmt.Errorf("failure_kind %q is not a dead_letter_kind", p.FailureKind)
 	}
 	if err != nil {
-		return b.rec.Record(ctx, unreadable(deadletter.SourceConsumer, streams.ConsumerDeadLetterV1,
+		return b.rec.Record(ctx, unreadable(ctx, deadletter.SourceConsumer, streams.ConsumerDeadLetterV1,
 			streams.DeadLetterControllerConsumerDeadLetters, msg, err, now))
 	}
 	return b.rec.Record(ctx, deadletter.DeadLetter{
-		ID: uuid.New(), DedupKey: deadletter.ConsumerKey(p.OriginalStream, p.OriginalGroup, p.OriginalMessageID),
+		ID: uuid.New(), DedupKey: deadletter.ConsumerKey(p.OriginalStream, p.OriginalGroup, p.DedupMessageID()),
 		Source: deadletter.SourceConsumer, FailureKind: p.FailureKind, Stream: p.OriginalStream, Group: p.OriginalGroup,
 		OriginalMessageID: p.OriginalMessageID, Producer: env.Producer, Error: p.Error, DeliveryCount: p.DeliveryCount,
 		Fields: p.Fields, Publishable: len(p.Fields) > 0, OriginalAt: idTimeOr(p.OriginalMessageID, env.OccurredAt),
