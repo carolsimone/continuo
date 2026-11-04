@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import NoPermissionError
 from redis.exceptions import ResponseError as RedisResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
@@ -49,6 +50,11 @@ _PERMANENT_BOOTSTRAP_PREFIXES = ("WRONGTYPE", "unknown command", "unknown subcom
 def _is_permanent_bootstrap_reply(exc: RedisResponseError) -> bool:
     text = str(exc).removeprefix("ERR ")
     return text.startswith(_PERMANENT_BOOTSTRAP_PREFIXES)
+
+
+def _is_refused(exc: BaseException) -> bool:
+    """Whether exc is a NOPERM reply: the login's rule does not reach the key."""
+    return isinstance(exc, NoPermissionError) or "NOPERM" in str(exc)
 
 
 # A message whose handler still fails transiently on this delivery is
@@ -163,16 +169,46 @@ class Consumer:
 
     def _group_keys(self) -> list[str]:
         """The keys that hold the consumer group, the prefixed key first; none
-        while the prefixed key does not hold it. A missing unprefixed key, or
-        one without the group, is left out."""
+        while the prefixed key does not hold it. A missing unprefixed key, one
+        without the group, or one the login may not read (NOPERM) is left out."""
         if not self._holds_group(self._key):
             return []
         found = [self._key]
         if LEGACY_KEYS:
             legacy = keys.legacy_key(self._stream)
-            if self._holds_group(legacy):
+            if self._holds_legacy_group(legacy):
                 found.append(legacy)
         return found
+
+    def _holds_legacy_group(self, legacy: str) -> bool:
+        """Whether the unprefixed key holds the consumer group; False when the
+        login may not read it."""
+        try:
+            return self._holds_group(legacy)
+        except RedisResponseError as e:
+            if _is_refused(e):
+                return False
+            raise
+
+    def _drop_lost_legacy_key(self, exc: Exception) -> bool:
+        """Stop reading the unprefixed key when exc, a NOGROUP or NOPERM reply
+        of a read or claim, came from it: the key was deleted or its group
+        removed once drained, or the login's rule no longer reaches it. It
+        checks the key again and returns True when it dropped it; False when
+        the consumer reads no unprefixed key, exc is another error, or the key
+        still holds the group (exc came from the prefixed key)."""
+        if len(self._keys) < 2 or not ("NOGROUP" in str(exc) or _is_refused(exc)):
+            return False
+        legacy = self._keys[1]
+        try:
+            if self._holds_legacy_group(legacy):
+                return False
+        except Exception:
+            return False
+        self._keys = [self._key]
+        logger.warning("Unprefixed key no longer readable, reading only the prefixed key: stream=%s key=%s group=%s: %s",
+                       self._stream, legacy, self._group, exc)
+        return True
 
     def _holds_group(self, key: str) -> bool:
         """Whether key holds the consumer group. A missing key holds none."""
@@ -417,6 +453,8 @@ class Consumer:
                 self._reclaim_stale_pending()
                 self._consume_once()
             except Exception as e:
+                if self._drop_lost_legacy_key(e):
+                    continue
                 if "NOGROUP" in str(e):
                     # The group was removed while the consumer ran. Only the
                     # streams-init step creates groups, so the loop ends and

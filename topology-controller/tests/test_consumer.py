@@ -1169,3 +1169,108 @@ def test_dispatch_acks_empty_entry_without_handler(msg_id, fields):
     c._dispatch(_KEY, msg_id, fields)
     handler.assert_not_called()
     r.xack.assert_called_once_with(_KEY, _GROUP, msg_id)
+
+
+# --- the unprefixed key going away ------------------------------------------
+
+_LEGACY_NOGROUP = (f"NOGROUP No such key '{_STREAM}' or consumer group '{_GROUP}' "
+                   "in XREADGROUP with GROUP option")
+
+
+class _Server:
+    """XINFO GROUPS as a server answers it: the keys in `held` hold the group,
+    the keys in `refused` answer NOPERM, every other key does not exist. A test
+    changes the sets while the consumer runs."""
+
+    def __init__(self, held, refused=()):
+        self.held, self.refused = set(held), set(refused)
+
+    def xinfo_groups(self, name):
+        if name in self.refused:
+            raise redis_exceptions.NoPermissionError("No permissions to access a key")
+        if name in self.held:
+            return [{"name": _GROUP.encode()}]
+        raise redis_exceptions.ResponseError("ERR no such key")
+
+
+def test_consumer_starts_without_a_legacy_key_its_login_may_not_read(monkeypatch):
+    redis_mock = MagicMock()
+    redis_mock.xinfo_groups.side_effect = _Server(held={_KEY}, refused={_STREAM}).xinfo_groups
+    c = _idle_consumer(redis_mock)
+
+    _run_until_read(redis_mock, c, monkeypatch)
+
+    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
+
+
+def test_consumer_stops_reading_the_legacy_key_once_it_is_deleted(monkeypatch):
+    """The release that stops reading the unprefixed key deletes it once it is
+    drained: the read that answers NOGROUP for it ends only that key."""
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    server = _Server(held={_KEY, _STREAM})
+    redis_mock.xinfo_groups.side_effect = server.xinfo_groups
+    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
+    reads = []
+
+    def xreadgroup(group, name, streams, **kw):
+        reads.append(dict(streams))
+        if len(reads) == 1:
+            server.held.discard(_STREAM)
+            raise redis_exceptions.ResponseError(_LEGACY_NOGROUP)
+        raise _Abort()
+
+    redis_mock.xreadgroup.side_effect = xreadgroup
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert reads == [{_KEY: ">", _STREAM: ">"}, {_KEY: ">"}]
+
+
+def test_consumer_stops_reading_the_legacy_key_once_its_login_is_refused(monkeypatch):
+    """A rule that stops reaching the unprefixed key while the consumer runs
+    refuses its claim sweep; the consumer goes on with the prefixed key instead
+    of retrying the refused sweep forever."""
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    server = _Server(held={_KEY, _STREAM})
+    redis_mock.xinfo_groups.side_effect = server.xinfo_groups
+
+    refusals = []
+
+    def xautoclaim(name, *a, **kw):
+        if name == _STREAM:
+            refusals.append(name)
+            if len(refusals) > 3:
+                raise _Stalled("the consumer keeps retrying the refused sweep and never reads")
+            server.refused.add(_STREAM)
+            raise redis_exceptions.NoPermissionError("No permissions to access a key")
+        return b"0-0", [], []
+
+    redis_mock.xautoclaim.side_effect = xautoclaim
+    redis_mock.xreadgroup.side_effect = _Abort()
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
+
+
+class _Stalled(BaseException):
+    """Ends a consumer loop that would otherwise retry forever."""
+
+
+def test_consumer_still_stops_when_the_prefixed_key_loses_its_group(monkeypatch):
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xinfo_groups.side_effect = _Server(held={_KEY, _STREAM}).xinfo_groups
+    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
+    redis_mock.xreadgroup.side_effect = redis_exceptions.ResponseError(
+        f"NOGROUP No such key '{_KEY}' or consumer group '{_GROUP}' in XREADGROUP with GROUP option")
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(redis_exceptions.ResponseError, match="NOGROUP"):
+        c.start()
