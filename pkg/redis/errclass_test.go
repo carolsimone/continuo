@@ -53,6 +53,10 @@ func TestClassify(t *testing.T) {
 		{"s3 404", statusErr(404), redis.ClassTransient},
 		{"redis loading", redisReply("LOADING Redis is loading the dataset in memory"), redis.ClassInfrastructure},
 		{"redis wrongtype", redisReply("WRONGTYPE Operation against a key"), redis.ClassTransient},
+		// A grant the login's rule lacks is retried within the delivery
+		// budget and then dead-lettered, kept for a redrive once the rule is
+		// fixed; topology-controller's classify agrees.
+		{"redis noperm", redisReply("NOPERM User continuo_catalog has no permissions to access the 'continuo:x' key"), redis.ClassTransient},
 		{"bare deadline", context.DeadlineExceeded, redis.ClassTransient},
 		{"plain error", errors.New("boom"), redis.ClassTransient},
 	}

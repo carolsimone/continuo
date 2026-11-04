@@ -76,7 +76,11 @@ def _underlying_failure(exc: BaseException) -> BaseException:
 def classify(exc: BaseException) -> ErrorClass:
     """The class of a handler failure. A transfer-retry wrapper takes the class
     of the failure it carries: S3 dropping a download's connection is an outage
-    to wait out, however many times the transfer already retried it."""
+    to wait out, however many times the transfer already retried it. A NOPERM
+    reply (redis-py's NoPermissionError: a key or command the login's rule does
+    not grant) is transient, as in pkg/redis's Classify: retried within the
+    delivery limit and then dead-lettered, ready for a redrive once the rule is
+    fixed."""
     exc = _underlying_failure(exc)
     if isinstance(exc, PermanentMessageError):
         return ErrorClass.PERMANENT

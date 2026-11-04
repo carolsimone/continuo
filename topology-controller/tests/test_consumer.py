@@ -455,6 +455,60 @@ def test_consumer_does_not_wait_on_a_permanent_error(monkeypatch):
     assert clock.slept == []
 
 
+@pytest.mark.parametrize("reply", [
+    # redis-py drops the ERR code from the text.
+    "unknown command 'XINFO', with args beginning with: 'GROUPS'",
+    "unknown subcommand 'GROUPS'. Try XINFO HELP.",
+])
+def test_consumer_does_not_wait_on_a_command_redis_does_not_have(monkeypatch, reply):
+    clock = _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xinfo_groups.side_effect = redis_exceptions.ResponseError(reply)
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(redis_exceptions.ResponseError, match="unknown"):
+        c.start()
+
+    assert redis_mock.xinfo_groups.call_count == 1
+    assert clock.slept == []
+
+
+# The text of the NoPermissionError redis-py raises for a NOPERM reply.
+_NOPERM = "User continuo_topology_controller has no permissions to access the 'continuo:release.requested:v1' key"
+
+
+def test_consumer_waits_out_a_login_refused_its_stream(monkeypatch):
+    """A login the stream's grant has not reached yet (the rules are being
+    applied) is waited out like a missing group, as the Go consumer does."""
+    _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    refused = redis_exceptions.NoPermissionError(_NOPERM)
+    redis_mock.xinfo_groups.side_effect = [refused, refused, [{"name": _GROUP.encode()}],
+                                           redis_exceptions.ResponseError("ERR no such key")]
+    redis_mock.xautoclaim.side_effect = _Abort()
+    c = _idle_consumer(redis_mock)
+
+    with pytest.raises(_Abort):
+        c.start()
+
+    assert redis_mock.xinfo_groups.call_count == 4
+
+
+def test_consumer_gives_up_on_a_login_refused_its_stream_once_the_window_is_spent(monkeypatch):
+    clock = _fake_clock(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xinfo_groups.side_effect = redis_exceptions.NoPermissionError(_NOPERM)
+    c = _idle_consumer(redis_mock)
+    start = clock.now
+
+    with pytest.raises(redis_exceptions.NoPermissionError):
+        c.start()
+
+    waited = clock.now - start
+    assert 290 <= waited <= 300, f"waited {waited}s"
+    redis_mock.xreadgroup.assert_not_called()
+
+
 def _run_until_read(redis_mock, c, monkeypatch):
     """Run start() until its first XREADGROUP, which ends the loop."""
     _fake_clock(monkeypatch)

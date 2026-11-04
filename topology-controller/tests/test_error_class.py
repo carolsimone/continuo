@@ -32,6 +32,10 @@ def _client_error(status):
     (botocore.exceptions.IncompleteReadError(actual_bytes=10, expected_bytes=100), ErrorClass.INFRASTRUCTURE),
     (botocore.exceptions.ResponseStreamingError(error="Connection broken"), ErrorClass.INFRASTRUCTURE),
     (_client_error(404), ErrorClass.TRANSIENT),
+    # A grant the login's rule lacks: retried within the delivery limit, then
+    # dead-lettered for a redrive once the rule is fixed, as in pkg/redis.
+    (redis.exceptions.NoPermissionError("User u has no permissions to access the 'k' key"),
+     ErrorClass.TRANSIENT),
     (ValueError("library bug"), ErrorClass.TRANSIENT),
     (RuntimeError("boom"), ErrorClass.TRANSIENT),
     # An OSError is not a lost connection: only its ConnectionError and
