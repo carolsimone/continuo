@@ -122,18 +122,19 @@ Kubernetes limits a label value to 63 characters, so continuo shortens longer `t
 
 ### Export the labels to Prometheus
 
-kube-state-metrics skips Job labels unless you list them, and without a list it emits no `kube_job_labels` series at all. Start it with:
+A Job's pods carry the same labels. kube-state-metrics skips these labels unless you list them, and without a list it emits no `kube_job_labels` or `kube_pod_labels` series at all. Start it with:
 
 ```text
---metric-labels-allowlist=jobs=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
+--metric-labels-allowlist=jobs=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id],pods=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
 ```
 
-With the `kube-prometheus-stack` chart, set the same list in its values:
+With the `kube-prometheus-stack` chart, set the same lists in its values:
 
 ```yaml
 kube-state-metrics:
   metricLabelsAllowlist:
     - jobs=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
+    - pods=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
 ```
 
 Dashes become underscores in Prometheus, so `run-id` becomes `label_run_id`.
@@ -143,6 +144,44 @@ Dashes become underscores in Prometheus, so `run-id` becomes `label_run_id`.
 Validation, seed-build and compile Jobs are all named `validate-*`. When one fails, it usually means the release was rejected, which continuo handles itself, so leave these Jobs out of your alerts.
 
 A failed Job stays on the cluster for `execution.jobTTLMinutes` (default 30). An alert on it can only fire during that time, so its wait must be shorter than this value.
+
+### CPU and memory per table
+
+The kubelet reports each container's CPU and memory by pod name. Join that with `kube_pod_labels` to see the table. This assumes you scrape the kubelet's cAdvisor endpoint, as `kube-prometheus-stack` does, and these queries are for Prometheus.
+
+Memory of each running Job, right now:
+
+```promql
+container_memory_working_set_bytes{container="dbt-job"}
+  * on (namespace, pod) group_left (label_schema_name, label_table_name)
+  kube_pod_labels{label_table_name!=""}
+```
+
+CPU cores of each running Job, right now:
+
+```promql
+rate(container_cpu_usage_seconds_total{container="dbt-job"}[1m])
+  * on (namespace, pod) group_left (label_schema_name, label_table_name)
+  kube_pod_labels{label_table_name!=""}
+```
+
+Highest memory seen per table over the last day. The range on `kube_pod_labels` is needed, because that series ends once the Job is deleted:
+
+```promql
+max by (label_schema_name, label_table_name) (
+  max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{container="dbt-job"}[1d]))
+    * on (namespace, pod) group_left (label_schema_name, label_table_name)
+    max by (namespace, pod, label_schema_name, label_table_name) (max_over_time(kube_pod_labels{label_table_name!=""}[1d]))
+)
+```
+
+For the CPU used by a finished Job, replace the memory metric in that query with `container_cpu_usage_seconds_total`. The result is CPU-seconds.
+
+These numbers are samples, not a record of each Job:
+
+- **Short Jobs can be missed:** a Job that ends between two scrapes has no samples at all. On a kubelet scraped every 10 seconds, Jobs of a few seconds often have none or one.
+- **Peaks can be missed:** the real peak can fall between samples, so don't size memory limits from a short Job's numbers.
+- **`rate` reads low on short Jobs:** a Job shorter than the `[1m]` range shows fewer cores than it used. Use CPU-seconds for those.
 
 ## Example alert rules
 
