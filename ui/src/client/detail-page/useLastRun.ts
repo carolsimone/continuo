@@ -37,7 +37,12 @@ export function useLastRun(
       setLastRunId(match?.last_run_id ?? null);
     },
   );
-  const statusFailed = useRetriedRead<Scheduler>(lastRunId ? `/api/runs/${lastRunId}` : null, setScheduler);
+  // A status the page already holds came from a poll, which is newer than this
+  // read when this read lands late.
+  const statusFailed = useRetriedRead<Scheduler>(
+    lastRunId ? `/api/runs/${lastRunId}` : null,
+    (data) => setScheduler((held) => held ?? data),
+  );
   const graphFailed = useRetriedRead<RunGraph>(lastRunId ? `/api/runs/${lastRunId}/graph` : null, setLiveRunGraph);
 
   return {

@@ -106,6 +106,21 @@ describe('DashboardPage — liveness badge', () => {
     });
   });
 
+  it('does not say there are no schedules before the first poll has answered', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    mockFetch.mockImplementation((url: string) => {
+      if (url === '/api/schedules') return new Promise(() => {});
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ schedules: [], total_count: 0 }) });
+    });
+
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      expect(container.querySelector('.live-badge')?.textContent).toContain('Connecting');
+    });
+    expect(screen.queryByText('No schedules found.')).toBeNull();
+  });
+
   it('treats a backend error on the schedules poll as a failed poll, not an empty list', async () => {
     mockFetchProposals.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {

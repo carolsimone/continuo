@@ -126,13 +126,15 @@ describe('runTabState', () => {
   const base = { lastRunId: 'r' as string | null | undefined, runsCount: 0, taskCount: 1, tasksRead: false, selectedRunId: null as string | null, runGraph: null as RunGraph | null, readFailed: false };
 
   it('is "unavailable" rather than "loading" while the reads it waits for are failing', () => {
-    expect(runTabState({ ...base, lastRunId: undefined, readFailed: true })).toBe('unavailable');
+    expect(runTabState({ ...base, lastRunId: undefined, taskCount: 0, readFailed: true })).toBe('unavailable');
     expect(runTabState({ ...base, taskCount: 0, readFailed: true })).toBe('unavailable');
-    expect(runTabState({ ...base, selectedRunId: 'old', runGraph: null, readFailed: true })).toBe('unavailable');
+    expect(runTabState({ ...base, taskCount: 0, selectedRunId: 'old', runGraph: null, readFailed: true })).toBe('unavailable');
   });
 
   it('stays "ready" while reads fail once there are tasks to show', () => {
     expect(runTabState({ ...base, readFailed: true })).toBe('ready');
+    // A chosen run's rows do not wait for a graph that cannot be read.
+    expect(runTabState({ ...base, selectedRunId: 'old', runGraph: null, readFailed: true })).toBe('ready');
   });
 
   it('is "no-tasks" once a run\'s tasks were read and there are none', () => {

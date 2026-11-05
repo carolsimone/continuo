@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import RouteErrorBoundary from '../../src/client/RouteErrorBoundary';
@@ -11,6 +12,16 @@ function Boom(): never {
 function ToSafePage() {
   const navigate = useNavigate();
   return <button onClick={() => navigate('/safe')}>to safe</button>;
+}
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(count + 1)}>count {count}</button>;
+}
+
+function ToOtherSchedule() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate('/schedule/b')}>to b</button>;
 }
 
 function renderAt(path: string) {
@@ -42,6 +53,22 @@ describe('RouteErrorBoundary', () => {
     renderAt('/boom');
     expect(screen.getByText('This page failed to display.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+  });
+
+  it('does not remount a route that stays mounted across a navigation', () => {
+    render(
+      <MemoryRouter initialEntries={['/schedule/a']}>
+        <ToOtherSchedule />
+        <RouteErrorBoundary>
+          <Routes>
+            <Route path="/schedule/:name" element={<Counter />} />
+          </Routes>
+        </RouteErrorBoundary>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'count 0' }));
+    fireEvent.click(screen.getByRole('button', { name: 'to b' }));
+    expect(screen.getByRole('button', { name: 'count 1' })).toBeInTheDocument();
   });
 
   it('shows the next page when the user navigates away from the failed one', () => {

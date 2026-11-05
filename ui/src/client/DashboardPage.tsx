@@ -109,7 +109,7 @@ export default function DashboardPage() {
         {activeTab === 'runs' && (
           <>
             {error && <div className="info-strip info-strip--error">{error}</div>}
-            {schedules.length === 0 && !error && (
+            {loaded && schedules.length === 0 && !error && (
               <p className="empty">No schedules found.</p>
             )}
             {schedules.map(s => (

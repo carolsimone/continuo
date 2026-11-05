@@ -16,8 +16,11 @@ const POLL_INTERVAL_MS = 5000;
 //
 // A read that fails leaves the rows and the status as they were, sets
 // readFailed, and is made again every 5 s until one lands, whichever read it
-// was. tasksRead says the shown run's tasks were read at least once, which is
-// what tells a run with no tasks from a run whose tasks are not known yet.
+// was. A read can outlast the 5 s, so reads overlap: once a read has seen the
+// run end, a status still in flight is dropped, and once the rows the run ended
+// with have landed, so is everything else. tasksRead says the shown run's tasks
+// were read at least once, which is what tells a run with no tasks from a run
+// whose tasks are not known yet.
 export function useRunRows({
   lastRunId,
   selectedRunId,
@@ -56,12 +59,19 @@ export function useRunRows({
     const shownRunId = selectedRunId ?? lastRunId;
     if (!shownRunId) return;
     if (mode === 'latest') return;
-    let cancelled = false;
+    // Set on cleanup and once every read the run needs has landed.
+    let finished = false;
     let timer: number | undefined;
     // A past run has ended; the latest run has once a read says so. After that
     // only its rows are left to read.
     let ended = selectedRunId !== null;
     const controller = new AbortController();
+
+    const finish = () => {
+      finished = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
 
     // Resolves once both reads have settled, with whether both landed.
     const fetchRunRows = (): Promise<boolean> => {
@@ -69,7 +79,7 @@ export function useRunRows({
         signal: controller.signal,
       })
         .then((all) => {
-          if (!cancelled) {
+          if (!finished) {
             setTasks(all);
             setTasksRead(true);
           }
@@ -81,7 +91,7 @@ export function useRunRows({
         signal: controller.signal,
       })
         .then((all) => {
-          if (!cancelled) setAttempts(all);
+          if (!finished) setAttempts(all);
           return true;
         })
         .catch(() => false);
@@ -93,7 +103,10 @@ export function useRunRows({
     const readStatus = (): Promise<Scheduler | null> =>
       readJson<Scheduler>(`/api/runs/${shownRunId}`)
         .then((data) => {
-          if (!cancelled) onSchedulerRef.current(data);
+          if (!finished && !ended) {
+            onSchedulerRef.current(data);
+            ended = isTerminalStatus(data.status);
+          }
           return data;
         })
         .catch(() => null);
@@ -101,43 +114,36 @@ export function useRunRows({
     const keepReading = () => {
       if (timer === undefined) timer = window.setInterval(read, POLL_INTERVAL_MS);
     };
-    const stopReading = () => {
-      window.clearInterval(timer);
-      timer = undefined;
-    };
 
     const read = async (): Promise<void> => {
       if (ended) {
         const rowsLanded = await fetchRunRows();
-        if (cancelled) return;
+        if (finished) return;
         setReadFailed(!rowsLanded);
-        if (rowsLanded) stopReading();
+        if (rowsLanded) finish();
         else keepReading();
         return;
       }
 
       const wasPolling = timer !== undefined;
       const [status, rowsLanded] = await Promise.all([readStatus(), fetchRunRows()]);
-      if (cancelled) return;
+      if (finished) return;
       setReadFailed(status === null || !rowsLanded);
-      if (status && isTerminalStatus(status.status)) {
-        ended = true;
+      if (ended && wasPolling) {
         // The run has ended: read the rows it ended with.
-        if (wasPolling) {
-          void read();
-          return;
-        }
-        if (rowsLanded) return;
+        void read();
+        return;
+      }
+      if (ended && rowsLanded) {
+        // The page arrived at a run that had already ended.
+        finish();
+        return;
       }
       keepReading();
     };
     void read();
 
-    return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearInterval(timer);
-    };
+    return finish;
   }, [lastRunId, selectedRunId, mode]);
 
   return { tasks, attempts, tasksRead, readFailed, clearRows };

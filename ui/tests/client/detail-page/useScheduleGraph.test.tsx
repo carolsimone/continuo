@@ -79,6 +79,24 @@ describe('useScheduleGraph', () => {
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
+  it('stays ready in run mode when a slower read fails after another one landed', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let answerFirstRead: (response: Response) => void = () => {};
+    const firstRead = new Promise<Response>((resolve) => { answerFirstRead = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => firstRead)
+      .mockImplementation(async () => new Response(JSON.stringify({ nodes: [NODE], edges: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useScheduleGraph('s', 'run'));
+    await advance(5000);
+    expect(result.current.graphState).toBe('ready');
+
+    answerFirstRead(new Response(JSON.stringify({ error: '14 UNAVAILABLE' }), { status: 500 }));
+    await advance(0);
+    expect(result.current.graphState).toBe('ready');
+  });
+
   it('keeps the last graph when a poll of latest mode fails', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     let down = false;

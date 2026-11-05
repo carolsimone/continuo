@@ -17,27 +17,32 @@ export function useScheduleGraph(
 
   useEffect(() => {
     if (!name) return;
-    let cancelled = false;
+    // Set on cleanup and, in run mode, once a read has landed: an answer that
+    // arrives after that, from a read still in flight, changes nothing.
+    let stopped = false;
     let timer: number | undefined;
 
     const fetchGraph = () => {
       readJson<ScheduleGraph>(`/api/schedules/${name}/graph`)
         .then((data) => {
-          if (cancelled) return;
+          if (stopped) return;
           setGraph(data);
           setGraphState(data.nodes.length > 0 ? 'ready' : 'empty');
           setPromotionSeq(Number(data.promotion_seq ?? 0));
-          if (mode !== 'latest') window.clearInterval(timer);
+          if (mode !== 'latest') {
+            stopped = true;
+            window.clearInterval(timer);
+          }
         })
         .catch(() => {
-          if (!cancelled) setGraphState('error');
+          if (!stopped) setGraphState('error');
         });
     };
 
     fetchGraph();
     timer = window.setInterval(fetchGraph, 5000);
     return () => {
-      cancelled = true;
+      stopped = true;
       window.clearInterval(timer);
     };
   }, [name, mode]);

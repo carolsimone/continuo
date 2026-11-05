@@ -73,6 +73,21 @@ describe('useLastRun', () => {
     expect(result.current.lastRunId).toBe('r1');
   });
 
+  it('does not replace a status the page already holds with the arrival read landing late', async () => {
+    let answerStatus: (response: Response) => void = () => {};
+    const slowStatus = new Promise<Response>((resolve) => { answerStatus = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
+      String(input) === '/api/runs/r1' ? slowStatus : ok(graph)
+    )));
+    const { result } = renderHook(() => useLastRun('s', { last_run_id: 'r1' }));
+    await advance(0);
+
+    act(() => result.current.setScheduler({ ...run, status: 'succeeded' } as never));
+    answerStatus(ok(run));
+    await advance(0);
+    expect(result.current.scheduler?.status).toBe('succeeded');
+  });
+
   it('never stores an error body as the run or its graph, and reads both again', async () => {
     let down = true;
     stubBackend(() => down);

@@ -320,6 +320,92 @@ describe('useRunRows when a read fails', () => {
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
+  it('ignores a status that lands after the poll that saw the run end', async () => {
+    const slowStatus = deferred<Response>();
+    let statusReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      if (path === '/api/runs/r1') {
+        statusReads += 1;
+        if (statusReads === 1) return ok(runAt('r1', 'running'));
+        if (statusReads === 2) return slowStatus.promise;
+        return ok(runAt('r1', 'succeeded'));
+      }
+      return ok(path.endsWith('/tasks') ? tasksOf('orders', 'running') : attemptsOf('t-orders'));
+    }));
+    const onScheduler = vi.fn<(s: Scheduler) => void>();
+    renderHook(() => useRunRows({ lastRunId: 'r1', selectedRunId: null, mode: 'run', onScheduler }));
+    await advance(10000);
+    expect(onScheduler.mock.calls.at(-1)?.[0].status).toBe('succeeded');
+
+    slowStatus.resolve(ok(runAt('r1', 'running')));
+    await advance(0);
+    expect(onScheduler.mock.calls.at(-1)?.[0].status).toBe('succeeded');
+  });
+
+  it('ignores rows that land after the rows the run ended with, and stays settled', async () => {
+    const slowTasks = deferred<Response>();
+    let status = 'running';
+    let taskReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      if (path === '/api/runs/r1') return ok(runAt('r1', status));
+      if (path.endsWith('/attempts')) return ok(attemptsOf('t-orders'));
+      taskReads += 1;
+      if (taskReads === 2) return slowTasks.promise;
+      return ok(tasksOf('orders', status));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useRunRows({
+      lastRunId: 'r1', selectedRunId: null, mode: 'run', onScheduler: vi.fn(),
+    }));
+    await advance(5000);
+
+    status = 'succeeded';
+    await advance(5000);
+    expect(result.current.tasks[0].status).toBe('succeeded');
+
+    slowTasks.resolve(ok(tasksOf('orders', 'running')));
+    await advance(0);
+    expect(result.current.tasks[0].status).toBe('succeeded');
+    expect(result.current.readFailed).toBe(false);
+
+    const before = fetchMock.mock.calls.length;
+    await advance(15000);
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
+  it('stays settled when a poll in flight fails after the run\'s last read landed', async () => {
+    const slowTasks = deferred<Response>();
+    let status = 'running';
+    let taskReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      if (path === '/api/runs/r1') return ok(runAt('r1', status));
+      if (path.endsWith('/attempts')) return ok(attemptsOf('t-orders'));
+      taskReads += 1;
+      if (taskReads === 2) return slowTasks.promise;
+      return ok(tasksOf('orders', status));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useRunRows({
+      lastRunId: 'r1', selectedRunId: null, mode: 'run', onScheduler: vi.fn(),
+    }));
+    await advance(5000);
+
+    status = 'succeeded';
+    await advance(5000);
+    expect(result.current.readFailed).toBe(false);
+
+    slowTasks.resolve(backendDown());
+    await advance(0);
+    expect(result.current.readFailed).toBe(false);
+
+    const before = fetchMock.mock.calls.length;
+    await advance(15000);
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
   it('reads a chosen past run again until a read lands, then stops', async () => {
     let down = true;
     const fetchMock = stubBackend({

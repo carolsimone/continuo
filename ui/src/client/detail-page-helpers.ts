@@ -309,7 +309,8 @@ export function runTabState({
 }: RunTabStateArgs): 'no-runs' | 'loading' | 'unavailable' | 'no-tasks' | 'ready' {
   if (lastRunId === null && runsCount === 0 && taskCount === 0) return 'no-runs';
   const unresolved = selectedRunId ? runGraph === null : lastRunId === undefined;
-  if (!unresolved && taskCount > 0) return 'ready';
+  // Rows already held do not wait for a graph that cannot be read.
+  if (taskCount > 0 && (!unresolved || readFailed)) return 'ready';
   if (!unresolved && tasksRead) return 'no-tasks';
   return readFailed ? 'unavailable' : 'loading';
 }
