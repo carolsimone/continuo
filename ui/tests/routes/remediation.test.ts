@@ -71,6 +71,7 @@ function appWith(
     remediation: RemediationClient;
     prCreator?: PullRequestCreator;
     getObject: (key: string) => Promise<string>;
+    uiUrl?: string;
   },
   user?: { userId: string; role: string; email: string; name: string },
 ) {
@@ -86,7 +87,7 @@ function appWith(
   }
   // Mount without apiGuards — operator gating is tested separately via the
   // app-level auth middleware; here we verify route behaviour in isolation.
-  app.use('/api/remediation', createRemediationRouter(deps.remediation, deps.prCreator, deps.getObject));
+  app.use('/api/remediation', createRemediationRouter(deps.remediation, deps.prCreator, deps.getObject, deps.uiUrl));
   return app;
 }
 
@@ -306,6 +307,17 @@ describe('remediation router', () => {
     const call = (prCreator.create as any).mock.calls[0][0];
     expect(call.title).toBe('[remediation] fix svc.schema.mymodel (release rel-1)');
     expect(call.body).toContain('**Nodes:** `svc.schema.mymodel`');
+  });
+
+  it('links the PR body to the Remediation tab on the UI public URL it was given', async () => {
+    const remediation = makeRemediation();
+    const prCreator = makePrCreator();
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject(), uiUrl: 'https://continuo.example.com' });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+    const call = (prCreator.create as any).mock.calls[0][0];
+    expect(call.body).toContain('[View in continuo UI](https://continuo.example.com/?tab=remediation)');
   });
 
   it('strips s3:// prefix when fetching the proposed SQL content', async () => {

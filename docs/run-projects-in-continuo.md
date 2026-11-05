@@ -908,7 +908,7 @@ helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
   --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
 
-`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
+`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-5-5`. For
 OpenAI, add `--set llm.provider=openai --set llm.model=<model>`.
 
 `--reuse-values` preserves anything you set at install; if you installed on pure

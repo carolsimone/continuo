@@ -168,7 +168,7 @@ helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
 kubectl -n continuo rollout restart deploy/agent-chat
 ```
 
-`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
+`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-5-5`. For
 OpenAI add `--set llm.provider=openai --set llm.model=<model>`. For any server
 that speaks OpenAI's chat-completions API (Mistral, OpenRouter, Groq, or vLLM/Ollama
 you host; chart 0.12.0 or later) add
