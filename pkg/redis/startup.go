@@ -3,11 +3,11 @@ package redis
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/startupwait"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -17,15 +17,7 @@ import (
 // Deployment rolls out next to the Redis StatefulSet, or when a docker-compose
 // service starts before its Redis container. An answer waiting cannot change
 // (bad credentials, a disallowed command) is not retried: it fails at once.
-type StartupPolicy struct {
-	// Timeout is the wall-clock budget for the whole wait, attempts included,
-	// before giving up with the last error.
-	Timeout time.Duration
-	// InitialDelay is the pause after the first failed attempt; it doubles per
-	// attempt up to MaxDelay.
-	InitialDelay time.Duration
-	MaxDelay     time.Duration
-}
+type StartupPolicy = startupwait.Policy
 
 // DefaultStartupPolicy waits as long as the chart's bundled-mode wait-for-redis
 // init container (100 tries, 3s apart), so an install path without that gate
@@ -55,11 +47,8 @@ func WaitForRedis(ctx context.Context, client Pinger, policy StartupPolicy, logg
 	return waitForPing(ctx, ping, policy, sleepCtx, logger)
 }
 
-// waitForPing calls ping until it succeeds, the policy timeout elapses, ctx is
-// cancelled, or ping returns an error that waiting cannot fix. The timeout
-// bounds the whole wait, including a ping that blocks, so the budget is
-// wall-clock time. sleep is injected so the backoff is testable without real
-// time.
+// waitForPing calls ping under policy (see startupwait.Wait). sleep is injected
+// so the backoff is testable without real time.
 func waitForPing(
 	ctx context.Context,
 	ping func(context.Context) error,
@@ -67,53 +56,12 @@ func waitForPing(
 	sleep func(context.Context, time.Duration) error,
 	logger *slog.Logger,
 ) error {
-	parent := ctx
-	ctx, cancel := context.WithTimeout(ctx, policy.Timeout)
-	defer cancel()
-
-	var waited time.Duration
-	delay := policy.InitialDelay
-	for attempt := 1; ; attempt++ {
-		err := ping(ctx)
-		if err == nil {
-			if attempt > 1 {
-				logger.Info("Redis reachable", "attempts", attempt, "waited", waited.String())
-			}
-			return nil
-		}
-		if !isStartupRetryable(err) {
-			return fmt.Errorf("redis rejected the connection: %w", err)
-		}
-		if stopped := waitStopped(parent, ctx, err, waited, attempt); stopped != nil {
-			return stopped
-		}
-		if waited+delay > policy.Timeout {
-			return fmt.Errorf("redis still unreachable after %s (%d attempts): %w", waited, attempt, err)
-		}
-		logger.Warn("Redis not reachable yet, retrying",
-			"attempt", attempt, "retry_in", delay.String(), "error", err)
-		if serr := sleep(ctx, delay); serr != nil {
-			if stopped := waitStopped(parent, ctx, err, waited, attempt); stopped != nil {
-				return stopped
-			}
-			return fmt.Errorf("waiting for redis interrupted: %w (last error: %v)", serr, err)
-		}
-		waited += delay
-		delay = min(delay*2, policy.MaxDelay)
-	}
-}
-
-// waitStopped explains why the wait ended when its context is done: the caller
-// cancelled it (shutdown) or the policy budget ran out. It returns nil while
-// the wait is still live.
-func waitStopped(parent, ctx context.Context, last error, waited time.Duration, attempt int) error {
-	if ctx.Err() == nil {
-		return nil
-	}
-	if parent.Err() != nil {
-		return fmt.Errorf("waiting for redis interrupted: %w (last error: %v)", parent.Err(), last)
-	}
-	return fmt.Errorf("redis still unreachable after %s (%d attempts): %w", waited, attempt, last)
+	return startupwait.Wait(ctx, startupwait.Dependency{
+		Name:      "Redis",
+		Ping:      ping,
+		Retryable: isStartupRetryable,
+		Sleep:     sleep,
+	}, policy, logger)
 }
 
 // transientReplyPrefixes are the Redis error replies a server sends while it

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/lib/pq"
@@ -16,6 +17,10 @@ type connector struct {
 	// dsn is the connection string without the password.
 	dsn      string
 	password pkgconfig.Secret
+	// connectTimeout, when set, bounds the dial and the startup handshake. The
+	// driver watches the context only while dialling, so a server that accepts
+	// the connection and never answers is otherwise waited for without limit.
+	connectTimeout time.Duration
 }
 
 var _ driver.Connector = connector{}
@@ -36,6 +41,9 @@ func (c connector) Connect(ctx context.Context) (driver.Conn, error) {
 		return nil, fmt.Errorf("parse the postgres connection string: %w", err)
 	}
 	pc.Password = pw
+	if c.connectTimeout > 0 {
+		pc.ConnectTimeout = c.connectTimeout
+	}
 	pqc, err := pq.NewConnectorConfig(pc)
 	if err != nil {
 		return nil, fmt.Errorf("build the postgres connector: %w", err)

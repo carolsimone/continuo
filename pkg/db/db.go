@@ -23,6 +23,9 @@ const (
 // by cfg.Pool over the service's defaults, and pings it within ctx. Each new
 // connection the pool opens reads cfg.Password again, so a rotated
 // POSTGRES_PASSWORD_FILE is picked up without a restart.
+//
+// It makes one attempt, which is what a one-shot tool wants. A service starting
+// up uses Connect, which waits for Postgres to become reachable.
 func Open(ctx context.Context, cfg pkgconfig.PostgresConfig, defaults pkgconfig.PoolConfig) (*sqlx.DB, error) {
 	pool, err := EffectivePool(cfg.Pool, defaults)
 	if err != nil {
@@ -32,9 +35,13 @@ func Open(ctx context.Context, cfg pkgconfig.PostgresConfig, defaults pkgconfig.
 	ApplyPool(db.DB, pool)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("connect to postgres %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.DB, err)
+		return nil, connectError(cfg, err)
 	}
 	return db, nil
+}
+
+func connectError(cfg pkgconfig.PostgresConfig, err error) error {
+	return fmt.Errorf("connect to postgres %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.DB, err)
 }
 
 // EffectivePool takes each limit from set when it is non-zero and from

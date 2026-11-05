@@ -14,6 +14,10 @@ shipped in those.
 
 ### Fixed
 
+- **Services no longer crash on each deploy while Postgres admits them.** TL;DR: a new pod retries Postgres at startup instead of exiting, so a deploy restarts fewer containers and `run-controller` is back sooner.
+  - A new pod's first connections to Postgres are refused for a second or two, until the NetworkPolicy in front of Postgres admits its IP. Services used to exit on that refusal, and Kubernetes could then hold the restart back for 10 seconds.
+  - They now retry for up to 5 minutes, as they do for Redis. A wrong password or an unknown database still fails at once.
+  - No values change is needed to upgrade.
 - **The assistant no longer fails on the first question after a quiet spell.** TL;DR: "turn exceeded token budget" no longer ends a turn whose prompt alone is over `CHAT_MAX_TURN_TOKENS`.
   - The first call of a turn writes the whole prompt to the prompt cache when the cache is cold. That write no longer counts toward the budget. Later calls' cache writes, such as a large tool result, still count.
   - No values change is needed to upgrade.

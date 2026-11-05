@@ -6,9 +6,10 @@ pod stops until the new one is Ready the Service has no endpoint, and every read
 of a run fails. The process serves about a second after it starts, so a fixed
 readiness delay would only lengthen that gap on every deploy. A startup probe
 checks the readiness path every second instead, and no readiness delay follows
-it. The startup probe must also outlast the process's own 5-minute wait for
-Redis (pkg/redis.WaitForRedis): running out of failures restarts the container,
-which a readiness probe never does.
+it. The startup probe must also outlast each of the process's own 5-minute
+waits, for Postgres (pkg/db.Connect) and for Redis (pkg/redis.WaitForRedis):
+running out of failures restarts the container, which a readiness probe never
+does.
 
 Usage: assert-run-controller-fast-ready.py <rendered-manifest.yaml>
 """
