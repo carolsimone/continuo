@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/unprefixed"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"
@@ -230,6 +231,48 @@ func TestReadUnprefixedOfAKeyWithNoEntry(t *testing.T) {
 	}
 }
 
+// XDEL of a key's newest entry leaves XINFO STREAM reporting the newest entry
+// that remains, older than the entry the group was last delivered. That group
+// has finished with the key.
+func TestReadUnprefixedAfterTheNewestEntryWasDeleted(t *testing.T) {
+	rc, stream := unprefixedStream(t)
+	ctx := context.Background()
+	const group = "reader"
+	ids := []string{"10-0", "20-0", "30-0"}
+	for _, id := range ids {
+		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: map[string]any{"k": id}}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rc.XGroupCreate(ctx, stream, group, "0").Err(); err != nil {
+		t.Fatal(err)
+	}
+	read, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{Group: group, Consumer: "c", Streams: []string{stream, ">"}, Count: 3}).Result()
+	if err != nil || len(read) != 1 || len(read[0].Messages) != len(ids) {
+		t.Fatalf("XREADGROUP = %v, %v", read, err)
+	}
+	if err := rc.XAck(ctx, stream, group, ids...).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.XDel(ctx, stream, "30-0").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	k, exists, err := NewStreamAdmin(rc).ReadUnprefixed(ctx, stream)
+	if err != nil || !exists {
+		t.Fatalf("ReadUnprefixed = exists %v, %v; want true, nil", exists, err)
+	}
+	if k.Last == nil || k.Last.String() != "20-0" {
+		t.Fatalf("Last = %v, want 20-0, the newest entry that remains", k.Last)
+	}
+	if len(k.Groups) != 1 || k.Groups[0].LastDelivered.String() != "30-0" {
+		t.Fatalf("Groups = %+v, want group %s delivered up to 30-0", k.Groups, group)
+	}
+	if held := unprefixed.Held(k, []string{group}); len(held) != 0 {
+		t.Fatalf("Held = %v, want none: the group has finished with the key", held)
+	}
+}
+
 // StreamExists asks about the prefixed key only: an unprefixed key of the same
 // name does not make the stream exist.
 func TestStreamExistsChecksThePrefixedKey(t *testing.T) {
@@ -259,9 +302,9 @@ func TestDeleteUnprefixedDeletesOnlyTheUnprefixedKey(t *testing.T) {
 		}
 	}
 	admin := NewStreamAdmin(rc)
-	deleted, err := admin.DeleteUnprefixed(ctx, stream)
-	if err != nil || !deleted {
-		t.Fatalf("DeleteUnprefixed = %v, %v; want true, nil", deleted, err)
+	deleted, otherType, err := admin.DeleteUnprefixed(ctx, stream)
+	if err != nil || !deleted || otherType != "" {
+		t.Fatalf("DeleteUnprefixed = %v, %q, %v; want true, \"\", nil", deleted, otherType, err)
 	}
 	if n := rc.Exists(ctx, stream).Val(); n != 0 {
 		t.Fatalf("the unprefixed key still exists")
@@ -269,16 +312,26 @@ func TestDeleteUnprefixedDeletesOnlyTheUnprefixedKey(t *testing.T) {
 	if n := rc.Exists(ctx, pkgredis.Key(stream)).Val(); n != 1 {
 		t.Fatalf("the prefixed key was deleted")
 	}
-	again, err := admin.DeleteUnprefixed(ctx, stream)
-	if err != nil || again {
-		t.Fatalf("second DeleteUnprefixed = %v, %v; want false, nil", again, err)
+	again, otherType, err := admin.DeleteUnprefixed(ctx, stream)
+	if err != nil || again || otherType != "" {
+		t.Fatalf("second DeleteUnprefixed = %v, %q, %v; want false, \"\", nil", again, otherType, err)
 	}
 }
 
-// The compose Redis signs in every login with the rules the streams generator
-// writes (compose/redis-users.acl), so this proves continuo_redis_migrate's
-// generated rule lets streams-init read and delete the unprefixed key of a
-// live stream and of a retired one.
+// migrationAdmin is an admin signed in as continuo_redis_migrate. The compose
+// Redis signs in every login with the rules the streams generator writes
+// (compose/redis-users.acl).
+func migrationAdmin(t *testing.T) *StreamAdmin {
+	t.Helper()
+	migrate := goredis.NewClient(&goredis.Options{
+		Addr: os.Getenv("REDIS_ADDR"), Username: "continuo_redis_migrate", Password: "local-continuo_redis_migrate",
+	})
+	t.Cleanup(func() { _ = migrate.Close() })
+	return NewStreamAdmin(migrate)
+}
+
+// This proves continuo_redis_migrate's generated rule lets streams-init read
+// and delete the unprefixed key of a live stream and of a retired one.
 func TestTheMigrationLoginMayReadAndDeleteTheUnprefixedKeys(t *testing.T) {
 	rc, _ := unprefixedStream(t)
 	ctx := context.Background()
@@ -289,11 +342,7 @@ func TestTheMigrationLoginMayReadAndDeleteTheUnprefixedKeys(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	migrate := goredis.NewClient(&goredis.Options{
-		Addr: os.Getenv("REDIS_ADDR"), Username: "continuo_redis_migrate", Password: "local-continuo_redis_migrate",
-	})
-	t.Cleanup(func() { _ = migrate.Close() })
-	admin := NewStreamAdmin(migrate)
+	admin := migrationAdmin(t)
 
 	if _, err := admin.StreamExists(ctx, live); err != nil {
 		t.Fatalf("StreamExists(%s) as continuo_redis_migrate = %v", live, err)
@@ -302,8 +351,43 @@ func TestTheMigrationLoginMayReadAndDeleteTheUnprefixedKeys(t *testing.T) {
 		t.Fatalf("ReadUnprefixed(%s) as continuo_redis_migrate = exists %v, %v; want true, nil", live, exists, err)
 	}
 	for _, key := range []string{live, retired} {
-		if deleted, err := admin.DeleteUnprefixed(ctx, key); err != nil || !deleted {
-			t.Fatalf("DeleteUnprefixed(%s) as continuo_redis_migrate = %v, %v; want true, nil", key, deleted, err)
+		if deleted, otherType, err := admin.DeleteUnprefixed(ctx, key); err != nil || !deleted || otherType != "" {
+			t.Fatalf("DeleteUnprefixed(%s) as continuo_redis_migrate = %v, %q, %v; want true, \"\", nil", key, deleted, otherType, err)
 		}
+	}
+}
+
+// On a Redis shared with another application, a key with a retired stream's
+// name may be that application's. DeleteUnprefixed, signed in under the
+// generated rule of continuo_redis_migrate, leaves a key that is not a stream
+// and names its type.
+func TestDeleteUnprefixedLeavesAKeyThatIsNotAStream(t *testing.T) {
+	rc, _ := unprefixedStream(t)
+	ctx := context.Background()
+	retired := streams.Retired[0]
+	t.Cleanup(func() { rc.Del(context.Background(), retired) })
+	admin := migrationAdmin(t)
+	for _, tc := range []struct {
+		wantType string
+		write    func() error
+	}{
+		{"string", func() error { return rc.Set(ctx, retired, "v", 0).Err() }},
+		{"hash", func() error { return rc.HSet(ctx, retired, "f", "v").Err() }},
+	} {
+		t.Run(tc.wantType, func(t *testing.T) {
+			if err := rc.Del(ctx, retired).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(); err != nil {
+				t.Fatal(err)
+			}
+			deleted, otherType, err := admin.DeleteUnprefixed(ctx, retired)
+			if err != nil || deleted || otherType != tc.wantType {
+				t.Fatalf("DeleteUnprefixed = %v, %q, %v; want false, %q, nil", deleted, otherType, err, tc.wantType)
+			}
+			if n := rc.Exists(ctx, retired).Val(); n != 1 {
+				t.Fatalf("the %s key was deleted", tc.wantType)
+			}
+		})
 	}
 }

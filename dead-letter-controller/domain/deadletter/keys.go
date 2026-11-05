@@ -7,7 +7,7 @@ import "strings"
 
 // ConsumerKey identifies a message a consumer group dead-lettered. messageID is
 // the message's dedup identity: its entry ID, qualified by the Redis key it was
-// read from for any key but the stream's legacy one.
+// read from for any key but the stream's unprefixed one.
 func ConsumerKey(stream, group, messageID string) string {
 	return strings.Join([]string{"consumer", stream, group, messageID}, "|")
 }

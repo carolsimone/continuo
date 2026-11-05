@@ -18,9 +18,9 @@ type ConsumerDeadLetter struct {
 	OriginalStream    string `json:"original_stream"`
 	OriginalGroup     string `json:"original_group"`
 	OriginalMessageID string `json:"original_message_id"`
-	// OriginalKey is the Redis key the message was read from: the stream's
-	// prefixed key, or its unprefixed legacy key, whose name is the stream's
-	// own. A producer that names no key reads only the legacy key.
+	// OriginalKey is the Redis key the message was read from. A consumer reads
+	// only the stream's prefixed key. A stored dead letter may name the stream's
+	// unprefixed key, whose name is the stream's own, or no key.
 	OriginalKey   string               `json:"original_key,omitempty"`
 	Fields        map[string]string    `json:"fields"`
 	FailureKind   model.DeadLetterKind `json:"failure_kind"`
@@ -29,11 +29,11 @@ type ConsumerDeadLetter struct {
 }
 
 // DedupMessageID returns the identity of the dead-lettered message within its
-// stream and group, by the rule pkgredis.DedupMessageID gives handlers: the
-// entry ID when the message was read from the legacy key or the payload names
-// no key, and the entry ID followed by "@" and the key for any other key. The
-// two keys of a stream number their entries independently, so entries of both
-// can share an ID.
+// stream and group: the entry ID when the payload names no key or the stream's
+// unprefixed key, and the entry ID followed by "@" and the key for any other
+// key. A stream's keys number their entries independently, so entries of two
+// keys can share an ID, and a stored dead letter keeps the identity it was
+// stored under.
 func (p ConsumerDeadLetter) DedupMessageID() string {
 	if p.OriginalKey == "" || p.OriginalKey == p.OriginalStream {
 		return p.OriginalMessageID
