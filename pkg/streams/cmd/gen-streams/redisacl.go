@@ -52,6 +52,10 @@ const (
 	// redisMigrationCommands are the commands of the migration login, after
 	// the key pattern ~<prefix>*.
 	redisMigrationCommands = "-@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"
+	// redisUnprefixedDeleteCommands are what the migration login may also run
+	// while legacy_keys is off, to read the state of the unprefixed key of a
+	// stream and delete it.
+	redisUnprefixedDeleteCommands = "+xinfo|stream +del"
 )
 
 // serviceNameRe is the shape of a service name: lowercase words joined by
@@ -182,10 +186,26 @@ func redisLogins(c *Contract) ([]redisLogin, error) {
 	logins = append(logins, redisLogin{
 		Service:  streamsInitService,
 		Username: streamsInitUsername,
-		Rule:     fmt.Sprintf("~%s* %s", c.KeyPrefix, redisMigrationCommands),
+		Rule:     migrationRule(c),
 	})
 	sort.Slice(logins, func(i, j int) bool { return logins[i].Service < logins[j].Service })
 	return logins, nil
+}
+
+// migrationRule builds the rule of the streams-init login: every key under the
+// prefix, to create streams and groups there. While legacy_keys is off it also
+// reaches the unprefixed key of every live and retired stream, and may read a
+// stream's state and delete it, for the step to delete those keys.
+func migrationRule(c *Contract) string {
+	patterns := []string{"~" + c.KeyPrefix + "*"}
+	commands := redisMigrationCommands
+	if !c.LegacyKeys {
+		for _, n := range allStreamNames(c) {
+			patterns = append(patterns, "~"+n)
+		}
+		commands += " " + redisUnprefixedDeleteCommands
+	}
+	return strings.Join(patterns, " ") + " " + commands
 }
 
 // redisRule builds the rule of one service: its key patterns (the prefixed

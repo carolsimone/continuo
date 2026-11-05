@@ -358,15 +358,45 @@ func TestRunControllerRule(t *testing.T) {
 	}
 }
 
-// TestMigrationLoginRule pins the streams-init login.
+// migrationBaseRule is the streams-init login's rule while legacy_keys holds:
+// it creates streams and groups under the prefix and reaches nothing else.
+const migrationBaseRule = "~continuo:* -@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"
+
+// TestMigrationLoginRule pins the streams-init login. While legacy_keys holds
+// it reaches the prefixed keys only. With legacy_keys off it also reaches the
+// unprefixed key of every live and retired stream, and may read a stream's
+// state and delete it, so the step can delete those keys.
 func TestMigrationLoginRule(t *testing.T) {
-	logins, err := redisLogins(loadRealContract(t))
+	c := loadRealContract(t)
+	c.LegacyKeys = true
+	logins, err := redisLogins(c)
 	if err != nil {
 		t.Fatalf("redisLogins: %v", err)
 	}
-	const want = "~continuo:* -@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"
-	if got := ruleOf(t, logins, "streams-init"); got != want {
-		t.Errorf("streams-init rule:\n got: %s\nwant: %s", got, want)
+	if got := ruleOf(t, logins, "streams-init"); got != migrationBaseRule {
+		t.Errorf("streams-init rule with legacy keys:\n got: %s\nwant: %s", got, migrationBaseRule)
+	}
+
+	c.LegacyKeys = false
+	logins, err = redisLogins(c)
+	if err != nil {
+		t.Fatalf("redisLogins: %v", err)
+	}
+	names := allStreamNames(c)
+	patterns := make([]string, 0, len(names))
+	for _, n := range names {
+		patterns = append(patterns, "~"+n)
+	}
+	want := "~continuo:* " + strings.Join(patterns, " ") +
+		" -@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type +xinfo|stream +del"
+	got := ruleOf(t, logins, "streams-init")
+	if got != want {
+		t.Errorf("streams-init rule without legacy keys:\n got: %s\nwant: %s", got, want)
+	}
+	for _, name := range []string{c.Streams[0].Name, c.RetiredStreams[0].Name} {
+		if !slices.Contains(strings.Fields(got), "~"+name) {
+			t.Errorf("streams-init rule does not reach the unprefixed %s: %s", name, got)
+		}
 	}
 }
 
@@ -391,19 +421,30 @@ func TestEveryConsumerMayWriteItsDeadLetters(t *testing.T) {
 }
 
 // TestDeadLetterControllerRule: dead-letter-controller reads and writes every
-// prefixed stream, and reaches every unprefixed stream key, live or retired.
+// prefixed stream. With legacy_keys off, which the contract sets, it reaches no
+// unprefixed stream key: the streams-init step deletes those.
 func TestDeadLetterControllerRule(t *testing.T) {
-	logins, err := redisLogins(loadRealContract(t))
+	c := loadRealContract(t)
+	if c.LegacyKeys {
+		t.Fatal("contract.yaml sets legacy_keys: true; this release reads only the prefixed keys")
+	}
+	logins, err := redisLogins(c)
 	if err != nil {
 		t.Fatalf("redisLogins: %v", err)
 	}
 	rule := ruleOf(t, logins, "dead-letter-controller")
-	for _, want := range []string{"~continuo:*", "~task.failed:v1", "~task.dispatch:v1", "+xadd", "+xtrim", "+xlen", "+del", "+info", "+xrange", "+xpending", "+xreadgroup"} {
-		if !slices.Contains(strings.Fields(rule), want) {
+	fields := strings.Fields(rule)
+	for _, want := range []string{"~continuo:*", "+xadd", "+xtrim", "+xlen", "+del", "+info", "+xrange", "+xpending", "+xreadgroup"} {
+		if !slices.Contains(fields, want) {
 			t.Errorf("dead-letter-controller rule lacks %s: %s", want, rule)
 		}
 	}
-	if slices.Contains(strings.Fields(rule), "~*") {
+	for _, name := range allStreamNames(c) {
+		if slices.Contains(fields, "~"+name) {
+			t.Errorf("dead-letter-controller rule reaches the unprefixed %s: %s", name, rule)
+		}
+	}
+	if slices.Contains(fields, "~*") {
 		t.Errorf("dead-letter-controller rule reaches every key: %s", rule)
 	}
 }

@@ -8,7 +8,6 @@ import uuid
 from datetime import datetime
 
 from adapters.redis.envelope import EVENT_ID_NAMESPACE, envelope_fields
-from adapters.redis.keys import legacy_key
 from domain.contract_vocabulary import DeadLetterKind
 from domain.model import DEFAULT_TENANT_ID
 
@@ -17,10 +16,11 @@ SCHEMA_VERSION = 1
 
 def dedup_message_id(stream: str, key: str, message_id: str) -> str:
     """The identity of a message read from key, one of stream's keys: its entry
-    ID for the legacy key, and the entry ID followed by "@" and the key for any
-    other. The two keys of a stream number their entries independently, so
-    entries of both can share an ID. Matches the Go ConsumerDeadLetter.DedupMessageID."""
-    if key == legacy_key(stream):
+    ID for the unprefixed key (the bare stream name), and the entry ID followed
+    by "@" and the key for any other. The keys of a stream number their entries
+    independently, so entries of two keys can share an ID. Matches the Go
+    ConsumerDeadLetter.DedupMessageID."""
+    if key == stream:
         return message_id
     return f"{message_id}@{key}"
 

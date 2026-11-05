@@ -2,8 +2,11 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/trim"
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/unprefixed"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
@@ -13,8 +16,9 @@ import (
 // stream, and destroys at once.
 const placeholderGroup = "streams-init"
 
-// StreamAdmin creates streams and consumer groups in Redis. It stores each
-// stream under pkgredis.Key of its contract name.
+// StreamAdmin creates streams and consumer groups in Redis, and deletes the
+// unprefixed keys of streams. It stores each stream under pkgredis.Key of its
+// contract name; the unprefixed key of a stream is unprefixedKey of it.
 type StreamAdmin struct{ rdb *goredis.Client }
 
 var _ ports.StreamAdmin = (*StreamAdmin)(nil)
@@ -88,6 +92,66 @@ func (a *StreamAdmin) CheckLogin(ctx context.Context, username, password string)
 		return nil
 	}
 	return err
+}
+
+// StreamExists runs EXISTS on the key of the contract stream name.
+func (a *StreamAdmin) StreamExists(ctx context.Context, stream string) (bool, error) {
+	n, err := a.rdb.Exists(ctx, pkgredis.Key(stream)).Result()
+	if err != nil {
+		return false, fmt.Errorf("exists %s: %w", stream, err)
+	}
+	return n > 0, nil
+}
+
+// unprefixedKey is the unprefixed Redis key of the contract stream name: the
+// name itself, with no streams.KeyPrefix. It is the one key this package names
+// without pkgredis.Key.
+func unprefixedKey(stream string) string { return stream }
+
+// ReadUnprefixed reads the unprefixed key of stream with XINFO GROUPS and
+// XINFO STREAM.
+func (a *StreamAdmin) ReadUnprefixed(ctx context.Context, stream string) (unprefixed.Key, bool, error) {
+	key := unprefixedKey(stream)
+	infos, err := a.rdb.XInfoGroups(ctx, key).Result()
+	if err != nil {
+		if strings.Contains(err.Error(), "no such key") {
+			return unprefixed.Key{}, false, nil
+		}
+		return unprefixed.Key{}, false, fmt.Errorf("xinfo groups %s: %w", key, err)
+	}
+	var k unprefixed.Key
+	for _, info := range infos {
+		last, err := trim.ParseID(info.LastDeliveredID)
+		if err != nil {
+			return unprefixed.Key{}, false, fmt.Errorf("group %s of %s: %w", info.Name, stream, err)
+		}
+		k.Groups = append(k.Groups, unprefixed.Group{Name: info.Name, Pending: info.Pending, LastDelivered: last})
+	}
+	info, err := a.rdb.XInfoStream(ctx, key).Result()
+	if err != nil {
+		if strings.Contains(err.Error(), "no such key") {
+			return unprefixed.Key{}, false, nil
+		}
+		return unprefixed.Key{}, false, fmt.Errorf("xinfo stream %s: %w", key, err)
+	}
+	if info.Length > 0 {
+		last, err := trim.ParseID(info.LastEntry.ID)
+		if err != nil {
+			return unprefixed.Key{}, false, fmt.Errorf("last entry of %s: %w", stream, err)
+		}
+		k.Last = &last
+	}
+	return k, true, nil
+}
+
+// DeleteUnprefixed runs DEL on the unprefixed key of stream.
+func (a *StreamAdmin) DeleteUnprefixed(ctx context.Context, stream string) (bool, error) {
+	key := unprefixedKey(stream)
+	n, err := a.rdb.Del(ctx, key).Result()
+	if err != nil {
+		return false, fmt.Errorf("del %s: %w", key, err)
+	}
+	return n == 1, nil
 }
 
 func isBusyGroup(err error) bool { return strings.HasPrefix(err.Error(), "BUSYGROUP") }

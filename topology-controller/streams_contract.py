@@ -4,9 +4,6 @@
 KEY_PREFIX = "continuo:"
 """Leads the name of every Redis key the system owns."""
 
-LEGACY_KEYS = True
-"""Whether the unprefixed key of a stream is still read beside its prefixed key."""
-
 CONSUMER_DEAD_LETTER_V1 = "consumer.dead_letter:v1"
 """Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive."""
 

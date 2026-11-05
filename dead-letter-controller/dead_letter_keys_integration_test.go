@@ -5,7 +5,6 @@ package main_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/handlers"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -26,8 +26,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sharedEntryID is the entry ID both keys of a test stream are given, as two
-// producers writing the legacy and the prefixed key in one millisecond do.
+// sharedEntryID is the entry ID of the test entries. An entry of a stream's
+// unprefixed key and one of its prefixed key, each numbered by its own key, can
+// share it.
 const sharedEntryID = "1700000000000-0"
 
 type nopObserver struct{}
@@ -36,9 +37,8 @@ func (nopObserver) Recorded(deadletter.DeadLetter) {}
 func (nopObserver) Redriven(deadletter.DeadLetter) {}
 func (nopObserver) Expired(deadletter.DeadLetter)  {}
 
-// keysEnv is a stream named after the test whose legacy and prefixed keys both
-// hold group, as while a rolling upgrade to prefixed keys lasts, with the real
-// Redis and Postgres dead letters are stored in.
+// keysEnv is a stream named after the test, with the real Redis and Postgres
+// dead letters are stored in.
 type keysEnv struct {
 	rc     *goredis.Client
 	db     *sqlx.DB
@@ -52,33 +52,12 @@ func newKeysEnv(t *testing.T) *keysEnv {
 	e := &keysEnv{rc: rc, db: db, stream: "test.dlkeys." + strings.ToLower(t.Name()) + ":v1", group: "dlkeys-test"}
 	ctx := context.Background()
 	cleanup := func() {
-		_ = rc.Del(ctx, pkgredis.Key(e.stream), pkgredis.LegacyKey(e.stream)).Err()
+		_ = rc.Del(ctx, pkgredis.Key(e.stream)).Err()
 		_, _ = db.Exec(`DELETE FROM dead_letters WHERE stream = $1`, e.stream)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
-	for _, key := range e.keys() {
-		require.NoError(t, rc.XGroupCreateMkStream(ctx, key, e.group, "0").Err())
-	}
 	return e
-}
-
-// keys are the legacy and the prefixed key of the test stream.
-func (e *keysEnv) keys() []string {
-	return []string{pkgredis.LegacyKey(e.stream), pkgredis.Key(e.stream)}
-}
-
-// addToBothKeys adds one entry with sharedEntryID to each key, naming the key
-// it was added to in its fields.
-func (e *keysEnv) addToBothKeys(t *testing.T, fields map[string]any) {
-	t.Helper()
-	for _, key := range e.keys() {
-		values := map[string]any{"from": key}
-		for k, v := range fields {
-			values[k] = v
-		}
-		require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{Stream: key, ID: sharedEntryID, Values: values}).Err())
-	}
 }
 
 // consume runs a stream consumer of the test stream with handle until the test ends.
@@ -144,20 +123,24 @@ func rowsWhere(db *sqlx.DB, where string, arg any) ([]keyedRow, error) {
 	return rows, err
 }
 
+// The dead-letter stream can hold dead letters for an entry of a stream's
+// unprefixed key and one of its prefixed key with the same entry ID, written by
+// consumers that read both keys. They are two records.
 func TestDeadLettersOfBothKeysOfAStreamWithOneEntryIDAreStoredApart(t *testing.T) {
 	e := newKeysEnv(t)
 	ensureDeadLetterStream(t, e.rc)
-	e.addToBothKeys(t, nil)
-	e.consume(t, func(context.Context, goredis.XMessage) error {
-		return fmt.Errorf("%w: every entry fails", events.ErrPermanent)
-	})
-
-	var dls []goredis.XMessage
-	require.Eventually(t, func() bool {
-		var err error
-		dls, err = deadLettersOf(e.rc, e.stream)
-		return err == nil && len(dls) == 2
-	}, 10*time.Second, 20*time.Millisecond, "both entries are dead-lettered")
+	for _, key := range []string{e.stream, pkgredis.Key(e.stream)} {
+		fields, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
+			Producer: "dead-letter-controller-test", OccurredAt: time.Now().UTC(), Stream: e.stream, Group: e.group,
+			MessageID: sharedEntryID, Key: key, Fields: map[string]string{"from": key},
+			FailureKind: model.DeadLetterKindPermanent, Error: "every entry fails", DeliveryCount: 1,
+		})
+		require.NoError(t, err)
+		require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{Stream: pkgredis.Key(streams.ConsumerDeadLetterV1), Values: fields}).Err())
+	}
+	dls, err := deadLettersOf(e.rc, e.stream)
+	require.NoError(t, err)
+	require.Len(t, dls, 2)
 	t.Cleanup(func() {
 		for _, m := range dls {
 			_ = e.rc.XDel(context.Background(), pkgredis.Key(streams.ConsumerDeadLetterV1), m.ID).Err()
@@ -180,8 +163,8 @@ func TestDeadLettersOfBothKeysOfAStreamWithOneEntryIDAreStoredApart(t *testing.T
 		require.NoError(t, json.Unmarshal([]byte(r.Fields), &fields))
 		byFrom[fields["from"]] = r
 	}
-	assert.Equal(t, deadletter.ConsumerKey(e.stream, e.group, sharedEntryID), byFrom[pkgredis.LegacyKey(e.stream)].DedupKey,
-		"a legacy entry keeps the identity earlier releases stored")
+	assert.Equal(t, deadletter.ConsumerKey(e.stream, e.group, sharedEntryID), byFrom[e.stream].DedupKey,
+		"an entry of the unprefixed key is stored under its own entry ID")
 	assert.Equal(t, deadletter.ConsumerKey(e.stream, e.group, sharedEntryID+"@"+pkgredis.Key(e.stream)),
 		byFrom[pkgredis.Key(e.stream)].DedupKey)
 
@@ -193,8 +176,11 @@ func TestDeadLettersOfBothKeysOfAStreamWithOneEntryIDAreStoredApart(t *testing.T
 	assert.Len(t, rows, 2, "storing the same dead letters again adds nothing")
 }
 
-func TestUnreadableDeadLettersOfBothKeysWithOneEntryIDAreStoredApart(t *testing.T) {
+// An unreadable entry of a dead-letter stream is stored under its entry ID
+// qualified by the key it was read from.
+func TestAnUnreadableDeadLetterIsStoredUnderItsKeyQualifiedID(t *testing.T) {
 	e := newKeysEnv(t)
+	require.NoError(t, e.rc.XGroupCreateMkStream(context.Background(), pkgredis.Key(e.stream), e.group, "0").Err())
 	// The binding records an unreadable entry under the dead-letter stream's
 	// name whatever key it was read from, so the rows are found by dedup key.
 	prefix := deadletter.UnreadableKey(streams.ConsumerDeadLetterV1, sharedEntryID)
@@ -204,18 +190,16 @@ func TestUnreadableDeadLettersOfBothKeysWithOneEntryIDAreStoredApart(t *testing.
 
 	recorder := handlers.NewRecorder(dlpostgres.NewDeadLetterRepository(e.db), nopObserver{}, discardLogger())
 	e.consume(t, dlredis.NewConsumerDeadLetterBinding(recorder, ports.SystemClock{}).Handle, pkgredis.WithoutDeadLetters())
-	e.addToBothKeys(t, map[string]any{"garbage": "1"})
+	require.NoError(t, e.rc.XAdd(context.Background(), &goredis.XAddArgs{
+		Stream: pkgredis.Key(e.stream), ID: sharedEntryID, Values: map[string]any{"garbage": "1"},
+	}).Err())
 
 	var rows []keyedRow
 	assert.Eventually(t, func() bool {
 		var err error
 		rows, err = rowsWhere(e.db, "dedup_key LIKE $1", prefix+"%")
-		return err == nil && len(rows) == 2
-	}, 10*time.Second, 20*time.Millisecond, "an unreadable entry from each key is its own record")
-	var got []string
-	for _, r := range rows {
-		got = append(got, r.DedupKey)
-	}
-	assert.ElementsMatch(t, []string{prefix, prefix + "@" + pkgredis.Key(e.stream)}, got,
-		"a legacy entry keeps the identity earlier releases stored")
+		return err == nil && len(rows) == 1
+	}, 10*time.Second, 20*time.Millisecond, "the unreadable entry is stored")
+	require.Len(t, rows, 1)
+	assert.Equal(t, prefix+"@"+pkgredis.Key(e.stream), rows[0].DedupKey)
 }

@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from redis.exceptions import NoPermissionError
 from redis.exceptions import ResponseError as RedisResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
@@ -15,7 +14,7 @@ from adapters.redis.dead_letter import as_text, build_fields, tenant_of
 from adapters.redis.error_class import ErrorClass, classify
 from adapters.redis.redrive import route
 from domain.contract_vocabulary import DeadLetterKind
-from streams_contract import CONSUMER_DEAD_LETTER_V1, LEGACY_KEYS
+from streams_contract import CONSUMER_DEAD_LETTER_V1
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +51,6 @@ def _is_permanent_bootstrap_reply(exc: RedisResponseError) -> bool:
     return text.startswith(_PERMANENT_BOOTSTRAP_PREFIXES)
 
 
-def _is_refused(exc: BaseException) -> bool:
-    """Whether exc is a NOPERM reply: the login's rule does not reach the key."""
-    return isinstance(exc, NoPermissionError) or "NOPERM" in str(exc)
-
-
 # A message whose handler still fails transiently on this delivery is
 # dead-lettered. The count is the pending entry's delivery counter.
 _MAX_DELIVERIES = 5
@@ -90,10 +84,8 @@ class Consumer:
             )
         self._redis = redis_client
         self._stream = stream_name
-        # The prefixed key of the stream, the one every consumer reads. start()
-        # adds the unprefixed key while it holds the group too.
+        # The prefixed key of the stream, the one key the consumer reads.
         self._key = keys.key(stream_name)
-        self._keys = [self._key]
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
         self._message_handler = message_handler
@@ -112,16 +104,14 @@ class Consumer:
         # running" (heartbeat goes and stays stale) — see adapters/health.
         self.last_heartbeat = time.monotonic()
 
-    def _await_group(self) -> list[str]:
-        """The keys this consumer reads, once the consumer group exists.
+    def _await_group(self) -> None:
+        """Return once the consumer group exists on the prefixed key.
 
         The consumer never creates the group. It polls until the prefixed key
-        of its stream holds the group, advancing the heartbeat on every poll,
-        and returns that key, followed by the unprefixed key while LEGACY_KEYS
-        is true and that key holds the group too. A Redis it cannot reach, or
-        any other error reply (a NOPERM while the login's rule is still being
-        applied), is waited out like a missing group, and that error is raised
-        once the window is spent. A reply no amount of waiting will fix (a key
+        of its stream holds the group, advancing the heartbeat on every poll.
+        A Redis it cannot reach, or any other error reply (a NOPERM while the
+        login's rule is still being applied), is waited out like a missing
+        group, and that error is raised once the window is spent. A reply no amount of waiting will fix (a key
         of the wrong type, a command the server does not have) is raised on the
         first attempt instead of burning the window, as in pkg/redis's
         StreamConsumer. A group still missing at the end raises RuntimeError.
@@ -134,15 +124,15 @@ class Consumer:
             self.last_heartbeat = time.monotonic()
             unreachable = None
             try:
-                found = self._group_keys()
+                found = self._holds_group(self._key)
             except (RedisConnectionError, RedisTimeoutError) as e:
-                found, unreachable = [], e
+                found, unreachable = False, e
             except RedisResponseError as e:
                 if _is_permanent_bootstrap_reply(e):
                     raise
-                found, unreachable = [], e
+                found, unreachable = False, e
             if found:
-                return found
+                return
             if time.monotonic() + delay > deadline:
                 if unreachable is not None:
                     logger.error(
@@ -166,49 +156,6 @@ class Consumer:
                 )
             time.sleep(delay)
             delay = min(delay * 2, _STARTUP_MAX_DELAY_S)
-
-    def _group_keys(self) -> list[str]:
-        """The keys that hold the consumer group, the prefixed key first; none
-        while the prefixed key does not hold it. A missing unprefixed key, one
-        without the group, or one the login may not read (NOPERM) is left out."""
-        if not self._holds_group(self._key):
-            return []
-        found = [self._key]
-        if LEGACY_KEYS:
-            legacy = keys.legacy_key(self._stream)
-            if self._holds_legacy_group(legacy):
-                found.append(legacy)
-        return found
-
-    def _holds_legacy_group(self, legacy: str) -> bool:
-        """Whether the unprefixed key holds the consumer group; False when the
-        login may not read it."""
-        try:
-            return self._holds_group(legacy)
-        except RedisResponseError as e:
-            if _is_refused(e):
-                return False
-            raise
-
-    def _drop_lost_legacy_key(self, exc: Exception) -> bool:
-        """Stop reading the unprefixed key when exc, a NOGROUP or NOPERM reply
-        of a read or claim, came from it: the key was deleted or its group
-        removed once drained, or the login's rule no longer reaches it. It
-        checks the key again and returns True when it dropped it; False when
-        the consumer reads no unprefixed key, exc is another error, or the key
-        still holds the group (exc came from the prefixed key)."""
-        if len(self._keys) < 2 or not ("NOGROUP" in str(exc) or _is_refused(exc)):
-            return False
-        legacy = self._keys[1]
-        try:
-            if self._holds_legacy_group(legacy):
-                return False
-        except Exception:
-            return False
-        self._keys = [self._key]
-        logger.warning("Unprefixed key no longer readable, reading only the prefixed key: stream=%s key=%s group=%s: %s",
-                       self._stream, legacy, self._group, exc)
-        return True
 
     def _holds_group(self, key: str) -> bool:
         """Whether key holds the consumer group. A missing key holds none."""
@@ -403,7 +350,7 @@ class Consumer:
         messages = self._redis.xreadgroup(
             self._group,
             self._name,
-            {key: ">" for key in self._keys},
+            {self._key: ">"},
             count=10,
             block=1000,
         )
@@ -425,14 +372,10 @@ class Consumer:
         reclaim window so a transient failure is retried instead of stranding the
         release. Messages that still fail are left pending for the next sweep.
         """
-        for key in self._keys:
-            self._reclaim_stale_pending_on(key)
-
-    def _reclaim_stale_pending_on(self, key: str) -> None:
         cursor = "0-0"
         while True:
             result = self._redis.xautoclaim(
-                key,
+                self._key,
                 self._group,
                 self._name,
                 min_idle_time=_RECLAIM_MIN_IDLE_MS,
@@ -440,21 +383,19 @@ class Consumer:
                 count=10,
             )
             cursor, claimed = result[0], result[1]
-            self._dispatch_in_hand([(key, msg_id, msg_fields) for msg_id, msg_fields in claimed])
+            self._dispatch_in_hand([(self._key, msg_id, msg_fields) for msg_id, msg_fields in claimed])
             if cursor in (b"0-0", "0-0"):
                 break
 
     def start(self) -> None:
         logger.info("Consumer starting", extra={"consumer_name": self._name, "stream": self._stream})
-        self._keys = self._await_group()
-        logger.info("Consumer reading", extra={"stream": self._stream, "keys": self._keys, "group": self._group})
+        self._await_group()
+        logger.info("Consumer reading", extra={"stream": self._stream, "key": self._key, "group": self._group})
         while True:
             try:
                 self._reclaim_stale_pending()
                 self._consume_once()
             except Exception as e:
-                if self._drop_lost_legacy_key(e):
-                    continue
                 if "NOGROUP" in str(e):
                     # The group was removed while the consumer ran. Only the
                     # streams-init step creates groups, so the loop ends and

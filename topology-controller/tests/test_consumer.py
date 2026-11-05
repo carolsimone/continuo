@@ -10,7 +10,7 @@ import redis.exceptions as redis_exceptions
 
 import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import LOG_DEAD_LETTERED, Consumer
-from adapters.redis.keys import key, legacy_key
+from adapters.redis.keys import key
 from config.config import SERVICE_NAME
 from domain.contract_vocabulary import DeadLetterKind
 from service.errors import PermanentMessageError
@@ -413,15 +413,14 @@ def test_consumer_waits_out_a_redis_that_is_not_up_yet(monkeypatch):
     _fake_clock(monkeypatch)
     redis_mock = MagicMock()
     unreachable = redis_exceptions.ConnectionError("Error -2 connecting to continuo-redis:6379.")
-    redis_mock.xinfo_groups.side_effect = [unreachable, unreachable, [{"name": _GROUP.encode()}],
-                                           redis_exceptions.ResponseError("ERR no such key")]
+    redis_mock.xinfo_groups.side_effect = [unreachable, unreachable, [{"name": _GROUP.encode()}]]
     redis_mock.xautoclaim.side_effect = _Abort()
     c = _idle_consumer(redis_mock)
 
     with pytest.raises(_Abort):
         c.start()
 
-    assert redis_mock.xinfo_groups.call_count == 4
+    assert redis_mock.xinfo_groups.call_count == 3
 
 
 def test_consumer_gives_up_on_a_redis_that_stays_unreachable(monkeypatch):
@@ -483,15 +482,14 @@ def test_consumer_waits_out_a_login_refused_its_stream(monkeypatch):
     _fake_clock(monkeypatch)
     redis_mock = MagicMock()
     refused = redis_exceptions.NoPermissionError(_NOPERM)
-    redis_mock.xinfo_groups.side_effect = [refused, refused, [{"name": _GROUP.encode()}],
-                                           redis_exceptions.ResponseError("ERR no such key")]
+    redis_mock.xinfo_groups.side_effect = [refused, refused, [{"name": _GROUP.encode()}]]
     redis_mock.xautoclaim.side_effect = _Abort()
     c = _idle_consumer(redis_mock)
 
     with pytest.raises(_Abort):
         c.start()
 
-    assert redis_mock.xinfo_groups.call_count == 4
+    assert redis_mock.xinfo_groups.call_count == 3
 
 
 def test_consumer_gives_up_on_a_login_refused_its_stream_once_the_window_is_spent(monkeypatch):
@@ -518,114 +516,18 @@ def _run_until_read(redis_mock, c, monkeypatch):
         c.start()
 
 
-def test_consumer_reads_the_legacy_key_when_it_holds_the_group(monkeypatch):
+def test_consumer_reads_only_the_prefixed_key(monkeypatch):
+    """The unprefixed key of the stream is never read or swept, even when it
+    holds the consumer's group; the consumer does not ask Redis about it."""
     redis_mock = MagicMock()
-    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
-    c = _idle_consumer(redis_mock)
-
-    _run_until_read(redis_mock, c, monkeypatch)
-
-    streams_read = redis_mock.xreadgroup.call_args.args[2]
-    assert streams_read == {_KEY: ">", _STREAM: ">"}
-    swept = [call.args[0] for call in redis_mock.xautoclaim.call_args_list]
-    assert swept == [_KEY, _STREAM], "both keys are swept for abandoned messages"
-
-
-def test_consumer_reads_only_the_prefixed_key_without_a_legacy_group(monkeypatch):
-    redis_mock = MagicMock()
-    _holding(redis_mock, _GROUP, _KEY)  # the legacy key does not exist
+    _holding(redis_mock, _GROUP, _KEY, _STREAM)
     c = _idle_consumer(redis_mock)
 
     _run_until_read(redis_mock, c, monkeypatch)
 
     assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
     assert [call.args[0] for call in redis_mock.xautoclaim.call_args_list] == [_KEY]
-
-
-def test_consumer_ignores_a_legacy_key_that_holds_another_group_only(monkeypatch):
-    redis_mock = MagicMock()
-
-    def xinfo_groups(name):
-        if name == _KEY:
-            return [{"name": _GROUP.encode()}]
-        return [{"name": b"another-group"}]
-
-    redis_mock.xinfo_groups.side_effect = xinfo_groups
-    c = _idle_consumer(redis_mock)
-
-    _run_until_read(redis_mock, c, monkeypatch)
-
-    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
-
-
-def test_consumer_reads_only_the_prefixed_key_when_legacy_keys_are_off(monkeypatch):
-    monkeypatch.setattr(consumer_mod, "LEGACY_KEYS", False)
-    redis_mock = MagicMock()
-    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
-    c = _idle_consumer(redis_mock)
-
-    _run_until_read(redis_mock, c, monkeypatch)
-
-    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
-    assert redis_mock.xinfo_groups.call_count == 1
-
-
-def test_a_message_from_the_legacy_key_is_settled_on_the_legacy_key(monkeypatch):
-    """ACK, delivery count and claim name the key the message came from."""
-    _fake_clock(monkeypatch)
-    redis_mock = _redis_with_pel()
-    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
-    redis_mock.xreadgroup.side_effect = [
-        [(_STREAM.encode(), [(b"1-0", {b"payload": b"old"})]),
-         (_KEY.encode(), [(b"2-0", {b"payload": b"new"})])],
-        _Abort(),
-    ]
-    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
-    seen = []
-    c = Consumer(redis_mock, _STREAM, _GROUP, seen.append, service_name=_SERVICE_NAME)
-
-    with pytest.raises(_Abort):
-        c.start()
-
-    assert seen == [{b"payload": b"old"}, {b"payload": b"new"}]
-    assert [call.args for call in redis_mock.xack.call_args_list] == [
-        (_STREAM, _GROUP, b"1-0"), (_KEY, _GROUP, b"2-0"),
-    ]
-
-
-def test_a_reclaimed_message_is_settled_on_the_key_it_was_claimed_from(monkeypatch):
-    _fake_clock(monkeypatch)
-    redis_mock = _redis_with_pel()
-    _holding(redis_mock, _GROUP, _KEY, legacy_key(_STREAM))
-
-    def xautoclaim(name, *_a, **_kw):
-        if name == _STREAM:
-            return b"0-0", [(b"5-0", {b"payload": b"x"})], []
-        return b"0-0", [], []
-
-    redis_mock.xautoclaim.side_effect = xautoclaim
-    redis_mock.xreadgroup.side_effect = _Abort()
-    c = Consumer(redis_mock, _STREAM, _GROUP, lambda f: None, service_name=_SERVICE_NAME)
-
-    with pytest.raises(_Abort):
-        c.start()
-
-    redis_mock.xack.assert_called_once_with(_STREAM, _GROUP, b"5-0")
-
-
-def test_pause_holds_each_key_s_messages_with_a_claim_on_that_key(monkeypatch):
-    _defang_sleep(monkeypatch)
-    r = _redis_with_pel()
-    r.xreadgroup.return_value = [
-        (_STREAM.encode(), [(b"1-0", {b"payload": b"A"})]),
-        (_KEY.encode(), [(b"2-0", {b"payload": b"B"})]),
-    ]
-    c = _dl_consumer(_handler_raising(A=[_OUTAGE]), r)
-
-    c._consume_once()
-
-    claims = [(call.args[0], call.kwargs["message_ids"]) for call in r.xclaim.call_args_list]
-    assert claims == [(_STREAM, [b"1-0"]), (_KEY, [b"2-0"])]
+    assert [call.args[0] for call in redis_mock.xinfo_groups.call_args_list] == [_KEY]
 
 
 # --- error classes and dead letters -----------------------------------------
@@ -819,11 +721,11 @@ def test_dead_letter_carries_the_message_tenant_and_ids_as_text(monkeypatch):
 
 
 def test_dead_letters_of_two_keys_with_one_id_name_their_key(monkeypatch):
-    """The legacy and the prefixed key number their entries independently, so
-    each dead letter names its key and is its own event."""
+    """The unprefixed and the prefixed key of a stream number their entries
+    independently, so each dead letter names its key and is its own event."""
     _defang_sleep(monkeypatch)
     written = {}
-    for read_from in (_KEY, legacy_key(_STREAM)):
+    for read_from in (_KEY, _STREAM):
         r = MagicMock()
         r.xpending_range.return_value = [{"times_delivered": 1}]
         _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(read_from, b"7-1", {b"payload": b"{}"})
@@ -832,7 +734,7 @@ def test_dead_letters_of_two_keys_with_one_id_name_their_key(monkeypatch):
         payload = json.loads(fields["payload"])
         assert payload["original_key"] == read_from
         assert payload["original_message_id"] == "7-1"
-    assert written[_KEY]["event_id"] != written[legacy_key(_STREAM)]["event_id"]
+    assert written[_KEY]["event_id"] != written[_STREAM]["event_id"]
 
 
 def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
@@ -1188,102 +1090,13 @@ def test_dispatch_acks_empty_entry_without_handler(msg_id, fields):
     r.xack.assert_called_once_with(_KEY, _GROUP, msg_id)
 
 
-# --- the unprefixed key going away ------------------------------------------
-
-_LEGACY_NOGROUP = (f"NOGROUP No such key '{_STREAM}' or consumer group '{_GROUP}' "
-                   "in XREADGROUP with GROUP option")
+# --- losing the group ------------------------------------------------------
 
 
-class _Server:
-    """XINFO GROUPS as a server answers it: the keys in `held` hold the group,
-    the keys in `refused` answer NOPERM, every other key does not exist. A test
-    changes the sets while the consumer runs."""
-
-    def __init__(self, held, refused=()):
-        self.held, self.refused = set(held), set(refused)
-
-    def xinfo_groups(self, name):
-        if name in self.refused:
-            raise redis_exceptions.NoPermissionError("No permissions to access a key")
-        if name in self.held:
-            return [{"name": _GROUP.encode()}]
-        raise redis_exceptions.ResponseError("ERR no such key")
-
-
-def test_consumer_starts_without_a_legacy_key_its_login_may_not_read(monkeypatch):
-    redis_mock = MagicMock()
-    redis_mock.xinfo_groups.side_effect = _Server(held={_KEY}, refused={_STREAM}).xinfo_groups
-    c = _idle_consumer(redis_mock)
-
-    _run_until_read(redis_mock, c, monkeypatch)
-
-    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
-
-
-def test_consumer_stops_reading_the_legacy_key_once_it_is_deleted(monkeypatch):
-    """The release that stops reading the unprefixed key deletes it once it is
-    drained: the read that answers NOGROUP for it ends only that key."""
+def test_consumer_stops_when_the_prefixed_key_loses_its_group(monkeypatch):
     _fake_clock(monkeypatch)
     redis_mock = MagicMock()
-    server = _Server(held={_KEY, _STREAM})
-    redis_mock.xinfo_groups.side_effect = server.xinfo_groups
-    redis_mock.xautoclaim.return_value = (b"0-0", [], [])
-    reads = []
-
-    def xreadgroup(group, name, streams, **kw):
-        reads.append(dict(streams))
-        if len(reads) == 1:
-            server.held.discard(_STREAM)
-            raise redis_exceptions.ResponseError(_LEGACY_NOGROUP)
-        raise _Abort()
-
-    redis_mock.xreadgroup.side_effect = xreadgroup
-    c = _idle_consumer(redis_mock)
-
-    with pytest.raises(_Abort):
-        c.start()
-
-    assert reads == [{_KEY: ">", _STREAM: ">"}, {_KEY: ">"}]
-
-
-def test_consumer_stops_reading_the_legacy_key_once_its_login_is_refused(monkeypatch):
-    """A rule that stops reaching the unprefixed key while the consumer runs
-    refuses its claim sweep; the consumer goes on with the prefixed key instead
-    of retrying the refused sweep forever."""
-    _fake_clock(monkeypatch)
-    redis_mock = MagicMock()
-    server = _Server(held={_KEY, _STREAM})
-    redis_mock.xinfo_groups.side_effect = server.xinfo_groups
-
-    refusals = []
-
-    def xautoclaim(name, *a, **kw):
-        if name == _STREAM:
-            refusals.append(name)
-            if len(refusals) > 3:
-                raise _Stalled("the consumer keeps retrying the refused sweep and never reads")
-            server.refused.add(_STREAM)
-            raise redis_exceptions.NoPermissionError("No permissions to access a key")
-        return b"0-0", [], []
-
-    redis_mock.xautoclaim.side_effect = xautoclaim
-    redis_mock.xreadgroup.side_effect = _Abort()
-    c = _idle_consumer(redis_mock)
-
-    with pytest.raises(_Abort):
-        c.start()
-
-    assert redis_mock.xreadgroup.call_args.args[2] == {_KEY: ">"}
-
-
-class _Stalled(BaseException):
-    """Ends a consumer loop that would otherwise retry forever."""
-
-
-def test_consumer_still_stops_when_the_prefixed_key_loses_its_group(monkeypatch):
-    _fake_clock(monkeypatch)
-    redis_mock = MagicMock()
-    redis_mock.xinfo_groups.side_effect = _Server(held={_KEY, _STREAM}).xinfo_groups
+    _holding(redis_mock, _GROUP, _KEY)
     redis_mock.xautoclaim.return_value = (b"0-0", [], [])
     redis_mock.xreadgroup.side_effect = redis_exceptions.ResponseError(
         f"NOGROUP No such key '{_KEY}' or consumer group '{_GROUP}' in XREADGROUP with GROUP option")

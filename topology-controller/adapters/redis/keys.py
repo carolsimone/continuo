@@ -1,9 +1,7 @@
 """Redis keys of the contract streams, and the NOMKSTREAM append every producer uses.
 
 Every stream the system reads or writes lives under streams_contract.KEY_PREFIX.
-A consumer reads the unprefixed key of a stream beside its prefixed key while
-streams_contract.LEGACY_KEYS is true and the unprefixed key holds its group. No
-process creates a stream or a group: the streams-init deploy step does.
+No process creates a stream or a group: the streams-init deploy step does.
 """
 
 from streams_contract import KEY_PREFIX
@@ -17,11 +15,6 @@ class MissingStreamError(RuntimeError):
 def key(name: str) -> str:
     """The Redis key of the contract stream name: KEY_PREFIX followed by it."""
     return KEY_PREFIX + name
-
-
-def legacy_key(name: str) -> str:
-    """The unprefixed Redis key of the contract stream name."""
-    return name
 
 
 def xadd_existing(client, name: str, fields: dict) -> None:

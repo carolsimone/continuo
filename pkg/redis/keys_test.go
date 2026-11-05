@@ -12,7 +12,3 @@ func TestKey_PrefixesTheContractName(t *testing.T) {
 	assert.Equal(t, "continuo:task.dispatch:v1", redis.Key(streams.TaskDispatchV1))
 	assert.Equal(t, streams.KeyPrefix+streams.ConsumerDeadLetterV1, redis.Key(streams.ConsumerDeadLetterV1))
 }
-
-func TestLegacyKey_IsTheContractName(t *testing.T) {
-	assert.Equal(t, streams.TaskDispatchV1, redis.LegacyKey(streams.TaskDispatchV1))
-}
