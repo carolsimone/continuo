@@ -7,13 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
 func testServer(reg *liveness.Registry) *Server {
-	return &Server{registry: reg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return NewServer(reg, "0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func probe(t *testing.T, srv *Server, path string) int {
@@ -21,6 +23,37 @@ func probe(t *testing.T, srv *Server, path string) int {
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec.Code
+}
+
+// TestHealthRoutesAnswerBeforeTheAPIIsServed: the server answers its probes while
+// the process waits for its dependencies, and the API appears once ServeAPI has
+// run. /livez must answer here, or the liveness probe restarts a pod that is only
+// waiting for Postgres.
+func TestHealthRoutesAnswerBeforeTheAPIIsServed(t *testing.T) {
+	reg := liveness.NewRegistry()
+	reg.AddStartupGate()
+	srv := testServer(reg)
+
+	if code := probe(t, srv, "/livez"); code != http.StatusOK {
+		t.Fatalf("/livez during the wait: expected 200, got %d", code)
+	}
+	if code := probe(t, srv, "/healthz"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz during the wait: expected 503, got %d", code)
+	}
+	submit := func() int {
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/releases", strings.NewReader("not json")))
+		return rec.Code
+	}
+	if code := submit(); code != http.StatusNotFound {
+		t.Fatalf("POST /releases before ServeAPI: expected 404, got %d", code)
+	}
+
+	deps, _ := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	srv.ServeAPI(deps)
+	if code := submit(); code != http.StatusBadRequest {
+		t.Fatalf("POST /releases of a bad body after ServeAPI: expected 400, got %d", code)
+	}
 }
 
 // TestHealthzAndLivezHealthy: with a live worker and fresh heartbeat, both

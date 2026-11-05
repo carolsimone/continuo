@@ -78,7 +78,8 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 	failing := beginFailsUoW{&fakeUoW{releases: releases, outbox: &fakeOutboxRepo{}}}
 	deps.NewUoW = func() uow.UnitOfWork { return failing }
 	var logged bytes.Buffer
-	srv := NewServer(deps, liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(&logged, nil)))
+	srv := NewServer(liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(&logged, nil)))
+	srv.ServeAPI(deps)
 
 	rec := postCandidate(srv, validCandidateInput())
 

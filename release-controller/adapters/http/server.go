@@ -17,40 +17,49 @@ type Server struct {
 	deps     *handlers.Deps
 	registry *liveness.Registry
 	port     string
+	mux      *http.ServeMux
 	srv      *http.Server
 	log      *slog.Logger
 }
 
-// NewServer creates a new Server. Call Start to begin listening. Health is
-// backed by registry across two paths with different semantics: /healthz
-// (readiness) reflects workers + heartbeats + dependency probes, /livez
-// (liveness) reflects workers + heartbeats ONLY. Deploy config points the
-// Kubernetes readinessProbe at /healthz and the livenessProbe at /livez (see
+// NewServer creates a Server that serves only its health routes. Call Start to
+// begin listening and ServeAPI to add the API once its dependencies exist, so
+// the process answers its probes while it waits for them. Health is backed by
+// registry across two paths with different semantics: /healthz (readiness)
+// reflects workers + heartbeats + dependency probes, /livez (liveness) reflects
+// workers + heartbeats ONLY. Deploy config points the Kubernetes readinessProbe
+// at /healthz and the livenessProbe at /livez (see
 // deploy/continuo/values.yaml), so a dependency outage pulls the pod from
 // Service endpoints without restarting it, while a dead/wedged consumer both
 // fails readiness AND restarts the pod.
-func NewServer(deps *handlers.Deps, registry *liveness.Registry, port string, log *slog.Logger) *Server {
-	return &Server{deps: deps, registry: registry, port: port, log: log}
+func NewServer(registry *liveness.Registry, port string, log *slog.Logger) *Server {
+	s := &Server{registry: registry, port: port, mux: http.NewServeMux(), log: log}
+	s.mux.HandleFunc("GET /healthz", liveness.Handler("readiness", s.registry.Check, s.log))
+	s.mux.HandleFunc("GET /livez", liveness.Handler("liveness", s.registry.LivenessCheck, s.log))
+	return s
 }
 
-// Routes registers all HTTP routes and returns the handler tree.
-func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", liveness.Handler("readiness", s.registry.Check, s.log))
-	mux.HandleFunc("GET /livez", liveness.Handler("liveness", s.registry.LivenessCheck, s.log))
-	mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
-	mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
-	mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
-	mux.HandleFunc("GET /releases", s.handleListReleases)
-	mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
-	mux.HandleFunc("POST /verification-runs", s.handleReceiveVerification)
-	mux.HandleFunc("GET /verification-runs/{id}", s.handleGetVerificationRun)
-	mux.HandleFunc("GET /verification-runs", s.handleListVerificationRuns)
-	mux.HandleFunc("GET /pipeline", s.handleGetPipeline)
-	return mux
+// ServeAPI adds the API routes, served from deps. It is safe to call while the
+// server is listening: until it returns an API path answers 404, and the startup
+// gate keeps the pod out of its Service for that time.
+func (s *Server) ServeAPI(deps *handlers.Deps) {
+	s.deps = deps
+	s.mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
+	s.mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
+	s.mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
+	s.mux.HandleFunc("GET /releases", s.handleListReleases)
+	s.mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
+	s.mux.HandleFunc("POST /verification-runs", s.handleReceiveVerification)
+	s.mux.HandleFunc("GET /verification-runs/{id}", s.handleGetVerificationRun)
+	s.mux.HandleFunc("GET /verification-runs", s.handleListVerificationRuns)
+	s.mux.HandleFunc("GET /pipeline", s.handleGetPipeline)
 }
 
-// Start registers routes, begins accepting connections, and blocks until ctx is
+// Routes returns the handler tree: the health routes, plus the API routes once
+// ServeAPI has added them.
+func (s *Server) Routes() http.Handler { return s.mux }
+
+// Start begins accepting connections and blocks until ctx is
 // cancelled, at which point it performs a graceful 5-second shutdown.
 func (s *Server) Start(ctx context.Context) error {
 	s.srv = &http.Server{Addr: ":" + s.port, Handler: s.Routes(), ReadHeaderTimeout: 5 * time.Second}

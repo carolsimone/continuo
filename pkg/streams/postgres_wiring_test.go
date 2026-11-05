@@ -19,6 +19,12 @@ const pkgDBImportPath = "github.com/carolsimone/continuo/pkg/db"
 // holds its restart back. Every service's main.go is discovered by glob, so a
 // new service is covered the day it lands; a one-shot tool under cmd/ is not a
 // service and may use Open, since failing at once is what its operator wants.
+//
+// It also fails when main.go reaches Connect before AddStartupGate. The wait
+// lasts up to five minutes, and a liveness probe restarts a pod that has not
+// answered for about 35 seconds, so the health server and its startup gate come
+// up first: /livez answers throughout and readiness stays false until startup
+// ends.
 func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
@@ -40,6 +46,7 @@ func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 		if name == "" {
 			continue
 		}
+		var gate, connect token.Pos
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -49,6 +56,9 @@ func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 			if !ok {
 				return true
 			}
+			if sel.Sel.Name == "AddStartupGate" && !gate.IsValid() {
+				gate = call.Pos()
+			}
 			pkg, ok := sel.X.(*ast.Ident)
 			if !ok || pkg.Name != name {
 				return true
@@ -57,10 +67,14 @@ func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 			case "Open":
 				t.Errorf("%s: a service must open Postgres with pkg/db.Connect, which waits through a refused connection, not pkg/db.Open", fset.Position(call.Pos()))
 			case "Connect":
+				connect = call.Pos()
 				connecting++
 			}
 			return true
 		})
+		if connect.IsValid() && (!gate.IsValid() || gate > connect) {
+			t.Errorf("%s: start the health server and its startup gate (AddStartupGate) before pkg/db.Connect, or the liveness probe restarts the pod during the wait", fset.Position(connect))
+		}
 	}
 	if connecting == 0 {
 		t.Fatal("no service main.go calls pkg/db.Connect, so this guard checked nothing")
