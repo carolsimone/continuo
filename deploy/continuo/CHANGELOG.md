@@ -12,6 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Services no longer crash on each deploy while Postgres admits them.** TL;DR: a new pod retries Postgres at startup instead of exiting, so a deploy restarts fewer containers and `run-controller` is back sooner.
+  - A new pod's first connections to Postgres are refused for a second or two, until the NetworkPolicy in front of Postgres admits its IP. Services used to exit on that refusal, and Kubernetes could then hold the restart back for 10 seconds.
+  - They now retry for up to 5 minutes, as they do for Redis. A wrong password or an unknown database still fails at once.
+  - No values change is needed to upgrade.
+
 ## [0.20.0] - 2026-11-05
 
 **TL;DR**

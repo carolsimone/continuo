@@ -106,7 +106,11 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(metricsServer.Shutdown)
 
 	// Postgres connection.
-	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
+	db, err := pkgdb.Connect(ctx, cfg.Postgres, dbPool, pkgdb.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for Postgres")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)

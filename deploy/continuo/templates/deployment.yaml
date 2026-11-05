@@ -378,8 +378,8 @@ spec:
           # This pod rolls with Recreate, so no pod serves its gRPC port until this
           # one is Ready and every read of a run fails meanwhile. The startup probe
           # checks readiness every second, so the pod turns Ready as soon as it can
-          # serve. Its 6 minutes outlast the process's own 5-minute wait for Redis:
-          # running out of failures restarts the container.
+          # serve. Its 6 minutes outlast each of the process's own 5-minute waits, for
+          # Postgres and for Redis: running out of failures restarts the container.
           startupProbe:
             httpGet:
               path: {{ default (default "/health" $svc.probePath) $svc.readinessPath }}
