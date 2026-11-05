@@ -20,7 +20,8 @@ const POLL_INTERVAL_MS = 5000;
 // run end, a status still in flight is dropped, and once the rows the run ended
 // with have landed, so is everything else. tasksRead says the shown run's tasks
 // were read at least once, which is what tells a run with no tasks from a run
-// whose tasks are not known yet.
+// whose tasks are not known yet. When the shown run changes, its predecessor's
+// rows are emptied at once, so they never render under the new run's status.
 export function useRunRows({
   lastRunId,
   selectedRunId,
@@ -44,6 +45,7 @@ export function useRunRows({
   const [readFailed, setReadFailed] = useState(false);
   const onSchedulerRef = useRef(onScheduler);
   onSchedulerRef.current = onScheduler;
+  const heldRunId = useRef<string | null>(null);
 
   // Empties the rows at once, so a newly chosen run never renders over the
   // previous run's tasks while its own are read.
@@ -58,6 +60,8 @@ export function useRunRows({
     setReadFailed(false);
     const shownRunId = selectedRunId ?? lastRunId;
     if (!shownRunId) return;
+    if (heldRunId.current !== null && heldRunId.current !== shownRunId) clearRows();
+    heldRunId.current = shownRunId;
     if (mode === 'latest') return;
     // Set on cleanup and once every read the run needs has landed.
     let finished = false;
@@ -144,7 +148,7 @@ export function useRunRows({
     void read();
 
     return finish;
-  }, [lastRunId, selectedRunId, mode]);
+  }, [lastRunId, selectedRunId, mode, clearRows]);
 
   return { tasks, attempts, tasksRead, readFailed, clearRows };
 }

@@ -5,11 +5,11 @@ import PageHeader from './PageHeader';
 import { settlesRequest, useActionRequestId } from './request-id';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
-import { taskPillClass, taskStatusTitle } from './detail-page-helpers';
+import { isTerminalStatus, taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
-import { type NodeType, NODE_TYPES_SUPPORTING_FULL_REFRESH } from '../server/generated/vocabulary.gen';
+import { type NodeType, type RunStatus, NODE_TYPES_SUPPORTING_FULL_REFRESH } from '../server/generated/vocabulary.gen';
 import { isNodeOperation, type NodeOperation } from '../server/shared/operation';
 
 const PYTHON_CSV: NodeType = 'python-csv';
@@ -88,6 +88,8 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
   );
 }
 
+const HISTORY_POLL_INTERVAL_MS = 5000;
+
 export default function NodeDetailPage() {
   const { fqn } = useParams<{ fqn: string }>();
   const navigate = useNavigate();
@@ -139,10 +141,12 @@ export default function NodeDetailPage() {
   // of the node, so its history is queried on the run dimension.
   const historyOperation = operation === 'full_refresh' ? 'run' : operation;
 
-  const fetchRuns = useCallback(() => {
+  // A poll leaves what the page holds in place until its answer lands, and when
+  // the read fails, so the next poll can try again.
+  const fetchRuns = useCallback((poll = false) => {
     if (!service || !schema || !table) return;
     const myGen = ++genRef.current;
-    setRunsKnown(false);
+    if (!poll) setRunsKnown(false);
     fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
@@ -151,13 +155,21 @@ export default function NodeDetailPage() {
         setRunsKnown(Array.isArray(data.tasks));
       })
       .catch(() => {
-        if (myGen !== genRef.current) return;
+        if (poll || myGen !== genRef.current) return;
         setRuns([]);
         setRunsKnown(false);
       });
   }, [service, schema, table, historyOperation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
+
+  // The history is read again every 5 s while a row has not ended.
+  const historyInFlight = runs.some(r => !isTerminalStatus(r.task_status as RunStatus));
+  useEffect(() => {
+    if (!historyInFlight) return;
+    const timer = window.setInterval(() => fetchRuns(true), HISTORY_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [historyInFlight, fetchRuns]);
 
   useEffect(() => {
     if (!service || !schema || !table) return;

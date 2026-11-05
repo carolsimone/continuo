@@ -18,6 +18,12 @@ shipped in those.
   - A new pod's first connections to Postgres are refused for a second or two, until the NetworkPolicy in front of Postgres admits its IP. Services used to exit on that refusal, and Kubernetes could then hold the restart back for 10 seconds.
   - They now retry for up to 5 minutes, as they do for Redis. A wrong password or an unknown database still fails at once.
   - No values change is needed to upgrade.
+- **The assistant no longer fails on the first question after a quiet spell.** TL;DR: "turn exceeded token budget" no longer ends a turn whose prompt alone is over `CHAT_MAX_TURN_TOKENS`.
+  - The first call of a turn writes the whole prompt to the prompt cache when the cache is cold. That write no longer counts toward the budget. Later calls' cache writes, such as a large tool result, still count.
+  - No values change is needed to upgrade.
+- **A schedule's page shows a new run without a reload.** TL;DR: after a trigger or rerun, or a run started anywhere else, the page moves to the new run within 5 seconds.
+  - A past run you chose stays on screen. Past runs updates when a run starts or ends, and a node's history updates while a row is still running.
+  - No values change is needed to upgrade.
 
 ### Changed
 

@@ -55,10 +55,10 @@ function ScheduleDetail({ name, mode, requestId }: {
   const location = useLocation();
 
   const {
-    lastRunId, scheduler, setScheduler, liveRunGraph, readFailed: lastRunReadFailed,
+    lastRunId, scheduler, setScheduler, liveRunGraph, readFailed: lastRunReadFailed, refreshLastRun, pastRunsVersion,
   } = useLastRun(name, location.state);
   const { graph, graphState, promotionSeq } = useScheduleGraph(name, mode);
-  const { runs, runsPage, setRunsPage, runsCount, readFailed: runsReadFailed } = useScheduleRuns(name);
+  const { runs, runsPage, setRunsPage, runsCount, readFailed: runsReadFailed } = useScheduleRuns(name, pastRunsVersion);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The selected run's summary, kept so the header still describes it after
   // paging away from the page it was chosen on.
@@ -69,7 +69,7 @@ function ScheduleDetail({ name, mode, requestId }: {
     lastRunId, selectedRunId, mode, onScheduler: setScheduler,
   });
   const { runGraph, readFailed: runGraphReadFailed } = useSelectedRunGraph(selectedRunId);
-  const trigger = useTriggerRun(name, lastRunId, requestId);
+  const trigger = useTriggerRun(name, lastRunId, requestId, refreshLastRun);
   // Any read of this page is failing and being retried.
   const readFailed = lastRunReadFailed || graphState === 'error' || runsReadFailed || rowsReadFailed || runGraphReadFailed;
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
@@ -89,7 +89,8 @@ function ScheduleDetail({ name, mode, requestId }: {
     setRerunModalOpen(false);
     setRerunFailedState('success');
     setTimeout(() => setRerunFailedState('idle'), 3000);
-  }, []);
+    void refreshLastRun();
+  }, [refreshLastRun]);
 
   // The shown run's rows are cleared at once, so the newly chosen run never
   // renders over the previous run's tasks while its own are read.

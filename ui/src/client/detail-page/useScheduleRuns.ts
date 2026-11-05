@@ -8,8 +8,9 @@ export const RUNS_PAGE_SIZE = 10;
 // One page of the schedule's past runs, newest first. `runsTotal` is the
 // schedule's full run count (null until the first page arrives, and while the
 // answer carries none); `runsCount` falls back to the rows read. A read that
-// fails keeps the page already shown and is made again until it lands.
-export function useScheduleRuns(name: string | undefined): {
+// fails keeps the page already shown and is made again until it lands. A new
+// refreshKey reads the page again.
+export function useScheduleRuns(name: string | undefined, refreshKey?: number): {
   runs: RunSummary[];
   runsTotal: number | null;
   runsPage: number;
@@ -27,6 +28,7 @@ export function useScheduleRuns(name: string | undefined): {
       setRuns(data.runs || []);
       setRunsTotal(typeof data.total_count === 'number' ? data.total_count : null);
     },
+    refreshKey,
   );
 
   return { runs, runsTotal, runsPage, setRunsPage, runsCount: runsTotal ?? runs.length, readFailed };
