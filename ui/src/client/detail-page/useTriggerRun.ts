@@ -6,11 +6,12 @@ import { settlesRequest, type ActionRequestId } from '../request-id';
 // press saw, sends the same request id, so the run the first press made is
 // returned rather than made twice. `lastRunObservation` is that last run (see
 // Observation in request-id.ts); the id is renewed once the server has given
-// its final answer.
+// its final answer. onStarted runs once the server has accepted the press.
 export function useTriggerRun(
   name: string | undefined,
   lastRunObservation: string | null | undefined,
   requestId: Pick<ActionRequestId, 'take' | 'renew'>,
+  onStarted?: () => void,
 ): {
   triggerState: 'idle' | 'loading' | 'success' | 'error';
   triggerError: string | null;
@@ -37,6 +38,7 @@ export function useTriggerRun(
       if (res.ok) {
         setTriggerState('success');
         setTimeout(() => setTriggerState('idle'), 3000);
+        onStarted?.();
       } else {
         const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
         setTriggerError(body.error ?? 'Request failed — please try again');
@@ -46,7 +48,7 @@ export function useTriggerRun(
       setTriggerError('Request failed — please try again');
       setTriggerState('error');
     }
-  }, [name, lastRunObservation, takeRequestId, renewRequestId]);
+  }, [name, lastRunObservation, takeRequestId, renewRequestId, onStarted]);
 
   return { triggerState, triggerError, trigger };
 }

@@ -42,7 +42,8 @@ type Config struct {
 	SystemPrompt string
 	// MaxIterations caps the tool→result loop per turn to prevent runaway agents.
 	MaxIterations int
-	// MaxTurnTokens caps the cumulative token spend across iterations in one turn.
+	// MaxTurnTokens caps the token spend of one turn, what its provider calls
+	// add beyond the prompt the turn starts from.
 	MaxTurnTokens int
 	// WindowTokens is the token budget passed to the sliding-window trimmer.
 	WindowTokens int
@@ -365,12 +366,17 @@ func (s *Session) driveTurn() {
 			return
 		}
 
-		// Spend is what the provider processed afresh: uncached input, tokens it
-		// wrote into its prompt cache, and output. Tokens served from cache were
-		// paid for by the iteration that wrote them and cost almost nothing to
-		// re-read, so the growing thread does not exhaust the budget on every
-		// later turn.
-		tokenSpend += result.Usage.InputTokens + result.Usage.CacheCreationInputTokens + result.Usage.OutputTokens
+		// Spend is what the turn added: uncached input, output and, after the
+		// first call, tokens written into the prompt cache. The first call's
+		// cache write is the prompt the turn starts from (tool catalog, system
+		// prompt and windowed thread), which is written whole when the cache is
+		// cold and may alone exceed the budget. A later call's cache write is
+		// what the turn appended, such as a tool result. Tokens served from
+		// cache cost almost nothing to re-read and are not spend.
+		tokenSpend += result.Usage.InputTokens + result.Usage.OutputTokens
+		if iter > 0 {
+			tokenSpend += result.Usage.CacheCreationInputTokens
+		}
 		s.deps.Logger.Info("provider turn",
 			"thread_id", s.threadID.String(),
 			"iteration", iter,

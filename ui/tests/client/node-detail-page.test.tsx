@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router';
@@ -1066,5 +1066,70 @@ describe('NodeDetailPage — request id', () => {
     await waitFor(() => expect(ids).toHaveLength(2));
     expect(ids[1]).toMatch(UUID);
     expect(ids[1]).not.toBe(ids[0]);
+  });
+});
+
+describe('NodeDetailPage — history of a run still in flight', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Answers every read with the history `rows` holds at that moment, and
+  // counts the history reads.
+  function serveHistory(rows: { current: ReturnType<typeof mkRun>[]; fail?: boolean }) {
+    let reads = 0;
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).includes('/runs?')) {
+        reads += 1;
+        if (rows.fail) return Promise.reject(new Error('no answer'));
+        return jsonResp({ tasks: rows.current });
+      }
+      return jsonResp({});
+    });
+    return () => reads;
+  }
+  const nextPoll = () => act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+
+  it('shows the status a queued row ends with, without a reload', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const rows = { current: [mkRun({ task_status: 'queued' })] };
+    serveHistory(rows);
+    renderPage();
+    expect(await screen.findByTitle('waiting for a slot')).toHaveTextContent('queued');
+
+    rows.current = [mkRun({ task_status: 'succeeded' })];
+    await nextPoll();
+
+    await waitFor(() => expect(screen.queryByTitle('waiting for a slot')).toBeNull());
+    expect(screen.getByText('succeeded')).toBeInTheDocument();
+  });
+
+  it('stops reading once every row has ended', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const rows = { current: [mkRun({ task_status: 'running' })] };
+    const reads = serveHistory(rows);
+    renderPage();
+    await screen.findByText('running');
+
+    rows.current = [mkRun({ task_status: 'succeeded' })];
+    await nextPoll();
+    await screen.findByText('succeeded');
+    const readsOnceEnded = reads();
+
+    await nextPoll();
+    await nextPoll();
+
+    expect(reads()).toBe(readsOnceEnded);
+  });
+
+  it('keeps the rows it holds when a poll fails', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const rows: { current: ReturnType<typeof mkRun>[]; fail?: boolean } = { current: [mkRun({ task_status: 'running' })] };
+    serveHistory(rows);
+    renderPage();
+    await screen.findByText('running');
+
+    rows.fail = true;
+    await nextPoll();
+
+    expect(screen.getByText('running')).toBeInTheDocument();
   });
 });

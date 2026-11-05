@@ -1831,3 +1831,225 @@ describe('DetailPage — arrival and teardown', () => {
     expect(ids.b[1]).toBe(ids.b[0]);
   });
 });
+
+describe('DetailPage — following the newest run', () => {
+  const NEW_RUN_ID = 'run-new';
+  const PAST_RUN_ID = 'run-past';
+  const taskRows = (table: string, status = 'succeeded') => ({
+    total_count: 1,
+    tasks: [{
+      task_id: `t-${table}`, service_name: 'svc1', schema_name: 'public', table_name: table,
+      job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
+    }],
+  });
+  const runOf = (id: string, status: string) => ({
+    run_id: id, schedule_name: SCHED, status,
+    created_at: '2026-09-01T10:00:00Z', started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+  });
+  const graphOf = (table: string) => ({
+    nodes: [{ node_id: `svc1.public.${table}`, node_type: 'dbt-model', schedule_name: SCHED }],
+    edges: [], run_promotion_seq: 7, latest_promotion_seq: 7,
+  });
+
+  // A schedule whose shown run, RUN_ID, has ended. `state.lastRunId` is what
+  // the schedule list names, `state.newRunStatus` the status of NEW_RUN_ID, and
+  // `state.pastRuns` what the Past runs list answers.
+  function schedule() {
+    const state = {
+      lastRunId: RUN_ID,
+      newRunStatus: 'running',
+      pastRuns: [runOf(RUN_ID, 'succeeded')] as unknown[],
+      listFails: false,
+      runsReads: 0,
+    };
+    const fetchMock = mockFetchSequence({
+      [`/api/runs/${NEW_RUN_ID}/graph`]: async () => graphOf('new_orders'),
+      [`/api/runs/${NEW_RUN_ID}/tasks`]: async () => taskRows('new_orders', state.newRunStatus),
+      [`/api/runs/${NEW_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+      [`/api/runs/${NEW_RUN_ID}`]: async () => runOf(NEW_RUN_ID, state.newRunStatus),
+      [`/api/runs/${PAST_RUN_ID}/graph`]: async () => graphOf('past_orders'),
+      [`/api/runs/${PAST_RUN_ID}/tasks`]: async () => taskRows('past_orders'),
+      [`/api/runs/${PAST_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+      [`/api/runs/${RUN_ID}/graph`]: async () => graphOf('old_orders'),
+      [`/api/runs/${RUN_ID}/tasks`]: async () => taskRows('old_orders'),
+      [`/api/runs/${RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+      [`/api/runs/${RUN_ID}`]: async () => runOf(RUN_ID, 'succeeded'),
+      [`/api/schedules/${SCHED}/graph`]: async () => graphOf('scheduled_orders'),
+      [`/api/schedules/${SCHED}/trigger`]: async () => {
+        state.lastRunId = NEW_RUN_ID;
+        return { run_id: NEW_RUN_ID };
+      },
+      [`/api/schedules/${SCHED}/runs`]: async () => {
+        state.runsReads += 1;
+        return { runs: state.pastRuns, total_count: state.pastRuns.length };
+      },
+      '/api/schedules': async () => {
+        if (state.listFails) throw new Error('no answer');
+        return { schedules: [{ schedule_name: SCHED, last_run_id: state.lastRunId }] };
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return state;
+  }
+  const useFakeInterval = () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const nextPoll = () => act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('shows the run its Trigger run started, without a reload', async () => {
+    schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    fireEvent.click(await screen.findByRole('button', { name: /^▶ Trigger run$/ }));
+
+    await screen.findByText('new_orders');
+    expect(screen.queryByText('old_orders')).toBeNull();
+  });
+
+  it('shows a run started elsewhere at its next poll', async () => {
+    useFakeInterval();
+    const state = schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+
+    await screen.findByText('new_orders');
+    expect(screen.queryByText('old_orders')).toBeNull();
+  });
+
+  it('drops the old run\'s rows as soon as it moves to a new run', async () => {
+    useFakeInterval();
+    const state = schedule();
+    const newTasks = deferred<unknown>();
+    const answer = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
+      String(input).includes(`/api/runs/${NEW_RUN_ID}/tasks`)
+        ? { ok: true, status: 200, json: async () => newTasks.promise } as Response
+        : answer(input)
+    )));
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+    await waitFor(() => expect(screen.queryByText('old_orders')).toBeNull());
+
+    newTasks.resolve(taskRows('new_orders', 'running'));
+    await screen.findByText('new_orders');
+  });
+
+  it('polls a run it followed until the run ends', async () => {
+    useFakeInterval();
+    const state = schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+    await waitFor(() => expect(screen.getByRole('button', { name: /Trigger run/ })).toBeDisabled());
+
+    state.newRunStatus = 'succeeded';
+    await nextPoll();
+    await nextPoll();
+    await waitFor(() => expect(screen.getByRole('button', { name: /Trigger run/ })).not.toBeDisabled());
+  });
+
+  it('adds the run to Past runs once it has ended', async () => {
+    useFakeInterval();
+    const state = schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+    await screen.findByRole('tab', { name: /past runs\s*1/i });
+
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+    await screen.findByText('new_orders');
+
+    state.newRunStatus = 'succeeded';
+    state.pastRuns = [runOf(NEW_RUN_ID, 'succeeded'), runOf(RUN_ID, 'succeeded')];
+    await nextPoll();
+
+    await screen.findByRole('tab', { name: /past runs\s*2/i });
+  });
+
+  it('keeps a chosen past run on screen while a new run starts', async () => {
+    useFakeInterval();
+    const state = schedule();
+    state.pastRuns = [runOf(PAST_RUN_ID, 'succeeded')];
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+    fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+    await waitFor(() => expect(container.querySelectorAll('.run-row').length).toBeGreaterThan(0));
+    fireEvent.click(container.querySelectorAll('.run-row')[0]);
+    fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+    await screen.findByText('past_orders');
+
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+    await flushReads();
+
+    expect(screen.getByText('past_orders')).toBeInTheDocument();
+    expect(screen.queryByText('new_orders')).toBeNull();
+  });
+
+  it('holds the shown run and says so while the schedule list cannot be read, then recovers', async () => {
+    useFakeInterval();
+    const state = schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    state.listFails = true;
+    await nextPoll();
+
+    await screen.findByText(/Can.t read the latest data/);
+    expect(screen.getByText('old_orders')).toBeInTheDocument();
+
+    state.listFails = false;
+    await nextPoll();
+    await waitFor(() => expect(screen.queryByText(/Can.t read the latest data/)).toBeNull());
+  });
+
+  it('stays on the new run when an older read of the schedule list answers late', async () => {
+    useFakeInterval();
+    const state = schedule();
+    const answer = globalThis.fetch;
+    const slowList = deferred<unknown>();
+    let listReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/schedules')) {
+        listReads += 1;
+        if (listReads === 1) return { ok: true, status: 200, json: async () => slowList.promise } as Response;
+      }
+      return answer(input);
+    }));
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    await nextPoll();
+    state.lastRunId = NEW_RUN_ID;
+    await nextPoll();
+    await screen.findByText('new_orders');
+
+    slowList.resolve({ schedules: [{ schedule_name: SCHED, last_run_id: RUN_ID }] });
+    await flushReads();
+
+    expect(screen.getByText('new_orders')).toBeInTheDocument();
+    expect(screen.queryByText('old_orders')).toBeNull();
+  });
+
+  it('keeps the shown run when the schedule list names no run', async () => {
+    useFakeInterval();
+    const state = schedule();
+    render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByText('old_orders');
+
+    state.lastRunId = null as unknown as string;
+    await nextPoll();
+    await flushReads();
+
+    expect(screen.getByText('old_orders')).toBeInTheDocument();
+  });
+});
