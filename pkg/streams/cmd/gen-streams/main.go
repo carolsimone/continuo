@@ -36,12 +36,7 @@ import (
 
 type Contract struct {
 	// KeyPrefix leads the name of every Redis key the system owns.
-	KeyPrefix string `yaml:"key_prefix"`
-	// LegacyKeys reports whether the unprefixed keys of the streams are kept:
-	// the services' rules reach them. When false, the streams-init step
-	// deletes each one once its consumer groups have finished with it, and the
-	// migration login's rule allows that.
-	LegacyKeys     bool            `yaml:"legacy_keys"`
+	KeyPrefix      string          `yaml:"key_prefix"`
 	Streams        []Stream        `yaml:"streams"`
 	RetiredStreams []RetiredStream `yaml:"retired_streams"`
 	// RedisAccess lists the Redis grants a service needs beyond the streams it
@@ -299,11 +294,6 @@ package streams
 // contract stream "<stream>" is KeyPrefix + "<stream>".
 const KeyPrefix = "{{ .KeyPrefix }}"
 
-// LegacyKeys reports whether the unprefixed keys of the streams are kept. When
-// false, the streams-init step deletes each one once its consumer groups have
-// finished with it.
-const LegacyKeys = {{ .LegacyKeys }}
-
 // Stream names.
 const (
 {{- range .Streams }}
@@ -352,12 +342,11 @@ var Retired = []string{
 	var buf strings.Builder
 	err = t.Execute(&buf, struct {
 		KeyPrefix    string
-		LegacyKeys   bool
 		Streams      []struct{ Const, Name, Description string }
 		Groups       []groupRow
 		StreamGroups []streamGroupsRow
 		Retired      []string
-	}{c.KeyPrefix, c.LegacyKeys, streamRows, groupRows, streamGroups, retired})
+	}{c.KeyPrefix, streamRows, groupRows, streamGroups, retired})
 	if err != nil {
 		return "", err
 	}

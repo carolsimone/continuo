@@ -51,11 +51,7 @@ const (
 	redisConsumerCommands = "+xreadgroup +xack +xautoclaim +xclaim +xpending +xinfo|consumers +xgroup|delconsumer"
 	// redisMigrationCommands are the commands of the migration login, after
 	// the key pattern ~<prefix>*.
-	redisMigrationCommands = "-@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists +type"
-	// redisUnprefixedDeleteCommands are what the migration login may also run
-	// while legacy_keys is off, to read the state of the unprefixed key of a
-	// stream and delete it.
-	redisUnprefixedDeleteCommands = "+xinfo|stream +del"
+	redisMigrationCommands = "-@all +ping +hello +client|setinfo +xgroup|create +xgroup|destroy +xinfo|groups +exists"
 )
 
 // serviceNameRe is the shape of a service name: lowercase words joined by
@@ -193,24 +189,13 @@ func redisLogins(c *Contract) ([]redisLogin, error) {
 }
 
 // migrationRule builds the rule of the streams-init login: every key under the
-// prefix, to create streams and groups there. While legacy_keys is off it also
-// reaches the unprefixed key of every live and retired stream, and may read a
-// stream's state and delete it, for the step to delete those keys.
+// prefix, to create streams and groups there.
 func migrationRule(c *Contract) string {
-	patterns := []string{"~" + c.KeyPrefix + "*"}
-	commands := redisMigrationCommands
-	if !c.LegacyKeys {
-		for _, n := range allStreamNames(c) {
-			patterns = append(patterns, "~"+n)
-		}
-		commands += " " + redisUnprefixedDeleteCommands
-	}
-	return strings.Join(patterns, " ") + " " + commands
+	return "~" + c.KeyPrefix + "* " + redisMigrationCommands
 }
 
-// redisRule builds the rule of one service: its key patterns (the prefixed
-// streams, then the unprefixed ones while legacy_keys holds), then the
-// commands those patterns need.
+// redisRule builds the rule of one service: its key patterns, then the commands
+// those patterns need.
 func redisRule(c *Contract, service string) string {
 	read := map[string]struct{}{}  // streams the service consumes
 	write := map[string]struct{}{} // streams the service produces and does not consume
@@ -262,20 +247,6 @@ func redisRule(c *Contract, service string) string {
 			add("~", c.KeyPrefix+"*")
 		}
 	}
-	if c.LegacyKeys {
-		if allStreams {
-			for _, n := range allStreamNames(c) {
-				add("~", n)
-			}
-		} else {
-			for _, n := range readNames {
-				add("~", n)
-			}
-			for _, n := range writeNames {
-				add("%W~", n)
-			}
-		}
-	}
 
 	commands := strings.Fields(redisBaseCommands)
 	if produces {
@@ -290,19 +261,6 @@ func redisRule(c *Contract, service string) string {
 		}
 	}
 	return strings.Join(append(patterns, dedupe(commands)...), " ")
-}
-
-// allStreamNames lists every live and retired stream, sorted.
-func allStreamNames(c *Contract) []string {
-	names := make([]string, 0, len(c.Streams)+len(c.RetiredStreams))
-	for _, s := range c.Streams {
-		names = append(names, s.Name)
-	}
-	for _, r := range c.RetiredStreams {
-		names = append(names, r.Name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func sortedKeys(m map[string]struct{}) []string {

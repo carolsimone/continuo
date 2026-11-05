@@ -5,8 +5,7 @@ The fence runs XINFO GROUPS on PERMISSION_PROBE_KEY. Every generated Redis rule
 allows that command, so a NOPERM answer can only mean the key lies outside the
 login's key patterns, and any other answer (the key's groups, "no such key",
 another error reply) means the login reaches it. The probe key lies outside
-every pattern of the generated rules, the ones under the continuo: prefix and
-the unprefixed stream names alike.
+every pattern of the generated rules, all of them under the continuo: prefix.
 """
 
 import logging

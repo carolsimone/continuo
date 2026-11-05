@@ -19,7 +19,7 @@ import (
 var shortStartup = StartupPolicy{Timeout: time.Second, InitialDelay: 100 * time.Millisecond, MaxDelay: 200 * time.Millisecond}
 
 // keysTestStream returns a contract name unique to the test and deletes its
-// key, and the unprefixed key named by the bare contract name, when the test
+// key, and the key of the bare contract name, when the test
 // ends.
 func keysTestStream(t *testing.T, rc *goredis.Client, label string) string {
 	t.Helper()
@@ -55,7 +55,7 @@ func TestConsumerNeverCreatesItsGroup(t *testing.T) {
 		t.Fatal("Start did not give up on a missing group within its startup policy")
 	}
 	assert.Equal(t, int64(0), rc.Exists(ctx, Key(stream)).Val(), "Start must not create the prefixed key")
-	assert.Equal(t, int64(0), rc.Exists(ctx, stream).Val(), "Start must not create the unprefixed key")
+	assert.Equal(t, int64(0), rc.Exists(ctx, stream).Val(), "Start must not create the bare-name key")
 }
 
 func TestConsumerWaitsForItsGroup(t *testing.T) {
@@ -90,7 +90,7 @@ func TestConsumerWaitsForItsGroup(t *testing.T) {
 	assert.NoError(t, <-done)
 }
 
-// The unprefixed key of a stream is never read, even when it holds the
+// The key of a stream's bare name is never read, even when it holds the
 // consumer's group: its entry stays undelivered and no consumer joins the group
 // there.
 func TestConsumerReadsOnlyThePrefixedKey(t *testing.T) {
@@ -129,8 +129,8 @@ func TestConsumerReadsOnlyThePrefixedKey(t *testing.T) {
 	groups, err := rc.XInfoGroups(ctx, stream).Result()
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
-	assert.Equal(t, "0-0", groups[0].LastDeliveredID, "nothing was delivered from the unprefixed key")
-	assert.Zero(t, groups[0].Consumers, "no consumer joined the group on the unprefixed key")
+	assert.Equal(t, "0-0", groups[0].LastDeliveredID, "nothing was delivered from the bare-name key")
+	assert.Zero(t, groups[0].Consumers, "no consumer joined the group on the bare-name key")
 	assert.NoError(t, c.Healthy(time.Minute))
 	cancel()
 	assert.NoError(t, <-done)
@@ -197,7 +197,7 @@ func TestConsumerDeadLettersToThePrefixedStream(t *testing.T) {
 		var lp events.ConsumerDeadLetter
 		payload, _ := e.Values["payload"].(string)
 		if json.Unmarshal([]byte(payload), &lp) == nil {
-			assert.NotEqual(t, stream, lp.OriginalStream, "no dead letter lands on the unprefixed stream")
+			assert.NotEqual(t, stream, lp.OriginalStream, "no dead letter lands on the bare-name stream")
 		}
 	}
 	cancel()
