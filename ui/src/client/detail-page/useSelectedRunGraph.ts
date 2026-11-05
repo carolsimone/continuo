@@ -1,33 +1,22 @@
 import { useEffect, useState } from 'react';
 import type { RunGraph } from '../types';
+import { useRetriedRead } from './useRetriedRead';
 
-// The graph a chosen past run ran on. It is null while that read is in
-// flight, when it failed, and when no run is chosen.
-export function useSelectedRunGraph(selectedRunId: string | null): RunGraph | null {
+// The graph a chosen past run ran on. It is null while that read is in flight
+// or failing, and when no run is chosen; a failed read is made again until it
+// lands.
+export function useSelectedRunGraph(selectedRunId: string | null): {
+  runGraph: RunGraph | null;
+  readFailed: boolean;
+} {
   const [runGraph, setRunGraph] = useState<RunGraph | null>(null);
 
-  useEffect(() => {
-    if (!selectedRunId) {
-      setRunGraph(null);
-      return;
-    }
+  useEffect(() => { setRunGraph(null); }, [selectedRunId]);
 
-    let cancelled = false;
-    setRunGraph(null);
+  const readFailed = useRetriedRead<RunGraph>(
+    selectedRunId ? `/api/runs/${selectedRunId}/graph` : null,
+    setRunGraph,
+  );
 
-    fetch(`/api/runs/${selectedRunId}/graph`)
-      .then((response) => response.json())
-      .then((data: RunGraph) => {
-        if (!cancelled) setRunGraph(data);
-      })
-      .catch(() => {
-        if (!cancelled) setRunGraph(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRunId]);
-
-  return runGraph;
+  return { runGraph, readFailed };
 }

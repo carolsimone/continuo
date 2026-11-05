@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchAllPages } from '../fetch-all-pages';
 import { isTerminalStatus, type DetailMode } from '../detail-page-helpers';
+import { readJson } from '../read-json';
 import type { Scheduler, Task, TaskAttempt } from '../types';
+
+const POLL_INTERVAL_MS = 5000;
 
 // The run the Run tab shows — a selected past run, else the latest — has
 // its tasks and every attempt of every task read from run-controller. A past run is
@@ -10,6 +13,14 @@ import type { Scheduler, Task, TaskAttempt } from '../types';
 // sees the run terminal may hold rows from before the run ended: once that
 // poll's reads have landed, the rows are read one last time. Each polled
 // status of the latest run goes to onScheduler. Latest mode reads no rows.
+//
+// A read that fails leaves the rows and the status as they were, sets
+// readFailed, and is made again every 5 s until one lands, whichever read it
+// was. A read can outlast the 5 s, so reads overlap: once a read has seen the
+// run end, a status still in flight is dropped, and once the rows the run ended
+// with have landed, so is everything else. tasksRead says the shown run's tasks
+// were read at least once, which is what tells a run with no tasks from a run
+// whose tasks are not known yet.
 export function useRunRows({
   lastRunId,
   selectedRunId,
@@ -20,9 +31,17 @@ export function useRunRows({
   selectedRunId: string | null;
   mode: DetailMode;
   onScheduler: (scheduler: Scheduler) => void;
-}): { tasks: Task[]; attempts: TaskAttempt[]; clearRows: () => void } {
+}): {
+  tasks: Task[];
+  attempts: TaskAttempt[];
+  tasksRead: boolean;
+  readFailed: boolean;
+  clearRows: () => void;
+} {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
+  const [tasksRead, setTasksRead] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   const onSchedulerRef = useRef(onScheduler);
   onSchedulerRef.current = onScheduler;
 
@@ -31,89 +50,101 @@ export function useRunRows({
   const clearRows = useCallback(() => {
     setTasks([]);
     setAttempts([]);
+    setTasksRead(false);
   }, []);
 
   useEffect(() => {
+    setTasksRead(false);
+    setReadFailed(false);
     const shownRunId = selectedRunId ?? lastRunId;
     if (!shownRunId) return;
     if (mode === 'latest') return;
-    let cancelled = false;
+    // Set on cleanup and once every read the run needs has landed.
+    let finished = false;
     let timer: number | undefined;
+    // A past run has ended; the latest run has once a read says so. After that
+    // only its rows are left to read.
+    let ended = selectedRunId !== null;
     const controller = new AbortController();
 
-    // Resolves once both reads have landed (or failed) and been applied.
-    const fetchRunRows = (): Promise<void> => {
+    const finish = () => {
+      finished = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+
+    // Resolves once both reads have settled, with whether both landed.
+    const fetchRunRows = (): Promise<boolean> => {
       const taskRead = fetchAllPages<Task>(`/api/runs/${shownRunId}/tasks`, 'tasks', {
         signal: controller.signal,
       })
         .then((all) => {
-          if (!cancelled) setTasks(all);
+          if (!finished) {
+            setTasks(all);
+            setTasksRead(true);
+          }
+          return true;
         })
-        .catch(() => {
-          if (!cancelled) setTasks([]);
-        });
+        .catch(() => false);
 
       const attemptRead = fetchAllPages<TaskAttempt>(`/api/runs/${shownRunId}/attempts`, 'attempts', {
         signal: controller.signal,
       })
         .then((all) => {
-          if (!cancelled) setAttempts(all);
+          if (!finished) setAttempts(all);
+          return true;
         })
-        .catch(() => {
-          if (!cancelled) setAttempts([]);
-        });
+        .catch(() => false);
 
-      return Promise.all([taskRead, attemptRead]).then(() => undefined);
+      return Promise.all([taskRead, attemptRead]).then(([tasksLanded, attemptsLanded]) => tasksLanded && attemptsLanded);
     };
 
-    if (selectedRunId) {
-      fetchRunRows();
-      return () => {
-        cancelled = true;
-        controller.abort();
-      };
-    }
-
-    const fetchDynamic = () => {
-      const schedulerRequest = fetch(`/api/runs/${shownRunId}`)
-        .then((response) => response.json())
-        .then((data: Scheduler) => {
-          if (!cancelled) onSchedulerRef.current(data);
+    // Resolves with the run's status, or null when the read failed.
+    const readStatus = (): Promise<Scheduler | null> =>
+      readJson<Scheduler>(`/api/runs/${shownRunId}`)
+        .then((data) => {
+          if (!finished && !ended) {
+            onSchedulerRef.current(data);
+            ended = isTerminalStatus(data.status);
+          }
           return data;
         })
-        .catch(() => {
-          return null;
-        });
+        .catch(() => null);
 
-      // Resolves with the run's status once its row reads have landed too.
-      return Promise.all([schedulerRequest, fetchRunRows()]).then(([nextScheduler]) => nextScheduler);
+    const keepReading = () => {
+      if (timer === undefined) timer = window.setInterval(read, POLL_INTERVAL_MS);
     };
 
-    fetchDynamic().then((freshScheduler) => {
-      if (cancelled) return;
-      if (freshScheduler && !isTerminalStatus(freshScheduler.status)) {
-        timer = window.setInterval(() => {
-          fetchDynamic().then((nextScheduler) => {
-            if (cancelled) return;
-            if (timer && nextScheduler && isTerminalStatus(nextScheduler.status)) {
-              window.clearInterval(timer);
-              timer = undefined;
-              // The run has ended: read the rows it ended with.
-              fetchRunRows();
-            }
-          });
-        }, 5000);
+    const read = async (): Promise<void> => {
+      if (ended) {
+        const rowsLanded = await fetchRunRows();
+        if (finished) return;
+        setReadFailed(!rowsLanded);
+        if (rowsLanded) finish();
+        else keepReading();
+        return;
       }
-    });
 
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (timer !== undefined) {
-        window.clearInterval(timer);
+      const wasPolling = timer !== undefined;
+      const [status, rowsLanded] = await Promise.all([readStatus(), fetchRunRows()]);
+      if (finished) return;
+      setReadFailed(status === null || !rowsLanded);
+      if (ended && wasPolling) {
+        // The run has ended: read the rows it ended with.
+        void read();
+        return;
       }
+      if (ended && rowsLanded) {
+        // The page arrived at a run that had already ended.
+        finish();
+        return;
+      }
+      keepReading();
     };
+    void read();
+
+    return finish;
   }, [lastRunId, selectedRunId, mode]);
 
-  return { tasks, attempts, clearRows };
+  return { tasks, attempts, tasksRead, readFailed, clearRows };
 }

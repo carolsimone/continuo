@@ -264,19 +264,21 @@ interface GraphCardStateArgs {
   runGraph: RunGraph | null;
   shouldRenderGraph: boolean;
   graphState: GraphState;
+  selectedRunGraphFailed?: boolean;
 }
 
-// What the graph card shows: a selected run waits for its own snapshot, any
-// other view draws the graph when it has nodes and otherwise reports how the
-// schedule graph's read went.
+// What the graph card shows: a selected run waits for its own snapshot, or
+// reports that it cannot be read; any other view draws the graph when it has
+// nodes and otherwise reports how the schedule graph's read went.
 export function graphCardState({
   selectedRunId,
   runGraph,
   shouldRenderGraph,
   graphState,
+  selectedRunGraphFailed = false,
 }: GraphCardStateArgs): GraphState {
   if (selectedRunId) {
-    if (runGraph === null) return 'loading';
+    if (runGraph === null) return selectedRunGraphFailed ? 'error' : 'loading';
     return shouldRenderGraph ? 'ready' : 'empty';
   }
   return shouldRenderGraph ? 'ready' : graphState;
@@ -286,8 +288,10 @@ interface RunTabStateArgs {
   lastRunId: string | null | undefined;
   runsCount: number;
   taskCount: number;
+  tasksRead: boolean;
   selectedRunId: string | null;
   runGraph: RunGraph | null;
+  readFailed: boolean;
 }
 
 // What the Run tab shows before it has a task set to summarise: a schedule
@@ -298,12 +302,17 @@ export function runTabState({
   lastRunId,
   runsCount,
   taskCount,
+  tasksRead,
   selectedRunId,
   runGraph,
-}: RunTabStateArgs): 'no-runs' | 'loading' | 'ready' {
+  readFailed,
+}: RunTabStateArgs): 'no-runs' | 'loading' | 'unavailable' | 'no-tasks' | 'ready' {
   if (lastRunId === null && runsCount === 0 && taskCount === 0) return 'no-runs';
   const unresolved = selectedRunId ? runGraph === null : lastRunId === undefined;
-  return unresolved || taskCount === 0 ? 'loading' : 'ready';
+  // Rows already held do not wait for a graph that cannot be read.
+  if (taskCount > 0 && (!unresolved || readFailed)) return 'ready';
+  if (!unresolved && tasksRead) return 'no-tasks';
+  return readFailed ? 'unavailable' : 'loading';
 }
 
 // The header's drift label for the live run. Only a stale run gets one:

@@ -32,7 +32,7 @@ describe('fetchAllPages', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
       `/api/x?limit=${PAGE_SIZE}&offset=0`,
-      expect.objectContaining({ signal: undefined })
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
 

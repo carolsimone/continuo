@@ -1,3 +1,5 @@
+import { readJson } from './read-json';
+
 export const PAGE_SIZE = 200;
 
 // Upper bound on pages walked in one call. The loop trusts a server-supplied
@@ -19,13 +21,8 @@ export async function fetchAllPages<T>(
     if (signal?.aborted) return out;
 
     const offset = pageIndex * PAGE_SIZE;
-    const response = await fetch(`${url}?limit=${PAGE_SIZE}&offset=${offset}`, { signal });
-    if (!response.ok) {
-      throw new Error(`${url} responded ${response.status}`);
-    }
-
-    const body = await response.json();
-    const rows: T[] = body[key] ?? [];
+    const body = await readJson<Record<string, unknown>>(`${url}?limit=${PAGE_SIZE}&offset=${offset}`, signal);
+    const rows = (body[key] ?? []) as T[];
     out.push(...rows);
 
     if (rows.length === 0) return out;
