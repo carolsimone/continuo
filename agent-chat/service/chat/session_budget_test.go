@@ -74,12 +74,35 @@ func TestSession_CacheReadsDoNotCountTowardBudget(t *testing.T) {
 	assert.Len(t, provider.calls, 2)
 }
 
-// Tokens written into the cache were processed once and count as spend.
-func TestSession_CacheCreationCountsTowardBudget(t *testing.T) {
+// The first call of a turn on a cold cache writes the prompt the turn starts
+// from (tool catalog, system prompt and windowed thread). That write is the
+// price of starting, not growth the turn caused, so a prompt larger than the
+// budget still lets the turn use its tool result and answer.
+func TestSession_FirstCallCacheWriteDoesNotExhaustBudget(t *testing.T) {
 	provider := &scriptedProvider{results: []*ports.TurnResult{
 		{
 			ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}}},
-			Usage:     ports.Usage{InputTokens: 10, OutputTokens: 10, CacheCreationInputTokens: 90},
+			Usage:     ports.Usage{InputTokens: 4, OutputTokens: 28, CacheCreationInputTokens: 31351},
+		},
+		{Text: "All good.", Usage: ports.Usage{InputTokens: 4, OutputTokens: 20, CacheReadInputTokens: 31351, CacheCreationInputTokens: 300}},
+	}}
+	exec := &fakeExecutor{}
+	s, sink := newBudgetSession(t, provider, exec, map[string]ports.ToolDef{"schedule_status": statusDef}, 30000)
+
+	s.Enqueue("how is daily?")
+	waitFor(t, sink, "final:All good.")
+
+	assert.NotContains(t, sink.snapshot(), "error:token_budget")
+	assert.Len(t, provider.calls, 2)
+}
+
+// The first call's uncached input and output still count: only its cache write
+// is the price of starting.
+func TestSession_FirstCallInputAndOutputCountTowardBudget(t *testing.T) {
+	provider := &scriptedProvider{results: []*ports.TurnResult{
+		{
+			ToolCalls: []ports.ToolCall{{ID: "c1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}}},
+			Usage:     ports.Usage{InputTokens: 60, OutputTokens: 50, CacheCreationInputTokens: 31351},
 		},
 		{Text: "never reached"},
 	}}
@@ -90,7 +113,26 @@ func TestSession_CacheCreationCountsTowardBudget(t *testing.T) {
 	waitFor(t, sink, "error:token_budget")
 
 	assert.Len(t, provider.calls, 1)
-	require.Len(t, exec.calls, 1)
+}
+
+// After the first call, a cache write is what the turn added to the thread,
+// such as a large tool result, and counts as spend: a turn cannot grow without
+// bound by writing to the cache.
+func TestSession_LaterCacheWritesCountTowardBudget(t *testing.T) {
+	statusCall := []ports.ToolCall{{ID: "c1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}}}
+	provider := &scriptedProvider{results: []*ports.TurnResult{
+		{ToolCalls: statusCall, Usage: ports.Usage{InputTokens: 5, OutputTokens: 5, CacheCreationInputTokens: 500}},
+		{ToolCalls: statusCall, Usage: ports.Usage{InputTokens: 5, OutputTokens: 5, CacheCreationInputTokens: 90}},
+		{Text: "never reached"},
+	}}
+	exec := &fakeExecutor{}
+	s, sink := newBudgetSession(t, provider, exec, map[string]ports.ToolDef{"schedule_status": statusDef}, 100)
+
+	s.Enqueue("how is daily?")
+	waitFor(t, sink, "error:token_budget")
+
+	assert.Len(t, provider.calls, 2)
+	require.Len(t, exec.calls, 2)
 }
 
 // A final text answer is delivered as final even when the iteration that

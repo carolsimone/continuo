@@ -12,6 +12,15 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The assistant no longer fails on the first question after a quiet spell.** TL;DR: "turn exceeded token budget" no longer ends a turn whose prompt alone is over `CHAT_MAX_TURN_TOKENS`.
+  - The first call of a turn writes the whole prompt to the prompt cache when the cache is cold. That write no longer counts toward the budget. Later calls' cache writes, such as a large tool result, still count.
+  - No values change is needed to upgrade.
+- **A schedule's page shows a new run without a reload.** TL;DR: after a trigger or rerun, or a run started anywhere else, the page moves to the new run within 5 seconds.
+  - A past run you chose stays on screen. Past runs updates when a run starts or ends, and a node's history updates while a row is still running.
+  - No values change is needed to upgrade.
+
 ### Changed
 
 - **`streams-init` no longer touches the old Redis keys.** TL;DR: upgrade through 0.20.x first; this release no longer checks for or deletes the old stream keys.
