@@ -32,7 +32,9 @@ type StreamAdmin interface {
 	// it holds and its last entry. exists is false when the key does not
 	// exist.
 	ReadUnprefixed(ctx context.Context, stream string) (k unprefixed.Key, exists bool, err error)
-	// DeleteUnprefixed deletes the unprefixed key of stream and reports whether
-	// it existed. It never touches the stream's prefixed key.
-	DeleteUnprefixed(ctx context.Context, stream string) (deleted bool, err error)
+	// DeleteUnprefixed deletes the unprefixed key of stream when it holds a
+	// Redis stream, and reports whether it deleted one. A key of any other type
+	// is left, and otherType names its Redis type. A missing key reports neither.
+	// It never touches the stream's prefixed key.
+	DeleteUnprefixed(ctx context.Context, stream string) (deleted bool, otherType string, err error)
 }

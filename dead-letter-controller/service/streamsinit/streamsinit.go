@@ -141,10 +141,12 @@ func refuseUnprefixedOnly(ctx context.Context, admin ports.StreamAdmin, names []
 // nothing: no consumer reads those entries, and in a pre-upgrade hook the
 // previous release still runs and reads the unprefixed keys, so a rejected
 // upgrade leaves Redis as it found it. Otherwise it deletes every unprefixed
-// key it read, and the unprefixed key of each retired stream whatever it
-// holds: nothing reads it. A key it cannot read or delete (a login whose rule
-// does not reach unprefixed keys answers NOPERM) is logged and left, and does
-// not fail the run. A cancelled ctx ends it with ctx's error.
+// key it read, and the unprefixed key of each retired stream whatever entries
+// and groups it holds: nothing reads it. A key that is not a Redis stream may
+// belong to another application on a shared Redis, so it is logged with its type
+// and left. A key it cannot read or delete (a login whose rule does not reach
+// unprefixed keys answers NOPERM) is logged and left, and does not fail the run.
+// A cancelled ctx ends it with ctx's error.
 func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []string, plan Plan, logger *slog.Logger) error {
 	const hint = "apply this release's rule of continuo_redis_migrate from deploy/redis-acl-rules.acl, or delete the key yourself"
 	var drained, kept []string
@@ -183,12 +185,14 @@ func deleteUnprefixedKeys(ctx context.Context, admin ports.StreamAdmin, names []
 // deleteUnprefixed deletes the unprefixed key of stream and logs what it did.
 // It returns only ctx's error: a key it cannot delete is logged and left.
 func deleteUnprefixed(ctx context.Context, admin ports.StreamAdmin, stream, hint string, logger *slog.Logger) error {
-	deleted, err := admin.DeleteUnprefixed(ctx, stream)
+	deleted, otherType, err := admin.DeleteUnprefixed(ctx, stream)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		return ctx.Err()
 	case err != nil:
 		logger.Warn("unprefixed key not deleted", "stream", stream, "error", err, "hint", hint)
+	case otherType != "":
+		logger.Warn("unprefixed key left, not a stream", "key", stream, "type", otherType)
 	case deleted:
 		logger.Info("unprefixed key deleted", "stream", stream)
 	}

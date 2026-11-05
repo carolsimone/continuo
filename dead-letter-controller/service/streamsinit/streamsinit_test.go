@@ -38,6 +38,9 @@ type fakeAdmin struct {
 	readErrs, deleteErrs map[string]error
 	// deleted is every unprefixed key DeleteUnprefixed deleted, in order.
 	deleted []string
+	// otherTypes is the Redis type of each stream's unprefixed key that is not
+	// a Redis stream.
+	otherTypes map[string]string
 }
 
 func newFakeAdmin() *fakeAdmin {
@@ -95,18 +98,21 @@ func (f *fakeAdmin) ReadUnprefixed(ctx context.Context, stream string) (unprefix
 	return k, ok, nil
 }
 
-func (f *fakeAdmin) DeleteUnprefixed(_ context.Context, stream string) (bool, error) {
+func (f *fakeAdmin) DeleteUnprefixed(_ context.Context, stream string) (bool, string, error) {
 	f.calls++
 	f.events = append(f.events, "delete "+stream)
 	if err := f.deleteErrs[stream]; err != nil {
-		return false, err
+		return false, "", err
+	}
+	if otherType, ok := f.otherTypes[stream]; ok {
+		return false, otherType, nil
 	}
 	if _, ok := f.unprefixed[stream]; !ok {
-		return false, nil
+		return false, "", nil
 	}
 	delete(f.unprefixed, stream)
 	f.deleted = append(f.deleted, stream)
-	return true, nil
+	return true, "", nil
 }
 
 // seen is every stream name the admin was asked about.
@@ -566,11 +572,31 @@ func TestRunDeletesTheUnprefixedKeyOfEveryRetiredStream(t *testing.T) {
 			t.Errorf("the unprefixed key of the retired stream %s was not deleted", retired)
 		}
 		if slices.Contains(admin.events, "read "+retired) {
-			t.Errorf("the retired stream %s was read: nothing consumes it, so it is deleted whatever it holds", retired)
+			t.Errorf("the retired stream %s was read: nothing consumes it, so no group holds its key back", retired)
 		}
 	}
 	if !slices.Equal(admin.deleted, []string{streams.Retired[0]}) {
 		t.Fatalf("deleted = %v", admin.deleted)
+	}
+}
+
+// A key that is not a Redis stream is not this release's to delete: the run
+// logs it with its type, leaves it and goes on to the next key.
+func TestRunLeavesAnUnprefixedKeyThatIsNotAStream(t *testing.T) {
+	admin := newFakeAdmin()
+	admin.otherTypes = map[string]string{streams.Retired[0]: "string"}
+	admin.unprefixed = map[string]unprefixed.Key{streams.Retired[1]: {}}
+	var out bytes.Buffer
+	if err := Run(context.Background(), admin, contractPlan(), slog.New(slog.NewJSONHandler(&out, nil))); err != nil {
+		t.Fatalf("Run = %v, want nil: a key that is not a stream does not fail the step", err)
+	}
+	if !slices.Equal(admin.deleted, []string{streams.Retired[1]}) {
+		t.Fatalf("deleted = %v, want only %s", admin.deleted, streams.Retired[1])
+	}
+	for _, want := range []string{`"unprefixed key left, not a stream"`, `"key":"` + streams.Retired[0] + `"`, `"type":"string"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the log lacks %s:\n%s", want, out.String())
+		}
 	}
 }
 

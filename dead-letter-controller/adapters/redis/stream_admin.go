@@ -16,6 +16,12 @@ import (
 // stream, and destroys at once.
 const placeholderGroup = "streams-init"
 
+// The answers of Redis's TYPE command for a missing key and for a stream.
+const (
+	redisTypeNone   = "none"
+	redisTypeStream = "stream"
+)
+
 // StreamAdmin creates streams and consumer groups in Redis, and deletes the
 // unprefixed keys of streams. It stores each stream under pkgredis.Key of its
 // contract name; the unprefixed key of a stream is unprefixedKey of it.
@@ -144,14 +150,27 @@ func (a *StreamAdmin) ReadUnprefixed(ctx context.Context, stream string) (unpref
 	return k, true, nil
 }
 
-// DeleteUnprefixed runs DEL on the unprefixed key of stream.
-func (a *StreamAdmin) DeleteUnprefixed(ctx context.Context, stream string) (bool, error) {
+// DeleteUnprefixed runs TYPE on the unprefixed key of stream, then DEL when TYPE
+// answers stream. TYPE answers none for a missing key, and any other answer is
+// returned as otherType with the key left in place.
+func (a *StreamAdmin) DeleteUnprefixed(ctx context.Context, stream string) (bool, string, error) {
 	key := unprefixedKey(stream)
-	n, err := a.rdb.Del(ctx, key).Result()
+	keyType, err := a.rdb.Type(ctx, key).Result()
 	if err != nil {
-		return false, fmt.Errorf("del %s: %w", key, err)
+		return false, "", fmt.Errorf("type %s: %w", key, err)
 	}
-	return n == 1, nil
+	switch keyType {
+	case redisTypeNone:
+		return false, "", nil
+	case redisTypeStream:
+		n, err := a.rdb.Del(ctx, key).Result()
+		if err != nil {
+			return false, "", fmt.Errorf("del %s: %w", key, err)
+		}
+		return n == 1, "", nil
+	default:
+		return false, keyType, nil
+	}
 }
 
 func isBusyGroup(err error) bool { return strings.HasPrefix(err.Error(), "BUSYGROUP") }

@@ -44,8 +44,7 @@ func idTimeOr(id string, fallback time.Time) time.Time {
 
 // unreadable is the stored form of a dead-letter stream entry that could not be
 // decoded: its raw fields, kept for inspection and never redriven. It is keyed
-// by the entry's dedup identity, so unreadable entries of the legacy and the
-// prefixed key of the dead-letter stream that share an ID are stored apart.
+// by the entry's dedup identity.
 func unreadable(ctx context.Context, source deadletter.Source, stream, group string, msg goredis.XMessage, cause error, now time.Time) deadletter.DeadLetter {
 	return deadletter.DeadLetter{
 		ID: uuid.New(), DedupKey: deadletter.UnreadableKey(stream, pkgredis.DedupMessageID(ctx, msg)), Source: source,

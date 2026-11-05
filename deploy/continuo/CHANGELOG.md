@@ -25,7 +25,7 @@ shipped in those.
   - A service no longer reads a stream under its old unprefixed name (`task.dispatch:v1`).
   - Before the services roll, `streams-init` deletes the old key of each stream once every consumer group of the release has read and acknowledged all of it, and the old key of every retired stream.
   - `streams-init` stops the deploy, naming the key and the group, while an old key still holds entries, and then deletes no old key: let 0.19.0 finish them and deploy again, or discard them with `DEL <key>`. It also stops it, before it creates anything, when Redis holds a stream under its old name and not under `continuo:`: that is an upgrade from 0.18.0 or earlier, which must go through 0.19.0 first. With the bundled Redis, `streams-init` is not a hook, so a stop shows as a failed Job and the rollout goes on.
-  - A key `streams-init` may not read or delete is logged and left.
+  - A key `streams-init` may not read or delete is logged and left, and so is a key with one of those names that is not a Redis stream.
   - dead-letter-controller's trim loop now deletes the `continuo:` key of a retired stream.
   - Redis rule changes: every service's rule drops the unprefixed stream names, and the rule of `continuo_redis_migrate` adds the unprefixed name of every stream, live and retired, with `+xinfo|stream` and `+del`. With your own Redis, apply the new rules before or with the upgrade: 0.19.0's services keep running under them. The bundled Redis restarts once, because its rules change.
   - No values change is needed to upgrade.
