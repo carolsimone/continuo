@@ -17,6 +17,23 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.20.0 · 2026-11-05 · `MINOR`
+
+**TL;DR**
+
+- Services now read only the `continuo:` Redis keys, and `streams-init` deletes the old ones. Upgrade from 0.19.0, not from an older release.
+- With your own Redis, apply the new Redis rules before or with the upgrade. The bundled Redis needs nothing and restarts once.
+- Upgrade through this release: the next one no longer checks or deletes the old keys.
+
+What else is new:
+
+- **The schedule page stays usable when reads of runs fail.** It keeps what it holds, shows a notice and retries every 5 seconds, instead of "Loading run…" or a blank page.
+- **run-controller answers sooner after a deploy,** so reads of runs fail for less time during an upgrade.
+- **A remediation pull request links to your ui.** "View in continuo UI" opens the Remediation tab of `auth.publicUrl`, and is left out when that is empty.
+- `llm.model` defaults to `claude-haiku-5-5`. An install that sets it keeps its value.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0200---2026-11-05) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.20.0)
+
 ## 0.19.0 · 2026-11-04 · `MINOR`
 
 **TL;DR**
