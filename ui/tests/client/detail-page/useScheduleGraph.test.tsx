@@ -29,7 +29,7 @@ describe('useScheduleGraph', () => {
     await advance(0);
     expect(run.result.current.graph).not.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith('/api/schedules/s/graph');
+    expect(fetchMock).toHaveBeenCalledWith('/api/schedules/s/graph', expect.anything());
     await advance(5000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     run.unmount();

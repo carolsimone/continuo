@@ -8,12 +8,13 @@ import {
   scheduleState,
 } from './scheduler-card-helpers';
 import { getDriftState, getDriftBadge } from './drift-helpers';
-import { ScheduleSummary, Task } from './types';
+import { RunGraph, ScheduleSummary, Task } from './types';
 import type { RunOperation } from '../server/shared/operation';
 import CancelDialog from './CancelDialog';
 import CronDialog from './CronDialog';
 import { useCurrentUser } from './auth/AuthContext';
 import { fetchAllPages } from './fetch-all-pages';
+import { readJson } from './read-json';
 import { settlesRequest, useActionRequestId } from './request-id';
 
 function formatTime(iso: string | null): string {
@@ -95,8 +96,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     }
     let cancelled = false;
     const fetch_ = () =>
-      fetch(`/api/runs/${schedule.last_run_id}/graph`)
-        .then(r => r.json())
+      readJson<RunGraph>(`/api/runs/${schedule.last_run_id}/graph`)
         .then(data => {
           if (cancelled) return;
           setDrift({

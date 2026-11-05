@@ -138,6 +138,35 @@ describe('DetailPage when reads fail', () => {
     expect(triggerButton()).toBeDisabled();
   });
 
+  it('says the run is unavailable within 10 s when the reads hang, and recovers on its own', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+    let hanging = true;
+    const healthy = vi.fn(async (input: RequestInfo | URL) => (
+      new Response(JSON.stringify(healthyBody(String(input).split('?')[0])), { status: 200 })
+    ));
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!hanging) return healthy(input);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    }));
+    const { container } = renderPage();
+    await advance(0);
+    expect(screen.getByText('Loading run…')).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+
+    await advance(10000);
+    expect(screen.getByText('Run unavailable')).toBeInTheDocument();
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+
+    hanging = false;
+    await advance(5000);
+    expect(screen.getByTestId('run-progress-pct')).toBeInTheDocument();
+    expect(statusPill(container)).toBe('running');
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
   it('does not say a schedule never ran when the schedule list cannot be read', async () => {
     let down = true;
     stubBackend(() => (down ? backendDown() : null));

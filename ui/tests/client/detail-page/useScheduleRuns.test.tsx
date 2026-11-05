@@ -20,7 +20,7 @@ describe('useScheduleRuns', () => {
     const fetchMock = stubRunsFetch(() => ({ runs: [run('r1')], total_count: 25 }));
     const { result } = renderHook(() => useScheduleRuns('s'));
     await waitFor(() => expect(result.current.runs).toHaveLength(1));
-    expect(fetchMock).toHaveBeenCalledWith(`/api/schedules/s/runs?limit=${RUNS_PAGE_SIZE}&offset=0`);
+    expect(fetchMock).toHaveBeenCalledWith(`/api/schedules/s/runs?limit=${RUNS_PAGE_SIZE}&offset=0`, expect.anything());
     expect(result.current.runsTotal).toBe(25);
     expect(result.current.runsCount).toBe(25);
   });
@@ -38,7 +38,7 @@ describe('useScheduleRuns', () => {
     const { result } = renderHook(() => useScheduleRuns('s'));
     await waitFor(() => expect(result.current.runs).toHaveLength(1));
     act(() => result.current.setRunsPage(1));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/schedules/s/runs?limit=${RUNS_PAGE_SIZE}&offset=${RUNS_PAGE_SIZE}`));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/schedules/s/runs?limit=${RUNS_PAGE_SIZE}&offset=${RUNS_PAGE_SIZE}`, expect.anything()));
     expect(result.current.runsPage).toBe(1);
   });
 
