@@ -18,7 +18,7 @@ describe('readJson', () => {
 
   // A fetch that answers only by rejecting when its request is aborted.
   const neverAnswers = () => vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-    init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
   }));
 
   it('aborts and rejects a read that has not answered after 10 s', async () => {
@@ -34,7 +34,7 @@ describe('readJson', () => {
 
       await vi.advanceTimersByTimeAsync(1);
       await read;
-      expect(settled.mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(settled.mock.calls[0][0]).toEqual(new Error('/api/runs/r1 did not answer within 10 s'));
       expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
@@ -45,8 +45,8 @@ describe('readJson', () => {
     vi.stubGlobal('fetch', neverAnswers());
     const controller = new AbortController();
     const read = readJson('/api/runs/r1', controller.signal);
-    controller.abort();
-    await expect(read).rejects.toThrow();
+    controller.abort(new Error('left the page'));
+    await expect(read).rejects.toThrow('left the page');
   });
 
   it('rejects a 2xx answer that is not JSON', async () => {
