@@ -39,9 +39,9 @@ func NewServer(registry *liveness.Registry, port string, log *slog.Logger) *Serv
 	return s
 }
 
-// ServeAPI adds the API routes, served from deps. It is safe to call while the
-// server is listening: until it returns an API path answers 404, and the startup
-// gate keeps the pod out of its Service for that time.
+// ServeAPI adds the API routes, served from deps. Call it once. It is safe to call
+// while the server is listening: until it returns an API path answers 404, and the
+// startup gate keeps the pod out of its Service for that time.
 func (s *Server) ServeAPI(deps *handlers.Deps) {
 	s.deps = deps
 	s.mux.HandleFunc("POST /releases", s.handleReceiveCandidate)

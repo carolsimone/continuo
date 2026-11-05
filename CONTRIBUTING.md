@@ -57,6 +57,30 @@ Run a service's tests inside its container, for example:
 docker exec topology-controller uv run pytest -v
 ```
 
+The Go tests run on the host. `make test-go` covers every service and `make test-go
+SERVICE=pkg` one of them. Both first run `make test-deps-up`, which starts Postgres,
+Neo4j and Redis, rebuilds the one-shot jobs that migrate them and create the Redis
+streams, and runs those jobs.
+
+To run them beside another worktree's stack, choose free host ports:
+
+```bash
+make test-go SERVICE=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
+  NEO4J_HOST_PORT=27687 NEO4J_HTTP_HOST_PORT=27474
+```
+
+Each worktree's compose project is named after its directory, so the stacks share
+nothing else. Never point tests at another worktree's database: a migration it does not
+know about fails its next Flyway validation.
+
+On macOS with colima, set `TESTCONTAINERS_RYUK_DISABLED=true`. Tests terminate the
+containers they start, even when they fail, but a run that is killed or times out leaves
+them running. This removes them, along with those of any test run still in progress:
+
+```bash
+docker ps -aq --filter label=org.testcontainers=true | xargs -r docker rm -f
+```
+
 For the end-to-end suite, see [tests/e2e/README.md](tests/e2e/README.md).
 
 ## Architecture conventions

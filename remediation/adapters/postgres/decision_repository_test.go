@@ -66,11 +66,8 @@ func newTestDB(t *testing.T) *sqlx.DB {
 		ContainerRequest: req,
 		Started:          true,
 	})
+	testcontainers.CleanupContainer(t, container)
 	require.NoError(t, err, "start postgres container")
-
-	t.Cleanup(func() {
-		_ = container.Terminate(context.Background())
-	})
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err, "get container host")

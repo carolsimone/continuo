@@ -155,9 +155,28 @@ MIGRATION_JOBS := migrations streams-init
 # (laptops, GitHub-hosted fork-PR runs) it is localhost.
 CI_HOST_IP ?= localhost
 
+# The host ports the data dependencies publish, which docker-compose.yml reads
+# under the same names. Set them to run a second stack beside one that holds the
+# defaults, such as another worktree's:
+#   make test-go SERVICE=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
+#     NEO4J_HOST_PORT=27687 NEO4J_HTTP_HOST_PORT=27474
+# A worktree's compose project is named after its directory, so the two stacks
+# share nothing else; COMPOSE_PROJECT_NAME names it otherwise. Tests never point
+# at another worktree's database: an applied migration it does not know about
+# fails its next Flyway validation. These are not named REDIS_PORT and the like
+# because those are the services' own configuration, which tests read.
+PG_HOST_PORT ?= 5432
+REDIS_HOST_PORT ?= 6379
+NEO4J_HOST_PORT ?= 7687
+NEO4J_HTTP_HOST_PORT ?= 7474
+export PG_HOST_PORT REDIS_HOST_PORT NEO4J_HOST_PORT NEO4J_HTTP_HOST_PORT
+
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up, migrated, and holding
-# every stream and consumer group. The only image built is the dead-letter-controller
-# dev image that runs streams-init. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
+# every stream and consumer group. The only images built are the one-shot jobs'
+# (the Flyway image, and the dead-letter-controller dev image that runs
+# streams-init). Each job runs the code baked into its image, so each is rebuilt
+# here and a change to it is what the tests exercise. Tests reach these via
+# POSTGRES_HOST=$(CI_HOST_IP).
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis
@@ -169,7 +188,7 @@ test-deps-up:
 	@# and `up --exit-code-from` exits non-zero unless the job exited 0.
 	@for f in $(MIGRATION_JOBS); do \
 	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
-	  $(DOCKER_COMPOSE) up --exit-code-from $$f --abort-on-container-exit $$f || exit 1; \
+	  $(DOCKER_COMPOSE) up --build --exit-code-from $$f --abort-on-container-exit $$f || exit 1; \
 	done
 
 .PHONY: test-deps-down
@@ -184,6 +203,8 @@ test-deps-down:
 # their db is empty). Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
+# With Ryuk off only the tests terminate their containers, so a run killed partway
+# leaves them running; CONTRIBUTING.md has the command that removes them.
 # release-controller pins GOFLAGS=-p=1: its adapters/postgres and
 # integration_test packages both TRUNCATE the same shared live-DB tables, so
 # running them as parallel package binaries (the default `go test ./...`
@@ -204,24 +225,24 @@ test-go: test-deps-up
 	  extra=; pkgs=./...; \
 	  case $$s in \
 	    run-controller) db=continuo_run_controller; \
-	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo";; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):$(REDIS_HOST_PORT) REDIS_PASSWORD=continuo";; \
 	    catalog) db=; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
-	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
+	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):$(PG_HOST_PORT)/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
 	    dead-letter-controller) db=continuo_dead_letter; \
-	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):$(REDIS_HOST_PORT) REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
 	    egress-proxy) db=;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
-	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):$(REDIS_HOST_PORT) REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
-	  (cd $$s && env POSTGRES_HOST=$(CI_HOST_IP) POSTGRES_PORT=5432 POSTGRES_DB=$$db \
+	  (cd $$s && env POSTGRES_HOST=$(CI_HOST_IP) POSTGRES_PORT=$(PG_HOST_PORT) POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
-	     NEO4J_HOST=$(CI_HOST_IP) NEO4J_URI=bolt://$(CI_HOST_IP):7687 NEO4J_USER=neo4j \
+	     NEO4J_HOST=$(CI_HOST_IP) NEO4J_URI=bolt://$(CI_HOST_IP):$(NEO4J_HOST_PORT) NEO4J_USER=neo4j \
 	     NEO4J_PASSWORD=atlas_password REQUIRE_TEST_DEPS=1 $$extra \
 	     go test -tags integration -count=1 $$pkgs -timeout 20m) || rc=1; \
 	done; exit $$rc
@@ -309,6 +330,13 @@ test-topology:
 # chart-pin pull request against a local bare repository and a stub gh: the
 # one-line edit, the branch, the commit's sign-off and trailers, the pull
 # request, and the failures that push nothing.
+# release/wait-for-image-publish_test.sh runs the step of release.yml that waits
+# for deploy.yml to publish a tag's images against a stub gh, and checks that a
+# CHANGELOG-only release cut publishes them.
+# check-dead-go_test.sh runs check-dead-go.sh with a stub go and deadcode: a
+# deadcode built by another Go is never used, and DEADCODE overrides the choice.
+# test-go-env_test.sh runs test-deps-up and test-go with a stub compose and go: the
+# host ports reach compose and the tests, and each one-shot job is rebuilt.
 # pr-title-type_test.sh and sync-pr-type-labels_test.sh run the title-to-label
 # mapping that the pr-title check and the pr-labels workflow share: which
 # titles are accepted and which labels each yields, and (against a stub gh)
@@ -339,6 +367,8 @@ guards:
 	bash scripts/check-service-names.sh
 	bash scripts/check-service-names_test.sh
 	bash scripts/check-dead-go.sh
+	bash scripts/check-dead-go_test.sh
+	bash scripts/test-go-env_test.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
@@ -357,6 +387,7 @@ guards:
 	bash scripts/deploy/last-deployed-commit_test.sh
 	bash scripts/install-test/changelog-check_test.sh
 	bash scripts/release/open-site-bump-pr_test.sh
+	bash scripts/release/wait-for-image-publish_test.sh
 	bash scripts/pr-title-type_test.sh
 	bash scripts/sync-pr-type-labels_test.sh
 	bash scripts/ci-disk-usage_test.sh

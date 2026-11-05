@@ -12,7 +12,7 @@ services:
       - POSTGRES_PASSWORD=continuo
       # POSTGRES_DB removed - databases created by init script
     ports:
-      - "5432:5432"
+      - "${PG_HOST_PORT:-5432}:5432"
     volumes:
       - ./db/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
 
@@ -38,7 +38,7 @@ services:
   redis:
     image: redis:7.2-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     # Disable all persistence (both RDB snapshots and AOF) to avoid
     # "No space left on device" errors when Colima's virtual disk is tight.
     # Each service signs in as its own login, from the ACL file the streams
@@ -56,8 +56,8 @@ services:
   neo4j:
     image: neo4j:5.26.28-community
     ports:
-      - "7474:7474"  # HTTP
-      - "7687:7687"  # Bolt
+      - "${NEO4J_HTTP_HOST_PORT:-7474}:7474"  # HTTP
+      - "${NEO4J_HOST_PORT:-7687}:7687"  # Bolt
     environment:
       - NEO4J_AUTH=neo4j/atlas_password
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
@@ -487,7 +487,8 @@ services:
   # under the continuo: prefix, then exits. Consumers wait up to five minutes
   # for their groups, so no service depends on it. It builds from
   # dead-letter-controller's Dockerfile and runs from the source baked into
-  # that image.
+  # that image, so plain `docker compose up streams-init` runs the code of the
+  # last build; `make test-deps-up` rebuilds it first.
   streams-init:
     build:
       context: .

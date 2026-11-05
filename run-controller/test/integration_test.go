@@ -49,9 +49,15 @@ var (
 	runControllerDSN string
 )
 
-// TestMain sets up a real PostgreSQL testcontainer and a live gRPC run-controller server,
-// shared across all tests in the package.
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests sets up a real PostgreSQL testcontainer and a live gRPC run-controller server,
+// shared across all tests in the package, and returns the exit code of the run. It holds
+// the teardown in deferred calls, so they run before TestMain's os.Exit, on a failed
+// setup as well as after the tests.
+func runTests(m *testing.M) int {
 	ctx := context.Background()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -75,20 +81,20 @@ func TestMain(m *testing.M) {
 		ContainerRequest: req,
 		Started:          true,
 	})
-	if err != nil {
-		logger.Error("Failed to start PostgreSQL container", "error", err)
-		os.Exit(1)
-	}
 	defer func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
+		if err := testcontainers.TerminateContainer(pgContainer); err != nil {
 			logger.Error("Failed to terminate PostgreSQL container", "error", err)
 		}
 	}()
+	if err != nil {
+		logger.Error("Failed to start PostgreSQL container", "error", err)
+		return 1
+	}
 
 	host, err := pgContainer.Host(ctx)
 	if err != nil {
 		logger.Error("Failed to get PostgreSQL host", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if host == "localhost" {
 		host = "127.0.0.1"
@@ -96,7 +102,7 @@ func TestMain(m *testing.M) {
 	port, err := pgContainer.MappedPort(ctx, "5432")
 	if err != nil {
 		logger.Error("Failed to get PostgreSQL port", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	connStr := fmt.Sprintf("host=%s port=%s user=testuser password=testpass dbname=testdb sslmode=disable", host, port.Port())
@@ -111,7 +117,7 @@ func TestMain(m *testing.M) {
 	}
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer db.Close()
 
@@ -120,7 +126,7 @@ func TestMain(m *testing.M) {
 	// lock-step with production. See run-controller/test/migrations.go.
 	if err := ApplyMigrations(db.DB); err != nil {
 		logger.Error("Failed to apply migrations", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	runControllerDB = db
 	runControllerDSN = connStr
@@ -134,7 +140,7 @@ func TestMain(m *testing.M) {
 	cronParser, err := cron.NewParser()
 	if err != nil {
 		logger.Error("Failed to build the cron parser", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
@@ -162,7 +168,7 @@ func TestMain(m *testing.M) {
 	runControllerServer, err = grpcserver.NewServer(0, runService, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	go func() {
@@ -176,7 +182,7 @@ func TestMain(m *testing.M) {
 	runControllerConn, err = grpc.NewClient(runControllerServer.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Error("Failed to create gRPC client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	runClient = runv1.NewRunServiceClient(runControllerConn)
 
@@ -185,7 +191,7 @@ func TestMain(m *testing.M) {
 
 	runControllerConn.Close()
 	runControllerServer.Shutdown(ctx)
-	os.Exit(code)
+	return code
 }
 
 // ============================================================================

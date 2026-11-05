@@ -181,10 +181,10 @@ func releaseDBBefore(t *testing.T, v int) *sqlx.DB {
 		},
 		Started: true,
 	})
+	testcontainers.CleanupContainer(t, container)
 	if err != nil {
 		testdeps.Unavailable(t, "start a throwaway postgres container: %v", err)
 	}
-	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
