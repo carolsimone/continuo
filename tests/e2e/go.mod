@@ -10,7 +10,7 @@ replace (
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.5
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.12
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/carolsimone/continuo/catalog v0.0.0-00010101000000-000000000000
 	github.com/carolsimone/continuo/pkg v0.0.0
