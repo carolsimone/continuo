@@ -12,11 +12,33 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-05
+
+**TL;DR**
+
+- Services now read only the `continuo:` Redis keys, and `streams-init` deletes the old ones. Upgrade from 0.19.0, not from an older release.
+- With your own Redis, apply the new Redis rules before or with the upgrade. The bundled Redis needs nothing and restarts once.
+- No values change is needed. `llm.model` now defaults to `claude-haiku-5-5` unless you set it.
+- Upgrade through this release: the next release no longer checks or deletes the old keys.
+
+### Upgrade steps
+
+1. **On 0.18.0 or earlier:** upgrade to 0.19.0 first.
+2. **On 0.19.0:** let its services run until they have read the old stream keys.
+3. **Your own Redis:** apply the rules in `deploy/redis-acl-rules.acl`, before or with the upgrade. 0.19.0's services keep running under them.
+4. **Upgrade.** If `streams-init` stops the deploy, naming an old key and a group, that key still holds entries. Let 0.19.0 finish them and deploy again, or discard them with `DEL <key>`.
+
+This release changes no values key, and it ships as a `MINOR`.
+
 ### Fixed
 
 - **run-controller answers sooner after a deploy.** TL;DR: reads of runs fail for less time during an upgrade.
   - run-controller is one pod that rolls with Recreate, so its Service has no endpoint until the new pod is Ready.
   - A startup probe now checks `/ready` every second instead of waiting 10 seconds first. It allows 6 minutes, longer than the process's own 5-minute wait for Redis.
+  - No values change is needed to upgrade.
+- **The schedule page stays usable when reads of runs fail.** TL;DR: a backend error no longer looks like "Loading run…" or a blank page.
+  - The page keeps what it holds, shows a notice and retries every 5 seconds.
+  - The dashboard no longer shows a backend error as "No schedules found."
   - No values change is needed to upgrade.
 
 ### Changed
