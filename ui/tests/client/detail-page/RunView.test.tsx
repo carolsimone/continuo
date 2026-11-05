@@ -50,6 +50,20 @@ describe('RunView', () => {
     expect(screen.getByText('Fetching the historical run snapshot…')).toBeInTheDocument();
   });
 
+  it('says the run cannot be read for state unavailable, without a loading message', () => {
+    renderRunView({ state: 'unavailable', tasks: [] });
+    expect(screen.getByText('Run unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Loading run…')).toBeNull();
+    expect(screen.queryByTestId('run-progress-pct')).toBeNull();
+  });
+
+  it('says a run has no tasks for state no-tasks, without a progress header', () => {
+    renderRunView({ state: 'no-tasks', tasks: [] });
+    expect(screen.getByText('This run has no tasks.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading run…')).toBeNull();
+    expect(screen.queryByTestId('run-progress-pct')).toBeNull();
+  });
+
   it('renders the progress header and the list for state ready', () => {
     renderRunView();
     expect(screen.getByTestId('run-progress-pct')).toBeInTheDocument();

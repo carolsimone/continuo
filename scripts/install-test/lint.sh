@@ -125,6 +125,12 @@ python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 echo "--- run-controller rolls with Recreate (defaults)"
 python3 scripts/install-test/assert-run-controller-recreate.py "${tmp}/defaults.yaml"
 
+# Recreate leaves run-controller's Service with no endpoint until the new pod is
+# Ready, and every read of a run fails meanwhile, so that pod must turn Ready as
+# soon as it can serve.
+echo "--- run-controller turns Ready as soon as it can serve (defaults)"
+python3 scripts/install-test/assert-run-controller-fast-ready.py "${tmp}/defaults.yaml"
+
 # A bundled Redis is a StatefulSet with no ordering guarantee against the
 # Deployments, so every service whose code connects to Redis must wait for it
 # in bundled mode, and none may wait in BYO mode, where Redis is already up.

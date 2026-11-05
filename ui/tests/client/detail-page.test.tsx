@@ -1703,10 +1703,11 @@ describe('DetailPage — arrival and teardown', () => {
       expect(container.querySelectorAll('.run-row')).toHaveLength(0);
     });
 
-    it('reads as loading when the tasks read fails', async () => {
+    it('says the run is unavailable when the tasks read fails', async () => {
       vi.stubGlobal('fetch', mockFetchSequence({ ...freshRoutes(), [`/api/runs/${RUN_ID}/tasks`]: reject }));
       render(withRouter({ last_run_id: RUN_ID }));
-      expect(await screen.findByText('Loading run…')).toBeInTheDocument();
+      expect(await screen.findByText('Run unavailable')).toBeInTheDocument();
+      expect(screen.queryByText('Loading run…')).toBeNull();
     });
 
     it('keeps the tasks when the attempts read fails', async () => {
@@ -1730,14 +1731,15 @@ describe('DetailPage — arrival and teardown', () => {
       expect(await screen.findByText('Graph unavailable')).toBeInTheDocument();
     });
 
-    it('shows "No runs yet." when the schedule list cannot be read on arrival', async () => {
+    it('does not say "No runs yet." when the schedule list cannot be read on arrival', async () => {
       vi.stubGlobal('fetch', mockFetchSequence({
         [`/api/schedules/${SCHED}/graph`]: async () => ({ nodes: [], edges: [] }),
         [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
         '/api/schedules': reject,
       }));
       render(withRouter(null));
-      expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+      expect(await screen.findByText('Run unavailable')).toBeInTheDocument();
+      expect(screen.queryByText('No runs yet.')).toBeNull();
     });
   });
 

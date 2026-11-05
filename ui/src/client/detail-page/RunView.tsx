@@ -19,8 +19,9 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
 
 // The run layout: full-width tabs, status first (Run) then history (Past
 // runs). The Run tab summarises the shown run's task set as a list or a
-// swimlane, or says why there is none to summarise yet; the Past runs tab
-// lists the schedule's runs.
+// swimlane, or says why there is none to summarise: no run yet, the run still
+// loading, its reads failing, or a run with no tasks. The Past runs tab lists
+// the schedule's runs.
 export default function RunView({
   state, selectedRunId, tasks, attemptsByTask, activeGraph, services, expandedServices, onServiceToggle, pastRuns,
 }: {
@@ -58,6 +59,16 @@ export default function RunView({
               <p className="graph-empty-copy">
                 {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the latest run…'}
               </p>
+            </div>
+          ) : state === 'unavailable' ? (
+            <div className="graph-empty-state">
+              <p className="graph-empty-title">Run unavailable</p>
+              <p className="graph-empty-copy">This page updates once the server answers.</p>
+            </div>
+          ) : state === 'no-tasks' ? (
+            <div className="graph-empty-state">
+              <p className="graph-empty-title">This run has no tasks.</p>
+              <p className="graph-empty-copy">Nothing was executed.</p>
             </div>
           ) : (
             <>

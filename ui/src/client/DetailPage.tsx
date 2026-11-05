@@ -55,19 +55,23 @@ function ScheduleDetail({ name, mode, requestId }: {
   const location = useLocation();
 
   const {
-    lastRunId, lastRunObservation, scheduler, setScheduler, liveRunGraph,
+    lastRunId, scheduler, setScheduler, liveRunGraph, readFailed: lastRunReadFailed,
   } = useLastRun(name, location.state);
   const { graph, graphState, promotionSeq } = useScheduleGraph(name, mode);
-  const { runs, runsPage, setRunsPage, runsCount } = useScheduleRuns(name);
+  const { runs, runsPage, setRunsPage, runsCount, readFailed: runsReadFailed } = useScheduleRuns(name);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The selected run's summary, kept so the header still describes it after
   // paging away from the page it was chosen on.
   const [pinnedRun, setPinnedRun] = useState<RunSummary | null>(null);
-  const { tasks, attempts, clearRows } = useRunRows({
+  const {
+    tasks, attempts, tasksRead, readFailed: rowsReadFailed, clearRows,
+  } = useRunRows({
     lastRunId, selectedRunId, mode, onScheduler: setScheduler,
   });
-  const runGraph = useSelectedRunGraph(selectedRunId);
-  const trigger = useTriggerRun(name, lastRunObservation, requestId);
+  const { runGraph, readFailed: runGraphReadFailed } = useSelectedRunGraph(selectedRunId);
+  const trigger = useTriggerRun(name, lastRunId, requestId);
+  // Any read of this page is failing and being retried.
+  const readFailed = lastRunReadFailed || graphState === 'error' || runsReadFailed || rowsReadFailed || runGraphReadFailed;
   const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
 
@@ -98,7 +102,7 @@ function ScheduleDetail({ name, mode, requestId }: {
 
   const liveSchedulerStatus =
     scheduler?.status ||
-    (lastRunId === undefined ? 'loading' : lastRunId === null ? 'never run' : 'loading');
+    (lastRunId === null ? 'never run' : readFailed ? 'unavailable' : 'loading');
   const schedulerStatus = selectedRun
     ? selectedRun.status || 'pending'
     : liveSchedulerStatus;
@@ -143,6 +147,13 @@ function ScheduleDetail({ name, mode, requestId }: {
           onOpenRerun={() => setRerunModalOpen(true)}
         />
 
+        {readFailed && (
+          <div className="info-strip info-strip--warning" role="status">
+            <span className="info-strip__icon">⚠</span>
+            Can&apos;t read the latest data from the server. Retrying every 5 seconds.
+          </div>
+        )}
+
         {rerunModalOpen && lastRunId && (
           <RerunFailedModal
             runId={lastRunId}
@@ -161,7 +172,9 @@ function ScheduleDetail({ name, mode, requestId }: {
           <LatestView
             name={name}
             activeGraph={activeGraph}
-            graphCardState={graphCardStateOf({ selectedRunId, runGraph, shouldRenderGraph, graphState })}
+            graphCardState={graphCardStateOf({
+              selectedRunId, runGraph, shouldRenderGraph, graphState, selectedRunGraphFailed: runGraphReadFailed,
+            })}
             graphBadge={graphBadge}
             graphBadgeClass={graphBadgeClass(graphBadge, snapshotRun?.status)}
             selectedNodeId={tree.selectedNodeId}
@@ -178,7 +191,9 @@ function ScheduleDetail({ name, mode, requestId }: {
             // The Run tab summarises a run's task set. With nothing yet to
             // summarise it must not render RunProgressHeader over an empty
             // list, which would read as a fake "0 of 0 nodes complete / 0%".
-            state={runTabState({ lastRunId, runsCount, taskCount: tasks.length, selectedRunId, runGraph })}
+            state={runTabState({
+              lastRunId, runsCount, taskCount: tasks.length, tasksRead, selectedRunId, runGraph, readFailed,
+            })}
             selectedRunId={selectedRunId}
             tasks={tasks}
             attemptsByTask={attemptsByTask}

@@ -48,5 +48,49 @@ describe('useScheduleRuns', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(result.current.runs).toEqual([]);
     expect(result.current.runsCount).toBe(0);
+    expect(result.current.readFailed).toBe(true);
+  });
+
+  it('reads again until a read lands, counting nothing from an error body', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let down = true;
+      vi.stubGlobal('fetch', vi.fn(async () => (down
+        ? new Response(JSON.stringify({ error: '14 UNAVAILABLE' }), { status: 500 })
+        : new Response(JSON.stringify({ runs: [run('r1')], total_count: 25 }), { status: 200 }))));
+      const { result } = renderHook(() => useScheduleRuns('s'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.runsTotal).toBeNull();
+      expect(result.current.readFailed).toBe(true);
+
+      down = false;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(result.current.runsCount).toBe(25);
+      expect(result.current.readFailed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the page it has while the next page cannot be read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let down = false;
+      vi.stubGlobal('fetch', vi.fn(async () => (down
+        ? new Response(JSON.stringify({ error: '14 UNAVAILABLE' }), { status: 500 })
+        : new Response(JSON.stringify({ runs: [run('r1')], total_count: 25 }), { status: 200 }))));
+      const { result } = renderHook(() => useScheduleRuns('s'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.runs).toHaveLength(1);
+
+      down = true;
+      act(() => result.current.setRunsPage(1));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.runs).toHaveLength(1);
+      expect(result.current.runsCount).toBe(25);
+      expect(result.current.readFailed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

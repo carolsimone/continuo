@@ -101,6 +101,10 @@ describe('graphCardState', () => {
     expect(graphCardState({ selectedRunId: 'r', runGraph: null, shouldRenderGraph: true, graphState: 'ready' })).toBe('loading');
   });
 
+  it('is "error" for a selected run whose graph cannot be read', () => {
+    expect(graphCardState({ selectedRunId: 'r', runGraph: null, shouldRenderGraph: false, graphState: 'ready', selectedRunGraphFailed: true })).toBe('error');
+  });
+
   it('is "ready" or "empty" for a selected run whose graph arrived', () => {
     expect(graphCardState({ selectedRunId: 'r', runGraph, shouldRenderGraph: true, graphState: 'error' })).toBe('ready');
     expect(graphCardState({ selectedRunId: 'r', runGraph, shouldRenderGraph: false, graphState: 'ready' })).toBe('empty');
@@ -119,7 +123,27 @@ describe('graphCardState', () => {
 
 describe('runTabState', () => {
   const runGraph = { nodes: [], edges: [] } as unknown as RunGraph;
-  const base = { lastRunId: 'r' as string | null | undefined, runsCount: 0, taskCount: 1, selectedRunId: null as string | null, runGraph: null as RunGraph | null };
+  const base = { lastRunId: 'r' as string | null | undefined, runsCount: 0, taskCount: 1, tasksRead: false, selectedRunId: null as string | null, runGraph: null as RunGraph | null, readFailed: false };
+
+  it('is "unavailable" rather than "loading" while the reads it waits for are failing', () => {
+    expect(runTabState({ ...base, lastRunId: undefined, readFailed: true })).toBe('unavailable');
+    expect(runTabState({ ...base, taskCount: 0, readFailed: true })).toBe('unavailable');
+    expect(runTabState({ ...base, selectedRunId: 'old', runGraph: null, readFailed: true })).toBe('unavailable');
+  });
+
+  it('stays "ready" while reads fail once there are tasks to show', () => {
+    expect(runTabState({ ...base, readFailed: true })).toBe('ready');
+  });
+
+  it('is "no-tasks" once a run\'s tasks were read and there are none', () => {
+    expect(runTabState({ ...base, taskCount: 0, tasksRead: true })).toBe('no-tasks');
+    expect(runTabState({ ...base, taskCount: 0, tasksRead: true, selectedRunId: 'old', runGraph })).toBe('no-tasks');
+    expect(runTabState({ ...base, taskCount: 0, tasksRead: true, readFailed: true })).toBe('no-tasks');
+  });
+
+  it('is still "loading" a chosen run\'s graph when its tasks were read and there are none', () => {
+    expect(runTabState({ ...base, taskCount: 0, tasksRead: true, selectedRunId: 'old', runGraph: null })).toBe('loading');
+  });
 
   it('is "no-runs" for a schedule that never ran and has no past runs or tasks', () => {
     expect(runTabState({ ...base, lastRunId: null, taskCount: 0 })).toBe('no-runs');

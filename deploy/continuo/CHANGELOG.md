@@ -12,6 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+
+- **run-controller answers sooner after a deploy.** TL;DR: reads of runs fail for less time during an upgrade.
+  - run-controller is one pod that rolls with Recreate, so its Service has no endpoint until the new pod is Ready.
+  - A startup probe now checks `/ready` every second instead of waiting 10 seconds first. It allows 6 minutes, longer than the process's own 5-minute wait for Redis.
+  - No values change is needed to upgrade.
+
 ### Changed
 
 - **Services read only the `continuo:` keys, and `streams-init` deletes the old ones.** TL;DR: upgrade from 0.19.0, once its services have read the old stream keys; this release does not read them.

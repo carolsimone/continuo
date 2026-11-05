@@ -106,6 +106,27 @@ describe('DashboardPage — liveness badge', () => {
     });
   });
 
+  it('treats a backend error on the schedules poll as a failed poll, not an empty list', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    mockFetch.mockImplementation((url: string) => {
+      if (url === '/api/schedules') {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ error: '14 UNAVAILABLE' }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ schedules: [], total_count: 0 }) });
+    });
+
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      expect(container.querySelector('.live-badge')?.textContent).toContain('Reconnecting');
+    });
+    expect(screen.queryByText('No schedules found.')).toBeNull();
+  });
+
   it('shows "Connecting" before the first poll resolves', async () => {
     mockFetchProposals.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {

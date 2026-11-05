@@ -8,6 +8,7 @@ import NodesCatalogPanel from './NodesCatalogPanel';
 import RemediationPanel from './RemediationPanel';
 import { fetchProposals } from './remediation-api';
 import PageHeader from './PageHeader';
+import { readJson } from './read-json';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -27,9 +28,8 @@ export default function DashboardPage() {
   const loadSchedules = useCallback(() => {
     const seq = ++schedulesSent.current;
     const isStale = () => seq < schedulesShown.current;
-    fetch('/api/schedules')
-      .then(r => r.json())
-      .then((data: SchedulesResponse) => {
+    readJson<SchedulesResponse>('/api/schedules')
+      .then((data) => {
         if (isStale()) return;
         schedulesShown.current = seq;
         setSchedules(data.schedules || []);
@@ -47,9 +47,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const fetch_ = () =>
-      fetch('/api/topology/schedules')
-        .then(r => r.json())
-        .then((data: TopologyListResponse) => {
+      readJson<TopologyListResponse>('/api/topology/schedules')
+        .then((data) => {
           setTopologies(data.schedules || []);
           setTopologiesError(null);
         })
