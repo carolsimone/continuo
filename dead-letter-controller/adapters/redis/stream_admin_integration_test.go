@@ -4,15 +4,12 @@ package redis
 
 import (
 	"context"
-	"fmt"
-	"maps"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/carolsimone/continuo/dead-letter-controller/domain/unprefixed"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,7 +17,7 @@ import (
 
 // adminClient connects to the compose Redis and returns a unique stream name
 // the test owns, with the key the admin stores it under; the key is deleted when
-// the test ends, and the test fails if the unprefixed name exists as a key.
+// the test ends, and the test fails if the bare contract name exists as a key.
 func adminClient(t *testing.T) (rc *goredis.Client, stream, key string) {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
@@ -34,7 +31,7 @@ func adminClient(t *testing.T) (rc *goredis.Client, stream, key string) {
 	t.Cleanup(func() { rc.Del(context.Background(), key, stream) })
 	t.Cleanup(func() {
 		if n, err := rc.Exists(context.Background(), stream).Result(); err != nil || n != 0 {
-			t.Errorf("the unprefixed key %q exists (%d, %v), want only %q", stream, n, err, key)
+			t.Errorf("the bare-name key %q exists (%d, %v), want only %q", stream, n, err, key)
 		}
 	})
 	return rc, stream, key
@@ -147,247 +144,60 @@ func TestCheckLoginAcceptsALoginThatMayNotPing(t *testing.T) {
 	}
 }
 
-// unprefixedStream returns a client of the compose Redis and a stream name the
-// test owns; both of its keys are deleted when the test ends.
-func unprefixedStream(t *testing.T) (*goredis.Client, string) {
-	t.Helper()
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
-	}
-	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
-	t.Cleanup(func() { _ = rc.Close() })
-	stream := "test.stream-admin:" + uuid.NewString()
-	t.Cleanup(func() { rc.Del(context.Background(), pkgredis.Key(stream), stream) })
-	return rc, stream
-}
-
-func TestReadUnprefixedReportsAMissingKey(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	_, exists, err := NewStreamAdmin(rc).ReadUnprefixed(context.Background(), stream)
-	if err != nil || exists {
-		t.Fatalf("ReadUnprefixed = exists %v, %v; want false, nil", exists, err)
-	}
-}
-
-// ReadUnprefixed reads the key named by the bare contract name, never the
-// prefixed one: each group's pending count and last delivered entry, and the
-// key's last entry.
-func TestReadUnprefixedReadsEveryGroupAndTheLastEntry(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	ctx := context.Background()
-	for _, id := range []string{"10-0", "20-0", "30-0"} {
-		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: map[string]any{"k": id}}).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := rc.XGroupCreate(ctx, stream, "reader", "0").Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := rc.XGroupCreate(ctx, stream, "caught-up", "$").Err(); err != nil {
-		t.Fatal(err)
-	}
-	read, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{Group: "reader", Consumer: "c", Streams: []string{stream, ">"}, Count: 2}).Result()
-	if err != nil || len(read) != 1 || len(read[0].Messages) != 2 {
-		t.Fatalf("XREADGROUP = %v, %v", read, err)
-	}
-	if err := rc.XAck(ctx, stream, "reader", "10-0").Err(); err != nil {
-		t.Fatal(err)
-	}
-	// A prefixed key of the same name is not the unprefixed key.
-	if err := rc.XGroupCreateMkStream(ctx, pkgredis.Key(stream), "prefixed-only", "0").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	k, exists, err := NewStreamAdmin(rc).ReadUnprefixed(ctx, stream)
-	if err != nil || !exists {
-		t.Fatalf("ReadUnprefixed = exists %v, %v; want true, nil", exists, err)
-	}
-	if k.Last == nil || k.Last.String() != "30-0" {
-		t.Fatalf("Last = %v, want 30-0", k.Last)
-	}
-	got := map[string]string{}
-	for _, g := range k.Groups {
-		got[g.Name] = fmt.Sprintf("%d %s", g.Pending, g.LastDelivered)
-	}
-	want := map[string]string{"reader": "1 20-0", "caught-up": "0 30-0"}
-	if !maps.Equal(got, want) {
-		t.Fatalf("groups = %v, want %v", got, want)
-	}
-}
-
-func TestReadUnprefixedOfAKeyWithNoEntry(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	ctx := context.Background()
-	if err := rc.XGroupCreateMkStream(ctx, stream, "g", "0").Err(); err != nil {
-		t.Fatal(err)
-	}
-	k, exists, err := NewStreamAdmin(rc).ReadUnprefixed(ctx, stream)
-	if err != nil || !exists {
-		t.Fatalf("ReadUnprefixed = exists %v, %v; want true, nil", exists, err)
-	}
-	if k.Last != nil || len(k.Groups) != 1 || k.Groups[0].Name != "g" {
-		t.Fatalf("ReadUnprefixed = %+v, want group g and no last entry", k)
-	}
-}
-
-// XDEL of a key's newest entry leaves XINFO STREAM reporting the newest entry
-// that remains, older than the entry the group was last delivered. That group
-// has finished with the key.
-func TestReadUnprefixedAfterTheNewestEntryWasDeleted(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	ctx := context.Background()
-	const group = "reader"
-	ids := []string{"10-0", "20-0", "30-0"}
-	for _, id := range ids {
-		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: map[string]any{"k": id}}).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := rc.XGroupCreate(ctx, stream, group, "0").Err(); err != nil {
-		t.Fatal(err)
-	}
-	read, err := rc.XReadGroup(ctx, &goredis.XReadGroupArgs{Group: group, Consumer: "c", Streams: []string{stream, ">"}, Count: 3}).Result()
-	if err != nil || len(read) != 1 || len(read[0].Messages) != len(ids) {
-		t.Fatalf("XREADGROUP = %v, %v", read, err)
-	}
-	if err := rc.XAck(ctx, stream, group, ids...).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := rc.XDel(ctx, stream, "30-0").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	k, exists, err := NewStreamAdmin(rc).ReadUnprefixed(ctx, stream)
-	if err != nil || !exists {
-		t.Fatalf("ReadUnprefixed = exists %v, %v; want true, nil", exists, err)
-	}
-	if k.Last == nil || k.Last.String() != "20-0" {
-		t.Fatalf("Last = %v, want 20-0, the newest entry that remains", k.Last)
-	}
-	if len(k.Groups) != 1 || k.Groups[0].LastDelivered.String() != "30-0" {
-		t.Fatalf("Groups = %+v, want group %s delivered up to 30-0", k.Groups, group)
-	}
-	if held := unprefixed.Held(k, []string{group}); len(held) != 0 {
-		t.Fatalf("Held = %v, want none: the group has finished with the key", held)
-	}
-}
-
-// StreamExists asks about the prefixed key only: an unprefixed key of the same
-// name does not make the stream exist.
-func TestStreamExistsChecksThePrefixedKey(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	ctx := context.Background()
-	admin := NewStreamAdmin(rc)
-	if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if exists, err := admin.StreamExists(ctx, stream); err != nil || exists {
-		t.Fatalf("StreamExists with only the unprefixed key = %v, %v; want false, nil", exists, err)
-	}
-	if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: pkgredis.Key(stream), Values: map[string]any{"k": "v"}}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if exists, err := admin.StreamExists(ctx, stream); err != nil || !exists {
-		t.Fatalf("StreamExists = %v, %v; want true, nil", exists, err)
-	}
-}
-
-func TestDeleteUnprefixedDeletesOnlyTheUnprefixedKey(t *testing.T) {
-	rc, stream := unprefixedStream(t)
-	ctx := context.Background()
-	for _, key := range []string{stream, pkgredis.Key(stream)} {
-		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "v"}}).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	admin := NewStreamAdmin(rc)
-	deleted, otherType, err := admin.DeleteUnprefixed(ctx, stream)
-	if err != nil || !deleted || otherType != "" {
-		t.Fatalf("DeleteUnprefixed = %v, %q, %v; want true, \"\", nil", deleted, otherType, err)
-	}
-	if n := rc.Exists(ctx, stream).Val(); n != 0 {
-		t.Fatalf("the unprefixed key still exists")
-	}
-	if n := rc.Exists(ctx, pkgredis.Key(stream)).Val(); n != 1 {
-		t.Fatalf("the prefixed key was deleted")
-	}
-	again, otherType, err := admin.DeleteUnprefixed(ctx, stream)
-	if err != nil || again || otherType != "" {
-		t.Fatalf("second DeleteUnprefixed = %v, %q, %v; want false, \"\", nil", again, otherType, err)
-	}
-}
-
-// migrationAdmin is an admin signed in as continuo_redis_migrate. The compose
-// Redis signs in every login with the rules the streams generator writes
+// migrationClient signs in as continuo_redis_migrate. The compose Redis signs in
+// every login with the rules the streams generator writes
 // (compose/redis-users.acl).
-func migrationAdmin(t *testing.T) *StreamAdmin {
+func migrationClient(t *testing.T) *goredis.Client {
 	t.Helper()
 	migrate := goredis.NewClient(&goredis.Options{
 		Addr: os.Getenv("REDIS_ADDR"), Username: "continuo_redis_migrate", Password: "local-continuo_redis_migrate",
 	})
 	t.Cleanup(func() { _ = migrate.Close() })
-	return NewStreamAdmin(migrate)
+	return migrate
 }
 
-// This proves continuo_redis_migrate's generated rule lets streams-init read
-// and delete the unprefixed key of a live stream and of a retired one.
-func TestTheMigrationLoginMayReadAndDeleteTheUnprefixedKeys(t *testing.T) {
-	rc, _ := unprefixedStream(t)
+// continuo_redis_migrate's generated rule lets streams-init create a stream and
+// a group under the prefix, and makes it pass the permission fence.
+func TestTheMigrationLoginMayCreateStreamsAndGroups(t *testing.T) {
+	_, stream, _ := adminClient(t)
+	_, groupless, _ := adminClient(t)
 	ctx := context.Background()
-	live, retired := streams.RemediationProposedV1, streams.Retired[0]
-	t.Cleanup(func() { rc.Del(context.Background(), live, retired) })
-	for _, key := range []string{live, retired} {
-		if err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "v"}}).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	admin := migrationAdmin(t)
+	migrate := migrationClient(t)
+	admin := NewStreamAdmin(migrate)
 
-	if _, err := admin.StreamExists(ctx, live); err != nil {
-		t.Fatalf("StreamExists(%s) as continuo_redis_migrate = %v", live, err)
+	if created, err := admin.EnsureGroup(ctx, stream, "g"); err != nil || !created {
+		t.Fatalf("EnsureGroup as continuo_redis_migrate = %v, %v; want true, nil", created, err)
 	}
-	if _, exists, err := admin.ReadUnprefixed(ctx, live); err != nil || !exists {
-		t.Fatalf("ReadUnprefixed(%s) as continuo_redis_migrate = exists %v, %v; want true, nil", live, exists, err)
+	if created, err := admin.EnsureStream(ctx, groupless); err != nil || !created {
+		t.Fatalf("EnsureStream as continuo_redis_migrate = %v, %v; want true, nil", created, err)
 	}
-	for _, key := range []string{live, retired} {
-		if deleted, otherType, err := admin.DeleteUnprefixed(ctx, key); err != nil || !deleted || otherType != "" {
-			t.Fatalf("DeleteUnprefixed(%s) as continuo_redis_migrate = %v, %q, %v; want true, \"\", nil", key, deleted, otherType, err)
-		}
+	if err := pkgredis.CheckPermissionFence(ctx, migrate, pkgconfig.RedisACLModePerService); err != nil {
+		t.Fatalf("the permission fence refuses continuo_redis_migrate: %v", err)
 	}
 }
 
-// On a Redis shared with another application, a key with a retired stream's
-// name may be that application's. DeleteUnprefixed, signed in under the
-// generated rule of continuo_redis_migrate, leaves a key that is not a stream
-// and names its type.
-func TestDeleteUnprefixedLeavesAKeyThatIsNotAStream(t *testing.T) {
-	rc, _ := unprefixedStream(t)
+// continuo_redis_migrate reaches only the keys under the prefix: a stream's bare
+// contract name is outside its rule, and it may not delete even its own keys.
+func TestTheMigrationLoginReachesNoBareNameAndDeletesNoKey(t *testing.T) {
+	rc, stream, key := adminClient(t)
 	ctx := context.Background()
-	retired := streams.Retired[0]
-	t.Cleanup(func() { rc.Del(context.Background(), retired) })
-	admin := migrationAdmin(t)
-	for _, tc := range []struct {
-		wantType string
-		write    func() error
-	}{
-		{"string", func() error { return rc.Set(ctx, retired, "v", 0).Err() }},
-		{"hash", func() error { return rc.HSet(ctx, retired, "f", "v").Err() }},
+	migrate := migrationClient(t)
+	if _, err := NewStreamAdmin(rc).EnsureGroup(ctx, stream, "g"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, err := range map[string]error{
+		"EXISTS of the bare name":        migrate.Exists(ctx, stream).Err(),
+		"XINFO GROUPS of the bare name":  migrate.XInfoGroups(ctx, stream).Err(),
+		"DEL of a key under the prefix":  migrate.Del(ctx, key).Err(),
+		"XINFO STREAM of a prefixed key": migrate.XInfoStream(ctx, key).Err(),
+		"TYPE of a key under the prefix": migrate.Type(ctx, key).Err(),
 	} {
-		t.Run(tc.wantType, func(t *testing.T) {
-			if err := rc.Del(ctx, retired).Err(); err != nil {
-				t.Fatal(err)
-			}
-			if err := tc.write(); err != nil {
-				t.Fatal(err)
-			}
-			deleted, otherType, err := admin.DeleteUnprefixed(ctx, retired)
-			if err != nil || deleted || otherType != tc.wantType {
-				t.Fatalf("DeleteUnprefixed = %v, %q, %v; want false, %q, nil", deleted, otherType, err, tc.wantType)
-			}
-			if n := rc.Exists(ctx, retired).Val(); n != 1 {
-				t.Fatalf("the %s key was deleted", tc.wantType)
-			}
-		})
+		if err == nil || !strings.HasPrefix(err.Error(), "NOPERM") {
+			t.Errorf("%s as continuo_redis_migrate = %v, want NOPERM", name, err)
+		}
+	}
+	if n, err := rc.Exists(ctx, key).Result(); err != nil || n != 1 {
+		t.Fatalf("the prefixed key exists = %d, %v; want 1, nil", n, err)
 	}
 }

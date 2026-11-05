@@ -11,9 +11,8 @@ import (
 )
 
 // permissionProbeKey is the key the permission fence asks Redis about. It lies
-// outside every key pattern of the generated rules, the ones under the
-// continuo: prefix and the unprefixed stream names alike, so a login built
-// from those rules is always refused it.
+// outside every key pattern of the generated rules, all of them under the
+// continuo: prefix, so a login built from those rules is always refused it.
 const permissionProbeKey = "continuo-permission-probe"
 
 // CheckPermissionFence makes sure, in RedisACLModePerService, that the login

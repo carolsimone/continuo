@@ -7,9 +7,8 @@ export const REDIS_ACL_MODES = ['shared', 'perService'] as const;
 export type RedisAclMode = (typeof REDIS_ACL_MODES)[number];
 
 // The key the fence asks Redis about. It lies outside every key pattern of the
-// generated Redis rules, the ones under the continuo: prefix and the
-// unprefixed stream names alike, so a login built from those rules is always
-// refused it.
+// generated Redis rules, all of them under the continuo: prefix, so a login
+// built from those rules is always refused it.
 const PERMISSION_PROBE_KEY = 'continuo-permission-probe';
 
 // How long the fence waits for a Redis it cannot reach yet, retrying after a

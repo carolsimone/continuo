@@ -17,8 +17,8 @@ import (
 )
 
 // inspectorStream returns a Redis client and a stream name named after the test,
-// and deletes the stream's prefixed key, and its unprefixed key (the bare
-// name), when the test ends. The test addresses the stream's key as
+// and deletes the stream's prefixed key, and a key of its bare name, when the
+// test ends. The test addresses the stream's key as
 // pkgredis.Key(stream).
 func inspectorStream(t *testing.T) (*goredis.Client, string) {
 	t.Helper()
@@ -170,7 +170,7 @@ func TestTrimBefore_RemovesOnlyBelow(t *testing.T) {
 }
 
 // DeleteIfExists removes the key of a stream removed from the contract, its
-// prefixed key, and leaves an unprefixed key of the same name to streams-init.
+// prefixed key, and leaves a key of the bare name, which is not continuo's.
 func TestDeleteIfExists(t *testing.T) {
 	rc, stream := inspectorStream(t)
 	ctx := context.Background()
@@ -189,7 +189,7 @@ func TestDeleteIfExists(t *testing.T) {
 	assert.Zero(t, n, "the retired stream's key is deleted")
 	n, err = rc.Exists(ctx, stream).Result()
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, n, "the unprefixed key is streams-init's to delete")
+	assert.EqualValues(t, 1, n, "a key of the bare name is left")
 }
 
 // A redriven entry addressed to another group is skipped by this group when it

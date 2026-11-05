@@ -242,8 +242,8 @@ docker.io/library/service-py                        v1                   cca6848
 ```
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
-by default, which tells continuo's execution-controller to resolve dbt job images as an
-unprefixed `<service>:<image_tag>`, and it launches them with
+by default, which tells continuo's execution-controller to resolve dbt job images as a
+bare `<service>:<image_tag>`, and it launches them with
 `imagePullPolicy: IfNotPresent`. So the image you already loaded onto the node
 with `kind load` is the one it runs, and nothing is ever pulled from a registry.
 Set `teamImagePrefix` to

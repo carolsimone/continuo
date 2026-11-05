@@ -517,7 +517,7 @@ def _run_until_read(redis_mock, c, monkeypatch):
 
 
 def test_consumer_reads_only_the_prefixed_key(monkeypatch):
-    """The unprefixed key of the stream is never read or swept, even when it
+    """The key of the bare stream name is never read or swept, even when it
     holds the consumer's group; the consumer does not ask Redis about it."""
     redis_mock = MagicMock()
     _holding(redis_mock, _GROUP, _KEY, _STREAM)

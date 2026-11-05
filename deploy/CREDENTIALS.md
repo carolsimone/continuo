@@ -42,7 +42,7 @@ can grant rights.
 | Redis | `continuo_dead_letter_controller` | Read both dead-letter streams, write every stream it redrives to, trim streams, read `INFO memory` | dead-letter-controller |
 | Redis | `continuo_topology_controller` | Read its stream, write the streams it produces | topology-controller |
 | Redis | `continuo_ui` | Read and write the ui sessions (`continuo:uisession:*`) | ui |
-| Redis | `continuo_redis_migrate` | Create every stream and consumer group under `continuo:`, and delete the stream keys named before the prefix | the `streams-init` Job |
+| Redis | `continuo_redis_migrate` | Create every stream and consumer group under `continuo:` | the `streams-init` Job |
 
 Every name is a value: `credentials.postgres.<service>.username` and
 `credentials.redis.logins.<name>.username`. The names above are the defaults,
@@ -200,11 +200,6 @@ Every key continuo uses starts with `continuo:`: its streams
 agent-chat's rate-limit keys and agent-remediation's LLM cache. On a Redis
 shared with other applications, `~continuo:*` fences continuo away from their
 keys, and the per-login rules below fence each service away from the others'.
-During this release the `streams-init` step deletes the stream keys continuo
-used before the prefix (`task.dispatch:v1`), so the published rule of
-`continuo_redis_migrate` names those too. No service's rule names them. Apply
-the new rules before or with the upgrade: the services of 0.19.0 keep running
-under them.
 
 ### Create the logins
 
@@ -294,19 +289,7 @@ before the services roll, from ID `0` where one is missing, signed in as
 a stream or a group itself. To create them yourself, set
 `redisInit.createStreams: false` and run `/streams-init` from the
 dead-letter-controller image with a login that may, before the upgrade; the
-Job then creates and deletes nothing but still checks every login.
-
-During this release the step also deletes each stream's old key from before
-the prefix (`task.dispatch:v1`), which no service reads: once every consumer
-group of the release has read and acknowledged all of it, and at once for a
-stream the release retired. While an old key still holds entries, the step
-stops the deploy, names the key and the group, and deletes no old key: let the previous release
-finish them and deploy again, or discard them with `DEL <key>`. It also stops
-the deploy, before it creates anything, when Redis holds a stream only under
-its old name: upgrade through the release that added the prefix first. A key
-the login may not read or delete (its rule is from an earlier release) is
-logged and left; delete it yourself once drained, or apply this release's rule
-and deploy again.
+Job then creates nothing but still checks every login.
 
 ### What continuo checks
 

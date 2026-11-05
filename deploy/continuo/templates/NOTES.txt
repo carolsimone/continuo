@@ -144,17 +144,6 @@ their groups and producers retry.
 
 {{- if .Release.IsUpgrade }}
 
-Services read only the Redis keys under continuo:. streams-init deletes each
-stream's old key (task.dispatch:v1) once every consumer group has read and
-acknowledged all of it, and stops the deploy, naming the key, while one still
-holds entries: let the previous release finish them and deploy again, or
-discard them with DEL <key>. Upgrading from 0.18.0 or earlier? Upgrade through
-0.19.0 first: streams-init stops the deploy while Redis holds streams only
-under their old names.
-{{- end }}
-
-{{- if .Release.IsUpgrade }}
-
 catalog keeps no Postgres: if your values override services, name catalog's
 entry catalog and delete POSTGRES_DB and POSTGRES_PASSWORD from it.
 With the bundled Postgres a POSTGRES_DB left there gives catalog's pod an init
