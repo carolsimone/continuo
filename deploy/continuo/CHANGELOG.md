@@ -21,6 +21,9 @@ shipped in those.
 
 ### Changed
 
+- **`llm.model` defaults to `claude-haiku-5-5`, and a remediation pull request's "View in continuo UI" link points at your UI.** TL;DR: an unmodified install runs Haiku 5.5, and the link in the PR body opens the Remediation tab of your UI.
+  - The link is `<auth.publicUrl>/?tab=remediation`, and is left out when `auth.publicUrl` is empty.
+  - No values change is needed to upgrade.
 - **Services read only the `continuo:` keys, and `streams-init` deletes the old ones.** TL;DR: upgrade from 0.19.0, once its services have read the old stream keys; this release does not read them.
   - A service no longer reads a stream under its old unprefixed name (`task.dispatch:v1`).
   - Before the services roll, `streams-init` deletes the old key of each stream once every consumer group of the release has read and acknowledged all of it, and the old key of every retired stream.

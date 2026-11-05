@@ -292,7 +292,7 @@ llm:
   # Optional. Empty apiKey: agent-chat/agent-remediation boot and serve, but
   # LLM calls fail until it is set.
   provider: anthropic
-  model: claude-haiku-4-5
+  model: claude-haiku-5-5
   baseUrl: ""
   apiKey: ""
   existingSecret: ""

@@ -65,7 +65,7 @@ export function createApp(
   app.use('/api/verifications', createVerificationsRouter(releaseClient));
   app.use('/api/pipeline', createPipelineRouter(releaseClient));
   if (remediationClient) {
-    app.use('/api/remediation', createRemediationRouter(remediationClient, prCreator, getLogObject));
+    app.use('/api/remediation', createRemediationRouter(remediationClient, prCreator, getLogObject, publicUrl));
   }
 
   app.use(auth.errorHandler);

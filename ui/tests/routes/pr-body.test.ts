@@ -25,4 +25,20 @@ describe('buildPullRequestBody', () => {
     expect(body).not.toContain('### Rationale');
     expect(body).toContain('**Nodes:** `a`');
   });
+
+  it('links to the Remediation tab on the absolute continuo URL, never a path GitHub would resolve against github.com', () => {
+    const body = buildPullRequestBody({
+      nodeIds: ['a'],
+      releaseId: 'r',
+      files: [{ path: 'p' }],
+      uiUrl: 'https://continuo.example.com',
+    });
+    expect(body).toContain('[View in continuo UI](https://continuo.example.com/?tab=remediation)');
+    expect(body).not.toContain('](/');
+  });
+
+  it('omits the link when the UI has no public URL', () => {
+    const body = buildPullRequestBody({ nodeIds: ['a'], releaseId: 'r', files: [{ path: 'p' }] });
+    expect(body).not.toContain('View in continuo UI');
+  });
 });

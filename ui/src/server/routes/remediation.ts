@@ -83,6 +83,7 @@ export function createRemediationRouter(
   remediation: RemediationClient,
   prCreator: PullRequestCreator | undefined,
   getObject: (key: string) => Promise<string>,
+  uiUrl?: string,
 ): Router {
   const router = Router();
 
@@ -281,6 +282,7 @@ export function createRemediationRouter(
       files,
       rationale: claim.rationale,
       diff,
+      uiUrl,
     });
 
     const commitMessage = title;

@@ -10,6 +10,10 @@ export interface PullRequestBodyInput {
   files: { path: string; target_node_id?: string }[];
   rationale?: string;
   diff?: string;
+  // The continuo UI's external base URL, without a trailing slash. GitHub
+  // renders a pull request body against github.com, so the link back to the
+  // Remediation tab must be absolute; with no URL the link is left out.
+  uiUrl?: string;
 }
 
 export function buildPullRequestBody(input: PullRequestBodyInput): string {
@@ -29,8 +33,8 @@ export function buildPullRequestBody(input: PullRequestBodyInput): string {
     ``,
     `---`,
     `*Proposed by the automated remediation agent — review before merge.*`,
-    ``,
-    `[View in continuo UI](/?tab=remediation)`,
+    input.uiUrl ? `` : null,
+    input.uiUrl ? `[View in continuo UI](${input.uiUrl}/?tab=remediation)` : null,
   ];
   return lines.filter((line): line is string => line !== null).join('\n').trim();
 }
