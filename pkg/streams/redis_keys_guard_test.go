@@ -59,13 +59,10 @@ func redisKeysGuardRoots(t *testing.T, root string) []string {
 }
 
 // TestRedisKeysCarryThePrefix fails for every production Go site that hands a
-// Redis command an unprefixed key: an XAddArgs whose Stream is not a Key call,
+// Redis command a key outside the prefix: an XAddArgs whose Stream is not a Key call,
 // or a key command whose key is a streams constant, a string literal or a
 // concatenation that starts with one. Every key lives under streams.KeyPrefix,
-// built only by pkg/redis.Key. The one exception is dead-letter-controller's
-// streams-init admin (adapters/redis/stream_admin.go, unprefixedKey), which
-// reads and deletes the unprefixed key of a stream through a variable, a shape
-// this guard does not flag.
+// built only by pkg/redis.Key.
 func TestRedisKeysCarryThePrefix(t *testing.T) {
 	root := repoRootFromTest(t)
 	exempt := filepath.Join(root, "pkg", "redis", "keys.go")
@@ -106,9 +103,9 @@ func TestRedisKeysCarryThePrefix(t *testing.T) {
 	}
 }
 
-// TestRedisKeyGuardFlagsAnUnprefixedKey proves the guard flags each unprefixed
+// TestRedisKeyGuardFlagsABareKey proves the guard flags each bare
 // shape and accepts the prefixed ones, on source fixtures.
-func TestRedisKeyGuardFlagsAnUnprefixedKey(t *testing.T) {
+func TestRedisKeyGuardFlagsABareKey(t *testing.T) {
 	const header = "package p\n\nimport (\n\tgoredis " + goRedisImport + "\n\tpkgredis \"x/pkg/redis\"\n\t\"x/pkg/streams\"\n)\n\nconst legacyPrefix = \"agent:\"\n\n"
 	cases := []struct {
 		name string
@@ -166,7 +163,7 @@ func scanRedisKeysSource(t *testing.T, src string) []string {
 	return found
 }
 
-// scanRedisKeys returns one message per unprefixed Redis key in the Go file at
+// scanRedisKeys returns one message per bare Redis key in the Go file at
 // path (or in src when it is not nil). Messages name the file relative to root.
 // The boolean reports whether the file imports go-redis and was inspected.
 func scanRedisKeys(t *testing.T, root, path string, src []byte) ([]string, bool) {
@@ -229,12 +226,12 @@ func checkKeyLiteral(lit *ast.CompositeLit, consts map[string]bool, flag func(to
 		}
 		// Streams is the keys followed by one id marker per key.
 		for _, key := range streams.Elts[:len(streams.Elts)/2] {
-			if unprefixed(key, consts) {
+			if bareKey(key, consts) {
 				flag(key.Pos(), "%s.Streams key is not a pkgredis.Key(...) call", typeName)
 			}
 		}
 	case strings.HasPrefix(typeName, "X") && strings.HasSuffix(typeName, "Args"):
-		if stream := fieldValue(lit, "Stream"); stream != nil && unprefixed(stream, consts) {
+		if stream := fieldValue(lit, "Stream"); stream != nil && bareKey(stream, consts) {
 			flag(stream.Pos(), "%s.Stream is not a pkgredis.Key(...) call", typeName)
 		}
 	}
@@ -266,7 +263,7 @@ func checkKeyCall(call *ast.CallExpr, consts map[string]bool, flag func(token.Po
 			last = len(call.Args)
 		}
 		for _, arg := range call.Args[1:last] {
-			if unprefixed(arg, consts) {
+			if bareKey(arg, consts) {
 				flag(arg.Pos(), "%s key is not a pkgredis.Key(...) call", name)
 			}
 		}
@@ -280,7 +277,7 @@ func checkKeyList(command string, arg ast.Expr, consts map[string]bool, flag fun
 		return
 	}
 	for _, key := range list.Elts {
-		if unprefixed(key, consts) {
+		if bareKey(key, consts) {
 			flag(key.Pos(), "%s key is not a pkgredis.Key(...) call", command)
 		}
 	}
@@ -328,14 +325,14 @@ func isKeyCall(expr ast.Expr) bool {
 	return name == "Key"
 }
 
-// unprefixed reports whether expr is a key built from a contract constant or a
+// bareKey reports whether expr is a key built from a contract constant or a
 // string literal: a `streams.` selector, a string literal, a package-level
 // string constant, or a `+` expression whose first operand is one of those. A
 // call (Key, any helper) and a variable are never flagged.
-func unprefixed(expr ast.Expr, consts map[string]bool) bool {
+func bareKey(expr ast.Expr, consts map[string]bool) bool {
 	switch e := expr.(type) {
 	case *ast.ParenExpr:
-		return unprefixed(e.X, consts)
+		return bareKey(e.X, consts)
 	case *ast.BasicLit:
 		return e.Kind == token.STRING
 	case *ast.Ident:
@@ -344,7 +341,7 @@ func unprefixed(expr ast.Expr, consts map[string]bool) bool {
 		pkg, ok := e.X.(*ast.Ident)
 		return ok && pkg.Name == "streams"
 	case *ast.BinaryExpr:
-		return e.Op == token.ADD && unprefixed(e.X, consts)
+		return e.Op == token.ADD && bareKey(e.X, consts)
 	}
 	return false
 }
@@ -364,7 +361,7 @@ func packageStringConsts(t *testing.T, dir string, own *ast.File, fixture bool) 
 			for _, spec := range gen.Specs {
 				vs := spec.(*ast.ValueSpec)
 				for i, name := range vs.Names {
-					if i < len(vs.Values) && unprefixed(vs.Values[i], nil) {
+					if i < len(vs.Values) && bareKey(vs.Values[i], nil) {
 						consts[name.Name] = true
 					}
 				}

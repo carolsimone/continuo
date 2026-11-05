@@ -242,8 +242,8 @@ docker.io/library/service-py                        v1                   cca6848
 ```
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
-by default, which tells continuo's execution-controller to resolve dbt job images as an
-unprefixed `<service>:<image_tag>`, and it launches them with
+by default, which tells continuo's execution-controller to resolve dbt job images as a
+bare `<service>:<image_tag>`, and it launches them with
 `imagePullPolicy: IfNotPresent`. So the image you already loaded onto the node
 with `kind load` is the one it runs, and nothing is ever pulled from a registry.
 Set `teamImagePrefix` to
@@ -903,7 +903,7 @@ Then set the LLM key (and the PAT, if you made one), and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.19.0 -n continuo --reuse-values \
+  --version 0.20.0 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
@@ -976,7 +976,7 @@ file, not a flag value (a PEM has newlines that `--set` mangles), so pass it wit
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.19.0 -n continuo --reuse-values \
+  --version 0.20.0 -n continuo --reuse-values \
   --set-string github.appId='<app-id>' \
   --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem

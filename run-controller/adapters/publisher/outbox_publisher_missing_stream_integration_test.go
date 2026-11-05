@@ -56,5 +56,5 @@ func TestPublisherRefusesAMissingStream(t *testing.T) {
 	require.Equal(t, entry.ID.String(), msgs[0].Values["outbox_entry_id"])
 	n, err := rc.Exists(ctx, name).Result()
 	require.NoError(t, err)
-	require.Zero(t, n, "the unprefixed key is never written")
+	require.Zero(t, n, "the key of the bare contract name is never written")
 }

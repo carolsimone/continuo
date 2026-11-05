@@ -19,6 +19,13 @@ shipped in those.
   - They now retry for up to 5 minutes, as they do for Redis. A wrong password or an unknown database still fails at once.
   - No values change is needed to upgrade.
 
+### Changed
+
+- **`streams-init` no longer touches the old Redis keys.** TL;DR: upgrade through 0.20.x first; this release no longer checks for or deletes the old stream keys.
+  - An install on 0.19.x upgrades to 0.20.x first and lets `streams-init` finish there. This release no longer protects against skipping 0.20: an old key left in Redis stays there, and its entries are never read.
+  - Redis rule changes: the rule of `continuo_redis_migrate` drops the old name of every stream, live and retired, and `+xinfo|stream`, `+del` and `+type`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` before or with the upgrade; a login that keeps its older rule goes on working. The bundled Redis restarts once, because its rules change.
+  - No values change is needed to upgrade.
+
 ## [0.20.0] - 2026-11-05
 
 **TL;DR**

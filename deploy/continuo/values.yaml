@@ -38,7 +38,7 @@ global:
   # Registry/namespace prefix for per-team dbt images (execution-controller
   # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
   # Empty renders DOCKERHUB_USERNAME="", which execution-controller treats as
-  # unset, so team images resolve to bare unprefixed names (side-loaded).
+  # unset, so team images resolve to bare names (side-loaded).
   teamImagePrefix: ""
 
   runControllerGrpcAddr: run-controller:50051
@@ -133,13 +133,11 @@ externalRedis:
 # With redis.enabled=false it runs as a pre-install/pre-upgrade hook, so the
 # streams exist before the services roll; with the bundled Redis it is a
 # regular Job. Consumers wait up to five minutes for their group, and a
-# producer never creates a stream. It then deletes each stream's old key from
-# before the prefix (task.dispatch:v1) once every consumer group has read and
-# acknowledged all of it, and fails while one still holds entries.
+# producer never creates a stream.
 redisInit:
   # Set false when the Redis login the release is given may not create streams
   # (a BYO Redis whose ACL grants no XGROUP CREATE ... MKSTREAM): the Job then
-  # creates and deletes nothing and exits 0. The Redis owner creates the streams instead,
+  # creates nothing and exits 0. The Redis owner creates the streams instead,
   # by running /streams-init from the dead-letter-controller image with a login
   # that may and REDIS_INIT_CREATE_STREAMS left at true. Until the streams
   # exist, consumers wait for their groups and producers retry.

@@ -6,7 +6,8 @@ and, when rendered, admits exactly those services on that port only.
 
 Which services serve /metrics is read from their source (an import of
 github.com/carolsimone/continuo/pkg/metrics in a non-test .go file), so the
-chart's list cannot drift from the code.
+chart's list cannot drift from the code. The metric table of
+deploy/OBSERVABILITY.md lists exactly the continuo_* metrics the source registers.
 
 Usage: assert-metrics.py <repo-root> <defaults.yaml> <scrape-rule.yaml>
 """
@@ -20,6 +21,8 @@ import yaml
 logger = logging.getLogger("assert-metrics")
 
 IMPORT = re.compile(r'"github\.com/carolsimone/continuo/pkg/metrics"')
+METRIC_NAME = re.compile(r'(?:Name:\s*|NewDesc\(\s*)"(continuo_[a-z0-9_]+)"')
+DOCUMENTED_METRIC = re.compile(r'^\| `(continuo_[a-z0-9_]+)`', re.MULTILINE)
 
 
 def serving_services(root: pathlib.Path) -> set[str]:
@@ -31,6 +34,29 @@ def serving_services(root: pathlib.Path) -> set[str]:
                 found.add(service_dir.name)
                 break
     return found
+
+
+def registered_metrics(root: pathlib.Path) -> set[str]:
+    found = set()
+    for source in root.rglob("*.go"):
+        relative = source.relative_to(root).parts
+        if source.name.endswith("_test.go") or any(p.startswith(".") for p in relative):
+            continue
+        found.update(METRIC_NAME.findall(source.read_text()))
+    return found
+
+
+def check_documented_metrics(root: pathlib.Path) -> list[str]:
+    registered = registered_metrics(root)
+    documented = set(DOCUMENTED_METRIC.findall((root / "deploy" / "OBSERVABILITY.md").read_text()))
+    problems = []
+    if not registered:
+        problems.append("found no registered continuo_* metric in the source")
+    if missing := registered - documented:
+        problems.append(f"deploy/OBSERVABILITY.md does not list {sorted(missing)}")
+    if stale := documented - registered:
+        problems.append(f"deploy/OBSERVABILITY.md lists {sorted(stale)}, which the source does not register")
+    return problems
 
 
 def load(path: str) -> list[dict]:
@@ -92,11 +118,11 @@ def main(argv: list[str]) -> int:
     serving = serving_services(root)
     defaults = load(defaults_path)
     port = configmap_port(defaults)
-    problems = check_defaults(defaults, serving, port) + check_scrape_rule(load(scrape_path), serving, port)
+    problems = check_defaults(defaults, serving, port) + check_scrape_rule(load(scrape_path), serving, port) + check_documented_metrics(root)
     for p in problems:
         logger.error("FAIL: %s", p)
     if not problems:
-        logger.info("metrics: port %s on %s; scrape rule admits only that port", port, ", ".join(sorted(serving)))
+        logger.info("metrics: port %s on %s; scrape rule admits only that port; the guide lists every metric", port, ", ".join(sorted(serving)))
     return 1 if problems else 0
 
 
