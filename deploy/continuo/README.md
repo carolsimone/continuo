@@ -565,18 +565,33 @@ allow policies are exercised here, not just rendered — the BYO fixture
 datastores need their own explicit ingress-allow policies because the chart's
 default-deny would otherwise block them.
 
+A release goes in this order:
+
+1. Merge the release cut, the pull request that adds `## [X.Y.Z]` to
+   `CHANGELOG.md`. Its push runs `deploy.yml`, which publishes `:<git-sha>` of
+   every image: a commit that changes only the changelog publishes too, because
+   `deploy/**` is in the workflow's release filter.
+2. Push the `vX.Y.Z` tag on that commit. It can go at once, with no manual
+   publish first.
+3. Merge the docs-pin PR once the release has succeeded, then run
+   `scripts/release/open-site-bump-pr.sh X.Y.Z`.
+
 Pushing a `vX.Y.Z` git tag runs `release.yml`:
 
-1. It first refuses any tag whose commit is not an ancestor of `origin/main` —
-   a release ships exactly what main ships. Every published image is then
-   retagged from the tagged commit's `:<git-sha>` to `:vX.Y.Z`. The tag must
-   point at a main commit whose push ran `deploy.yml`'s build-publish job;
-   otherwise the release fails closed with remediation instructions
-   (`gh workflow run deploy.yml --ref main -f force_publish=true`, then tag
-   that head).
-2. The same install test runs against the `:vX.Y.Z` images and gates the
+1. It waits for `deploy.yml`'s run of the tagged commit to publish its images,
+   on a GitHub-hosted runner, for up to three hours.
+2. It refuses any tag whose commit is not an ancestor of `origin/main` — a
+   release ships exactly what main ships. Every published image is then retagged
+   from the tagged commit's `:<git-sha>` to `:vX.Y.Z`. When an image is missing,
+   the release fails closed with remediation instructions. That happens on a
+   commit outside the release filter and on one whose `deploy.yml` run was
+   cancelled while it queued behind a newer push: tag a newer main commit whose
+   run published, or run
+   `gh workflow run deploy.yml --ref main -f force_publish=true` and tag that
+   head.
+3. The same install test runs against the `:vX.Y.Z` images and gates the
    publish.
-3. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and
+4. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and
    pushed to `oci://ghcr.io/carolsimone/charts/continuo`.
 
 After the release workflow succeeds and the docs-pin PR (pinning this

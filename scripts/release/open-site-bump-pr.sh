@@ -22,16 +22,13 @@
 #   CHART_REPO       the repository whose release the pull request links [carolsimone/continuo]
 #   GH               the gh executable [gh]
 #   COMMIT_TRAILERS  trailer lines that end the commit message, above the
-#                    sign-off [the Co-Authored-By and Claude-Session lines
-#                    below]; empty adds none
+#                    sign-off [none]
 set -euo pipefail
 
 SITE_REPO="${SITE_REPO:-carolsimone/continuo-site}"
 CHART_REPO="${CHART_REPO:-carolsimone/continuo}"
 GH="${GH:-gh}"
-DEFAULT_TRAILERS='Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01PSskScdqXuRyxr36mAaXUi'
-COMMIT_TRAILERS="${COMMIT_TRAILERS-$DEFAULT_TRAILERS}"
+COMMIT_TRAILERS="${COMMIT_TRAILERS:-}"
 CONFIG=site.config.ts
 CHART_REF="oci://ghcr.io/carolsimone/charts/continuo"
 

@@ -1,14 +1,18 @@
 name: release
 
 # Release flow, triggered by pushing a v<major>.<minor>.<patch> tag on a main
-# commit:
-#   1. retag-images  — alias every published :<commit-sha> image to the
+# commit, which may be pushed as soon as the commit is on main:
+#   1. wait-for-images — wait for deploy.yml's run of the tagged commit to
+#                      publish its :<commit-sha> images. A release cut that
+#                      changes only the changelog publishes like any other
+#                      commit, since deploy/** is in deploy.yml's release filter.
+#   2. retag-images  — alias every published :<commit-sha> image to the
 #                      release tag (fails closed if the commit never went
 #                      through deploy.yml's build-publish).
-#   2. install-test  — the reusable kind install gate, run against the
+#   3. install-test  — the reusable kind install gate, run against the
 #                      freshly tagged images. A failing install blocks the
 #                      chart publish.
-#   3. publish-chart — helm package with version=X.Y.Z / appVersion=vX.Y.Z
+#   4. publish-chart — helm package with version=X.Y.Z / appVersion=vX.Y.Z
 #                      (appVersion is the chart's default image tag, so the
 #                      published chart pins every image to this release) and
 #                      push to oci://ghcr.io/<owner>/charts.
@@ -49,9 +53,33 @@ permissions:
   contents: read
 
 jobs:
+  wait-for-images:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
+    # GitHub-hosted, so the wait holds neither of the two self-hosted agents the
+    # deploy run it waits for needs. The limit outlasts that run's queue and its
+    # builds, which take an hour or two when the runners are busy.
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Wait for deploy.yml to publish the tagged commit's images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # For annotated tags GITHUB_SHA can be the tag OBJECT, not the commit
+          # it points at, so dereference explicitly.
+          bash scripts/release/wait-for-image-publish.sh "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+
   retag-images:
     # Tag-derived, so push-only: see the workflow_dispatch comment above.
     if: github.event_name == 'push'
+    needs: wait-for-images
     runs-on: self-hosted
     timeout-minutes: 15
     permissions:

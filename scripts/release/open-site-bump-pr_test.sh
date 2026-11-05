@@ -84,10 +84,8 @@ msg="$(git -C "$remote" log -1 --format=%B "$b" 2>/dev/null)"
 has_line(){ grep -qxF "$1" <<< "$msg"; }
 assert "the commit subject names the version" "[ \"\$(head -n 1 <<< \"\$msg\")\" = 'chore: bump quickstart chart version to 0.16.0' ]"
 assert "the commit is signed off" "has_line 'Signed-off-by: t <t@t>'"
-assert "the commit carries the Co-Authored-By trailer" "has_line 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'"
-assert "the commit carries the Claude-Session trailer" "has_line 'Claude-Session: https://claude.ai/code/session_01PSskScdqXuRyxr36mAaXUi'"
-assert "git reads the trailers as trailers" \
-  "[ \"\$(git -C \"$remote\" log -1 --format='%(trailers:key=Co-Authored-By,valueonly)' $b | head -n 1)\" = 'Claude Sonnet 5.5 <noreply@anthropic.com>' ]"
+assert "without COMMIT_TRAILERS the only trailer is the sign-off" \
+  "[ \"\$(git -C \"$remote\" log -1 --format='%(trailers:only,unfold)' $b)\" = 'Signed-off-by: t <t@t>' ]"
 assert "the PR is titled for the version" "[ \"\$(cat \"$tmp/pr/title\")\" = 'chore: bump quickstart chart version to 0.16.0' ]"
 assert "the PR goes from the branch to main of the site repository" \
   "[ \"\$(cat \"$tmp/pr/head\")\" = $b ] && [ \"\$(cat \"$tmp/pr/base\")\" = main ] && [ \"\$(cat \"$tmp/pr/repo\")\" = example/site ]"
@@ -99,13 +97,24 @@ assert "the PR URL is printed" "grep -qF 'https://github.com/example/site/pull/1
 bump 0.16.0
 assert "an existing branch fails before anything is pushed" "[ $rc -ne 0 ] && grep -q 'already has a branch' \"$tmp/err\" && [ ! -f \"$tmp/pr/title\" ]"
 
-export COMMIT_TRAILERS=''
+export COMMIT_TRAILERS='Co-Authored-By: Someone <someone@example.com>
+Claude-Session: https://example.com/session'
 bump 0.16.0-rc.1
 unset COMMIT_TRAILERS
 msg="$(git -C "$remote" log -1 --format=%B chore/bump-chart-0.16.0-rc.1 2>/dev/null)"
-assert "a pre-release version with an empty COMMIT_TRAILERS succeeds" "[ $rc -eq 0 ]"
-assert "an empty COMMIT_TRAILERS adds no trailer but keeps the sign-off" \
-  "! grep -q 'Co-Authored-By' <<< \"\$msg\" && has_line 'Signed-off-by: t <t@t>'"
+assert "a pre-release version with COMMIT_TRAILERS succeeds" "[ $rc -eq 0 ]"
+assert "the commit carries the Co-Authored-By trailer" "has_line 'Co-Authored-By: Someone <someone@example.com>'"
+assert "the commit carries the Claude-Session trailer" "has_line 'Claude-Session: https://example.com/session'"
+assert "git reads the trailers as trailers" \
+  "[ \"\$(git -C \"$remote\" log -1 --format='%(trailers:key=Co-Authored-By,valueonly)' chore/bump-chart-0.16.0-rc.1 | head -n 1)\" = 'Someone <someone@example.com>' ]"
+assert "the trailers keep the sign-off" "has_line 'Signed-off-by: t <t@t>'"
+
+export COMMIT_TRAILERS=''
+new_site empty "$SITE_CONFIG"
+bump 0.16.0
+unset COMMIT_TRAILERS
+assert "an empty COMMIT_TRAILERS also adds no trailer" \
+  "[ $rc -eq 0 ] && [ \"\$(git -C \"$remote\" log -1 --format='%(trailers:only,unfold)' $b)\" = 'Signed-off-by: t <t@t>' ]"
 
 # The failure modes push nothing and open no PR.
 new_site same "$SITE_CONFIG"
