@@ -36,6 +36,13 @@ function renderPanel() {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('ReleasesPanel', () => {
+  it('shows an empty state, not a failed page, for an install with no releases', async () => {
+    vi.stubGlobal('fetch', mockFetch([], {}));
+    renderPanel();
+    expect(await screen.findByText('No releases found.')).toBeInTheDocument();
+    expect(screen.getByText('No release promoted yet.')).toBeInTheDocument();
+  });
+
   it('renders info-strip banner, .form-field filter, and a nodes-table; no legacy classes', async () => {
     vi.stubGlobal('fetch', mockFetch([REL], {
       current_prod_release_id: 'rel_live', node_count: 21, updated_at: '2026-06-01T09:00:00Z',

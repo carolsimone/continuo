@@ -132,7 +132,8 @@ Rules:
 
 ## Buttons
 
-One class for the shape, three variants, two orthogonal states.
+One class for the shape, three variants, two orthogonal states. A split
+button joins a `.btn` to a chooser (see "Split button").
 
 ```css
 .btn            { display: inline-flex; align-items: center; gap: 6px;
@@ -166,7 +167,7 @@ State rules (apply to every action button without exception):
 
 | State | Label | Class |
 |---|---|---|
-| idle | `▶ Trigger run` / `Update Graph` / `↺ Rerun failed` | `.btn .btn--secondary` |
+| idle | `▶ Trigger run` / `Update Graph` / `↺ Rerun failed` (`Trigger run`, with no glyph, in a split button) | `.btn .btn--secondary` |
 | loading | `Triggering…` / `Updating…` | adds `.is-loading`, disabled |
 | success (~3s) | `Triggered` / `Updated` / `Reran` | adds `.is-success` |
 
@@ -178,6 +179,65 @@ State rules (apply to every action button without exception):
   Update Graph already uses).
 - Errors do NOT live next to the button as inline text. They render
   below the action row as an `.info-strip--error` (see below).
+
+### Split button
+
+An action and, joined to its right edge, the native `<select>` that chooses
+its variant. The schedule card's `Trigger run ⌄` is the reference: the same
+two steps as a labelled select and a button, in under half the width, and on a
+list the word `Operation` is not repeated on every row.
+
+```jsx
+<div className="btn-group">
+  <button type="button" className="btn btn--secondary" title="Trigger a full DAG run">Trigger run</button>
+  <label className="btn btn--secondary btn--caret" title="Operation">
+    <span className="sr-only">Operation</span>
+    <select value={operation} onChange={…}>
+      <option value="run">Run</option>
+      <option value="test">Test</option>
+      <option value="build">Build</option>
+    </select>
+    <svg className="btn__ico" width="8" height="5" viewBox="0 0 8 5" aria-hidden="true">
+      <path d="M1 1l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </label>
+</div>
+```
+
+```css
+.btn-group        { display: inline-flex; }
+.btn-group > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-group > .btn:last-child  { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.btn--caret       { position: relative; justify-content: center; width: 28px;
+                    padding-left: 0; padding-right: 0; color: #6b7280; }
+.btn--caret > select { position: absolute; inset: 0; width: 100%; height: 100%;
+                       opacity: 0; cursor: pointer; }
+.btn-group > .btn:focus-visible,
+.btn--caret:has(select:focus-visible) { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+.btn--caret:where(:has(select:disabled)) { opacity: .4; pointer-events: none; }
+```
+
+Rules:
+
+- One selector per page stays a labelled `.form-field` (the node page). A
+  selector repeated on every item of a list is a split button.
+- The chooser is the native control, spread invisibly over a chevron, so a click
+  opens the browser's own menu. Never a custom dropdown.
+- The button's label follows the choice (`Trigger test`), so the chosen variant
+  is always on screen. A variant that needs explaining before it runs does not
+  belong in a split button.
+- The label is `.sr-only` beside the control, and the same word is the `title`
+  on the chooser, because nothing else names it.
+- The chooser is at least 28px wide, and joined by a single divider, because the
+  action beside it may have no confirmation.
+- While the action is in flight or showing its success, both halves are disabled
+  and carry the same `.is-loading` or `.is-success`. The `:where()` keeps the
+  disabled rule's specificity low, so those states read the same on both.
+- `opacity: 0` hides a select's own focus ring and disabled look, so both sit on
+  the label.
+- Tab reaches the action first, then the chooser. On Windows and Linux, arrow
+  keys on the chooser change the value without opening the menu; the button's
+  label shows the new choice.
 
 ## Info-strips
 
@@ -733,7 +793,8 @@ Rules:
 ## Form fields
 
 The sanctioned wrapper for a labelled native control (e.g. a filter
-`<select>`). One label plus one control per `.form-field`.
+`<select>`). One label plus one control per `.form-field`. The chooser of a
+split button (see Buttons) is the one native control that is not in one.
 
 ```jsx
 <div className="form-field">
@@ -753,8 +814,7 @@ The sanctioned wrapper for a labelled native control (e.g. a filter
 
 /* Inline in an action row, the block margin is wrong: it inflates the flex
    row and (being asymmetric) shifts the select off the buttons' centre line. */
-.page-action-row .form-field,
-.scheduler-card-header .form-field { margin: 0; }
+.page-action-row .form-field { margin: 0; }
 ```
 
 Rules:
@@ -766,10 +826,10 @@ Rules:
   `.section-header` of the list it filters. There the `8px 0 12px`
   block margin gives it breathing room.
 - When the `.form-field` is used *inline* as an operation selector inside
-  an action row (`.page-action-row`, `.scheduler-card-header`), that block
-  margin must be zeroed. Otherwise it makes the field taller than its
-  sibling `.btn`s and pushes the `<select>` above their shared centre line
-  — the field and the buttons must sit on one baseline.
+  an action row (`.page-action-row`), that block margin must be zeroed.
+  Otherwise it makes the field taller than its sibling `.btn`s and pushes the
+  `<select>` above their shared centre line — the field and the buttons must
+  sit on one baseline.
 
 ## Tables
 
@@ -1048,8 +1108,8 @@ Rules:
   like pending: nothing of the task runs yet. A `queued` pill carries the
   title "waiting for a slot" (`taskStatusTitle`). Wherever task statuses are
   ordered or counted (the nodes table, the run-progress header, the swimlane
-  legend, a service's rolled-up status, the dashboard run card's summary
-  row) dispatched and queued come just before running.
+  legend, a service's rolled-up status, the dashboard run card's counts)
+  dispatched and queued come just before running.
 - Two statuses mean a cancel is in progress, and both are neutral-warning
   (`#fef3c7` fill, `#92400e` text, the `.info-strip--warning` palette): a run
   is `cancelling` (title "cancelling — waiting for its Jobs to stop") and a
@@ -1229,72 +1289,182 @@ Rules:
   put `border-bottom: none` on the card row itself; the card row's border is
   what separates one proposal's card from the next proposal's row.
 
+## Run status bar and counts
+
+A run's tasks, as one bar and one row of counts, on the run page's header and
+on the schedule card (`TaskStatusBar`, `TaskStatusCounts`,
+`ui/src/client/TaskStatusProgress.tsx`). `summarizeTasks` counts the tasks and
+gives one percentage, and `nodesComplete` and `nodeTotal` give the words for them,
+so the two surfaces always agree. The percentage reads 100 only once every task has
+ended: 1,999 of 2,000 reads 99%.
+
+```jsx
+<div className="run-progress-bar" aria-hidden="true">
+  <span className="rp-seg rp-succeeded" style={{ width: '68.3%' }} title="28 succeeded" />
+  <span className="rp-seg rp-running" style={{ width: '14.6%' }} title="6 running" />
+  <span className="rp-seg rp-pending" style={{ width: '17.1%' }} title="7 pending" />
+</div>
+<div className="run-progress-counts">
+  <span className="rp-count"><span className="rp-dot rp-succeeded" /><b>28</b> succeeded</span>
+  <span className="rp-count rp-count--alert"><span className="rp-dot rp-failed" /><b>1</b> failed</span>
+</div>
+```
+
+```css
+.rp-seg           { display: block; height: 100%; min-width: 3px; transition: width .4s ease; }
+.rp-pending       { background: transparent; }
+.rp-dot.rp-pending { background: transparent; box-shadow: inset 0 0 0 1.5px #94a3b8; }
+.rp-seg.rp-running { animation: rp-pulse 2s ease-in-out infinite; }
+.rp-count--alert  { color: #dc2626; }
+```
+
+Rules:
+
+- A status is a square dot, never an emoji. The dot, the bar segment and the
+  swimlane legend paint a status with the same colour, in the same order:
+  succeeded, dispatched, queued, stopping, running, failed, skipped, cancelled,
+  pending. The order is the swimlane legend's, so they read as one.
+- **The bar has one segment per status that has tasks**, sized by its share. A
+  segment keeps a `min-width`, so one failure among 2,000 tasks stays visible;
+  a status with no tasks draws no segment.
+- **Pending is hollow**, because nothing has happened yet: its segment leaves the
+  track showing, and its dot, the legend key and a collapsed swimlane cell are
+  outlines, as a pending node on the swimlane is.
+- **The running segment pulses gently**, and stops under
+  `prefers-reduced-motion`. Its dot in the counts does not pulse.
+- **A failed count is red once a task has failed**, and only then.
+- **Counts** group their thousands (`1,999`). `hideZero` leaves out a status with
+  no tasks; the schedule card uses it, where a row of zeros would outweigh the
+  counts that matter. The run page shows every status. A queued or stopping count
+  carries `taskStatusTitle` on hover.
+- The bar repeats the counts, so it is `aria-hidden` and assistive technology
+  reads the counts.
+
 ## Schedule cards
 
 Each schedule on the home page's Runs tab is a `SchedulerCard`
-(`ui/src/client/SchedulerCard.tsx`). After the name and the status badge of
-its last run, its header says whether and when the schedule runs on its own.
+(`ui/src/client/SchedulerCard.tsx`). Every card has the same shape, so a list of
+them scans as one: its name, status and controls, one line of facts, then the bar
+and counts of its last run. One rule runs through it: quiet when healthy, loud
+when broken. Colour appears only where it means something, so a failure stands
+out.
 
 ```jsx
-<div className="scheduler-card-header">
-  <span className="schedule-name">daily</span>
-  <span className="status-badge status-succeeded">succeeded</span>
-  <span className="schedule-pill schedule-pill--scheduled">scheduled</span>
-  <span className="schedule-cron" title="every day at 01:00">0 1 * * * · Europe/Paris</span>
-  <span className="timestamps">next 28 Oct 01:00</span>
-  <span className="timestamps">last run 01:00:04</span>
-  <div className="scheduler-card-actions">
-    {/* Operation select, Trigger run, Cancel */}
-    <button type="button" className="btn btn--secondary">Edit cron</button>
+<div className="detail-card scheduler-card">
+  <div className="scheduler-card-header">
+    <Link className="schedule-name" to="/schedule/daily" state={{ last_run_id }}>daily</Link>
+    <span className="pill-sm pill-sm--running">running</span>
+    <span className="info-strip info-strip--warning info-strip--inline">…source 2 releases behind latest</span>
+    <div className="scheduler-card-actions" role="group" aria-label="daily controls" tabIndex={-1}>
+      {/* split button or Cancel, then Edit cron */}
+    </div>
+  </div>
+  <div className="preview-facts schedule-facts">
+    <span className="schedule-cron" title="0 3 * * *">At 03:00</span>
+    <span className="preview-facts__sep" aria-hidden="true">·</span>
+    <span>Europe/Berlin</span>
+    <span className="preview-facts__sep" aria-hidden="true">·</span>
+    <span>next 7 Nov 03:00</span>
+    <span className="preview-facts__sep" aria-hidden="true">·</span>
+    <span title="11/6/2026, 10:56:07 AM">started 2m ago</span>
+  </div>
+  {/* no-models strip, trigger error strip */}
+  <div className="scheduler-card-body">
+    {/* TaskStatusBar */}
+    <div className="scheduler-card-summary">
+      {/* TaskStatusCounts hideZero */}
+      <div className="preview-facts schedule-facts scheduler-card-total">
+        <span>28 of 41 nodes complete</span>
+        <span className="preview-facts__sep" aria-hidden="true">·</span>
+        <span>68%</span>
+      </div>
+    </div>
   </div>
 </div>
 ```
 
 ```css
-.schedule-pill            { display: inline-block; padding: 2px 8px; border-radius: 12px;
-                            font-size: 11px; font-weight: 500; text-transform: uppercase;
-                            letter-spacing: 0.05em; border: 1px solid transparent; }
-.schedule-pill--scheduled { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
-.schedule-pill--paused    { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-.schedule-pill--manual    { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
-.schedule-cron            { color: #6b7280; font-size: 12px; font-family: monospace;
-                            white-space: nowrap; }
-.schedule-cron--paused    { text-decoration: line-through; }
-.scheduler-card-header    { display: flex; flex-wrap: wrap; align-items: center;
-                            gap: 12px; row-gap: 8px; }
-.scheduler-card-actions   { display: flex; flex-wrap: wrap; align-items: center;
-                            gap: 12px; margin-left: auto; }
-.timestamps               { color: #6b7280; font-size: 12px; white-space: nowrap; }
+.scheduler-card         { gap: 10px; padding: 14px 16px; margin-bottom: 12px; cursor: pointer;
+                          transition: background .15s, border-color .15s; }
+.scheduler-card:hover   { background: #f8f9fa; border-color: #c7d2fe; }
+.scheduler-card--failed { box-shadow: inset 3px 0 0 #dc2626, 0 1px 3px rgba(0, 0, 0, .05); }
+.scheduler-card-header  { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.scheduler-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+                          margin-left: auto; cursor: default; }
+.schedule-cron--paused  { text-decoration: line-through; }
+.schedule-cron--raw     { font-family: 'SF Mono', 'Fira Mono', monospace; }
 ```
 
 Rules:
 
-- **One pill per card**: `scheduled` (a cron that fires), `paused` (a cron
-  that starts nothing on its own) or `manual` (no cron: it runs only when
-  triggered). The pill says whether the schedule runs on its own; the
-  status badge before it says how its last run went. The pill's border sets
-  it apart from the borderless status badge.
-- **The cron span** is the raw cron and its timezone, monospace, on a
-  schedule that has a cron, struck through (`.schedule-cron--paused`) while
-  paused; its `title` is the cron in words. One muted `.timestamps` fact
-  follows it: `next 28 Oct 01:00`, in the schedule's timezone, or
-  `paused by bob@example.com · 27 Oct 14:02`, in the viewer's. A cron that
-  fires no more has no fact. A manual schedule shows `no cron: runs only when
-  triggered` in place of the span.
-- **The header wraps** when its facts and controls do not fit: each fact
-  keeps to one line (`white-space: nowrap`), and the controls — Operation,
-  Trigger, Cancel, Edit cron — stay together in `.scheduler-card-actions`,
-  right-aligned, and move to the next line as one group.
-  `ui/tests/client/styles-schedule-card-header.test.ts` pins this.
+- **The surface is `.detail-card`**, the card of the Nodes tab. Its hover is that
+  of the other clickable surfaces (`.snapshot-tile`, `.pick-row`).
+- **The status is a `.pill-sm`** through `taskPillClass`, with `taskStatusTitle` on
+  hover: the last run's status, or `never run`. It sits beside the name, as on the
+  run page's header. A stale run adds the drift chip after it, the same
+  `.info-strip--inline` the run page shows.
+- **The only rail is a failed run's**: 3px of red, drawn inside the card by an inset
+  shadow, so the card's content lines up with its neighbours'. A running or
+  succeeded card has none.
+- **The facts line says when the schedule runs, then how old its last run is.** The
+  cron in the server's words comes first, its raw form in `title` (`.schedule-cron`);
+  with no words, the raw cron in monospace (`.schedule-cron--raw`). Then its
+  timezone, then `next 28 Oct 01:00` in that timezone, or
+  `paused by bob@example.com · 27 Oct 14:02` in the viewer's. A manual schedule
+  shows `No cron: runs only when triggered`. `started 18m ago` (`formatRelative`,
+  `started just now` under a minute) ends the line, with the exact time in `title`;
+  it reads `started` because the time is when the run was created. A fact that is
+  not known is absent. The line is the `.preview-facts` line of a list, set at the
+  card's 12px, its facts joined by `joinFacts` (`PreviewList.tsx`); they wrap between
+  each other, and long cron words also wrap within themselves.
+- **A paused schedule's one pill**, `.pill-sm--paused` (the neutral-warning palette),
+  starts the facts line, and its cron is struck through (`.schedule-cron--paused`). A
+  scheduled or manual schedule has no such pill: the facts line already says so.
+- **The name is the real link**, with the last run in its navigation state. A click
+  anywhere else on the card is a mouse shortcut for it, as a row is on the Releases
+  table: it leaves a modified click to the browser and ignores the click that ends a
+  text selection. The controls, the drift chip and the no-models strip do not
+  navigate. A browser starts no text selection on a link, so a drag on the name drags
+  the link; never set it `draggable={false}`, which turns that drag into a click. To
+  copy a name, start the drag just left of it.
+- **One run control at a time.** While no run is active the card offers the split
+  button (Run, Test, Build). While a run is active it offers `Cancel`
+  (`.btn--danger`): a run cannot be triggered then, so there is no disabled button
+  saying so. A press stays on screen until its request has answered and `Triggered`
+  has shown, and `Cancel` appears as soon as a run is active, so it is never hidden
+  while there is a run to cancel; for a moment both show. Their order is Trigger,
+  Cancel, Edit cron, so `Cancel` does not move once it appears.
+- **When the focused run control leaves**, the focus moves to the group of controls
+  (`.scheduler-card-actions`, `role="group"`, `tabIndex={-1}`, no ring), which holds the
+  keyboard's place: the next Tab reaches the control that remains. It never moves to
+  that control itself, because a key meant for `Cancel` must not land on Trigger, which
+  has no confirmation. Focus the operator moved elsewhere stays there. Whether the focus
+  is on a control that is leaving is read in the render before it goes: a removal fires
+  `blur` too, so tracking blur cannot tell it from a move.
 - **`Edit cron`** (scheduled or paused) / **`Add cron`** (manual) is a
   `.btn--secondary`, last of the card's controls, and opens the cron dialog. Only an
   operator sees it, by the session's role (`useCurrentUser()`); a viewer
   sees no button rather than a disabled one.
+- **The body is the last run's status bar and counts** (see "Run status bar and
+  counts"), with `hideZero`. Beside the counts, `28 of 41 nodes complete · 68%` while
+  a run is active, and `41 nodes` once it has ended, so a failed run never reads
+  `100%`. Until the first read of a run settles, the body holds its height as an empty
+  track, so the card does not grow when the tasks arrive. Tasks are held with the run
+  they belong to, so a new run never shows the counts of the one before. A failed first
+  read, a run with no tasks and a schedule that never ran have no body.
 - **A scheduled name with no models** (no model of the live release has its
-  tag) carries an `.info-strip--warning` under the header: "No model in the
+  tag) carries an `.info-strip--warning` under the facts: "No model in the
   live release has the tag **daily**. Each fire records a failed run until a
   release brings them back, or you remove its cron." A paused or manual
-  schedule fires nothing and has no such strip.
+  schedule fires nothing and has no such strip. A refused trigger's
+  `.info-strip--error` sits in the same place, does not navigate, and goes once the
+  card shows a newer run, since there is no Trigger to press and clear it during that
+  run.
+- **The rows wrap** when they do not fit: the controls move to the next line as one
+  group, right-aligned, and the facts and counts wrap between their items.
+  `ui/tests/client/styles-schedule-card-header.test.ts` pins this.
+- **No schedules** is an `.info-strip--neutral` saying how one appears, not a bare
+  paragraph.
 
 ## Snapshot tiles
 
@@ -1579,6 +1749,8 @@ Rules:
 - `style="…"` inline overrides on visual elements.
 - Checkmark glyphs in button labels (`✓ Done`). Use the green
   `.is-success` state.
+- Emoji, as a status marker or in a button label. A status is a pill or a square
+  dot (`.rp-dot`), whose colour says the same thing everywhere; an action is its verb.
 - Inline red error text next to buttons. Use `.info-strip--error`
   below the action row.
 - Fixed widths that break responsive flow (other than the

@@ -655,6 +655,25 @@ describe('NodeDetailPage full refresh', () => {
     expect(screen.queryByRole('option', { name: /full refresh/i })).toBeNull();
   });
 
+  it.each([
+    ['run', 'Run this node'],
+    ['test', 'Test this node'],
+    ['build', 'Build this node'],
+    ['full_refresh', 'Full refresh this node'],
+  ])('names the %s action in plain words, with no glyph', async (operation, label) => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), operation);
+    expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+  });
+
+  it('names the old-snapshot action in plain words, with no glyph', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Run with old snapshot…' })).toBeInTheDocument();
+  });
+
   it('asks for confirmation and only POSTs full_refresh after confirming', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model'));
     renderPage();

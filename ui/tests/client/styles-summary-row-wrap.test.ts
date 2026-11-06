@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// The Runs card's summary row holds one count per task status, nine in all,
-// which is wider than a card on a narrow viewport. It wraps onto a second line
-// rather than widen the card and scroll the page sideways.
+// A run's counts can hold one count per task status, nine in all, which is
+// wider than a card on a narrow viewport. They wrap onto a second line rather
+// than widen the card and scroll the page sideways.
 const css = readFileSync(fileURLToPath(new URL('../../src/client/styles.css', import.meta.url)), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -15,8 +15,8 @@ function ruleBody(selector: string): string | null {
   return null;
 }
 
-describe('styles.css Runs card summary row', () => {
+describe('styles.css run progress counts', () => {
   it('wraps instead of overflowing the card', () => {
-    expect(ruleBody('.summary-row')).toMatch(/flex-wrap:\s*wrap/);
+    expect(ruleBody('.run-progress-counts')).toMatch(/flex-wrap:\s*wrap/);
   });
 });

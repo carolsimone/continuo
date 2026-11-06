@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router';
-import {
-  formatDayTime,
-  getScheduleProgressLabel,
-  getScheduleProgressBarClass,
-  getScheduleProgressPercent,
-  scheduleState,
-} from './scheduler-card-helpers';
+import { Link, useNavigate } from 'react-router';
+import { formatDayTime, scheduleState } from './scheduler-card-helpers';
+import { taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import { getDriftState, getDriftBadge } from './drift-helpers';
+import { formatRelative } from './node-helpers';
+import { joinFacts } from './PreviewList';
+import { nodesComplete, nodeTotal, summarizeTasks, TaskStatusBar, TaskStatusCounts } from './TaskStatusProgress';
 import { RunGraph, ScheduleSummary, Task } from './types';
 import type { RunOperation } from '../server/shared/operation';
 import CancelDialog from './CancelDialog';
@@ -17,17 +16,6 @@ import { useCurrentUser } from './auth/AuthContext';
 import { fetchAllPages } from './fetch-all-pages';
 import { readJson } from './read-json';
 import { settlesRequest, useActionRequestId } from './request-id';
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString();
-}
-
-function cardBorderClass(status: string): string {
-  if (status === 'running' || status === 'cancelling' || status === 'succeeded') return 'card-border-green';
-  if (status === 'failed') return 'card-border-red';
-  return 'card-border-grey';
-}
 
 interface Props {
   schedule: ScheduleSummary;
@@ -48,10 +36,23 @@ function whenLine(schedule: ScheduleSummary): string | null {
   return schedule.next_fire_at ? `next ${formatDayTime(schedule.next_fire_at, schedule.timezone)}` : null;
 }
 
+// How long ago the last run was created. It is not when the run ended: a run
+// that took three hours and has just ended started 3h ago.
+function startedLine(iso: string): string {
+  const ago = formatRelative(iso);
+  return ago === 'now' ? 'started just now' : `started ${ago}`;
+}
+
+// True once a drag has selected text: the click that ends the drag is not a
+// click on what lies under it.
+const hasSelectedText = () => (window.getSelection()?.toString() ?? '') !== '';
+
 export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   const navigate = useNavigate();
   const neverRun = !schedule.last_run_id;
-  const [tasks, setTasks] = useState<Task[]>([]);
+  // The latest answer for a run's tasks, with the run it is for, so a new run
+  // never shows the tasks of the run before it.
+  const [taskRead, setTaskRead] = useState<{ runId: string; tasks: Task[] } | null>(null);
   const [tasksReload, setTasksReload] = useState(0);
   const [drift, setDrift] = useState<{ run: number; latest: number } | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -70,21 +71,28 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   // schedule list's poll) makes the next press a new action, and the id is
   // renewed once the server has given its final answer.
   const { take: takeRequestId, renew: renewTriggerId } = useActionRequestId();
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const triggerGroupRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   // Reads the run's tasks now and every 5 s after. A change of run or a bump
   // of tasksReload starts the reads over; the reads already in flight are
   // aborted and their answers dropped, so an answer from before a cancel never
-  // replaces one from after it.
+  // replaces one from after it. A read that fails keeps the tasks the run
+  // already has, and settles a run that has none yet as having none.
   useEffect(() => {
-    if (neverRun) return;
+    const runId = schedule.last_run_id;
+    if (!runId) return;
     let cancelled = false;
     const controller = new AbortController();
     const fetch_ = () =>
-      fetchAllPages<Task>(`/api/runs/${schedule.last_run_id}/tasks`, 'tasks', {
+      fetchAllPages<Task>(`/api/runs/${runId}/tasks`, 'tasks', {
         signal: controller.signal,
       })
-        .then(all => { if (!cancelled) setTasks(all); })
-        .catch(() => {});
+        .then(tasks => { if (!cancelled) setTaskRead({ runId, tasks }); })
+        .catch(() => {
+          if (!cancelled) setTaskRead(read => (read?.runId === runId ? read : { runId, tasks: [] }));
+        });
     fetch_();
     const id = setInterval(fetch_, 5000);
     return () => { cancelled = true; controller.abort(); clearInterval(id); };
@@ -115,6 +123,33 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
     if (!schedule.has_active_run) setCancelDialogOpen(false);
   }, [schedule.has_active_run]);
 
+  // An error from an earlier press says nothing about a newer run, and while
+  // that run is active there is no Trigger to press and clear it.
+  useEffect(() => {
+    setTriggerError(null);
+  }, [schedule.last_run_id]);
+
+  // Trigger is on offer while no run is active. A press stays on screen until
+  // its request has answered and its success has shown, even once the run it
+  // started reads active; Cancel appears as soon as a run is active, so it is
+  // never hidden while there is a run to cancel.
+  const triggerBusy = triggerLoading || triggerStatus === 'success';
+  const showTrigger = !schedule.has_active_run || triggerBusy;
+
+  // A browser drops the focus to the page when the focused control leaves the
+  // document. This render, the last before that control goes, reads whether the
+  // focus is on it; only here can that be told from focus the operator moved
+  // away, since a removal fires blur too. The focus then goes to the group of
+  // controls, which holds the keyboard's place and does nothing on a key press: a
+  // key meant for Cancel must not land on Trigger, which has no confirmation.
+  const holdsFocus = (el: HTMLElement | null) => Boolean(el?.contains(document.activeElement));
+  const focusIsLeaving =
+    (!showTrigger && holdsFocus(triggerGroupRef.current)) ||
+    (!schedule.has_active_run && holdsFocus(cancelRef.current));
+  useLayoutEffect(() => {
+    if (focusIsLeaving) actionsRef.current?.focus({ preventScroll: true });
+  }, [focusIsLeaving]);
+
   // A cancelling run is active (has_active_run) but not running: it reads
   // cancelling, and its Cancel button stays available.
   const displayStatus = neverRun
@@ -130,33 +165,34 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
   // a failed run at each fire.
   const showNoModelsStrip = cronState === 'scheduled' && schedule.model_count === 0;
 
-  const total = tasks.length;
-  const succeeded = tasks.filter(t => t.status === 'succeeded').length;
-  const failed = tasks.filter(t => t.status === 'failed').length;
-  const skipped = tasks.filter(t => t.status === 'skipped').length;
-  const cancelledTasks = tasks.filter(t => t.status === 'cancelled').length;
-  const dispatched = tasks.filter(t => t.status === 'dispatched').length;
-  const queued = tasks.filter(t => t.status === 'queued').length;
-  const stopping = tasks.filter(t => t.status === 'stopping').length;
-  const running = tasks.filter(t => t.status === 'running').length;
-  const pending = tasks.filter(t => t.status === 'pending').length;
-  const pct = getScheduleProgressPercent(tasks);
+  const read = taskRead?.runId === schedule.last_run_id ? taskRead : null;
+  const summary = summarizeTasks(read?.tasks ?? []);
+  // Until the first read of a run settles, its body holds its place as an empty
+  // track, so the card does not grow when the tasks arrive. A run read as having
+  // no tasks has no body.
+  const showBody = !neverRun && (read === null || summary.total > 0);
 
   const driftState = drift ? getDriftState(drift.run, drift.latest) : 'fresh';
   // Only a stale run (pinned to an older topology than the latest) warrants a
-  // strip. The 'unknown' state (a run predating topology tracking) is silent.
-  const showDriftStrip = driftState === 'stale';
-  const driftBadge = showDriftStrip && drift
+  // chip. The 'unknown' state (a run predating topology tracking) is silent.
+  const driftBadge = driftState === 'stale' && drift
     ? getDriftBadge('stale', drift.run, drift.latest)
     : null;
 
-  const handleClick = () =>
-    navigate(`/schedule/${schedule.schedule_name}`, {
-      state: { last_run_id: schedule.last_run_id },
-    });
+  const schedulePath = `/schedule/${encodeURIComponent(schedule.schedule_name)}`;
+  const navigationState = { last_run_id: schedule.last_run_id };
 
-  const handleTrigger = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  // A click on the card is a mouse shortcut for the name, which holds the real
+  // link: it leaves a modified click to the browser and ignores the click that
+  // ends a text selection.
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || hasSelectedText()) return;
+    navigate(schedulePath, { state: navigationState });
+  };
+
+  const stopCardClick = (e: React.MouseEvent) => e.stopPropagation();
+
+  const handleTrigger = () => {
     setTriggerLoading(true);
     setTriggerError(null);
     fetch(`/api/schedules/${encodeURIComponent(schedule.schedule_name)}/trigger`, {
@@ -180,21 +216,11 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
       .finally(() => setTriggerLoading(false));
   };
 
-  const handleCancelClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCancelDialogOpen(true);
-  };
-
   // A cancel keeps the same run, so the card reads both the schedule list (the
   // run's status) and the run's tasks (now stopping or cancelled) again.
   const handleCancelled = () => {
     setTasksReload(n => n + 1);
     onRunChanged();
-  };
-
-  const handleCronClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCronDialogMode(hasCron ? 'edit' : 'add');
   };
 
   const handleCronDialogClose = () => {
@@ -204,6 +230,34 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
 
   const triggerIdleLabel =
     operation === 'test' ? 'Trigger test' : operation === 'build' ? 'Trigger build' : 'Trigger run';
+  const triggerStateClass = triggerLoading ? 'is-loading' : triggerStatus === 'success' ? 'is-success' : '';
+
+  const scheduleFacts: ReactNode[] = [];
+  if (hasCron) {
+    const cronClass = [
+      'schedule-cron',
+      cronState === 'paused' ? 'schedule-cron--paused' : '',
+      schedule.cron_words ? '' : 'schedule-cron--raw',
+    ].filter(Boolean).join(' ');
+    scheduleFacts.push(
+      <span className={cronClass} title={schedule.cron_words ? schedule.cron : undefined}>
+        {schedule.cron_words || schedule.cron}
+      </span>,
+    );
+    if (schedule.timezone) scheduleFacts.push(<span>{schedule.timezone}</span>);
+  } else {
+    scheduleFacts.push(<span>No cron: runs only when triggered</span>);
+  }
+  if (when) scheduleFacts.push(<span>{when}</span>);
+  if (!neverRun && schedule.last_run_at) {
+    scheduleFacts.push(
+      <span title={new Date(schedule.last_run_at).toLocaleString()}>{startedLine(schedule.last_run_at)}</span>,
+    );
+  }
+
+  const progressFacts: ReactNode[] = schedule.has_active_run
+    ? [<span>{nodesComplete(summary)}</span>, <span>{summary.percent}%</span>]
+    : [<span>{nodeTotal(summary)}</span>];
 
   return (
     <>
@@ -220,125 +274,112 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
         document.body,
       )}
       <div
-        className={`scheduler-card ${cardBorderClass(displayStatus)}`}
-        onClick={handleClick}
-        role="button"
-        tabIndex={0}
-        // Navigate only when the card itself is focused. Restricting to
-        // currentTarget keeps Enter on a nested control (the operation select,
-        // the Trigger/Cancel buttons) from bubbling up and navigating away.
-        onKeyDown={e => { if (e.key === 'Enter' && e.target === e.currentTarget) handleClick(); }}
+        className={`detail-card scheduler-card${displayStatus === 'failed' ? ' scheduler-card--failed' : ''}`}
+        onClick={handleCardClick}
       >
         <div className="scheduler-card-header">
-          <span className="schedule-name">{schedule.schedule_name}</span>
-          <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
+          <Link
+            className="schedule-name"
+            to={schedulePath}
+            state={navigationState}
+            onClick={stopCardClick}
+          >
+            {schedule.schedule_name}
+          </Link>
+          <span
+            className={`pill-sm ${taskPillClass(displayStatus)}`}
+            title={taskStatusTitle(displayStatus)}
+            data-testid="run-status"
+          >
             {displayStatus}
           </span>
-          <span className={`schedule-pill schedule-pill--${cronState}`}>{cronState}</span>
-          {hasCron ? (
-            <span
-              className={cronState === 'paused' ? 'schedule-cron schedule-cron--paused' : 'schedule-cron'}
-              title={schedule.cron_words || undefined}
-            >
-              {schedule.cron}
-              {schedule.timezone ? ` · ${schedule.timezone}` : ''}
-            </span>
-          ) : (
-            <span className="timestamps">no cron: runs only when triggered</span>
-          )}
-          {when && <span className="timestamps">{when}</span>}
-          {!neverRun && (
-            <span className="timestamps">
-              {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
+          {driftBadge && (
+            <span className="info-strip info-strip--warning info-strip--inline" onClick={stopCardClick}>
+              <span className="info-strip__icon" aria-hidden="true">⚠</span>
+              {driftBadge}
             </span>
           )}
-          <div className="scheduler-card-actions">
-            <div className="form-field" onClick={e => e.stopPropagation()}>
-              <label htmlFor={`op-${schedule.schedule_name}`}>Operation</label>
-              <select
-                id={`op-${schedule.schedule_name}`}
-                value={operation}
-                disabled={schedule.has_active_run || triggerLoading}
-                onChange={e => setOperation(e.target.value as RunOperation)}
-              >
-                <option value="run">Run</option>
-                <option value="test">Test</option>
-                <option value="build">Build</option>
-              </select>
-            </div>
-            <button
-              type="button"
-              className={[
-                'btn',
-                'btn--secondary',
-                triggerLoading ? 'is-loading' : '',
-                triggerStatus === 'success' ? 'is-success' : '',
-              ].filter(Boolean).join(' ')}
-              disabled={schedule.has_active_run || triggerLoading || triggerStatus === 'success'}
-              onClick={handleTrigger}
-              title={schedule.has_active_run ? 'A run is already active' : 'Trigger a full DAG run'}
-            >
-              {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
-            </button>
+          <div
+            ref={actionsRef}
+            className="scheduler-card-actions"
+            role="group"
+            aria-label={`${schedule.schedule_name} controls`}
+            tabIndex={-1}
+            onClick={stopCardClick}
+          >
+            {showTrigger && (
+              <div ref={triggerGroupRef} className="btn-group">
+                <button
+                  type="button"
+                  className={['btn', 'btn--secondary', triggerStateClass].filter(Boolean).join(' ')}
+                  disabled={triggerBusy}
+                  onClick={handleTrigger}
+                  title="Trigger a full DAG run"
+                >
+                  {triggerLoading ? 'Triggering…' : triggerStatus === 'success' ? 'Triggered' : triggerIdleLabel}
+                </button>
+                <label className={['btn', 'btn--secondary', 'btn--caret', triggerStateClass].filter(Boolean).join(' ')} title="Operation">
+                  <span className="sr-only">Operation</span>
+                  <select
+                    value={operation}
+                    disabled={triggerBusy}
+                    onChange={e => setOperation(e.target.value as RunOperation)}
+                  >
+                    <option value="run">Run</option>
+                    <option value="test">Test</option>
+                    <option value="build">Build</option>
+                  </select>
+                  <svg className="btn__ico" width="8" height="5" viewBox="0 0 8 5" aria-hidden="true">
+                    <path d="M1 1l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </label>
+              </div>
+            )}
             {schedule.has_active_run && (
               <button
+                ref={cancelRef}
                 type="button"
                 className="btn btn--danger"
-                onClick={handleCancelClick}
+                onClick={() => setCancelDialogOpen(true)}
                 title="Cancel the active run"
               >
                 Cancel
               </button>
             )}
             {isOperator && (
-              <button type="button" className="btn btn--secondary" onClick={handleCronClick}>
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => setCronDialogMode(hasCron ? 'edit' : 'add')}
+              >
                 {hasCron ? 'Edit cron' : 'Add cron'}
               </button>
             )}
           </div>
         </div>
-        {showDriftStrip && driftBadge && (
-          <div
-            className="info-strip info-strip--warning"
-            onClick={e => e.stopPropagation()}
-          >
-            <span aria-hidden="true">⚠</span>
-            <span>{driftBadge}</span>
-          </div>
-        )}
+        <div className="preview-facts schedule-facts">
+          {cronState === 'paused' && <span className="pill-sm pill-sm--paused">paused</span>}
+          {joinFacts(scheduleFacts)}
+        </div>
         {showNoModelsStrip && (
-          <div
-            className="info-strip info-strip--warning"
-            onClick={e => e.stopPropagation()}
-          >
-            <span aria-hidden="true">⚠</span>
+          <div className="info-strip info-strip--warning" onClick={stopCardClick}>
+            <span className="info-strip__icon" aria-hidden="true">⚠</span>
             <span>
               No model in the live release has the tag <b>{schedule.schedule_name}</b>. Each fire records a failed
               run until a release brings them back, or you remove its cron.
             </span>
           </div>
         )}
-        {triggerError && <div className="info-strip info-strip--error">{triggerError}</div>}
-        {!neverRun && total > 0 && (
+        {triggerError && <div className="info-strip info-strip--error" onClick={stopCardClick}>{triggerError}</div>}
+        {showBody && (
           <div className="scheduler-card-body">
-            <div className="progress-row">
-              <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
-              <div className="progress-bar-track">
-                <div className={getScheduleProgressBarClass(displayStatus)} style={{ width: `${pct}%` }} />
+            <TaskStatusBar summary={summary} />
+            {summary.total > 0 && (
+              <div className="scheduler-card-summary">
+                <TaskStatusCounts summary={summary} hideZero />
+                <div className="preview-facts schedule-facts scheduler-card-total">{joinFacts(progressFacts)}</div>
               </div>
-              <span className="progress-pct">{pct}%</span>
-            </div>
-            <div className="summary-row">
-              <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
-              <span><span aria-hidden="true">❌</span> {failed} failed</span>
-              <span><span aria-hidden="true">⏭️</span> {skipped} skipped</span>
-              <span><span aria-hidden="true">🚫</span> {cancelledTasks} cancelled</span>
-              <span><span aria-hidden="true">📤</span> {dispatched} dispatched</span>
-              <span><span aria-hidden="true">🕒</span> {queued} queued</span>
-              <span><span aria-hidden="true">✋</span> {stopping} stopping</span>
-              <span><span aria-hidden="true">🏃</span> {running} running</span>
-              <span><span aria-hidden="true">⏳</span> {pending} pending</span>
-            </div>
+            )}
           </div>
         )}
       </div>

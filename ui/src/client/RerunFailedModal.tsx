@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import PreviewList, { PreviewFacts, PreviewItem } from './PreviewList';
-import { formatDuration } from './node-helpers';
+import { formatCount, formatDuration } from './node-helpers';
 import { useActionRequestId } from './request-id';
 import type { ChangedUpstreamNode, RebasePreview } from './types';
 
@@ -47,10 +47,6 @@ function isRebasePreview(body: unknown): body is RebasePreview {
     && typeof p.total_nodes === 'number'
     && typeof p.inherited === 'number'
     && Array.isArray(p.changed_nodes);
-}
-
-function formatCount(n: number): string {
-  return n.toLocaleString('en-US');
 }
 
 // formatSeconds formats a duration in seconds; under a second reads "<1s".

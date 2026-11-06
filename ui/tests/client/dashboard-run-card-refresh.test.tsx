@@ -95,11 +95,11 @@ async function advance(ms: number) {
 }
 
 function badge(container: HTMLElement) {
-  return container.querySelector('.status-badge');
+  return container.querySelector('[data-testid="run-status"]');
 }
 
 function summary(container: HTMLElement) {
-  return container.querySelector('.summary-row')?.textContent ?? '';
+  return container.querySelector('.run-progress-counts')?.textContent ?? '';
 }
 
 async function cancelThroughDialog() {
@@ -115,19 +115,19 @@ describe('DashboardPage — the Runs card after a cancel', () => {
     const { container } = render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     await advance(0);
     expect(badge(container)).toHaveTextContent('running');
-    expect(screen.getByText('Completed: 20/41')).toBeInTheDocument();
+    expect(screen.getByText('20 of 41 nodes complete')).toBeInTheDocument();
 
     await cancelThroughDialog();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(badge(container)).toHaveTextContent('cancelling');
     expect(summary(container)).toMatch(/6 stopping/);
     expect(summary(container)).toMatch(/15 cancelled/);
-    expect(screen.getByText('Completed: 35/41')).toBeInTheDocument();
+    expect(screen.getByText('35 of 41 nodes complete')).toBeInTheDocument();
 
     phase = 'cancelled';
     await advance(POLL_MS);
     expect(badge(container)).toHaveTextContent('cancelled');
-    expect(screen.getByText('Completed: 41/41')).toBeInTheDocument();
+    expect(screen.getByText('41 nodes')).toBeInTheDocument();
     expect(summary(container)).toMatch(/21 cancelled/);
     expect(screen.queryByTitle('Cancel the active run')).toBeNull();
   });
@@ -182,7 +182,7 @@ describe('DashboardPage — the Runs card after a trigger', () => {
     fireEvent.click(screen.getByTitle('Trigger a full DAG run'));
     await advance(0);
     expect(badge(container)).toHaveTextContent('running');
-    expect(screen.getByText('Completed: 0/41')).toBeInTheDocument();
+    expect(screen.getByText('0 of 41 nodes complete')).toBeInTheDocument();
     expect(summary(container)).toMatch(/41 pending/);
   });
 });

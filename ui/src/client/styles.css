@@ -23,109 +23,6 @@ body {
   padding: 48px;
 }
 
-/* Scheduler card */
-.scheduler-card {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-
-/* The header wraps onto a second line when its facts and controls do not
-   fit, and each fact keeps to one line, so a narrow card moves the controls
-   down rather than breaking the cron or its next fire across lines. */
-.scheduler-card-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  row-gap: 8px;
-  padding: 14px 16px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.scheduler-card-header:hover {
-  background: #f9fafb;
-}
-
-/* The card's controls (Operation, Trigger, Cancel, Edit cron) stay together,
-   right-aligned, and move to the next line as one group. */
-.scheduler-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-}
-
-.schedule-name {
-  font-weight: 600;
-  font-size: 15px;
-}
-
-.timestamps {
-  color: #6b7280;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.expand-toggle {
-  margin-left: auto;
-  color: #9ca3af;
-  font-size: 10px;
-}
-
-/* Status badges */
-.status-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.status-pending    { background: #f3f4f6; color: #374151; }
-.status-running    { background: #e0e7ff; color: #4338ca; }
-.status-succeeded  { background: #dcfce7; color: #15803d; }
-.status-failed     { background: #fee2e2; color: #dc2626; }
-.status-cancelled  { background: #fff7ed; color: #c2410c; }
-.status-cancelling { background: #fef3c7; color: #92400e; }
-.status-skipped    { background: #f3f4f6; color: #6b7280; }
-.status-never-run  { background-color: #888; color: #fff; }
-
-/* Schedule pill: whether the schedule runs on its own. scheduled has a cron
-   that fires, paused has a cron and starts nothing on its own, manual has no
-   cron and runs only when triggered. */
-.schedule-pill {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border: 1px solid transparent;
-}
-
-.schedule-pill--scheduled { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
-.schedule-pill--paused    { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-.schedule-pill--manual    { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
-
-/* The cron and its timezone, on a schedule that has a cron; struck through
-   while paused. */
-.schedule-cron {
-  color: #6b7280;
-  font-size: 12px;
-  font-family: monospace;
-  white-space: nowrap;
-}
-
-.schedule-cron--paused { text-decoration: line-through; }
-
 /* Task table */
 .task-table {
   width: 100%;
@@ -163,55 +60,6 @@ body {
   text-align: center;
   font-size: 13px;
   margin: 0;
-}
-
-/* Card border variants */
-.card-border-green { border-left: 4px solid #22c55e; }
-.card-border-red   { border-left: 4px solid #ef4444; }
-.card-border-grey  { border-left: 4px solid #d1d5db; }
-
-/* Scheduler card body */
-.scheduler-card-body {
-  padding: 10px 16px 14px;
-  border-top: 1px solid #f3f4f6;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Progress bar */
-.progress-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-.progress-label { color: #374151; min-width: 110px; }
-.progress-bar-track {
-  flex: 1;
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.progress-bar-fill {
-  height: 100%;
-  background: #22c55e;
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-.progress-bar-fill--failed { background: #dc2626; }
-.progress-bar-fill--cancelled { background: #d97706; }
-.progress-pct { color: #6b7280; font-size: 12px; min-width: 32px; text-align: right; }
-
-/* Summary row: one count per task status; it wraps rather than widen the card */
-.summary-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  row-gap: 4px;
-  font-size: 12px;
-  color: #6b7280;
 }
 
 .detail-back-link {
@@ -270,6 +118,8 @@ body {
    .info-strip--warning palette. */
 .pill--cancelling, .pill-sm--cancelling,
 .pill--stopping,   .pill-sm--stopping   { background: #fef3c7; color: #92400e; }
+/* A paused schedule starts nothing on its own: the same neutral-warning palette. */
+.pill-sm--paused { background: #fef3c7; color: #92400e; }
 /* A pending task waiting for another run to finish writing its node: neutral
    like queued (nothing of it runs yet), dashed like a pending node, and a link
    to the run writing the node. The 1px border replaces 1px of padding so it
@@ -291,6 +141,84 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   display: flex;
   flex-direction: column;
 }
+
+/* ---- Schedule card: one schedule on the home page's Runs tab. Every card has
+   the same shape: its name, status and controls, one line of facts, then the
+   status bar and counts of its last run. It builds on .detail-card. ---- */
+.scheduler-card {
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.scheduler-card:hover { background: #f8f9fa; border-color: #c7d2fe; }
+/* The one rail a card can carry says its last run failed. It is drawn inside the
+   card, so the card's content lines up with its neighbours'. */
+.scheduler-card--failed { box-shadow: inset 3px 0 0 #dc2626, 0 1px 3px rgba(0, 0, 0, 0.05); }
+
+/* The header wraps onto a second line when its name, status and controls do not
+   fit, its controls moving down together, right-aligned. */
+.scheduler-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.scheduler-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  cursor: default;
+}
+/* The group takes the focus only to hold the keyboard's place when the focused
+   run control leaves, so it draws no ring of its own. */
+.scheduler-card-actions:focus { outline: none; }
+/* The trigger keeps its width through Triggering… and Triggered, so a press does
+   not move the button under the pointer. */
+.scheduler-card-actions .btn-group > .btn:first-child { min-width: 90px; justify-content: center; }
+.schedule-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  font-size: 15px;
+  color: inherit;
+  text-decoration: none;
+}
+.schedule-name:hover { text-decoration: underline; }
+.schedule-name:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; border-radius: 2px; }
+
+/* The line of facts under the name holds the height of the pill a paused
+   schedule adds to it, so every card keeps one height. */
+.scheduler-card > .schedule-facts { min-height: 18px; }
+/* A cron in words is prose, and wraps inside the card when it is long. */
+.schedule-cron { min-width: 0; }
+.schedule-cron--paused { text-decoration: line-through; }
+.schedule-cron--raw { font-family: 'SF Mono', 'Fira Mono', monospace; }
+
+/* The status bar and counts of the last run. The body holds its height while
+   the first read of a run is in flight, so the card does not grow when the tasks
+   arrive. */
+.scheduler-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 32px;
+  margin-top: 2px;
+}
+.scheduler-card .run-progress-bar { height: 6px; margin: 0; }
+.scheduler-card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+.scheduler-card-total { margin-left: auto; }
+.scheduler-card .run-progress-counts { gap: 4px 14px; font-size: 12px; color: #6b7280; }
+.scheduler-card .rp-count b { font-weight: 600; color: #374151; }
+.scheduler-card .rp-count--alert b { color: inherit; }
 
 .detail-card-header {
   padding: 10px 16px;
@@ -967,6 +895,8 @@ a.release-author:hover { text-decoration: underline; }
 }
 .pick-row__sep,
 .preview-facts__sep { color: #cbd5e1; }
+/* On a schedule card, facts are the card's secondary text, not a list's. */
+.schedule-facts { font-size: 12px; }
 
 /* A preview row of one short fact and its value, on one line. */
 .preview-row--line {
@@ -1219,6 +1149,37 @@ a.release-author:hover { text-decoration: underline; }
 .btn--danger { border-color: #fca5a5; color: #dc2626; background: #fff; }
 .btn--danger:hover:not(:disabled) { background: #fef2f2; border-color: #ef4444; }
 
+/* Split button: an action and, joined to its right edge, the native select that
+   chooses its variant. The select spreads invisibly over a chevron, so a click
+   opens the browser's own menu; the focus ring and the disabled look sit on its
+   label, because an invisible select shows neither. The chevron is wide enough
+   to hit on purpose, since the action beside it has no confirmation. Its
+   :where() keeps the disabled rule's specificity low, so .is-loading and
+   .is-success read the same on both halves. */
+.btn-group { display: inline-flex; }
+.btn-group > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-group > .btn:last-child { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.btn-group > .btn:hover:not(:disabled) { position: relative; z-index: 1; }
+.btn--caret {
+  position: relative;
+  justify-content: center;
+  width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+  color: #6b7280;
+}
+.btn--caret > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.btn-group > .btn:focus-visible,
+.btn--caret:has(select:focus-visible) { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+.btn--caret:where(:has(select:disabled)) { opacity: 0.4; pointer-events: none; }
+
 /* Prominent call-to-action: a sized-up primary button for the one action a
    screen steers the operator toward (the dead-end retry banner uses it). */
 .btn--cta {
@@ -1380,13 +1341,12 @@ a.release-author:hover { text-decoration: underline; }
   margin: 8px 0 12px;
 }
 
-/* The 8px/12px block margin suits a filter sitting above a list. Inside an
-   action row (the node / run operation selector) the field sits inline beside
-   buttons; the vertical margin would then inflate the flex row and, being
-   asymmetric, shift the select off the buttons' shared centre line. Zero it so
-   the select and the buttons align. */
-.page-action-row .form-field,
-.scheduler-card-header .form-field { margin: 0; }
+/* The 8px/12px block margin suits a filter sitting above a list. Inside the
+   node page's action row the operation selector sits inline beside buttons; the
+   vertical margin would then inflate the flex row and, being asymmetric, shift
+   the select off the buttons' shared centre line. Zero it so the select and the
+   buttons align. */
+.page-action-row .form-field { margin: 0; }
 
 .form-field > label {
   font-size: 11px;
@@ -1768,7 +1728,8 @@ a.release-author:hover { text-decoration: underline; }
    proposal split across many services stays one compact cell. */
 .remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
-/* ---- Run progress header (live run summary bar) ---- */
+/* ---- Run progress: the status bar and counts of a run's tasks, on the run
+   page's header and on a schedule card ---- */
 .run-progress {
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -1787,24 +1748,38 @@ a.release-author:hover { text-decoration: underline; }
   margin: 8px 0;
   background: #e5e7eb;
 }
-.rp-seg { display: block; height: 100%; }
+.rp-seg {
+  display: block;
+  height: 100%;
+  /* One failure among thousands of tasks stays visible. */
+  min-width: 3px;
+  transition: width 0.4s ease;
+}
 /* Bucket colors reuse literals already used elsewhere in this file for the
    same status, so a status reads the same way here as it does in the rest of
-   the run view: succeeded matches .progress-bar-fill / .run-dot--ok / the
-   "live" indicator; running, failed, skipped and pending match the
-   .pill-sm--<status> text colors NodesPanel uses for the same buckets. */
+   the run view: succeeded matches .run-dot--ok / the "live" indicator; running,
+   failed and skipped match the .pill-sm--<status> text colors NodesPanel uses
+   for the same buckets. Pending is hollow, because nothing has happened yet: its
+   segment leaves the track showing and its dot is an outline, as a pending node
+   on the swimlane is. */
 .rp-succeeded { background: #22c55e; }
 .rp-running   { background: #6d28d9; }
 .rp-failed    { background: #dc2626; }
 .rp-skipped   { background: #475569; }
 .rp-cancelled { background: #d97706; }
-.rp-pending   { background: #64748b; }
+.rp-pending   { background: transparent; }
 .rp-dispatched { background: #cbd5e1; }
 .rp-queued     { background: #94a3b8; }
 .rp-stopping   { background: #fcd34d; }
+/* The bar's running segment pulses: work is happening there. */
+.rp-seg.rp-running { animation: rp-pulse 2s ease-in-out infinite; }
+@keyframes rp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
+@media (prefers-reduced-motion: reduce) { .rp-seg.rp-running { animation: none; } }
 .run-progress-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
 .rp-count { display: flex; align-items: center; gap: 6px; }
+.rp-count--alert { color: #dc2626; }
 .rp-dot { width: 8px; height: 8px; border-radius: 2px; }
+.rp-dot.rp-pending { background: transparent; box-shadow: inset 0 0 0 1.5px #94a3b8; }
 
 /* ---- Run node table filter bar (All / Running / Failed + name search) ---- */
 .run-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -1926,7 +1901,7 @@ a.release-author:hover { text-decoration: underline; }
 .swim-legend-key.fail { background: #dc2626; }
 .swim-legend-key.skip { background: #475569; }
 .swim-legend-key.cancel { background: #d97706; }
-.swim-legend-key.pend { background: #94a3b8; }
+.swim-legend-key.pend { background: transparent; box-shadow: inset 0 0 0 1.5px #94a3b8; }
 .swim-legend-key.disp { background: #cbd5e1; }
 .swim-legend-key.queue { background: #94a3b8; border: 1px solid #64748b; }
 .swim-legend-key.stop { background: #fcd34d; }
@@ -1938,7 +1913,7 @@ a.release-author:hover { text-decoration: underline; }
 .swim-cell.run  { background: #6d28d9; }
 .swim-cell.fail { background: #dc2626; }
 .swim-cell.skip { background: #475569; }
-.swim-cell.pend { background: #64748b; }
+.swim-cell.pend { background: transparent; box-shadow: inset 0 0 0 1.5px #94a3b8; }
 .swim-cell.disp { background: #cbd5e1; }
 .swim-cell.queue { background: #94a3b8; }
 .swim-cell.cancel { background: #d97706; }

@@ -106,6 +106,15 @@ describe('DashboardPage — liveness badge', () => {
     });
   });
 
+  it('says how a schedule appears once the first poll answers with none', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    renderDashboard();
+
+    const strip = (await screen.findByText(/No schedules yet/)).closest('.info-strip');
+    expect(strip?.className).toMatch(/\binfo-strip--neutral\b/);
+    expect(strip).toHaveTextContent('A schedule appears when a promoted release has a model with a dbt tag.');
+  });
+
   it('does not say there are no schedules before the first poll has answered', async () => {
     mockFetchProposals.mockResolvedValue([]);
     mockFetch.mockImplementation((url: string) => {
@@ -118,7 +127,7 @@ describe('DashboardPage — liveness badge', () => {
     await waitFor(() => {
       expect(container.querySelector('.live-badge')?.textContent).toContain('Connecting');
     });
-    expect(screen.queryByText('No schedules found.')).toBeNull();
+    expect(screen.queryByText(/No schedules yet/)).toBeNull();
   });
 
   it('treats a backend error on the schedules poll as a failed poll, not an empty list', async () => {
@@ -139,7 +148,7 @@ describe('DashboardPage — liveness badge', () => {
     await waitFor(() => {
       expect(container.querySelector('.live-badge')?.textContent).toContain('Reconnecting');
     });
-    expect(screen.queryByText('No schedules found.')).toBeNull();
+    expect(screen.queryByText(/No schedules yet/)).toBeNull();
   });
 
   it('shows "Connecting" before the first poll resolves', async () => {
