@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
@@ -90,6 +91,12 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		reason, errorDetail := compileRejection(in.PerNode)
 		if errorDetail == "" {
 			errorDetail = in.ErrorDetail
+		}
+		if errorDetail == "" {
+			// No pod container to blame and no text from the producer: name what
+			// failed to compile. The compile leg runs before any topology exists,
+			// so the nodes (one per service) carry no service of their own.
+			errorDetail = release.SummarizeCompileFailure(failedNodes(failing, nil))
 		}
 
 		r.RecordStageResults("compile", results)

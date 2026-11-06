@@ -69,9 +69,6 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	}
 
 	r.RecordStageResults("seed_build", results)
-	if err := r.Fail(string(pkg_model.RejectReasonSeedBuildFailed), in.ErrorDetail, failing, now); err != nil {
-		return fmt.Errorf("transition to rejected: %w", err)
-	}
 
 	// Build a single lookup from the candidate topology so per-node rejection
 	// entries carry the source location the remediation agent needs: the
@@ -84,6 +81,17 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	locByNodeID := make(map[string]sourceLoc, len(topo))
 	for _, n := range topo {
 		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
+	}
+
+	// Text from the producer is the better explanation; when it sends none, say
+	// which seeds did not build, the one thing the topology knows about the failure.
+	detail := in.ErrorDetail
+	if detail == "" {
+		detail = release.SummarizeSeedFailure(
+			failedNodes(failing, func(id string) string { return locByNodeID[id].service }))
+	}
+	if err := r.Fail(string(pkg_model.RejectReasonSeedBuildFailed), detail, failing, now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	perNode := make([]ports.RejectedNode, len(in.PerNode))
@@ -103,7 +111,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		Shape:           ports.RejectionShapeSeedBuild,
 		ReleaseID:       in.ReleaseID,
 		Reason:          pkg_model.RejectReasonSeedBuildFailed,
-		ErrorDetail:     in.ErrorDetail,
+		ErrorDetail:     detail,
 		FailingNodes:    failing,
 		PerNode:         perNode,
 		Repo:            r.Repo(),
