@@ -17,6 +17,23 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.21.0 · 2026-11-06 · `MINOR`
+
+**TL;DR**
+
+- The Runs tab is redesigned: every schedule card has the same shape, and a failed run stands out.
+- A rejected release names the nodes that failed, on the release page, in the public API and in CI.
+- Upgrade through 0.20.0 first: this release no longer checks or deletes the old Redis keys. With your own Redis, apply the new Redis rules.
+
+What else is new:
+
+- **A guide for your own monitoring.** `deploy/OBSERVABILITY.md` lists the metrics, the Job labels and example alert rules.
+- **Services wait for Postgres at startup** instead of exiting, so a deploy restarts fewer containers.
+- **The schedule page and the topology page follow a run** without a reload: a new run shows within 5 seconds, and the topology page leaves `running` when the run ends.
+- **The assistant answers the first question after a quiet spell** instead of failing with "turn exceeded token budget".
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0210---2026-11-06) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.21.0)
+
 ## 0.20.0 · 2026-11-05 · `MINOR`
 
 **TL;DR**
