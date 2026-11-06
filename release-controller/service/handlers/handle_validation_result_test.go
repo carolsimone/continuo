@@ -927,32 +927,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 			bHash = topo[i].ContentHash
 		}
 	}
-	// The release is already in Validating (seedToValidatingWithURIs drives it
-	// there), so re-transitioning is refused by the state machine; rehydrate a
-	// new aggregate carrying every persisted field, with the rewired topology.
-	r = pipeline.Rehydrate(pipeline.RehydrateInput{
-		ID:                r.ID(),
-		Kind:              r.Kind(),
-		Status:            r.Status(),
-		ImageTags:         r.ImageTags(),
-		ChangedService:    r.ChangedService(),
-		CandidateTopology: store.storeTopology(r.ID(), topo),
-		ValidationNodeIDs: r.ValidationNodeIDs(),
-		PerNodeResults:    r.PerNodeResults(),
-		FailReason:        r.FailReason(),
-		FailDetail:        r.FailDetail(),
-		FailingNodes:      r.FailingNodes(),
-		CreatedAt:         r.CreatedAt(),
-		Transitions:       r.Transitions(),
-		Bootstrap:         r.IsBootstrap(),
-		Repo:              r.Repo(),
-		CommitSHA:         r.CommitSHA(),
-		CodeBundleURI:     r.CodeBundleURI(),
-		ManifestKind:      r.ManifestKind(),
-		RemediationRound:  r.RemediationRound(),
-		RejectionPayload:  r.RejectionPayload(),
-	})
-	store.SeedRelease(r)
+	rewireValidating(t, store, r, topo, r.ValidationNodeIDs())
 	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ContentHash: "old-hash-for-a"},
 		{UniqueID: "b", ContentHash: bHash},
@@ -1001,9 +976,39 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	got, err := store.GetRelease("rAnc")
 	require.NoError(t, err)
 	assert.Equal(t,
-		fmt.Sprintf("1 of %d nodes did not pass validation: b (svc-a); changed upstream of the failing nodes: a (svc-a)",
+		fmt.Sprintf("1 of %d nodes failed validation: b (svc-a); changed upstream of the failing nodes: a (svc-a)",
 			len(got.ValidationNodeIDs())),
 		got.FailDetail())
+}
+
+// rewireValidating replaces the candidate topology and the validation node set
+// of a release that is already Validating. The state machine refuses to
+// re-transition it, so it rehydrates a new aggregate carrying every persisted
+// field and seeds that into the store.
+func rewireValidating(t *testing.T, store *fakeStore, r *pipeline.Run, topo release.Topology, validationNodeIDs []string) {
+	t.Helper()
+	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
+		ID:                r.ID(),
+		Kind:              r.Kind(),
+		Status:            r.Status(),
+		ImageTags:         r.ImageTags(),
+		ChangedService:    r.ChangedService(),
+		CandidateTopology: store.storeTopology(r.ID(), topo),
+		ValidationNodeIDs: validationNodeIDs,
+		PerNodeResults:    r.PerNodeResults(),
+		FailReason:        r.FailReason(),
+		FailDetail:        r.FailDetail(),
+		FailingNodes:      r.FailingNodes(),
+		CreatedAt:         r.CreatedAt(),
+		Transitions:       r.Transitions(),
+		Bootstrap:         r.IsBootstrap(),
+		Repo:              r.Repo(),
+		CommitSHA:         r.CommitSHA(),
+		CodeBundleURI:     r.CodeBundleURI(),
+		ManifestKind:      r.ManifestKind(),
+		RemediationRound:  r.RemediationRound(),
+		RejectionPayload:  r.RejectionPayload(),
+	}))
 }
 
 // TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap verifies
