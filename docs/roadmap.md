@@ -34,7 +34,7 @@ with the right skills propose a solution the data team will have to edit or merg
 
 ### Standardize every node on the Open Data Contract Standard (ODCS)
 
-Every node — dbt models, Python nodes, seeds, and streaming producers — will
+Every node — dbt models, Python nodes, and seeds — will
 carry a data contract in the Open Data Contract Standard (ODCS) format: schema,
 data-quality expectations, and ownership expressed the same way regardless of
 runtime. One contract format across the whole graph replaces the per-runtime
@@ -53,12 +53,14 @@ data.
 
 ### One control plane for streaming and batch
 
-A single view — with contract enforcement and lineage — for both streaming and
-batch. Contracts stay in sync by design, so a software engineer changing a
-streaming producer sees the downstream impact on batch models and the teams that
-own them. The goal is for agents to propose the downstream changes
-automatically, reusing the `agent-remediation` service and the diffs, data
-types, historical diffs, and documentation already stored in the graph database.
+A single view, with contract enforcement and lineage, for the streaming and
+batch nodes continuo runs. A streaming node carries the same ODCS contract as a
+dbt or Python node and is enforced the same way.
+
+Generating contracts from backend database and event schemas, and showing a
+software engineer the downstream impact on their pull request, is not part of
+this open-source project. It will be a separate commercial product built on
+continuo's public interfaces.
 
 ### Test suite for circular dependencies
 
