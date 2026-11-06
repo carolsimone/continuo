@@ -1,6 +1,9 @@
 package handlers
 
-import "github.com/carolsimone/continuo/release-controller/domain/pipeline"
+import (
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
+)
 
 // NodeResult is one per-node result carried by the compile and seed-build
 // aggregate events (the validation leg instead streams per-node content as
@@ -40,4 +43,18 @@ func stageResults(perNode []NodeResult) (results []pipeline.NodeValidationResult
 		}
 	}
 	return results, failing
+}
+
+// failedNodes pairs each failing node id with the service serviceOf names for
+// it, the input of the operator-facing failure summaries. serviceOf may be nil
+// where no candidate topology exists yet, as in the compile leg.
+func failedNodes(ids []string, serviceOf func(id string) string) []release.FailedNode {
+	nodes := make([]release.FailedNode, len(ids))
+	for i, id := range ids {
+		nodes[i].NodeID = id
+		if serviceOf != nil {
+			nodes[i].Service = serviceOf(id)
+		}
+	}
+	return nodes
 }

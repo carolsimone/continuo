@@ -254,9 +254,6 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), "", failing, now); err != nil {
-		return fmt.Errorf("transition to rejected: %w", err)
-	}
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
 		return err
@@ -302,6 +299,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// candidate topology. A failing node additionally names its changed
 	// ancestors, which may be the root cause of its failure.
 	var perNode []ports.RejectedNode
+	var upstream []release.ChangedAncestor // every failing node's changed ancestors, for the summary
 	for _, nr := range r.PerNodeResults() {
 		if nr.Stage != "validation" {
 			continue
@@ -318,13 +316,25 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			Service:              f.service,
 		}
 		if nr.Status != "ok" {
-			for _, a := range release.ChangedAncestors(topo, nr.NodeID, changedSet) {
+			ancestors := release.ChangedAncestors(topo, nr.NodeID, changedSet)
+			upstream = append(upstream, ancestors...)
+			for _, a := range ancestors {
 				entry.ChangedAncestors = append(entry.ChangedAncestors, ports.ChangedAncestor{
 					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
 				})
 			}
 		}
 		perNode = append(perNode, entry)
+	}
+
+	// execution-controller reports a node's outcome, never its error text, so the
+	// operator-facing detail is what the topology can say: which nodes did not
+	// pass and which changed nodes sit upstream of them. It reuses the ancestors
+	// gathered above, so explaining the rejection walks the graph once.
+	detail := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()),
+		failedNodes(failing, func(id string) string { return factsByNodeID[id].service }), upstream)
+	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), detail, failing, now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	payload, err := d.Rejections.Encode(ports.ReleaseRejection{

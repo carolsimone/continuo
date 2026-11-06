@@ -995,6 +995,15 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	assert.Equal(t, "svc-a", byID["b"][0].Service)
 	assert.Equal(t, 1, byID["b"][0].Depth, "a is b's direct upstream")
 	assert.Empty(t, byID["a"], "a has no changed ancestors")
+
+	// The same ancestors explain the rejection to an operator: a changed and
+	// passed, b failed.
+	got, err := store.GetRelease("rAnc")
+	require.NoError(t, err)
+	assert.Equal(t,
+		fmt.Sprintf("1 of %d nodes did not pass validation: b (svc-a); changed upstream of the failing nodes: a (svc-a)",
+			len(got.ValidationNodeIDs())),
+		got.FailDetail())
 }
 
 // TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap verifies
