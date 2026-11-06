@@ -29,7 +29,7 @@ func TestStartupAdvancesTheQueueBeforeTheConsumersStart(t *testing.T) {
 }
 
 // release-controller refuses to start on a release database that still has the
-// legacy topology columns, so main.go checks the schema before it serves a
+// legacy topology columns, so main.go checks the schema before it serves an API
 // request, runs a startup step or starts a consumer.
 func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	src, err := os.ReadFile("main.go")
@@ -41,7 +41,7 @@ func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	if check < 0 {
 		t.Fatal("main.go must call handlers.CheckLegacyTopologyColumnsDropped")
 	}
-	for _, later := range []string{"objectstore.New(", "httpinfra.NewServer(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
+	for _, later := range []string{"objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)

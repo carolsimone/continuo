@@ -19,7 +19,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// setupPostgres starts a PostgreSQL testcontainer and runs migrations
+// setupPostgres starts a PostgreSQL testcontainer, which is terminated when the
+// test ends, and runs migrations. The returned function closes the connection.
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	ctx := context.Background()
 
@@ -41,6 +42,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 		ContainerRequest: req,
 		Started:          true,
 	})
+	testcontainers.CleanupContainer(t, postgresContainer)
 	require.NoError(t, err, "Failed to start PostgreSQL container")
 
 	// Get container host and port
@@ -75,15 +77,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	// stays in lock-step with production. See run-controller/test/migrations.go.
 	require.NoError(t, ApplyMigrations(db.DB), "Failed to apply migrations")
 
-	// Cleanup function
-	cleanup := func() {
-		db.Close()
-		if err := postgresContainer.Terminate(ctx); err != nil {
-			t.Logf("Failed to terminate container: %v", err)
-		}
-	}
-
-	return db, cleanup
+	return db, func() { db.Close() }
 }
 
 // TestRunRepository_Create tests creating a run record

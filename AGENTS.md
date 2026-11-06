@@ -124,6 +124,8 @@ Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Char
 - **If a value becomes newly required**, add an `{{ if .Release.IsUpgrade }}` warning to `templates/NOTES.txt` telling operators what to set — the changelog is easy to miss, but NOTES.txt is what actually prints at `helm upgrade` time.
 - Validate with `bash scripts/install-test/lint.sh` (helm lint + template + kube-linter across all four values topologies) before pushing.
 
+Release order: merge the release cut (the PR that adds `## [X.Y.Z]` to `deploy/continuo/CHANGELOG.md`), then push the `vX.Y.Z` tag on that commit. The tag can go at once: the cut's own push publishes its `:<sha>` images, since `deploy/**` is in `deploy.yml`'s release filter, and `release.yml` waits for that run (`scripts/release/wait-for-image-publish.sh`) before `scripts/release/retag-images.sh` checks that every image exists.
+
 After a release: once `release.yml` has succeeded for `vX.Y.Z` and the docs-pin PR (the one pinning this repository's install guides to `X.Y.Z` and adding its release notes) has merged, run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in `carolsimone/continuo-site` that moves the public site's quickstart `chartVersion` to `X.Y.Z`; nothing else bumps that pin. It runs with your own `gh` login, and `release.yml` does not call it, because it needs push access to that second repository.
 
 # Pull request titles and labels

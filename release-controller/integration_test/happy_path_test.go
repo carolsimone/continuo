@@ -51,7 +51,8 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 		Topologies: newMemTopologies(),
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}
-	srv := httpinfra.NewServer(deps, liveness.NewRegistry(), "0", slog.Default())
+	srv := httpinfra.NewServer(liveness.NewRegistry(), "0", slog.Default())
+	srv.ServeAPI(deps)
 	return srv, deps, db
 }
 

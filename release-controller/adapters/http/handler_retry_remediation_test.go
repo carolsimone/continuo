@@ -30,7 +30,9 @@ import (
 // newTestServer wraps NewServer with a throwaway registry and a discarding
 // logger, so a handler test only has to supply the Deps it cares about.
 func newTestServer(deps *handlers.Deps) *Server {
-	return NewServer(deps, liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := NewServer(liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.ServeAPI(deps)
+	return s
 }
 
 // --- fakeReleaseRepo: in-memory RunRepository backing retry-remediation tests ---

@@ -131,6 +131,22 @@ func main() {
 		_ = metricsServer.Shutdown(shutdownCtx)
 	}()
 
+	// The HTTP server comes up before any dependency is reachable, with only its
+	// health routes, so /livez keeps answering while the boot waits for Postgres
+	// and Redis. The startup gate holds /healthz false, keeping the pod out of its
+	// Service until the outbox publisher and consumers below are running. The
+	// server blocks until ctx is cancelled (graceful 5-second shutdown).
+	startup := liveReg.AddStartupGate()
+	srv := httpinfra.NewServer(liveReg, cfg.HTTPPort, logger)
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		if err := srv.Start(ctx); err != nil {
+			logger.Error("http server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
 	db, err := pkgdb.Connect(ctx, cfg.Postgres, dbPool, pkgdb.DefaultStartupPolicy(), logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for Postgres")
@@ -149,7 +165,7 @@ func main() {
 	// release-controller never reads the columns that held topologies inline,
 	// so it refuses to run on a database that still has them: release migration
 	// V26 has not applied yet, or it refused because rows still need them.
-	// Nothing else has started yet.
+	// Nothing but the health routes has started yet.
 	if err := handlers.CheckLegacyTopologyColumnsDropped(ctx, postgres.NewLegacyTopologyColumns(db)); err != nil {
 		logger.Error("Refusing to start: the release database is not migrated", "error", err)
 		os.Exit(1)
@@ -190,23 +206,9 @@ func main() {
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 
-	// The HTTP server (API plus /healthz and /livez) comes up before Redis is
-	// reachable so /livez keeps answering while the boot waits for it; the
-	// startup gate holds /healthz false, keeping the pod out of its Service
-	// until the outbox publisher and consumers below are running. The API
-	// needs only Postgres and S3: a request accepted before then records its
-	// events in the outbox, which the publisher drains once it starts. The
-	// server blocks until ctx is cancelled (graceful 5-second shutdown).
-	startup := liveReg.AddStartupGate()
-	srv := httpinfra.NewServer(deps, liveReg, cfg.HTTPPort, logger)
-	srvDone := make(chan struct{})
-	go func() {
-		defer close(srvDone)
-		if err := srv.Start(ctx); err != nil {
-			logger.Error("http server error", "error", err)
-			os.Exit(1)
-		}
-	}()
+	// The API needs only Postgres and S3: a request accepted before Redis answers
+	// records its events in the outbox, which the publisher drains once it starts.
+	srv.ServeAPI(deps)
 
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff

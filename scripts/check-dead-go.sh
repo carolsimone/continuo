@@ -14,7 +14,16 @@
 # live in non-test files, test-only seams, methods that satisfy an interface).
 # One extended regex per line, matched against "path: symbol".
 #
+# deadcode type-checks the standard library of the Go toolchain running this
+# script, so a binary built by another Go fails with "file requires newer Go
+# version" and then "packages contain errors". Each deadcode version is therefore
+# installed once per Go version, in a directory of its own, and a deadcode found
+# on PATH or in GOPATH/bin is never used.
+#
 # Usage: bash scripts/check-dead-go.sh        (run from anywhere)
+#
+# Environment:
+#   DEADCODE  a deadcode binary to run as it is, instead of the installed one
 set -euo pipefail
 
 # Single source of truth for the pinned version. Bump here only.
@@ -23,11 +32,17 @@ DEADCODE_VERSION="v0.51.0"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-bin="${DEADCODE:-$(go env GOPATH)/bin/deadcode}"
-if [ ! -x "$bin" ] || ! go version -m "$bin" 2>/dev/null | grep -q "golang.org/x/tools[[:space:]]*${DEADCODE_VERSION}"; then
-  echo "Installing deadcode ${DEADCODE_VERSION}..."
-  go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}"
-  bin="$(go env GOPATH)/bin/deadcode"
+if [ -n "${DEADCODE:-}" ]; then
+  bin="$DEADCODE"
+  [ -x "$bin" ] || { echo "deadcode: DEADCODE=${bin} is not an executable file" >&2; exit 1; }
+else
+  go_version="$(go env GOVERSION)"
+  tool_dir="$(go env GOPATH)/pkg/continuo-tools/deadcode-${DEADCODE_VERSION}-${go_version}"
+  bin="${tool_dir}/deadcode"
+  if [ ! -x "$bin" ]; then
+    echo "Installing deadcode ${DEADCODE_VERSION} with ${go_version}..."
+    GOBIN="$tool_dir" go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}"
+  fi
 fi
 
 mains=()
