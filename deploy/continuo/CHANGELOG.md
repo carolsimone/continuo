@@ -12,11 +12,54 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-06
+
+**TL;DR**
+
+- The Runs tab is redesigned: every schedule card has the same shape, and a failed run stands out.
+- A rejected release now names the nodes that failed, on the release page, in the public API and in CI.
+- Upgrade through 0.20.0 first: this release no longer checks or deletes the old Redis keys. With your own Redis, apply the new Redis rules.
+- No values change is needed.
+
+### Upgrade steps
+
+1. **On 0.19.0 or earlier:** upgrade to 0.20.0 first and follow its steps, so `streams-init` finishes there.
+2. **Your own Redis:** apply the rules in `deploy/redis-acl-rules.acl` before or with the upgrade. A login that keeps its older rule goes on working. The bundled Redis restarts once.
+3. **Upgrade.**
+
+This release changes no values key, and it ships as a `MINOR`.
+
+### Added
+
+- **A guide for your own monitoring.** TL;DR: `deploy/OBSERVABILITY.md` lists the metrics continuo exposes, the labels on its Jobs and example alert rules.
+  - It covers the `/metrics` endpoint, the NetworkPolicy setting that lets a scraper in, and the Job labels that kube-state-metrics must export.
+  - No values change is needed to upgrade.
+
+### Changed
+
+- **The Runs tab reads at a glance.** TL;DR: every schedule card has the same shape and uses the pills, bar and square dots of the rest of the UI, so a failed run stands out.
+  - Each card shows one count for each status that has tasks, and a bar with a segment for each status, as on the run page. A failed count and a failed segment are red, a cancelled one is orange. An active card reads `28 of 41 nodes complete · 68%` and an ended one reads `41 nodes`, so a failed run never reads 100%. A failed run's card has a red rail.
+  - The cron reads in words, with the raw cron on hover. `started 18m ago` replaces the clock time, with the exact time on hover.
+  - The operation and Trigger run are one split button, and Cancel takes its place while a run is active. The `scheduled` and `manual` pills are gone, and `paused` stays.
+  - The schedule's name is a link, so Cmd-click opens it in a new tab. The node page's buttons lose their emoji.
+  - The run page shares the new bar: a pending task is hollow, and the percentage reads 100 only once every task has ended.
+  - No values change is needed to upgrade.
+- **A rejected release says which nodes failed.** TL;DR: the release page, the public API's `reject_detail` and CI name the nodes that did not pass, instead of only the reason.
+  - A validation rejection names the nodes that failed with their service (the first 5, then a count), counts the skipped ones apart and names the changed upstream nodes of the failing ones. A seed rejection names the seeds that did not build, and a compile rejection says what failed to compile.
+  - Example: `3 of 44 nodes failed validation: analytics.daily_transactions (core), analytics.ltv_per_user (finance) and analytics.revenue_per_user (core); 24 were skipped because an upstream failed; changed upstream of the failing nodes: analytics.fx_transactions_eur (finance)`.
+  - It says where to look, not why: the cause stays in each node's log. Text that a stage already reports still wins.
+  - No values change is needed to upgrade.
+- **`streams-init` no longer touches the old Redis keys.** TL;DR: upgrade through 0.20.x first; this release no longer checks for or deletes the old stream keys.
+  - An install on 0.19.x upgrades to 0.20.x first and lets `streams-init` finish there. This release no longer protects against skipping 0.20: an old key left in Redis stays there, and its entries are never read.
+  - Redis rule changes: the rule of `continuo_redis_migrate` drops the old name of every stream, live and retired, and `+xinfo|stream`, `+del` and `+type`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` before or with the upgrade; a login that keeps its older rule goes on working. The bundled Redis restarts once, because its rules change.
+  - No values change is needed to upgrade.
+
 ### Fixed
 
 - **Services no longer crash on each deploy while Postgres admits them.** TL;DR: a new pod retries Postgres at startup instead of exiting, so a deploy restarts fewer containers and `run-controller` is back sooner.
   - A new pod's first connections to Postgres are refused for a second or two, until the NetworkPolicy in front of Postgres admits its IP. Services used to exit on that refusal, and Kubernetes could then hold the restart back for 10 seconds.
   - They now retry for up to 5 minutes, as they do for Redis. A wrong password or an unknown database still fails at once.
+  - release-controller starts its health endpoints before it waits, so its liveness probe does not restart it meanwhile.
   - No values change is needed to upgrade.
 - **The assistant no longer fails on the first question after a quiet spell.** TL;DR: "turn exceeded token budget" no longer ends a turn whose prompt alone is over `CHAT_MAX_TURN_TOKENS`.
   - The first call of a turn writes the whole prompt to the prompt cache when the cache is cold. That write no longer counts toward the budget. Later calls' cache writes, such as a large tool result, still count.
@@ -25,15 +68,6 @@ shipped in those.
   - A past run you chose stays on screen. Past runs updates when a run starts or ends, and a node's history updates while a row is still running.
   - No values change is needed to upgrade.
 - **A schedule's topology page shows a run's end without a reload.** TL;DR: `/schedule/<name>/latest` no longer stays on `running` with Trigger run disabled after the run has ended.
-  - No values change is needed to upgrade.
-- **A failed or cancelled run no longer has a green bar on its schedule's card.** TL;DR: the bar is red for a failed run and orange for a cancelled one.
-  - No values change is needed to upgrade.
-
-### Changed
-
-- **`streams-init` no longer touches the old Redis keys.** TL;DR: upgrade through 0.20.x first; this release no longer checks for or deletes the old stream keys.
-  - An install on 0.19.x upgrades to 0.20.x first and lets `streams-init` finish there. This release no longer protects against skipping 0.20: an old key left in Redis stays there, and its entries are never read.
-  - Redis rule changes: the rule of `continuo_redis_migrate` drops the old name of every stream, live and retired, and `+xinfo|stream`, `+del` and `+type`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` before or with the upgrade; a login that keeps its older rule goes on working. The bundled Redis restarts once, because its rules change.
   - No values change is needed to upgrade.
 
 ## [0.20.0] - 2026-11-05
