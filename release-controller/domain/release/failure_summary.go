@@ -16,32 +16,46 @@ const (
 )
 
 // FailedNode is a node that did not pass a pipeline stage, with the service
-// the candidate topology declares for it ("" when it names none).
+// the candidate topology declares for it ("" when it names none). Skipped marks
+// a node that never ran because something upstream of it failed: a consequence
+// of a failure, not a failure of its own.
 type FailedNode struct {
 	NodeID  string
 	Service string
+	Skipped bool
 }
 
 // SummarizeValidationFailure is the operator-facing explanation of a
 // validation rejection, built from what release-controller knows about the
-// failure without reading any log: which nodes did not pass, in which service,
-// and which changed nodes sit upstream of them. It says where to look, not why
-// a node failed; the why lives in the node's log, which only the log's owner
-// interprets. total is the number of nodes the stage validated and upstream
-// the changed ancestors of every failing node, in any order and possibly
-// repeating a node reached through several of them. An ancestor that failed
-// too is already named as failing, so only the ones that passed are listed:
-// those are the changes that broke their consumers without breaking themselves.
-func SummarizeValidationFailure(total int, failing []FailedNode, upstream []ChangedAncestor) string {
-	if len(failing) == 0 {
+// failure without reading any log: which nodes failed, in which service, how
+// many more were skipped because of them, and which changed nodes sit upstream
+// of them. It says where to look, not why a node failed; the why lives in the
+// node's log, which only the log's owner interprets.
+//
+// total is the number of nodes the stage validated and nodes the ones that did
+// not pass, in any order. upstream holds the changed ancestors of the failed
+// nodes, possibly repeating a node reached through several of them. An ancestor
+// that did not pass is already counted above, so only the ones that passed are
+// listed: those are the changes that broke their consumers without breaking
+// their own validation.
+func SummarizeValidationFailure(total int, nodes []FailedNode, upstream []ChangedAncestor) string {
+	named, failed, skipped := firstFailures(nodes, maxNamedNodes)
+	switch {
+	case failed == 0 && skipped == 0:
 		return "validation failed, but no per-node failure was recorded"
+	case failed == 0:
+		return fmt.Sprintf("validation failed, but no node reported a failure; %d %s %s because an upstream failed",
+			skipped, plural(skipped, "node", "nodes"), plural(skipped, "was skipped", "were skipped"))
 	}
-	summary := fmt.Sprintf("%d of %d nodes did not pass validation: %s", len(failing), total, nameNodes(failing, maxNamedNodes))
-	passing := nearestFirstExcept(upstream, failing)
-	if len(passing) == 0 {
-		return summary
+
+	summary := fmt.Sprintf("%d of %d nodes failed validation: %s", failed, total, nameFirst(named, failed))
+	if skipped > 0 {
+		summary += fmt.Sprintf("; %d %s because an upstream failed", skipped, plural(skipped, "was skipped", "were skipped"))
 	}
-	return summary + "; changed upstream of the failing nodes: " + nameNodes(passing, maxNamedUpstream)
+	if passing := nearestFirstExcept(upstream, nodes); len(passing) > 0 {
+		summary += "; changed upstream of the failing nodes: " + nameNodes(passing, maxNamedUpstream)
+	}
+	return summary
 }
 
 // SummarizeSeedFailure is the operator-facing explanation of a seed-build
@@ -50,11 +64,8 @@ func SummarizeSeedFailure(failing []FailedNode) string {
 	if len(failing) == 0 {
 		return "seed build failed, but no per-node failure was recorded"
 	}
-	noun := "seeds"
-	if len(failing) == 1 {
-		noun = "seed"
-	}
-	return fmt.Sprintf("%d %s did not build: %s", len(failing), noun, nameNodes(failing, maxNamedNodes))
+	return fmt.Sprintf("%d %s did not build: %s",
+		len(failing), plural(len(failing), "seed", "seeds"), nameNodes(failing, maxNamedNodes))
 }
 
 // SummarizeCompileFailure is the operator-facing explanation of a compile
@@ -67,20 +78,38 @@ func SummarizeCompileFailure(failing []FailedNode) string {
 	return "dbt compile failed for: " + nameNodes(failing, maxNamedNodes)
 }
 
-// nameNodes renders "a (svc), b (svc) and c (svc)", or, past limit nodes,
-// "a (svc), …, e (svc) and 7 more". Only the nodes it names are formatted, so
-// a stage that fails for thousands of nodes costs the same as one that fails
-// for five.
-func nameNodes(nodes []FailedNode, limit int) string {
-	named := nodes
-	if len(named) > limit {
-		named = named[:limit]
+// firstFailures walks nodes once and returns the first limit that failed, in
+// their given order, with the count of nodes that failed and of nodes that were
+// skipped. It copies only what it names, so a stage that fails for thousands of
+// nodes costs no more than one that fails for five.
+func firstFailures(nodes []FailedNode, limit int) (named []FailedNode, failed, skipped int) {
+	named = make([]FailedNode, 0, min(limit, len(nodes)))
+	for _, n := range nodes {
+		if n.Skipped {
+			skipped++
+			continue
+		}
+		failed++
+		if len(named) < limit {
+			named = append(named, n)
+		}
 	}
+	return named, failed, skipped
+}
+
+// nameNodes renders the first limit of nodes; see nameFirst.
+func nameNodes(nodes []FailedNode, limit int) string {
+	return nameFirst(nodes[:min(limit, len(nodes))], len(nodes))
+}
+
+// nameFirst renders "a (svc), b (svc) and c (svc)" for the nodes it is given,
+// or, when they are only the first of total, "a (svc), …, e (svc) and 7 more".
+func nameFirst(named []FailedNode, total int) string {
 	labels := make([]string, len(named))
 	for i, n := range named {
 		labels[i] = n.label()
 	}
-	if rest := len(nodes) - len(named); rest > 0 {
+	if rest := total - len(named); rest > 0 {
 		return strings.Join(labels, ", ") + fmt.Sprintf(" and %d more", rest)
 	}
 	return joinWithAnd(labels)
@@ -91,6 +120,14 @@ func (n FailedNode) label() string {
 		return n.NodeID
 	}
 	return n.NodeID + " (" + n.Service + ")"
+}
+
+// plural picks the wording for a count: one for exactly 1, many otherwise.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // nearestFirstExcept collapses the ancestors to one entry per node, at the

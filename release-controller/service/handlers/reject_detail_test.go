@@ -35,11 +35,11 @@ func TestHandleValidationResult_Rejected_DetailNamesTheFailingNodes(t *testing.T
 	r, err := store.GetRelease("rDetail")
 	require.NoError(t, err)
 	assert.Equal(t,
-		fmt.Sprintf("1 of %d nodes did not pass validation: a (svc-a)", len(r.ValidationNodeIDs())),
+		fmt.Sprintf("1 of %d nodes failed validation: a (svc-a)", len(r.ValidationNodeIDs())),
 		r.FailDetail())
 }
 
-func TestHandleValidationResult_Rejected_DetailCountsEveryNodeThatDidNotPass(t *testing.T) {
+func TestHandleValidationResult_Rejected_DetailCountsSkippedNodesApartFromFailedOnes(t *testing.T) {
 	deps, store := seedToValidating(t, "rDetailAll")
 	seedValidationNodes(t, deps, "rDetailAll", []handlers.NodeResult{
 		{NodeID: "a", Status: "failed"},
@@ -53,9 +53,48 @@ func TestHandleValidationResult_Rejected_DetailCountsEveryNodeThatDidNotPass(t *
 	r, err := store.GetRelease("rDetailAll")
 	require.NoError(t, err)
 	assert.Equal(t,
-		fmt.Sprintf("2 of %d nodes did not pass validation: a (svc-a) and b (svc-a)", len(r.ValidationNodeIDs())),
+		fmt.Sprintf("1 of %d nodes failed validation: a (svc-a); 1 was skipped because an upstream failed", len(r.ValidationNodeIDs())),
 		r.FailDetail(),
-		"a node skipped because its upstream failed did not pass either")
+		"a node skipped because its upstream failed is a consequence: counted, not listed as a failure")
+}
+
+func TestHandleValidationResult_Rejected_DetailNamesTheFailuresNotTheSkippedNodesAheadOfThem(t *testing.T) {
+	// The nodes are stored in id order, so the skipped ones sort first. x and u
+	// are changed and pass; f fails (upstream x); s is skipped because f failed
+	// (upstream f and u). Only x changed upstream of a node that actually failed:
+	// u sits upstream of the skipped node alone.
+	deps, store := seedToValidatingWithURIs(t, "rDetailSkip")
+	r, err := store.GetRelease("rDetailSkip")
+	require.NoError(t, err)
+	topo := release.Topology{
+		{UniqueID: "a-skipped", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"b-failed", "u-unrelated"}, ContentHash: "h-s"},
+		{UniqueID: "b-failed", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"x-changed"}, ContentHash: "h-f"},
+		{UniqueID: "u-unrelated", ServiceName: "svc-u", UpstreamUniqueIDs: []string{}, ContentHash: "new-u"},
+		{UniqueID: "x-changed", ServiceName: "svc-x", UpstreamUniqueIDs: []string{}, ContentHash: "new-x"},
+	}
+	rewireValidating(t, store, r, topo, []string{"a-skipped", "b-failed", "u-unrelated", "x-changed"})
+	seedProd(t, deps, store, "prev", release.Topology{
+		{UniqueID: "a-skipped", ContentHash: "h-s"},
+		{UniqueID: "b-failed", ContentHash: "h-f"},
+		{UniqueID: "u-unrelated", ContentHash: "old-u"},
+		{UniqueID: "x-changed", ContentHash: "old-x"},
+	}, deps.Clock.Now())
+	seedValidationNodes(t, deps, "rDetailSkip", []handlers.NodeResult{
+		{NodeID: "a-skipped", Status: "skipped"},
+		{NodeID: "b-failed", Status: "failed"},
+		{NodeID: "u-unrelated", Status: "ok"},
+		{NodeID: "x-changed", Status: "ok"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rDetailSkip", AggregateStatus: "failed",
+	}))
+
+	got, err := store.GetRelease("rDetailSkip")
+	require.NoError(t, err)
+	assert.Equal(t,
+		"1 of 4 nodes failed validation: b-failed (svc-a); 1 was skipped because an upstream failed; changed upstream of the failing nodes: x-changed (svc-x)",
+		got.FailDetail())
 }
 
 func TestHandleValidationResult_Rejected_DetailSaysSoWhenOnlyTheAggregateFailed(t *testing.T) {
@@ -86,7 +125,7 @@ func TestHandleValidationResult_VerificationFails_DetailNamesTheFailingNodes(t *
 
 	got, err := store.GetRelease(r.ID())
 	require.NoError(t, err)
-	assert.Equal(t, "1 of 1 nodes did not pass validation: model.core.orders (core)", got.FailDetail(),
+	assert.Equal(t, "1 of 1 nodes failed validation: model.core.orders (core)", got.FailDetail(),
 		"a failed verification explains itself on the verification page the same way")
 }
 

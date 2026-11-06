@@ -299,7 +299,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// candidate topology. A failing node additionally names its changed
 	// ancestors, which may be the root cause of its failure.
 	var perNode []ports.RejectedNode
-	var upstream []release.ChangedAncestor // every failing node's changed ancestors, for the summary
+	var notPassed []release.FailedNode     // every node that did not pass, for the summary
+	var upstream []release.ChangedAncestor // the changed ancestors of the nodes that failed, for the summary
 	for _, nr := range r.PerNodeResults() {
 		if nr.Stage != "validation" {
 			continue
@@ -316,8 +317,14 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			Service:              f.service,
 		}
 		if nr.Status != "ok" {
+			skipped := nr.Status == nodeSkipped
+			notPassed = append(notPassed, release.FailedNode{NodeID: nr.NodeID, Service: f.service, Skipped: skipped})
 			ancestors := release.ChangedAncestors(topo, nr.NodeID, changedSet)
-			upstream = append(upstream, ancestors...)
+			if !skipped {
+				// A skipped node never ran: what sits upstream of it only matters
+				// through the node that failed, whose own ancestors are gathered here.
+				upstream = append(upstream, ancestors...)
+			}
 			for _, a := range ancestors {
 				entry.ChangedAncestors = append(entry.ChangedAncestors, ports.ChangedAncestor{
 					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
@@ -328,11 +335,11 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	}
 
 	// execution-controller reports a node's outcome, never its error text, so the
-	// operator-facing detail is what the topology can say: which nodes did not
-	// pass and which changed nodes sit upstream of them. It reuses the ancestors
-	// gathered above, so explaining the rejection walks the graph once.
-	detail := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()),
-		failedNodes(failing, func(id string) string { return factsByNodeID[id].service }), upstream)
+	// operator-facing detail is what the topology can say: which nodes failed,
+	// how many were skipped because of them, and which changed nodes sit upstream
+	// of the failures. It reuses the ancestors gathered above, so explaining the
+	// rejection walks the graph once.
+	detail := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)
 	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
