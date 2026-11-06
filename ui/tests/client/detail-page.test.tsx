@@ -907,8 +907,8 @@ describe('DetailPage in latest mode', () => {
       const urls = fetchMock.mock.calls.map(c => String(c[0]));
       // fetchAllPages appends ?limit=&offset=, so the patterns are not
       // end-anchored: an anchored one could never match a paged request.
-      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/tasks/.test(u))).toBe(false);
-      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/attempts/.test(u))).toBe(false);
+      expect(urls.some(u => /\/api\/runs\/[^/]+\/tasks/.test(u))).toBe(false);
+      expect(urls.some(u => /\/api\/runs\/[^/]+\/attempts/.test(u))).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -926,6 +926,155 @@ describe('DetailPage in latest mode', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('DetailPage in latest mode — following a run to its end', () => {
+  const NEW_RUN = 'latest-new-run';
+  const runOf = (id: string, status: string) => ({
+    run_id: id, schedule_name: LATEST_SCHED, status,
+    created_at: '2026-05-26T12:00:00Z', started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+  });
+
+  // A schedule whose last run is `state.lastRunId`, with the statuses and the
+  // Past runs list the state holds.
+  function schedule(initial: { lastRunId: string; lastRunStatus: string }) {
+    const state = {
+      lastRunId: initial.lastRunId,
+      lastRunStatus: initial.lastRunStatus,
+      newRunStatus: 'running',
+      statusFails: false,
+      statusReads: 0,
+      pastRuns: [] as unknown[],
+      runsReads: 0,
+    };
+    const readStatus = (id: string, status: () => string) => async () => {
+      state.statusReads += 1;
+      if (state.statusFails) throw new Error('no answer');
+      return runOf(id, status());
+    };
+    const fetchMock = mockFetchSequence({
+      [`/api/schedules/${LATEST_SCHED}/trigger`]: async () => {
+        state.lastRunId = NEW_RUN;
+        return { run_id: NEW_RUN };
+      },
+      [`/api/runs/${NEW_RUN}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 5, latest_promotion_seq: 5 }),
+      [`/api/runs/${NEW_RUN}`]: readStatus(NEW_RUN, () => state.newRunStatus),
+      ...latestRoutes(),
+      [`/api/runs/${LATEST_RUN_ID}`]: readStatus(LATEST_RUN_ID, () => state.lastRunStatus),
+      [`/api/schedules/${LATEST_SCHED}/runs`]: async () => {
+        state.runsReads += 1;
+        return { runs: state.pastRuns, total_count: state.pastRuns.length };
+      },
+      '/api/schedules': async () => ({
+        schedules: [{ schedule_name: LATEST_SCHED, last_run_id: state.lastRunId }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { state, fetchMock };
+  }
+  const useFakeInterval = () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const nextPoll = () => act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  const triggerButton = () => screen.getByRole('button', { name: /Trigger/ });
+
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('shows the end of a run it triggered, without a reload', async () => {
+    useFakeInterval();
+    const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'succeeded' });
+    render(withLatestRouter());
+    await waitFor(() => expect(triggerButton()).not.toBeDisabled());
+
+    fireEvent.click(triggerButton());
+    await screen.findByText(/Current run/);
+
+    state.newRunStatus = 'failed';
+    await nextPoll();
+
+    await waitFor(() => expect(screen.queryByText(/Current run/)).toBeNull());
+    expect(screen.getByText('failed')).toBeInTheDocument();
+  });
+
+  it('frees Trigger run and reads Past runs again when the run it arrived at ends', async () => {
+    useFakeInterval();
+    const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
+    render(withLatestRouter());
+    await screen.findByText(/Current run/);
+    expect(triggerButton()).toBeDisabled();
+    const runsReadsWhileRunning = state.runsReads;
+
+    state.lastRunStatus = 'succeeded';
+    state.pastRuns = [runOf(LATEST_RUN_ID, 'succeeded')];
+    await nextPoll();
+
+    await waitFor(() => expect(triggerButton()).not.toBeDisabled());
+    expect(screen.queryByText(/Current run/)).toBeNull();
+    await waitFor(() => expect(state.runsReads).toBeGreaterThan(runsReadsWhileRunning));
+  });
+
+  it('stops reading the status once the run has ended', async () => {
+    useFakeInterval();
+    const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
+    render(withLatestRouter());
+    await screen.findByText(/Current run/);
+
+    state.lastRunStatus = 'succeeded';
+    await nextPoll();
+    await waitFor(() => expect(screen.queryByText(/Current run/)).toBeNull());
+    const readsAtTheEnd = state.statusReads;
+
+    await nextPoll();
+    await nextPoll();
+    expect(state.statusReads).toBe(readsAtTheEnd);
+  });
+
+  it('reads no tasks or attempts while it follows a run', async () => {
+    useFakeInterval();
+    const { fetchMock } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
+    render(withLatestRouter());
+    await screen.findByText(/Current run/);
+
+    await nextPoll();
+    await nextPoll();
+
+    const urls = fetchMock.mock.calls.map(c => String(c[0]));
+    expect(urls.some(u => /\/api\/runs\/[^/]+\/(tasks|attempts)/.test(u))).toBe(false);
+  });
+
+  it('says a status read failed, keeps trying, and shows the end once a read lands', async () => {
+    useFakeInterval();
+    const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
+    render(withLatestRouter());
+    await screen.findByText(/Current run/);
+
+    state.statusFails = true;
+    await nextPoll();
+    await screen.findByText(/Can.t read the latest data/);
+
+    state.statusFails = false;
+    state.lastRunStatus = 'succeeded';
+    await nextPoll();
+    await waitFor(() => expect(screen.queryByText(/Can.t read the latest data/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Current run/)).toBeNull());
+  });
+
+  it('holds the live status while a past run is chosen, then reads it again on the way back', async () => {
+    useFakeInterval();
+    const { state } = schedule({ lastRunId: LATEST_RUN_ID, lastRunStatus: 'running' });
+    state.pastRuns = [runOf('an-older-run', 'succeeded')];
+    const { container } = render(withLatestRouter());
+    await screen.findByText(/Current run/);
+
+    await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(2));
+    fireEvent.click(container.querySelectorAll('.run-row')[1]);
+    await screen.findByText(/Viewing snapshot/);
+    const readsWhileChosen = state.statusReads;
+    await nextPoll();
+    expect(state.statusReads).toBe(readsWhileChosen);
+
+    state.lastRunStatus = 'succeeded';
+    fireEvent.click(screen.getByRole('button', { name: /Return to live run/ }));
+    await waitFor(() => expect(screen.queryByText(/Current run/)).toBeNull());
   });
 });
 

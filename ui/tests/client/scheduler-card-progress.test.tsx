@@ -78,4 +78,26 @@ describe('SchedulerCard progress', () => {
       expect(screen.getByText('Completed: 412/412')).toBeInTheDocument();
     });
   });
+
+  // Every task of an ended run counts as completed, so the bar of a run that
+  // failed or was cancelled also fills: its colour tells it from a success.
+  it.each([
+    ['succeeded', 'progress-bar-fill'],
+    ['running', 'progress-bar-fill'],
+    ['failed', 'progress-bar-fill progress-bar-fill--failed'],
+    ['cancelled', 'progress-bar-fill progress-bar-fill--cancelled'],
+    ['cancelling', 'progress-bar-fill progress-bar-fill--cancelled'],
+  ])('colours the bar of a %s run', async (status, className) => {
+    const { container } = render(
+      <MemoryRouter>
+        <SchedulerCard
+          schedule={baseSchedule({ last_run_status: status, has_active_run: status === 'running' || status === 'cancelling' })}
+          onRunChanged={() => {}}
+        />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Completed: 412/412');
+    expect(container.querySelector('.progress-bar-fill')?.className).toBe(className);
+  });
 });

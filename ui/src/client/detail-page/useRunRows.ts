@@ -12,7 +12,9 @@ const POLL_INTERVAL_MS = 5000;
 // poll reads the rows alongside the run's status, so the poll that first
 // sees the run terminal may hold rows from before the run ended: once that
 // poll's reads have landed, the rows are read one last time. Each polled
-// status of the latest run goes to onScheduler. Latest mode reads no rows.
+// status of the latest run goes to onScheduler. Latest mode reads no rows: it
+// polls only the latest run's status until the run is terminal, and reads nothing
+// while a past run is selected.
 //
 // A read that fails leaves the rows and the status as they were, sets
 // readFailed, and is made again every 5 s until one lands, whichever read it
@@ -62,7 +64,7 @@ export function useRunRows({
     if (!shownRunId) return;
     if (heldRunId.current !== null && heldRunId.current !== shownRunId) clearRows();
     heldRunId.current = shownRunId;
-    if (mode === 'latest') return;
+    if (mode === 'latest' && selectedRunId !== null) return;
     // Set on cleanup and once every read the run needs has landed.
     let finished = false;
     let timer: number | undefined;
@@ -79,6 +81,7 @@ export function useRunRows({
 
     // Resolves once both reads have settled, with whether both landed.
     const fetchRunRows = (): Promise<boolean> => {
+      if (mode === 'latest') return Promise.resolve(true);
       const taskRead = fetchAllPages<Task>(`/api/runs/${shownRunId}/tasks`, 'tasks', {
         signal: controller.signal,
       })

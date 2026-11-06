@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import {
   formatDayTime,
   getScheduleProgressLabel,
+  getScheduleProgressBarClass,
   getScheduleProgressPercent,
   scheduleState,
 } from './scheduler-card-helpers';
@@ -323,7 +324,7 @@ export default function SchedulerCard({ schedule, onRunChanged }: Props) {
             <div className="progress-row">
               <span className="progress-label">{getScheduleProgressLabel(tasks)}</span>
               <div className="progress-bar-track">
-                <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
+                <div className={getScheduleProgressBarClass(displayStatus)} style={{ width: `${pct}%` }} />
               </div>
               <span className="progress-pct">{pct}%</span>
             </div>
