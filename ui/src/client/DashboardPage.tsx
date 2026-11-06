@@ -110,7 +110,10 @@ export default function DashboardPage() {
           <>
             {error && <div className="info-strip info-strip--error">{error}</div>}
             {loaded && schedules.length === 0 && !error && (
-              <p className="empty">No schedules found.</p>
+              <div className="info-strip info-strip--neutral">
+                <span className="info-strip__icon" aria-hidden="true">ⓘ</span>
+                No schedules yet. A schedule appears when a promoted release has a model with a dbt tag.
+              </div>
             )}
             {schedules.map(s => (
               <SchedulerCard key={s.schedule_name} schedule={s} onRunChanged={loadSchedules} />

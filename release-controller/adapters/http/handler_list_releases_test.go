@@ -74,6 +74,22 @@ func TestHandleListReleases_OmitsVerificationRuns(t *testing.T) {
 	assert.Equal(t, "rel-1", resp.Releases[0]["release_id"])
 }
 
+// An install with no releases answers an empty array, never null: the ui's
+// Releases tab reads the list's length, and a nil slice would marshal to null
+// and fail the whole page.
+func TestHandleListReleases_NoReleasesIsAnEmptyArray(t *testing.T) {
+	deps, _ := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/releases", nil)
+	newTestServer(deps).Routes().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.JSONEq(t, `[]`, string(resp["releases"]))
+}
+
 // The release list reports a run's node count from its topology reference, so
 // listing never reads an artifact.
 func TestToReleaseListItem_NodeCountComesFromTheTopologyRef(t *testing.T) {

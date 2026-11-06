@@ -45,9 +45,9 @@ describe('cancel statuses in styles.css', () => {
     expect(declarationOf(`.${cls}`)).not.toBe(declarationOf('.pill-sm--pending'));
   });
 
-  it('paints the run-card badge, the progress bucket and every swimlane element', () => {
+  it('paints the progress bucket and every swimlane element', () => {
     for (const s of [
-      '.status-cancelling', '.rp-stopping',
+      '.rp-stopping',
       '.swim-roll.stop', '.swim-node.stop', '.swim-sd.stop', '.swim-legend-key.stop', '.swim-cell.stop',
     ]) {
       expect(sels.has(s), `${s} has no rule`).toBe(true);

@@ -49,4 +49,33 @@ describe('RunProgressHeader', () => {
     // a cancelled task is terminal: done = succeeded + cancelled = 2 of 2 = 100%
     expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('100%');
   });
+
+  it('draws no bar segment for a status with no tasks, yet still counts it', () => {
+    const { container } = render(<RunProgressHeader tasks={[t('succeeded'), t('running')]} />);
+    expect(container.querySelector('.rp-seg.rp-failed')).toBeNull();
+    expect(container.querySelector('.rp-seg.rp-succeeded')).not.toBeNull();
+    expect(screen.getByTestId('count-failed')).toHaveTextContent('0');
+  });
+
+  it('groups the thousands of a large run in its total too', () => {
+    const tasks = Array.from({ length: 2000 }, () => t('succeeded'));
+    render(<RunProgressHeader tasks={tasks} />);
+    expect(screen.getByText('2,000 of 2,000 nodes complete')).toBeInTheDocument();
+  });
+
+  it('says node for a run of one task, as the Runs card does', () => {
+    render(<RunProgressHeader tasks={[t('running')]} />);
+    expect(screen.getByText('0 of 1 node complete')).toBeInTheDocument();
+  });
+
+  it('marks the failed count when a task failed', () => {
+    const { container } = render(<RunProgressHeader tasks={[t('failed'), t('running')]} />);
+    expect(container.querySelector('.rp-count--alert')).toHaveTextContent('1 failed');
+  });
+
+  it('reads the same percentage as the Runs card for a share that rounds on a floating-point edge', () => {
+    const tasks = [...Array.from({ length: 23 }, () => t('succeeded')), ...Array.from({ length: 17 }, () => t('pending'))];
+    render(<RunProgressHeader tasks={tasks} />);
+    expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('58%');
+  });
 });

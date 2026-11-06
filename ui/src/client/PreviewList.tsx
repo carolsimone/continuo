@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
 // PreviewItem is one row of a read-only preview list: an identifier shown in
 // the monospace identifier style (title, when set, is the full id shown on
@@ -26,6 +26,17 @@ interface FactsProps {
   summary?: boolean;
 }
 
+// joinFacts puts a middle dot between the facts of one muted line. A screen
+// reader reads the facts, not the dots.
+export function joinFacts(facts: ReactNode[]): ReactNode {
+  return facts.map((fact, i) => (
+    <Fragment key={i}>
+      {i > 0 && <span className="preview-facts__sep" aria-hidden="true">·</span>}
+      {fact}
+    </Fragment>
+  ));
+}
+
 // PreviewFacts renders facts on one muted line, separated by a middle dot.
 // summary marks the line that breaks down a section header's total. No facts
 // render nothing.
@@ -33,12 +44,7 @@ export function PreviewFacts({ facts, summary = false }: FactsProps) {
   if (facts.length === 0) return null;
   return (
     <span className={summary ? 'preview-facts preview-facts--summary' : 'preview-facts'}>
-      {facts.map((fact, i) => (
-        <Fragment key={fact}>
-          {i > 0 && <span className="preview-facts__sep" aria-hidden="true">·</span>}
-          <span>{fact}</span>
-        </Fragment>
-      ))}
+      {joinFacts(facts.map(fact => <span>{fact}</span>))}
     </span>
   );
 }

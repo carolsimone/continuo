@@ -1,36 +1,8 @@
-import { ScheduleSummary, Task } from './types';
+import { ScheduleSummary } from './types';
 
-// A task is done once it has ended: it succeeded, failed, was skipped or was
-// cancelled. A stopping task has not ended: its Job is still being deleted.
-function isTerminalStatus(status: string): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'skipped' || status === 'cancelled';
-}
-
-export function getCompletedCount(tasks: Task[]): number {
-  return tasks.filter((task) => isTerminalStatus(task.status)).length;
-}
-
-export function getScheduleProgressLabel(tasks: Task[]): string {
-  return `Completed: ${getCompletedCount(tasks)}/${tasks.length}`;
-}
-
-export function getScheduleProgressPercent(tasks: Task[]): number {
-  if (tasks.length === 0) return 0;
-  return Math.round((getCompletedCount(tasks) / tasks.length) * 100);
-}
-
-// The classes of a run's progress bar. Every task of an ended run counts as
-// completed, so the bar of a run that failed or was cancelled fills too: its
-// colour tells it from a success.
-export function getScheduleProgressBarClass(status: string): string {
-  if (status === 'failed') return 'progress-bar-fill progress-bar-fill--failed';
-  if (status === 'cancelled' || status === 'cancelling') return 'progress-bar-fill progress-bar-fill--cancelled';
-  return 'progress-bar-fill';
-}
-
-// The state a schedule's pill shows: scheduled (its cron fires), paused (it
-// has a cron, and nothing starts on its own) or manual (no cron: it runs only
-// when triggered).
+// Whether a schedule runs on its own: scheduled (its cron fires), paused (it has
+// a cron, and nothing starts on its own) or manual (no cron: it runs only when
+// triggered).
 export type ScheduleState = 'scheduled' | 'paused' | 'manual';
 
 export function scheduleState(s: Pick<ScheduleSummary, 'cron' | 'paused'>): ScheduleState {

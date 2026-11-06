@@ -115,6 +115,11 @@ export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
   return [...groups.values()];
 }
 
+// A count with its thousands grouped: 2,000.
+export function formatCount(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
 export function formatRelative(iso: string | null, now: Date = new Date()): string {
   if (!iso) return '—';
   const t = new Date(iso).getTime();

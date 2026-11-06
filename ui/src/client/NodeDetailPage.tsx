@@ -293,10 +293,10 @@ export default function NodeDetailPage() {
   const runLatestClass = ['btn', 'btn--secondary', runState === 'loading' ? 'is-loading' : '', runState === 'success' ? 'is-success' : ''].filter(Boolean).join(' ');
 
   const runVerb =
-    operation === 'test' ? '🧪 Test this node'
-    : operation === 'build' ? '🔨 Build this node'
-    : operation === 'full_refresh' ? '♻ Full refresh this node'
-    : '▶ Run this node';
+    operation === 'test' ? 'Test this node'
+    : operation === 'build' ? 'Build this node'
+    : operation === 'full_refresh' ? 'Full refresh this node'
+    : 'Run this node';
 
   // A node no longer active in the latest topology has no latest version to
   // run, so every latest-mode operation is unavailable for it; only the
@@ -387,7 +387,7 @@ export default function NodeDetailPage() {
           onClick={() => setPickerOpen(true)}
           title="Run this node with the image_tag from a past run"
         >
-          ⏱ Run with old snapshot…
+          Run with old snapshot…
         </button>
       </div>
 

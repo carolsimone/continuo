@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
 import { ScheduleSummary, Task } from '../../src/client/types';
@@ -74,30 +74,17 @@ describe('SchedulerCard progress', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => {
-      expect(screen.getByText('Completed: 412/412')).toBeInTheDocument();
-    });
+    expect(await screen.findByText('412 nodes')).toBeInTheDocument();
   });
 
-  // Every task of an ended run counts as completed, so the bar of a run that
-  // failed or was cancelled also fills: its colour tells it from a success.
-  it.each([
-    ['succeeded', 'progress-bar-fill'],
-    ['running', 'progress-bar-fill'],
-    ['failed', 'progress-bar-fill progress-bar-fill--failed'],
-    ['cancelled', 'progress-bar-fill progress-bar-fill--cancelled'],
-    ['cancelling', 'progress-bar-fill progress-bar-fill--cancelled'],
-  ])('colours the bar of a %s run', async (status, className) => {
+  it('counts the tasks of every page, not just the first', async () => {
     const { container } = render(
       <MemoryRouter>
-        <SchedulerCard
-          schedule={baseSchedule({ last_run_status: status, has_active_run: status === 'running' || status === 'cancelling' })}
-          onRunChanged={() => {}}
-        />
+        <SchedulerCard schedule={baseSchedule()} onRunChanged={() => {}} />
       </MemoryRouter>
     );
 
-    await screen.findByText('Completed: 412/412');
-    expect(container.querySelector('.progress-bar-fill')?.className).toBe(className);
+    await screen.findByText('412 nodes');
+    expect(container.querySelector('.run-progress-counts')).toHaveTextContent('412 succeeded');
   });
 });
