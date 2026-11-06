@@ -132,7 +132,9 @@ kubectl -n continuo port-forward svc/catalog 50052:50052 &
 continuo schedule list
 ```
 
-Every command prints JSON; [cli/README.md](../cli/README.md) lists them all.
+Every command prints JSON. `continuo describe` lists every command with its
+arguments, flags and output, and [cli/README.md](../cli/README.md) covers the
+build and the connection settings.
 
 ### Declare the task timeout of a node
 
