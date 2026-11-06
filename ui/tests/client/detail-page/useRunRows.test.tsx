@@ -74,9 +74,32 @@ describe('useRunRows', () => {
     expect(callsTo(fetchMock, '/api/runs/r1/tasks')).toBe(0);
   });
 
-  it('reads nothing in latest mode', async () => {
+  it('in latest mode polls only the latest run\'s status, until it is terminal', async () => {
+    let status = 'running';
+    const fetchMock = stubFetch({ '/api/runs/r1': () => runAt('r1', status) });
+    const onScheduler = vi.fn<(s: Scheduler) => void>();
+    const { result } = renderHook(() => useRunRows({
+      lastRunId: 'r1', selectedRunId: null, mode: 'latest', onScheduler,
+    }));
+    await advance(0);
+    await advance(5000);
+    expect(callsTo(fetchMock, '/api/runs/r1')).toBe(2);
+
+    status = 'succeeded';
+    await advance(5000);
+    expect(onScheduler.mock.calls.map((c) => c[0].status)).toEqual(['running', 'running', 'succeeded']);
+
+    await advance(15000);
+    expect(callsTo(fetchMock, '/api/runs/r1')).toBe(3);
+    expect(callsTo(fetchMock, '/api/runs/r1/tasks')).toBe(0);
+    expect(callsTo(fetchMock, '/api/runs/r1/attempts')).toBe(0);
+    expect(result.current.tasks).toEqual([]);
+    expect(result.current.readFailed).toBe(false);
+  });
+
+  it('reads nothing in latest mode while a past run is selected', async () => {
     const fetchMock = stubFetch({});
-    renderHook(() => useRunRows({ lastRunId: 'r1', selectedRunId: null, mode: 'latest', onScheduler: vi.fn() }));
+    renderHook(() => useRunRows({ lastRunId: 'r1', selectedRunId: 'r2', mode: 'latest', onScheduler: vi.fn() }));
     await advance(15000);
     expect(fetchMock).not.toHaveBeenCalled();
   });

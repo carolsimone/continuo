@@ -19,6 +19,15 @@ export function getScheduleProgressPercent(tasks: Task[]): number {
   return Math.round((getCompletedCount(tasks) / tasks.length) * 100);
 }
 
+// The classes of a run's progress bar. Every task of an ended run counts as
+// completed, so the bar of a run that failed or was cancelled fills too: its
+// colour tells it from a success.
+export function getScheduleProgressBarClass(status: string): string {
+  if (status === 'failed') return 'progress-bar-fill progress-bar-fill--failed';
+  if (status === 'cancelled' || status === 'cancelling') return 'progress-bar-fill progress-bar-fill--cancelled';
+  return 'progress-bar-fill';
+}
+
 // The state a schedule's pill shows: scheduled (its cron fires), paused (it
 // has a cron, and nothing starts on its own) or manual (no cron: it runs only
 // when triggered).

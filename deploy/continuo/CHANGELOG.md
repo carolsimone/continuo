@@ -24,6 +24,10 @@ shipped in those.
 - **A schedule's page shows a new run without a reload.** TL;DR: after a trigger or rerun, or a run started anywhere else, the page moves to the new run within 5 seconds.
   - A past run you chose stays on screen. Past runs updates when a run starts or ends, and a node's history updates while a row is still running.
   - No values change is needed to upgrade.
+- **A schedule's topology page shows a run's end without a reload.** TL;DR: `/schedule/<name>/latest` no longer stays on `running` with Trigger run disabled after the run has ended.
+  - No values change is needed to upgrade.
+- **A failed or cancelled run no longer has a green bar on its schedule's card.** TL;DR: the bar is red for a failed run and orange for a cancelled one.
+  - No values change is needed to upgrade.
 
 ### Changed
 
