@@ -107,12 +107,34 @@ in it, deliberately:
    untagged model is skipped. Seeds are exempt and default to build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
-   `continuo schedule set-cron daily "0 1 * * *" Europe/Paris`, and until then
+   `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
+   [`continuo` command line](#the-continuo-command-line)), and until then
    it runs only when triggered.
 
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
+
+### The `continuo` command line
+
+The `continuo` CLI is optional: the UI does everything this guide asks of it. It
+is not published as a download, so build it from a clone of the
+[continuo repository](https://github.com/carolsimone/continuo) with Go
+installed: `make -C cli install` puts it in `$GOBIN` (`~/go/bin` by default). It
+reaches the `run-controller` and `catalog` services over gRPC, at
+`localhost:50051` and `localhost:50052` unless you set
+`CONTINUO_RUN_CONTROLLER_ADDR` and `CONTINUO_CATALOG_ADDR`, so forward both first:
+
+```bash
+kubectl -n continuo port-forward svc/run-controller 50051:50051 &
+kubectl -n continuo port-forward svc/catalog 50052:50052 &
+
+continuo schedule list
+```
+
+Every command prints JSON. `continuo describe` lists every command with its
+arguments, flags and output, and [cli/README.md](../cli/README.md) covers the
+build and the connection settings.
 
 ### Declare the task timeout of a node
 
@@ -144,18 +166,20 @@ or later) are `continuo-python-runtime` 0.10.0 or later. With an older image bas
 every run of every node of that service fails when it loads its contracts.
 
 ```yaml
-# services/service-py/contracts/py_daily_kpis.yml
+# services/service-py/contracts/py_daily_kpis.yml (excerpt), with timeout_minutes added
 nodes:
   - schema: analytics
     table: py_daily_kpis
-    kind: python-api
-    owner: data-team
+    owner: "service-py"
     schedule: daily
     criticality: SECONDARY
     script: scripts/py_daily_kpis.py
-    timeout_minutes: 30
+    timeout_minutes: 30      # added: the demo declares none
+    reads:
+      daily: select created_at, amount_eur from analytics.daily_transactions
     output_columns:
-      - {name: kpi_date, type: DATE, nullable: false}
+      - {name: day, type: DATE, nullable: false}
+      # ...
 ```
 
 The value is an integer from 1 to 10,080 minutes (seven days). continuo
@@ -517,7 +541,9 @@ aws --endpoint-url http://localhost:9000 \
 
 Now build the contract from the service's `contracts/` directory, using the
 runtime CLI the release gate uses (a service's image base must be on the same
-runtime release or later to run a contract that declares `timeout_minutes`):
+runtime release or later to run a contract that declares `timeout_minutes`).
+[uv](https://docs.astral.sh/uv/) installs it: `brew install uv` on macOS, or the
+[uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
 uv tool install continuo-python-runtime==0.11.0
@@ -623,7 +649,7 @@ the other. continuo derived the ordering from the SQL and the contract.
 
 ## 5. Run it
 
-Open the UI, pick the `daily` schedule, and press **▶ Trigger run**.
+Open the UI, pick the `daily` schedule, and press **Trigger run**.
 
 ![The daily schedule run in the continuo UI: every node green across all four services after a successful run](img/daily-run-view.png)
 
@@ -999,7 +1025,7 @@ fork.
 One green run proved the graph you bootstrapped. Close the loop by proving the
 graph as it stands now — new node included, broken release excluded.
 
-Open the UI, pick the `daily` schedule, and press **▶ Trigger run** again.
+Open the UI, pick the `daily` schedule, and press **Trigger run** again.
 
 The run picks up `channel_roi` as just another node: downstream of finance's
 `ltv_per_user`, so it is dispatched after it, across the same four services.

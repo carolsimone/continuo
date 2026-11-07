@@ -34,9 +34,10 @@ then apply to the host itself.
 | [Helm](https://helm.sh/) 3.14+ | Installing continuo | `brew install helm` |
 | `git`, `curl`, `jq` | Cloning, calling the release API, reading its answers | `brew install jq` |
 | [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install awscli` |
+| [uv](https://docs.astral.sh/uv/) | Installing the runtime CLI that builds the python service's contract (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install uv` |
 
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
-identity provider in this mode, plus nine of its own services, and then runs your
+identity provider in this mode, plus its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
 **6 CPUs, 16 GiB of memory and a 60 GB disk**. Close other heavy containers,
 and a second local cluster especially, before you start. On colima that is:
