@@ -148,6 +148,57 @@ jobs:
         # in-process gRPC stub and exercises the built binary end to end.
         run: make -C cli test test-integration
 
+      - name: Detect topology-controller changes
+        id: tcfilter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            topology_controller:
+              - 'topology-controller/**'
+
+      - name: Set up a buildx builder for the topology-controller prod image
+        # A multi-platform build needs the docker-container driver. use: false
+        # keeps it off the default builder, so the docker compose builds in
+        # setup.sh below still load their images into the daemon.
+        if: steps.tcfilter.outputs.topology_controller == 'true'
+        id: tcbuildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          use: false
+
+      - name: Build the topology-controller prod image for both platforms
+        # deploy.yml publishes this image for linux/amd64 and linux/arm64; this
+        # builds both before merge, so a dependency with no wheel for one of
+        # them fails here instead of in the deploy. The image installs its
+        # dependencies on the build platform and its runtime stage only copies
+        # files, so no half needs QEMU (tests/test_prod_image_cross_build_guard.py).
+        if: steps.tcfilter.outputs.topology_controller == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          builder: ${{ steps.tcbuildx.outputs.name }}
+          context: topology-controller
+          file: topology-controller/Dockerfile.prod
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=topology-controller
+
+      - name: Smoke-run the topology-controller prod image
+        # Loads this runner's own platform from the build cache above and imports
+        # every dependency and the service's entrypoint module with the image's
+        # interpreter, which fails if the venv was made for another Python.
+        if: steps.tcfilter.outputs.topology_controller == 'true'
+        env:
+          TC_IMAGE: topology-controller-prod:ci-${{ github.run_id }}-${{ github.run_attempt }}
+          TC_PLATFORM: linux/${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+        run: |
+          set -euo pipefail
+          docker buildx build --builder "${{ steps.tcbuildx.outputs.name }}" \
+            --platform "${TC_PLATFORM}" --load -t "${TC_IMAGE}" \
+            -f topology-controller/Dockerfile.prod topology-controller
+          trap 'docker image rm -f "${TC_IMAGE}" >/dev/null 2>&1 || true' EXIT
+          docker run --rm --entrypoint python "${TC_IMAGE}" -c \
+            "import boto3, google.protobuf, grpc, redis, sqlglot, yaml; import main; print('topology-controller prod image imports OK')"
+
       - name: Detect Dockerfile.base changes
         id: basefilter
         uses: dorny/paths-filter@v4

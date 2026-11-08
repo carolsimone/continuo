@@ -1,16 +1,19 @@
-# uv comes from its official image, pinned by digest. That image ships uv's
-# statically linked musl build, which runs under QEMU's amd64 emulation: the
-# arm64 CI runners build this image's linux/amd64 half that way, and uv's glibc
-# build (what `pip install uv` installs) crashes at start under QEMU 9 and later.
-FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+# The image is built for linux/amd64 and linux/arm64 from a runner of one
+# architecture, and no step of it runs under CPU emulation: the uv and builder
+# stages run on the build platform, the builder installs the target platform's
+# wheels, and the runtime stage only copies files. Guarded by
+# tests/test_prod_image_cross_build_guard.py.
 
-FROM python:3.15-slim AS builder
+# uv comes from its official image, pinned by digest.
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+
+# The same python image as the runtime stage, so the venv's interpreter
+# (/usr/local/bin/python3) is the one the runtime stage provides.
+FROM --platform=$BUILDPLATFORM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS builder
+
+ARG TARGETARCH
 
 WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -20,11 +23,26 @@ COPY --from=uv /uv /usr/local/bin/uv
 # tests/test_prod_image_guard.py.
 COPY pyproject.toml uv.lock ./
 
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_PYTHON_DOWNLOADS=never
 
+# --python-platform installs the wheels of the target platform, whatever this
+# stage runs on. --no-build refuses a package with no wheel for it: uv would
+# build that package for the build platform, not for the target.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    case "${TARGETARCH}" in \
+      amd64) python_platform=x86_64-manylinux_2_28 ;; \
+      arm64) python_platform=aarch64-manylinux_2_28 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && uv sync --frozen --no-dev --no-install-project --no-build \
+         --python-platform "${python_platform}"
 
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
 COPY main.py ./
 COPY streams_contract.py ./
 COPY config/ ./config/
@@ -33,28 +51,10 @@ COPY domain/ ./domain/
 COPY service/ ./service/
 COPY proto/ ./proto/
 
-FROM python:3.15-slim
-
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/main.py ./
-COPY --from=builder /app/streams_contract.py ./
-COPY --from=builder /app/config/ ./config/
-COPY --from=builder /app/adapters/ ./adapters/
-COPY --from=builder /app/domain/ ./domain/
-COPY --from=builder /app/service/ ./service/
-COPY --from=builder /app/proto/ ./proto/
-
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
-
-# Reads code from the image, writes only to stdout — run unprivileged.
+# Reads code from the image, writes only to stdout — run unprivileged. A
+# numeric user needs no /etc/passwd entry, so this stage runs no command.
 USER 65532:65532
 
 EXPOSE 8086
