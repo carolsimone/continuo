@@ -23,6 +23,9 @@ export default function NodesCatalogPanel() {
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // True while the first page for the current filters is in flight, so an
+  // empty table reads as loading rather than as "no nodes".
+  const [loading, setLoading] = useState(true);
   const [nameOptions, setNameOptions] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const genRef = useRef(0);
@@ -35,34 +38,31 @@ export default function NodesCatalogPanel() {
     if (service) params.set('service', service);
     params.set('limit', String(PAGE));
     params.set('offset', String(offset));
+    if (!append) setLoading(true);
     try {
       const res = await fetch(`/api/nodes?${params.toString()}`);
       if (myGen !== genRef.current) return;            // superseded while awaiting fetch
-      if (!res.ok) { setError('Failed to load nodes'); return; }
+      if (!res.ok) { setError('Failed to load nodes'); setLoading(false); return; }
       const data: NodesResponse = await res.json();
       if (myGen !== genRef.current) return;            // superseded while awaiting json
       setError(null);
       setTotal(data.total_count || 0);
       offsetRef.current = offset;
       setNodes(prev => (append ? [...prev, ...(data.nodes || [])] : (data.nodes || [])));
+      setLoading(false);
     } catch {
       if (myGen !== genRef.current) return;
       setError('Failed to load nodes');
+      setLoading(false);
     }
   }, [operation, search, service]);
 
-  // Refetch the first page on filter change (debounced for search typing).
+  // Fetch the first page on mount and on filter change (debounced for search
+  // typing). The list is not polled: each call aggregates every node's recent
+  // runs on the server, so its cost grows with the install's history.
   useEffect(() => {
     const id = setTimeout(() => { fetchPage(0, false); }, 250);
     return () => clearTimeout(id);
-  }, [fetchPage]);
-
-  // Live refresh of the FIRST page only; suppressed once extra pages are loaded.
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (offsetRef.current === 0) fetchPage(0, false);
-    }, 10000);
-    return () => clearInterval(id);
   }, [fetchPage]);
 
   // Autocomplete: the COMPLETE distinct-name list, independent of the paginated
@@ -119,16 +119,27 @@ export default function NodesCatalogPanel() {
         <div className="section-header">
           <div className="section-header__main">
             <span className="section-header__title">Nodes</span>
-            <span className="section-header__count">{total}</span>
+            {!(loading && nodes.length === 0) && <span className="section-header__count">{total}</span>}
           </div>
           <div className="section-header__sub">over last 50 runs</div>
         </div>
 
         {nodes.length === 0 && !error ? (
-          <div className="info-strip info-strip--neutral">
-            <span className="info-strip__icon">ⓘ</span>
-            No node runs yet — trigger a schedule to populate.
-          </div>
+          loading ? (
+            <div className="info-strip info-strip--neutral">
+              <span>Loading nodes…</span>
+            </div>
+          ) : search || service ? (
+            <div className="info-strip info-strip--neutral">
+              <span className="info-strip__icon">ⓘ</span>
+              No node matches this filter.
+            </div>
+          ) : (
+            <div className="info-strip info-strip--neutral">
+              <span className="info-strip__icon">ⓘ</span>
+              No node runs yet — trigger a schedule to populate.
+            </div>
+          )
         ) : (
           <>
             <table className="nodes-table">

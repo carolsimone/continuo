@@ -27,7 +27,10 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('NodesCatalogPanel', () => {
   it('renders rows from /api/nodes with node identity', async () => {
@@ -69,6 +72,69 @@ describe('NodesCatalogPanel', () => {
     });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
+  });
+
+  it('shows a loading strip, not the empty state, until the first page arrives', async () => {
+    let resolvePage!: (v: any) => void;
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return new Promise(r => { resolvePage = r; });
+    });
+    render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    expect(screen.getByText(/Loading nodes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+
+    await vi.waitFor(() => expect(resolvePage).toBeDefined());
+    await act(async () => { resolvePage({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) }); });
+    expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Loading nodes/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no node count until the first page arrives', async () => {
+    let resolvePage!: (v: any) => void;
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return new Promise(r => { resolvePage = r; });
+    });
+    const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    expect(container.querySelector('.section-header__count')).not.toBeInTheDocument();
+
+    await vi.waitFor(() => expect(resolvePage).toBeDefined());
+    await act(async () => { resolvePage({ ok: true, json: async () => page }); });
+    await screen.findByText('fct_orders');
+    expect(container.querySelector('.section-header__count')).toHaveTextContent('2');
+  });
+
+  it('says no node matches when a filter returns nothing', async () => {
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      if (String(url).includes('search=nope')) {
+        return Promise.resolve({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => page });
+    });
+    render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    await screen.findByText('fct_orders');
+    fireEvent.change(screen.getByPlaceholderText(/table name/i), { target: { value: 'nope' } });
+    expect(await screen.findByText(/No node matches/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+  });
+
+  it('does not refetch the node list on a timer', async () => {
+    vi.useFakeTimers();
+    const catalogCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => /\/api\/nodes\?/.test(String(url))).length;
+    render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(catalogCalls()).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(catalogCalls()).toBe(1);
   });
 
   it('renders an error strip when the fetch fails', async () => {
