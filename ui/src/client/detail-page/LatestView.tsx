@@ -4,7 +4,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import DAGPanel from '../DAGPanel';
 import NodeTypeIcon, { isIngestedNodeType } from '../NodeTypeIcon';
 import PastRunsPanel from '../PastRunsPanel';
-import type { GraphState } from '../detail-page-helpers';
+import { ingestedNodeName, type GraphState } from '../detail-page-helpers';
 import type { ScheduleGraph } from '../types';
 
 // The latest layout, a topology-catalog view: the schedule's current
@@ -79,7 +79,9 @@ export default function LatestView({
                 <div className="dag-focus-legend">
                   <div className="dag-focus-legend-title">
                     <NodeTypeIcon nodeType={selectedNodeType} size={12} />
-                    {selectedNodeId.split('.').pop()}
+                    {isIngestedNodeType(selectedNodeType)
+                      ? ingestedNodeName(selectedNodeId)
+                      : selectedNodeId.split('.').pop()}
                   </div>
                   <div className="dag-focus-legend-row">
                     <div className="dag-focus-dot dag-focus-dot--selected" /> Selected

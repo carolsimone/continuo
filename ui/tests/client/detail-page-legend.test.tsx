@@ -152,11 +152,22 @@ describe('DetailPage focus legend for an ingested node', () => {
     expect(queryByRole('link', { name: /open node detail/i })).toBeNull();
   });
 
+  it('names the selected ingested node with its schema, as the canvas does', async () => {
+    const { container } = await renderAndSelect(INGESTED_ID);
+
+    await waitFor(() => {
+      expect(container.querySelector('.dag-focus-legend-title')?.textContent).toBe('raw.ingest_probe');
+    });
+    const canvasNode = container.querySelector(`.react-flow__node[data-id="${INGESTED_ID}"]`);
+    expect(canvasNode?.textContent).toContain('raw.ingest_probe');
+  });
+
   it('still offers the link for an ordinary node of the same graph', async () => {
     const { container, findByRole } = await renderAndSelect(READER_ID);
 
     const link = await findByRole('link', { name: /open node detail/i });
     expect(link.getAttribute('href')).toBe(`/node/${READER_ID}`);
     expect(container.querySelector('.dag-focus-legend')?.textContent).toContain('Depends on (1)');
+    expect(container.querySelector('.dag-focus-legend-title')?.textContent).toBe('reader');
   });
 });

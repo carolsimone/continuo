@@ -16,7 +16,7 @@ import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import { GraphEdge, GraphNode, Task } from './types';
 import NodeTypeIcon, { isIngestedNodeType } from './NodeTypeIcon';
-import { parseNodeId, resolveNodeStatus, taskNodeId } from './detail-page-helpers';
+import { ingestedNodeName, resolveNodeStatus, taskNodeId } from './detail-page-helpers';
 import {
   DisplayEdge,
   ServiceVertex,
@@ -214,10 +214,9 @@ function focusRole(
 // An ingested node is named with its schema, the only way to tell two such
 // tables with the same name apart, and carries a chip that says what it is.
 function ingestedLabel(nodeId: string): React.ReactNode {
-  const { schema_name, table_name } = parseNodeId(nodeId);
   return (
     <div className="dag-node-label">
-      <span>{`${schema_name}.${table_name}`}</span>
+      <span>{ingestedNodeName(nodeId)}</span>
       <span className="dag-ingested-chip">ingested</span>
     </div>
   );

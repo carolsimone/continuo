@@ -6,6 +6,7 @@ import {
   formatAttemptSeconds,
   groupAttemptsByTask,
   headerDriftLabel,
+  ingestedNodeName,
   parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
@@ -146,6 +147,10 @@ describe('detail page graph helpers', () => {
       schema_name: '',
       table_name: '',
     });
+  });
+
+  it('names an ingested node by its schema and table, skipping its empty service', () => {
+    expect(ingestedNodeName('.raw.ingest_probe')).toBe('raw.ingest_probe');
   });
 
   it('hides the header drift chip in latest mode regardless of drift', () => {

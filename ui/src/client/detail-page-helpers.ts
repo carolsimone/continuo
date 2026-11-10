@@ -143,6 +143,14 @@ export function parseNodeId(nodeId: string): {
   return { service_name, schema_name, table_name };
 }
 
+// ingestedNodeName is how the graph and its focus legend name an ingested
+// node: its schema and table, the only way to tell two such tables of the same
+// name apart.
+export function ingestedNodeName(nodeId: string): string {
+  const { schema_name, table_name } = parseNodeId(nodeId);
+  return `${schema_name}.${table_name}`;
+}
+
 // groupAttemptsByTask groups a run's attempts per task, each task's list in
 // attempt order. A row repeated across two page reads (offset paging over a
 // set that grew in between shifts later rows down by one) appears once: the
