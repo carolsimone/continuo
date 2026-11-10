@@ -15,8 +15,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import { GraphEdge, GraphNode, Task } from './types';
-import NodeTypeIcon from './NodeTypeIcon';
-import { resolveNodeStatus, taskNodeId } from './detail-page-helpers';
+import NodeTypeIcon, { isIngestedNodeType } from './NodeTypeIcon';
+import { parseNodeId, resolveNodeStatus, taskNodeId } from './detail-page-helpers';
 import {
   DisplayEdge,
   ServiceVertex,
@@ -61,6 +61,11 @@ const STATUS_BORDER: Record<string, string> = {
   external: '#9ca3af',
 };
 
+// An ingested node (a table another system loads, which no node builds) has no
+// run status and no service, so it carries one fixed grey look of its own.
+const INGESTED_BG = '#e2e8f0';
+const INGESTED_BORDER = '#94a3b8';
+
 // Borders are expressed with longhand properties only. Mixing the `border`
 // shorthand with a `borderLeft*` accent breaks on re-render: React re-applies
 // the changed shorthand, which resets the left border and drops the service
@@ -90,6 +95,7 @@ function nodeStyle(
   status: string,
   isExternal: boolean,
   role: FocusRole,
+  ingested: boolean,
   accent?: string,
 ): React.CSSProperties {
   const base: React.CSSProperties = {
@@ -109,10 +115,12 @@ function nodeStyle(
     };
   }
 
-  let bg = STATUS_BG[status] ?? '#f3f4f6';
-  let borderColor = STATUS_BORDER[status] ?? '#d1d5db';
+  // The dashed border means "a node of the graph that is not in the run on
+  // screen"; an ingested node is never drawn with it, whatever its status.
+  let bg = ingested ? INGESTED_BG : (STATUS_BG[status] ?? '#f3f4f6');
+  let borderColor = ingested ? INGESTED_BORDER : (STATUS_BORDER[status] ?? '#d1d5db');
   let borderWidth = '1.5px';
-  let borderStyleVal = isExternal ? 'dashed' : 'solid';
+  let borderStyleVal = isExternal && !ingested ? 'dashed' : 'solid';
   let boxShadow: string | undefined;
 
   if (role === 'selected') {
@@ -203,6 +211,18 @@ function focusRole(
   return 'dim';
 }
 
+// An ingested node is named with its schema, the only way to tell two such
+// tables with the same name apart, and carries a chip that says what it is.
+function ingestedLabel(nodeId: string): React.ReactNode {
+  const { schema_name, table_name } = parseNodeId(nodeId);
+  return (
+    <div className="dag-node-label">
+      <span>{`${schema_name}.${table_name}`}</span>
+      <span className="dag-ingested-chip">ingested</span>
+    </div>
+  );
+}
+
 function buildLayout(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],
@@ -251,24 +271,28 @@ function buildLayout(
 
   const nodes: Node[] = modelNodes.map((n) => {
     const pos = g.node(n.node_id);
+    // The type decides first: an ingested node's id has an empty service
+    // (".raw.ingest_probe"), so no service accent or lookup may be derived
+    // from it.
+    const ingested = isIngestedNodeType(n.node_type);
     const task = tasks.find((candidate) => taskNodeId(candidate) === n.node_id);
     const status = colorByStatus ? resolveNodeStatus(n, tasks) : 'pending';
     const isExternal = colorByStatus ? !task && !n.status : false;
     const role = focusRole(n.node_id, selectedNodeId, parentIds, childIds);
-    const accent = serviceView ? serviceColors.get(serviceOfNode(n.node_id)) : undefined;
+    const accent = !ingested && serviceView ? serviceColors.get(serviceOfNode(n.node_id)) : undefined;
 
     return {
       id: n.node_id,
       position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
       data: {
-        label: (
+        label: ingested ? ingestedLabel(n.node_id) : (
           <div className="dag-node-label">
             <NodeTypeIcon nodeType={n.node_type} />
             <span>{n.node_id.split('.').pop() ?? n.node_id}</span>
           </div>
         ),
       },
-      style: nodeStyle(status, isExternal, role, accent),
+      style: nodeStyle(status, isExternal, role, ingested, accent),
     };
   });
 
@@ -321,6 +345,7 @@ function miniMapNodeColor(node: Node): string {
   const style = node.style as React.CSSProperties | undefined;
   const bg = style?.background as string | undefined;
   if (!bg) return '#e5e7eb';
+  if (bg === INGESTED_BG) return INGESTED_BG;
   if (bg === '#eef2ff') return '#a5b4fc';
   if (bg === '#f0fdf4') return '#86efac';
   if (bg === '#fef2f2') return '#fca5a5';
