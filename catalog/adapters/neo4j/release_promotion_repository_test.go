@@ -511,3 +511,113 @@ func TestPromoteRelease_RefreshesContentHash(t *testing.T) {
 	assert.Equal(t, "sha256:v2", f.node("a")["content_hash"])
 	assert.Equal(t, "sha256:bbb", f.node("b")["content_hash"])
 }
+
+// ingestedNode is a table that the release's models read and no model builds,
+// as the topology artifact carries it: no service, no content hash, no image,
+// no schedule.
+func ingestedNode(uniqueID, schema, table string) topology.ReleasePromotedTopologyNode {
+	return topology.ReleasePromotedTopologyNode{
+		UniqueID: uniqueID, SchemaName: schema, TableName: table,
+		NodeType: "ingested", UpstreamUniqueIDs: []string{},
+	}
+}
+
+// An ingested node is stored as a live :Node with its type and an empty
+// service, and each reader draws its :DEPENDS_ON to it.
+func TestPromoteRelease_StoresAnIngestedNodeWithItsEdges(t *testing.T) {
+	f := newSwapFixture(t)
+	const probe = "raw.ingest_probe"
+
+	outcome := f.promote("rel-1", releaseOf(
+		ingestedNode(probe, "raw", "ingest_probe"),
+		modelNode("analytics.a", probe),
+		modelNode("analytics.b", probe),
+	), time.Now().UTC())
+	assert.Equal(t, topology.PromotionApplied, outcome)
+
+	n := f.node(probe)
+	require.NotNil(t, n)
+	assert.Equal(t, true, n["active"])
+	assert.Equal(t, "ingested", n["node_type"])
+	assert.Equal(t, "", n["service_name"])
+	assert.Equal(t, "raw", n["schema_name"])
+	assert.Equal(t, "ingest_probe", n["table_name"])
+	assert.NotContains(t, n, "retired_at")
+	assert.Equal(t, []string{"analytics.a", "analytics.b", probe}, f.activeIDs())
+	assert.Equal(t, []string{"analytics.a->" + probe, "analytics.b->" + probe}, f.edges(),
+		"each reader depends on the ingested node")
+	assert.Equal(t, int64(2), f.count(
+		`MATCH (:Node {tenant_id: $tenant_id})-[r:DEPENDS_ON]->(:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(r) AS n`,
+		map[string]any{"uid": probe}))
+}
+
+// A release that builds the table with a model turns the ingested :Node into
+// that model in place: one :Node holds the id, its readers keep their edges.
+func TestPromoteRelease_TurnsAnIngestedNodeIntoTheModelThatBuildsIt(t *testing.T) {
+	f := newSwapFixture(t)
+	const probe = "raw.ingest_probe"
+	now := time.Now().UTC()
+
+	f.promote("rel-1", releaseOf(
+		ingestedNode(probe, "raw", "ingest_probe"),
+		modelNode("analytics.a", probe),
+		modelNode("analytics.b", probe),
+	), now)
+	require.Equal(t, "ingested", f.node(probe)["node_type"])
+
+	built := topology.ReleasePromotedTopologyNode{
+		UniqueID: probe, SchemaName: "raw", TableName: "ingest_probe", ServiceName: "service-1",
+		NodeType: "dbt-model", ContentHash: "sha256:probe", ImageTag: "img", Schedule: "daily",
+		UpstreamUniqueIDs: []string{},
+	}
+	require.Equal(t, topology.PromotionApplied, f.promote("rel-2", releaseOf(
+		built,
+		modelNode("analytics.a", probe),
+		modelNode("analytics.b", probe),
+	), now.Add(time.Hour)))
+
+	assert.Equal(t, int64(1), f.count(
+		`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(n) AS n`, map[string]any{"uid": probe}),
+		"one :Node holds the id")
+	n := f.node(probe)
+	assert.Equal(t, "dbt-model", n["node_type"])
+	assert.Equal(t, "service-1", n["service_name"])
+	assert.Equal(t, "sha256:probe", n["content_hash"])
+	assert.Equal(t, "rel-2", n["release_id"])
+	assert.Equal(t, true, n["active"])
+	assert.NotContains(t, n, "retired_at")
+	assert.Equal(t, []string{"analytics.a", "analytics.b", probe}, f.activeIDs())
+	assert.Equal(t, []string{"analytics.a->" + probe, "analytics.b->" + probe}, f.edges(),
+		"the readers' edges still hold")
+}
+
+// When no model reads the table any more, the next release does not carry the
+// ingested node and the swap retires it like any node it drops.
+func TestPromoteRelease_RetiresAnIngestedNodeNoOneReads(t *testing.T) {
+	f := newSwapFixture(t)
+	const probe = "raw.ingest_probe"
+	r1At := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+
+	f.promote("rel-1", releaseOf(
+		ingestedNode(probe, "raw", "ingest_probe"),
+		modelNode("analytics.a", probe),
+		modelNode("analytics.b", probe),
+	), r1At)
+	require.Equal(t, []string{"analytics.a->" + probe, "analytics.b->" + probe}, f.edges())
+
+	r2At := r1At.Add(24 * time.Hour)
+	require.Equal(t, topology.PromotionApplied, f.promote("rel-2", releaseOf(
+		modelNode("analytics.a"),
+		modelNode("analytics.b"),
+	), r2At))
+
+	n := f.node(probe)
+	require.NotNil(t, n, "a dropped ingested node stays in the graph")
+	assert.Equal(t, false, n["active"])
+	retiredAt, ok := n["retired_at"].(time.Time)
+	require.True(t, ok, "retired_at is a datetime, got %T", n["retired_at"])
+	assert.True(t, r2At.Equal(retiredAt), "retired_at is the time of the release that dropped it: %v", retiredAt)
+	assert.Equal(t, "ingested", n["node_type"], "a retired node keeps its type")
+	assert.Equal(t, []string{"analytics.a", "analytics.b"}, f.activeIDs())
+	assert.Empty(t, f.edges(), "no live reader depends on the retired node")
+}

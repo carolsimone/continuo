@@ -267,3 +267,22 @@ func TestVersionBatches_KeepANodeWithoutArtifactEntry(t *testing.T) {
 	assert.Len(t, batches[0].Nodes, 1)
 	assert.Empty(t, batches[0].Topology)
 }
+
+// An ingested node is a table no node builds, so the code bundle holds no code
+// for it: the plan writes no version for it, and its topology entry travels
+// with the plan so the node exists in the graph.
+func TestPlanVersionWrite_WritesNoVersionForAnIngestedNode(t *testing.T) {
+	nodes := append(nodesFixture(), topology.ReleasePromotedTopologyNode{
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested",
+	})
+
+	in := planVersionWrite(inputFixture(true, false), bundleFixture(), nodes, versionsTestLogger())
+
+	require.Len(t, in.Nodes, 1)
+	assert.Equal(t, "analytics.revenue", in.Nodes[0].UniqueID)
+	for _, n := range in.Nodes {
+		assert.NotEqual(t, "raw.ingest_probe", n.UniqueID, "no version for the ingested node")
+	}
+	assert.Contains(t, in.Topology, "raw.ingest_probe")
+	assert.Equal(t, "ingested", in.Topology["raw.ingest_probe"].NodeType)
+}
