@@ -1,8 +1,16 @@
 import logging
 from collections.abc import Callable, Mapping
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.ingested import SystemRelations
-from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeRegistry, NodeRegistryEntry, NodeType, TableRef
+from domain.ingested import SystemRelations, ingested_nodes
+from domain.model import (
+    DEFAULT_TENANT_ID,
+    FailedNode,
+    ManifestNode,
+    NodeRegistry,
+    NodeRegistryEntry,
+    NodeType,
+    TableRef,
+)
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -35,6 +43,34 @@ def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
 def _summary(failed: list[FailedNode]) -> str:
     noun = "node" if len(failed) == 1 else "nodes"
     return f"{len(failed)} {noun} failed to parse: " + ", ".join(sorted(n.node_id for n in failed))
+
+
+def _artifact_entry(node: ManifestNode) -> dict:
+    """The topology artifact's entry for one node: its identity, the relation it
+    stands for, the service and image that run it, its schedule and the
+    unique_ids it reads. An optional key is present only when the node sets
+    it."""
+    entry = {
+        "unique_id":           node.unique_id,
+        "schema_name":         node.schema_name,
+        "table_name":          node.table_name,
+        "resolved_relation_id": node.resolved_relation_id,
+        "service_name":        node.service_name,
+        "node_type":           node.node_type,
+        "test_count":          node.test_count,
+        "content_hash":        node.content_hash,
+        "image_tag":           node.image_tag,
+        "original_file_path":  node.original_file_path,
+        "upstream_unique_ids": [
+            dep.unique_id for dep in node.upstream_deps
+        ],
+        "schedule":            node.schedule_name,
+    }
+    if node.secret_ref:
+        entry["secret_ref"] = node.secret_ref
+    if node.timeout_seconds:
+        entry["timeout_seconds"] = node.timeout_seconds
+    return entry
 
 
 class CandidateManifestHandler:
@@ -84,6 +120,12 @@ class CandidateManifestHandler:
     system_relations names the relations the warehouse engine keeps for itself
     (its information schema and catalog tables), supplied by the composition
     root from the same configured engine as dialect.
+
+    Once every node has resolved, each table some node reads and no node builds
+    becomes an ingested node (ingested_nodes), and each node that reads it gains
+    an edge to it. An ingested node exists only in the topology artifact: it is
+    in no registry or rewrite lookup, has no candidate artifact, no code-bundle
+    entry and no image tag, because nothing in the release produces it.
     """
 
     def __init__(
@@ -259,7 +301,8 @@ class CandidateManifestHandler:
         # the operator a fix-push-reject loop per node.
         failed: list[FailedNode] = []
         # Every table each node's SQL names, by node unique_id, for each node
-        # that writes a relation (a dbt test writes none).
+        # that writes a relation (a dbt test writes none). ingested_nodes
+        # decides which of them no node of the release builds.
         reads: dict[str, list[TableRef]] = {}
         for node in all_nodes:
             try:
@@ -284,6 +327,9 @@ class CandidateManifestHandler:
                 failed_nodes=failed,
             )
             return
+
+        # Adds the edges to the readers before their entries are built below.
+        ingested = ingested_nodes(all_nodes, reads, system=self._system_relations)
 
         topology: list[dict] = []
         for node in all_nodes:
@@ -310,27 +356,9 @@ class CandidateManifestHandler:
                 self._reject_internal_unless_infra(release_id, exc)
                 return
 
-            entry = {
-                "unique_id":           node.unique_id,
-                "schema_name":         node.schema_name,
-                "table_name":          node.table_name,
-                "resolved_relation_id": node.resolved_relation_id,
-                "service_name":        node.service_name,
-                "node_type":           node.node_type,
-                "test_count":          node.test_count,
-                "content_hash":        node.content_hash,
-                "image_tag":           node.image_tag,
-                "original_file_path":  node.original_file_path,
-                "upstream_unique_ids": [
-                    dep.unique_id for dep in node.upstream_deps
-                ],
-                "schedule":            node.schedule_name,
-            }
-            if node.secret_ref:
-                entry["secret_ref"] = node.secret_ref
-            if node.timeout_seconds:
-                entry["timeout_seconds"] = node.timeout_seconds
-            topology.append(entry)
+            topology.append(_artifact_entry(node))
+
+        topology.extend(_artifact_entry(node) for node in ingested)
 
         bundle = build_code_bundle(
             release_id,
