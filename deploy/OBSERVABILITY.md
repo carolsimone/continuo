@@ -102,6 +102,8 @@ Every series also carries a `service` label.
 | `continuo_topology_release_columns` | gauge | `family` | `topology-controller` |
 | `continuo_topology_release_skipped_nodes` | gauge | `reason` | `topology-controller` |
 | `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `service` | `topology-controller` |
+| `continuo_releases_total` | counter | `outcome` (`promoted`, `rejected`), `reject_reason` (`none` or a reject reason) | `release-controller` |
+| `continuo_release_stage_duration_seconds` | histogram | `stage` (`compiling`, `parsing`, `seed_building`, `validating`), `outcome` (`ok`, `failed`) | `release-controller` |
 | `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every service that keeps a Postgres database (not `catalog` or `egress-proxy`) |
 | `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every Go service |
 

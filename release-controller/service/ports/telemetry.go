@@ -1,21 +1,35 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
-// Telemetry emits OTEL spans for release-controller state transitions.
+// Telemetry records release-controller's release lifecycle: the stage
+// completions and the candidate outcomes are the release series. Handlers call
+// it after the transaction that made the transition commits.
 type Telemetry interface {
 	ReleaseReceived(ctx context.Context, releaseID string)
 	ReleaseParseRequested(ctx context.Context, releaseID string)
-	ReleaseParseCompleted(ctx context.Context, releaseID string, ok bool, durationMS int64)
+	// ReleaseCompileCompleted reports the end of the compile leg: ok is the
+	// leg's own result and took is the time the run spent compiling.
+	ReleaseCompileCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
+	// ReleaseParseCompleted reports the end of the parse leg: ok is the leg's
+	// own result and took is the time the run spent parsing.
+	ReleaseParseCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
 	ReleaseValidationRequested(ctx context.Context, releaseID string, nodeCount int)
-	ReleaseValidationCompleted(ctx context.Context, releaseID string, ok bool, okCount, failCount int, durationMS int64)
+	// ReleaseValidationCompleted reports the end of the validation leg: ok is
+	// the leg's own result and took is the time the run spent validating.
+	ReleaseValidationCompleted(ctx context.Context, releaseID string, ok bool, okCount, failCount int, took time.Duration)
 	ReleaseSeedBuildRequested(ctx context.Context, releaseID string, seedCount int)
-	ReleaseSeedBuildCompleted(ctx context.Context, releaseID string, ok bool, durationMS int64)
+	// ReleaseSeedBuildCompleted reports the end of the seed-build leg: ok is
+	// the leg's own result and took is the time the run spent building seeds.
+	ReleaseSeedBuildCompleted(ctx context.Context, releaseID string, ok bool, took time.Duration)
 	ReleasePromoted(ctx context.Context, releaseID string, nodeCount int)
 	ReleaseRejected(ctx context.Context, releaseID, reason string, failingNodes []string)
-	// VerificationFinished emits the span for a verification run's terminal
-	// outcome (passed or failed). A verification never promotes or rejects a
-	// release, so its terminal decision gets its own span rather than reusing
+	// VerificationFinished records a verification run's terminal outcome
+	// (passed or failed). A verification never promotes or rejects a release,
+	// so its terminal decision gets its own call rather than reusing
 	// ReleasePromoted/ReleaseRejected.
 	VerificationFinished(ctx context.Context, runID, outcome string, nodeCount int)
 }
@@ -23,13 +37,15 @@ type Telemetry interface {
 // NoOpTelemetry is the default for tests and bring-up.
 type NoOpTelemetry struct{}
 
-func (NoOpTelemetry) ReleaseReceived(context.Context, string)                                   {}
-func (NoOpTelemetry) ReleaseParseRequested(context.Context, string)                             {}
-func (NoOpTelemetry) ReleaseParseCompleted(context.Context, string, bool, int64)                {}
-func (NoOpTelemetry) ReleaseValidationRequested(context.Context, string, int)                   {}
-func (NoOpTelemetry) ReleaseValidationCompleted(context.Context, string, bool, int, int, int64) {}
-func (NoOpTelemetry) ReleaseSeedBuildRequested(context.Context, string, int)                    {}
-func (NoOpTelemetry) ReleaseSeedBuildCompleted(context.Context, string, bool, int64)            {}
-func (NoOpTelemetry) ReleasePromoted(context.Context, string, int)                              {}
-func (NoOpTelemetry) ReleaseRejected(context.Context, string, string, []string)                 {}
-func (NoOpTelemetry) VerificationFinished(context.Context, string, string, int)                 {}
+func (NoOpTelemetry) ReleaseReceived(context.Context, string)                              {}
+func (NoOpTelemetry) ReleaseParseRequested(context.Context, string)                        {}
+func (NoOpTelemetry) ReleaseCompileCompleted(context.Context, string, bool, time.Duration) {}
+func (NoOpTelemetry) ReleaseParseCompleted(context.Context, string, bool, time.Duration)   {}
+func (NoOpTelemetry) ReleaseValidationRequested(context.Context, string, int)              {}
+func (NoOpTelemetry) ReleaseValidationCompleted(context.Context, string, bool, int, int, time.Duration) {
+}
+func (NoOpTelemetry) ReleaseSeedBuildRequested(context.Context, string, int)                 {}
+func (NoOpTelemetry) ReleaseSeedBuildCompleted(context.Context, string, bool, time.Duration) {}
+func (NoOpTelemetry) ReleasePromoted(context.Context, string, int)                           {}
+func (NoOpTelemetry) ReleaseRejected(context.Context, string, string, []string)              {}
+func (NoOpTelemetry) VerificationFinished(context.Context, string, string, int)              {}

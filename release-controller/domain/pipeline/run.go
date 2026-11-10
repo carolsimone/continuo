@@ -304,6 +304,22 @@ func (r *Run) FinishedAt() (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// StageDuration is the time the run spent in stage: from its last transition
+// into stage to the transition after it. It is zero while the run is still in
+// stage and when it never entered it.
+func (r *Run) StageDuration(stage Status) time.Duration {
+	for i := len(r.transitions) - 1; i >= 0; i-- {
+		if r.transitions[i].To != stage {
+			continue
+		}
+		if i+1 == len(r.transitions) {
+			return 0
+		}
+		return r.transitions[i+1].At.Sub(r.transitions[i].At)
+	}
+	return 0
+}
+
 // SetCodeBundleURI records the S3 URI of the run's code-bundle document,
 // received with the parse result.
 func (r *Run) SetCodeBundleURI(uri string) { r.codeBundleURI = uri }

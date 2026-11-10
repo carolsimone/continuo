@@ -54,6 +54,20 @@ func anyOutboxWithStream(t *testing.T, store *fakeStore, streamName string) bool
 	return false
 }
 
+func TestHandleCompileResult_RecordsTheCompilingStageDuration(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	putCompilingRelease(t, fakes, d, "rel-c-time")
+	spy := &stageSpy{}
+	d.Telemetry = spy
+	d.Clock.(*fakeClock).t = d.Clock.Now().Add(30 * time.Second)
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: "rel-c-time", Status: "ok",
+	}))
+
+	assert.Equal(t, []stageCall{{"compiling", true, 30 * time.Second}}, spy.calls)
+}
+
 func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	releaseID := "rel-c-ok"

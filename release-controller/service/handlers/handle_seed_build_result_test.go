@@ -208,6 +208,21 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
+func TestHandleSeedBuildResult_Failed_RecordsTheSeedBuildingStageDuration(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-time"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+	spy := &stageSpy{}
+	deps.Telemetry = spy
+	deps.Clock.(*fakeClock).t = deps.Clock.Now().Add(45 * time.Second)
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
+	}))
+
+	assert.Equal(t, []stageCall{{"seed_building", false, 45 * time.Second}}, spy.calls)
+}
+
 func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-fail-schema"

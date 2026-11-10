@@ -290,6 +290,24 @@ func seedToValidatingVerification(t *testing.T, releaseID string) (*handlers.Dep
 	return deps, store
 }
 
+func TestHandleValidationResult_OK_RecordsTheValidatingStageDuration(t *testing.T) {
+	deps, _ := seedToValidating(t, "rValidatingTime")
+	seedValidationNodes(t, deps, "rValidatingTime", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
+	spy := &stageSpy{}
+	deps.Telemetry = spy
+	deps.Clock.(*fakeClock).t = deps.Clock.Now().Add(20 * time.Second)
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rValidatingTime",
+		AggregateStatus: "ok",
+	}))
+
+	assert.Equal(t, []stageCall{{"validating", true, 20 * time.Second}}, spy.calls)
+}
+
 // TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes drives
 // HandleValidationResult with a verification run in Validating and an all-ok
 // aggregate. The verification run must stop at StatusPassed: no

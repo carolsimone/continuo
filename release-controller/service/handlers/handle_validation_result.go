@@ -239,7 +239,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, r.StageDuration(pipeline.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, r.CandidateTopologyRef().NodeCount)
 	return nil
 }
@@ -374,7 +374,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	}
 
 	okCount := len(r.ValidationNodeIDs()) - len(failing)
-	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), 0)
+	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), r.StageDuration(pipeline.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }

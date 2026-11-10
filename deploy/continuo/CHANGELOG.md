@@ -17,6 +17,7 @@ shipped in those.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
   - Its pod gets the `metrics` container port, the `prometheus.io/*` annotations and a place in the scrape NetworkPolicy. `deploy/OBSERVABILITY.md` lists the new series and an example rule for a stage near the liveness budget.
   - No values change is needed.
+- **release-controller counts releases.** TL;DR: `continuo_releases_total` counts promoted and rejected releases by reason, and `continuo_release_stage_duration_seconds` times each pipeline stage.
 
 ### Changed
 
