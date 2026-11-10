@@ -82,6 +82,10 @@ def _common_monkeypatches(monkeypatch):
     # rather than open a real port per test run. tests/test_health_server.py
     # covers the health server itself.
     monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    # Same for the metrics listener: tests/test_metrics_server.py covers it, and
+    # METRICS_PORT is cleared so the default port is what the wiring asks for.
+    monkeypatch.delenv("METRICS_PORT", raising=False)
+    monkeypatch.setattr(main, "start_metrics_server", lambda *a, **kw: None)
 
 
 class _InlineThread(_NoopThread):
@@ -151,6 +155,35 @@ def test_main_starts_health_server_wired_to_the_candidate_consumer(monkeypatch):
     assert isinstance(port, int) and port > 0
     assert consumer is _RecordingConsumer.instances[0]
     assert isinstance(thread, _NoopThread)
+
+
+def test_main_binds_the_metrics_port_before_the_consumer_starts(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    events = []
+    monkeypatch.setattr(main, "start_metrics_server", lambda port, registry: events.append(("metrics", port)))
+
+    class _RecordingThread(_NoopThread):
+        def start(self):
+            events.append(("thread", self.name))
+
+    monkeypatch.setattr(main.threading, "Thread", _RecordingThread)
+    main.main()
+    assert events[0] == ("metrics", 9464)
+    assert ("thread", "consumer-release-requested") in events[1:]
+
+
+def test_main_exits_non_zero_when_the_metrics_port_is_taken(monkeypatch, caplog):
+    _common_monkeypatches(monkeypatch)
+
+    def taken(port, registry):
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(main, "start_metrics_server", taken)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.main()
+    assert exited.value.code == 1
+    assert _RecordingConsumer.instances == []
+    assert any(r.getMessage() == "cannot listen on the metrics port" and r.port == 9464 for r in caplog.records)
 
 
 def test_main_consumer_group_correct(monkeypatch):

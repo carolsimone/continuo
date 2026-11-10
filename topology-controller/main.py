@@ -2,6 +2,7 @@ import logging
 import sys
 import threading
 import redis
+from prometheus_client import CollectorRegistry
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
@@ -11,6 +12,7 @@ from config.config import (
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
+    metrics_port,
     redis_acl_mode,
     validate,
     warehouse_dialect,
@@ -20,6 +22,7 @@ from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.json_log import configure_logging
+from adapters.metrics.server import start_metrics_server
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
@@ -43,6 +46,15 @@ def main() -> None:
     configure_logging(log_level())
     validate()
     logger.info("topology-controller starting (candidate consumer)")
+
+    # Bound before anything consumes, so a port another process holds stops the
+    # process here instead of leaving a consumer working with no scrape target.
+    registry = CollectorRegistry()
+    try:
+        start_metrics_server(metrics_port(), registry)
+    except OSError as exc:
+        logger.error("cannot listen on the metrics port", extra={"port": metrics_port(), "error": str(exc)})
+        sys.exit(1)
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 

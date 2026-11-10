@@ -262,3 +262,46 @@ def test_validate_rejects_an_unknown_redis_acl_mode(monkeypatch):
     from config.config import validate
     with pytest.raises(RuntimeError, match="REDIS_ACL_MODE 'perservice'"):
         validate()
+
+
+def test_metrics_port_defaults_to_9464(monkeypatch):
+    monkeypatch.delenv("METRICS_PORT", raising=False)
+    from config.config import metrics_port
+    assert metrics_port() == 9464
+
+
+def test_metrics_port_empty_string_falls_back_to_the_default(monkeypatch):
+    """A rendered-but-empty ConfigMap value is treated as unset."""
+    monkeypatch.setenv("METRICS_PORT", "")
+    from config.config import metrics_port
+    assert metrics_port() == 9464
+
+
+def test_metrics_port_reads_the_variable(monkeypatch):
+    monkeypatch.setenv("METRICS_PORT", "9465")
+    from config.config import metrics_port
+    assert metrics_port() == 9465
+
+
+@pytest.mark.parametrize("raw", ["0", "65536", "-1", "abc", "9_464", " 9464", "94.64", "٩٤٦٤"])
+def test_metrics_port_refuses_anything_but_a_whole_number_from_1_to_65535(monkeypatch, raw):
+    monkeypatch.setenv("METRICS_PORT", raw)
+    from config.config import metrics_port
+    with pytest.raises(RuntimeError, match="METRICS_PORT"):
+        metrics_port()
+
+
+def test_validate_refuses_a_bad_metrics_port(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("METRICS_PORT", "abc")
+
+    from config.config import validate
+    with pytest.raises(RuntimeError, match="METRICS_PORT"):
+        validate()
