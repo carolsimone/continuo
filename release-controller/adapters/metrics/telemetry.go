@@ -80,8 +80,13 @@ func (t *Telemetry) ReleaseSeedBuildCompleted(_ context.Context, _ string, ok bo
 	t.observeStage(pipeline.StatusSeedBuilding, ok, took)
 }
 
-// ReleaseValidationCompleted observes the time the run spent validating.
-func (t *Telemetry) ReleaseValidationCompleted(_ context.Context, _ string, ok bool, _, _ int, took time.Duration) {
+// ReleaseValidationCompleted observes the time the run spent validating. A
+// release that validates no node, and so passes straight through the stage,
+// has no validation to time and observes nothing.
+func (t *Telemetry) ReleaseValidationCompleted(_ context.Context, _ string, ok bool, okCount, failCount int, took time.Duration) {
+	if ok && okCount+failCount == 0 {
+		return
+	}
 	t.observeStage(pipeline.StatusValidating, ok, took)
 }
 
