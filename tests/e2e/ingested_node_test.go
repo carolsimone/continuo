@@ -55,6 +55,7 @@ const (
 //     the table.
 //  6. A single-node run of the table is refused with InvalidArgument, with
 //     no service and with the reader's service.
+//  7. No run of the tenant, this one or any other, holds a task for the table.
 //
 // The release leaves the live topology as service-1's alone and starts the
 // promote-seed runs of its seeds, so a deferred restore announces the default
@@ -256,6 +257,17 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	assert.Contains(t, status.Convert(err).Message(), "ingested", "the refusal names why: %v", err)
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, namedServiceID), "a refused command stores no record")
 	t.Logf("✅ a single-node run of %s was refused with INVALID_ARGUMENT, with and without a service", ingestedKey)
+
+	// ── 7. no run ever holds a task for the table ────────────────────────────
+	// The schedule's run could not hold one whatever the planner did, since the
+	// ingested node belongs to no schedule: only the task rows of every run of
+	// the tenant show that no run plans it.
+	var ingestedTasks int
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &ingestedTasks,
+		`SELECT count(*) FROM tasks WHERE tenant_id = $1 AND node_key = $2`,
+		events.DefaultTenantID, ingestedKey))
+	assert.Zero(t, ingestedTasks, "no run of tenant %s holds a task for the ingested node %s", events.DefaultTenantID, ingestedKey)
+	t.Logf("✅ no task row of any run names %s", ingestedKey)
 }
 
 // uiGraphNodeTypes returns the node type of each node of a ui schedule graph,
