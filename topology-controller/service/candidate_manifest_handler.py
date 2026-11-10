@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
+from domain.ingested import SystemRelations
 from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeRegistry, NodeRegistryEntry, NodeType, TableRef
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
@@ -79,6 +80,10 @@ class CandidateManifestHandler:
     supplied by the composition root from the configured engine. It governs
     both dependency resolution and the candidate-schema rewrite, so the
     uploaded SQL is in the dialect the validation runner will execute.
+
+    system_relations names the relations the warehouse engine keeps for itself
+    (its information schema and catalog tables), supplied by the composition
+    root from the same configured engine as dialect.
     """
 
     def __init__(
@@ -89,6 +94,7 @@ class CandidateManifestHandler:
         artifact_writer: TopologyArtifactWriterPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
+        system_relations: SystemRelations,
         image_tags: Mapping[str, str] | None,
         is_infrastructure_error: Callable[[BaseException], bool],
     ) -> None:
@@ -98,6 +104,7 @@ class CandidateManifestHandler:
         self._artifact_writer = artifact_writer
         self._artifact_builders = artifact_builders
         self._dialect = dialect
+        self._system_relations = system_relations
         self._image_tags = image_tags
         self._is_infrastructure_error = is_infrastructure_error
 

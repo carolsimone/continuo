@@ -7,6 +7,7 @@ import pytest
 import yaml
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
+from config.config import _SYSTEM_RELATIONS
 from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
@@ -55,10 +56,12 @@ class FakeBundleUploader:
 
 
 def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-             image_tags=None, artifact_writer=None) -> CandidateManifestHandler:
-    """Build a handler pinned to the postgres dialect, a fake bundle uploader,
-    a recording artifact writer and an empty image-tag map unless a test names
-    otherwise. Outages are recognised by the consumer's own classifier.
+             image_tags=None, artifact_writer=None,
+             system_relations=_SYSTEM_RELATIONS["postgres"]) -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect and its system relations,
+    a fake bundle uploader, a recording artifact writer and an empty image-tag
+    map unless a test names otherwise. Outages are recognised by the consumer's
+    own classifier.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -71,12 +74,14 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
+        system_relations=system_relations,
         image_tags=image_tags if image_tags is not None else {},
         is_infrastructure_error=is_infrastructure,
     )
 
 
-def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None):
+def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
+                      system_relations=_SYSTEM_RELATIONS["postgres"]):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -90,6 +95,7 @@ def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgr
         artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
         artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect=dialect,
+        system_relations=system_relations,
         image_tags={},
         is_infrastructure_error=is_infrastructure,
     )
@@ -568,6 +574,7 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
         artifact_writer=writer,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags=None,
         is_infrastructure_error=is_infrastructure,
     )
@@ -1210,6 +1217,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
             Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
         },
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
     )
@@ -1252,6 +1260,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
             Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
         },
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
     )
