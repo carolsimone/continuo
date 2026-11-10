@@ -1,17 +1,21 @@
-"""Where the time of one release's parse goes.
+"""Where the time of one release's parse goes, and what the release held.
 
 The handler wraps each stage of the parse in `ReleaseTimings.stage`, which adds
 the stage's elapsed seconds, its run count and its counts to one `StageRecord`
 per stage. A stage that runs several times (once per manifest, once per node)
 adds up in the same record. The record also keeps the largest resident set seen
-at a stage boundary.
+at a stage boundary, how many nodes and declared columns each runtime
+contributed, how many nodes the parse skipped and why, and how the release
+ended. `log_fields` renders all of it as the fields of the release's log line.
 """
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import TracebackType
 
+from domain.contract_vocabulary import ParseFailureKind
+from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
 from service.ports import ClockPort, MemoryProbePort
 
 
@@ -28,6 +32,13 @@ class Stage(StrEnum):
     CODE_BUNDLE = "code_bundle"
     TOPOLOGY_ARTIFACT = "topology_artifact"
     PUBLISH = "publish"
+
+
+class ReleaseOutcome(StrEnum):
+    """How a release's parse ended: published to release-controller, or
+    reported to it as failed."""
+    OK = "ok"
+    FAILED = "failed"
 
 
 @dataclass
@@ -86,6 +97,10 @@ class ReleaseTimings:
     construction: a stage that did not run reads zero seconds and zero runs.
     `peak_rss_bytes` is the largest resident set read at the boundary of a stage
     that samples memory, so it is a lower bound of the process's true peak.
+    `nodes` and `columns` hold, per runtime, the nodes the parses returned and
+    the columns they declare; `skipped` holds the nodes the parses left out,
+    per reason. All three name every runtime or reason from construction.
+    `outcome` and `failure_kind` stay unset until the release ends.
     """
 
     def __init__(self, release_id: str, clock: ClockPort, memory: MemoryProbePort) -> None:
@@ -94,6 +109,11 @@ class ReleaseTimings:
         self._memory = memory
         self.stages: dict[Stage, StageRecord] = {stage: StageRecord() for stage in Stage}
         self.peak_rss_bytes = 0
+        self.outcome: ReleaseOutcome | None = None
+        self.failure_kind: ParseFailureKind | None = None
+        self.nodes: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
+        self.columns: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
+        self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -110,3 +130,31 @@ class ReleaseTimings:
     def stages_ms(self) -> dict[str, int]:
         """Every stage's milliseconds by stage name, in pipeline order."""
         return {stage.value: round(record.seconds * 1000) for stage, record in self.stages.items()}
+
+    def add_nodes(self, nodes: Iterable[ManifestNode]) -> None:
+        """Count the nodes a parse returned, and their declared columns, under
+        each node's runtime."""
+        for node in nodes:
+            self.nodes[node.runtime] += 1
+            self.columns[node.runtime] += node.declared_columns
+
+    def add_skips(self, skips: Iterable[SkippedNode]) -> None:
+        """Count the nodes a parse left out, under each skip's reason."""
+        for skip in skips:
+            self.skipped[skip.reason] += 1
+
+    def log_fields(self) -> dict[str, object]:
+        """The fields of the release's log line. `failure_kind` is present only
+        for a failed release."""
+        fields: dict[str, object] = {
+            "release_id": self.release_id,
+            "outcome": self.outcome.value if self.outcome is not None else None,
+            "nodes": dict(self.nodes),
+            "columns": dict(self.columns),
+            "skipped": {reason.value: count for reason, count in self.skipped.items()},
+            "stages_ms": self.stages_ms(),
+            "peak_rss_bytes": self.peak_rss_bytes,
+        }
+        if self.outcome is ReleaseOutcome.FAILED and self.failure_kind is not None:
+            fields["failure_kind"] = self.failure_kind.value
+        return fields

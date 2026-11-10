@@ -1,7 +1,16 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import DEFAULT_TENANT_ID, FailedNode, ManifestKind, NodeRegistry, NodeRegistryEntry, NodeType
+from domain.model import (
+    DEFAULT_TENANT_ID,
+    FailedNode,
+    ManifestKind,
+    ManifestNode,
+    NodeRegistry,
+    NodeRegistryEntry,
+    NodeType,
+    SkippedNode,
+)
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -13,7 +22,7 @@ from service.ports import (
     MemoryProbePort,
     TopologyArtifactWriterPort,
 )
-from service.release_timings import ReleaseTimings, Stage
+from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
 from domain.contract_vocabulary import ParseFailureKind
@@ -82,9 +91,15 @@ class CandidateManifestHandler:
     both dependency resolution and the candidate-schema rewrite, so the
     uploaded SQL is in the dialect the validation runner will execute.
 
+    A dbt node a parse leaves out (no owner, no tag to take a schedule from, a
+    local stub) is never a failure: it is logged at INFO as it is skipped and
+    counted on the release's line, and release-controller is told nothing of it.
+
     handle() times each stage of the parse (see service.release_timings) with
     clock and memory and returns the record, whether the release was published,
-    failed, or empty.
+    failed, or empty. A release that ended, published or failed, logs one
+    "release parsed" line carrying the record's fields; a handler that raised
+    published nothing and logs no such line.
     """
 
     def __init__(
@@ -119,6 +134,8 @@ class CandidateManifestHandler:
             self._handle_impl(release_id)
         finally:
             self._source.cleanup()
+        if self._timings.outcome is not None:
+            logger.info("release parsed", extra=self._timings.log_fields())
         return self._timings
 
     def _handle_impl(self, release_id: str) -> None:
@@ -126,9 +143,13 @@ class CandidateManifestHandler:
             self._fail(release_id, ParseFailureKind.INTERNAL, _NO_IMAGE_TAGS)
             return
 
+        logger.info(
+            "candidate: downloading manifests",
+            extra={"release_id": release_id, "manifests": self._source.manifest_count()},
+        )
         with self._timings.stage(Stage.DOWNLOAD) as record:
             manifests = self._source.list_manifests()
-            record.add(manifests=len(manifests))
+            record.add(manifests=len(manifests), bytes=sum(m.size_bytes for m in manifests))
         if not manifests:
             logger.warning(
                 "candidate: no manifest files found — publishing empty topology",
@@ -136,11 +157,6 @@ class CandidateManifestHandler:
             )
             self._publish(release_id, topology=[], code_bundle_uri="")
             return
-
-        logger.info(
-            "candidate: loading manifests",
-            extra={"release_id": release_id, "count": len(manifests)},
-        )
 
         all_nodes = []
         shared_code: dict[str, dict] = {}
@@ -158,9 +174,10 @@ class CandidateManifestHandler:
                 return
 
             parse_stage = Stage.PYTHON_PARSE if mf.kind == ManifestKind.PYTHON else Stage.DBT_PARSE
+            manifest_skips: list[SkippedNode] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
-                    nodes, mf_shared = parser.parse(mf.path, mf.image_tag)
+                    nodes, mf_shared = parser.parse(mf.path, mf.image_tag, skipped=manifest_skips)
                     record.add(nodes=len(nodes))
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
@@ -170,6 +187,11 @@ class CandidateManifestHandler:
                 # so they stay pending.
                 self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, f"{mf.path}: {exc!r}")
                 return
+
+            # Reported before the declared-service checks below: a manifest
+            # whose every node was skipped fails as empty, and its skips are
+            # then the only trace of why.
+            self._record_parse(release_id, nodes, manifest_skips)
 
             # Namespace this manifest's shared-code units by service so two
             # manifests pinning different versions of the same dbt package
@@ -354,14 +376,23 @@ class CandidateManifestHandler:
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
             )
-        logger.info(
-            "candidate: parse complete",
-            extra={
-                "release_id": release_id,
-                "published_nodes": artifact.node_count,
-                "topology_uri": artifact.uri,
-            },
-        )
+        self._timings.outcome = ReleaseOutcome.OK
+
+    def _record_parse(self, release_id: str, nodes: list[ManifestNode], skips: list[SkippedNode]) -> None:
+        """Log each node a manifest's parse skipped, then add the manifest's
+        skips and nodes to the release's counts."""
+        for skip in skips:
+            logger.info(
+                "candidate: node skipped",
+                extra={
+                    "release_id": release_id,
+                    "service": skip.service,
+                    "node_id": skip.node_id,
+                    "reason": skip.reason.value,
+                },
+            )
+        self._timings.add_skips(skips)
+        self._timings.add_nodes(nodes)
 
     def _reject_internal_unless_infra(self, release_id: str, exc: Exception) -> None:
         """Re-raise an S3 outage (is_infrastructure_error) so the consumer
@@ -386,3 +417,5 @@ class CandidateManifestHandler:
                 detail=detail,
                 failed_nodes=list(failed_nodes),
             )
+        self._timings.outcome = ReleaseOutcome.FAILED
+        self._timings.failure_kind = kind

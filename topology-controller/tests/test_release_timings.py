@@ -1,6 +1,8 @@
 import pytest
 
-from service.release_timings import ReleaseTimings, Stage, StageRecord
+from domain.contract_vocabulary import ParseFailureKind
+from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
+from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage, StageRecord
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -68,3 +70,39 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
     assert list(ms) == ["download", "dbt_parse", "python_parse", "registry", "resolve", "rewrite",
                         "candidate_upload", "code_bundle", "topology_artifact", "publish"]
     assert (ms["resolve"], ms["python_parse"]) == (660, 0)
+
+
+def _node(runtime: Runtime, declared_columns: int) -> ManifestNode:
+    return ManifestNode(table_name="t", schema_name="s", service_name="svc-a", owner="o",
+                        schedule_name="daily", criticality="SECONDARY", runtime=runtime,
+                        declared_columns=declared_columns)
+
+
+def test_log_fields_carry_the_release_its_counts_and_every_stage():
+    timings = _timings(FakeClock())
+    timings.add_nodes([_node(Runtime.DBT, 3), _node(Runtime.DBT, 0), _node(Runtime.PYTHON, 2)])
+    timings.add_skips([SkippedNode("m", "svc-a", SkipReason.NO_TAG)])
+    timings.outcome = ReleaseOutcome.OK
+    assert timings.log_fields() == {
+        "release_id": "rel-1",
+        "outcome": "ok",
+        "nodes": {"dbt": 2, "python": 1},
+        "columns": {"dbt": 3, "python": 2},
+        "skipped": {"no_owner": 0, "no_tag": 1, "local_stub": 0},
+        "stages_ms": timings.stages_ms(),
+        "peak_rss_bytes": 0,
+    }
+
+
+def test_log_fields_name_the_failure_kind_of_a_failed_release():
+    timings = _timings()
+    timings.outcome = ReleaseOutcome.FAILED
+    timings.failure_kind = ParseFailureKind.INVALID_SQL
+    fields = timings.log_fields()
+    assert (fields["outcome"], fields["failure_kind"]) == ("failed", "invalid_sql")
+
+
+def test_a_release_with_no_nodes_counts_every_runtime_and_reason_at_zero():
+    fields = _timings().log_fields()
+    assert (fields["nodes"], fields["columns"]) == ({"dbt": 0, "python": 0}, {"dbt": 0, "python": 0})
+    assert fields["skipped"] == {"no_owner": 0, "no_tag": 0, "local_stub": 0}

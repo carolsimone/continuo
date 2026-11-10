@@ -1,8 +1,10 @@
 import hashlib
 import json
+import logging
 from pathlib import Path
 import pytest
 from domain.exceptions import InvalidNodeSettingError
+from domain.model import SkippedNode, SkipReason
 from service.parser import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -541,3 +543,93 @@ def test_parse_skips_node_without_meta_owner_whether_meta_is_null_or_empty(tmp_p
     path = _manifest_path(tmp_path, {"model.svc.revenue": node})
     nodes, _ = parse_manifest(path, "v1")
     assert nodes == []
+
+
+def _write_nodes(tmp_path, **nodes) -> str:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"macros": {}, "nodes": nodes}))
+    return str(path)
+
+
+def _svc_a_model(name, *, owner="team-a", tags=("daily",), **over):
+    node = {
+        "resource_type": "model",
+        "name": name,
+        "schema": "analytics",
+        "fqn": ["svc_a", name],
+        "tags": list(tags),
+        "config": {"meta": {"owner": owner} if owner else {}},
+        "checksum": {"checksum": name},
+    }
+    node.update(over)
+    return node
+
+
+def test_a_test_node_is_skipped_by_the_first_pass_without_a_log_line(tmp_path, caplog):
+    path = _write_nodes(
+        tmp_path,
+        **{
+            "model.svc_a.kept": _svc_a_model("kept"),
+            "test.svc_a.not_null_kept_id": {
+                "resource_type": "test", "name": "not_null_kept_id", "schema": "analytics",
+                "fqn": ["svc_a", "not_null_kept_id"], "attached_node": "model.svc_a.kept",
+                "compiled_code": "select id from analytics.kept where id is null",
+            },
+        },
+    )
+    with caplog.at_level(logging.DEBUG, logger="service.parser"):
+        parse_manifest(path)
+    assert not [r for r in caplog.records if getattr(r, "node_id", "") == "test.svc_a.not_null_kept_id"]
+
+
+def test_an_unsupported_resource_type_is_logged_at_debug_with_its_node_id(tmp_path, caplog):
+    path = _write_nodes(
+        tmp_path,
+        **{"analysis.svc_a.report": {"resource_type": "analysis", "name": "report", "fqn": ["svc_a", "report"]}},
+    )
+    with caplog.at_level(logging.DEBUG, logger="service.parser"):
+        parse_manifest(path)
+    (record,) = [r for r in caplog.records if r.name == "service.parser"]
+    assert (record.levelno, record.node_id) == (logging.DEBUG, "analysis.svc_a.report")
+
+
+def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp_path, caplog):
+    path = _write_nodes(
+        tmp_path,
+        **{
+            "model.svc_a.kept": _svc_a_model("kept"),
+            "model.svc_a.no_owner": _svc_a_model("no_owner", owner=None),
+            "model.svc_a.stub": _svc_a_model("stub", tags=["local_stub"]),
+            "model.svc_a.untagged": _svc_a_model("untagged", tags=[]),
+        },
+    )
+    skipped: list[SkippedNode] = []
+    with caplog.at_level(logging.DEBUG, logger="service.parser"):
+        nodes, _ = parse_manifest(path, skipped=skipped)
+    assert [n.table_name for n in nodes] == ["kept"]
+    assert skipped == [
+        SkippedNode("model.svc_a.no_owner", "svc-a", SkipReason.NO_OWNER),
+        SkippedNode("model.svc_a.stub", "svc-a", SkipReason.LOCAL_STUB),
+        SkippedNode("model.svc_a.untagged", "svc-a", SkipReason.NO_TAG),
+    ]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_service(tmp_path):
+    bare = _svc_a_model("bare", owner=None)
+    del bare["fqn"]
+    skipped: list[SkippedNode] = []
+    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
+    assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]
+
+
+def test_a_model_counts_its_declared_columns(tmp_path):
+    columns = {name: {"name": name} for name in ("id", "amount", "created_at")}
+    path = _write_nodes(tmp_path, **{"model.svc_a.wide": _svc_a_model("wide", columns=columns)})
+    nodes, _ = parse_manifest(path)
+    assert nodes[0].declared_columns == 3
+
+
+def test_a_model_with_no_columns_block_declares_none(tmp_path):
+    nodes, _ = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare")}))
+    assert nodes[0].declared_columns == 0

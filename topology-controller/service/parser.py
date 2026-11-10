@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import ManifestNode, NodeType
+from domain.model import ManifestNode, NodeType, SkippedNode, SkipReason
 from domain.node_timeout import timeout_seconds
 from service.content_hash import content_hash_fold
 
@@ -113,9 +113,23 @@ _RESOURCE_TYPE_DEFAULT_SCHEDULE: dict[str, str | None] = {
 }
 
 
+def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
+    """The report of a node a gate left out. The service is read tolerantly: a
+    node the parse never builds can still lack an fqn without raising."""
+    service = (node.get("fqn") or [""])[0].replace("_", "-")
+    return SkippedNode(node_id=node_id, service=service, reason=reason)
+
+
 def parse_manifest(
-    manifest_path: str, image_tag: str = ""
+    manifest_path: str, image_tag: str = "", *, skipped: list[SkippedNode] | None = None
 ) -> tuple[list[ManifestNode], dict]:
+    """Parse a dbt manifest into its nodes and the shared code they use.
+
+    A model, seed or snapshot that a gate leaves out (no owner, no tag to take
+    a schedule from, a local stub) is never an error: when `skipped` is given,
+    the node is appended to it with its reason, and nothing is logged here, so
+    the caller reports every skip in one place.
+    """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
@@ -126,24 +140,27 @@ def parse_manifest(
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in SUPPORTED_RESOURCE_TYPES:
-            logger.error("Skipping node with unsupported resource_type",
-                         extra={"node_id": node_id, "resource_type": resource_type})
+            # A test is read by the second pass, so it is not "unsupported".
+            if resource_type != "test":
+                logger.debug("Skipping node with unsupported resource_type",
+                             extra={"node_id": node_id, "resource_type": resource_type})
             continue
 
         owner = (node.get("config", {}).get("meta") or {}).get("owner")
         if not owner:
-            logger.warning("Skipping node missing required meta.owner",
-                           extra={"node_id": node_id})
+            if skipped is not None:
+                skipped.append(_skipped(node_id, node, SkipReason.NO_OWNER))
             continue
 
         tags = node.get("tags", [])
         if "local_stub" in tags:
-            logger.info("Skipping local_stub node", extra={"node_id": node_id})
+            if skipped is not None:
+                skipped.append(_skipped(node_id, node, SkipReason.LOCAL_STUB))
             continue
         default_schedule = _RESOURCE_TYPE_DEFAULT_SCHEDULE.get(resource_type)
         if not tags and default_schedule is None:
-            logger.warning("Skipping node missing required tags (schedule)",
-                           extra={"node_id": node_id})
+            if skipped is not None:
+                skipped.append(_skipped(node_id, node, SkipReason.NO_TAG))
             continue
 
         schedule_name = tags[0] if tags else default_schedule
@@ -178,6 +195,7 @@ def parse_manifest(
             shared_code_hash=shared_hash,
             config_hash=config_hash,
             code_unit_ids=direct_unit_ids,
+            declared_columns=len(node.get("columns") or {}),
         )
         try:
             manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))

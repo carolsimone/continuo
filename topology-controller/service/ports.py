@@ -65,6 +65,10 @@ class ManifestSourcePort(Protocol):
     """Supplies the release's manifest files to the parse handler and owns the
     temporary storage they were fetched into."""
 
+    def manifest_count(self) -> int:
+        """How many manifests `list_manifests` will fetch."""
+        ...
+
     def list_manifests(self) -> list[ManifestFile]:
         ...
 
