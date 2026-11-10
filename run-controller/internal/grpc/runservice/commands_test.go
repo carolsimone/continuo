@@ -295,6 +295,12 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 			})
 			return err
 		},
+		"TriggerSingleNodeRun without a service": func() error {
+			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
+				RequestId: id, ServiceName: "", SchemaName: "e2e_raw", TableName: "ingest_probe", MetadataSource: "latest",
+			})
+			return err
+		},
 		"TriggerSingleNodeRun of an unknown metadata source": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
 				RequestId: id, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "yesterday",
@@ -331,6 +337,22 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(call()), name)
 	}
 	assert.Zero(t, cmds.calls)
+}
+
+// A run of an ingested node is refused as an invalid argument, with the
+// refusal's own message, which names the node. It is the request that is
+// wrong, so no retry or other state of the system changes the answer.
+func TestCommandError_IngestedNodeIsInvalidArgument(t *testing.T) {
+	refusal := fmt.Errorf("select: %w", fmt.Errorf("%w: raw.ingest_probe", runplan.ErrIngestedNode))
+	cmds := &fakeCommands{err: refusal}
+	srv := newCommandServer(newStore(), cmds)
+
+	_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
+		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "ingest_probe", MetadataSource: "latest",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, refusal.Error(), status.Convert(err).Message())
 }
 
 // A request id reused for another command is AlreadyExists with the contract's
@@ -370,6 +392,7 @@ func TestCommands_MapTheRefusals(t *testing.T) {
 		{runplan.ErrTargetNotFound, codes.NotFound},
 		{run.ErrTaskNotFound, codes.NotFound},
 		{runplan.ErrFullRefreshUnsupported, codes.InvalidArgument},
+		{runplan.ErrIngestedNode, codes.InvalidArgument},
 		{run.ErrScheduleNameTooLong, codes.InvalidArgument},
 		{run.ErrScheduleHasActiveRun, codes.FailedPrecondition},
 		{runplan.ErrEmptySelection, codes.FailedPrecondition},

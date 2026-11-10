@@ -91,3 +91,26 @@ func TestWholeDAG_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, planOf(pending("ok"), "ok"), plan)
 }
+
+// An ingested node has no schedule, so the graph of a schedule holds none. A
+// graph that holds one is planned without it, as a schedule that does not
+// name it: the node is no task, and what reads it is ready at creation.
+func TestWholeDAG_LeavesAnIngestedNodeOut(t *testing.T) {
+	schedule := scheduleGraph(e2eDAG, "e2e-schedule")
+	g := withIngestedUpstream(schedule, "seed_table_1", "table_a")
+	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest} {
+		got, err := runplan.WholeDAG{Operation: op}.Select(g)
+		require.NoError(t, err, "operation %q", op)
+		want, err := runplan.WholeDAG{Operation: op}.Select(schedule)
+		require.NoError(t, err, "operation %q", op)
+		assert.Equal(t, want, got, "operation %q", op)
+	}
+}
+
+func TestWholeDAG_AGraphOfIngestedNodesOnlyIsEmpty(t *testing.T) {
+	g := topology.NewGraph([]topology.Node{ingestedNode()}, nil)
+	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest} {
+		_, err := runplan.WholeDAG{Operation: op}.Select(g)
+		assert.ErrorIs(t, err, runplan.ErrEmptySelection, "operation %q", op)
+	}
+}

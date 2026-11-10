@@ -98,6 +98,50 @@ func TestScheduleGraph_AScheduleWithNoUpstreamInAnotherScheduleHasNoCrossEdge(t 
 	assert.Equal(t, []topology.Edge{{Upstream: "stg.table_d", Downstream: "stg.other_y"}}, g.Edges)
 }
 
+// The schedule graph the UI draws returns the upstreams of a schedule's nodes
+// whatever their type, so an ingested node shows up with the edge to its
+// reader, and with no service.
+func TestGraph_ReturnsAnIngestedUpstreamAndItsEdge(t *testing.T) {
+	db := newTestDB(t)
+	tenant := ingestedRelease(t, db)
+
+	g, err := postgres.NewScheduleGraphRepository(db).Graph(context.Background(), tenant, "s")
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(1), g.PromotionSeq)
+	require.Equal(t, []topology.NodeKey{"a.m", "raw.x"}, keysOf(g.Nodes))
+	zero := 0
+	assert.Equal(t, topology.Node{
+		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "ingested", TestCount: &zero,
+	}, g.Nodes[1])
+	assert.Equal(t, "", g.Nodes[1].ServiceName)
+	assert.Equal(t, []topology.Edge{{Upstream: "raw.x", Downstream: "a.m"}}, g.Edges)
+}
+
+// An ingested node has an empty schedule name, which belongs to no schedule:
+// it adds no schedule to the list, no tile and no model to any count.
+func TestScheduleSummaries_AnIngestedNodeIsNoSchedule(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := ingestedRelease(t, db)
+
+	got, err := postgres.NewScheduleGraphRepository(db).Summaries(ctx, tenant)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "s", got[0].ScheduleName)
+	assert.Equal(t, 1, got[0].NodeCount)
+
+	models := postgres.NewLiveScheduleModelRepository(db)
+	counts, err := models.CountByScheduleName(ctx, tenant)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"s": 1}, counts)
+	for name, want := range map[string]int{"s": 1, "": 0} {
+		n, err := models.CountOf(ctx, tenant, name)
+		require.NoError(t, err, name)
+		assert.Equal(t, want, n, "models of %q", name)
+	}
+}
+
 func TestScheduleGraph_UnknownScheduleIsEmpty(t *testing.T) {
 	db := newTestDB(t)
 	tenant, _ := liveScheduleRelease(t, db)

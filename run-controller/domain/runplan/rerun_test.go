@@ -118,3 +118,28 @@ func TestRerun_AnUndeclaredNodeTypeIsRefusedOnlyOnATaskItExecutes(t *testing.T) 
 	_, err = runplan.Rerun{Source: src}.Select(retyped(sourceGraph(e2eDAG, src), "ftable_d", "dbt-macro"))
 	assert.NoError(t, err)
 }
+
+// An ingested node is never a task, so a source run never has one. A source
+// task that names one anyway is refused when the rerun would execute it, the
+// way an undeclared node type is.
+func TestRerun_RefusesAnIngestedNode(t *testing.T) {
+	src := failedFailureRun()
+	src.Tasks = append(src.Tasks, runplan.SourceTask{Key: ingestedProbe, TaskID: sourceTaskID("ingest_probe"), BuiltOn: sourceRelease})
+	g := withIngestedUpstream(releaseGraph(e2eDAG), "ftable_e")
+
+	_, err := runplan.Rerun{Source: src}.Select(g)
+	require.ErrorIs(t, err, runplan.ErrIngestedNode)
+	assert.Contains(t, err.Error(), "raw.ingest_probe")
+}
+
+// The ingested node a release holds upstream of a source task is not a task of
+// the source, so the rerun reads past it: it plans the same tasks as on the
+// release without it.
+func TestRerun_ReadsPastAnIngestedUpstream(t *testing.T) {
+	src := failedFailureRun()
+	got, err := runplan.Rerun{Source: src}.Select(withIngestedUpstream(releaseGraph(e2eDAG), "ftable_e"))
+	require.NoError(t, err)
+	want, err := runplan.Rerun{Source: src}.Select(sourceGraph(e2eDAG, src))
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
+	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,4 +121,28 @@ func TestRebase_ASingleNodeRunHasNothingToRebase(t *testing.T) {
 	src := sourceRun(model.OperationFullRefresh, nil, []string{"table_d"})
 	_, err := runplan.Rebase{Source: src}.Select(scheduleGraph(e2eDAG, "single-node-run-1a2b3c4d"))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
+}
+
+// The live release holds an ingested node (a table the source run's older
+// release did not know) that ftable_d reads. The ingested node is no task: the
+// rebase neither runs it as a new node nor refuses over it, and the reader's
+// extra upstream makes ftable_d no more changed than it was. The rebase
+// selects what it selects on the live release without the ingested node,
+// whether or not it widens to the changed nodes upstream.
+func TestRebase_LeavesAnIngestedNodeOut(t *testing.T) {
+	older := scheduleGraph(e2eDAG, "e2e-schedule-failure")
+	live := withIngestedUpstream(older, "ftable_d")
+	sourceGraphs := map[string]topology.Graph{sourceRelease: older}
+
+	for _, widen := range []bool{false, true} {
+		rebase := runplan.Rebase{Source: failedFailureRun(), SourceGraphs: sourceGraphs, IncludeChangedUpstream: widen}
+		got, err := rebase.Preview(live)
+		require.NoError(t, err, "include changed upstream %v", widen)
+		want, err := rebase.Preview(older)
+		require.NoError(t, err, "include changed upstream %v", widen)
+		assert.Equal(t, want, got, "include changed upstream %v", widen)
+		assert.NotContains(t, got.Plan.Tasks, runplan.PlannedTask{Key: ingestedProbe}, "include changed upstream %v", widen)
+		assert.Zero(t, got.New, "the ingested node is not a new node")
+		assert.Empty(t, got.Changed, "include changed upstream %v", widen)
+	}
 }

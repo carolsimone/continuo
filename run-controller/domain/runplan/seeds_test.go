@@ -31,3 +31,10 @@ func TestSeeds_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 	_, err := runplan.Seeds{Keys: keys("n")}.Select(withNode("n", "dbt-macro", count(0)))
 	assert.ErrorIs(t, err, runplan.ErrInvalidNodeType)
 }
+
+// The seed reconcile names dbt seeds only, so a key that names an ingested
+// node is refused rather than run.
+func TestSeeds_AnIngestedNodeIsRefused(t *testing.T) {
+	_, err := runplan.Seeds{Keys: append(keys("seed_table_1"), ingestedProbe)}.Select(withIngestedUpstream(releaseGraph(e2eDAG), "table_a"))
+	assert.ErrorIs(t, err, runplan.ErrIngestedNode)
+}
