@@ -41,6 +41,13 @@ def test_unnest_and_values_name_no_table():
     assert referenced_tables(_node("SELECT * FROM unnest(ARRAY[1,2]) AS u(x)"), dialect="postgres") == []
 
 
+def test_a_schema_qualified_function_call_names_no_table():
+    """sqlglot models public.my_fn(1) as a table with a schema and no name, which
+    reads no relation."""
+    assert referenced_tables(_node("SELECT * FROM public.my_fn(1)"), dialect="postgres") == []
+    assert referenced_tables(_node("SELECT * FROM pg_catalog.generate_series(1, 3)"), dialect="postgres") == []
+
+
 def test_invalid_sql_raises_invalid_compiled_sql():
     with pytest.raises(InvalidCompiledSqlError):
         referenced_tables(_node("SELECT FROM WHERE ("), dialect="postgres")

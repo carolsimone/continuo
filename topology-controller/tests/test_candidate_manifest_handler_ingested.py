@@ -106,6 +106,24 @@ def test_a_system_table_is_no_ingested_node(tmp_path):
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
 
 
+def test_a_schema_qualified_function_call_is_no_ingested_node(tmp_path):
+    """public.my_fn(1) is a function call, not a table: it makes no node and no
+    edge, beside a real table the same model reads."""
+    reader = dbt_node("reader") | {
+        "compiled_code": "SELECT * FROM public.my_fn(1) f JOIN raw.ingest_probe p ON true",
+    }
+    by_id = _topology(source_with_nodes(tmp_path, reader))
+    assert sorted(by_id) == ["raw.ingest_probe", "test_schema.reader"]
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["raw.ingest_probe"]
+
+
+def test_a_model_reading_only_a_schema_qualified_function_call_has_no_upstream(tmp_path):
+    reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM public.my_fn(1)"}
+    by_id = _topology(source_with_nodes(tmp_path, reader))
+    assert list(by_id) == ["test_schema.reader"]
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
+
+
 def test_the_handler_asks_the_system_relations_it_was_built_with(tmp_path):
     """Trino names its system relations by catalog, so a read of system.runtime.nodes
     makes no node under the trino relations while a read of a hive table does."""

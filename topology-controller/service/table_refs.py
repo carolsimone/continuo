@@ -12,8 +12,9 @@ def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
     node reads and are skipped. A table with no schema raises
     UnqualifiedTableReferenceError: which relation it means depends on the
     session's search path, so the SQL is rejected rather than guessed at. A
-    table with a schema and no name (a function call or a VALUES list that
-    sqlglot models as a table) names no relation and is skipped.
+    table with a schema and no name (a schema-qualified function call such as
+    public.my_fn(1) or pg_catalog.generate_series(1, 3), which sqlglot models
+    as a table) names no relation and is skipped.
 
     dialect is the sqlglot dialect of the warehouse the install targets; it
     decides which syntax parses, so a query valid on one engine can raise
