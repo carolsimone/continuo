@@ -389,3 +389,41 @@ func TestDuplicateClaims_RelationAndIdentityCollisionsAreDistinguishableInOneRel
 	assert.Contains(t, detail, "rename one of them", "relation remedy: alias rename")
 	assert.Contains(t, detail, "the declared model itself must be renamed", "identity remedy: cannot be fixed by alias rename")
 }
+
+// TestDuplicateClaims_IgnoresAnIngestedNode pins that an ingested node claims
+// nothing: nothing builds its table, so it neither writes a relation another
+// node writes nor shares a unique_id in a way erasing a built node.
+func TestDuplicateClaims_IgnoresAnIngestedNode(t *testing.T) {
+	t.Run("a built node resolves to the ingested node's relation", func(t *testing.T) {
+		topo := Topology{
+			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.x"},
+		}
+		assert.Empty(t, DuplicateClaims(topo))
+	})
+	t.Run("a built node declares the ingested node's unique_id under another relation", func(t *testing.T) {
+		topo := Topology{
+			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.y"},
+		}
+		assert.Empty(t, DuplicateClaims(topo))
+	})
+	t.Run("two ingested nodes with one key", func(t *testing.T) {
+		topo := Topology{
+			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+		}
+		assert.Empty(t, DuplicateClaims(topo))
+	})
+	t.Run("a real collision beside an ingested node is still reported", func(t *testing.T) {
+		topo := Topology{
+			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			node("s.a", "finance", "models/a.sql"),
+			nodeWithRelation("s.b", "s.a", "marketing", "models/b.sql"),
+		}
+		claims := DuplicateClaims(topo)
+		require.Len(t, claims, 1)
+		assert.Equal(t, "s.a", claims[0].RelationID)
+		assert.Len(t, claims[0].Claimants, 2)
+	})
+}

@@ -35,6 +35,14 @@ type Node struct {
 	TimeoutSeconds int
 }
 
+// IsIngested reports whether the node only marks a table that something
+// outside continuo builds. An ingested node has no content and nothing builds
+// it, so it is never changed, built, cloned or duplicated, and it needs no
+// service.
+func (n Node) IsIngested() bool {
+	return pkg_model.NodeType(n.NodeType).IsIngested()
+}
+
 // WithoutTests returns a copy of the topology without dbt-test nodes. A test
 // is validation-only: it is bind-checked in the candidate schema and kept in
 // current_prod so an unchanged test is not re-checked next release, but it is

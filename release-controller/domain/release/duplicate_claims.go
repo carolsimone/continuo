@@ -118,9 +118,15 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 //
 // The check is service-agnostic: two nodes in the same service collide
 // exactly as two nodes in different services do.
+//
+// An ingested node is skipped: nothing builds its table, so it writes no
+// relation that another node could also write.
 func relationCollisions(candidate Topology) []DuplicateClaim {
 	byRelation := make(map[string][]Claimant, len(candidate))
 	for _, n := range candidate {
+		if n.IsIngested() {
+			continue
+		}
 		// A test writes no relation to claim; its identity is still checked
 		// in identityCollisions.
 		if n.NodeType == string(pkg_model.NodeTypeDbtTest) {
@@ -154,6 +160,9 @@ func relationCollisions(candidate Topology) []DuplicateClaim {
 // (a test writes no relation), so a group made of test claimants can never
 // have been "already reported" there, and the relation-homogeneity skip does
 // not apply to it — a shared test id is always reported here.
+//
+// An ingested node is skipped: it only marks a table another system builds, so
+// it holds no identity that a built node's declaration could erase.
 func identityCollisions(candidate Topology) []DuplicateClaim {
 	byID := make(map[string][]Claimant, len(candidate))
 	relationsByID := make(map[string]map[string]bool, len(candidate))
@@ -164,6 +173,9 @@ func identityCollisions(candidate Topology) []DuplicateClaim {
 	// re-reporting what relationCollisions already caught, does not apply.
 	testByID := make(map[string]bool, len(candidate))
 	for _, n := range candidate {
+		if n.IsIngested() {
+			continue
+		}
 		byID[n.UniqueID] = append(byID[n.UniqueID], claimantOf(n))
 		if relationsByID[n.UniqueID] == nil {
 			relationsByID[n.UniqueID] = make(map[string]bool, 2)

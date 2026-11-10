@@ -26,3 +26,12 @@ func TestWithoutTests_DropsOnlyDbtTestNodes(t *testing.T) {
 	}, got)
 	assert.Len(t, topo, 3, "the receiver is not mutated")
 }
+
+// TestNode_IsIngested pins that a node is ingested exactly when its type is
+// the ingested node type.
+func TestNode_IsIngested(t *testing.T) {
+	assert.True(t, release.Node{NodeType: "ingested"}.IsIngested())
+	for _, nt := range []string{"dbt-model", "dbt-seed", "dbt-snapshot", "dbt-test", "python-node", "python-csv", "python-api", ""} {
+		assert.False(t, release.Node{NodeType: nt}.IsIngested(), nt)
+	}
+}

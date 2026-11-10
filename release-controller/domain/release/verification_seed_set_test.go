@@ -82,3 +82,21 @@ func TestVerificationBuildSets_SortedAndDeduplicated(t *testing.T) {
 	assert.Equal(t, []string{"a", "z"}, scope, "absent from the rejected candidate -> the fix added them -> scope")
 	assert.Empty(t, context)
 }
+
+// TestVerificationBuildSets_NeverReturnsAnIngestedNode pins that an ingested
+// node is in neither build set, however it differs from production and from the
+// rejected release: it has no content for a fix to touch or a release to prove.
+func TestVerificationBuildSets_NeverReturnsAnIngestedNode(t *testing.T) {
+	ingested := release.Node{UniqueID: "raw.ingest_probe", NodeType: "ingested"}
+	reader := func(hash string) release.Node {
+		return release.Node{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: hash, UpstreamUniqueIDs: []string{"raw.ingest_probe"}}
+	}
+	prod := release.Topology{reader("h1")}
+	rejected := release.Topology{reader("h2")}
+	verification := release.Topology{ingested, reader("h3")}
+
+	scope, context := release.VerificationBuildSets(verification, prod, rejected, nil)
+
+	assert.Equal(t, []string{"a.m"}, scope)
+	assert.Empty(t, context)
+}
