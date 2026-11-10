@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeRegistry, NodeRegistryEntry, NodeType
+from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeRegistry, NodeRegistryEntry, NodeType, TableRef
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -13,6 +13,7 @@ from service.ports import (
 )
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
+from service.table_refs import referenced_tables
 from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
@@ -250,9 +251,15 @@ class CandidateManifestHandler:
         # node is rejected whole, and reporting every broken node at once spares
         # the operator a fix-push-reject loop per node.
         failed: list[FailedNode] = []
+        # Every table each node's SQL names, by node unique_id, for each node
+        # that writes a relation (a dbt test writes none).
+        reads: dict[str, list[TableRef]] = {}
         for node in all_nodes:
             try:
-                node.upstream_deps = resolve_upstream_deps(node, lookup, dialect=self._dialect)
+                refs = referenced_tables(node, dialect=self._dialect)
+                node.upstream_deps = resolve_upstream_deps(refs, lookup)
+                if node.node_type != NodeType.DBT_TEST:
+                    reads[node.unique_id] = refs
             except (UnqualifiedTableReferenceError, InvalidCompiledSqlError) as exc:
                 failed.append(FailedNode(
                     node_id=node.unique_id,

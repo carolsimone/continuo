@@ -210,10 +210,10 @@ def _source_with_nodes(tmp_path, *nodes):
 
 
 def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
     source = _source_with_nodes(tmp_path, _dbt_node("users", original_file_path="models/users.sql"))
     publisher = MagicMock()
     uploader = _make_uploader()
@@ -231,10 +231,10 @@ def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
 
 
 def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch, tmp_path):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=f"broken {node.table_name}")
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
     source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
     publisher = MagicMock()
 
@@ -250,13 +250,13 @@ def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch,
 def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
     calls = {"n": 0}
 
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         calls["n"] += 1
         if calls["n"] == 1:
             raise UnqualifiedTableReferenceError(table_name="x", node_table_name=node.table_name)
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
     source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
     publisher = MagicMock()
 
@@ -271,16 +271,16 @@ def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
 def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
     """A single broken node fails the release; the others are resolved and are
     not reported as failed."""
-    real = candidate_manifest_handler.resolve_upstream_deps
+    real = candidate_manifest_handler.referenced_tables
     calls = {"n": 0}
 
-    def _raise_once(node, lookup, *, dialect):
+    def _raise_once(node, *, dialect):
         calls["n"] += 1
         if calls["n"] == 1:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
-        return real(node, lookup, dialect=dialect)
+        return real(node, dialect=dialect)
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise_once)
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise_once)
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
@@ -413,11 +413,11 @@ def test_handle_calls_source_cleanup_after_publish():
 
 
 def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
-        "service.candidate_manifest_handler.resolve_upstream_deps", _raise
+        "service.candidate_manifest_handler.referenced_tables", _raise
     )
 
     source = _make_source("manifest_service1.json")
@@ -642,18 +642,18 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     Rendering itself is pinned in test_rewriter.py.
     """
     seen: dict[str, list[str]] = {"resolve": [], "rewrite": []}
-    real_resolve = candidate_manifest_handler.resolve_upstream_deps
+    real_resolve = candidate_manifest_handler.referenced_tables
     real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
-    def spy_resolve(node, registry, *, dialect):
+    def spy_resolve(node, *, dialect):
         seen["resolve"].append(dialect)
-        return real_resolve(node, registry, dialect=dialect)
+        return real_resolve(node, dialect=dialect)
 
     def spy_rewrite(*args, dialect, **kwargs):
         seen["rewrite"].append(dialect)
         return real_rewrite(*args, dialect=dialect, **kwargs)
 
-    monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", spy_resolve)
+    monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", spy_resolve)
     monkeypatch.setattr(candidate_artifacts, "rewrite_to_candidate_schema", spy_rewrite)
 
     source = _make_source(

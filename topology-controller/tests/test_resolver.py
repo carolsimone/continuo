@@ -1,7 +1,8 @@
 import pytest
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import ManifestNode, NodeRegistry, NodeRegistryEntry
+from domain.model import ManifestNode, NodeRegistry, NodeRegistryEntry, TableRef
 from service.resolver import resolve_upstream_deps
+from service.table_refs import referenced_tables
 
 
 def _make_registry(*table_names: str) -> dict:
@@ -35,11 +36,11 @@ def _make_node(table_name: str, sql: str = "", *, dependency_sqls: list[str] | N
 def _resolve(node: ManifestNode, registry: dict, dialect: str = "postgres") -> list:
     """Resolve against the postgres dialect unless a test names another.
 
-    resolve_upstream_deps takes dialect as a required keyword so production code
+    referenced_tables takes dialect as a required keyword so production code
     cannot fall back to one engine's rules; these cases are about resolution
     behaviour, not dialect selection, so they pin the default engine here.
     """
-    return resolve_upstream_deps(node, registry, dialect=dialect)
+    return resolve_upstream_deps(referenced_tables(node, dialect=dialect), registry)
 
 
 def test_resolves_single_upstream():
@@ -188,7 +189,7 @@ def test_dialect_is_required():
     # postgres that would silently read another engine's SQL under the wrong
     # rules.
     with pytest.raises(TypeError):
-        resolve_upstream_deps(_make_node("orders", "SELECT 1"), {})
+        referenced_tables(_make_node("orders", "SELECT 1"))
 
 
 def test_deps_unioned_and_deduped_across_multiple_dependency_sqls():
@@ -223,3 +224,13 @@ def test_cte_in_one_query_does_not_exempt_the_same_name_in_another():
     ])
     deps = _resolve(node, registry)
     assert [d.table_name for d in deps] == ["users"]
+
+
+def test_deps_follow_ref_order_and_skip_refs_the_registry_does_not_hold():
+    registry = _make_registry("table_a", "table_b")
+    refs = [
+        TableRef(schema="public", table="table_b"),
+        TableRef(schema="raw", table="external_source"),
+        TableRef(schema="public", table="table_a"),
+    ]
+    assert [d.table_name for d in resolve_upstream_deps(refs, registry)] == ["table_b", "table_a"]
