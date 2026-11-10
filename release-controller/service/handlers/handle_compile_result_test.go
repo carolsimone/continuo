@@ -161,6 +161,26 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 	}
 }
 
+// TestHandleCompileResult_KeepsEachNodesDuration verifies the time a compile
+// Job ran, which compile.completed:v1 carries per node, is stored on the
+// node's compile-stage result.
+func TestHandleCompileResult_KeepsEachNodesDuration(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-compile-duration"
+	putCompilingRelease(t, fakes, d, releaseID)
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+		PerNode:   []handlers.NodeResult{{NodeID: "core", Status: "ok", DurationMS: 3200}},
+	}))
+
+	r := mustGetRelease(t, fakes, releaseID)
+	require.Len(t, r.PerNodeResults(), 1)
+	assert.Equal(t, "compile", r.PerNodeResults()[0].Stage)
+	assert.Equal(t, int64(3200), r.PerNodeResults()[0].DurationMS)
+}
+
 // TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFailed
 // verifies that a compile-leg failure attributed to the upload container is
 // reported as artifact_upload_failed — an internal publication failure, not

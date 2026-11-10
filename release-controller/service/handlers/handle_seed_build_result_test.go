@@ -186,6 +186,27 @@ func TestHandleSeedBuildResult_OKValidationPayloadCarriesExpectedFields(t *testi
 	assert.NotContains(t, idsInOrder, "seed.core.fx")
 }
 
+func TestHandleSeedBuildResult_KeepsEachNodesDuration(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-duration"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "ok",
+		PerNode: []handlers.NodeResult{{NodeID: "seed.core.fx", Status: "ok", DurationMS: 1500}},
+	}))
+
+	var seedBuild []pipeline.NodeValidationResult
+	for _, n := range mustGetRelease(t, store, releaseID).PerNodeResults() {
+		if n.Stage == "seed_build" {
+			seedBuild = append(seedBuild, n)
+		}
+	}
+	require.Len(t, seedBuild, 1)
+	assert.Equal(t, "seed.core.fx", seedBuild[0].NodeID)
+	assert.Equal(t, int64(1500), seedBuild[0].DurationMS)
+}
+
 func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-fail"

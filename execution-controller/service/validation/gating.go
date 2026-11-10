@@ -45,19 +45,23 @@ func SettleNodeTerminal(
 	if err != nil {
 		return fmt.Errorf("get settled node for projection: %w", err)
 	}
+	var settledMS int64
+	if took, ok := settled.RunDuration(); ok {
+		settledMS = took.Milliseconds()
+	}
 	if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
-		perNodeResultPayload(releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI())); err != nil {
+		perNodeResultPayload(releaseID, completedNodeID, settled.Outcome(), settled.DBTLogURI(), settled.DBTRunResultsURI(), settledMS)); err != nil {
 		return err
 	}
 	// Nodes this failure skipped never run through SettleNodeTerminal on their own,
 	// so they would otherwise never project a per-node result. Emit one per skipped
-	// node with status "skipped" and no URIs (they never ran). Release-controller
-	// records each result as it arrives and, once the terminal (kind=complete) row
-	// shows up, decides from aggregate_status (a skipped node has status != "ok",
-	// so it counts as failing).
+	// node with status "skipped", no URIs and no duration (they never ran).
+	// Release-controller records each result as it arrives and, once the terminal
+	// (kind=complete) row shows up, decides from aggregate_status (a skipped node
+	// has status != "ok", so it counts as failing).
 	for _, skippedID := range skipped {
 		if err := emitPerNodeResult(ctx, outboxRepo, cfg.namespace, releaseID,
-			perNodeResultPayload(releaseID, skippedID, "skipped", "", "")); err != nil {
+			perNodeResultPayload(releaseID, skippedID, "skipped", "", "", 0)); err != nil {
 			return err
 		}
 	}
