@@ -311,10 +311,10 @@ func TestHandleValidationResult_OK_RecordsTheValidatingStageDuration(t *testing.
 // TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes drives
 // HandleValidationResult with a verification run in Validating and an all-ok
 // aggregate. The verification run must stop at StatusPassed: no
-// release.promoted:v2 outbox row, current_prod's Upsert never called, and the
-// promoted-telemetry span never fires. A control on the identical flow with a
-// candidate must still promote exactly as today, proving the gate is
-// specific to the run's kind rather than a general regression.
+// release.promoted:v2 outbox row, current_prod's Upsert never called, and
+// Telemetry's ReleasePromoted never called. A control on the identical flow
+// with a candidate must still promote, proving the gate is specific to the
+// run's kind rather than a general regression.
 func TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes(t *testing.T) {
 	t.Run("verification run stops at passed and never promotes", func(t *testing.T) {
 		deps, store := seedToValidatingVerification(t, "rVerify")
@@ -351,7 +351,7 @@ func TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes(t *test
 			"a verification run must never upsert service_prod")
 
 		assert.Equal(t, 0, spy.releasePromotedCalls,
-			"a verification run must never fire the promoted telemetry span")
+			"a verification run must never call ReleasePromoted on Telemetry")
 	})
 
 	t.Run("control: a candidate on the identical flow still promotes", func(t *testing.T) {

@@ -35,8 +35,8 @@ type Telemetry struct {
 var _ ports.Telemetry = (*Telemetry)(nil)
 
 // NewTelemetry registers continuo_releases_total and
-// continuo_release_stage_duration_seconds on reg. Every release outcome the
-// pipeline can reach is exported at 0 from the start.
+// continuo_release_stage_duration_seconds on reg. Every reject reason is
+// exported at 0 from the start.
 func NewTelemetry(reg *pkgmetrics.Registry) *Telemetry {
 	t := &Telemetry{
 		releases: prometheus.NewCounterVec(prometheus.CounterOpts{

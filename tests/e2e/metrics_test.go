@@ -28,7 +28,9 @@ func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
 	}{
 		{getEnv("RUN_CONTROLLER_HOST", "run-controller"), withConsumersAndOutbox},
 		{getEnv("CATALOG_HOST", "catalog"), withConsumers},
-		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), withConsumersAndOutbox},
+		// continuo_releases_total{ is registered at 0 at startup, so it proves
+		// release-controller's own Telemetry series are on the served registry.
+		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), append(append([]string{}, withConsumersAndOutbox...), "continuo_releases_total{")},
 		{getEnv("REMEDIATION_HOST", "remediation"), withConsumersAndOutbox},
 		{getEnv("AGENT_REMEDIATION_HOST", "agent-remediation"), withConsumersAndOutbox},
 		{getEnv("DEAD_LETTER_HOST", "dead-letter-controller"), withConsumersAndOutbox},

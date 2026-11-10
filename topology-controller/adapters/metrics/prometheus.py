@@ -14,7 +14,7 @@ from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, disa
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import SkipReason
-from service.release_timings import ReleaseOutcome, ReleaseTimings
+from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
 
 # Seconds a release's stage can take, from a manifest download to the whole
 # parse of a large estate.
@@ -96,9 +96,12 @@ class TopologyMetrics:
             registry=self.registry,
         )
 
-        # Every pair a release can end under and every skip reason is visible
-        # from boot, so a rate over a series that has not moved yet is 0, not
-        # absent.
+        # Every stage, every pair a release can end under and every skip reason
+        # is visible from boot, so a rate or an increase over a series that has
+        # not moved yet is 0, not absent (an increase does not count a series'
+        # first sample from an implied 0).
+        for stage in Stage:
+            self._stage_duration.labels(service, stage.value)
         self._releases.labels(service, ReleaseOutcome.OK.value, _NO_FAILURE_KIND)
         for kind in ParseFailureKind:
             self._releases.labels(service, ReleaseOutcome.FAILED.value, kind.value)

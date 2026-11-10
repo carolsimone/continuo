@@ -37,6 +37,13 @@ def test_every_outcome_and_failure_kind_pair_and_every_skip_reason_is_exported_a
         assert _value(metrics, "continuo_topology_release_skipped_nodes", reason=reason.value) == 0.0
 
 
+def test_every_stage_is_exported_at_zero_from_boot():
+    metrics = TopologyMetrics("topology-controller")
+    for stage in Stage:
+        assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage=stage.value) == 0.0
+        assert _value(metrics, "continuo_topology_stage_duration_seconds_sum", stage=stage.value) == 0.0
+
+
 def test_a_finished_release_moves_every_release_series():
     metrics = TopologyMetrics("topology-controller")
     metrics.release_finished(_finished({"dbt": 3, "python": 1}, {SkipReason.NO_TAG: 2},
@@ -44,7 +51,8 @@ def test_a_finished_release_moves_every_release_series():
     assert _value(metrics, "continuo_topology_releases_total", outcome="failed", failure_kind="invalid_sql") == 1.0
     assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="resolve") == 1.0
     assert _value(metrics, "continuo_topology_stage_duration_seconds_sum", stage="resolve") == 1.0
-    assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="download") is None
+    # The stage did not run in this release, so it is exported but not observed.
+    assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="download") == 0.0
     assert _value(metrics, "continuo_topology_release_nodes", family="dbt") == 3.0
     assert _value(metrics, "continuo_topology_release_columns", family="python") == 10.0
     assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_tag") == 2.0

@@ -38,9 +38,10 @@ var _ ports.Clock = (*fakeClock)(nil)
 // --- spyTelemetry ---
 
 // spyTelemetry embeds NoOpTelemetry and records ReleasePromoted and
-// VerificationFinished calls so tests can assert the promoted span does not
-// fire on a route that must not promote (e.g. a verification run stopping at
-// Passed), and that a verification's terminal decision emits its own span.
+// VerificationFinished calls so tests can assert that ReleasePromoted is not
+// called on a route that must not promote (e.g. a verification run stopping at
+// Passed), and that a verification's terminal decision calls
+// VerificationFinished.
 type spyTelemetry struct {
 	ports.NoOpTelemetry
 	releasePromotedCalls      int

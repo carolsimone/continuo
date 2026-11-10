@@ -247,7 +247,7 @@ groups:
           summary: "topology-controller's {{ $labels.stage }} stage took over 30 s; liveness restarts the pod about 80 s after its last heartbeat"
 ```
 
-The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite` and `candidate_upload`: the per-node stages refresh the heartbeat after every node, so their summed time says nothing about it. Python bucket labels are written `30.0`, not `30`.
+The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite` and `candidate_upload`: the per-node stages refresh the heartbeat after every node, so their summed time says nothing about it. `dbt_parse` and `python_parse` refresh the heartbeat once per manifest, so the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
 
 ## Datadog
 
