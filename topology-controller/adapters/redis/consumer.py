@@ -104,6 +104,12 @@ class Consumer:
         # running" (heartbeat goes and stays stale) — see adapters/health.
         self.last_heartbeat = time.monotonic()
 
+    def refresh_heartbeat(self) -> None:
+        """Mark the consumer alive now. A message handler calls it between the
+        units of a long message, so the health check sees a handler that is
+        working through its nodes as running, and one that stopped as stale."""
+        self.last_heartbeat = time.monotonic()
+
     def _await_group(self) -> None:
         """Return once the consumer group exists on the prefixed key.
 

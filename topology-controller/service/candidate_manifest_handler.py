@@ -35,6 +35,10 @@ _NO_IMAGE_TAGS = (
 )
 
 
+def _no_progress() -> None:
+    """The progress callback of a handler nobody watches."""
+
+
 def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
     """The release-level kind for a set of per-node kinds: the first in contract
     declaration order, which is the precedence the contract defines."""
@@ -100,6 +104,12 @@ class CandidateManifestHandler:
     failed, or empty. A release that ended, published or failed, logs one
     "release parsed" line carrying the record's fields; a handler that raised
     published nothing and logs no such line.
+
+    progress is called once after each manifest's parse, once after each node's
+    resolve and once after each node's build, a failed one included, so the
+    caller can tell a release that is working through its nodes from one that
+    has stopped. A step that loops over no nodes (a download, an upload) calls
+    nothing, so each must end within the caller's own staleness budget.
     """
 
     def __init__(
@@ -114,6 +124,7 @@ class CandidateManifestHandler:
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
         memory: MemoryProbePort,
+        progress: Callable[[], None] = _no_progress,
     ) -> None:
         self._source = source
         self._publisher = publisher
@@ -125,6 +136,7 @@ class CandidateManifestHandler:
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
         self._memory = memory
+        self._progress = progress
         # Replaced by the record of each release handle() starts.
         self._timings = ReleaseTimings("", clock, memory)
 
@@ -187,6 +199,7 @@ class CandidateManifestHandler:
                 # so they stay pending.
                 self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, f"{mf.path}: {exc!r}")
                 return
+            self._progress()
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -289,6 +302,7 @@ class CandidateManifestHandler:
                         node_type=node.node_type,
                         detail=str(exc),
                     ))
+                self._progress()
         if failed:
             self._fail(
                 release_id,
@@ -318,6 +332,8 @@ class CandidateManifestHandler:
             except Exception as exc:
                 self._reject_internal_unless_infra(release_id, exc)
                 return
+            finally:
+                self._progress()
 
             entry = {
                 "unique_id":           node.unique_id,

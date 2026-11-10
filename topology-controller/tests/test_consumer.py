@@ -119,6 +119,15 @@ def _consumer(redis_mock, handler):
     )
 
 
+def test_refresh_heartbeat_moves_the_heartbeat_forward():
+    c = _consumer(MagicMock(), lambda f: None)
+    c.last_heartbeat = 0.0
+
+    c.refresh_heartbeat()
+
+    assert c.last_heartbeat > 0.0
+
+
 def test_reclaim_redispatches_pending_message_and_acks():
     """A message left pending by a previous (now-dead) consumer is claimed,
     re-dispatched to the handler, and ACKed."""

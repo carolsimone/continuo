@@ -34,6 +34,9 @@ class _RecordingConsumer:
     def start(self):
         pass
 
+    def refresh_heartbeat(self):
+        pass
+
 
 class _NoopThread:
     def __init__(self, target, daemon, name=None):
@@ -198,6 +201,7 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     assert captured["dialect"] == "postgres"
     assert isinstance(captured["clock"], MonotonicClock)
     assert isinstance(captured["memory"], ResidentMemoryProbe)
+    assert captured["progress"] == candidate_consumer.refresh_heartbeat
 
 
 def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):

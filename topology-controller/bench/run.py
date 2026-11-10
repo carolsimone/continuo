@@ -17,7 +17,7 @@ import resource
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib import metadata
 from pathlib import Path
 
@@ -80,6 +80,7 @@ def build_handler(
     clock: ClockPort,
     memory: MemoryProbePort,
     dialect: str = "postgres",
+    progress: Callable[[], None] = lambda: None,
 ) -> tuple[CandidateManifestHandler, RecordingPublisher]:
     """The handler `main.py` builds, over `store` instead of S3, with a
     publisher that records the outcome instead of writing to Redis."""
@@ -98,6 +99,7 @@ def build_handler(
         is_infrastructure_error=lambda exc: False,
         clock=clock,
         memory=memory,
+        progress=progress,
     )
     return handler, publisher
 

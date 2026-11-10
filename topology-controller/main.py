@@ -106,6 +106,9 @@ def main() -> None:
             is_infrastructure_error=is_infrastructure,
             clock=MonotonicClock(),
             memory=ResidentMemoryProbe(),
+            # Looked up when a release is handled, by which time the consumer
+            # exists: a handler that keeps working keeps /health fresh.
+            progress=candidate_consumer.refresh_heartbeat,
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(
