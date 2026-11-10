@@ -753,9 +753,9 @@ egress:
 metrics:
   # Every Go service (run-controller, catalog, execution-controller,
   # release-controller, remediation, agent-remediation, agent-chat,
-  # dead-letter-controller, egress-proxy) serves Prometheus metrics at /metrics
-  # on this port, on a listener of its own, so a scraper can be admitted to it
-  # without reaching the service's other ports.
+  # dead-letter-controller, egress-proxy) and topology-controller serve
+  # Prometheus metrics at /metrics on this port, on a listener of its own, so a
+  # scraper can be admitted to it without reaching the service's other ports.
   # Published to the services as METRICS_PORT on the shared ConfigMap. Must
   # differ from every service's httpPort and grpcPort and, while the egress-proxy
   # renders, from its ports 3128 and 8093 (rendering fails otherwise).

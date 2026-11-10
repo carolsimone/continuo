@@ -930,10 +930,12 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set maintenance
 grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/maintenance-null.yaml" \
   || { echo "FAIL: a release without maintenance values must render MAINTENANCE_ENABLED false"; exit 1; }
 
-# Every Go service serves /metrics on the one port the ConfigMap names. The
-# chart must expose and annotate exactly those services, admit scrapers only
-# when asked and only to that port, and refuse a port another listener uses.
+# Every service in continuo.metrics.services serves /metrics on the one port the
+# ConfigMap names. The chart must expose and annotate exactly those services,
+# admit scrapers only when asked and only to that port, and refuse a port
+# another listener uses.
 echo "--- metrics port, annotations and scrape rule cover exactly the services that serve /metrics"
+python3 scripts/install-test/test-assert-metrics.py -v
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'metrics.scrapeNamespaceSelector={"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}' \
   > "${tmp}/metrics-scrape.yaml"

@@ -12,6 +12,17 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+
+- **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
+  - Its pod gets the `metrics` container port, the `prometheus.io/*` annotations and a place in the scrape NetworkPolicy. `deploy/OBSERVABILITY.md` lists the new series and an example rule for a stage near the liveness budget.
+  - No values change is needed.
+
+### Changed
+
+- **topology-controller logs JSON lines.** TL;DR: topology-controller writes one JSON object per line on stderr, with every field, as the Go services do. A log agent that read its old text lines needs its JSON parser instead.
+  - Each release logs one `release parsed` line with its stage times and counts. A skipped dbt node logs at INFO instead of WARNING, and a dbt test node no longer logs an ERROR on every release.
+
 ## [0.21.0] - 2026-11-06
 
 **TL;DR**
