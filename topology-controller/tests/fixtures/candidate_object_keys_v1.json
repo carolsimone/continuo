@@ -43,6 +43,12 @@
   },
   {
     "release_id": "rel-2026-10-08-0001",
+    "unique_id": "raw.exchange_rates",
+    "node_type": "ingested",
+    "key": ""
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
     "unique_id": "staging.mystery",
     "node_type": "dbt-unknown",
     "key": ""

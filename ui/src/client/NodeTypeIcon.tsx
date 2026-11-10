@@ -21,11 +21,18 @@ export type NodeTypeFamily = 'dbt' | 'python' | 'python-csv';
 
 const PYTHON_CSV: NodeType = 'python-csv';
 
+// An ingested node marks a table another system loads; no toolchain builds it,
+// so it has no tool mark.
+export function isIngestedNodeType(nodeType: string): boolean {
+  return (NODE_TYPE_RUNTIME as Readonly<Record<string, string>>)[nodeType] === 'external';
+}
+
 // Collapses the exact node_type to the family that decides which icon is
 // shown: python-csv keeps its own badge, every other kind follows the
-// toolchain that builds it. Unknown or empty types map to null and render no
-// icon.
+// toolchain that builds it. Unknown, empty and ingested types map to null and
+// render no icon.
 export function nodeTypeFamily(nodeType: string): NodeTypeFamily | null {
+  if (isIngestedNodeType(nodeType)) return null;
   if (nodeType === PYTHON_CSV) return 'python-csv';
   const runtime = (NODE_TYPE_RUNTIME as Readonly<Record<string, string>>)[nodeType];
   if (runtime === 'dbt') return 'dbt';

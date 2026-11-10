@@ -213,6 +213,8 @@ const (
 	NodeRuntimeDbt NodeRuntime = "dbt"
 	// NodeRuntimePython — built by continuo-python-runtime inside the node's own image.
 	NodeRuntimePython NodeRuntime = "python"
+	// NodeRuntimeExternal — nothing in continuo builds it: the node only marks a table another system loads.
+	NodeRuntimeExternal NodeRuntime = "external"
 )
 
 // NodeRuntimes returns every value in contract.yaml declaration order.
@@ -220,6 +222,7 @@ func NodeRuntimes() []NodeRuntime {
 	return []NodeRuntime{
 		NodeRuntimeDbt,
 		NodeRuntimePython,
+		NodeRuntimeExternal,
 	}
 }
 
@@ -229,6 +232,8 @@ func (v NodeRuntime) IsValid() bool {
 	case NodeRuntimeDbt:
 		return true
 	case NodeRuntimePython:
+		return true
+	case NodeRuntimeExternal:
 		return true
 	}
 	return false
@@ -254,6 +259,8 @@ const (
 	NodeTypePythonApi NodeType = "python-api"
 	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
+	// NodeTypeIngested — a table a node reads that no node builds, never run, built, validated or fixed.
+	NodeTypeIngested NodeType = "ingested"
 )
 
 // NodeTypes returns every value in contract.yaml declaration order.
@@ -266,6 +273,7 @@ func NodeTypes() []NodeType {
 		NodeTypePythonCsv,
 		NodeTypePythonApi,
 		NodeTypeDbtTest,
+		NodeTypeIngested,
 	}
 }
 
@@ -285,6 +293,8 @@ func (v NodeType) IsValid() bool {
 	case NodeTypePythonApi:
 		return true
 	case NodeTypeDbtTest:
+		return true
+	case NodeTypeIngested:
 		return true
 	}
 	return false
@@ -329,6 +339,8 @@ func (v NodeType) Runtime() NodeRuntime {
 		return NodeRuntimePython
 	case NodeTypeDbtTest:
 		return NodeRuntimeDbt
+	case NodeTypeIngested:
+		return NodeRuntimeExternal
 	}
 	return ""
 }

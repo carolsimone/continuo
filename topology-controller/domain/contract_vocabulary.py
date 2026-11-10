@@ -52,6 +52,7 @@ class NodeRuntime(StrEnum):
     """The toolchain that builds a graph node."""
     DBT = "dbt"
     PYTHON = "python"
+    EXTERNAL = "external"
 
 
 class NodeType(StrEnum):
@@ -63,6 +64,7 @@ class NodeType(StrEnum):
     PYTHON_CSV = "python-csv"
     PYTHON_API = "python-api"
     DBT_TEST = "dbt-test"
+    INGESTED = "ingested"
 
 
 NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT_SEED})
@@ -73,7 +75,7 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 """Values of NodeType whose contract may name one Secret for the node's pod."""
 
 
-NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.INGESTED: NodeRuntime.EXTERNAL}
 """Which toolchain builds each NodeType."""
 
 

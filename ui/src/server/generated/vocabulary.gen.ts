@@ -13,14 +13,14 @@ export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse
 export type DeadLetterKind = 'permanent' | 'transient_exhausted' | 'trimmed';
 export const DEAD_LETTER_KINDS: readonly DeadLetterKind[] = ['permanent', 'transient_exhausted', 'trimmed'];
 
-export type NodeRuntime = 'dbt' | 'python';
-export const NODE_RUNTIMES: readonly NodeRuntime[] = ['dbt', 'python'];
+export type NodeRuntime = 'dbt' | 'python' | 'external';
+export const NODE_RUNTIMES: readonly NodeRuntime[] = ['dbt', 'python', 'external'];
 
-export type NodeType = 'dbt-model' | 'dbt-seed' | 'dbt-snapshot' | 'python-node' | 'python-csv' | 'python-api' | 'dbt-test';
-export const NODE_TYPES: readonly NodeType[] = ['dbt-model', 'dbt-seed', 'dbt-snapshot', 'python-node', 'python-csv', 'python-api', 'dbt-test'];
+export type NodeType = 'dbt-model' | 'dbt-seed' | 'dbt-snapshot' | 'python-node' | 'python-csv' | 'python-api' | 'dbt-test' | 'ingested';
+export const NODE_TYPES: readonly NodeType[] = ['dbt-model', 'dbt-seed', 'dbt-snapshot', 'python-node', 'python-csv', 'python-api', 'dbt-test', 'ingested'];
 export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-model', 'dbt-seed'];
 export const NODE_TYPES_WITH_SECRET_REF: readonly NodeType[] = ['python-api'];
-export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'python-api': 'python', 'dbt-test': 'dbt' };
+export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'python-api': 'python', 'dbt-test': 'dbt', 'ingested': 'external' };
 
 export type RunStatus = 'pending' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'skipped';
 export const RUN_STATUSES: readonly RunStatus[] = ['pending', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'skipped'];
