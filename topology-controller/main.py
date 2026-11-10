@@ -19,6 +19,7 @@ from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
+from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.redis.error_class import is_infrastructure
@@ -102,6 +103,8 @@ def main() -> None:
             # propagates, so the consumer pauses and redelivers instead of the
             # release being rejected.
             is_infrastructure_error=is_infrastructure,
+            clock=MonotonicClock(),
+            memory=ResidentMemoryProbe(),
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(

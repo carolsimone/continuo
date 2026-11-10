@@ -20,7 +20,9 @@ from adapters.topology_artifact_writer import TopologyArtifactWriter
 from domain.contract_vocabulary import NODE_TYPE_RUNTIME
 from domain.model import ManifestNode, NodeType, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext
+from service.release_timings import ReleaseTimings
 from service.topology_artifact import canonical_topology_json, topology_artifact_key
+from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -260,6 +262,7 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
         ctx = RewriteContext(
             release_id=case["release_id"], registry={},
             candidate_schema="_candidate_x", dialect="postgres",
+            timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
         )
 
         _builder_for(node_type, s3).build(node, ctx)

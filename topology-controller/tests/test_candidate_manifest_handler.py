@@ -14,8 +14,9 @@ from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifac
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
 from service.ports import ManifestSourcePort
+from service.release_timings import Stage
 from domain.contract_vocabulary import ParseFailureKind
-from tests.fakes import RecordingArtifactWriter
+from tests.fakes import FakeClock, RecordingArtifactWriter, ScriptedMemoryProbe
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -55,7 +56,7 @@ class FakeBundleUploader:
 
 
 def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-             image_tags=None, artifact_writer=None) -> CandidateManifestHandler:
+             image_tags=None, artifact_writer=None, clock=None, memory=None) -> CandidateManifestHandler:
     """Build a handler pinned to the postgres dialect, a fake bundle uploader,
     a recording artifact writer and an empty image-tag map unless a test names
     otherwise. Outages are recognised by the consumer's own classifier.
@@ -73,10 +74,13 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         dialect=dialect,
         image_tags=image_tags if image_tags is not None else {},
         is_infrastructure_error=is_infrastructure,
+        clock=clock or FakeClock(),
+        memory=memory or ScriptedMemoryProbe(0),
     )
 
 
-def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None):
+def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
+                      clock=None, memory=None):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -92,6 +96,8 @@ def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgr
         dialect=dialect,
         image_tags={},
         is_infrastructure_error=is_infrastructure,
+        clock=clock or FakeClock(),
+        memory=memory or ScriptedMemoryProbe(0),
     )
 
 
@@ -570,6 +576,8 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
         dialect="postgres",
         image_tags=None,
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
 
     handler.handle(release_id="rel-1")
@@ -1212,6 +1220,8 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
         dialect="postgres",
         image_tags={},
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
     handler.handle(release_id="rel-1")
 
@@ -1254,6 +1264,8 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
         dialect="postgres",
         image_tags={},
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
 
     handler.handle(release_id="rel-1")
@@ -1329,3 +1341,25 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
     downstream = topology["businesslayer.downstream_table"]
     assert upstream["unique_id"] == "analytics.upstream_table"
     assert downstream["upstream_unique_ids"] == ["analytics.upstream_table"]
+
+
+def test_handle_returns_the_timings_of_every_stage_that_ran():
+    source = _make_source("manifest_service1.json", "manifest_service2.json")
+    timings = _handler(source, MagicMock(), _make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
+    ran = {stage: record for stage, record in timings.stages.items() if record.runs}
+    assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
+                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
+    assert ran[Stage.DOWNLOAD].counts == {"manifests": 2}
+    assert ran[Stage.DBT_PARSE].runs == 2
+    assert ran[Stage.RESOLVE].counts == {"nodes": 2}
+    assert (ran[Stage.REWRITE].runs, ran[Stage.CANDIDATE_UPLOAD].runs) == (2, 2)
+    assert all(record.seconds == record.runs for record in ran.values())
+
+
+def test_a_failed_release_times_its_publish(tmp_path):
+    bad = tmp_path / "manifest.json"
+    bad.write_text("{not json")
+    publisher = MagicMock()
+    timings = _dispatch_handler(_source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
+    publisher.publish_failed.assert_called_once()
+    assert timings.stages[Stage.PUBLISH].runs == 1

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import main
+from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.redis.fence import PermissionFenceError
 from adapters.topology_artifact_writer import TopologyArtifactWriter
@@ -184,6 +185,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     ]
     assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
+    assert isinstance(captured["clock"], MonotonicClock)
+    assert isinstance(captured["memory"], ResidentMemoryProbe)
 
 
 def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):

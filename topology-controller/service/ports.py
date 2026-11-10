@@ -71,3 +71,21 @@ class ManifestSourcePort(Protocol):
     def cleanup(self) -> None:
         """Release any temporary resources acquired to serve the manifests."""
         ...
+
+
+@runtime_checkable
+class ClockPort(Protocol):
+    """A monotonic clock the release stage timer reads."""
+
+    def now(self) -> float:
+        """Monotonic seconds: only the difference between two readings means anything."""
+        ...
+
+
+@runtime_checkable
+class MemoryProbePort(Protocol):
+    """Reads the memory the process holds, for the release stage timer."""
+
+    def resident_bytes(self) -> int:
+        """The process's resident set, in bytes."""
+        ...
