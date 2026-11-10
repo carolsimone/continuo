@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import main
+from adapters.metrics.prometheus import TopologyMetrics
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.redis.fence import PermissionFenceError
@@ -24,8 +25,9 @@ from streams_contract import (
 class _RecordingConsumer:
     instances = []
 
-    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name):
+    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name, observer=None):
         self.stream_name = stream_name
+        self.observer = observer
         self.service_name = service_name
         self.group_name = group_name
         self.message_handler = message_handler
@@ -170,6 +172,32 @@ def test_main_binds_the_metrics_port_before_the_consumer_starts(monkeypatch):
     main.main()
     assert events[0] == ("metrics", 9464)
     assert ("thread", "consumer-release-requested") in events[1:]
+
+
+def test_main_wires_one_metrics_object_to_the_listener_the_handler_and_the_consumer(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    served = []
+    monkeypatch.setattr(main, "start_metrics_server", lambda port, registry: served.append(registry))
+
+    class FakeCandidateHandler:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def handle(self, release_id):
+            captured["release_id"] = release_id
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", FakeCandidateHandler)
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None, kwargs=kw))
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    assert isinstance(captured["observer"], TopologyMetrics)
+    assert served == [captured["observer"].registry]
+    assert _RecordingConsumer.instances[0].observer is captured["observer"]
 
 
 def test_main_exits_non_zero_when_the_metrics_port_is_taken(monkeypatch, caplog):

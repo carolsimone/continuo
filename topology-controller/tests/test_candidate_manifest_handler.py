@@ -13,8 +13,8 @@ from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
-from service.ports import ManifestSourcePort
-from service.release_timings import Stage
+from service.ports import ManifestSourcePort, NoReleaseObserver
+from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
 from tests.fakes import FakeClock, RecordingArtifactWriter, ScriptedMemoryProbe
 
@@ -57,10 +57,12 @@ class FakeBundleUploader:
 
 
 def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-             image_tags=None, artifact_writer=None, clock=None, memory=None) -> CandidateManifestHandler:
+             image_tags=None, artifact_writer=None, clock=None, memory=None,
+             observer=None) -> CandidateManifestHandler:
     """Build a handler pinned to the postgres dialect, a fake bundle uploader,
-    a recording artifact writer and an empty image-tag map unless a test names
-    otherwise. Outages are recognised by the consumer's own classifier.
+    a recording artifact writer, an empty image-tag map and no release observer
+    unless a test names otherwise. Outages are recognised by the consumer's own
+    classifier.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -77,6 +79,7 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         is_infrastructure_error=is_infrastructure,
         clock=clock or FakeClock(),
         memory=memory or ScriptedMemoryProbe(0),
+        observer=observer if observer is not None else NoReleaseObserver(),
     )
 
 
@@ -1433,3 +1436,48 @@ def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(t
     assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
     (line,) = _release_lines(caplog)
     assert (line.outcome, line.failure_kind, line.skipped["no_tag"]) == ("failed", "invalid_artifact", 2)
+
+
+class _RecordingReleaseObserver:
+    def __init__(self):
+        self.finished = []
+
+    def release_finished(self, timings):
+        self.finished.append(timings)
+
+
+def test_the_observer_gets_each_published_release_once():
+    observer = _RecordingReleaseObserver()
+    timings = _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+                       observer=observer).handle(release_id="rel-1")
+    assert observer.finished == [timings] and timings.outcome == ReleaseOutcome.OK
+
+
+def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
+    observer = _RecordingReleaseObserver()
+    path = _skipping_manifest(tmp_path, _model("a", tags=()))
+    timings = _handler(_source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
+                       _make_uploader(), observer=observer).handle(release_id="rel-1")
+    assert observer.finished == [timings]
+    assert (timings.outcome, timings.failure_kind) == (ReleaseOutcome.FAILED, ParseFailureKind.INVALID_ARTIFACT)
+
+
+def test_the_observer_gets_the_release_after_the_release_line_is_logged(caplog):
+    lines_seen = []
+    observer = _RecordingReleaseObserver()
+    observer.release_finished = lambda timings: lines_seen.append(len(_release_lines(caplog)))
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+                 observer=observer).handle(release_id="rel-1")
+    assert lines_seen == [1]
+
+
+def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplog):
+    observer = _RecordingReleaseObserver()
+    outage = botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000")
+    handler = _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+                       artifact_writer=RecordingArtifactWriter(fail=outage), observer=observer)
+    with caplog.at_level(logging.INFO), pytest.raises(botocore.exceptions.EndpointConnectionError):
+        handler.handle(release_id="rel-1")
+    assert observer.finished == []
+    assert not _release_lines(caplog)

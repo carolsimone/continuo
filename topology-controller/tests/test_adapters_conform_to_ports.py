@@ -10,6 +10,7 @@ so they fail the moment an adapter stops providing the port's surface.
 import pytest
 
 from adapters.code_bundle_uploader import CodeBundleUploader
+from adapters.metrics.prometheus import TopologyMetrics
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources.s3 import S3Source
@@ -20,6 +21,7 @@ from service.ports import (
     CodeBundleUploaderPort,
     ManifestSourcePort,
     MemoryProbePort,
+    ReleaseObserverPort,
     TopologyArtifactWriterPort,
 )
 
@@ -30,6 +32,7 @@ CONCRETE_PORT_PAIRS = [
     (ResidentMemoryProbe, MemoryProbePort),
     (S3Source, ManifestSourcePort),
     (TopologyArtifactWriter, TopologyArtifactWriterPort),
+    (TopologyMetrics, ReleaseObserverPort),
 ]
 
 

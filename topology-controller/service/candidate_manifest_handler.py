@@ -20,6 +20,8 @@ from service.ports import (
     CodeBundleUploaderPort,
     ManifestSourcePort,
     MemoryProbePort,
+    NoReleaseObserver,
+    ReleaseObserverPort,
     TopologyArtifactWriterPort,
 )
 from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
@@ -102,8 +104,9 @@ class CandidateManifestHandler:
     handle() times each stage of the parse (see service.release_timings) with
     clock and memory and returns the record, whether the release was published,
     failed, or empty. A release that ended, published or failed, logs one
-    "release parsed" line carrying the record's fields; a handler that raised
-    published nothing and logs no such line.
+    "release parsed" line carrying the record's fields and hands the same
+    record to observer; a handler that raised published nothing, logs no such
+    line and tells the observer nothing.
 
     progress is called once after each manifest's parse, once after each node's
     resolve and once after each node's build, a failed one included, so the
@@ -125,6 +128,7 @@ class CandidateManifestHandler:
         clock: ClockPort,
         memory: MemoryProbePort,
         progress: Callable[[], None] = _no_progress,
+        observer: ReleaseObserverPort = NoReleaseObserver(),
     ) -> None:
         self._source = source
         self._publisher = publisher
@@ -137,6 +141,7 @@ class CandidateManifestHandler:
         self._clock = clock
         self._memory = memory
         self._progress = progress
+        self._observer = observer
         # Replaced by the record of each release handle() starts.
         self._timings = ReleaseTimings("", clock, memory)
 
@@ -148,6 +153,7 @@ class CandidateManifestHandler:
             self._source.cleanup()
         if self._timings.outcome is not None:
             logger.info("release parsed", extra=self._timings.log_fields())
+            self._observer.release_finished(self._timings)
         return self._timings
 
     def _handle_impl(self, release_id: str) -> None:

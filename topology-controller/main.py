@@ -2,7 +2,6 @@ import logging
 import sys
 import threading
 import redis
-from prometheus_client import CollectorRegistry
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
@@ -22,6 +21,7 @@ from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.json_log import configure_logging
+from adapters.metrics.prometheus import TopologyMetrics
 from adapters.metrics.server import start_metrics_server
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
@@ -49,9 +49,9 @@ def main() -> None:
 
     # Bound before anything consumes, so a port another process holds stops the
     # process here instead of leaving a consumer working with no scrape target.
-    registry = CollectorRegistry()
+    metrics = TopologyMetrics(SERVICE_NAME)
     try:
-        start_metrics_server(metrics_port(), registry)
+        start_metrics_server(metrics_port(), metrics.registry)
     except OSError as exc:
         logger.error("cannot listen on the metrics port", extra={"port": metrics_port(), "error": str(exc)})
         sys.exit(1)
@@ -121,6 +121,7 @@ def main() -> None:
             # Looked up when a release is handled, by which time the consumer
             # exists: a handler that keeps working keeps /health fresh.
             progress=candidate_consumer.refresh_heartbeat,
+            observer=metrics,
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(
@@ -129,6 +130,7 @@ def main() -> None:
         group_name=RELEASE_REQUESTED_GROUP,
         message_handler=handle_release_requested,
         service_name=SERVICE_NAME,
+        observer=metrics,
     )
 
     consumer_failures: list[BaseException] = []
