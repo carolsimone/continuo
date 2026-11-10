@@ -154,6 +154,30 @@ func TestParseSeedBuildRequested_NonDbtSeedNodeTypeIsError(t *testing.T) {
 	require.Error(t, err, "non-dbt-seed node_type must be rejected in seed build event")
 }
 
+// An ingested node is a table nothing builds, so release-controller never sends
+// one in a seed build. A message that names one anyway is refused as an ingested
+// node, not as a node that is merely not a seed, whether or not the rest of its
+// fields are present.
+func TestParseSeedBuildRequested_RefusesAnIngestedNode(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any){
+		"a complete seed": func(s map[string]any) { s["node_type"] = "ingested" },
+		"a seed with no service name": func(s map[string]any) {
+			s["node_type"] = "ingested"
+			delete(s, "service_name")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := seedBuildPayload()
+			seeds := p["seeds"].([]map[string]any)
+			edit(seeds[1])
+			_, err := ParseSeedBuildRequested(seedBuildMsg(t, p, ""))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "is an ingested node")
+			assert.Contains(t, err.Error(), "seed.shop.currencies")
+		})
+	}
+}
+
 func TestParseSeedBuildRequested_InvalidNodeTypeIsError(t *testing.T) {
 	p := seedBuildPayload()
 	seeds := p["seeds"].([]map[string]any)

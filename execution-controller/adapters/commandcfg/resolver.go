@@ -47,8 +47,12 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 // resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
 // seed to SeedFullRefresh. The default block is always complete (built-in when
 // no file, validated at load when a file exists), so the run/test/build
-// templates are never nil.
+// templates are never nil. An ingested node is never run, so every operation on
+// one fails with events.ErrPermanent.
 func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error) {
+	if nt.IsIngested() {
+		return nil, fmt.Errorf("%w: node type %q has no command", events.ErrPermanent, nt)
+	}
 	var pick func(*opSet) []string
 	switch op {
 	case pkg_model.OperationTest:
