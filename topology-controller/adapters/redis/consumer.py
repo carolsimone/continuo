@@ -237,13 +237,12 @@ class Consumer:
                         key, msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
                     )
                 else:
-                    # Render the cause into the message (and attach the
-                    # traceback via exc_info) rather than only into `extra`:
-                    # the process log format is plain `%(message)s`, so an
-                    # `extra`-only detail is invisible and a fatal misconfig
-                    # (e.g. an S3 SignatureDoesNotMatch) reads as an opaque
-                    # failure that repeats on every redelivery until the
-                    # message is dead-lettered.
+                    # Render the cause into the message and attach the
+                    # traceback via exc_info, so the line names the failure on
+                    # its own: a fatal misconfig (e.g. an S3
+                    # SignatureDoesNotMatch) repeats on every redelivery until
+                    # the message is dead-lettered, and a reader of one line
+                    # must see why.
                     logger.exception(
                         "Failed to process message %s, not ACKing (delivery %d of %d): %s",
                         text_id, deliveries, _MAX_DELIVERIES, exc,

@@ -103,8 +103,7 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
     failures = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert failures, "expected an ERROR log on dispatch failure"
     rec = failures[-1]
-    # The rendered message (what a plain `%(message)s` format prints) must carry
-    # the underlying cause and the message id.
+    # The rendered message must carry the underlying cause and the message id.
     rendered = rec.getMessage()
     assert "SignatureDoesNotMatch calling GetObject" in rendered
     assert "9-0" in rendered

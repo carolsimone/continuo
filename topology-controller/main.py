@@ -19,6 +19,7 @@ from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
+from adapters.json_log import configure_logging
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
@@ -36,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    # The root logger takes the level LOG_LEVEL names; log_level() refuses an
-    # unknown name, which stops the process before anything else starts.
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    logging.getLogger().setLevel(log_level())
+    # The root logger writes JSON lines at the level LOG_LEVEL names;
+    # log_level() refuses an unknown name, which stops the process before
+    # anything else starts.
+    configure_logging(log_level())
     validate()
     logger.info("topology-controller starting (candidate consumer)")
 

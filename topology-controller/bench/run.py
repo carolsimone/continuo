@@ -6,8 +6,8 @@ process makes the child's first pass cold: no sqlglot or YAML state is warm.
 The child builds the estate and one in-memory S3, then parses the release
 twice, `cold` and `warm`, with the handler `main.py` builds, and writes one
 JSON line to stdout per pass. The parent adds the facts about the machine and
-the checkout to each line. Diagnostics go to stderr through logging, with the
-same format `main.py` uses.
+the checkout to each line. Diagnostics go to stderr through logging, as the
+JSON lines `main.py` writes, so the benchmark pays production's logging cost.
 """
 import argparse
 import json
@@ -26,6 +26,7 @@ import yaml
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
+from adapters.json_log import configure_logging
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.sources.s3 import S3Source
 from adapters.topology_artifact_writer import TopologyArtifactWriter
@@ -43,7 +44,6 @@ BUCKET = "bench"
 # The version of the result line's fields, documented in README.md.
 RESULT_SCHEMA = 1
 _ENV = "bench"
-_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 _SERVICE_DIR = Path(__file__).resolve().parent.parent
 _PACKAGES = ("sqlglot", "PyYAML", "jsonschema", "continuo-contracts", "prometheus-client")
 _STDERR_TAIL_LINES = 50
@@ -282,7 +282,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format=_LOG_FORMAT)
+    configure_logging(logging.INFO)
     if args.child:
         if args.size is None or args.rep is None:
             parser.error("--child needs --size and --rep")

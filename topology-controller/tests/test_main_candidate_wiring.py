@@ -107,6 +107,17 @@ def test_main_exits_non_zero_and_logs_when_the_consumer_cannot_start(monkeypatch
     )
 
 
+def test_main_configures_json_logging_at_the_log_level(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    levels = []
+    monkeypatch.setattr(main, "configure_logging", lambda level: levels.append(level))
+
+    main.main()
+
+    assert levels == [logging.DEBUG]
+
+
 def test_main_returns_when_the_consumer_ends_cleanly(monkeypatch):
     _common_monkeypatches(monkeypatch)
     monkeypatch.setattr(main.threading, "Thread", _InlineThread)
