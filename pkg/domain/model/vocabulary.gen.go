@@ -203,7 +203,7 @@ func (v DeadLetterKind) IsValid() bool {
 	return false
 }
 
-// NodeRuntime — The toolchain that builds a graph node.
+// NodeRuntime — The toolchain that builds a graph node, or external when nothing in continuo builds it.
 // Values come from the vocabulary "node_runtime" in contract.yaml, in
 // declaration order.
 type NodeRuntime string
@@ -239,7 +239,7 @@ func (v NodeRuntime) IsValid() bool {
 	return false
 }
 
-// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref).
+// NodeType — The kind of a graph node. Decides which toolchain builds it, or that nothing does (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref).
 // Values come from the vocabulary "node_type" in contract.yaml, in
 // declaration order.
 type NodeType string

@@ -49,14 +49,14 @@ class DeadLetterKind(StrEnum):
 
 
 class NodeRuntime(StrEnum):
-    """The toolchain that builds a graph node."""
+    """The toolchain that builds a graph node, or external when nothing in continuo builds it."""
     DBT = "dbt"
     PYTHON = "python"
     EXTERNAL = "external"
 
 
 class NodeType(StrEnum):
-    """The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref)."""
+    """The kind of a graph node. Decides which toolchain builds it, or that nothing does (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref)."""
     DBT_MODEL = "dbt-model"
     DBT_SEED = "dbt-seed"
     DBT_SNAPSHOT = "dbt-snapshot"
