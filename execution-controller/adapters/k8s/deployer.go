@@ -36,9 +36,9 @@ func NewDeployer(client *K8sClient, namespace string, startTimeout, legTimeout t
 }
 
 // Deploy maps the domain JobSpec to K8s job params and creates the Job of
-// the attempt. A node type the vocabulary does not declare is
-// deploy.ErrInvalidNodeType and a dispatch without a timeout
-// deploy.ErrMalformedDispatch; neither can ever succeed.
+// the attempt. A node type the vocabulary does not declare, or the ingested one
+// no command builds, is deploy.ErrInvalidNodeType and a dispatch without a
+// timeout deploy.ErrMalformedDispatch; neither can ever succeed.
 func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
 	if err != nil {

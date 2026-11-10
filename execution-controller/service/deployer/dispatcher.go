@@ -637,8 +637,8 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 
 // creationFailureReason is why the Job of a production attempt could not be
 // created: the dispatch cannot run (a name another task's or attempt's Job
-// holds, an undeclared node type, or another field), or Kubernetes refused
-// the Job on every try.
+// holds, an undeclared or ingested node type, or another field), or Kubernetes
+// refused the Job on every try.
 func creationFailureReason(err error) pkgmodel.FailureReason {
 	switch {
 	case errors.Is(err, deploy.ErrJobNameCollision):

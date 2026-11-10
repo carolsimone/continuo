@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
@@ -284,7 +285,8 @@ func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
 }
 
 // An ingested node is a table nothing builds, so no operation has a command for
-// it, and the refusal is permanent: no retry can supply one.
+// it. The refusal is permanent, since no retry can supply a command, and it is
+// an invalid node type, which is the reason the attempt's failure report gives.
 func TestResolver_NodeCommandRefusesAnIngestedNode(t *testing.T) {
 	r := Defaults()
 	for _, op := range []pkg_model.Operation{
@@ -293,6 +295,7 @@ func TestResolver_NodeCommandRefusesAnIngestedNode(t *testing.T) {
 		argv, err := r.NodeCommand("svc", op, pkg_model.NodeTypeIngested, "orders")
 		assert.Nil(t, argv, "operation %s", op)
 		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "operation %s", op)
+		assert.ErrorIs(t, err, deploy.ErrInvalidNodeType, "operation %s", op)
 		assert.ErrorContains(t, err, "has no command", "operation %s", op)
 	}
 }

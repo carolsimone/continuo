@@ -169,6 +169,17 @@ func TestDeploy_AnUndeclaredNodeTypeIsInvalid(t *testing.T) {
 	require.ErrorIs(t, err, deploy.ErrInvalidNodeType)
 }
 
+// A dispatch of an ingested node cannot run either: nothing builds the table,
+// so no command exists for it and the refusal can never succeed.
+func TestDeploy_AnIngestedNodeIsInvalid(t *testing.T) {
+	spec := attemptSpec(pkg_model.NodeTypeIngested, "v42")
+
+	err := NewDeployer(newQueryTestClient(), "default", 15*time.Minute, 24*time.Hour).Deploy(context.Background(), spec)
+
+	require.ErrorIs(t, err, deploy.ErrInvalidNodeType)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
 // Every release-leg Job is stopped once the start timeout plus the install's
 // task timeout has passed since the Job started.
 func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
