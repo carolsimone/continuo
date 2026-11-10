@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react';
 import { useNavigate } from 'react-router';
 import { ReactFlowProvider } from '@xyflow/react';
 import DAGPanel from '../DAGPanel';
-import NodeTypeIcon from '../NodeTypeIcon';
+import NodeTypeIcon, { isIngestedNodeType } from '../NodeTypeIcon';
 import PastRunsPanel from '../PastRunsPanel';
 import type { GraphState } from '../detail-page-helpers';
 import type { ScheduleGraph } from '../types';
@@ -95,7 +95,9 @@ export default function LatestView({
                   <div className="dag-focus-legend-row">
                     <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
                   </div>
-                  {selectedNodeId && name && (
+                  {/* An ingested node has no node page: a click on it only
+                      highlights the nodes it feeds. */}
+                  {selectedNodeId && name && !isIngestedNodeType(selectedNodeType) && (
                     <a
                       className="dag-focus-open-link"
                       href={`/node/${encodeURIComponent(selectedNodeId)}`}

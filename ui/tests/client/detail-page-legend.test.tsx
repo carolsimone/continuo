@@ -112,3 +112,51 @@ describe('DetailPage focus legend node type', () => {
     expect(link.getAttribute('href')).toBe(`/node/${CSV_NODE_ID}`);
   });
 });
+
+// An ingested node is a table a node reads and no node builds: it has no node
+// page, so a click only highlights the nodes it feeds.
+describe('DetailPage focus legend for an ingested node', () => {
+  const INGESTED_ID = '.raw.ingest_probe';
+  const READER_ID = 'svc1.public.reader';
+  const ingestedRoutes = {
+    ...routes,
+    [`/api/schedules/${SCHED}/graph`]: async () => ({
+      nodes: [
+        { node_id: INGESTED_ID, node_type: 'ingested', schedule_name: SCHED },
+        { node_id: READER_ID, node_type: 'dbt-model', schedule_name: SCHED },
+      ],
+      edges: [{ from_node_id: INGESTED_ID, to_node_id: READER_ID }],
+    }),
+  };
+
+  async function renderAndSelect(nodeId: string) {
+    vi.stubGlobal('fetch', mockFetchSequence(ingestedRoutes));
+    const view = renderLatest();
+    await waitFor(() => {
+      expect(view.container.querySelector(`.react-flow__node[data-id="${nodeId}"]`)).not.toBeNull();
+    });
+    fireEvent.click(view.container.querySelector(`.react-flow__node[data-id="${nodeId}"]`)!);
+    return view;
+  }
+
+  it('keeps the legend and offers no "Open node detail" link for a selected ingested node', async () => {
+    const { container, queryByRole } = await renderAndSelect(INGESTED_ID);
+
+    await waitFor(() => {
+      const legend = container.querySelector('.dag-focus-legend');
+      expect(legend).not.toBeNull();
+      expect(legend!.textContent).toContain('ingest_probe');
+      expect(legend!.textContent).toContain('Required by (1)');
+    });
+    expect(container.querySelector('.dag-focus-open-link')).toBeNull();
+    expect(queryByRole('link', { name: /open node detail/i })).toBeNull();
+  });
+
+  it('still offers the link for an ordinary node of the same graph', async () => {
+    const { container, findByRole } = await renderAndSelect(READER_ID);
+
+    const link = await findByRole('link', { name: /open node detail/i });
+    expect(link.getAttribute('href')).toBe(`/node/${READER_ID}`);
+    expect(container.querySelector('.dag-focus-legend')?.textContent).toContain('Depends on (1)');
+  });
+});
