@@ -176,7 +176,7 @@ func TestRecordAttemptReport_ThreeAttemptsThenTheTaskFails(t *testing.T) {
 // timeout would take as long again, and an invalid dispatch can never run.
 func TestRecordAttemptReport_ANonRetryableFailureFailsTheTaskWithBudgetLeft(t *testing.T) {
 	for _, reason := range []model.FailureReason{model.FailureReasonStartTimeout, model.FailureReasonDeadlineExceeded,
-		model.FailureReasonDbtNothingToDo, model.FailureReasonJobNameCollision} {
+		model.FailureReasonDbtNothingToDo, model.FailureReasonJobNameCollision, model.FailureReasonImageContractMismatch} {
 		t.Run(string(reason), func(t *testing.T) {
 			r, tc, g := startedFailureRun(t)
 			report(t, r, tc, g, "ftable_a", 0, run.AttemptSucceeded, "")

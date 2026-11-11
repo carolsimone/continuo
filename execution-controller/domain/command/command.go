@@ -39,6 +39,10 @@ type DeployTask struct {
 	// TimeoutSeconds is how long the attempt's container may run once its
 	// Job has started its pod.
 	TimeoutSeconds int64
+	// ContentHash is the node's content hash as the release recorded it; a
+	// python node's pod receives it as CONTENT_HASH to check its image
+	// against. Empty when the dispatch carries none.
+	ContentHash string
 }
 
 func (DeployTask) isCommand() {}
@@ -105,6 +109,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		Operation:      c.Operation,
 		Attempt:        c.Attempt,
 		TimeoutSeconds: c.TimeoutSeconds,
+		ContentHash:    c.ContentHash,
 	}
 }
 

@@ -131,3 +131,27 @@ func TestDeployTaskDTO_StoredJobParamsWithoutSecretRefDecodeEmpty(t *testing.T) 
 		t.Fatalf("SecretRef = %q, want empty", got)
 	}
 }
+
+func TestDeployTaskDTO_RoundTripsContentHash(t *testing.T) {
+	raw, err := json.Marshal(DeployTaskFromDomain(command.DeployTask{TaskID: "t", ContentHash: "sha256:91d4c0"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"content_hash":"sha256:91d4c0"`) {
+		t.Fatalf("content_hash missing from %s", raw)
+	}
+	var back DeployTaskDTO
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := back.ToDomain().ContentHash; got != "sha256:91d4c0" {
+		t.Fatalf("ContentHash = %q after round trip", got)
+	}
+	raw, err = json.Marshal(DeployTaskFromDomain(command.DeployTask{TaskID: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "content_hash") {
+		t.Fatalf("an empty content_hash must be omitted, got %s", raw)
+	}
+}

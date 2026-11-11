@@ -29,6 +29,7 @@ type DeployTaskDTO struct {
 	Attempt        int    `json:"attempt"`
 	Operation      string `json:"operation"`
 	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
+	ContentHash    string `json:"content_hash,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -47,6 +48,7 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		Attempt:        c.Attempt,
 		Operation:      c.Operation,
 		TimeoutSeconds: c.TimeoutSeconds,
+		ContentHash:    c.ContentHash,
 	}
 }
 
@@ -66,6 +68,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		Attempt:        d.Attempt,
 		Operation:      d.Operation,
 		TimeoutSeconds: d.TimeoutSeconds,
+		ContentHash:    d.ContentHash,
 	}
 }
 

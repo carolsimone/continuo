@@ -47,6 +47,39 @@ func TestBuildPythonPodSpec_InjectsExactlyTheNormativeEnv(t *testing.T) {
 		"the python pod env is exactly the four normative variables")
 }
 
+// TestBuildPythonPodSpec_InjectsExactlyFiveVariablesWithAContentHash extends the
+// closed set by the one variable a dispatch's content hash adds.
+func TestBuildPythonPodSpec_InjectsExactlyFiveVariablesWithAContentHash(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	p := pythonParams()
+	p.ContentHash = "sha256:91d4c0"
+
+	spec, err := buildPythonPodSpec(p)
+	require.NoError(t, err)
+
+	var names []string
+	for _, v := range spec.Containers[0].Env {
+		names = append(names, v.Name)
+	}
+	assert.ElementsMatch(t, []string{"NODE_ID", "TABLE_NAME", "TARGET_SCHEMA", "TASK_ATTEMPT", "CONTENT_HASH"}, names)
+}
+
+func TestBuildPythonPodSpec_SetsContentHashFromTheDispatch(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	p := pythonParams()
+	p.ContentHash = "sha256:91d4c0"
+	spec, err := buildPythonPodSpec(p)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:91d4c0", envMap(spec.Containers[0].Env)["CONTENT_HASH"])
+}
+
+func TestBuildPythonPodSpec_OmitsContentHashWhenTheDispatchHasNone(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	spec, err := buildPythonPodSpec(pythonParams())
+	require.NoError(t, err)
+	assert.NotContains(t, envMap(spec.Containers[0].Env), "CONTENT_HASH")
+}
+
 // TestBuildPythonPodSpec_OmitsDbtEnvNames is the negative half of the contract.
 // The harness requires TARGET_SCHEMA and recognizes no fallback, so injecting
 // the dbt names would silently misroute a node's output; CONTRACT_DIR and

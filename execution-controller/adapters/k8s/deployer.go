@@ -76,6 +76,7 @@ func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespa
 		SecretRef:    spec.SecretRef,
 		Operation:    pkg_model.Operation(spec.Operation),
 		Attempt:      spec.Attempt,
+		ContentHash:  spec.ContentHash,
 	}
 }
 

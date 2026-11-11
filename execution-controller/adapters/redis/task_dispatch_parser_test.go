@@ -70,3 +70,16 @@ func TestParseTaskDispatch_AnEntryWithoutATenantIsPermanent(t *testing.T) {
 
 	require.ErrorIs(t, err, pkgevents.ErrPermanent)
 }
+
+func TestParseTaskDispatch_ReadsContentHash(t *testing.T) {
+	msg := fixtureDispatch(t)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(msg.Values["payload"].(string)), &payload))
+	payload["content_hash"] = "sha256:91d4c0"
+	raw, err := json.Marshal(payload)
+	require.NoError(t, err)
+	msg.Values["payload"] = string(raw)
+	evt, err := ParseTaskDispatch(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:91d4c0", evt.ContentHash)
+}

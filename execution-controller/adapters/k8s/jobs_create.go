@@ -938,10 +938,13 @@ var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 // files baked inside it. execution-controller therefore sets no command and resolves no
 // dbt command dialect.
 //
-// The environment is exactly four variables: the three the harness requires,
+// The environment is four variables: the three the harness requires,
 // NODE_ID (whose trailing schema.table segments select the node), TABLE_NAME
 // and TARGET_SCHEMA, and TASK_ATTEMPT, the attempt of the task the pod runs,
-// which the harness does not read. They deliberately differ from the dbt Job
+// which the harness does not read. A fifth, CONTENT_HASH, is added when the
+// dispatch carries the node's content hash: the harness recomputes the hash
+// of the image's contract and refuses to run on a mismatch. The variables
+// deliberately differ from the dbt Job
 // env — the harness recognizes no SCHEMA/DBT_TARGET_SCHEMA fallback — and
 // CONTRACT_DIR and APP_ROOT are left to the image, which declares its own
 // layout. The warehouse connection arrives via envFrom of the same
@@ -1003,6 +1006,9 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 			events.ErrPermanent, p.NodeType, p.SchemaName, p.TableName)
 	}
 	env = append(env, kindEnv()...)
+	if p.ContentHash != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTENT_HASH", Value: p.ContentHash})
+	}
 
 	return corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,

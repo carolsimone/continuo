@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 )
 
@@ -36,14 +37,16 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 		_, block = validationresult.Split(tail)
 	}
 	var blockMessage string
+	var blockReason pkgmodel.FailureReason
 	if block != "" {
 		// A "success" block describes a run that completed before an
-		// unrelated crash; its message is not the failure's.
+		// unrelated crash; its message and reason are not the failure's.
 		if r, err := validationresult.Parse([]byte(block)); err == nil && r.Status != "success" {
 			blockMessage = strings.TrimSpace(r.Message)
+			blockReason = model.ReasonFromResultBlock(r.Reason)
 		}
 	}
-	f := model.AttemptFacts{NothingToDo: strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage)}
+	f := model.AttemptFacts{NothingToDo: strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
 	if f.LogMessage == "" {
 		f.LogMessage = o.truncate(tail)
 	}
