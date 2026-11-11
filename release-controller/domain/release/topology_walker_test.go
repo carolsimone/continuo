@@ -268,6 +268,17 @@ func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) 
 	assert.Equal(t, []string{"raw.ingest_probe"}, release.DerivedChangedNodeIDs(cand, prod))
 }
 
+// TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged pins the
+// reverse direction: when production builds a table and the candidate holds it
+// as an ingested node, the candidate node has no content to validate, so it is
+// not changed even though its content hash differs from production's.
+func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T) {
+	prod := release.Topology{{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
+	cand := release.Topology{{UniqueID: "raw.x", NodeType: "ingested", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x"}}
+
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, prod))
+}
+
 // TestFullAncestorsClosure_StopsAtAnIngestedNode pins that an ingested
 // ancestor is never part of a build closure, so it is never cloned or built.
 func TestFullAncestorsClosure_StopsAtAnIngestedNode(t *testing.T) {

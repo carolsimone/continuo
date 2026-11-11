@@ -391,8 +391,11 @@ func TestDuplicateClaims_RelationAndIdentityCollisionsAreDistinguishableInOneRel
 }
 
 // TestDuplicateClaims_IgnoresAnIngestedNode pins that an ingested node claims
-// nothing: nothing builds its table, so it neither writes a relation another
-// node writes nor shares a unique_id in a way erasing a built node.
+// nothing: no node builds its table, so it writes no relation. A built node and
+// an ingested node never share a unique_id, because topology-controller emits an
+// ingested node only for a name that no node declares or resolves to. The
+// sub-tests that pair them feed the check topologies it never receives, to show
+// that it skips the ingested node rather than relying on that.
 func TestDuplicateClaims_IgnoresAnIngestedNode(t *testing.T) {
 	t.Run("a built node resolves to the ingested node's relation", func(t *testing.T) {
 		topo := Topology{
@@ -402,6 +405,8 @@ func TestDuplicateClaims_IgnoresAnIngestedNode(t *testing.T) {
 		assert.Empty(t, DuplicateClaims(topo))
 	})
 	t.Run("a built node declares the ingested node's unique_id under another relation", func(t *testing.T) {
+		// A topology topology-controller never emits: the skip, not the
+		// emitter, is what keeps the shared unique_id from being reported.
 		topo := Topology{
 			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
 			{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.y"},

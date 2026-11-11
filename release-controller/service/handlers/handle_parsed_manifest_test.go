@@ -582,6 +582,46 @@ func TestHandleParsedManifest_IngestedUpstreamIsNotValidated(t *testing.T) {
 	assert.Equal(t, []string{"a.m"}, order)
 }
 
+// TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated pins the move
+// from an ingested table to a built one: production holds raw.x as an ingested
+// node read by a.m, the candidate builds raw.x, so raw.x is a new node with
+// content, is built from its SQL together with its reader, and no ingested node
+// is part of the request.
+func TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	seedProd(t, deps, store, "prev", release.Topology{
+		{UniqueID: "raw.x", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h1", UpstreamUniqueIDs: []string{"raw.x"}},
+	}, time.Unix(50, 0).UTC())
+
+	topo := release.Topology{
+		{UniqueID: "raw.x", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h2", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h1", UpstreamUniqueIDs: []string{"raw.x"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
+
+	nodes := decodeValidationRequestedNodes(t, store)
+	byID := indexNodesByUniqueID(t, nodes)
+	require.Len(t, byID, 2)
+	for _, id := range []string{"raw.x", "a.m"} {
+		require.Contains(t, byID, id)
+		assert.Equal(t, "build_from_sql", byID[id]["validation_op"], id)
+	}
+	for _, n := range nodes {
+		assert.NotEqual(t, "ingested", n["node_type"])
+	}
+}
+
 // TestHandleParsedManifest_IngestedNodeAloneIsNothingToValidate pins the first
 // release that carries an ingested node: its reader is unchanged and the
 // ingested node is new, yet nothing is validated. The release promotes at once,

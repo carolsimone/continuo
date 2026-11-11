@@ -161,8 +161,10 @@ func relationCollisions(candidate Topology) []DuplicateClaim {
 // have been "already reported" there, and the relation-homogeneity skip does
 // not apply to it — a shared test id is always reported here.
 //
-// An ingested node is skipped: it only marks a table another system builds, so
-// it holds no identity that a built node's declaration could erase.
+// An ingested node is skipped. It cannot share a unique_id with a built node:
+// topology-controller counts every non-test node's declared "<schema>.<table>"
+// (the key a unique_id is) and the relation its build really writes as built,
+// so it never emits an ingested node for a name that a node builds.
 func identityCollisions(candidate Topology) []DuplicateClaim {
 	byID := make(map[string][]Claimant, len(candidate))
 	relationsByID := make(map[string]map[string]bool, len(candidate))
