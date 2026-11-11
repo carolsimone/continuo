@@ -147,6 +147,28 @@ def test_the_real_table_is_ingested_from_the_sql_in_either_order_of_the_two_read
     assert results == [(["runtime.nodes"], ["runtime.nodes"])] * 2
 
 
+@pytest.mark.parametrize("system_first", [True, False], ids=["system-first", "system-last"])
+@pytest.mark.parametrize("split", [False, True], ids=["one-sql", "two-sqls"])
+@pytest.mark.parametrize("real_read", ["runtime.nodes", "warehouse.runtime.nodes"], ids=["no-catalog", "catalog"])
+def test_the_real_table_is_ingested_once_beside_a_system_read_however_the_reads_are_written(
+    system_first, split, real_read,
+):
+    """The reads come in one SQL or split over two (a python node's shape), in
+    either order, with or without a catalog on the real read: one ingested node
+    and one edge, whichever."""
+    reads = ["system.runtime.nodes", real_read]
+    if not system_first:
+        reads.reverse()
+    sqls = [f"SELECT * FROM {r}" for r in reads] if split else [
+        f"SELECT * FROM {reads[0]} JOIN {reads[1]} ON 1=1"
+    ]
+    reader = _model("reader", node_type=NodeType.PYTHON_NODE)
+    reader.dependency_sqls = sqls
+    out = ingested_nodes([reader], {reader.unique_id: referenced_tables(reader, dialect="trino")}, system=TRINO)
+    assert [n.unique_id for n in out] == ["runtime.nodes"]
+    assert [d.unique_id for d in reader.upstream_deps] == ["runtime.nodes"]
+
+
 def test_a_reader_keeps_the_edges_it_already_has():
     reader = _model("reader")
     reader.upstream_deps = [UpstreamDep(table_name="orders", schema_name="analytics", service_name="service-1")]

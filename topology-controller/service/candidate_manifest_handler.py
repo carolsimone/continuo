@@ -352,7 +352,12 @@ class CandidateManifestHandler:
             for node in all_nodes:
                 try:
                     refs = referenced_tables(node, dialect=self._dialect)
-                    node.upstream_deps = resolve_upstream_deps(refs, lookup)
+                    # A system relation is never a node a release builds, so it
+                    # resolves to no dependency, even when a node builds a table
+                    # with the same schema and name.
+                    node.upstream_deps = resolve_upstream_deps(
+                        [ref for ref in refs if not self._system_relations.matches(ref)], lookup,
+                    )
                     if node.node_type != NodeType.DBT_TEST:
                         reads[node.unique_id] = refs
                 except (UnqualifiedTableReferenceError, InvalidCompiledSqlError) as exc:

@@ -189,6 +189,45 @@ def test_a_read_of_only_a_system_catalog_table_writes_no_node_and_no_edge(tmp_pa
     assert nodes[0]["upstream_unique_ids"] == []
 
 
+def _trino_topology_with_a_node_building_runtime_nodes(tmp_path, compiled_code):
+    """The topology of a release on Trino with a reader of compiled_code and a
+    node that builds runtime.nodes, by unique_id."""
+    writer = RecordingArtifactWriter()
+    reader = dbt_node("reader") | {"compiled_code": compiled_code}
+    builder = dbt_node("nodes") | {"schema": "runtime"}
+    build_handler(
+        source_with_nodes(tmp_path, reader, builder), MagicMock(), make_uploader(), artifact_writer=writer,
+        dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
+    ).handle(release_id="rel-1")
+    return {n["unique_id"]: n for n in writer.nodes}
+
+
+def test_a_system_catalog_read_gets_no_edge_to_a_node_that_builds_the_same_schema_and_table(tmp_path):
+    """system.runtime.nodes is the engine's own: a node that builds runtime.nodes
+    is not what the reader reads, so the reader gets no edge to it."""
+    by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, "SELECT * FROM system.runtime.nodes")
+    assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
+    assert by_id["runtime.nodes"]["node_type"] != "ingested"
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
+
+
+def test_a_read_under_a_non_system_catalog_gets_an_edge_to_the_node_that_builds_the_table(tmp_path):
+    """The registry knows a table by schema and name: the database part of a
+    read that is not the engine's own is ignored."""
+    by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, "SELECT * FROM warehouse.runtime.nodes")
+    assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
+    assert by_id["runtime.nodes"]["node_type"] != "ingested"
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
+
+
+def test_a_system_read_beside_a_real_read_of_a_built_table_gets_one_edge_to_the_built_node(tmp_path):
+    for sql in SYSTEM_AND_REAL_READS:
+        by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, sql)
+        assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
+        assert by_id["runtime.nodes"]["node_type"] != "ingested"
+        assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
+
+
 def test_a_dbt_test_reading_an_outside_table_makes_no_node_and_no_edge(tmp_path):
     model = dbt_node("orders")
     test = {
