@@ -678,7 +678,8 @@ func Parse{{ .Const }}(s string) ({{ .Const }}, error) {
 {{- end }}
 {{- if .RuntimeType }}
 
-// Runtime reports which toolchain builds a node of this type.
+// Runtime reports which toolchain builds a node of this type, or external when
+// nothing in continuo builds it.
 func (v {{ .Const }}) Runtime() {{ .RuntimeType }} {
 	switch v {
 {{- range .Values }}
@@ -895,7 +896,7 @@ class {{ .Const }}(StrEnum):
 
 {{ end }}{{ if .RuntimeType }}
 {{ .RuntimeConst }}: dict[{{ .Const }}, {{ .RuntimeType }}] = { {{- range $i, $e := .RuntimeEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
-"""Which toolchain builds each {{ .Const }}."""
+"""Which toolchain builds each {{ .Const }}, or external when nothing in continuo builds it."""
 
 {{ end }}{{ if .ClassType }}
 {{ .ClassConst }}: dict[{{ .Const }}, {{ .ClassType }}] = { {{- range $i, $e := .ClassEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }

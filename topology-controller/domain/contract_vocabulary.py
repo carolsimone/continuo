@@ -76,7 +76,7 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 
 
 NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.INGESTED: NodeRuntime.EXTERNAL}
-"""Which toolchain builds each NodeType."""
+"""Which toolchain builds each NodeType, or external when nothing in continuo builds it."""
 
 
 class RunStatus(StrEnum):

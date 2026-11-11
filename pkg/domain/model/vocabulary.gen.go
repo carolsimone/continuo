@@ -322,7 +322,8 @@ func (v NodeType) AllowsSecretRef() bool {
 	return false
 }
 
-// Runtime reports which toolchain builds a node of this type.
+// Runtime reports which toolchain builds a node of this type, or external when
+// nothing in continuo builds it.
 func (v NodeType) Runtime() NodeRuntime {
 	switch v {
 	case NodeTypeDbtModel:
