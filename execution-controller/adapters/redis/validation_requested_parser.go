@@ -2,6 +2,7 @@
 package redis
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 
@@ -30,6 +31,7 @@ type validationRequestedNode struct {
 	NodeType             string   `json:"node_type"`
 	SchemaName           string   `json:"schema_name"`
 	TableName            string   `json:"table_name"`
+	RelationName         string   `json:"relation_name"`
 	ImageTag             string   `json:"image_tag"`
 	UpstreamNodeIDs      []string `json:"upstream_node_ids"`
 	CandidateArtifactURI string   `json:"candidate_artifact_uri"`
@@ -91,10 +93,13 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 				fmt.Errorf("node[%d] (%s) invalid node_type: %w", i, n.UniqueID, err)
 		}
 		nodes = append(nodes, events.ValidationNode{
-			NodeID:               n.UniqueID,
-			ServiceName:          n.ServiceName,
-			SchemaName:           n.SchemaName,
-			TableName:            n.TableName,
+			NodeID:      n.UniqueID,
+			ServiceName: n.ServiceName,
+			SchemaName:  n.SchemaName,
+			// The validation Job builds or clones the relation dbt writes,
+			// while the seed-build Job and production tasks keep
+			// `dbt --select <table_name>`.
+			TableName:            cmp.Or(n.RelationName, n.TableName),
 			NodeType:             nodeType,
 			ImageTag:             n.ImageTag,
 			UpstreamNodeIDs:      n.UpstreamNodeIDs,

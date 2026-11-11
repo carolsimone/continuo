@@ -10,6 +10,9 @@ type Node struct {
 	UniqueID   string
 	SchemaName string
 	TableName  string
+	// RelationName is the relation the node writes, as declared, when it
+	// differs from TableName; empty otherwise.
+	RelationName string
 	// ResolvedRelationID is "<schema>.<resolved name>", lowercased: the
 	// physical relation this node's build actually writes. UniqueID is keyed
 	// on the DECLARED name; this is keyed on the RESOLVED one — a dbt node's
@@ -33,6 +36,9 @@ type Node struct {
 	// TimeoutSeconds is the node's declared task timeout; 0 when it declares
 	// none.
 	TimeoutSeconds int
+	// SeedColumnsHash is a seed's column fingerprint; empty without compile
+	// extras.
+	SeedColumnsHash string
 }
 
 // IsIngested reports whether the node only marks a table that something

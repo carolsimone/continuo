@@ -267,3 +267,19 @@ func TestParseValidationRequested_LegacyKeyNotDecoded(t *testing.T) {
 	assert.Empty(t, evt.Nodes[0].CandidateArtifactURI,
 		"the legacy candidate_sql_uri key must not be decoded — no compatibility alias is read")
 }
+
+func TestParseValidationRequested_TableNameIsTheRelationName(t *testing.T) {
+	p := validationPayload()
+	node := p["nodes"].([]map[string]any)[0]
+	node["table_name"], node["relation_name"] = "dim.v2", "dim_v2"
+	ev, err := ParseValidationRequested(validationMsg(t, p, ""))
+	require.NoError(t, err)
+	assert.Equal(t, "dim_v2", ev.Nodes[0].TableName)
+}
+
+func TestParseValidationRequested_TableNameFallsBackToTableName(t *testing.T) {
+	ev, err := ParseValidationRequested(validationMsg(t, validationPayload(), ""))
+	require.NoError(t, err)
+	assert.Equal(t, "orders", ev.Nodes[0].TableName)
+	assert.Equal(t, "customers", ev.Nodes[1].TableName)
+}

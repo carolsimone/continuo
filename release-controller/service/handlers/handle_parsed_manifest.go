@@ -620,7 +620,7 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 			continue
 		}
 		op, prodSchema := validationOpFor(n, rebuiltFromCandidate)
-		out = append(out, map[string]any{
+		node := map[string]any{
 			"unique_id":              n.UniqueID,
 			"service_name":           n.ServiceName,
 			"node_type":              n.NodeType,
@@ -631,7 +631,11 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 			"candidate_artifact_uri": candidateArtifactURI(bucket, releaseID, n),
 			"validation_op":          op,
 			"prod_schema":            prodSchema,
-		})
+		}
+		if n.RelationName != "" {
+			node["relation_name"] = n.RelationName
+		}
+		out = append(out, node)
 	}
 	return out
 }
