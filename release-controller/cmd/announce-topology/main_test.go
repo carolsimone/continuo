@@ -123,7 +123,7 @@ func TestTopologyRoundTrip(t *testing.T) {
 		UniqueID: "a", SchemaName: "s", TableName: "t", ResolvedRelationID: "s.t", ServiceName: "svc",
 		NodeType: "python-api", ContentHash: "h", TestCount: 2, ImageTag: "img",
 		UpstreamUniqueIDs: []string{"b"}, Schedule: "daily", OriginalFilePath: "p.py", SecretRef: "continuo-api-x",
-		TimeoutSeconds: 7200,
+		TimeoutSeconds: 7200, RelationName: "T_Rel", SeedColumnsHash: "sha256:e5a0",
 	}}
 	raw, err := json.Marshal(fromTopology(topo))
 	require.NoError(t, err)
