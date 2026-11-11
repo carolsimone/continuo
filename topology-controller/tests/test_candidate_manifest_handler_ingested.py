@@ -327,12 +327,13 @@ def test_a_python_node_read_of_an_outside_table_makes_an_ingested_node(tmp_path)
 
 
 def test_one_python_node_naming_a_table_two_ways_gets_one_ingested_node_and_one_edge(tmp_path):
-    """Two reads of one node name the same outside table, once by the source's
-    quoted, upper-case, three-part name and once by its bare two-part name: the
-    release holds one ingested node for it and the python node has one edge to it."""
+    """Two reads of one node name the same outside table, one with a catalog
+    and in mixed case (an unquoted name, which Postgres folds to lower case) and
+    one with no catalog and in lower case: the release holds one ingested node
+    for it and the python node has one edge to it."""
     entry = python_entry(reads={
-        "quoted": 'select id from "continuo_dbt"."RAW"."Ingest_Probe"',
-        "bare": "select id from raw.ingest_probe",
+        "with_catalog": "select id from continuo_dbt.RAW.Ingest_Probe",
+        "without_catalog": "select id from raw.ingest_probe",
     })
     source = source_of(ManifestFile(
         path=python_contract(tmp_path, entry), declared_service="service-py", kind=ManifestKind.PYTHON,
