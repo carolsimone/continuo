@@ -17,6 +17,7 @@ import pytest
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.topology_artifact_writer import TopologyArtifactWriter
+from config.config import _SYSTEM_RELATIONS
 from domain.contract_vocabulary import NODE_TYPE_RUNTIME
 from domain.model import ManifestNode, NodeType, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext
@@ -265,6 +266,7 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
         ctx = RewriteContext(
             release_id=case["release_id"], registry={},
             candidate_schema="_candidate_x", dialect="postgres",
+            system_relations=_SYSTEM_RELATIONS["postgres"],
             timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
         )
 

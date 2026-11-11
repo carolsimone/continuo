@@ -336,6 +336,7 @@ class CandidateManifestHandler:
             registry=lookup,
             candidate_schema=candidate_schema,
             dialect=self._dialect,
+            system_relations=self._system_relations,
             timings=self._timings,
         )
 

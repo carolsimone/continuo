@@ -119,10 +119,12 @@ def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgre
     )
 
 
-def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None):
+def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None,
+                   system_relations=_SYSTEM_RELATIONS["postgres"]):
     """A handler wired for both kinds, for cases that publish a python node."""
     return dispatch_handler(
         source, publisher, dialect=dialect, artifact_writer=artifact_writer,
+        system_relations=system_relations,
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(

@@ -13,6 +13,7 @@ Each builder owns its whole step: rewrite to the candidate schema and upload.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from domain.ingested import SystemRelations
 from domain.model import ManifestNode, NodeRegistryEntry
 from service.ports import CandidateSpecUploaderPort, CandidateSqlUploaderPort
 from service.release_timings import ReleaseTimings, Stage
@@ -27,6 +28,9 @@ class RewriteContext:
     resolved once at boot by the composition root; it decides the syntax of
     every SQL string a builder emits.
 
+    system_relations are the relations that engine keeps for itself: a builder
+    never redirects a read of one of them to the candidate schema.
+
     timings is the release's stage record: a builder times its rewrite and its
     upload into it, one run of each stage per node.
     """
@@ -34,6 +38,7 @@ class RewriteContext:
     registry: dict[tuple[str, str], NodeRegistryEntry]
     candidate_schema: str
     dialect: str
+    system_relations: SystemRelations
     timings: ReleaseTimings
 
 
@@ -59,7 +64,7 @@ class DbtSqlArtifactBuilder(CandidateArtifactBuilder):
             candidate_sql = rewrite_to_candidate_schema(
                 node.candidate_sql, ctx.registry, ctx.candidate_schema,
                 self_schema=node.schema_name, self_table=node.table_name,
-                dialect=ctx.dialect,
+                dialect=ctx.dialect, system_relations=ctx.system_relations,
             )
         with ctx.timings.stage(Stage.CANDIDATE_UPLOAD, sample_memory=False, nodes=1):
             self._uploader.upload(
@@ -88,7 +93,7 @@ class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
                 rewrite_to_candidate_schema(
                     sql, ctx.registry, ctx.candidate_schema,
                     self_schema=node.schema_name, self_table=node.table_name,
-                    dialect=ctx.dialect,
+                    dialect=ctx.dialect, system_relations=ctx.system_relations,
                 )
                 for sql in node.dependency_sqls
             ]

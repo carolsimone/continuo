@@ -6,15 +6,18 @@ tables in an isolated candidate schema, in dependency order, then builds the nod
 against them — touching nothing in production. The models are never edited: every
 schema-qualified reference that resolves to a known graph node (the same registry
 the dependency resolver uses) is redirected here, at parse time, to the candidate
-schema. Unqualified references, CTEs, and tables owned by no service are left
-untouched.
+schema. Unqualified references, CTEs, tables owned by no service, and the
+warehouse engine's own system relations (information_schema, pg_catalog, Trino's
+system catalog) are left untouched: a system relation is never a node, so it has
+no copy in the candidate schema.
 """
 import re
 
 import sqlglot
 from sqlglot import exp
 
-from domain.model import NodeRegistryEntry
+from domain.ingested import SystemRelations
+from domain.model import NodeRegistryEntry, TableRef
 
 _NON_SCHEMA_SAFE = re.compile(r"[^a-zA-Z0-9_]")
 
@@ -37,10 +40,17 @@ def rewrite_to_candidate_schema(
     self_table: str = "",
     *,
     dialect: str,
+    system_relations: SystemRelations,
 ) -> str:
     """Return sql with every known-node schema-qualified reference
     redirected to candidate_schema. Empty input (e.g. a seed, which has no SQL)
     is returned unchanged.
+
+    A system relation (see system_relations) is never redirected, whatever the
+    registry holds: the engine's own table has no copy in the candidate schema,
+    and a node that builds a table with the same schema and name is a different
+    relation. The catalog of a read decides only that: a read of a registered
+    table under any other catalog is redirected, and keeps the catalog it named.
 
     A qualified self-reference (self_schema.self_table — e.g. an incremental model
     selecting from {{ this }}) is left on its production schema: the validation
@@ -53,6 +63,11 @@ def rewrite_to_candidate_schema(
     text uploaded for validation — the postgres dialect renders a cast as
     CAST(x AS TEXT) where Trino needs CAST(x AS VARCHAR). It is required rather
     than defaulted so a caller cannot silently emit one engine's SQL to another.
+
+    system_relations are the relations of that same engine, the ones the
+    dependency resolver and the ingested-node step also treat as the engine's own.
+    It is required for the same reason: a caller that forgot it would redirect an
+    engine's relation to a schema that does not exist.
     """
     if not sql:
         return sql
@@ -69,6 +84,9 @@ def rewrite_to_candidate_schema(
             continue
         key = (schema_raw.lower(), name)
         if key == self_ref:
+            continue
+        ref = TableRef(schema=key[0], table=name, catalog=table.catalog.lower())
+        if system_relations.matches(ref):
             continue
         if key in registry:
             table.set("db", exp.to_identifier(candidate_schema, quoted=True))

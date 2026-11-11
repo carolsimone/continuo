@@ -228,6 +228,71 @@ def test_a_system_read_beside_a_real_read_of_a_built_table_gets_one_edge_to_the_
         assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
 
 
+def _trino_candidate_sqls(tmp_path, **readers):
+    """The candidate SQL the handler uploads for each reader of a release on Trino
+    in which a node builds runtime.nodes, by the reader's name. readers maps a
+    reader's name to its compiled code."""
+    uploader = make_uploader()
+    nodes = [dbt_node(name) | {"compiled_code": sql} for name, sql in readers.items()]
+    builder = dbt_node("nodes") | {"schema": "runtime"}
+    build_handler(
+        source_with_nodes(tmp_path, builder, *nodes), MagicMock(), uploader,
+        dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
+    ).handle(release_id="rel-1")
+    sqls = {c.kwargs["unique_id"]: c.kwargs["sql"] for c in uploader.upload.call_args_list}
+    return {name: sqls[f"test_schema.{name}"] for name in readers}
+
+
+def test_a_system_catalog_read_stays_on_the_system_catalog_while_a_real_read_goes_to_the_candidate_schema(tmp_path):
+    """A node builds runtime.nodes, so the registry knows ('runtime', 'nodes'). The
+    engine's own system.runtime.nodes is not that node: its candidate SQL names
+    the table where it is, while warehouse.runtime.nodes, which the node does
+    build, is redirected to the release's candidate schema."""
+    sqls = _trino_candidate_sqls(
+        tmp_path,
+        sys_reader="SELECT * FROM system.runtime.nodes",
+        real_reader="SELECT * FROM warehouse.runtime.nodes",
+    )
+    assert sqls["sys_reader"] == "SELECT * FROM system.runtime.nodes"
+    assert sqls["real_reader"] == 'SELECT * FROM warehouse."_candidate_rel_1".nodes'
+
+
+def test_a_system_read_beside_a_real_read_of_a_built_table_is_split_in_either_order(tmp_path):
+    for first, second in (("system", "warehouse"), ("warehouse", "system")):
+        sqls = _trino_candidate_sqls(
+            tmp_path,
+            mixed=f"SELECT * FROM {first}.runtime.nodes a JOIN {second}.runtime.nodes b ON 1 = 1",
+        )
+        sql = sqls["mixed"]
+        assert "system.runtime.nodes" in sql, sql
+        assert 'warehouse."_candidate_rel_1".nodes' in sql, sql
+        assert sql.count("_candidate_rel_1") == 1, sql
+
+
+def test_a_python_nodes_system_read_is_left_alone_in_its_uploaded_spec(tmp_path):
+    """The python builder rewrites each declared read with the same rule: a read
+    of the engine's system.runtime.nodes stays, one of the built
+    warehouse.runtime.nodes is redirected."""
+    builder = python_entry(schema="runtime", table="nodes", reads={"one": "select 1 as id"})
+    reader = python_entry(table="reader", reads={
+        "a_system": "SELECT * FROM system.runtime.nodes",
+        "b_built": "SELECT * FROM warehouse.runtime.nodes",
+    })
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, builder, reader), declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+    spec_uploader = make_uploader("s3://x.json")
+    python_handler(
+        source, MagicMock(), spec_uploader=spec_uploader, dialect="trino",
+        system_relations=_SYSTEM_RELATIONS["trino"],
+    ).handle(release_id="rel-1")
+    specs = {c.kwargs["unique_id"]: c.kwargs["spec"] for c in spec_uploader.upload.call_args_list}
+    assert specs["test_schema.reader"]["reads"] == [
+        "SELECT * FROM system.runtime.nodes",
+        'SELECT * FROM warehouse."_candidate_rel_1".nodes',
+    ]
+
+
 def test_a_dbt_test_reading_an_outside_table_makes_no_node_and_no_edge(tmp_path):
     model = dbt_node("orders")
     test = {
