@@ -14,6 +14,7 @@ var sharedFixtures = []struct{ goPath, pyPath string }{
 	{"pkg/events/testdata/consumer_dead_letter_v1_prefixed_key.json", "topology-controller/tests/fixtures/consumer_dead_letter_v1_prefixed_key.json"},
 	{"pkg/topologyartifact/testdata/topology_v1.json", "topology-controller/tests/fixtures/topology_v1.json"},
 	{"pkg/topologyartifact/testdata/candidate_object_keys_v1.json", "topology-controller/tests/fixtures/candidate_object_keys_v1.json"},
+	{"pkg/codebundle/testdata/bundle_v1.json", "topology-controller/tests/fixtures/code_bundle_v1.json"},
 	{"pkg/events/testdata/manifest_loaded_candidate_v2_ok.json", "topology-controller/tests/fixtures/manifest_loaded_candidate_v2_ok.json"},
 	{"pkg/events/testdata/manifest_loaded_candidate_v2_failed.json", "topology-controller/tests/fixtures/manifest_loaded_candidate_v2_failed.json"},
 	{"pkg/events/testdata/release_requested_v1.json", "topology-controller/tests/fixtures/release_requested_v1.json"},
