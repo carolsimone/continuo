@@ -221,6 +221,11 @@ func validateOpSet(path string, ops *opSet) error {
 			return err
 		}
 	}
+	if ops.Compile != nil {
+		if err := validateCompileContext(path, ops); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -332,6 +337,55 @@ func validateParseContext(path string, ops *opSet) error {
 					"dbt folds this flag into its partial-parse validity check, so a mismatch "+
 					"means the compile rehearsal validates a context the runtime dispatch never reproduces",
 				path, op.name, flag, path, describeFlag(flag, opVal, opHas), describeFlag(flag, parseVal, parseHas))
+		}
+	}
+	return nil
+}
+
+// defaultProfilesDir is the directory dbt reads profiles.yml from when an
+// invocation carries no --profiles-dir: the working directory of the dbt image.
+const defaultProfilesDir = "/project"
+
+// compileContextFlags is parseContextFlags without the --no-partial-parse
+// presence flag, and without --profiles-dir when it names the image's default
+// directory, so an argv that spells the default out equals one that omits it.
+func compileContextFlags(argv []string) map[string]string {
+	flags := parseContextFlags(argv)
+	delete(flags, noPartialParseFlag)
+	if flags["--profiles-dir"] == defaultProfilesDir {
+		delete(flags, "--profiles-dir")
+	}
+	return flags
+}
+
+// validateCompileContext requires that every node-dispatch op in ops parses
+// the project with the same --vars, --target, --profile, --profiles-dir and
+// --project-dir as ops.Compile.Command. Every fingerprint is read from the
+// manifest the compile step writes, so a run step that parses with other
+// values runs code no fingerprint saw.
+func validateCompileContext(path string, ops *opSet) error {
+	compileFlags := compileContextFlags(ops.Compile.Command)
+	nodeOps := []struct {
+		name string
+		argv []string
+	}{
+		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
+		{"test", ops.Test}, {"build", ops.Build}, {"seed_build", ops.SeedBuild},
+		{"full_refresh", ops.FullRefresh}, {"seed_full_refresh", ops.SeedFullRefresh},
+	}
+	for _, op := range nodeOps {
+		if op.argv == nil {
+			continue
+		}
+		opFlags := compileContextFlags(op.argv)
+		if flag := firstDivergentFlag(opFlags, compileFlags); flag != "" {
+			opVal, opHas := opFlags[flag]
+			compileVal, compileHas := compileFlags[flag]
+			return fmt.Errorf(
+				"%s.%s: parse-context flag %s does not match %s.compile.command (%s vs %s) — "+
+					"every fingerprint reads the manifest the compile step writes, so a run step "+
+					"that parses with other values runs code no fingerprint saw",
+				path, op.name, flag, path, describeFlag(flag, opVal, opHas), describeFlag(flag, compileVal, compileHas))
 		}
 	}
 	return nil

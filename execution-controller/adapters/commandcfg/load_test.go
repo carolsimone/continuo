@@ -2,6 +2,7 @@ package commandcfg
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func testLogger() *slog.Logger {
@@ -330,7 +332,7 @@ default:
   seed_build: ["dbt", "seed", "--select", "{{ node }}", "--vars", "env:prod"]
   parse:      ["dbt", "parse", "--vars", "env:prod"]
   compile:
-    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "--vars", "env:prod"]
     manifest_path: "/project/target/manifest.json"
 `)
 	_, err := Load(path, testLogger())
@@ -397,6 +399,76 @@ default:
 	assert.Contains(t, err.Error(), "--no-partial-parse")
 }
 
+// Every op and parse carry the same --vars, so only the compile check can refuse the block.
+func TestLoad_RefusesARunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--vars", "env:prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "--vars", "env:prod"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--vars", "env:prod"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "--vars", "env:prod"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "--vars", "env:prod"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "--vars", "env:prod"]
+  parse:      ["dbt", "parse", "--vars", "env:prod"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default.run")
+	assert.Contains(t, err.Error(), "does not match default.compile.command")
+}
+
+// completeDefault's compile carries --profiles-dir /project and its run ops carry none.
+func TestLoad_TreatsTheDefaultProfilesDirAsEqual(t *testing.T) {
+	_, err := Load(writeConfig(t, completeDefault), testLogger())
+	require.NoError(t, err)
+}
+
+// A profiles directory other than the image default is a parse-context flag like any other.
+func TestLoad_RefusesACompileWithAnotherProfilesDir(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/profiles"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--profiles-dir")
+	assert.Contains(t, err.Error(), "does not match default.compile.command")
+}
+
+// The refusal covers every service block, not only the default one.
+func TestLoad_RefusesAServiceRunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
+	path := writeConfig(t, completeDefault+`
+services:
+  service-1:
+    run:        ["dbt", "run", "--select", "{{ node }}", "--target", "prod"]
+    seed:       ["dbt", "seed", "--select", "{{ node }}", "--target", "prod"]
+    snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--target", "prod"]
+    test:       ["dbt", "test", "--select", "{{ node }}", "--target", "prod"]
+    build:      ["dbt", "build", "--select", "{{ node }}", "--target", "prod"]
+    seed_build: ["dbt", "seed", "--select", "{{ node }}", "--target", "prod"]
+    parse:      ["dbt", "parse", "--target", "prod"]
+    compile:
+      command:       ["dbt", "compile", "--profiles-dir", "/project"]
+      manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "services.service-1.run")
+	assert.Contains(t, err.Error(), "does not match services.service-1.compile.command")
+}
+
 // Regression: builtinDefault() and both shipped dbt-commands.yaml files must
 // keep run/seed/snapshot/test/build/seed_build's parse-affecting flags in
 // sync with parse's. builtinDefault() itself is never routed through
@@ -405,6 +477,8 @@ default:
 func TestParseContextValidation_BuiltinAndShippedConfigsPass(t *testing.T) {
 	require.NoError(t, validateParseContext("default", builtinDefault()),
 		"built-in default must define matching parse-context flags across the block")
+	require.NoError(t, validateCompileContext("default", builtinDefault()),
+		"built-in default must parse its run commands like its compile command")
 
 	for _, shipped := range []string{
 		filepath.Join("..", "..", "..", "config", "dbt-commands.yaml"),
@@ -412,6 +486,34 @@ func TestParseContextValidation_BuiltinAndShippedConfigsPass(t *testing.T) {
 	} {
 		_, err := Load(shipped, testLogger())
 		require.NoErrorf(t, err, "shipped config %s must load", shipped)
+	}
+}
+
+// The e2e stack mounts its own dbt-commands ConfigMap into execution-controller; the
+// commands it carries must load like the shipped files do.
+func TestLoad_AcceptsTheE2EStackDbtCommandsConfigMap(t *testing.T) {
+	manifest, err := os.Open(filepath.Join("..", "..", "..", "tests", "e2e", "k8s", "execution-controller-deployment.yaml"))
+	require.NoError(t, err)
+	defer manifest.Close()
+
+	decoder := yaml.NewDecoder(manifest)
+	for {
+		var doc struct {
+			Kind     string `yaml:"kind"`
+			Metadata struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+			Data map[string]string `yaml:"data"`
+		}
+		err := decoder.Decode(&doc)
+		require.NotErrorIs(t, err, io.EOF, "the manifest must carry the dbt-commands ConfigMap")
+		require.NoError(t, err)
+		if doc.Kind != "ConfigMap" || doc.Metadata.Name != "dbt-commands" {
+			continue
+		}
+		_, err = Load(writeConfig(t, doc.Data["dbt-commands.yaml"]), testLogger())
+		require.NoError(t, err)
+		return
 	}
 }
 
