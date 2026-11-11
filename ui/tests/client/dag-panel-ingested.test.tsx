@@ -42,6 +42,9 @@ function setup(props: {
   onNodeClick?: (nodeId: string | null) => void;
   graphNodes?: GraphNode[];
   graphEdges?: GraphEdge[];
+  serviceView?: boolean;
+  expandedServices?: Set<string>;
+  serviceColors?: Map<string, string>;
 } = {}) {
   return render(
     <ReactFlowProvider>
@@ -52,6 +55,9 @@ function setup(props: {
         selectedNodeId={props.selectedNodeId ?? null}
         onNodeClick={props.onNodeClick ?? (() => {})}
         colorByStatus={props.colorByStatus ?? false}
+        serviceView={props.serviceView}
+        expandedServices={props.expandedServices}
+        serviceColors={props.serviceColors}
       />
     </ReactFlowProvider>,
   );
@@ -90,8 +96,21 @@ describe('DAGPanel ingested nodes', () => {
     expect(node.style.borderTopColor).toBe('rgb(148, 163, 184)');
   });
 
-  it('carries no service accent on its left border', () => {
-    const { container } = setup();
+  it('carries no service accent on its left border, even when the empty service has a colour', () => {
+    // The service view expands both services, so each node is drawn on its own,
+    // and the colour map holds a colour for the empty service an ingested id
+    // starts with: only the node type keeps the accent off the ingested node.
+    const { container } = setup({
+      serviceView: true,
+      expandedServices: new Set(['', 's']),
+      serviceColors: new Map([['', '#ff0000'], ['s', '#2563eb']]),
+    });
+
+    // A node of a real service in the same graph takes its service's accent.
+    const reader = nodeIn(container, READER_ID);
+    expect(reader.style.borderLeftColor).toBe('rgb(37, 99, 235)');
+    expect(reader.style.borderLeftWidth).not.toBe(reader.style.borderTopWidth);
+
     const node = nodeIn(container, INGESTED_ID);
     expect(node.style.borderLeftStyle).toBe('solid');
     expect(node.style.borderLeftColor).toBe('rgb(148, 163, 184)');
