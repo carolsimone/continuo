@@ -28,9 +28,21 @@ type Node struct {
 	SharedCodeHash string         `json:"shared_code_hash"`
 	ConfigHash     string         `json:"config_hash"`
 	ContentHash    string         `json:"content_hash"`
-	// CodeUnitIDs are the node's DIRECT shared-code dependencies. The full set
-	// in scope is their closure through SharedCodeUnit.DependsOn.
+	// CodeUnitIDs are every shared-code unit the node's shared part folds;
+	// SharedCodeUnit.DependsOn lists only units that are themselves folded.
 	CodeUnitIDs []string `json:"code_unit_ids"`
+	// HashedConfig is the config part of content_hash, on dbt nodes only; catalog
+	// stores it as a version's config.
+	HashedConfig map[string]any `json:"hashed_config,omitempty"`
+	// CompiledHash is the masked compiled-SQL part of content_hash; empty for
+	// seeds, tests and python nodes.
+	CompiledHash string `json:"compiled_hash"`
+	// Projection is a python node's code projection, the JSON text whose hash is
+	// the node's config part; empty on dbt nodes. RawCode stays the node's
+	// contract entry, whose kind, owner and reads keys are in the read set;
+	// catalog stores Projection, when set, as the version's raw code, so a stored
+	// version shows only what its hash covers.
+	Projection string `json:"projection,omitempty"`
 }
 
 // SharedCodeUnit is one shared-code unit's entry, keyed in Bundle.SharedCode by

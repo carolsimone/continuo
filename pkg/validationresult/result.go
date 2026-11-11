@@ -20,6 +20,10 @@ type Result struct {
 	Message       string `json:"message"`
 	Failures      int    `json:"failures"`
 	UniqueID      string `json:"unique_id"`
+	// Reason is a machine-readable cause the pod names, empty when it names none;
+	// the python harness writes image_contract_mismatch when its image does not
+	// hash to the dispatched content_hash.
+	Reason string `json:"reason"`
 }
 
 // supportedRunStatuses is the structured-result contract's status

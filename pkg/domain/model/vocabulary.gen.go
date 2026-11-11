@@ -678,6 +678,8 @@ const (
 	FailureReasonMalformedDispatch FailureReason = "malformed_dispatch"
 	// FailureReasonJobNameCollision — a Job of the dispatched name already exists for another task or attempt.
 	FailureReasonJobNameCollision FailureReason = "job_name_collision"
+	// FailureReasonImageContractMismatch — the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.
+	FailureReasonImageContractMismatch FailureReason = "image_contract_mismatch"
 )
 
 // FailureReasons returns every value in contract.yaml declaration order.
@@ -700,6 +702,7 @@ func FailureReasons() []FailureReason {
 		FailureReasonInvalidNodeType,
 		FailureReasonMalformedDispatch,
 		FailureReasonJobNameCollision,
+		FailureReasonImageContractMismatch,
 	}
 }
 
@@ -739,6 +742,8 @@ func (v FailureReason) IsValid() bool {
 	case FailureReasonMalformedDispatch:
 		return true
 	case FailureReasonJobNameCollision:
+		return true
+	case FailureReasonImageContractMismatch:
 		return true
 	}
 	return false
@@ -780,6 +785,8 @@ func (v FailureReason) Class() FailureClass {
 	case FailureReasonMalformedDispatch:
 		return FailureClassInvalid
 	case FailureReasonJobNameCollision:
+		return FailureClassInvalid
+	case FailureReasonImageContractMismatch:
 		return FailureClassInvalid
 	}
 	return ""

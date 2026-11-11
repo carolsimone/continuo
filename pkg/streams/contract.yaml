@@ -672,3 +672,7 @@ vocabularies:
         const: JobNameCollision
         class: invalid
         description: a Job of the dispatched name already exists for another task or attempt.
+      - value: image_contract_mismatch
+        const: ImageContractMismatch
+        class: invalid
+        description: the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.

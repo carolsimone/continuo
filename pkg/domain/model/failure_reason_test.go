@@ -38,3 +38,14 @@ func TestFailureReason_DispatchSideReasonsAndTheirClasses(t *testing.T) {
 		}
 	}
 }
+
+// A python node whose image does not hash to the dispatched content_hash fails
+// as invalid: running the image again cannot change what it holds.
+func TestFailureReasonImageContractMismatchIsInvalid(t *testing.T) {
+	if !FailureReasonImageContractMismatch.IsValid() {
+		t.Fatalf("image_contract_mismatch is not a declared failure reason")
+	}
+	if got := FailureReasonImageContractMismatch.Class(); got != FailureClassInvalid {
+		t.Fatalf("image_contract_mismatch class = %q, want invalid", got)
+	}
+}
