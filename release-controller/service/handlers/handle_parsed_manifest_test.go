@@ -175,6 +175,26 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
+func TestHandleParsedManifest_Failed_RecordsTheParsingStageDuration(t *testing.T) {
+	deps, _ := seedToParsing(t, "rP", map[string]string{"svc": "img"})
+	spy := &stageSpy{}
+	deps.Telemetry = spy
+	deps.Clock.(*fakeClock).t = time.Unix(109, 0).UTC()
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rP",
+		Status:      "failed",
+		FailureKind: pkg_model.ParseFailureKindInvalidSQL,
+		Detail:      "1 node failed to parse: analytics.fx",
+		FailedNodes: []handlers.ParsedFailedNode{{
+			NodeID: "analytics.fx", Kind: pkg_model.ParseFailureKindInvalidSQL, Service: "svc",
+			FilePath: "models/fx.sql", NodeType: "dbt-model", Detail: "Expecting ). Line 3, Col: 12.",
+		}},
+	}))
+
+	assert.Equal(t, []stageCall{{"parsing", false, 9 * time.Second}}, spy.calls)
+}
+
 func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 

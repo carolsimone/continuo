@@ -513,3 +513,14 @@ def test_a_null_timeout_minutes_is_undeclared(tmp_path):
 def test_timeout_minutes_is_not_in_raw_code(tmp_path):
     node = _parse_one(tmp_path, make_entry(timeout_minutes=90))
     assert "timeout_minutes" not in json.loads(node.raw_code)
+
+
+def test_a_python_node_counts_its_output_columns(tmp_path):
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    assert nodes[0].declared_columns == 2
+
+
+def test_a_python_contract_skips_no_node(tmp_path):
+    skipped = []
+    parse_python_contract(write_contract(tmp_path, make_entry()), skipped=skipped)
+    assert skipped == []

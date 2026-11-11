@@ -374,7 +374,7 @@ spec:
 {{- with $m.scrapeNamespaceSelector }}
 ---
 # Admits the namespaces metrics.scrapeNamespaceSelector names to the metrics
-# port of every Go service, and to no other port.
+# port of every service in continuo.metrics.services, and to no other port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

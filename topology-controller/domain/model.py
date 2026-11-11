@@ -21,6 +21,24 @@ class ManifestKind(StrEnum):
     PYTHON = "python"
 
 
+class SkipReason(StrEnum):
+    """Why the parse leg leaves a dbt node out of the topology without failing
+    the release: it declares no owner, it carries no tag to take a schedule
+    from, or it is a local stub. A value is the string the logs report."""
+    NO_OWNER = "no_owner"
+    NO_TAG = "no_tag"
+    LOCAL_STUB = "local_stub"
+
+
+@dataclass(frozen=True)
+class SkippedNode:
+    """One dbt node the parse leg left out of the topology, and why. A skip is
+    never a failure: the node simply is not part of the release."""
+    node_id: str
+    service: str
+    reason: SkipReason
+
+
 @dataclass(frozen=True)
 class FailedNode:
     """One node the parse leg could not resolve, with where its source lives.
@@ -64,6 +82,7 @@ class ManifestFile:
     # The raw wire value, not narrowed to ManifestKind: an unrecognized kind is
     # a permanent failure the handler reports, not an exception at decode time.
     kind: str = ManifestKind.DBT
+    size_bytes: int = 0  # the fetched file's size on disk
 
 
 @dataclass
@@ -139,6 +158,8 @@ class ManifestNode:
     identity: str = ""  # explicit unique_id for a node that is not a relation
     # (a dbt test): dbt's own manifest unique_id. Empty for every relation
     # node, whose identity is "<schema>.<table>".
+    declared_columns: int = 0  # how many columns the node declares: a dbt
+    # node's `columns` block, a python node's output columns.
 
     @property
     def unique_id(self) -> str:

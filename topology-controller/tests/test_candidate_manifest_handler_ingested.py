@@ -7,8 +7,10 @@ from config.config import _SYSTEM_RELATIONS
 from domain.model import ManifestFile, ManifestKind
 from service import candidate_manifest_handler
 from service.topology_artifact import canonical_topology_json
+from service.release_timings import Stage
 from tests.fakes import (
     FakeBundleUploader,
+    FakeClock,
     RecordingArtifactWriter,
     build_handler,
     dbt_node,
@@ -79,6 +81,22 @@ def test_an_ingested_node_never_takes_an_image_tag(tmp_path):
     by_id = _topology(_probe_release(tmp_path), image_tags={"service-1": "registry/service-1:abc"})
     assert by_id["raw.ingest_probe"]["image_tag"] == ""
     assert by_id["test_schema.probe_reads_source"]["image_tag"] == "registry/service-1:abc"
+
+
+def test_the_release_counts_its_ingested_nodes_under_the_external_runtime(tmp_path):
+    timings = build_handler(_probe_release(tmp_path), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    assert timings.nodes == {"dbt": 2, "python": 0, "external": 1}
+    assert timings.columns == {"dbt": 0, "python": 0, "external": 0}
+
+
+def test_the_resolve_stage_times_the_ingested_step_in_its_one_run(tmp_path):
+    """Making the ingested nodes is part of resolving: it adds no stage and no
+    second run of the resolve stage."""
+    timings = build_handler(
+        _probe_release(tmp_path), MagicMock(), make_uploader(), clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-1")
+    resolve = timings.stages[Stage.RESOLVE]
+    assert (resolve.runs, resolve.seconds, resolve.counts) == (1, 1.0, {"nodes": 2})
 
 
 def test_a_table_a_node_builds_is_no_ingested_node(tmp_path):

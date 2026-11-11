@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMetrics_GoServicesServePrometheusMetrics scrapes /metrics on every Go
-// service the e2e stack runs in compose. execution-controller runs in kind;
-// the chart lint covers its metrics port.
-func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
+// TestMetrics_ServicesServePrometheusMetrics scrapes /metrics on every service
+// the e2e stack runs in compose. execution-controller runs in kind; the chart
+// lint covers its metrics port.
+func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
 	withConsumersAndOutbox := []string{"continuo_consumer_pending{", "continuo_outbox_backlog{", "go_sql_open_connections{"}
 	// catalog keeps no outbox and no Postgres, so it exposes consumer series
 	// and its own export series only.
@@ -28,12 +28,17 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 	}{
 		{getEnv("RUN_CONTROLLER_HOST", "run-controller"), withConsumersAndOutbox},
 		{getEnv("CATALOG_HOST", "catalog"), withConsumers},
-		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), withConsumersAndOutbox},
+		// continuo_releases_total{ is registered at 0 at startup, so it proves
+		// release-controller's own Telemetry series are on the served registry.
+		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), append(append([]string{}, withConsumersAndOutbox...), "continuo_releases_total{")},
 		{getEnv("REMEDIATION_HOST", "remediation"), withConsumersAndOutbox},
 		{getEnv("AGENT_REMEDIATION_HOST", "agent-remediation"), withConsumersAndOutbox},
 		{getEnv("DEAD_LETTER_HOST", "dead-letter-controller"), withConsumersAndOutbox},
 		{getEnv("AGENT_CHAT_HOST", "agent-chat"), []string{"go_sql_open_connections{"}},
 		{getEnv("EGRESS_PROXY_HOST", "egress-proxy"), []string{"continuo_egress_active_tunnels{"}},
+		// The histogram's # TYPE line exists before any release, and the release
+		// pairs are exported at 0 from boot.
+		{getEnv("TOPOLOGY_CONTROLLER_HOST", "topology-controller"), []string{"# TYPE continuo_topology_stage_duration_seconds histogram", "continuo_topology_releases_total{"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {

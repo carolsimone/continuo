@@ -4,20 +4,20 @@ continuo ships no monitoring stack, dashboards or alert rules. It exposes metric
 
 | What | Where it comes from | What you do |
 |---|---|---|
-| Service metrics | `/metrics` on every Go service | Point your scraper at it and allow it through the NetworkPolicy |
+| Service metrics | `/metrics` on every Go service and on topology-controller | Point your scraper at it and allow it through the NetworkPolicy |
 | Failed Jobs, with their table | Labels on each Kubernetes Job | Export the labels through kube-state-metrics or your agent's equivalent |
 | Alerts | Your monitoring tool | Write your own, or start from the [example rules](#example-alert-rules) |
-| Logs | Pod output, and the bucket for attempt logs | Collect pod output with your log agent |
+| Logs | Pod output, and the bucket for attempt logs. The Go services and topology-controller log one JSON object per line | Collect pod output with your log agent |
 
 continuo emits no traces.
 
 ## Service metrics
 
-Every Go service serves Prometheus metrics at `/metrics` on `metrics.port` (default 9464), on a listener of its own. `ui` and `topology-controller` don't serve metrics.
+Every Go service and topology-controller serve Prometheus metrics at `/metrics` on `metrics.port` (default 9464), on a listener of its own. `ui` doesn't serve metrics.
 
 | Value | Default | Effect |
 |---|---|---|
-| `metrics.port` | `9464` | The port every Go service serves metrics on |
+| `metrics.port` | `9464` | The port the services serve metrics on |
 | `metrics.podAnnotations` | `true` | Adds `prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` to those pods, for scrapers that find pods by annotation |
 | `metrics.scrapeNamespaceSelector` | `{}` | The namespaces allowed to reach the port |
 
@@ -57,8 +57,8 @@ Every series also carries a `service` label.
 | `continuo_consumer_handler_duration_seconds` | histogram | `stream`, `group`, `result` | services with stream consumers |
 | `continuo_consumer_dead_letters_total` | counter | `stream`, `group`, `kind` | services with stream consumers |
 | `continuo_consumer_infra_pauses_total` | counter | `stream`, `group` | services with stream consumers |
-| `continuo_consumer_lag` | gauge | `stream`, `group` | services with stream consumers |
-| `continuo_consumer_pending` | gauge | `stream`, `group` | services with stream consumers |
+| `continuo_consumer_lag` | gauge | `stream`, `group` | Go services with stream consumers |
+| `continuo_consumer_pending` | gauge | `stream`, `group` | Go services with stream consumers |
 | `continuo_outbox_published_total` | counter | `table` | services with an outbox |
 | `continuo_outbox_publish_failures_total` | counter | `table`, `kind` | services with an outbox |
 | `continuo_outbox_backlog` | gauge | `table` | services with an outbox |
@@ -96,8 +96,16 @@ Every series also carries a `service` label.
 | `continuo_catalog_export_bytes` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_records` | gauge | `kind` (`node`, `relationship`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_last_success_timestamp_seconds` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_topology_stage_duration_seconds` | histogram | `stage` | `topology-controller` |
+| `continuo_topology_releases_total` | counter | `outcome`, `failure_kind` | `topology-controller` |
+| `continuo_topology_release_nodes` | gauge | `family` | `topology-controller` |
+| `continuo_topology_release_columns` | gauge | `family` | `topology-controller` |
+| `continuo_topology_release_skipped_nodes` | gauge | `reason` | `topology-controller` |
+| `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `service` | `topology-controller` |
+| `continuo_releases_total` | counter | `outcome` (`promoted`, `rejected`), `reject_reason` (`none` or a reject reason) | `release-controller` |
+| `continuo_release_stage_duration_seconds` | histogram | `stage` (`compiling`, `parsing`, `seed_building`, `validating`), `outcome` (`ok`, `failed`) | `release-controller` |
 | `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every service that keeps a Postgres database (not `catalog` or `egress-proxy`) |
-| `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every service |
+| `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every Go service |
 
 ## Job labels
 
@@ -228,9 +236,18 @@ groups:
           severity: warning
         annotations:
           summary: "The last stored catalog export is older than 26 hours"
+      - alert: TopologyStageNearLivenessBudget
+        expr: |
+          sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="+Inf", stage!~"resolve|rewrite|candidate_upload"}[30m]))
+            - sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="30.0", stage!~"resolve|rewrite|candidate_upload"}[30m]))
+            > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "topology-controller's {{ $labels.stage }} stage took over 30 s; liveness restarts the pod about 80 s after its last heartbeat"
 ```
 
-The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`.
+The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite` and `candidate_upload`: the per-node stages refresh the heartbeat after every node, so their summed time says nothing about it. `dbt_parse` and `python_parse` refresh the heartbeat once per manifest, so the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
 
 ## Datadog
 

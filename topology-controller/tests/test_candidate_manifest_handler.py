@@ -7,16 +7,19 @@ import pytest
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime
+from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SkipReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.ports import ManifestSourcePort
+from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
 from tests.fakes import (
     FakeBundleUploader,
+    FakeClock,
     RecordingArtifactWriter,
+    ScriptedMemoryProbe,
     build_handler,
     dbt_node,
     dispatch_handler,
@@ -37,6 +40,7 @@ def _make_source(*entries):
         ManifestFile(path=str(FIXTURES / name), image_tag="")
         for name in entries
     ]
+    source.manifest_count.return_value = len(entries)
     return source
 
 
@@ -473,6 +477,8 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
         system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags=None,
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
 
     handler.handle(release_id="rel-1")
@@ -1091,6 +1097,8 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
         system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
     handler.handle(release_id="rel-1")
 
@@ -1137,6 +1145,8 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
         system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
+        clock=FakeClock(),
+        memory=ScriptedMemoryProbe(0),
     )
 
     handler.handle(release_id="rel-1")
@@ -1212,3 +1222,139 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
     downstream = topology["businesslayer.downstream_table"]
     assert upstream["unique_id"] == "analytics.upstream_table"
     assert downstream["upstream_unique_ids"] == ["analytics.upstream_table"]
+
+
+def test_handle_returns_the_timings_of_every_stage_that_ran():
+    source = _make_source("manifest_service1.json", "manifest_service2.json")
+    timings = build_handler(source, MagicMock(), make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
+    ran = {stage: record for stage, record in timings.stages.items() if record.runs}
+    assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
+                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
+    assert ran[Stage.DOWNLOAD].counts == {"manifests": 2, "bytes": 0}
+    assert ran[Stage.DBT_PARSE].runs == 2
+    assert ran[Stage.RESOLVE].counts == {"nodes": 2}
+    assert (ran[Stage.REWRITE].runs, ran[Stage.CANDIDATE_UPLOAD].runs) == (2, 2)
+    assert all(record.seconds == record.runs for record in ran.values())
+
+
+def test_a_failed_release_times_its_publish(tmp_path):
+    bad = tmp_path / "manifest.json"
+    bad.write_text("{not json")
+    publisher = MagicMock()
+    timings = dispatch_handler(source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
+    publisher.publish_failed.assert_called_once()
+    assert timings.stages[Stage.PUBLISH].runs == 1
+
+
+def _release_lines(caplog):
+    return [r for r in caplog.records if r.getMessage() == "release parsed"]
+
+
+def test_a_release_logs_one_release_line(caplog):
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        build_handler(_make_source("manifest_service1.json", "manifest_service2.json"), MagicMock(),
+                 make_uploader()).handle(release_id="rel-1")
+    (line,) = _release_lines(caplog)
+    assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
+        logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
+    assert line.skipped == {"no_owner": 0, "no_tag": 0, "local_stub": 0}
+    assert list(line.stages_ms) == [stage.value for stage in Stage]
+    assert not hasattr(line, "failure_kind")
+    assert not any(r.getMessage() == "candidate: parse complete" for r in caplog.records)
+
+
+def test_the_download_is_logged_before_it_starts_with_the_manifest_count(caplog):
+    source = _make_source("manifest_service1.json")
+    source.manifest_count.return_value = 1
+    logged_first = []
+    source.list_manifests.side_effect = lambda: (
+        logged_first.append(any(r.getMessage() == "candidate: downloading manifests" for r in caplog.records)),
+        [ManifestFile(path=str(FIXTURES / "manifest_service1.json"), size_bytes=1580)])[1]
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        timings = build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
+    (line,) = [r for r in caplog.records if r.getMessage() == "candidate: downloading manifests"]
+    assert (logged_first, line.release_id, line.manifests) == ([True], "rel-1", 1)
+    assert timings.stages[Stage.DOWNLOAD].counts == {"manifests": 1, "bytes": 1580}
+
+
+def _skipping_manifest(tmp_path, *nodes):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"macros": {}, "nodes": {n["unique_id"]: n for n in nodes}}))
+    return str(path)
+
+
+def _model(name, *, owner="team-a", tags=("daily",)):
+    return {"unique_id": f"model.svc_a.{name}", "resource_type": "model", "name": name, "schema": "analytics",
+            "fqn": ["svc_a", name], "tags": list(tags), "config": {"meta": {"owner": owner} if owner else {}},
+            "checksum": {"checksum": name}, "compiled_code": "select 1"}
+
+
+def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason(tmp_path, caplog):
+    path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
+                              _model("stub", tags=("local_stub",)), _model("untagged", tags=()))
+    with caplog.at_level(logging.INFO):
+        timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert [(r.levelno, r.release_id, r.service, r.node_id, r.reason) for r in skips] == [
+        (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
+        (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
+        (logging.INFO, "rel-1", "svc-a", "model.svc_a.untagged", "no_tag")]
+    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.NO_TAG: 1, SkipReason.LOCAL_STUB: 1}
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(tmp_path, caplog):
+    path = _skipping_manifest(tmp_path, _model("a", tags=()), _model("b", tags=()))
+    publisher = MagicMock()
+    with caplog.at_level(logging.INFO):
+        build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
+                 make_uploader()).handle(release_id="rel-1")
+    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
+    (line,) = _release_lines(caplog)
+    assert (line.outcome, line.failure_kind, line.skipped["no_tag"]) == ("failed", "invalid_artifact", 2)
+
+
+class _RecordingReleaseObserver:
+    def __init__(self):
+        self.finished = []
+
+    def release_finished(self, timings):
+        self.finished.append(timings)
+
+
+def test_the_observer_gets_each_published_release_once():
+    observer = _RecordingReleaseObserver()
+    timings = build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
+                       observer=observer).handle(release_id="rel-1")
+    assert observer.finished == [timings] and timings.outcome == ReleaseOutcome.OK
+
+
+def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
+    observer = _RecordingReleaseObserver()
+    path = _skipping_manifest(tmp_path, _model("a", tags=()))
+    timings = build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
+                       make_uploader(), observer=observer).handle(release_id="rel-1")
+    assert observer.finished == [timings]
+    assert (timings.outcome, timings.failure_kind) == (ReleaseOutcome.FAILED, ParseFailureKind.INVALID_ARTIFACT)
+
+
+def test_the_observer_gets_the_release_after_the_release_line_is_logged(caplog):
+    lines_seen = []
+    observer = _RecordingReleaseObserver()
+    observer.release_finished = lambda timings: lines_seen.append(len(_release_lines(caplog)))
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
+                 observer=observer).handle(release_id="rel-1")
+    assert lines_seen == [1]
+
+
+def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplog):
+    observer = _RecordingReleaseObserver()
+    outage = botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000")
+    handler = build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
+                       artifact_writer=RecordingArtifactWriter(fail=outage), observer=observer)
+    with caplog.at_level(logging.INFO), pytest.raises(botocore.exceptions.EndpointConnectionError):
+        handler.handle(release_id="rel-1")
+    assert observer.finished == []
+    assert not _release_lines(caplog)

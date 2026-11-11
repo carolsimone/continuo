@@ -9,6 +9,7 @@ dependencies = [
     "protobuf>=7.36.2",
     "boto3>=1.43.125",
     "PyYAML>=6.0",
+    "prometheus-client==0.26.0",
 ]
 
 [project.optional-dependencies]

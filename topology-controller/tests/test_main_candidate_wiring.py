@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 import main
+from adapters.metrics.prometheus import TopologyMetrics
+from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.redis.fence import PermissionFenceError
 from adapters.topology_artifact_writer import TopologyArtifactWriter
@@ -23,14 +25,18 @@ from streams_contract import (
 class _RecordingConsumer:
     instances = []
 
-    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name):
+    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name, observer=None):
         self.stream_name = stream_name
+        self.observer = observer
         self.service_name = service_name
         self.group_name = group_name
         self.message_handler = message_handler
         _RecordingConsumer.instances.append(self)
 
     def start(self):
+        pass
+
+    def refresh_heartbeat(self):
         pass
 
 
@@ -78,6 +84,10 @@ def _common_monkeypatches(monkeypatch):
     # rather than open a real port per test run. tests/test_health_server.py
     # covers the health server itself.
     monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    # Same for the metrics listener: tests/test_metrics_server.py covers it, and
+    # METRICS_PORT is cleared so the default port is what the wiring asks for.
+    monkeypatch.delenv("METRICS_PORT", raising=False)
+    monkeypatch.setattr(main, "start_metrics_server", lambda *a, **kw: None)
 
 
 class _InlineThread(_NoopThread):
@@ -104,6 +114,17 @@ def test_main_exits_non_zero_and_logs_when_the_consumer_cannot_start(monkeypatch
         record.exc_info and "consumer group does not exist" in str(record.exc_info[1])
         for record in caplog.records
     )
+
+
+def test_main_configures_json_logging_at_the_log_level(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    levels = []
+    monkeypatch.setattr(main, "configure_logging", lambda level: levels.append(level))
+
+    main.main()
+
+    assert levels == [logging.DEBUG]
 
 
 def test_main_returns_when_the_consumer_ends_cleanly(monkeypatch):
@@ -136,6 +157,61 @@ def test_main_starts_health_server_wired_to_the_candidate_consumer(monkeypatch):
     assert isinstance(port, int) and port > 0
     assert consumer is _RecordingConsumer.instances[0]
     assert isinstance(thread, _NoopThread)
+
+
+def test_main_binds_the_metrics_port_before_the_consumer_starts(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    events = []
+    monkeypatch.setattr(main, "start_metrics_server", lambda port, registry: events.append(("metrics", port)))
+
+    class _RecordingThread(_NoopThread):
+        def start(self):
+            events.append(("thread", self.name))
+
+    monkeypatch.setattr(main.threading, "Thread", _RecordingThread)
+    main.main()
+    assert events[0] == ("metrics", 9464)
+    assert ("thread", "consumer-release-requested") in events[1:]
+
+
+def test_main_wires_one_metrics_object_to_the_listener_the_handler_and_the_consumer(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    served = []
+    monkeypatch.setattr(main, "start_metrics_server", lambda port, registry: served.append(registry))
+
+    class FakeCandidateHandler:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def handle(self, release_id):
+            captured["release_id"] = release_id
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", FakeCandidateHandler)
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None, kwargs=kw))
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    assert isinstance(captured["observer"], TopologyMetrics)
+    assert served == [captured["observer"].registry]
+    assert _RecordingConsumer.instances[0].observer is captured["observer"]
+
+
+def test_main_exits_non_zero_when_the_metrics_port_is_taken(monkeypatch, caplog):
+    _common_monkeypatches(monkeypatch)
+
+    def taken(port, registry):
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(main, "start_metrics_server", taken)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.main()
+    assert exited.value.code == 1
+    assert _RecordingConsumer.instances == []
+    assert any(r.getMessage() == "cannot listen on the metrics port" and r.port == 9464 for r in caplog.records)
 
 
 def test_main_consumer_group_correct(monkeypatch):
@@ -185,6 +261,9 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
     assert captured["system_relations"] is _SYSTEM_RELATIONS["postgres"]
+    assert isinstance(captured["clock"], MonotonicClock)
+    assert isinstance(captured["memory"], ResidentMemoryProbe)
+    assert captured["progress"] == candidate_consumer.refresh_heartbeat
 
 
 def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
