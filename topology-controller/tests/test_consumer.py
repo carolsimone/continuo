@@ -103,8 +103,7 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
     failures = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert failures, "expected an ERROR log on dispatch failure"
     rec = failures[-1]
-    # The rendered message (what a plain `%(message)s` format prints) must carry
-    # the underlying cause and the message id.
+    # The rendered message must carry the underlying cause and the message id.
     rendered = rec.getMessage()
     assert "SignatureDoesNotMatch calling GetObject" in rendered
     assert "9-0" in rendered
@@ -118,6 +117,15 @@ def _consumer(redis_mock, handler):
         message_handler=handler,
         service_name=_SERVICE_NAME,
     )
+
+
+def test_refresh_heartbeat_moves_the_heartbeat_forward():
+    c = _consumer(MagicMock(), lambda f: None)
+    c.last_heartbeat = 0.0
+
+    c.refresh_heartbeat()
+
+    assert c.last_heartbeat > 0.0
 
 
 def test_reclaim_redispatches_pending_message_and_acks():
@@ -1104,3 +1112,125 @@ def test_consumer_stops_when_the_prefixed_key_loses_its_group(monkeypatch):
 
     with pytest.raises(redis_exceptions.ResponseError, match="NOGROUP"):
         c.start()
+
+
+# --- the observer ------------------------------------------------------------
+
+
+class _RecordingObserver:
+    """A ConsumerObserver that records what it is told, in order, and how long
+    each handler call took."""
+
+    def __init__(self):
+        self.calls = []
+        self.seconds = []
+
+    def handled(self, stream, group, result, seconds):
+        assert (stream, group) == (_STREAM, _GROUP)
+        self.calls.append(("handled", result))
+        self.seconds.append(seconds)
+
+    def dead_lettered(self, stream, group, kind):
+        assert (stream, group) == (_STREAM, _GROUP)
+        self.calls.append(("dead_lettered", kind))
+
+    def paused(self, stream, group):
+        assert (stream, group) == (_STREAM, _GROUP)
+        self.calls.append(("paused",))
+
+
+def _observed(handler, redis_mock, observer):
+    return Consumer(redis_mock, _STREAM, _GROUP, handler, service_name=_SERVICE_NAME, observer=observer)
+
+
+def _raising_in_turn(*excs):
+    pending = list(excs)
+
+    def handler(fields):
+        raise pending.pop(0)
+
+    return handler
+
+
+def test_the_observer_sees_each_result_pause_and_dead_letter(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    observer = _RecordingObserver()
+    handler = _raising_in_turn(redis_exceptions.ConnectionError("down"), PermanentMessageError("bad"))
+    _observed(handler, r, observer)._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert observer.calls == [("handled", "infrastructure"), ("paused",), ("handled", "permanent"),
+                              ("dead_lettered", "permanent")]
+
+
+def test_the_observer_sees_a_handled_message_as_ok():
+    r = MagicMock()
+    observer = _RecordingObserver()
+    _observed(lambda fields: None, r, observer)._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert observer.calls == [("handled", "ok")]
+
+
+def test_the_observer_sees_a_transient_failure_that_is_retried_as_transient_with_no_dead_letter(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    observer = _RecordingObserver()
+    _observed(_raising(RuntimeError("flaky")), r, observer)._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert observer.calls == [("handled", "transient")]
+
+
+def test_the_observer_sees_the_dead_letter_of_an_exhausted_transient_failure(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 5}]
+    observer = _RecordingObserver()
+    _observed(_raising(RuntimeError("flaky")), r, observer)._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert observer.calls == [("handled", "transient"), ("dead_lettered", "transient_exhausted")]
+
+
+def test_the_observer_hears_of_a_dead_letter_once_its_write_succeeded_and_before_the_ack(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    events = []
+    observer = _RecordingObserver()
+    observer.dead_lettered = lambda stream, group, kind: events.append("dead_lettered")
+    writes = iter([redis_exceptions.ConnectionError("down"), b"9-0"])
+
+    def xadd(*_a, **_kw):
+        outcome = next(writes)
+        events.append("xadd_failed" if isinstance(outcome, Exception) else "xadd")
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    r.xadd.side_effect = xadd
+    r.xack.side_effect = lambda *_a, **_kw: events.append("xack")
+    _observed(_raising(PermanentMessageError("bad")), r, observer)._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert events == ["xadd_failed", "xadd", "dead_lettered", "xack"]
+
+
+def test_the_observer_gets_the_seconds_each_handler_call_took(monkeypatch):
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    observer = _RecordingObserver()
+    consumer = _observed(_raising_in_turn(RuntimeError("flaky")), r, observer)
+    # Patched after construction, which reads the clock for the heartbeat.
+    ticks = iter([10.0, 12.5, 20.0, 20.25])
+    monkeypatch.setattr(
+        consumer_mod, "time", SimpleNamespace(sleep=lambda _s: None, monotonic=lambda: next(ticks)),
+    )
+    consumer._dispatch(_KEY, b"1-0", {b"k": b"v"})
+    assert observer.seconds == [2.5]
+    consumer._message_handler = lambda fields: None
+    consumer._dispatch(_KEY, b"2-0", {b"k": b"v"})
+    assert observer.seconds == [2.5, 0.25]
+
+
+def test_a_message_that_never_reaches_the_handler_is_not_observed():
+    r = MagicMock()
+    observer = _RecordingObserver()
+    consumer = _observed(MagicMock(), r, observer)
+    consumer._dispatch(_KEY, b"8-0", {})
+    consumer._dispatch(_KEY, b"9-0", {b"k": b"v", b"redrive_group": b"other"})
+    assert observer.calls == []

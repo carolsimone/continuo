@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
@@ -141,6 +142,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
+		d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, false, r.StageDuration(pipeline.StatusCompiling))
 		recordTerminalTelemetry(ctx, d, r, 0)
 		return nil
 	}
@@ -175,6 +177,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	d.Telemetry.ReleaseCompileCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusCompiling))
 	d.Telemetry.ReleaseParseRequested(ctx, in.ReleaseID)
 	return nil
 }

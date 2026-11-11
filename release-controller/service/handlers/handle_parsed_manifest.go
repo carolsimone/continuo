@@ -184,7 +184,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, false, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, false, r.StageDuration(pipeline.StatusParsing))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
@@ -318,11 +318,12 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		// Emit the full lifecycle span sequence (parsed → checked-0-nodes →
-		// promoted) so this no-validation-needed promotion is observable the same
-		// way a normal pass is, just with a zero-node validation.
-		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
-		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
+		// Record the parse, a zero-node validation and the promotion, as a
+		// normal pass does. The validation call is made, and the telemetry
+		// adapter observes no validating sample for a release that validates
+		// no node.
+		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusParsing))
+		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, r.StageDuration(pipeline.StatusValidating))
 		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
@@ -379,7 +380,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusParsing))
 	d.Telemetry.ReleaseValidationRequested(ctx, in.ReleaseID, len(validationIDs))
 	return nil
 }
@@ -563,7 +564,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, r.StageDuration(pipeline.StatusParsing))
 	d.Telemetry.ReleaseSeedBuildRequested(ctx, releaseID, len(seedIDs))
 	return nil
 }
@@ -571,9 +572,9 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v2. The full parse/checked/promoted telemetry span is
-// emitted (with a zero-node validation) so a bootstrap is observable like any
-// other promotion.
+// release.promoted:v2. It calls Telemetry for the parse, a zero-node validation
+// and the promotion, as any other promotion does (the adapter observes no
+// validating sample for a zero-node validation).
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {
 	// TransitionToValidating records the reference to the candidate topology
 	// artifact and satisfies promoteToProduction's Validating precondition; no
@@ -590,10 +591,11 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	// okCount is 0: a bootstrap validates no nodes (consistent with the
-	// no-validation promote path's zero-node validation span).
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, 0)
+	// okCount and failCount are 0: a bootstrap validates no nodes, as on the
+	// no-validation promote path, and the telemetry adapter observes no
+	// validating sample for it.
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, r.StageDuration(pipeline.StatusParsing))
+	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, r.StageDuration(pipeline.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, len(topo))
 	return nil
 }
@@ -724,7 +726,7 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 	}
 	// The parse itself succeeded; the run is failed because what it proposes
 	// cannot be measured, not on a malformed artifact.
-	d.Telemetry.ReleaseParseCompleted(ctx, r.ID(), true, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, r.ID(), true, r.StageDuration(pipeline.StatusParsing))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
@@ -760,7 +762,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 		return fmt.Errorf("commit: %w", err)
 	}
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, r.StageDuration(pipeline.StatusParsing))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
@@ -895,7 +897,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 	}
 	// The parse itself succeeded; the release is rejected on a topology
 	// invariant, not on a malformed artifact.
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, r.StageDuration(pipeline.StatusParsing))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }

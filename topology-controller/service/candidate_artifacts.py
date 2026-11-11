@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from domain.model import ManifestNode, NodeRegistryEntry
 from service.ports import CandidateSpecUploaderPort, CandidateSqlUploaderPort
+from service.release_timings import ReleaseTimings, Stage
 from service.rewriter import rewrite_to_candidate_schema
 
 
@@ -25,11 +26,15 @@ class RewriteContext:
     dialect is the sqlglot dialect of the warehouse this install targets,
     resolved once at boot by the composition root; it decides the syntax of
     every SQL string a builder emits.
+
+    timings is the release's stage record: a builder times its rewrite and its
+    upload into it, one run of each stage per node.
     """
     release_id: str
     registry: dict[tuple[str, str], NodeRegistryEntry]
     candidate_schema: str
     dialect: str
+    timings: ReleaseTimings
 
 
 class CandidateArtifactBuilder(ABC):
@@ -50,16 +55,18 @@ class DbtSqlArtifactBuilder(CandidateArtifactBuilder):
         self._uploader = uploader
 
     def build(self, node: ManifestNode, ctx: RewriteContext) -> None:
-        candidate_sql = rewrite_to_candidate_schema(
-            node.candidate_sql, ctx.registry, ctx.candidate_schema,
-            self_schema=node.schema_name, self_table=node.table_name,
-            dialect=ctx.dialect,
-        )
-        self._uploader.upload(
-            release_id=ctx.release_id,
-            unique_id=node.unique_id,
-            sql=candidate_sql,
-        )
+        with ctx.timings.stage(Stage.REWRITE, sample_memory=False, nodes=1):
+            candidate_sql = rewrite_to_candidate_schema(
+                node.candidate_sql, ctx.registry, ctx.candidate_schema,
+                self_schema=node.schema_name, self_table=node.table_name,
+                dialect=ctx.dialect,
+            )
+        with ctx.timings.stage(Stage.CANDIDATE_UPLOAD, sample_memory=False, nodes=1):
+            self._uploader.upload(
+                release_id=ctx.release_id,
+                unique_id=node.unique_id,
+                sql=candidate_sql,
+            )
 
 
 class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
@@ -76,14 +83,15 @@ class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
         self._uploader = uploader
 
     def build(self, node: ManifestNode, ctx: RewriteContext) -> None:
-        reads = [
-            rewrite_to_candidate_schema(
-                sql, ctx.registry, ctx.candidate_schema,
-                self_schema=node.schema_name, self_table=node.table_name,
-                dialect=ctx.dialect,
-            )
-            for sql in node.dependency_sqls
-        ]
+        with ctx.timings.stage(Stage.REWRITE, sample_memory=False, nodes=1):
+            reads = [
+                rewrite_to_candidate_schema(
+                    sql, ctx.registry, ctx.candidate_schema,
+                    self_schema=node.schema_name, self_table=node.table_name,
+                    dialect=ctx.dialect,
+                )
+                for sql in node.dependency_sqls
+            ]
         spec = {
             "reads": reads,
             "output_columns": node.output_columns,
@@ -94,8 +102,9 @@ class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
             # warehouse reference. The runner range-fetches its header and
             # checks it against output_columns before building the table.
             spec["csv_source"] = node.csv_source
-        self._uploader.upload(
-            release_id=ctx.release_id,
-            unique_id=node.unique_id,
-            spec=spec,
-        )
+        with ctx.timings.stage(Stage.CANDIDATE_UPLOAD, sample_memory=False, nodes=1):
+            self._uploader.upload(
+                release_id=ctx.release_id,
+                unique_id=node.unique_id,
+                spec=spec,
+            )

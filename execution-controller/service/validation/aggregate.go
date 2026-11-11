@@ -218,6 +218,9 @@ func emitAggregateIfComplete(
 		if fc := r.FailedContainer(); fc != "" { // omitempty: only the compile leg ever sets this
 			node["failed_container"] = fc
 		}
+		if took, ok := r.RunDuration(); ok { // omitempty: absent for a node whose Job never started
+			node["duration_ms"] = took.Milliseconds()
+		}
 		perNode = append(perNode, node)
 		if r.Outcome() != "ok" {
 			aggregate = "failed"
@@ -279,8 +282,11 @@ func aggregatePayload(mode model.Mode, releaseID string, perNode []map[string]an
 // perNodeResultPayload builds one settled node's row on the shared
 // validation.result:v1 stream. "kind":"node" distinguishes it from the
 // terminal "kind":"complete" aggregate row the same stream also carries. URIs
-// are omitted when empty (omitempty parity with the aggregate event).
-func perNodeResultPayload(releaseID, nodeID, status, dbtLogURI, runResultsURI string) map[string]any {
+// are omitted when empty (omitempty parity with the aggregate event), and so is
+// duration_ms when it is 0: a node that never ran, or a skipped one, has no run
+// time to report, and a node whose measured run is under a millisecond has a
+// value that rounds down to 0.
+func perNodeResultPayload(releaseID, nodeID, status, dbtLogURI, runResultsURI string, durationMS int64) map[string]any {
 	p := map[string]any{
 		"kind":       "node",
 		"release_id": releaseID,
@@ -293,6 +299,9 @@ func perNodeResultPayload(releaseID, nodeID, status, dbtLogURI, runResultsURI st
 	}
 	if runResultsURI != "" {
 		p["run_results_uri"] = runResultsURI
+	}
+	if durationMS > 0 {
+		p["duration_ms"] = durationMS
 	}
 	return p
 }

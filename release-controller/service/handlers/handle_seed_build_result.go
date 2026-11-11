@@ -135,7 +135,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, 0)
+	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, r.StageDuration(pipeline.StatusSeedBuilding))
 	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
@@ -204,8 +204,8 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
-		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
+		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusSeedBuilding))
+		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, r.StageDuration(pipeline.StatusValidating))
 		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
@@ -241,7 +241,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
+	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, r.StageDuration(pipeline.StatusSeedBuilding))
 	d.Telemetry.ReleaseValidationRequested(ctx, in.ReleaseID, len(validationIDs))
 	return nil
 }

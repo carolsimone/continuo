@@ -3,6 +3,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Protocol, runtime_checkable
 
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -64,6 +65,39 @@ _PAUSE_SLICE_S = 5.0
 LOG_DEAD_LETTERED = "Message dead-lettered — ACKing to drop from PEL"
 
 
+@runtime_checkable
+class ConsumerObserver(Protocol):
+    """What the consumer reports about the messages it handles, for an adapter
+    that turns it into metrics. Only adapters use it: the consumer is itself an
+    adapter, so the protocol stays here."""
+
+    def handled(self, stream: str, group: str, result: str, seconds: float) -> None:
+        """One handler call ended: result is "ok" or the name of its ErrorClass,
+        seconds the time the call took."""
+        ...
+
+    def dead_lettered(self, stream: str, group: str, kind: str) -> None:
+        """A message's dead letter was written, kind being its DeadLetterKind."""
+        ...
+
+    def paused(self, stream: str, group: str) -> None:
+        """The consumer began waiting out an infrastructure error."""
+        ...
+
+
+class _NoConsumerObserver:
+    """The observer of a consumer nobody measures: it ignores everything."""
+
+    def handled(self, stream: str, group: str, result: str, seconds: float) -> None:
+        pass
+
+    def dead_lettered(self, stream: str, group: str, kind: str) -> None:
+        pass
+
+    def paused(self, stream: str, group: str) -> None:
+        pass
+
+
 class Consumer:
     def __init__(
         self,
@@ -74,6 +108,7 @@ class Consumer:
         *,
         service_name: str,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        observer: ConsumerObserver = _NoConsumerObserver(),
     ) -> None:
         # The name is the producer of every dead letter this consumer writes;
         # refuse to run unnamed rather than stamp an empty producer.
@@ -92,6 +127,7 @@ class Consumer:
         # Names this service as the producer of the dead letters it writes.
         self._service = service_name
         self._now = clock
+        self._observer = observer
         # The messages of the batch being read or the page being claimed that
         # have not settled yet, by (key, text id), in delivery order. The key is
         # the one the message came from. Settling means
@@ -102,6 +138,12 @@ class Consumer:
         # failure) so a health check can tell "retrying through a Redis
         # outage" (heartbeat keeps advancing) apart from "the loop stopped
         # running" (heartbeat goes and stays stale) — see adapters/health.
+        self.last_heartbeat = time.monotonic()
+
+    def refresh_heartbeat(self) -> None:
+        """Mark the consumer alive now. A message handler calls it between the
+        units of a long message, so the health check sees a handler that is
+        working through its nodes as running, and one that stopped as stale."""
         self.last_heartbeat = time.monotonic()
 
     def _await_group(self) -> None:
@@ -213,10 +255,12 @@ class Consumer:
         text_id = as_text(msg_id)
         pauses = 0
         while True:
+            started = time.monotonic()
             try:
                 self._process_message(msg_id, msg_fields)
             except Exception as exc:
                 cls = classify(exc)
+                self._observer.handled(self._stream, self._group, cls.value, time.monotonic() - started)
                 if cls is ErrorClass.INFRASTRUCTURE:
                     pauses += 1
                     delay = self._backoff(pauses)
@@ -224,6 +268,7 @@ class Consumer:
                         "Infrastructure error — pausing consumer: message_id=%s pause=%d retry_in=%.0fs: %s",
                         text_id, pauses, delay, exc,
                     )
+                    self._observer.paused(self._stream, self._group)
                     self._pause(msg_id, delay)
                     continue
                 deliveries = self._deliveries(key, msg_id)
@@ -237,18 +282,18 @@ class Consumer:
                         key, msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
                     )
                 else:
-                    # Render the cause into the message (and attach the
-                    # traceback via exc_info) rather than only into `extra`:
-                    # the process log format is plain `%(message)s`, so an
-                    # `extra`-only detail is invisible and a fatal misconfig
-                    # (e.g. an S3 SignatureDoesNotMatch) reads as an opaque
-                    # failure that repeats on every redelivery until the
-                    # message is dead-lettered.
+                    # Render the cause into the message and attach the
+                    # traceback via exc_info, so the line names the failure on
+                    # its own: a fatal misconfig (e.g. an S3
+                    # SignatureDoesNotMatch) repeats on every redelivery until
+                    # the message is dead-lettered, and a reader of one line
+                    # must see why.
                     logger.exception(
                         "Failed to process message %s, not ACKing (delivery %d of %d): %s",
                         text_id, deliveries, _MAX_DELIVERIES, exc,
                     )
                 return
+            self._observer.handled(self._stream, self._group, "ok", time.monotonic() - started)
             if self._ack(key, msg_id):
                 logger.info("Message ACKed", extra={"msg_id": text_id})
             return
@@ -344,6 +389,7 @@ class Consumer:
                 self._pause(msg_id, delay)
         logger.error("%s: stream=%s group=%s message_id=%s failure_kind=%s deliveries=%d dead_letter_event_id=%s error=%s",
                      LOG_DEAD_LETTERED, self._stream, self._group, text_id, kind, deliveries, fields["event_id"], error)
+        self._observer.dead_lettered(self._stream, self._group, kind.value)
         self._ack(key, msg_id)
 
     def _consume_once(self) -> None:
