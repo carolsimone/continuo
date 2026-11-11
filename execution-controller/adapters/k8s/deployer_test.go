@@ -227,10 +227,12 @@ func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
 		NodeType:    string(pkg_model.NodeTypePythonApi),
 		ImageTag:    "ghcr.io/acme/py:1",
 		SecretRef:   "continuo-api-fx",
+		ContentHash: "sha256:91d4c0",
 	}
 
 	params := jobParamsFromSpec(spec, pkg_model.NodeTypePythonApi, "default")
 
+	assert.Equal(t, "sha256:91d4c0", params.ContentHash)
 	assert.Equal(t, "continuo-api-fx", params.SecretRef)
 	assert.Equal(t, "ghcr.io/acme/py:1", params.ImageTag)
 	assert.Equal(t, "default", params.Namespace)

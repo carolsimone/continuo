@@ -13,7 +13,7 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	c := command.DeployTask{
 		TaskID: "t1", RunID: "s1", ScheduleName: "daily", ServiceName: "dbt",
 		SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders",
-		NodeType: "dbt-model", ImageTag: "sha-abc", Attempt: 2,
+		NodeType: "dbt-model", ImageTag: "sha-abc", Attempt: 2, ContentHash: "sha256:91d4c0",
 	}
 	spec := c.ToJobSpec()
 	assert.Equal(t, "dbt-public-orders", spec.JobName)
@@ -25,6 +25,7 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	assert.Equal(t, "orders", spec.TableName)
 	assert.Equal(t, "dbt-model", spec.NodeType)
 	assert.Equal(t, "sha-abc", spec.ImageTag)
+	assert.Equal(t, "sha256:91d4c0", spec.ContentHash)
 }
 
 func TestValidationDeployTask_SatisfiesCommand(t *testing.T) {
