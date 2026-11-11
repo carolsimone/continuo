@@ -799,6 +799,13 @@ services:
   # 30-day expiry lifecycle rules. `mc ilm import` replaces the full rule set,
   # so re-running the service is idempotent. Services that read or write S3 at
   # startup depend on this completing, not merely on minio being healthy.
+  #
+  # There is no age rule on code-bundles/ or tenants/: they hold the code bundle
+  # and topology artifact of the live release, which external consumers read
+  # (docs/read-contract.md), and an age rule cannot tell a live release from an
+  # old one. release-controller deletes a release's objects when its retention
+  # prunes the release, and never for current_prod or a service_prod release.
+  # scripts/check-read-retention.sh fails a rule on either prefix.
   minio-init:
     image: ghcr.io/carolsimone/continuo-mc:2025.7.21
     depends_on:
@@ -814,8 +821,7 @@ services:
         {
           "Rules": [
             {"ID": "expire-candidate-sql-30d", "Filter": {"Prefix": "candidate-sql/"}, "Status": "Enabled", "Expiration": {"Days": 30}},
-            {"ID": "expire-logs-30d", "Filter": {"Prefix": "logs/"}, "Status": "Enabled", "Expiration": {"Days": 30}},
-            {"ID": "expire-code-bundles-30d", "Filter": {"Prefix": "code-bundles/"}, "Status": "Enabled", "Expiration": {"Days": 30}}
+            {"ID": "expire-logs-30d", "Filter": {"Prefix": "logs/"}, "Status": "Enabled", "Expiration": {"Days": 30}}
           ]
         }
         EOF

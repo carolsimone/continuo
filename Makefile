@@ -384,6 +384,8 @@ guards:
 	bash scripts/check-dev-dockerfile-nonroot.sh
 	bash scripts/check-standalone-modules.sh
 	bash scripts/check-generated-streams.sh
+	bash scripts/check-read-retention.sh
+	bash scripts/check-read-retention_test.sh
 	bash scripts/deploy/last-deployed-commit_test.sh
 	bash scripts/install-test/changelog-check_test.sh
 	bash scripts/release/open-site-bump-pr_test.sh
