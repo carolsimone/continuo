@@ -546,12 +546,15 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //   - when params.SourceOverlayURI is set, initContainer "overlay": the
 //     s3-sidecar image fetches a verification run's proposed source files
 //     into /shared/overlay before any other team-image init container runs.
+//   - initContainer "extras-script": the s3-sidecar image copies
+//     /compile_extras.py into /shared for the team image to run.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
 //     the overlay ran, the command first stages the project into its own
 //     workdir emptyDir with /shared/overlay laid over it and compiles there,
-//     reading the manifest back from that copy.
+//     reading the manifest back from that copy. It then runs the extras script
+//     against that manifest, writing /shared/compile-extras.json.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
@@ -562,8 +565,9 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
 //     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
-//     MANIFEST_S3_URI + the S3 credential envs, plus the four PARSE_* envs
-//     when the parse-export leg ran.
+//     MANIFEST_S3_URI + COMPILE_EXTRAS_LOCAL_PATH + COMPILE_EXTRAS_S3_URI +
+//     the S3 credential envs, plus the four PARSE_* envs when the parse-export
+//     leg ran.
 //
 // The mode=compile label names its leg for operators; the observer routes its
 // result by the deployment row's mode. release-id/node-id annotations carry
@@ -635,13 +639,24 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     emptyDir of its own at /work, so the overlay is the project under test
 //     throughout the pod, not just in compile, and no container ever writes
 //     into the team image's own project directory;
+//   - an initContainer "extras-script" using the shared s3-sidecar image that
+//     copies /compile_extras.py into /shared/compile_extras.py, so the team
+//     image runs the script with its own Python (the interpreter that runs
+//     dbt) without containing it;
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that, when the overlay ran, first stages the project into its
 //     workdir with /shared/overlay laid over it, then runs the service's
 //     resolved compile command there, copies the manifest dbt wrote in that
 //     copy into /shared/manifest.json, and chmods it 644 so it is
 //     world-readable regardless of the team image's uid/umask (the upload
-//     container below runs as a fixed, different uid);
+//     container below runs as a fixed, different uid). The same command then
+//     runs /shared/compile_extras.py against that manifest and the dbt
+//     project, writing /shared/compile-extras.json (chmod 644 likewise). The
+//     project directory is taken as the directory two levels above the
+//     compiled manifest path: that holds for every shipped config
+//     (/project/target/manifest.json) and, under the overlay, for the staged
+//     copy of it. A custom manifest_path deeper than target/ makes the script
+//     fail by naming the missing dbt_project.yml;
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", that (each staging the project into
 //     its own workdir first, when the overlay is set) export and rehearse the
@@ -649,14 +664,15 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     contexts respectively (see buildParseExportCommand) into
 //     /shared/parse/<ctx>/partial_parse.msgpack;
 //     when CandidateSchema is empty the parse-export leg is disabled and the
-//     pod keeps the two-container layout (compile initContainer + upload main
-//     container);
+//     pod keeps the short layout (extras-script and compile initContainers +
+//     upload main container);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
-//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the
-//     execution-controller env, plus the four PARSE_* envs (local paths +
-//     S3 destinations) when the parse-export leg ran.
+//     MANIFEST_S3_URI, COMPILE_EXTRAS_LOCAL_PATH, COMPILE_EXTRAS_S3_URI (the
+//     compile-extras.json beside the manifest), and the S3 credential envs
+//     forwarded from the execution-controller env, plus the four PARSE_* envs
+//     (local paths + S3 destinations) when the parse-export leg ran.
 func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string, parseArgv []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
@@ -681,11 +697,18 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 
 	mount := sharedVolumeMount()
 
+	extrasURI, err := compileExtrasURI(p.ManifestS3URI)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
+
 	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
 	// intentionally omitted (see s3CredEnvVars).
 	uploadEnvVars := append([]corev1.EnvVar{
 		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
+		{Name: "COMPILE_EXTRAS_LOCAL_PATH", Value: "/shared/compile-extras.json"},
+		{Name: "COMPILE_EXTRAS_S3_URI", Value: extrasURI},
 	}, s3CredEnvVars()...)
 
 	// staged is true for a verification run verifying a proposed fix. Every
@@ -703,7 +726,8 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	}
 	compileCmd := overlayPrefix + shellJoin(compileArgv) +
 		" && cp " + shellQuote(compiledManifestPath) + " /shared/manifest.json" +
-		" && chmod 644 /shared/manifest.json"
+		" && chmod 644 /shared/manifest.json" +
+		compileExtrasCommand(path.Dir(path.Dir(compiledManifestPath)), p.ServiceName, p.ReleaseID)
 	var initContainers []corev1.Container
 	if staged {
 		// The overlay fetcher lays the proposed files into /shared/overlay,
@@ -722,6 +746,13 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		})
 	}
 	initContainers = append(initContainers, corev1.Container{
+		Name:            "extras-script",
+		Image:           uploadImage,
+		ImagePullPolicy: validationImagePullPolicy(),
+		Command:         []string{"cp", "/compile_extras.py", "/shared/compile_extras.py"},
+		VolumeMounts:    []corev1.VolumeMount{mount},
+		SecurityContext: continuoImageSecurityContext(),
+	}, corev1.Container{
 		Name:            "compile",
 		Image:           teamImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
@@ -787,6 +818,40 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	}
 
 	return spec, nil
+}
+
+// The compile Job uploads the manifest as manifest.json; the compile extras
+// are uploaded beside it as compile-extras.json.
+const (
+	compileManifestSegment = "/manifest.json"
+	compileExtrasSegment   = "/compile-extras.json"
+)
+
+// compileExtrasURI returns the S3 URI of the compile extras: the manifest URI
+// with its last segment replaced. A URI that does not end in /manifest.json is
+// a permanent error, since the extras could not be placed beside the manifest.
+func compileExtrasURI(manifestURI string) (string, error) {
+	base, ok := strings.CutSuffix(manifestURI, compileManifestSegment)
+	if !ok {
+		return "", fmt.Errorf("%w: compile manifest URI %q does not end in %s",
+			events.ErrPermanent, manifestURI, compileManifestSegment)
+	}
+	return base + compileExtrasSegment, nil
+}
+
+// compileExtrasCommand returns the shell text appended to the compile command
+// after the manifest hand-off. It refuses a team image without python3 on
+// PATH, runs the script copied into /shared by the extras-script container
+// against the compiled manifest and the dbt project, and makes its output
+// world-readable for the upload container, which runs as another uid.
+func compileExtrasCommand(projectDir, service, releaseID string) string {
+	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
+		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json" +
+		" --project-dir " + shellQuote(projectDir) +
+		" --service " + shellQuote(service) +
+		" --release-id " + shellQuote(releaseID) +
+		" --out /shared/compile-extras.json" +
+		" && chmod 644 /shared/compile-extras.json"
 }
 
 // buildPodSpec constructs the PodSpec for the Job of one dbt attempt.

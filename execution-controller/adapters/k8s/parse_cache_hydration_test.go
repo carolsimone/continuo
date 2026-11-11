@@ -245,13 +245,16 @@ func TestWarehouseSecretEnvFromDriftGuard(t *testing.T) {
 	compileSpec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json",
 		[]string{"dbt", "parse"}, "target/partial_parse.msgpack")
 	require.NoError(t, err)
-	require.Len(t, compileSpec.InitContainers, 3, "expected compile + parse-prod + parse-candidate")
+	require.Len(t, compileSpec.InitContainers, 4, "expected extras-script + compile + parse-prod + parse-candidate")
 
 	containers := map[string]corev1.Container{
 		"run team container":  runSpec.Containers[0],
 		"seed team container": seedSpec.Containers[0],
 	}
 	for _, c := range compileSpec.InitContainers {
+		if c.Name == "extras-script" {
+			continue // copies a script out of the s3-sidecar image, runs no dbt and gets no warehouse Secret
+		}
 		containers["compile initContainer "+c.Name] = c
 	}
 	require.Len(t, containers, 5)

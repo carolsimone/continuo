@@ -107,12 +107,13 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateCompileJob(context.Background(), ValidationJobParams{
 		JobName: "j4", ReleaseID: "rel1", NodeID: "customname", ServiceName: "customname",
-		ImageTag: "v1", ManifestS3URI: "s3://b/k", Namespace: "default",
+		ImageTag: "v1", ManifestS3URI: "s3://b/customname/rel1/manifest.json", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j4")
-	line := job.Spec.Template.Spec.InitContainers[0].Command[2]
+	line := job.Spec.Template.Spec.InitContainers[1].Command[2]
 	assert.Equal(t,
-		"customname-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json && chmod 644 /shared/manifest.json",
+		"customname-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json && chmod 644 /shared/manifest.json"+
+			wantExtrasSuffix("/project", "customname", "rel1"),
 		line, "manifest path with a space must be shell-quoted")
 }
 
@@ -134,12 +135,13 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 	c := newDialectTestClient(t, "")
 	require.NoError(t, c.CreateCompileJob(context.Background(), ValidationJobParams{
 		JobName: "j5", ReleaseID: "rel1", NodeID: "svc", ServiceName: "svc",
-		ImageTag: "v1", ManifestS3URI: "s3://b/k", Namespace: "default",
+		ImageTag: "v1", ManifestS3URI: "s3://b/svc/rel1/manifest.json", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j5")
 	assert.Equal(t,
-		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json && chmod 644 /shared/manifest.json",
-		job.Spec.Template.Spec.InitContainers[0].Command[2],
+		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json && chmod 644 /shared/manifest.json"+
+			wantExtrasSuffix("/project", "svc", "rel1"),
+		job.Spec.Template.Spec.InitContainers[1].Command[2],
 		"no config: compile line must be byte-identical to the plain-dbt form")
 }
 

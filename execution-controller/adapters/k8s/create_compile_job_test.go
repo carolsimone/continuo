@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -22,14 +23,14 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	spec := job.Spec.Template.Spec
-	require.Len(t, spec.InitContainers, 1)
-	assert.Equal(t, "carolsimone/core:abc123", spec.InitContainers[0].Image) // team image
-	assert.Contains(t, spec.InitContainers[0].Command[2], "dbt compile")
-	assert.Contains(t, spec.InitContainers[0].Command[2], "/shared/manifest.json")
+	require.Len(t, spec.InitContainers, 2)
+	assert.Equal(t, "carolsimone/core:abc123", spec.InitContainers[1].Image) // team image
+	assert.Contains(t, spec.InitContainers[1].Command[2], "dbt compile")
+	assert.Contains(t, spec.InitContainers[1].Command[2], "/shared/manifest.json")
 	// handoff file must be made world-readable: the init container runs the
 	// team image (arbitrary uid/umask) but the upload container is forced to
 	// runAsUser 65532, so a restrictive-mode file would EACCES on upload.
-	assert.Contains(t, spec.InitContainers[0].Command[2], "&& chmod 644 /shared/manifest.json")
+	assert.Contains(t, spec.InitContainers[1].Command[2], "&& chmod 644 /shared/manifest.json")
 	assert.Equal(t, "carolsimone/s3-sidecar:latest", spec.Containers[0].Image) // upload image
 	assert.Equal(t, []string{"python", "/compile_uploader.py"}, spec.Containers[0].Command)
 	assert.Equal(t, "/shared/manifest.json", envByName(spec, "COMPILE_MANIFEST_PATH"))
@@ -108,10 +109,10 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	for i, ic := range spec.InitContainers {
 		names[i] = ic.Name
 	}
-	assert.Equal(t, []string{"compile", "parse-prod", "parse-candidate"}, names)
+	assert.Equal(t, []string{"extras-script", "compile", "parse-prod", "parse-candidate"}, names)
 
-	prod := spec.InitContainers[1]
-	cand := spec.InitContainers[2]
+	prod := spec.InitContainers[2]
+	cand := spec.InitContainers[3]
 
 	assert.Equal(t, wantWarehouseEnvFrom(), prod.EnvFrom,
 		"parse-prod connection comes from the warehouse Secret alone")
@@ -149,8 +150,8 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 
 // TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty verifies that
 // when CandidateSchema is empty the parse-export leg is disabled and the pod
-// keeps the two-container layout: a single "compile" initContainer and an
-// upload container carrying no PARSE_* env.
+// keeps the short layout: the "extras-script" and "compile" initContainers and
+// an upload container carrying no PARSE_* env.
 func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
@@ -167,10 +168,11 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	for i, ic := range spec.InitContainers {
 		names[i] = ic.Name
 	}
-	assert.Equal(t, []string{"compile"}, names)
+	assert.Equal(t, []string{"extras-script", "compile"}, names)
 
 	require.Len(t, spec.Containers, 1)
-	assert.Len(t, spec.Containers[0].Env, 6, "upload env must be the pre-feature 6 vars only")
+	assert.Len(t, spec.Containers[0].Env, 8,
+		"upload env is the manifest pair, the compile extras pair and the S3 credential vars")
 	for _, e := range spec.Containers[0].Env {
 		assert.False(t, strings.HasPrefix(e.Name, "PARSE_"), "no PARSE_* env when CandidateSchema is empty, got %s", e.Name)
 	}
@@ -197,7 +199,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 
-	require.Len(t, spec.InitContainers, 2)
+	require.Len(t, spec.InitContainers, 3)
 	overlay := spec.InitContainers[0]
 	assert.Equal(t, "overlay", overlay.Name)
 	assert.Equal(t, "carolsimone/s3-sidecar:latest", overlay.Image)
@@ -206,12 +208,19 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
 	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
 
-	compile := spec.InitContainers[1]
+	extras := spec.InitContainers[1]
+	assert.Equal(t, "extras-script", extras.Name)
+	require.Len(t, extras.VolumeMounts, 1)
+	assert.Equal(t, "shared", extras.VolumeMounts[0].Name)
+
+	compile := spec.InitContainers[2]
 	assert.Equal(t, "compile", compile.Name)
 	assert.Equal(t, expectedStagePrefix+
 		"dbt compile --profiles-dir /project"+
 		" && cp /work/project/target/manifest.json /shared/manifest.json"+
-		" && chmod 644 /shared/manifest.json", compile.Command[2])
+		" && chmod 644 /shared/manifest.json"+
+		wantExtrasSuffix("/work/project", "core", "verify-rel-1-svc-a1"), compile.Command[2],
+		"the extras script reads the staged project, two directories above the staged manifest")
 
 	mounts := make([]string, len(compile.VolumeMounts))
 	for i, m := range compile.VolumeMounts {
@@ -254,10 +263,10 @@ func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T)
 	for i, ic := range spec.InitContainers {
 		names[i] = ic.Name
 	}
-	require.Equal(t, []string{"overlay", "compile", "parse-prod", "parse-candidate"}, names)
+	require.Equal(t, []string{"overlay", "extras-script", "compile", "parse-prod", "parse-candidate"}, names)
 
-	parseProd := spec.InitContainers[2]
-	parseCandidate := spec.InitContainers[3]
+	parseProd := spec.InitContainers[3]
+	parseCandidate := spec.InitContainers[4]
 	require.Len(t, parseProd.Command, 3)
 	require.Len(t, parseCandidate.Command, 3)
 	assert.True(t, strings.HasPrefix(parseProd.Command[2], expectedStagePrefix), parseProd.Command[2])
@@ -273,7 +282,11 @@ func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T)
 	}
 	assert.Equal(t, []string{"shared", "workdir-compile", "workdir-parse-prod", "workdir-parse-candidate"}, volumes,
 		"each staging container needs its own workdir so dbt output does not leak between them")
-	for _, ic := range spec.InitContainers[1:] {
+	for _, ic := range spec.InitContainers[:2] {
+		require.Len(t, ic.VolumeMounts, 1, "container %s", ic.Name)
+		assert.Equal(t, "shared", ic.VolumeMounts[0].Name, "container %s mounts only shared", ic.Name)
+	}
+	for _, ic := range spec.InitContainers[2:] {
 		mounts := make([]string, len(ic.VolumeMounts))
 		for i, m := range ic.VolumeMounts {
 			mounts[i] = m.Name
@@ -284,7 +297,7 @@ func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T)
 		"the upload container runs no dbt and needs no workdir")
 }
 
-func TestCreateCompileJob_NoOverlayKeepsSingleInitContainer(t *testing.T) {
+func TestCreateCompileJob_NoOverlayRunsTheExtrasScriptThenCompile(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
@@ -292,20 +305,65 @@ func TestCreateCompileJob_NoOverlayKeepsSingleInitContainer(t *testing.T) {
 		ServiceName: "core", ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
-	require.Len(t, spec.InitContainers, 1)
-	assert.Equal(t, "compile", spec.InitContainers[0].Name)
-	assert.False(t, strings.Contains(spec.InitContainers[0].Command[2], "/shared/overlay"))
+	require.Len(t, spec.InitContainers, 2)
+	assert.Equal(t, "extras-script", spec.InitContainers[0].Name)
+	compile := spec.InitContainers[1]
+	assert.Equal(t, "compile", compile.Name)
+	assert.False(t, strings.Contains(compile.Command[2], "/shared/overlay"))
 
-	// A release without an overlay runs dbt in the image's own project dir,
-	// exactly as it did before the overlay existed: no staging, no workdir.
+	// A release without an overlay runs dbt in the image's own project dir:
+	// no staging, no workdir.
 	assert.Equal(t, "dbt compile --profiles-dir /project"+
 		" && cp /project/target/manifest.json /shared/manifest.json"+
-		" && chmod 644 /shared/manifest.json", spec.InitContainers[0].Command[2])
-	assert.NotContains(t, spec.InitContainers[0].Command[2], "/work")
+		" && chmod 644 /shared/manifest.json"+
+		wantExtrasSuffix("/project", "core", "rel-1"), compile.Command[2])
+	assert.NotContains(t, compile.Command[2], "/work")
 	require.Len(t, spec.Volumes, 1)
 	assert.Equal(t, "shared", spec.Volumes[0].Name)
-	require.Len(t, spec.InitContainers[0].VolumeMounts, 1)
-	assert.Equal(t, "shared", spec.InitContainers[0].VolumeMounts[0].Name)
+	require.Len(t, compile.VolumeMounts, 1)
+	assert.Equal(t, "shared", compile.VolumeMounts[0].Name)
+}
+
+func TestCreateCompileJob_CopiesAndRunsTheExtrasScript(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{JobName: "compile-core-rel", ReleaseID: "rel-1", NodeID: "core", ServiceName: "core",
+		ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+	require.Len(t, spec.InitContainers, 2)
+	assert.Equal(t, "extras-script", spec.InitContainers[0].Name)
+	assert.Equal(t, "carolsimone/s3-sidecar:latest", spec.InitContainers[0].Image)
+	assert.Equal(t, []string{"cp", "/compile_extras.py", "/shared/compile_extras.py"}, spec.InitContainers[0].Command)
+	cmd := spec.InitContainers[1].Command[2]
+	assert.Contains(t, cmd, "command -v python3")
+	assert.Contains(t, cmd, "python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir /project --service core --release-id rel-1 --out /shared/compile-extras.json")
+	assert.Contains(t, cmd, "chmod 644 /shared/compile-extras.json")
+	assert.Equal(t, "/shared/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_LOCAL_PATH"))
+	assert.Equal(t, "s3://continuo/core/rel-1/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_S3_URI"))
+}
+
+func TestCompileExtrasURI_RefusesAURIThatNamesNoManifest(t *testing.T) {
+	_, err := compileExtrasURI("s3://continuo/core/rel-1/contract.yaml")
+	require.ErrorIs(t, err, events.ErrPermanent)
+}
+
+func TestCompileExtrasURI_ReplacesTheLastSegment(t *testing.T) {
+	got, err := compileExtrasURI("s3://continuo/core/rel-1/manifest.json")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://continuo/core/rel-1/compile-extras.json", got)
+}
+
+// wantExtrasSuffix is the exact text the compile command gains after the
+// manifest hand-off: the python3 guard, the extras script run against the
+// project directory and the chmod that makes its output readable by the upload
+// container.
+func wantExtrasSuffix(projectDir, service, releaseID string) string {
+	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
+		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir " + shellQuote(projectDir) +
+		" --service " + shellQuote(service) + " --release-id " + shellQuote(releaseID) +
+		" --out /shared/compile-extras.json && chmod 644 /shared/compile-extras.json"
 }
 
 // TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged pins the parse-leg
@@ -332,7 +390,7 @@ func TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged(t *testing.T) {
 		}
 		assert.Equal(t, []string{"shared"}, mounts, "container %s", ic.Name)
 	}
-	assert.Contains(t, spec.InitContainers[1].Command[2],
+	assert.Contains(t, spec.InitContainers[2].Command[2],
 		"cp /project/target/partial_parse.msgpack /shared/parse/prod/partial_parse.msgpack")
 	require.Len(t, spec.Volumes, 1)
 	assert.Equal(t, "shared", spec.Volumes[0].Name)

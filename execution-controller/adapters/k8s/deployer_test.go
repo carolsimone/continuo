@@ -176,8 +176,10 @@ func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 
 	job := fetchJob(t, client, "default", "compile-svc-rel123")
 	podSpec := job.Spec.Template.Spec
-	assert.Equal(t, "carolsimone/service-1:abc123", podSpec.InitContainers[0].Image)
+	require.Equal(t, "compile", podSpec.InitContainers[1].Name)
+	assert.Equal(t, "carolsimone/service-1:abc123", podSpec.InitContainers[1].Image)
 	assert.Equal(t, "s3://continuo/svc/rel123/manifest.json", envByName(podSpec, "MANIFEST_S3_URI"))
+	assert.Equal(t, "s3://continuo/svc/rel123/compile-extras.json", envByName(podSpec, "COMPILE_EXTRAS_S3_URI"))
 	assert.Equal(t, "rel123", job.Annotations[annotationReleaseID])
 	assert.Equal(t, "svc.orders", job.Annotations[annotationNodeID])
 	assert.Equal(t, "compile", job.Spec.Template.Labels["mode"])
