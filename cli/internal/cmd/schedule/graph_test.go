@@ -127,17 +127,17 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 // An ingested node is a table no node builds. The schedule graph carries it
 // with node_type "ingested" and an empty service_name, and an edge from the
 // node that reads it to its id (the empty service, then schema and table). The
-// command emits all of it as it comes, and its help names the type so a caller
-// that reads the graph knows no node command can address it.
+// command emits all of it as it comes, and its help says what the type is and
+// that the empty service makes its node id start with a dot, so a caller that
+// reads the graph knows no node command can address it.
 func TestGraph_IngestedNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
 	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{
 		Nodes: []*runv1.ScheduleGraphNode{
 			{
-				SchemaName:   "raw",
-				TableName:    "ingest_probe",
-				ServiceName:  "",
-				NodeType:     "ingested",
-				ScheduleName: "daily_ingest",
+				SchemaName:  "raw",
+				TableName:   "ingest_probe",
+				ServiceName: "",
+				NodeType:    "ingested",
 			},
 		},
 		Edges: []*runv1.ScheduleGraphEdge{
@@ -164,7 +164,8 @@ func TestGraph_IngestedNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
 	assert.Equal(t, ".raw.ingest_probe", payload.Edges[0].ToNodeId)
 
 	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
-	assert.Contains(t, cmd.Long, "ingested", "the help names the ingested node type")
+	assert.Contains(t, cmd.Long, `A node of type "ingested" is a table no node builds`, "the help says what an ingested node is")
+	assert.Contains(t, cmd.Long, "its node id starts with a dot", "the help says what the empty service does to the node id")
 }
 
 // TestScheduleGraph_OutputMatchesItsSchema holds the output_schema annotation
