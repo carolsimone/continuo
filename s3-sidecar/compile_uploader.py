@@ -17,6 +17,11 @@ alongside its manifest). Each pair is independent and optional: an absent URI
 env means that artifact is not produced in this context and is skipped
 silently; a URI present without a readable local file is a hard error, since
 it means the compile leg claimed to export the artifact but didn't.
+
+It also uploads compile-extras.json (the seed hashes, headers and column types, the
+project flags and the dbt package versions written by compile_extras.py) from
+COMPILE_EXTRAS_LOCAL_PATH to COMPILE_EXTRAS_S3_URI, beside the manifest, under the
+same optional-pair rule.
 """
 import os
 import sys
@@ -25,7 +30,7 @@ import s3_common
 
 
 def _upload_optional(s3, local_env: str, uri_env: str) -> None:
-    """Upload one optional parse-cache artifact. Both envs present -> upload
+    """Upload one optional artifact. Both envs present -> upload
     (missing local file is a hard error: the compile pod claimed it exported).
     URI env absent -> skip silently (feature not active for this context)."""
     uri = os.environ.get(uri_env, "")
@@ -41,7 +46,7 @@ def _upload_optional(s3, local_env: str, uri_env: str) -> None:
         with open(local, "rb") as f:
             body = f.read()
     except OSError as exc:
-        print(f"compile_uploader: cannot read parse artifact {local}: {exc}", file=sys.stderr)
+        print(f"compile_uploader: cannot read optional artifact {local}: {exc}", file=sys.stderr)
         sys.exit(3)
     try:
         s3.put_object(Bucket=bucket, Key=key, Body=body)
@@ -76,6 +81,7 @@ def main() -> None:
 
     _upload_optional(s3, "PARSE_PROD_LOCAL_PATH", "PARSE_PROD_S3_URI")
     _upload_optional(s3, "PARSE_CANDIDATE_LOCAL_PATH", "PARSE_CANDIDATE_S3_URI")
+    _upload_optional(s3, "COMPILE_EXTRAS_LOCAL_PATH", "COMPILE_EXTRAS_S3_URI")
 
 
 if __name__ == "__main__":

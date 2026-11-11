@@ -125,3 +125,36 @@ def test_parse_artifact_missing_local_file_exits_3(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         compile_uploader.main()
     assert e.value.code == 3
+
+
+def test_main_uploads_the_compile_extras_beside_the_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"nodes":{}}')
+    extras = tmp_path / "compile-extras.json"
+    extras.write_bytes(b'{"version":1}')
+    monkeypatch.setenv("COMPILE_MANIFEST_PATH", str(manifest))
+    monkeypatch.setenv("MANIFEST_S3_URI", "s3://continuo/svc/rel-1/manifest.json")
+    monkeypatch.setenv("COMPILE_EXTRAS_LOCAL_PATH", str(extras))
+    monkeypatch.setenv("COMPILE_EXTRAS_S3_URI", "s3://continuo/svc/rel-1/compile-extras.json")
+    fake = mock.MagicMock()
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
+
+    compile_uploader.main()
+
+    assert fake.put_object.call_count == 2
+    _, kwargs = fake.put_object.call_args_list[1]
+    assert (kwargs["Bucket"], kwargs["Key"], kwargs["Body"]) == ("continuo", "svc/rel-1/compile-extras.json", b'{"version":1}')
+
+
+def test_main_fails_when_the_extras_uri_names_no_file(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"nodes":{}}')
+    monkeypatch.setenv("COMPILE_MANIFEST_PATH", str(manifest))
+    monkeypatch.setenv("MANIFEST_S3_URI", "s3://continuo/svc/rel-1/manifest.json")
+    monkeypatch.setenv("COMPILE_EXTRAS_LOCAL_PATH", str(tmp_path / "does-not-exist"))
+    monkeypatch.setenv("COMPILE_EXTRAS_S3_URI", "s3://continuo/svc/rel-1/compile-extras.json")
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: mock.MagicMock())
+
+    with pytest.raises(SystemExit) as e:
+        compile_uploader.main()
+    assert e.value.code == 3
