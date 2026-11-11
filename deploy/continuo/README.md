@@ -272,7 +272,7 @@ Every container in this chart, bundled or not, gets:
 | `egress.proxy.replicas` | Replicas of egress-proxy (default 2). |
 | `egress.proxy.maxTunnels` | The most tunnels and forwarded requests one replica holds open at once (default 1024, `EGRESS_MAX_TUNNELS`); further ones are refused. |
 | `egress.proxy.resources` | Resource requests and limits of the proxy container (default requests `50m` / `64Mi`, limits `500m` / `256Mi`). |
-| `metrics.port` | Port every Go service, egress-proxy included, serves Prometheus `/metrics` on (`METRICS_PORT`, default 9464; must differ from every service port and, with `egress.enabled`, from the proxy's ports 3128 and 8093 while the proxy renders). |
+| `metrics.port` | Port every Go service, egress-proxy included, and topology-controller serve Prometheus `/metrics` on (`METRICS_PORT`, default 9464; must differ from every service port and, with `egress.enabled`, from the proxy's ports 3128 and 8093 while the proxy renders). |
 | `metrics.podAnnotations` | Adds `prometheus.io/{scrape,port,path}` annotations to those pods (default true). |
 | `metrics.scrapeNamespaceSelector` | Namespace selector admitted to the metrics port by the NetworkPolicy; empty (default) admits none. |
 | `ingress.enabled` / `ingress.className` / `ingress.host` / `ingress.annotations` / `ingress.tls.*` | Front door for `ui` only. Fully values-driven — no ingress class or cert-manager/ACME assumptions are baked in; set them yourself (see `values-byo.yaml.example`). With `networkPolicy.enabled` it also renders an allow rule for cert-manager's HTTP-01 solver pods (matched by their `acme.cert-manager.io/http01-solver` label, port 8089) so ACME challenges pass the default-deny; the rule selects nothing on installs without cert-manager. |

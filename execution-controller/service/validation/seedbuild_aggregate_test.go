@@ -3,6 +3,7 @@ package validation_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -63,6 +64,82 @@ func TestEmitSeedBuildAggregate_AnyFailed_EmitsStatusFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, outboxRepo.last)
 	assert.Contains(t, string(outboxRepo.last.Payload), `"status":"failed"`)
+}
+
+// perNodeOf decodes the per_node entries of an aggregate event's payload.
+func perNodeOf(t *testing.T, payload []byte) []map[string]any {
+	t.Helper()
+	var p struct {
+		PerNode []map[string]any `json:"per_node"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &p))
+	return p.PerNode
+}
+
+func TestEmitSeedBuildAggregate_CarriesEachNodesRunDuration(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "rel", NodeID: "seed.a", CandidateSchema: "_candidate_rel",
+		JobName: "seed-a", NodeType: "dbt-seed", ImageTag: "t",
+	}
+	dep := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(t0))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", "", t0.Add(1500*time.Millisecond)))
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.EmitSeedBuildAggregateIfComplete(
+		context.Background(), depRepo, outboxRepo, &fakeAggRepo{won: true}, "rel", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	require.Len(t, perNode, 1)
+	assert.Equal(t, float64(1500), perNode[0]["duration_ms"])
+}
+
+func TestEmitSeedBuildAggregate_ANodeThatNeverStartedCarriesNoDuration(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "rel", NodeID: "seed.a", CandidateSchema: "_candidate_rel",
+		JobName: "seed-a", NodeType: "dbt-seed", ImageTag: "t",
+	}
+	dep := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.FailSeedBuild("not deployable", t0.Add(time.Second)))
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.EmitSeedBuildAggregateIfComplete(
+		context.Background(), depRepo, outboxRepo, &fakeAggRepo{won: true}, "rel", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	require.Len(t, perNode, 1)
+	assert.Equal(t, "failed", perNode[0]["status"])
+	assert.NotContains(t, perNode[0], "duration_ms", "a node that never started has no run time to report")
+}
+
+func TestEmitSeedBuildAggregate_ASkewedOutcomeCarriesNoDuration(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "rel", NodeID: "seed.a", CandidateSchema: "_candidate_rel",
+		JobName: "seed-a", NodeType: "dbt-seed", ImageTag: "t",
+	}
+	dep := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(t0.Add(5*time.Second)))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", "", t0))
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.EmitSeedBuildAggregateIfComplete(
+		context.Background(), depRepo, outboxRepo, &fakeAggRepo{won: true}, "rel", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	require.Len(t, perNode, 1)
+	assert.NotContains(t, perNode[0], "duration_ms", "an outcome before the start must not become a negative duration")
 }
 
 func TestEmitSeedBuildAggregate_UsesSeedBuildNamespace(t *testing.T) {

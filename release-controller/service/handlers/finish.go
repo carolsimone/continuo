@@ -91,9 +91,9 @@ func emitReleaseRejected(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run,
 	return nil
 }
 
-// recordTerminalTelemetry emits the span a terminal decision deserves: a
-// release rejection or promotion for a candidate, a verification outcome for
-// a verification. Called after Commit.
+// recordTerminalTelemetry calls Telemetry for a terminal decision: a release
+// rejection or promotion for a candidate, a verification outcome for a
+// verification. Called after Commit.
 func recordTerminalTelemetry(ctx context.Context, d *Deps, r *pipeline.Run, nodeCount int) {
 	switch {
 	case r.Kind() == pipeline.KindVerification:

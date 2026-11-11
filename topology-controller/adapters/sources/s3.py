@@ -28,6 +28,9 @@ class S3Source:
         self._keys = keys
         self._tmpdir = tempfile.TemporaryDirectory()
 
+    def manifest_count(self) -> int:
+        return len(self._keys)
+
     def list_manifests(self) -> list[ManifestFile]:
         result = []
         for request in self._keys:
@@ -36,6 +39,7 @@ class S3Source:
             result.append(ManifestFile(
                 path=local_path, image_tag="",
                 declared_service=request.service, kind=request.kind,
+                size_bytes=os.path.getsize(local_path),
             ))
         return result
 

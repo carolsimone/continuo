@@ -126,6 +126,33 @@ func TestSettleCompileNode_AllOk_OmitsFailedContainer(t *testing.T) {
 		"ok outcome must omit failed_container")
 }
 
+// TestSettleCompileNode_CarriesTheNodesRunDuration verifies the per-node
+// compile.completed:v1 entry carries the time from the compile Job's creation
+// to its recorded outcome, in whole milliseconds.
+func TestSettleCompileNode_CarriesTheNodesRunDuration(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "rel", NodeID: "compile.svc", JobName: "compile-compile.svc",
+		NodeType: "dbt-model", ImageTag: "t",
+	}
+	dep := model.NewCompileDeployment(cmd, nil, t0)
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(t0))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", "", t0.Add(2500*time.Millisecond+400*time.Microsecond)))
+
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.SettleCompileNodeTerminal(
+		context.Background(), depRepo, outboxRepo, &fakeAggRepo{won: true},
+		"rel", "compile.svc", "ok", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	require.Len(t, perNode, 1)
+	assert.Equal(t, float64(2500), perNode[0]["duration_ms"], "whole milliseconds, the sub-millisecond rest dropped")
+}
+
 // TestCompileAggregate_UsesDistinctNamespace asserts the compile dedup namespace
 // is distinct from both the validation and seed-build namespaces so the three
 // legs of one release derive independent outbox aggregate_ids.

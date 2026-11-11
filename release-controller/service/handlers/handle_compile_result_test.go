@@ -54,6 +54,20 @@ func anyOutboxWithStream(t *testing.T, store *fakeStore, streamName string) bool
 	return false
 }
 
+func TestHandleCompileResult_RecordsTheCompilingStageDuration(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	putCompilingRelease(t, fakes, d, "rel-c-time")
+	spy := &stageSpy{}
+	d.Telemetry = spy
+	d.Clock.(*fakeClock).t = d.Clock.Now().Add(30 * time.Second)
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: "rel-c-time", Status: "ok",
+	}))
+
+	assert.Equal(t, []stageCall{{"compiling", true, 30 * time.Second}}, spy.calls)
+}
+
 func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	releaseID := "rel-c-ok"
@@ -145,6 +159,26 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 			assert.Contains(t, detail, "env_var()")
 		})
 	}
+}
+
+// TestHandleCompileResult_KeepsEachNodesDuration verifies the time a compile
+// Job ran, which compile.completed:v1 carries per node, is stored on the
+// node's compile-stage result.
+func TestHandleCompileResult_KeepsEachNodesDuration(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-compile-duration"
+	putCompilingRelease(t, fakes, d, releaseID)
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+		PerNode:   []handlers.NodeResult{{NodeID: "core", Status: "ok", DurationMS: 3200}},
+	}))
+
+	r := mustGetRelease(t, fakes, releaseID)
+	require.Len(t, r.PerNodeResults(), 1)
+	assert.Equal(t, "compile", r.PerNodeResults()[0].Stage)
+	assert.Equal(t, int64(3200), r.PerNodeResults()[0].DurationMS)
 }
 
 // TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFailed

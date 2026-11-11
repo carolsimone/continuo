@@ -1919,19 +1919,21 @@ staticPasswords:
 {{- end -}}
 
 {{/*
-The services that serve /metrics on the metrics port: every Go service.
-scripts/install-test/assert-metrics.py pins this list to the services whose
-source imports pkg/metrics.
+The services that serve /metrics on the metrics port: every Go service and
+topology-controller. scripts/install-test/assert-metrics.py pins this list to
+the services whose source imports pkg/metrics (Go) or prometheus_client
+(Python).
 */ -}}
 {{- define "continuo.metrics.services" -}}
-["run-controller","catalog","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
+["run-controller","catalog","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy","topology-controller"]
 {{- end -}}
 
 {{/*
-The port every Go service serves /metrics on (default 9464, also when the
-metrics block is absent from stored values). Rendering fails when it equals a
-service's httpPort or grpcPort, which that service could then not bind, or, with
-the egress proxy rendered, the proxy's listen port (3128) or health port (8093).
+The port every service in continuo.metrics.services serves /metrics on (default
+9464, also when the metrics block is absent from stored values). Rendering fails
+when it equals a service's httpPort or grpcPort, which that service could then
+not bind, or, with the egress proxy rendered, the proxy's listen port (3128) or
+health port (8093).
 */ -}}
 {{- define "continuo.metrics.port" -}}
 {{- $m := .Values.metrics | default dict -}}

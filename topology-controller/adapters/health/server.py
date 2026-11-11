@@ -14,10 +14,10 @@ DEFAULT_MAX_STALENESS_SECONDS = 60.0
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # BaseHTTPRequestHandler logs every request to stderr by default; the
-    # process log format is plain `%(message)s`, and Kubernetes polls these
-    # paths every few seconds, so leaving this on would drown out real
-    # consumer log lines with probe traffic.
+    # BaseHTTPRequestHandler writes a plain-text line to stderr for every
+    # request by default; the process logs one JSON object per line, and
+    # Kubernetes polls these paths every few seconds, so leaving this on would
+    # drown out real consumer log lines with probe traffic.
     def log_message(self, format: str, *args) -> None:  # noqa: A002
         pass
 

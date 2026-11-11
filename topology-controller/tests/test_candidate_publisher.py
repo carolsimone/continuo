@@ -1,10 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from adapters.json_log import JsonFormatter
 from adapters.redis.candidate_publisher import CandidateManifestPublisher, manifest_loaded_candidate_event_id
 from adapters.redis.keys import MissingStreamError, key
 from domain.contract_vocabulary import ParseFailureKind
@@ -231,3 +233,22 @@ def test_publisher_raises_when_the_stream_is_missing():
 
     with pytest.raises(MissingStreamError):
         pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INTERNAL, detail="x")
+
+
+def test_the_parse_failed_line_prints_its_release_kind_detail_and_failed_node_count(caplog):
+    pub, _ = _make()
+    node = FailedNode("a.b", ParseFailureKind.INVALID_SQL, "svc", "models/b.sql", NodeType.DBT_MODEL, "bad")
+    with caplog.at_level(logging.ERROR, logger="adapters.redis.candidate_publisher"):
+        pub.publish_failed("rel-9", ParseFailureKind.INVALID_SQL, "1 node failed to parse: a.b", [node])
+    line = json.loads(JsonFormatter().format(caplog.records[-1]))
+    assert (line["level"], line["msg"]) == ("ERROR", "Published manifest.loaded.candidate failed")
+    assert (line["release_id"], line["failure_kind"], line["detail"], line["failed_nodes"]) == (
+        "rel-9", "invalid_sql", "1 node failed to parse: a.b", 1)
+
+
+def test_the_ok_line_prints_its_release_node_count_and_topology_uri(caplog):
+    pub, _ = _make()
+    with caplog.at_level(logging.INFO, logger="adapters.redis.candidate_publisher"):
+        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+    line = json.loads(JsonFormatter().format(caplog.records[-1]))
+    assert (line["release_id"], line["node_count"], line["topology_uri"]) == ("rel-1", 3, _ARTIFACT.uri)

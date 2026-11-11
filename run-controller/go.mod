@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/run-controller
 
-go 1.26.10
+go 1.26.11
 
 replace github.com/carolsimone/continuo/pkg => ../pkg
 

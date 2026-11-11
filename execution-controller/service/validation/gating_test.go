@@ -283,6 +283,73 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 	assert.Equal(t, "s3://logs/a.txt", p["dbt_log_uri"])
 }
 
+// A settled node's per-node row carries the time its Job ran, from creation to
+// the recorded outcome, in whole milliseconds.
+func TestSettleNodeTerminal_PerNodeRowCarriesTheRunDuration(t *testing.T) {
+	log := &callLog{}
+	a := validationNode(t, "rel-1", "node.a", model.StatusRunning)
+	require.NoError(t, a.RecordOutcome("ok", "", "", "", a.DeployedAt().Add(2*time.Second)))
+	b := validationNode(t, "rel-1", "node.b", model.StatusPending)
+	repo := newChainDepRepo(log, a, b)
+	outboxRepo := &captureOutbox{}
+	agg := &orderedAggRepo{won: true, log: log}
+
+	require.NoError(t, validation.SettleNodeTerminal(
+		context.Background(), repo, outboxRepo, agg,
+		validation.DedupNamespace, "rel-1", "node.a", "ok", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	var p map[string]any
+	require.NoError(t, json.Unmarshal(outboxRepo.last.Payload, &p))
+	assert.Equal(t, "node.a", p["node_id"])
+	assert.Equal(t, float64(2000), p["duration_ms"])
+}
+
+// A node that failed before its Job was created has no start to measure from,
+// and one whose outcome is stamped before its start (clock skew between
+// replicas) has no meaningful duration; neither row carries duration_ms.
+func TestSettleNodeTerminal_PerNodeRowOmitsAnUnmeasurableDuration(t *testing.T) {
+	skewed := validationNode(t, "rel-1", "node.s", model.StatusRunning)
+	require.NoError(t, skewed.RecordOutcome("ok", "", "", "", skewed.DeployedAt().Add(-3*time.Second)))
+	neverStarted := validationNode(t, "rel-1", "node.n", model.StatusReserved)
+	require.NoError(t, neverStarted.FailValidation("not deployable", time.Now()))
+
+	for _, tc := range []struct {
+		name    string
+		node    *model.Deployment
+		outcome string
+	}{
+		{"failed before its Job was created", neverStarted, "failed"},
+		{"outcome stamped before the start", skewed, "ok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &callLog{}
+			repo := newChainDepRepo(log, tc.node, validationNode(t, "rel-1", "node.z", model.StatusPending))
+			outboxRepo := &captureOutbox{}
+			agg := &orderedAggRepo{won: true, log: log}
+
+			require.NoError(t, validation.SettleNodeTerminal(
+				context.Background(), repo, outboxRepo, agg,
+				validation.DedupNamespace, "rel-1", tc.node.NodeID(), tc.outcome, time.Now()))
+
+			var found bool
+			for _, e := range outboxRepo.all {
+				if e.EventType != validation.EventTypeValidationNodeResult {
+					continue
+				}
+				var p map[string]any
+				require.NoError(t, json.Unmarshal(e.Payload, &p))
+				if p["node_id"] != tc.node.NodeID() {
+					continue
+				}
+				found = true
+				assert.NotContains(t, p, "duration_ms")
+			}
+			assert.True(t, found, "the settled node's per-node row was emitted")
+		})
+	}
+}
+
 // (e) A failing settle skips its transitive blocked descendants, and each skipped
 // node — which never runs through SettleNodeTerminal on its own — MUST still get a
 // per-node validation.result:v1 (kind=node) projection row emitted for it (status
@@ -335,6 +402,9 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 	assert.False(t, hasLog, "skipped node carries no dbt_log_uri")
 	_, hasRR := perNode["a2"]["run_results_uri"]
 	assert.False(t, hasRR, "skipped node carries no run_results_uri")
+	for _, id := range []string{"a2", "a3"} {
+		assert.NotContains(t, perNode[id], "duration_ms", "skipped node %s never ran, so it carries no duration", id)
+	}
 }
 
 // (f) Per-node projection rows each get a distinct, randomly generated

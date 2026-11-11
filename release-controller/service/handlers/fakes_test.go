@@ -38,9 +38,10 @@ var _ ports.Clock = (*fakeClock)(nil)
 // --- spyTelemetry ---
 
 // spyTelemetry embeds NoOpTelemetry and records ReleasePromoted and
-// VerificationFinished calls so tests can assert the promoted span does not
-// fire on a route that must not promote (e.g. a verification run stopping at
-// Passed), and that a verification's terminal decision emits its own span.
+// VerificationFinished calls so tests can assert that ReleasePromoted is not
+// called on a route that must not promote (e.g. a verification run stopping at
+// Passed), and that a verification's terminal decision calls
+// VerificationFinished.
 type spyTelemetry struct {
 	ports.NoOpTelemetry
 	releasePromotedCalls      int
@@ -56,6 +57,40 @@ func (s *spyTelemetry) VerificationFinished(context.Context, string, string, int
 }
 
 var _ ports.Telemetry = (*spyTelemetry)(nil)
+
+// --- stageSpy ---
+
+// stageCall is one stage completion a stageSpy recorded.
+type stageCall struct {
+	stage string
+	ok    bool
+	took  time.Duration
+}
+
+// stageSpy embeds NoOpTelemetry and records every stage completion, so tests
+// can assert each reports the run's own stage duration.
+type stageSpy struct {
+	ports.NoOpTelemetry
+	calls []stageCall
+}
+
+func (s *stageSpy) ReleaseCompileCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
+	s.calls = append(s.calls, stageCall{"compiling", ok, took})
+}
+
+func (s *stageSpy) ReleaseParseCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
+	s.calls = append(s.calls, stageCall{"parsing", ok, took})
+}
+
+func (s *stageSpy) ReleaseSeedBuildCompleted(_ context.Context, _ string, ok bool, took time.Duration) {
+	s.calls = append(s.calls, stageCall{"seed_building", ok, took})
+}
+
+func (s *stageSpy) ReleaseValidationCompleted(_ context.Context, _ string, ok bool, _, _ int, took time.Duration) {
+	s.calls = append(s.calls, stageCall{"validating", ok, took})
+}
+
+var _ ports.Telemetry = (*stageSpy)(nil)
 
 // --- fakeStore ---
 

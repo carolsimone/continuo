@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -37,6 +38,52 @@ func TestHandleNodeValidationResult_UpsertsOneNode(t *testing.T) {
 	assert.Equal(t, "ok", got[0].Status)
 	assert.Equal(t, "validation", got[0].Stage)
 	assert.Equal(t, "s3://a", got[0].DBTLogURI)
+}
+
+// TestHandleNodeValidationResult_KeepsTheNodesDuration verifies the time a
+// node's Job ran, which the kind=node message carries, is stored on the node's
+// result for the release page to show.
+func TestHandleNodeValidationResult_KeepsTheNodesDuration(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	require.NoError(t, handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{
+		ReleaseID:  "rA",
+		Stage:      "validation",
+		NodeID:     "a",
+		Status:     "ok",
+		DurationMS: 2000,
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	got := r.PerNodeResults()
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(2000), got[0].DurationMS)
+}
+
+// TestNodeValidationResultInput_DecodesDurationMS pins the wire key execution-controller
+// writes the node's run time under.
+func TestNodeValidationResultInput_DecodesDurationMS(t *testing.T) {
+	var in handlers.NodeValidationResultInput
+	require.NoError(t, json.Unmarshal([]byte(`{"kind":"node","release_id":"rA","node_id":"a","status":"ok","duration_ms":2000}`), &in))
+	assert.Equal(t, int64(2000), in.DurationMS)
+}
+
+// TestHandleNodeValidationResult_ANodeThatNeverRanHasNoDuration verifies a
+// message with no duration (a skipped node, or one that failed before its Job
+// started) stores zero.
+func TestHandleNodeValidationResult_ANodeThatNeverRanHasNoDuration(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+
+	require.NoError(t, handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{
+		ReleaseID: "rA", Stage: "validation", NodeID: "a", Status: "skipped",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	got := r.PerNodeResults()
+	require.Len(t, got, 1)
+	assert.Zero(t, got[0].DurationMS)
 }
 
 // TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology verifies
