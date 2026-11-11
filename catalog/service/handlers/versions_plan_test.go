@@ -270,10 +270,10 @@ func TestVersionBatches_KeepANodeWithoutArtifactEntry(t *testing.T) {
 
 // An ingested node is a table no node builds, so the code bundle holds no code
 // for it. A release whose topology holds one and whose code bundle has no entry
-// for it gives a plan with no version for it, and no error. The plan still
-// carries its topology entry, but versionBatches forwards only the entries of
-// nodes that have a version, so the entry never reaches the version write: the
-// topology swap is what creates the node.
+// for it gives a plan with no version for it. The plan still carries its
+// topology entry, but versionBatches forwards only the entries of nodes that
+// have a version, so the entry never reaches the version write: the topology
+// swap is what creates the node.
 func TestPlanVersionWrite_WritesNoVersionForAnIngestedNode(t *testing.T) {
 	nodes := append(nodesFixture(), topology.ReleasePromotedTopologyNode{
 		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested",
