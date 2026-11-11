@@ -11,24 +11,24 @@ import (
 )
 
 func TestNewCandidate_IsReceived(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Equal(t, pipeline.StatusReceived, r.Status())
 }
 
 func TestNewCandidate_InitialisesImageTags(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Equal(t, map[string]string{"svc1": "sha-abc"}, r.ImageTags())
 	assert.Equal(t, "svc1", r.ChangedService())
 }
 
 func TestRun_TransitionReceivedToParsing(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	assert.Equal(t, pipeline.StatusParsing, r.Status())
 }
 
 func TestRun_TransitionParsingToValidating(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	assert.Equal(t, pipeline.StatusValidating, r.Status())
@@ -36,7 +36,7 @@ func TestRun_TransitionParsingToValidating(t *testing.T) {
 }
 
 func TestRun_TransitionValidatingToPromoted(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Promote(time.Unix(3, 0)))
@@ -44,7 +44,7 @@ func TestRun_TransitionValidatingToPromoted(t *testing.T) {
 }
 
 func TestRun_TransitionValidatingToRejected(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Fail("validation_failed", "", []string{"n"}, time.Unix(3, 0)))
@@ -53,13 +53,13 @@ func TestRun_TransitionValidatingToRejected(t *testing.T) {
 }
 
 func TestRun_CannotSkipStates(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Error(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(1, 0)))
 	assert.Error(t, r.Promote(time.Unix(1, 0)))
 }
 
 func TestRun_CannotDoublePromote(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Promote(time.Unix(3, 0)))
@@ -67,7 +67,7 @@ func TestRun_CannotDoublePromote(t *testing.T) {
 }
 
 func TestRun_TransitionsAreRecorded(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	transitions := r.Transitions()
@@ -78,14 +78,14 @@ func TestRun_TransitionsAreRecorded(t *testing.T) {
 }
 
 func TestRun_SetAssembledImageTags(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc-a", "tag-a", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc-a", "tag-a", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assembled := map[string]string{"svc-a": "tag-a", "svc-b": "tag-b"}
 	r.SetAssembledImageTags(assembled)
 	assert.Equal(t, assembled, r.ImageTags())
 }
 
 func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
-	r := pipeline.NewCandidate("rX", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	r := pipeline.NewCandidate("rX", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"a"}, time.Unix(3, 0).UTC()))
 
@@ -101,7 +101,7 @@ func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 }
 
 func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
-	r := pipeline.NewCandidate("rY", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	r := pipeline.NewCandidate("rY", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"a"}, time.Unix(3, 0).UTC()))
 	r.RecordValidationResults([]pipeline.NodeValidationResult{{NodeID: "a", Status: "ok"}})
@@ -110,7 +110,7 @@ func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
 }
 
 func TestUpsertStageResult_AddsThenReplacesByStageAndNode(t *testing.T) {
-	r := pipeline.NewCandidate("rel-1", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0).UTC())
+	r := pipeline.NewCandidate("rel-1", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0).UTC())
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "a", Status: "ok"})
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "b", Status: "failed"})
 	// Replace a's outcome; b and stage untouched.
@@ -129,7 +129,7 @@ func TestUpsertStageResult_AddsThenReplacesByStageAndNode(t *testing.T) {
 }
 
 func TestNewCandidate_CarriesProvenance(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeefcafe", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeefcafe", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Equal(t, "acme/demo", r.Repo())
 	assert.Equal(t, "deadbeefcafe", r.CommitSHA())
 }
@@ -147,7 +147,7 @@ func TestRun_RehydrateRoundTripsProvenance(t *testing.T) {
 }
 
 func TestRun_SetCodeBundleURIRoundTrips(t *testing.T) {
-	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Equal(t, "", r.CodeBundleURI(), "unset code_bundle_uri defaults to empty")
 	r.SetCodeBundleURI("s3://b/code-bundles/r/bundle.json")
 	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
@@ -170,7 +170,7 @@ var (
 
 func newReceivedCandidate(t *testing.T) *pipeline.Run {
 	t.Helper()
-	return pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	return pipeline.NewCandidate("sha-abc", "svc", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 }
 
 func newParsingCandidate(t *testing.T) *pipeline.Run {
@@ -236,7 +236,7 @@ func TestTransitionToRejected_FromCompiling(t *testing.T) {
 }
 
 func TestTransitionToRejected_PersistsDetail(t *testing.T) {
-	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123", release.ManifestKindDbt, time.Unix(1, 0))
+	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123", release.ManifestKindDbt, time.Unix(1, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0)))
 
 	require.NoError(t, r.Fail(
@@ -254,7 +254,7 @@ func TestTransitionToRejected_PersistsDetail(t *testing.T) {
 }
 
 func TestRecordStageResults_ReplacesPerStage(t *testing.T) {
-	r := pipeline.NewCandidate("rel-1", "core", "tag", false, "o/r", "sha", release.ManifestKindDbt, time.Now())
+	r := pipeline.NewCandidate("rel-1", "core", "tag", false, false, "o/r", "sha", release.ManifestKindDbt, time.Now())
 	r.RecordStageResults("compile", []pipeline.NodeValidationResult{
 		{Stage: "compile", NodeID: "core", Status: "failed", DBTLogURI: "s3://c.log"},
 	})
@@ -282,7 +282,7 @@ func TestRecordStageResults_ReplacesPerStage(t *testing.T) {
 
 func TestStartRemediationRound_IncrementsUpToCap(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	require.Equal(t, 1, r.RemediationRound())
@@ -302,7 +302,7 @@ func TestStartRemediationRound_IncrementsUpToCap(t *testing.T) {
 
 func TestStartRemediationRound_RequiresRejected(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	_, err := r.StartRemediationRound(now)
 	require.ErrorIs(t, err, pipeline.ErrNotRejected)
 }
@@ -317,10 +317,10 @@ func TestRehydrate_CarriesRoundAndPayload(t *testing.T) {
 func TestNewCandidate_BootstrapFlag(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 
-	plain := pipeline.NewCandidate("r1", "svc-a", "sha-a", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	plain := pipeline.NewCandidate("r1", "svc-a", "sha-a", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	assert.False(t, plain.IsBootstrap())
 
-	boot := pipeline.NewCandidate("r2", "svc-a", "sha-a", true, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	boot := pipeline.NewCandidate("r2", "svc-a", "sha-a", true, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	assert.True(t, boot.IsBootstrap())
 }
 

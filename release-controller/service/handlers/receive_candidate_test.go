@@ -207,7 +207,7 @@ func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testin
 func TestReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
 	require.NoError(t, r.TransitionToParsing(now))
 	store.SeedRelease(r)
@@ -235,7 +235,7 @@ func TestReceiveCandidate_ExplicitDbtKindMatchesAnAbsentKind(t *testing.T) {
 func TestReceiveCandidate_LosingARaceToADifferentCandidateIsAConflict(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	store.RaceRelease(pipeline.NewCandidate("rel-1", "core", "img:winner", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now))
+	store.RaceRelease(pipeline.NewCandidate("rel-1", "core", "img:winner", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now))
 
 	in := conflictBase()
 	in.ImageTag = "img:loser"
@@ -250,7 +250,7 @@ func TestReceiveCandidate_LosingARaceToADifferentCandidateIsAConflict(t *testing
 func TestReceiveCandidate_LosingARaceToTheSameCandidateIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
-	winner := pipeline.NewCandidate("rel-1", "core", "img:1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	winner := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
 	store.RaceRelease(winner)
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()))
@@ -264,4 +264,24 @@ func TestReceiveCandidate_LosingARaceToAVerificationIsAKindConflict(t *testing.T
 	deps, store := newDeps(now)
 	store.RaceRelease(pipeline.NewVerification("rel-1", "core", "img:1", "rel-0", 1, "", release.ManifestKindDbt, now))
 	assert.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()), handlers.ErrRunKindConflict)
+}
+
+func TestReceiveCandidate_RefusesRebaselineWithoutBootstrap(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rRebase", ImageTag: "t", Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"})
+	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
+	assert.Contains(t, err.Error(), "rebaseline is accepted only together with bootstrap")
+	_, getErr := store.GetRelease("rRebase")
+	assert.Error(t, getErr, "a refused submission stores nothing")
+}
+
+func TestReceiveCandidate_StoresRebaselineWithBootstrap(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rRebase", ImageTag: "t", Bootstrap: true, Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"}))
+	r, err := store.GetRelease("rRebase")
+	require.NoError(t, err)
+	assert.True(t, r.IsBootstrap())
+	assert.True(t, r.IsRebaseline())
 }

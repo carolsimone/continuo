@@ -60,7 +60,7 @@ func TestReceiveVerification_IdempotentOnRunID_ConflictsWithACandidate(t *testin
 	deps, store := newDeps(now)
 	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, validVerification()))
 	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, validVerification()), "a redelivery is accepted")
-	store.SeedRelease(pipeline.NewCandidate("rel-9", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now))
+	store.SeedRelease(pipeline.NewCandidate("rel-9", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now))
 	in := validVerification()
 	in.RunID = "rel-9"
 	err := handlers.ReceiveVerification(context.Background(), deps, in)
@@ -108,7 +108,7 @@ func TestReceiveVerification_LosingARaceToACandidateIsAKindConflict(t *testing.T
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
 	in := validVerification()
-	winner := pipeline.NewCandidate(in.RunID, "core", "img:1", false, "org/r", "sha", release.ManifestKindDbt, now)
+	winner := pipeline.NewCandidate(in.RunID, "core", "img:1", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 	store.RaceRelease(winner)
 
 	err := handlers.ReceiveVerification(context.Background(), deps, in)

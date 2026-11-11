@@ -43,7 +43,7 @@ func TestHandleGetVerificationRun_ReceivedShapeHasEmptyActivatedAt(t *testing.T)
 func TestHandleGetVerificationRun_CandidateIDAnswers404(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now)
+	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/verification-runs/rel-1", nil)

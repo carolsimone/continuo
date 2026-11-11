@@ -25,7 +25,7 @@ func TestGetPipeline_ReportsTheActiveVerification(t *testing.T) {
 	v := pipeline.NewVerification("verify-rel-1-core-a2", "core", "img", "rel-1", 2, "", release.ManifestKindDbt, now)
 	require.NoError(t, v.TransitionToCompiling(now.Add(time.Minute)))
 	store.SeedRelease(v)
-	store.SeedRelease(pipeline.NewCandidate("rel-2", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now.Add(2*time.Minute)))
+	store.SeedRelease(pipeline.NewCandidate("rel-2", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now.Add(2*time.Minute)))
 
 	got, err := handlers.GetPipeline(context.Background(), deps)
 	require.NoError(t, err)

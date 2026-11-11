@@ -19,6 +19,7 @@ type ReceiveCandidateRequest struct {
 	ReleaseID         string `json:"release_id"`
 	ImageTag          string `json:"image_tag"`
 	Bootstrap         bool   `json:"bootstrap"`
+	Rebaseline        bool   `json:"rebaseline"`
 	Repo              string `json:"repo"`
 	CommitSHA         string `json:"commit_sha"`
 	Kind              string `json:"kind"`
@@ -33,6 +34,7 @@ func (b ReceiveCandidateRequest) toInput() handlers.ReceiveCandidateInput {
 		ReleaseID:         b.ReleaseID,
 		ImageTag:          b.ImageTag,
 		Bootstrap:         b.Bootstrap,
+		Rebaseline:        b.Rebaseline,
 		Repo:              b.Repo,
 		CommitSHA:         b.CommitSHA,
 		Kind:              b.Kind,

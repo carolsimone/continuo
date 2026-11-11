@@ -225,6 +225,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		Repo:            r.Repo(),
 		CommitSHA:       r.CommitSHA(),
 		Bootstrap:       r.IsBootstrap(),
+		Rebaseline:      r.IsRebaseline(),
 	}); err != nil {
 		return err
 	}

@@ -50,7 +50,8 @@ const runColumns = `run_id, run_kind, status, image_tags, changed_service,
 	per_node_results, created_at, transitions, code_bundle_uri, manifest_kind,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
 	verifies_release_id, attempt, source_overlay_uri,
-	candidate_topology_uri, candidate_topology_sha256, candidate_node_count`
+	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
+	rebaseline`
 
 const activeStatuses = `('compiling','parsing','seed_building','validating')`
 
@@ -81,6 +82,7 @@ type runRow struct {
 	CandidateTopologyURI    sql.NullString `db:"candidate_topology_uri"`
 	CandidateTopologySHA256 sql.NullString `db:"candidate_topology_sha256"`
 	CandidateNodeCount      sql.NullInt32  `db:"candidate_node_count"`
+	Rebaseline              bool           `db:"rebaseline"`
 }
 
 func (r *RunRepository) getOne(ctx context.Context, where string, args ...any) (*pipeline.Run, error) {
@@ -157,7 +159,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	// beforehand.
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		 ON CONFLICT (run_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -196,7 +198,7 @@ func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, er
 	}
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		 ON CONFLICT (run_id) DO NOTHING`,
 		args...)
 	if err != nil {
@@ -244,7 +246,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
 		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
-		topologyURI, topologySHA256, nodeCount,
+		topologyURI, topologySHA256, nodeCount, run.IsRebaseline(),
 	}, nil
 }
 
@@ -292,6 +294,7 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		CreatedAt:         row.CreatedAt.Time,
 		Transitions:       transitions,
 		Bootstrap:         row.Bootstrap,
+		Rebaseline:        row.Rebaseline,
 		Repo:              row.Repo,
 		CommitSHA:         row.CommitSHA,
 		RemediationRound:  row.RemediationRound,

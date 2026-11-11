@@ -32,7 +32,7 @@ func TestHandleGetPipeline_NothingActiveIsNull(t *testing.T) {
 func TestHandleGetPipeline_ActiveCandidate(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	c := pipeline.NewCandidate("rel-1", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now)
+	c := pipeline.NewCandidate("rel-1", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, c.TransitionToCompiling(now.Add(time.Minute)))
 	releases.releases["rel-1"] = c
 

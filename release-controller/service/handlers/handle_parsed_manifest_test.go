@@ -54,7 +54,7 @@ func seedToParsing(t *testing.T, releaseID string, imageTags map[string]string) 
 // seedToParsingBootstrap is seedToParsing for a bootstrap release.
 // imageTags may have multiple entries when the test topology has cross-service nodes;
 // only the first entry is used as the changed service, others are pre-seeded as service_prod.
-func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
+func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string]string, opts ...func(*handlers.ReceiveCandidateInput)) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -74,14 +74,18 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, release.ManifestKindDbt, time.Unix(0, 0)))
 	}
 
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+	in := handlers.ReceiveCandidateInput{
 		Service:   changedSvc,
 		ReleaseID: releaseID,
 		ImageTag:  changedTag,
 		Bootstrap: true,
 		Repo:      "acme/demo",
 		CommitSHA: "deadbeef",
-	}))
+	}
+	for _, opt := range opts {
+		opt(&in)
+	}
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, in))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	// Simulate the compile leg completing (Compiling → Parsing).
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
@@ -1241,6 +1245,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", payload["code_bundle_uri"],
 		"bootstrap promote path must carry code_bundle_uri")
 	assert.Equal(t, true, payload["bootstrap"], "bootstrap release must carry bootstrap=true")
+	assert.Equal(t, false, payload["rebaseline"], "a plain bootstrap release must carry rebaseline=false")
 
 	// Assert the changed service's service_prod row carries the correct values.
 	// Changed service is the lexically-first service ("svc-a", tag "sha-a").
@@ -2665,4 +2670,17 @@ func TestHandleParsedManifest_ProdWithoutArtifactIsAnError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "current_prod rLegacy references no topology artifact")
+}
+
+func TestHandleParsedManifest_Rebaseline_PromotesWithBothFlags(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rRebase", map[string]string{"svc-a": "sha-a"},
+		func(in *handlers.ReceiveCandidateInput) { in.Rebaseline = true })
+	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rRebase", Status: "ok", TopologyRef: putTopology(t, deps, "rRebase", topo),
+		CodeBundleURI: "s3://continuo/code-bundles/rRebase/bundle.json",
+	}))
+	p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV2))
+	assert.True(t, p.Bootstrap)
+	assert.True(t, p.Rebaseline)
 }

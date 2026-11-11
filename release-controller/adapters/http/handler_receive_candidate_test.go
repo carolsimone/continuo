@@ -92,7 +92,7 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 // The request DTO decodes the same wire field names the application input is
 // built from, so the POST /releases body format is pinned here.
 func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
-	raw := `{"service":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,` +
+	raw := `{"service":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,"rebaseline":true,` +
 		`"repo":"org/r","commit_sha":"sha","kind":"python","shadow":true,` +
 		`"source_overlay_uri":"s3://x","verifies_release_id":"rel-0"}`
 	var body ReceiveCandidateRequest
@@ -102,6 +102,7 @@ func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
 	assert.Equal(t, "rel-1", in.ReleaseID)
 	assert.Equal(t, "img:1", in.ImageTag)
 	assert.True(t, in.Bootstrap)
+	assert.True(t, in.Rebaseline)
 	assert.Equal(t, "org/r", in.Repo)
 	assert.Equal(t, "sha", in.CommitSHA)
 	assert.Equal(t, "python", in.Kind)
@@ -131,7 +132,7 @@ func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
 	rec := postCandidate(srv, in)
 
 	require.Equal(t, http.StatusConflict, rec.Code)
-	assert.Equal(t, "release id already names a different candidate: \"rel-1\" has a different service, image tag, kind, bootstrap flag or source change\n", rec.Body.String())
+	assert.Equal(t, "release id already names a different candidate: \"rel-1\" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n", rec.Body.String())
 	assert.Equal(t, "img:1", releases.releases["rel-1"].ImageTags()["core"])
 }
 
@@ -140,7 +141,7 @@ func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
 func TestHandleReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIs202(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, "org/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
 	require.NoError(t, r.TransitionToParsing(now))
 	releases.releases["rel-1"] = r
@@ -148,4 +149,14 @@ func TestHandleReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIs202(t *t
 	rec := postCandidate(newTestServer(deps), validCandidateInput())
 
 	require.Equal(t, http.StatusAccepted, rec.Code)
+}
+
+func TestHandleReceiveCandidate_RebaselineWithoutBootstrapIs400(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	in := validCandidateInput()
+	in.Rebaseline = true
+	rec := postCandidate(newTestServer(deps), in)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "rebaseline is accepted only together with bootstrap")
+	assert.Empty(t, releases.releases)
 }

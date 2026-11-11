@@ -65,9 +65,9 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
 	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
-	// remediation_round. There is no shadow key: a candidate response never
+	// remediation_round + rebaseline. There is no shadow key: a candidate response never
 	// carries one, since GET /releases/{id} only ever returns a candidate.
-	assert.Len(t, decoded, 15)
+	assert.Len(t, decoded, 16)
 	assert.Equal(t, "rPROV", decoded["release_id"])
 	_, hasShadow := decoded["shadow"]
 	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
@@ -90,7 +90,7 @@ func TestHandleGetRelease_VerificationIDAnswers404(t *testing.T) {
 }
 
 func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
-	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.Fail("duplicate_table",
@@ -121,4 +121,14 @@ func TestGetReleaseResponse_IncludesManifestKind(t *testing.T) {
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(body, &decoded))
 	assert.Equal(t, "python", decoded["manifest_kind"])
+}
+
+func TestGetReleaseResponse_IncludesRebaseline(t *testing.T) {
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "rREBASE", Status: pipeline.StatusPromoted, Bootstrap: true, Rebaseline: true})
+	body, err := json.Marshal(getReleaseResponse(rel))
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.Equal(t, true, decoded["bootstrap"])
+	assert.Equal(t, true, decoded["rebaseline"])
 }

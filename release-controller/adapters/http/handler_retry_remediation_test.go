@@ -192,7 +192,7 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 // healable reason and a stored rejection payload, ready for RetryRemediation.
 func rejectedReleaseForRetry(t *testing.T, id string, now time.Time) *pipeline.Run {
 	t.Helper()
-	r := pipeline.NewCandidate(id, "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	r.SetRejectionPayload([]byte(`{"release_id":"` + id + `","stage":"compile","reason":"compile_failed"}`))
