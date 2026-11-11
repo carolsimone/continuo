@@ -15,12 +15,18 @@ shipped in those.
 **TL;DR**
 
 - A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
-- Upgrade while no release is compiling, parsing, seed-building or validating, and do not roll release-controller back afterwards.
+- Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
 - No values change is needed.
 
 ### Upgrade steps
 
-1. **Upgrade while no release is compiling, parsing, seed-building or validating.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue until it is failed by hand.
+1. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
+   1. Turn maintenance mode on: `helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true`. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish.
+   2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
+   3. Run the upgrade to this version with maintenance mode still on: keep `--set maintenance.enabled=true` with your usual values.
+   4. Turn maintenance mode off: `helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
+
+   Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
 2. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
 
 This release changes no values key, and it ships as a `MINOR`.
