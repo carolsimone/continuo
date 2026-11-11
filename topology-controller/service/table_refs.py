@@ -15,10 +15,13 @@ def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
     and merging them by schema and name would let whichever the SQL names first
     hide the other.
 
-    CTE names and schema-qualified reads of the node's own relation are not
-    tables the node reads and are skipped. A table with no schema raises
-    UnqualifiedTableReferenceError: which relation it means depends on the
-    session's search path, so the SQL is rejected rather than guessed at. A
+    A reference to a CTE and a schema-qualified read of the node's own relation
+    are not tables the node reads and are skipped. Only an unqualified name is
+    taken for a CTE reference: a CTE is always unqualified, so a qualified name
+    is a table even when a CTE of the same name is in scope. A table with no
+    schema that is not a CTE reference raises UnqualifiedTableReferenceError:
+    which relation it means depends on the session's search path, so the SQL is
+    rejected rather than guessed at. A
     table with a schema and no name (a schema-qualified function call such as
     public.my_fn(1) or pg_catalog.generate_series(1, 3), which sqlglot models
     as a table) names no relation and is skipped.
@@ -46,8 +49,10 @@ def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
             name = table.name.lower()
             schema = table.db.lower()
 
-            # CTEs are always unqualified — skip before the schema guard fires.
-            if name in cte_names:
+            # A CTE is always unqualified, so only an unqualified name can be
+            # one: skip it before the schema guard fires. A qualified name is a
+            # table even when a CTE of the same name is in scope.
+            if not schema and name in cte_names:
                 continue
 
             # Skip qualified self-references; unqualified self-references fall
