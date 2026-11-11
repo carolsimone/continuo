@@ -58,14 +58,15 @@ def rewrite_to_candidate_schema(
         return sql
 
     parsed = sqlglot.parse_one(sql, dialect=dialect)
-    cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
     self_ref = (self_schema.lower(), self_table.lower())
 
     for table in parsed.find_all(exp.Table):
         name = table.name.lower()
         schema_raw = table.db
-        # CTE references and unqualified names carry no schema to redirect.
-        if name in cte_names or not schema_raw:
+        # An unqualified name, a CTE reference included, carries no schema to
+        # redirect. A qualified name is a table even when a CTE of the same
+        # name is in scope.
+        if not schema_raw:
             continue
         key = (schema_raw.lower(), name)
         if key == self_ref:

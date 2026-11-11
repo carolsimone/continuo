@@ -223,3 +223,22 @@ def test_cte_in_one_query_does_not_exempt_the_same_name_in_another():
     ])
     deps = _resolve(node, registry)
     assert [d.table_name for d in deps] == ["users"]
+
+
+def test_a_qualified_table_is_resolved_when_a_cte_has_its_name():
+    # A CTE is always unqualified, so public.users is the table even though a
+    # CTE of the same name is in scope. Skipping it by name drops the upstream
+    # dependency and the release promotes without the edge.
+    registry = _make_registry("users")
+    sql = """
+        WITH users AS (SELECT 1 AS id)
+        SELECT u.id FROM users u JOIN public.users p ON p.id = u.id
+    """
+    deps = _resolve(_make_node("orders", sql), registry)
+    assert [d.table_name for d in deps] == ["users"]
+
+
+def test_an_unqualified_reference_to_a_cte_is_still_skipped():
+    registry = _make_registry("users")
+    sql = "WITH users AS (SELECT 1 AS id) SELECT id FROM users"
+    assert _resolve(_make_node("orders", sql), registry) == []
