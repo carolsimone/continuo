@@ -161,9 +161,10 @@ class CandidateManifestHandler:
     - from the start through the first manifest's parse: the image-tag check,
       the listing of every manifest (every manifest's download included) and
       that parse;
-    - from the last manifest's parse through the first node's resolve: the node
-      registry and its lookup and the rewrite context (in-memory work linear in
-      the number of nodes), then that resolve;
+    - from the last manifest's parse through the first node's resolve: that
+      manifest's own bookkeeping (skip logging, shared-code namespacing,
+      service checks), the node registry and its lookup and the rewrite context
+      (in-memory work linear in the number of nodes), then that resolve;
     - from the last node's resolve through the first node's build: the
       ingested step (in-memory work linear in the number of table references),
       then that build;

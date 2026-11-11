@@ -49,8 +49,11 @@ def rewrite_to_candidate_schema(
     A system relation (see system_relations) is never redirected, whatever the
     registry holds: the engine's own table has no copy in the candidate schema,
     and a node that builds a table with the same schema and name is a different
-    relation. The catalog of a read decides only that: a read of a registered
-    table under any other catalog is redirected, and keeps the catalog it named.
+    relation. The catalog of a read matters only for that system-relation check
+    (the engine's own catalog, such as Trino's `system`). A read that is not a
+    system relation is matched to the registry by its schema and table alone,
+    whatever catalog it names, and a read of a registered table is redirected
+    and keeps the catalog it named.
 
     A qualified self-reference (self_schema.self_table — e.g. an incremental model
     selecting from {{ this }}) is left on its production schema: the validation
