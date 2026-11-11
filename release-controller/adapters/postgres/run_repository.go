@@ -369,8 +369,10 @@ func (r *RunRepository) List(ctx context.Context, f repository.ListFilter) ([]*p
 // cutoff and not in keepIDs. For each removed run it then deletes the
 // candidate-SQL and code-bundle prefixes from S3, plus the topology artifact
 // of a run that was never promoted. A promoted run's artifact is kept: it
-// records a topology that ran in production. S3 deletion soft-fails (the
-// bucket lifecycle rule is the backstop for candidate SQL and code bundles).
+// records a topology that ran in production. S3 deletion soft-fails: an object
+// whose deletion fails stays in the bucket, and only the candidate SQL has a
+// bucket lifecycle rule behind it (an age rule on the code bundles could delete
+// the bundle of the live release, so the bundles have none).
 // Runs inside the caller's transaction; see the prune handler.
 func (r *RunRepository) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepIDs []string) (int, error) {
 	rows, err := r.q.QueryxContext(ctx,

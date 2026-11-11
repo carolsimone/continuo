@@ -492,6 +492,13 @@ to discard an export it cancels or that fails.
 | | release-controller | `s3:DeleteObject`, `s3:ListBucket` |
 | `tenants/<tenant>/backups/catalog/` (the exports) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload` |
 
+Set no lifecycle expiry rule on `code-bundles/` or `tenants/`. They hold the code
+bundle and the topology artifact of the release in production, which external
+tools read ([docs/read-contract.md](../../docs/read-contract.md)), and an age
+rule cannot tell the live release from an old one. release-controller deletes a
+release's objects when its retention prunes the release, and never for the
+production release.
+
 `s3:ListBucket` applies to the bucket, not to its objects: grant it on the
 bucket ARN and narrow it with an `s3:prefix` condition. A reader that holds it
 also sees a missing object as 404 rather than 403. The example below is for one
