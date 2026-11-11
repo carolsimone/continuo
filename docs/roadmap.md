@@ -60,7 +60,9 @@ dbt or Python node and is enforced the same way.
 Generating contracts from backend database and event schemas, and showing a
 software engineer the downstream impact on their pull request, is not part of
 this open-source project. It will be a separate commercial product built on
-continuo's public interfaces.
+continuo's public interfaces. Fixing the readers a change breaks stays in this
+project: the open remediation agent proposes those fixes, whether or not you
+use the commercial product.
 
 ### Test suite for circular dependencies
 
