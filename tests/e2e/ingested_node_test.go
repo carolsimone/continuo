@@ -260,10 +260,11 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 
 	// ── 7. no run ever holds a task for the table ────────────────────────────
 	// In this test's own flow nothing that could select the node ever runs: the
-	// schedule's run, the promote-seed runs and the refused single-node run all
-	// leave it out whatever the planner does. So this count cannot show that the
-	// planner ignores the node, any more than step 5's exact-task-set assertion
-	// can. It catches a task for the node from any run of the tenant.
+	// schedule's run and the promote-seed runs leave it out whatever the planner
+	// does, and the refused single-node run creates no run at all (step 6 pins
+	// that refusal). So this count cannot show that the planner ignores the node,
+	// any more than step 5's exact-task-set assertion can. It catches a task for
+	// the node from any run of the tenant.
 	var ingestedTasks int
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &ingestedTasks,
 		`SELECT count(*) FROM tasks WHERE tenant_id = $1 AND node_key = $2`,
