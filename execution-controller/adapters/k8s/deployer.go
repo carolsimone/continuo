@@ -42,7 +42,7 @@ func NewDeployer(client *K8sClient, namespace string, startTimeout, legTimeout t
 func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
 	if err != nil {
-		return fmt.Errorf("%w %q: %w", deploy.ErrInvalidNodeType, spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+		return fmt.Errorf("%w: %w: %w", pkgevents.ErrPermanent, deploy.ErrInvalidNodeType, err)
 	}
 	if spec.TimeoutSeconds <= 0 {
 		return fmt.Errorf("%w: timeout_seconds %d for Job %s", errors.Join(deploy.ErrMalformedDispatch, pkgevents.ErrPermanent),
