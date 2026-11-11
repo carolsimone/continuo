@@ -73,8 +73,9 @@ func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 		nodeTypeByID[n.NodeID] = n.NodeType
 		set := map[string]bool{}
 		for _, anc := range dag.ChangedAncestorsByNode[n.NodeID] {
-			// An ancestor with no service is an ingested table that no node
-			// builds, so no fix can be placed there.
+			// An ancestor that names no service (in practice an ingested table
+			// that no node builds) is never a cluster target: no fix can be
+			// placed there.
 			if anc.Service == "" {
 				continue
 			}
