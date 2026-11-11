@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/egress-proxy
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/carolsimone/continuo/pkg v0.0.0

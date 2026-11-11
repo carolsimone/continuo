@@ -25,6 +25,9 @@ shipped in those.
   - Each release logs one `release parsed` line with its stage times and counts. A skipped dbt node logs at INFO instead of WARNING, and a dbt test node no longer logs an ERROR on every release.
 - **The release page shows how long each node took.** TL;DR: the duration column of a release's node results shows each compile, seed-build and validation Job's run time instead of a dash.
 
+### Security
+- Service and CLI images are built with Go 1.27.4, and every Go module requires Go 1.26.11: both fix GO-2026-6859 in `net/http` (an HTTP/1 server that uses `MaxBytesReader` or `MaxBytesHandler` could crash when its handler read the request body while it wrote the response header). No values change. PATCH.
+
 ## [0.21.0] - 2026-11-06
 
 **TL;DR**
