@@ -153,12 +153,24 @@ class CandidateManifestHandler:
     progress is called once after each manifest's parse, once after each node's
     resolve and once after each node's build, a failed one included, so the
     caller can tell a release that is working through its nodes from one that
-    has stopped. Three stretches call nothing: from the start through the first
-    manifest's parse (every manifest's download included), the ingested step
-    between the last node's resolve and the first node's build (in-memory work
-    linear in the number of table references), and from the last node's build
-    through the code bundle, the topology artifact and the publish. Each
-    stretch must end within the caller's staleness budget.
+    has stopped. Between two calls the handler does one manifest's parse (after
+    the in-memory bookkeeping of the manifest before it: skip logging,
+    shared-code namespacing, service checks), one node's resolve or one node's
+    build, except in these stretches, each of which must end within the
+    caller's staleness budget:
+    - from the start through the first manifest's parse: the image-tag check,
+      the listing of every manifest (every manifest's download included) and
+      that parse;
+    - from the last manifest's parse through the first node's resolve: the node
+      registry and its lookup and the rewrite context (in-memory work linear in
+      the number of nodes), then that resolve;
+    - from the last node's resolve through the first node's build: the
+      ingested step (in-memory work linear in the number of table references),
+      then that build;
+    - from the last node's build through the code bundle, its upload, the
+      topology artifact and the publish.
+    A release that ends early, with no manifest or with a failure, ends in the
+    stretch it is in, after the publish of its outcome.
     """
 
     def __init__(
