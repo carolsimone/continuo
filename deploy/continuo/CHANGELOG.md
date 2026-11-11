@@ -12,8 +12,25 @@ shipped in those.
 
 ## [Unreleased]
 
+**TL;DR**
+
+- A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
+- Upgrade while no release is compiling, parsing, seed-building or validating, and do not roll release-controller back afterwards.
+- No values change is needed.
+
+### Upgrade steps
+
+1. **Upgrade while no release is compiling, parsing, seed-building or validating.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue until it is failed by hand.
+2. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+
+This release changes no values key, and it ships as a `MINOR`.
+
 ### Added
 
+- **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
+  - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
+  - A system relation never becomes an ingested node.
+  - No values change is needed.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
   - Its pod gets the `metrics` container port, the `prometheus.io/*` annotations and a place in the scrape NetworkPolicy. `deploy/OBSERVABILITY.md` lists the new series and an example rule for a stage near the liveness budget.
   - No values change is needed.
@@ -21,6 +38,9 @@ shipped in those.
 
 ### Changed
 
+- **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
+  - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
+  - The key and its default are unchanged, and no values change is needed.
 - **topology-controller logs JSON lines.** TL;DR: topology-controller writes one JSON object per line on stderr, with every field, as the Go services do. A log agent that read its old text lines needs its JSON parser instead.
   - Each release logs one `release parsed` line with its stage times and counts. A skipped dbt node logs at INFO instead of WARNING, and a dbt test node no longer logs an ERROR on every release.
 - **The release page shows how long each node took.** TL;DR: the duration column of a release's node results shows each compile, seed-build and validation Job's run time instead of a dash.

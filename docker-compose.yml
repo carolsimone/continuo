@@ -836,8 +836,11 @@ services:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: us-east-1
-      # SQL dialect for dependency resolution and the candidate-schema rewrite.
-      # Mirrors the chart's validation.engine; the local stack runs Postgres.
+      # SQL dialect for dependency resolution and the candidate-schema rewrite,
+      # and the engine's system relations (information_schema and the pg_*
+      # schemas on Postgres), which never become nodes, resolve to a node or
+      # move to the candidate schema. Mirrors the chart's validation.engine; the
+      # local stack runs Postgres.
       WAREHOUSE_ENGINE: postgres
       LOG_LEVEL: INFO
       METRICS_PORT: "9464"
