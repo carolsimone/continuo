@@ -259,9 +259,10 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	t.Logf("✅ a single-node run of %s was refused with INVALID_ARGUMENT, with and without a service", ingestedKey)
 
 	// ── 7. no run ever holds a task for the table ────────────────────────────
-	// The schedule's run could not hold one whatever the planner did, since the
-	// ingested node belongs to no schedule: only the task rows of every run of
-	// the tenant show that no run plans it.
+	// The exact-task-set assertion on the schedule's run in step 5 cannot show
+	// that the planner ignores the ingested node: the node has no schedule, so a
+	// schedule's run never selects it whatever the planner does. Counting the
+	// task rows for the node's key across every run of the tenant can show it.
 	var ingestedTasks int
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &ingestedTasks,
 		`SELECT count(*) FROM tasks WHERE tenant_id = $1 AND node_key = $2`,
