@@ -26,6 +26,40 @@ def test_a_table_named_twice_across_sqls_is_returned_once():
     assert [r.key for r in refs] == ["raw.a"]
 
 
+def _read_tuples(sql: str, dialect: str = "trino") -> list[tuple[str, str, str]]:
+    return [(r.catalog, r.schema, r.table) for r in referenced_tables(_node(sql), dialect=dialect)]
+
+
+def test_the_same_schema_and_table_under_two_catalogs_returns_both_in_first_seen_order():
+    """The system-relation filter that follows decides per catalog, so a read of
+    system.runtime.nodes must not hide a read of warehouse.runtime.nodes."""
+    assert _read_tuples("SELECT * FROM system.runtime.nodes JOIN warehouse.runtime.nodes ON 1=1") == [
+        ("system", "runtime", "nodes"), ("warehouse", "runtime", "nodes"),
+    ]
+
+
+def test_the_catalogs_come_back_in_the_order_the_sql_reads_them():
+    assert _read_tuples("SELECT * FROM warehouse.runtime.nodes JOIN system.runtime.nodes ON 1=1") == [
+        ("warehouse", "runtime", "nodes"), ("system", "runtime", "nodes"),
+    ]
+
+
+def test_two_reads_of_one_catalog_schema_and_table_in_any_case_return_one_ref():
+    assert _read_tuples("SELECT * FROM Warehouse.Raw.Orders JOIN warehouse.raw.orders ON 1=1") == [
+        ("warehouse", "raw", "orders"),
+    ]
+    refs = referenced_tables(
+        _node("SELECT * FROM warehouse.raw.orders", 'SELECT * FROM "WAREHOUSE"."RAW"."ORDERS"'), dialect="trino",
+    )
+    assert [(r.catalog, r.schema, r.table) for r in refs] == [("warehouse", "raw", "orders")]
+
+
+def test_a_read_with_a_catalog_and_the_same_read_without_one_are_two_refs():
+    assert _read_tuples("SELECT * FROM raw.orders JOIN warehouse.raw.orders ON 1=1", "postgres") == [
+        ("", "raw", "orders"), ("warehouse", "raw", "orders"),
+    ]
+
+
 def test_ctes_and_qualified_self_reads_are_skipped():
     sql = "WITH x AS (SELECT * FROM raw.a) SELECT * FROM x JOIN analytics.m ON 1=1"
     assert [r.key for r in referenced_tables(_node(sql), dialect="postgres")] == ["raw.a"]

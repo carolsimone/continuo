@@ -12,13 +12,17 @@ def resolve_upstream_deps(
     or source no known service owns, and is skipped. dbt seeds are registered
     (the in-memory registry is built from every parsed node, seeds included),
     so a seed reference resolves to an upstream dep like any other node. The
-    deps come back in ref order.
+    registry knows a table by schema and name, whatever its catalog, so refs
+    that differ only in catalog resolve to one dep. The deps come back in the
+    order of each table's first ref.
     """
     deps: list[UpstreamDep] = []
+    resolved: set[tuple[str, str]] = set()
     for ref in refs:
         entry = registry.get((ref.schema, ref.table))
-        if entry is None:
+        if entry is None or (ref.schema, ref.table) in resolved:
             continue
+        resolved.add((ref.schema, ref.table))
         deps.append(UpstreamDep(
             table_name=entry.table_name,
             schema_name=entry.schema_name,

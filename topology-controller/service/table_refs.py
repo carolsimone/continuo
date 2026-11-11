@@ -7,9 +7,16 @@ from domain.model import ManifestNode, TableRef
 def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
     """Every table the node's dependency SQLs name, in first-seen order.
 
-    A table is returned once, however many of the node's SQLs name it. CTE names
-    and schema-qualified reads of the node's own relation are not tables the
-    node reads and are skipped. A table with no schema raises
+    A table is returned once per catalog, schema and table, however many of the
+    node's SQLs name it. The catalog is part of the identity because the
+    system-relation filter that follows (domain.ingested.SystemRelations) decides
+    per catalog: on an engine that keeps its own relations in a catalog,
+    system.runtime.nodes and warehouse.runtime.nodes share a schema and a name,
+    and merging them by schema and name would let whichever the SQL names first
+    hide the other.
+
+    CTE names and schema-qualified reads of the node's own relation are not
+    tables the node reads and are skipped. A table with no schema raises
     UnqualifiedTableReferenceError: which relation it means depends on the
     session's search path, so the SQL is rejected rather than guessed at. A
     table with a schema and no name (a schema-qualified function call such as
@@ -22,7 +29,7 @@ def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
     so a caller cannot silently fall back to one engine's rules.
     """
     refs: list[TableRef] = []
-    seen: set[str] = set()
+    seen: set[TableRef] = set()
 
     for dep_sql in node.dependency_sqls:
         if not dep_sql:
@@ -58,9 +65,9 @@ def referenced_tables(node: ManifestNode, *, dialect: str) -> list[TableRef]:
                 continue
 
             ref = TableRef(schema=schema, table=name, catalog=table.catalog.lower())
-            if ref.key in seen:
+            if ref in seen:
                 continue
-            seen.add(ref.key)
+            seen.add(ref)
             refs.append(ref)
 
     return refs

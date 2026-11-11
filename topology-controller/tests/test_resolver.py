@@ -78,6 +78,37 @@ def test_deduplicates_upstreams():
     assert len(deps) == 1
 
 
+def test_one_registered_table_read_under_two_catalogs_gives_one_dependency():
+    # The registry knows a table by (schema, table) and ignores the catalog, so
+    # refs that differ only in catalog are one dependency.
+    registry = _make_registry("orders")
+    node = _make_node("summary", "SELECT * FROM hive.public.orders a JOIN other.public.orders b ON 1=1")
+    refs = referenced_tables(node, dialect="trino")
+    assert [(r.catalog, r.schema, r.table) for r in refs] == [("hive", "public", "orders"), ("other", "public", "orders")]
+    deps = resolve_upstream_deps(refs, registry)
+    assert [d.unique_id for d in deps] == ["public.orders"]
+
+
+def test_dependencies_come_in_the_order_of_each_tables_first_ref():
+    registry = _make_registry("a", "b")
+    refs = [
+        TableRef(schema="public", table="b", catalog="hive"),
+        TableRef(schema="public", table="a", catalog="hive"),
+        TableRef(schema="public", table="b", catalog="other"),
+        TableRef(schema="public", table="a", catalog="other"),
+    ]
+    assert [d.unique_id for d in resolve_upstream_deps(refs, registry)] == ["public.b", "public.a"]
+
+
+def test_refs_of_two_registered_tables_give_two_dependencies_in_ref_order():
+    registry = _make_registry("users", "products")
+    refs = [
+        TableRef(schema="public", table="products", catalog="hive"),
+        TableRef(schema="public", table="users", catalog="hive"),
+    ]
+    assert [d.unique_id for d in resolve_upstream_deps(refs, registry)] == ["public.products", "public.users"]
+
+
 def test_skips_unknown_table():
     # Tables not in the registry (seeds, sources, external refs) are silently
     # skipped — they are not cross-service model dependencies.

@@ -7,6 +7,7 @@ from domain.model import ManifestNode, TableRef, UpstreamDep
 from service.table_refs import referenced_tables
 
 PG = _SYSTEM_RELATIONS["postgres"]
+TRINO = _SYSTEM_RELATIONS["trino"]
 
 
 def _model(table, schema="analytics", *, alias="", node_type=NodeType.DBT_MODEL, service="service-1", sql=""):
@@ -104,6 +105,46 @@ def test_a_reader_gets_one_edge_for_two_reads_of_the_same_table():
     out = ingested_nodes([a], {a.unique_id: [_ref("raw.ext"), TableRef("raw", "ext", catalog="other")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.ext"]
     assert [d.unique_id for d in a.upstream_deps] == ["raw.ext"]
+
+
+def test_a_system_read_before_or_after_a_real_one_gives_the_same_node_and_edge():
+    """Trino's system relations are a catalog, and system.runtime.nodes and
+    warehouse.runtime.nodes share a schema and a table: the real table is
+    ingested whichever of the two reads comes first."""
+    system_ref, real_ref = TableRef("runtime", "nodes", catalog="system"), TableRef("runtime", "nodes", catalog="warehouse")
+    results = []
+    for reads in ([system_ref, real_ref], [real_ref, system_ref]):
+        reader = _model("reader")
+        out = ingested_nodes([reader], {reader.unique_id: reads}, system=TRINO)
+        results.append(([n.unique_id for n in out], [d.unique_id for d in reader.upstream_deps]))
+    assert results == [(["runtime.nodes"], ["runtime.nodes"])] * 2
+
+
+def test_a_reader_of_only_a_system_catalog_table_gets_no_node_and_no_edge():
+    reader = _model("reader")
+    reads = {reader.unique_id: [TableRef("runtime", "nodes", catalog="system")]}
+    assert ingested_nodes([reader], reads, system=TRINO) == []
+    assert reader.upstream_deps == []
+
+
+def test_one_table_read_under_two_non_system_catalogs_is_one_node_and_one_edge():
+    reader = _model("reader")
+    reads = {reader.unique_id: [TableRef("raw", "orders", catalog="hive"), TableRef("raw", "orders", catalog="other")]}
+    out = ingested_nodes([reader], reads, system=TRINO)
+    assert [n.unique_id for n in out] == ["raw.orders"]
+    assert [d.unique_id for d in reader.upstream_deps] == ["raw.orders"]
+
+
+def test_the_real_table_is_ingested_from_the_sql_in_either_order_of_the_two_reads():
+    results = []
+    for sql in (
+        "SELECT * FROM system.runtime.nodes JOIN warehouse.runtime.nodes ON 1=1",
+        "SELECT * FROM warehouse.runtime.nodes JOIN system.runtime.nodes ON 1=1",
+    ):
+        reader = _model("reader", sql=sql)
+        out = ingested_nodes([reader], {reader.unique_id: referenced_tables(reader, dialect="trino")}, system=TRINO)
+        results.append(([n.unique_id for n in out], [d.unique_id for d in reader.upstream_deps]))
+    assert results == [(["runtime.nodes"], ["runtime.nodes"])] * 2
 
 
 def test_a_reader_keeps_the_edges_it_already_has():
