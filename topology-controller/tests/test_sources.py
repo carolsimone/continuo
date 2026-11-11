@@ -163,17 +163,36 @@ def test_s3_source_empty_declared_service_when_no_service_supplied():
 def test_source_carries_the_declared_kind_onto_each_manifest_file():
     """kind travels with the key from the release.requested payload; the
     handler is what decides how to parse it."""
-    s3 = MagicMock()
-    source = S3Source(
-        bucket="continuo", env="local", s3_client=s3,
-        keys=[
-            ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
-            ManifestRequest(service="marketing-py", key="marketing-py/rel-1/contract.yaml",
-                            kind=ManifestKind.PYTHON),
-        ],
-    )
+    source = _make_s3_source(keys=[
+        ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
+        ManifestRequest(service="marketing-py", key="marketing-py/rel-1/contract.yaml",
+                        kind=ManifestKind.PYTHON),
+    ])
+    try:
+        files = source.list_manifests()
 
-    files = source.list_manifests()
+        assert [f.kind for f in files] == ["dbt", "python"]
+        assert [f.declared_service for f in files] == ["service-1", "marketing-py"]
+    finally:
+        source.cleanup()
 
-    assert [f.kind for f in files] == ["dbt", "python"]
-    assert [f.declared_service for f in files] == ["service-1", "marketing-py"]
+
+def test_s3_source_counts_its_manifests_before_downloading():
+    source = _make_s3_source(keys=[
+        ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
+        ManifestRequest(service="service-2", key="service-2/rel-1/manifest.json"),
+    ])
+    try:
+        assert source.manifest_count() == 2
+        source._s3.download_file.assert_not_called()
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_records_each_files_size():
+    source = _make_s3_source(keys=[ManifestRequest(service="svc", key="svc/rel/manifest.json")])
+    try:
+        (file,) = source.list_manifests()
+        assert file.size_bytes == 13
+    finally:
+        source.cleanup()

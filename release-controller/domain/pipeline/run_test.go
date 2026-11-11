@@ -119,6 +119,24 @@ func TestActivatedAt_IsFirstTransitionOffReceived(t *testing.T) {
 	assert.Equal(t, t0.Add(30*time.Second), at)
 }
 
+func TestRun_StageDurationIsTheTimeUntilTheNextTransition(t *testing.T) {
+	r := candidate(t)
+	require.NoError(t, r.TransitionToCompiling(t0.Add(1*time.Second)))
+	require.NoError(t, r.TransitionFromCompiling(t0.Add(31*time.Second)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, t0.Add(40*time.Second)))
+	require.NoError(t, r.Promote(t0.Add(100*time.Second)))
+	assert.Equal(t, 30*time.Second, r.StageDuration(pipeline.StatusCompiling))
+	assert.Equal(t, 9*time.Second, r.StageDuration(pipeline.StatusParsing))
+	assert.Equal(t, 60*time.Second, r.StageDuration(pipeline.StatusValidating))
+	assert.Equal(t, time.Duration(0), r.StageDuration(pipeline.StatusSeedBuilding))
+}
+
+func TestRun_StageDurationOfTheStageInProgressIsZero(t *testing.T) {
+	r := candidate(t)
+	require.NoError(t, r.TransitionToParsing(t0.Add(5*time.Second)))
+	assert.Equal(t, time.Duration(0), r.StageDuration(pipeline.StatusParsing))
+}
+
 func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 	v := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID: "verify-x", Kind: pipeline.KindVerification, Status: pipeline.StatusPassed,

@@ -4,6 +4,8 @@ from domain.model import ManifestNode, NodeRegistryEntry, NodeType, Runtime
 from service.candidate_artifacts import (
     DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext,
 )
+from service.release_timings import ReleaseTimings, Stage
+from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
 def _ctx(**overrides):
@@ -16,6 +18,7 @@ def _ctx(**overrides):
     base = dict(
         release_id="rel-1", registry=registry,
         candidate_schema="_candidate_rel_1", dialect="postgres",
+        timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
     )
     base.update(overrides)
     return RewriteContext(**base)
@@ -177,3 +180,15 @@ def test_python_builder_leaves_a_self_reference_on_the_production_schema():
     PythonSpecArtifactBuilder(uploader).build(node, _ctx(registry=registry))
 
     assert "_candidate_rel_1" not in uploader.upload.call_args.kwargs["spec"]["reads"][0]
+
+
+def test_the_dbt_builder_times_the_rewrite_and_the_upload_apart_without_reading_memory():
+    memory = ScriptedMemoryProbe(0)
+    timings = ReleaseTimings("rel-1", FakeClock(step=1.0), memory)
+    node = ManifestNode(table_name="orders", schema_name="test_schema", service_name="service-2",
+                        owner="team-b", schedule_name="daily", criticality="CORE",
+                        candidate_sql="select * from test_schema.users")
+    DbtSqlArtifactBuilder(MagicMock()).build(node, _ctx(timings=timings))
+    assert (timings.stages[Stage.REWRITE].runs, timings.stages[Stage.REWRITE].seconds) == (1, 1.0)
+    assert (timings.stages[Stage.CANDIDATE_UPLOAD].runs, timings.stages[Stage.CANDIDATE_UPLOAD].seconds) == (1, 1.0)
+    assert memory.calls == 0

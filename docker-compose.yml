@@ -840,6 +840,7 @@ services:
       # Mirrors the chart's validation.engine; the local stack runs Postgres.
       WAREHOUSE_ENGINE: postgres
       LOG_LEVEL: INFO
+      METRICS_PORT: "9464"
     volumes:
       - ./pkg:/app/pkg:ro
     depends_on:

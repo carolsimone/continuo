@@ -711,3 +711,51 @@ func TestNewStoppedDeployment_IsDoneAndStopped(t *testing.T) {
 func TestReleaseLegTenantID_IsTheDefaultTenant(t *testing.T) {
 	assert.Equal(t, pkgevents.DefaultTenantID, model.ReleaseLegTenantID)
 }
+
+func TestDeployment_RunDurationNeedsAStartBeforeTheOutcome(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{ReleaseID: "rel", NodeID: "seed.a", JobName: "seed-a", NodeType: "dbt-seed", ImageTag: "t"}
+
+	ran := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, ran.Reserve())
+	require.NoError(t, ran.MarkStarted(t0))
+	require.NoError(t, ran.RecordOutcome("ok", "", "", "", t0.Add(1500*time.Millisecond)))
+	took, ok := ran.RunDuration()
+	assert.True(t, ok)
+	assert.Equal(t, 1500*time.Millisecond, took)
+
+	// A node whose Job was never created has no start to measure from.
+	never := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, never.Reserve())
+	require.NoError(t, never.FailSeedBuild("not deployable", t0))
+	_, ok = never.RunDuration()
+	assert.False(t, ok)
+
+	// An outcome stamped before the start (clock skew between replicas) is no duration.
+	skewed := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, skewed.Reserve())
+	require.NoError(t, skewed.MarkStarted(t0.Add(5*time.Second)))
+	require.NoError(t, skewed.RecordOutcome("ok", "", "", "", t0))
+	_, ok = skewed.RunDuration()
+	assert.False(t, ok)
+
+	// A started node with no outcome yet has nothing to measure to.
+	running := model.NewSeedBuildDeployment(cmd, nil, t0)
+	require.NoError(t, running.Reserve())
+	require.NoError(t, running.MarkStarted(t0))
+	_, ok = running.RunDuration()
+	assert.False(t, ok)
+}
+
+func TestDeployment_RunDurationOfAnOutcomeAtTheStartIsZero(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cmd := command.ValidationDeployTask{ReleaseID: "rel", NodeID: "node.a", JobName: "val-a", NodeType: "dbt-model", ImageTag: "t"}
+
+	d := model.NewValidationDeployment(cmd, nil, t0, false)
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(t0))
+	require.NoError(t, d.RecordOutcome("ok", "", "", "", t0))
+	took, ok := d.RunDuration()
+	assert.True(t, ok, "an outcome at the instant of the start is a measured duration of zero")
+	assert.Zero(t, took)
+}

@@ -32,8 +32,8 @@ type NodeResult struct {
 
 // stageResults converts the inbound per-node wire results of a compile or
 // seed-build leg into the domain value objects recorded on the release, and
-// derives the failing-node set in the same pass. The validation leg keeps its
-// own conversion because it additionally carries DurationMS.
+// derives the failing-node set in the same pass. Each result keeps the time its
+// Job ran (DurationMS), which is 0 for a node that never started.
 func stageResults(perNode []NodeResult) (results []pipeline.NodeValidationResult, failing []string) {
 	results = make([]pipeline.NodeValidationResult, len(perNode))
 	for i, n := range perNode {
@@ -42,6 +42,7 @@ func stageResults(perNode []NodeResult) (results []pipeline.NodeValidationResult
 			Status:        n.Status,
 			DBTLogURI:     n.DBTLogURI,
 			RunResultsURI: n.RunResultsURI,
+			DurationMS:    n.DurationMS,
 		}
 		if n.Status != "ok" {
 			failing = append(failing, n.NodeID)

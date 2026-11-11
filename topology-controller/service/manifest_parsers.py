@@ -6,15 +6,24 @@ produce the same ManifestNode, so this is the only place downstream code has to
 know a kind exists.
 """
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from domain.exceptions import InvalidNodeSettingError, MalformedContractError
-from domain.model import ManifestKind, ManifestNode
+from domain.model import ManifestKind, ManifestNode, SkippedNode
 from service.parser import parse_manifest
 from service.python_contract_parser import parse_python_contract
 
-ParseFn = Callable[[str, str], tuple[list[ManifestNode], dict]]
+
+class ParseFn(Protocol):
+    """A kind's parse function: the artifact at `path` to its nodes and shared
+    code. A node the parse leaves out without failing is appended to `skipped`
+    when it is given."""
+
+    def __call__(
+        self, path: str, image_tag: str, *, skipped: list[SkippedNode] | None = None
+    ) -> tuple[list[ManifestNode], dict]:
+        ...
 
 
 @dataclass(frozen=True)

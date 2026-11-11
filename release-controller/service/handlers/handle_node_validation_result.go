@@ -17,6 +17,9 @@ type NodeValidationResultInput struct {
 	Status        string `json:"status"`
 	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
 	RunResultsURI string `json:"run_results_uri,omitempty"`
+	// DurationMS is the time the node's Job ran. It is absent for a node that
+	// never started and for a skipped one.
+	DurationMS int64 `json:"duration_ms,omitempty"`
 }
 
 // HandleNodeValidationResult upserts one node's outcome into the release's
@@ -63,6 +66,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 		Status:        in.Status,
 		DBTLogURI:     in.DBTLogURI,
 		RunResultsURI: in.RunResultsURI,
+		DurationMS:    in.DurationMS,
 		NodeType:      nodeType,
 	})
 	if err := u.RunRepo().Save(ctx, r); err != nil {

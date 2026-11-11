@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 from config.secrets import read_secret
 from streams_contract import (
@@ -19,6 +20,11 @@ SERVICE_NAME    = "topology-controller"
 # topology-controller.httpPort). Not in _REQUIRED: an operational default is
 # fine, unlike REDIS_URL/S3_* which must be explicitly wired per environment.
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8086"))
+
+# Serves GET /metrics (Prometheus text format) on a listener of its own, apart
+# from the probe port above, so a scrape never shares a socket with the probes.
+# METRICS_PORT overrides it; metrics_port() validates the value.
+DEFAULT_METRICS_PORT = 9464
 
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")
 S3_BUCKET       = os.environ.get("S3_BUCKET", "")
@@ -89,6 +95,25 @@ def log_level() -> int:
             f"unsupported LOG_LEVEL {raw!r}: expected one of {', '.join(_LOG_LEVELS)}"
         ) from None
 
+
+def metrics_port() -> int:
+    """Return the port METRICS_PORT names, DEFAULT_METRICS_PORT when it is unset or empty.
+
+    A value is accepted only when it is written as ASCII digits and lies in
+    1..65535. int() alone would also take "9_464", " 9464" and non-ASCII
+    digits, which a port setting never means. Raises RuntimeError for any
+    other value, so a port this service cannot bind stops it at startup.
+    """
+    raw = os.environ.get("METRICS_PORT", "")
+    if not raw:
+        return DEFAULT_METRICS_PORT
+    if re.fullmatch(r"[0-9]+", raw) and 1 <= int(raw) <= 65535:
+        return int(raw)
+    raise RuntimeError(
+        f"unsupported METRICS_PORT {raw!r}: expected a whole number from 1 to 65535"
+    )
+
+
 # REDIS_ACL_MODE (the chart's Redis login mode, injected through the shared
 # ConfigMap): in perService mode each service signs in as its own Redis login,
 # whose rule fences it to its own keys, and the service refuses to start when
@@ -142,7 +167,8 @@ def validate() -> None:
     carries credentials (they come from REDIS_USERNAME and REDIS_PASSWORD), an
     unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
     this service has a SQL dialect for, a LOG_LEVEL that names no level this
-    service logs at, and a REDIS_ACL_MODE other than shared or perService.
+    service logs at, a METRICS_PORT that is not a whole number from 1 to 65535,
+    and a REDIS_ACL_MODE other than shared or perService.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]
@@ -154,4 +180,5 @@ def validate() -> None:
         )
     warehouse_dialect()
     log_level()
+    metrics_port()
     redis_acl_mode()

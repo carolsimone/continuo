@@ -11,6 +11,7 @@ from config.config import (
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
+    metrics_port,
     redis_acl_mode,
     validate,
     warehouse_dialect,
@@ -19,6 +20,10 @@ from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
+from adapters.json_log import configure_logging
+from adapters.metrics.prometheus import TopologyMetrics
+from adapters.metrics.server import start_metrics_server
+from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.redis.error_class import is_infrastructure
@@ -35,12 +40,21 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    # The root logger takes the level LOG_LEVEL names; log_level() refuses an
-    # unknown name, which stops the process before anything else starts.
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    logging.getLogger().setLevel(log_level())
+    # The root logger writes JSON lines at the level LOG_LEVEL names;
+    # log_level() refuses an unknown name, which stops the process before
+    # anything else starts.
+    configure_logging(log_level())
     validate()
     logger.info("topology-controller starting (candidate consumer)")
+
+    # Bound before anything consumes, so a port another process holds stops the
+    # process here instead of leaving a consumer working with no scrape target.
+    metrics = TopologyMetrics(SERVICE_NAME)
+    try:
+        start_metrics_server(metrics_port(), metrics.registry)
+    except OSError as exc:
+        logger.error("cannot listen on the metrics port", extra={"port": metrics_port(), "error": str(exc)})
+        sys.exit(1)
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 
@@ -102,6 +116,12 @@ def main() -> None:
             # propagates, so the consumer pauses and redelivers instead of the
             # release being rejected.
             is_infrastructure_error=is_infrastructure,
+            clock=MonotonicClock(),
+            memory=ResidentMemoryProbe(),
+            # Looked up when a release is handled, by which time the consumer
+            # exists: a handler that keeps working keeps /health fresh.
+            progress=candidate_consumer.refresh_heartbeat,
+            observer=metrics,
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(
@@ -110,6 +130,7 @@ def main() -> None:
         group_name=RELEASE_REQUESTED_GROUP,
         message_handler=handle_release_requested,
         service_name=SERVICE_NAME,
+        observer=metrics,
     )
 
     consumer_failures: list[BaseException] = []

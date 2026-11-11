@@ -186,6 +186,27 @@ func TestHandleSeedBuildResult_OKValidationPayloadCarriesExpectedFields(t *testi
 	assert.NotContains(t, idsInOrder, "seed.core.fx")
 }
 
+func TestHandleSeedBuildResult_KeepsEachNodesDuration(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-duration"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "ok",
+		PerNode: []handlers.NodeResult{{NodeID: "seed.core.fx", Status: "ok", DurationMS: 1500}},
+	}))
+
+	var seedBuild []pipeline.NodeValidationResult
+	for _, n := range mustGetRelease(t, store, releaseID).PerNodeResults() {
+		if n.Stage == "seed_build" {
+			seedBuild = append(seedBuild, n)
+		}
+	}
+	require.Len(t, seedBuild, 1)
+	assert.Equal(t, "seed.core.fx", seedBuild[0].NodeID)
+	assert.Equal(t, int64(1500), seedBuild[0].DurationMS)
+}
+
 func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-fail"
@@ -206,6 +227,21 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	_, hasErrorClass := payload["error_class"]
 	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+}
+
+func TestHandleSeedBuildResult_Failed_RecordsTheSeedBuildingStageDuration(t *testing.T) {
+	deps, store := newTestDeps(t)
+	releaseID := "rel-seed-time"
+	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
+	spy := &stageSpy{}
+	deps.Telemetry = spy
+	deps.Clock.(*fakeClock).t = deps.Clock.Now().Add(45 * time.Second)
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
+	}))
+
+	assert.Equal(t, []stageCall{{"seed_building", false, 45 * time.Second}}, spy.calls)
 }
 
 func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T) {

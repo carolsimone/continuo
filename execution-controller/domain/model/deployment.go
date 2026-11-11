@@ -402,6 +402,18 @@ func (d *Deployment) Finish(outcome string, now time.Time) error {
 // HasOutcome reports whether the deployment's terminal outcome is recorded.
 func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
 
+// RunDuration is the time from the creation of the deployment's Job to its
+// recorded outcome. It reports false when the Job was never created
+// (deployed_at is unset), when no outcome is recorded yet, or when the outcome
+// is stamped before the start, as clocks that differ between replicas can
+// produce.
+func (d *Deployment) RunDuration() (time.Duration, bool) {
+	if d.deployedAt == nil || d.outcomeAt == nil || d.outcomeAt.Before(*d.deployedAt) {
+		return 0, false
+	}
+	return d.outcomeAt.Sub(*d.deployedAt), true
+}
+
 // AwaitingResult reports whether the deployment's attempt was started and its
 // result is not recorded yet: it is starting, running or terminating.
 func (d *Deployment) AwaitingResult() bool {

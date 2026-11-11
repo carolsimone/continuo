@@ -24,6 +24,7 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	rcgrpc "github.com/carolsimone/continuo/release-controller/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
+	rcmetrics "github.com/carolsimone/continuo/release-controller/adapters/metrics"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
@@ -194,7 +195,7 @@ func main() {
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, candidateSQLDeleter) },
 		Clock:     ports.SystemClock{},
-		Telemetry: ports.NoOpTelemetry{},
+		Telemetry: rcmetrics.NewTelemetry(metricsReg),
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
