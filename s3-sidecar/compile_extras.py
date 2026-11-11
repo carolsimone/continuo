@@ -66,13 +66,29 @@ def seed_header(data: bytes, delimiter: str) -> list[str]:
     return list(row)
 
 
+def _seed_root(node: dict, project: dict, project_dir: str) -> str:
+    """The directory a seed's original_file_path is relative to: the manifest's
+    root_path when the node carries one, the installed package's directory for a seed
+    of a dbt package, otherwise the project directory."""
+    if node.get("root_path"):
+        return node["root_path"]
+    package = node.get("package_name")
+    if package and package != project.get("name"):
+        install_path = project.get("packages-install-path") or "dbt_packages"
+        return os.path.join(project_dir, install_path, package)
+    return project_dir
+
+
 def build_extras(manifest: dict, project_dir: str, service: str, release_id: str) -> dict:
     """The compile-extras document for a parsed manifest and its dbt project directory."""
+    with open(os.path.join(project_dir, "dbt_project.yml"), "rb") as f:
+        project = yaml.safe_load(f) or {}
+
     seeds = {}
     for unique_id, node in (manifest.get("nodes") or {}).items():
         if node.get("resource_type") != "seed":
             continue
-        path = os.path.join(node.get("root_path") or project_dir, node["original_file_path"])
+        path = os.path.join(_seed_root(node, project, project_dir), node["original_file_path"])
         with open(path, "rb") as f:
             raw = f.read()
         config = node.get("config") or {}
@@ -82,8 +98,6 @@ def build_extras(manifest: dict, project_dir: str, service: str, release_id: str
             "column_types": dict(config.get("column_types") or {}),
         }
 
-    with open(os.path.join(project_dir, "dbt_project.yml"), "rb") as f:
-        project = yaml.safe_load(f) or {}
     adapter_type = (manifest.get("metadata") or {}).get("adapter_type") or ""
     return {
         "version": SCHEMA_VERSION,
