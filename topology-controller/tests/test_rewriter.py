@@ -74,6 +74,28 @@ def test_cte_reference_not_rewritten():
     assert _schemas_of(out) == {"_candidate_r1"}
 
 
+def test_a_qualified_table_is_rewritten_when_a_cte_has_its_name():
+    # A CTE is always unqualified, so public.users is the table even though a
+    # CTE of the same name is in scope. Leaving it on its production schema
+    # makes validation read production instead of the candidate schema.
+    out = _rewrite(
+        "WITH users AS (SELECT 1 AS id) "
+        "SELECT u.id FROM users u JOIN public.users p ON p.id = u.id",
+        _registry("users"),
+        "_candidate_r1",
+    )
+    assert _schemas_of(out) == {"_candidate_r1"}
+
+
+def test_an_unqualified_reference_to_a_cte_is_not_given_a_schema():
+    out = _rewrite(
+        "WITH users AS (SELECT 1 AS id) SELECT id FROM users",
+        _registry("users"),
+        "_candidate_r1",
+    )
+    assert _schemas_of(out) == set()
+
+
 def test_self_reference_not_rewritten():
     # A qualified self-reference (e.g. an incremental model selecting from itself)
     # must stay on its prod schema — the runner drops+recreates the candidate copy,

@@ -36,8 +36,10 @@ def resolve_upstream_deps(
             name = table.name.lower()
             schema_raw = table.db
 
-            # CTEs are always unqualified — skip before the schema guard fires.
-            if name in cte_names:
+            # A CTE is always unqualified, so only an unqualified name can be
+            # one: skip it before the schema guard fires. A qualified name is a
+            # table even when a CTE of the same name is in scope.
+            if not schema_raw and name in cte_names:
                 continue
 
             # Skip qualified self-references; unqualified self-references fall
