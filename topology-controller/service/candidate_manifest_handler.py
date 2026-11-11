@@ -153,11 +153,12 @@ class CandidateManifestHandler:
     progress is called once after each manifest's parse, once after each node's
     resolve and once after each node's build, a failed one included, so the
     caller can tell a release that is working through its nodes from one that
-    has stopped. The two stretches with no node loop (from the start through
-    the first manifest's parse, every manifest's download included, and from
-    the last node's build through the code bundle, the topology artifact and
-    the publish) call nothing, so each stretch must end within the caller's
-    staleness budget.
+    has stopped. Three stretches call nothing: from the start through the first
+    manifest's parse (every manifest's download included), the ingested step
+    between the last node's resolve and the first node's build (in-memory work
+    linear in the number of table references), and from the last node's build
+    through the code bundle, the topology artifact and the publish. Each
+    stretch must end within the caller's staleness budget.
     """
 
     def __init__(

@@ -59,7 +59,7 @@ class TopologyMetrics:
         )
         self._release_columns = Gauge(
             "continuo_topology_release_columns",
-            "Columns the nodes of the last release that ended declare, by family (dbt, python, external).",
+            "Columns the nodes of the last release that ended declare, by family (dbt, python, external; external nodes declare none).",
             ["service", "family"],
             registry=self.registry,
         )

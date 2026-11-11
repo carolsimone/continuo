@@ -97,9 +97,11 @@ class ReleaseTimings:
     construction: a stage that did not run reads zero seconds and zero runs.
     `peak_rss_bytes` is the largest resident set read at the boundary of a stage
     that samples memory, so it is a lower bound of the process's true peak.
-    `nodes` and `columns` hold, per runtime, the nodes the parses returned and
-    the columns they declare; `skipped` holds the nodes the parses left out,
-    per reason. All three name every runtime or reason from construction.
+    `nodes` and `columns` hold, per runtime, the nodes the release holds (the
+    nodes the parses returned and the ingested nodes, which no parse returns
+    and which count under the `external` runtime) and the columns they
+    declare; `skipped` holds the nodes the parses left out, per reason. All
+    three name every runtime or reason from construction.
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 
@@ -132,8 +134,8 @@ class ReleaseTimings:
         return {stage.value: round(record.seconds * 1000) for stage, record in self.stages.items()}
 
     def add_nodes(self, nodes: Iterable[ManifestNode]) -> None:
-        """Count the nodes a parse returned, and their declared columns, under
-        each node's runtime."""
+        """Count nodes the release holds, a parse's or the release's ingested
+        nodes, and their declared columns, under each node's runtime."""
         for node in nodes:
             self.nodes[node.runtime] += 1
             self.columns[node.runtime] += node.declared_columns

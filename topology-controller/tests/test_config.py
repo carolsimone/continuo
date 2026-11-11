@@ -118,6 +118,20 @@ def test_an_unknown_engine_has_no_system_relations(monkeypatch):
         warehouse_system_relations()
 
 
+@pytest.mark.parametrize("engine", ["postgres", "trino"])
+def test_system_relations_for_returns_the_engines_own_entry(engine):
+    """The lookup returns the entry of the engine it is asked for, not another
+    engine's, whatever the environment says."""
+    from config.config import _SYSTEM_RELATIONS, system_relations_for
+    assert system_relations_for(engine) is _SYSTEM_RELATIONS[engine]
+
+
+def test_system_relations_for_an_unknown_engine_names_it():
+    from config.config import system_relations_for
+    with pytest.raises(RuntimeError, match="unsupported WAREHOUSE_ENGINE 'duckdb'"):
+        system_relations_for("duckdb")
+
+
 @pytest.mark.parametrize("raw", [None, ""])
 def test_system_relations_default_to_postgres(monkeypatch, raw):
     """An unset or empty engine reads as postgres, as warehouse_dialect does."""
