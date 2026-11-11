@@ -65,6 +65,35 @@ def test_ctes_and_qualified_self_reads_are_skipped():
     assert [r.key for r in referenced_tables(_node(sql), dialect="postgres")] == ["raw.a"]
 
 
+def test_a_qualified_table_is_returned_when_a_cte_has_its_name():
+    """A CTE is always unqualified, so public.users is a table even though a CTE
+    named users is in scope; the unqualified users beside it is the CTE."""
+    sql = "WITH users AS (SELECT 1 AS id) SELECT * FROM public.users JOIN users ON 1=1"
+    assert [r.key for r in referenced_tables(_node(sql), dialect="postgres")] == ["public.users"]
+
+
+def test_a_qualified_table_that_shares_a_ctes_name_is_returned_whichever_is_read_first():
+    sql = "WITH users AS (SELECT 1 AS id) SELECT * FROM users JOIN public.users ON 1=1"
+    assert [r.key for r in referenced_tables(_node(sql), dialect="postgres")] == ["public.users"]
+
+
+def test_an_unqualified_reference_to_a_cte_is_skipped_and_does_not_raise():
+    sql = "WITH users AS (SELECT 1 AS id) SELECT * FROM users"
+    assert referenced_tables(_node(sql), dialect="postgres") == []
+
+
+def test_an_unqualified_table_that_is_not_a_cte_raises_beside_a_cte_of_another_name():
+    with pytest.raises(UnqualifiedTableReferenceError) as exc_info:
+        referenced_tables(_node("WITH users AS (SELECT 1) SELECT * FROM users JOIN orders ON 1=1"), dialect="postgres")
+    assert exc_info.value.table_name == "orders"
+
+
+def test_a_cte_in_one_sql_does_not_hide_the_same_name_unqualified_in_another():
+    with pytest.raises(UnqualifiedTableReferenceError) as exc_info:
+        referenced_tables(_node("WITH users AS (SELECT 1) SELECT * FROM users", "SELECT * FROM users"), dialect="postgres")
+    assert exc_info.value.table_name == "users"
+
+
 def test_a_nameless_table_with_no_schema_still_raises_unqualified():
     with pytest.raises(UnqualifiedTableReferenceError):
         referenced_tables(_node("SELECT * FROM generate_series(1, 3)"), dialect="postgres")

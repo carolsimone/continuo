@@ -113,6 +113,18 @@ def test_an_unqualified_reference_to_a_cte_is_not_given_a_schema():
     assert _schemas_of(out) == set()
 
 
+def test_a_qualified_system_read_is_not_redirected_when_a_cte_has_its_name():
+    # The CTE of the same name does not make the qualified read a CTE reference,
+    # and the system-relation rule still keeps it on the engine's own schema.
+    out = _rewrite(
+        "WITH tables AS (SELECT 1 AS id) "
+        "SELECT * FROM tables t JOIN information_schema.tables i ON 1 = 1",
+        _registry("tables", schema="information_schema"),
+        "_candidate_r1",
+    )
+    assert _schemas_of(out) == {"information_schema"}
+
+
 def test_self_reference_not_rewritten():
     # A qualified self-reference (e.g. an incremental model selecting from itself)
     # must stay on its prod schema — the runner drops+recreates the candidate copy,
