@@ -1,0 +1,42 @@
+{
+  "contract_version": 1,
+  "nodes": {
+    "analytics.revenue": {
+      "code_unit_ids": [
+        "service-a:macro.svc.m1"
+      ],
+      "compiled_code": "select 1 as id from analytics.orders",
+      "config": {
+        "materialized": "table",
+        "meta": {
+          "owner": "team-a"
+        }
+      },
+      "config_hash": "c1",
+      "content_hash": "sha256:aaa",
+      "raw_code": "select 1 as id from {{ ref('orders') }}",
+      "runtime": "dbt",
+      "shared_code_hash": "m1",
+      "source_hash": "s1"
+    },
+    "analytics.table_test": {
+      "code_unit_ids": [],
+      "compiled_code": "",
+      "config": {},
+      "config_hash": "ccc333",
+      "content_hash": "sha256:10a14c17d608c8b04b7ca68417edef546c444ded9c5b144523eaa778da8b45f5",
+      "raw_code": "{\n  \"config\": {},\n  \"criticality\": \"SECONDARY\",\n  \"description\": \"\",\n  \"extra_columns\": \"raise\",\n  \"kind\": \"python-node\",\n  \"output_columns\": [\n    {\n      \"name\": \"id\",\n      \"nullable\": false,\n      \"type\": \"INTEGER\"\n    },\n    {\n      \"name\": \"amount\",\n      \"nullable\": true,\n      \"type\": \"NUMERIC(10,2)\"\n    }\n  ],\n  \"owner\": \"marketing\",\n  \"reads\": {\n    \"ids\": \"select id from analytics.table_b\",\n    \"joined\": \"select a from analytics.table_a\"\n  },\n  \"schedule\": \"daily\",\n  \"schema\": \"analytics\",\n  \"script\": \"scripts/table_test.py\",\n  \"table\": \"table_test\"\n}",
+      "runtime": "python",
+      "shared_code_hash": "bbb222",
+      "source_hash": "aaa111"
+    }
+  },
+  "release_id": "rel-1",
+  "shared_code": {
+    "service-a:macro.svc.m1": {
+      "checksum": "u1",
+      "depends_on": [],
+      "source": "select 1"
+    }
+  }
+}

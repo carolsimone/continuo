@@ -19,6 +19,10 @@ shipped in those.
   - No values change is needed.
 - **release-controller counts releases.** TL;DR: `continuo_releases_total` counts promoted and rejected releases by reason, and `continuo_release_stage_duration_seconds` times each pipeline stage.
 
+- **The code bundle and topology keys external tools read are declared and versioned.** TL;DR: [docs/read-contract.md](../../docs/read-contract.md) names the keys of the code bundle (`contract_version` 1), the topology artifact (`schema_version` 1) and `GET /api/v1/current-prod` that a reader may rely on, and what raises a version. Tests pin them.
+  - With your own bucket, set no lifecycle expiry on `code-bundles/` or `tenants/`: an age rule can delete the objects of the release in production. release-controller deletes a release's objects when its retention prunes it, and never for the production release.
+  - No values change is needed.
+
 ### Changed
 
 - **topology-controller logs JSON lines.** TL;DR: topology-controller writes one JSON object per line on stderr, with every field, as the Go services do. A log agent that read its old text lines needs its JSON parser instead.
