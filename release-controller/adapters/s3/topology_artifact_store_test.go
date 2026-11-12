@@ -447,8 +447,41 @@ func TestCloneTopology_CoversEveryReferenceField(t *testing.T) {
 			referenceFields = append(referenceFields, f.Name)
 		}
 	}
-	assert.Equal(t, []string{"UpstreamUniqueIDs"}, referenceFields,
-		"cloneTopology copies only UpstreamUniqueIDs; extend it for any other reference-typed field")
+	assert.Equal(t, []string{"UpstreamUniqueIDs", "FullRefresh", "SeedColumns"}, referenceFields,
+		"cloneTopology copies only UpstreamUniqueIDs, FullRefresh and SeedColumns; extend it for any other reference-typed field")
+}
+
+func TestCloneTopology_SharesNoSeedReloadFieldWithItsSource(t *testing.T) {
+	yes := true
+	src := release.Topology{{UniqueID: "svc.seed", FullRefresh: &yes, SeedColumns: []release.SeedColumn{{Name: "id"}}}}
+	cp := cloneTopology(src)
+	*cp[0].FullRefresh = false
+	cp[0].SeedColumns[0].Name = "mutated"
+	assert.True(t, *src[0].FullRefresh)
+	assert.Equal(t, "id", src[0].SeedColumns[0].Name)
+}
+
+func TestTopologyArtifactStore_RoundTripsTheSeedReloadFields(t *testing.T) {
+	yes := true
+	topo := release.Topology{
+		{UniqueID: "analytics.seed_fx_rates_eur", SchemaName: "analytics", TableName: "seed_fx_rates_eur", ServiceName: "svc",
+			NodeType: "dbt-seed", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed",
+			Materialized: "seed", FullRefresh: &yes,
+			SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_to_eur", Type: "numeric"}}},
+		{UniqueID: "analytics.fx_rates_current", SchemaName: "analytics", TableName: "fx_rates_current", ServiceName: "svc",
+			NodeType: "dbt-model", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily", Materialized: "view"},
+	}
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", topo)
+	require.NoError(t, err)
+
+	// A second store has an empty cache, so this decodes the stored object.
+	got, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
+	require.NoError(t, err)
+	byID := byUniqueID(got)
+	for _, n := range topo {
+		assert.Equal(t, n, byID[n.UniqueID])
+	}
 }
 
 func TestTopologyArtifactStore_RoundTripsRelationNameAndSeedColumnsHash(t *testing.T) {
