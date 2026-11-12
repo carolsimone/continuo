@@ -105,6 +105,12 @@ func (f *fakeTopology) Graph(_ context.Context, _ string, releaseID string, keys
 	return topology.NewGraph(nodes, nil), nil
 }
 
+func (f *fakeTopology) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, errors.New("ViewClosure is not used by the seed reconcile")
+}
+func (f *fakeTopology) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, errors.New("IsBootstrapRelease is not used by the seed reconcile")
+}
 func (f *fakeTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the seed reconcile")
 }
@@ -167,6 +173,9 @@ func (f *fakeMaterializations) RecordBuilt(_ context.Context, tenantID string, b
 	return nil
 }
 
+func (f *fakeMaterializations) LoadedSeedColumns(context.Context, string, []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	return nil, errors.New("LoadedSeedColumns is not used by the seed reconcile")
+}
 func (f *fakeMaterializations) DeleteAbsentFrom(context.Context, string, string) (int64, error) {
 	return 0, nil
 }

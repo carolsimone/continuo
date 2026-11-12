@@ -86,6 +86,7 @@ func (h *ReleasePromotedHandler) Handle(ctx context.Context, u uow.UnitOfWork, i
 	if err != nil {
 		return fmt.Errorf("%w: release %s: %w", pkgevents.ErrPermanent, p.ReleaseID, err)
 	}
+	rel.Bootstrap = p.Bootstrap
 
 	topo := u.Topology()
 	if err := topo.LockTopology(ctx); err != nil {

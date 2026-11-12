@@ -209,6 +209,12 @@ func (f *LiveReleaseOnly) ScheduleGraph(context.Context, string, string, string)
 func (f *LiveReleaseOnly) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
 	return topology.Graph{}, ErrNotFaked
 }
+func (f *LiveReleaseOnly) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, ErrNotFaked
+}
+func (f *LiveReleaseOnly) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, ErrNotFaked
+}
 
 func (f *LiveReleaseOnly) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, ErrNotFaked

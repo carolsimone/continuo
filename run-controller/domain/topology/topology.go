@@ -24,19 +24,28 @@ func KeyOf(schemaName, tableName string) NodeKey {
 // NodeSpec is one node as a release's topology artifact describes it. The
 // upstream nodes it reads are named by unique id.
 type NodeSpec struct {
-	UniqueID          string
-	ServiceName       string
-	SchemaName        string
-	TableName         string
-	NodeType          string
-	TestCount         *int
-	ContentHash       string
-	SeedColumnsHash   string
-	ImageTag          string
-	SecretRef         string
-	ScheduleName      string
-	TimeoutSeconds    *int
-	UpstreamUniqueIDs []string
+	UniqueID        string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	NodeType        string
+	TestCount       *int
+	ContentHash     string
+	SeedColumnsHash string
+	// Materialized is the node's dbt materialization (seed, table, view,
+	// materialized_view, ephemeral, incremental); empty when the node has none.
+	Materialized string
+	// FullRefresh is a seed's +full_refresh setting; nil when it leaves it unset
+	// and on every other node.
+	FullRefresh *bool
+	// ResolvedRelationID is the relation the node writes, "<schema>.<name>"
+	// with an alias applied; empty when it is the node's own key.
+	ResolvedRelationID string
+	ImageTag           string
+	SecretRef          string
+	ScheduleName       string
+	TimeoutSeconds     *int
+	UpstreamUniqueIDs  []string
 }
 
 // Node is one node as stored for a release. TestCount is nil when the number
@@ -52,10 +61,24 @@ type Node struct {
 	TestCount       *int
 	ContentHash     string
 	SeedColumnsHash string
-	ImageTag        string
-	SecretRef       string
-	ScheduleName    string
-	TimeoutSeconds  *int
+	// Materialized, FullRefresh and ResolvedRelationID are the NodeSpec fields
+	// of the same names.
+	Materialized       string
+	FullRefresh        *bool
+	ResolvedRelationID string
+	ImageTag           string
+	SecretRef          string
+	ScheduleName       string
+	TimeoutSeconds     *int
+}
+
+// Relation returns the relation the node writes: its resolved relation, or its
+// key when the release names none.
+func (n Node) Relation() string {
+	if n.ResolvedRelationID != "" {
+		return n.ResolvedRelationID
+	}
+	return string(n.Key)
 }
 
 // NodeHashes are the two fingerprints a release states for one node: the hash
@@ -82,8 +105,10 @@ type Release struct {
 	PromotionSeq   int64
 	TopologyURI    string
 	TopologySHA256 string
-	Nodes          []Node
-	Edges          []Edge
+	// Bootstrap marks a release promoted without validation.
+	Bootstrap bool
+	Nodes     []Node
+	Edges     []Edge
 }
 
 // ErrDuplicateNodeKey reports a release in which two nodes build the same
@@ -113,19 +138,22 @@ func NewRelease(tenantID, releaseID string, seq int64, uri, sha256 string, specs
 			keyByUniqueID[s.UniqueID] = key
 		}
 		nodes = append(nodes, Node{
-			Key:             key,
-			UniqueID:        s.UniqueID,
-			ServiceName:     s.ServiceName,
-			SchemaName:      s.SchemaName,
-			TableName:       s.TableName,
-			NodeType:        s.NodeType,
-			TestCount:       cloneCount(s.TestCount),
-			ContentHash:     s.ContentHash,
-			SeedColumnsHash: s.SeedColumnsHash,
-			ImageTag:        s.ImageTag,
-			SecretRef:       s.SecretRef,
-			ScheduleName:    s.ScheduleName,
-			TimeoutSeconds:  cloneCount(s.TimeoutSeconds),
+			Key:                key,
+			UniqueID:           s.UniqueID,
+			ServiceName:        s.ServiceName,
+			SchemaName:         s.SchemaName,
+			TableName:          s.TableName,
+			NodeType:           s.NodeType,
+			TestCount:          cloneCount(s.TestCount),
+			ContentHash:        s.ContentHash,
+			SeedColumnsHash:    s.SeedColumnsHash,
+			Materialized:       s.Materialized,
+			FullRefresh:        cloneFlag(s.FullRefresh),
+			ResolvedRelationID: s.ResolvedRelationID,
+			ImageTag:           s.ImageTag,
+			SecretRef:          s.SecretRef,
+			ScheduleName:       s.ScheduleName,
+			TimeoutSeconds:     cloneCount(s.TimeoutSeconds),
 		})
 	}
 
@@ -169,6 +197,14 @@ func NewRelease(tenantID, releaseID string, seq int64, uri, sha256 string, specs
 }
 
 func isTest(s NodeSpec) bool { return s.NodeType == string(model.NodeTypeDbtTest) }
+
+func cloneFlag(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
+}
 
 func cloneCount(n *int) *int {
 	if n == nil {

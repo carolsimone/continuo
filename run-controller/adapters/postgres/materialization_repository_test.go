@@ -290,3 +290,20 @@ func TestMaterializationRepository_RecordBuiltWritesTheSeedColumnsHash(t *testin
 	require.NoError(t, err)
 	assert.Empty(t, got["raw.countries"].SeedColumnsHash, "a load recorded without a fingerprint clears the old one")
 }
+
+func TestLoadedSeedColumns_ReturnsTheRecordedFingerprintOfEachKey(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	repo := postgres.NewMaterializationRepository(db, nil)
+	require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{Key: "stg.seed_a", ContentHash: "sha256:a",
+		SeedColumnsHash: "sha256:cols-a", Source: seeds.SourceBuild, At: materializedAt}))
+
+	got, err := repo.LoadedSeedColumns(ctx, tenant, []topology.NodeKey{"stg.seed_a", "stg.seed_none"})
+	require.NoError(t, err)
+	assert.Equal(t, map[topology.NodeKey]string{"stg.seed_a": "sha256:cols-a"}, got)
+
+	other, err := repo.LoadedSeedColumns(ctx, "t-"+uuid.NewString(), []topology.NodeKey{"stg.seed_a"})
+	require.NoError(t, err)
+	assert.Empty(t, other, "another tenant's row is not read")
+}

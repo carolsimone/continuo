@@ -53,6 +53,15 @@ type TopologyRepository interface {
 	// among them. A key the release does not hold is left out.
 	Graph(ctx context.Context, tenantID, releaseID string, keys []topology.NodeKey) (topology.Graph, error)
 
+	// ViewClosure returns the seeds, every node reached from them through nodes
+	// whose materialization is view, materialized_view or ephemeral, and the
+	// edges among them. A seed the release does not hold is left out.
+	ViewClosure(ctx context.Context, tenantID, releaseID string, seeds []topology.NodeKey) (topology.Graph, error)
+
+	// IsBootstrapRelease reports whether the release was promoted without
+	// validation; an unknown release is not.
+	IsBootstrapRelease(ctx context.Context, tenantID, releaseID string) (bool, error)
+
 	// NodeHashes returns the content hash and the seed column fingerprint of one
 	// node of a release, and whether the release has that node.
 	NodeHashes(ctx context.Context, tenantID, releaseID string, key topology.NodeKey) (hashes topology.NodeHashes, found bool, err error)

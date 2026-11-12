@@ -80,6 +80,12 @@ func (f *fakeTopologyRepo) Graph(context.Context, string, string, []topology.Nod
 	return topology.Graph{}, nil
 }
 
+func (f *fakeTopologyRepo) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, nil
+}
+func (f *fakeTopologyRepo) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeTopologyRepo) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, nil
 }
@@ -101,6 +107,9 @@ func (f *fakeMaterializationRepo) RecordAttempt(context.Context, string, topolog
 
 func (f *fakeMaterializationRepo) RecordBuilt(context.Context, string, seeds.Built) error { return nil }
 
+func (f *fakeMaterializationRepo) LoadedSeedColumns(context.Context, string, []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	return nil, nil
+}
 func (f *fakeMaterializationRepo) DeleteAbsentFrom(_ context.Context, tenantID, releaseID string) (int64, error) {
 	f.deletedFor = append(f.deletedFor, tenantID+"/"+releaseID)
 	return 0, nil
@@ -339,4 +348,19 @@ func TestReleasePromotedHandler_PassesRebaselineToTheSeedReconcile(t *testing.T)
 	require.Len(t, reconciler.triggers, 1)
 	assert.True(t, reconciler.triggers[0].Bootstrap)
 	assert.True(t, reconciler.triggers[0].Rebaseline)
+}
+
+func TestReleasePromotedHandler_StoresTheReleaseAsBootstrapWhenThePromotionIs(t *testing.T) {
+	for _, bootstrap := range []bool{true, false} {
+		topo := &fakeTopologyRepo{loaded: true}
+		h := handlers.NewReleasePromotedHandler(&fakeArtifactReader{}, nil, testLogger())
+		p := promotedRelease("rel-1", 1)
+		p.Bootstrap = bootstrap
+
+		require.NoError(t, h.Handle(context.Background(), promotedUoW(topo, &fakeMaterializationRepo{}),
+			handlers.ReleasePromotedInput{Promotion: p, Nodes: []topology.NodeSpec{seedSpec("orders")}}, uuid.New()))
+
+		require.Len(t, topo.saved, 1)
+		assert.Equal(t, bootstrap, topo.saved[0].Bootstrap)
+	}
 }
