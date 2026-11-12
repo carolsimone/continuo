@@ -462,8 +462,11 @@ func TestCloneTopology_SharesNoSeedReloadFieldWithItsSource(t *testing.T) {
 }
 
 func TestTopologyArtifactStore_RoundTripsTheSeedReloadFields(t *testing.T) {
-	yes := true
+	yes, no := true, false
 	topo := release.Topology{
+		{UniqueID: "analytics.flags", SchemaName: "analytics", TableName: "flags", ServiceName: "svc",
+			NodeType: "dbt-seed", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed",
+			Materialized: "seed", FullRefresh: &no},
 		{UniqueID: "analytics.seed_fx_rates_eur", SchemaName: "analytics", TableName: "seed_fx_rates_eur", ServiceName: "svc",
 			NodeType: "dbt-seed", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed",
 			Materialized: "seed", FullRefresh: &yes,
