@@ -3,6 +3,7 @@ package runplan
 import (
 	"slices"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -48,6 +49,41 @@ func withDescendants(g topology.Graph, keys []topology.NodeKey) map[topology.Nod
 	}
 	for _, k := range g.Descendants(keys) {
 		out[k] = true
+	}
+	return out
+}
+
+// carryRebuilds returns p with each pending task that re-executes a source
+// rebuild given the rebuild's operation (when the run's operation does not
+// already apply it), reason and seed, when that seed is an inherited task of
+// p: the seed's load already dropped the relation, so the rebuild is still
+// owed, and no seed reload of the new run plans it again. A rebuild whose seed
+// the new run loads again is planned by that load.
+func carryRebuilds(p Plan, tasks []SourceTask, runOperation model.Operation) Plan {
+	inherited := make(map[topology.NodeKey]bool)
+	for _, t := range p.Tasks {
+		if t.Inherited {
+			inherited[t.Key] = true
+		}
+	}
+	rebuilds := make(map[topology.NodeKey]SourceTask)
+	for _, t := range tasks {
+		if t.RebuildOf != "" && inherited[t.RebuildOf] {
+			rebuilds[t.Key] = t
+		}
+	}
+	if len(rebuilds) == 0 {
+		return p
+	}
+	out := Plan{Tasks: slices.Clone(p.Tasks), Ready: p.Ready}
+	for i, t := range out.Tasks {
+		src, ok := rebuilds[t.Key]
+		if !ok || t.Inherited {
+			continue
+		}
+		out.Tasks[i].Operation = ownOperation(src.Operation, runOperation)
+		out.Tasks[i].Reason = src.Reason
+		out.Tasks[i].RebuildOf = src.RebuildOf
 	}
 	return out
 }

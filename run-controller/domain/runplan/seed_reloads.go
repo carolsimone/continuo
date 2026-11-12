@@ -91,10 +91,11 @@ func ApplySeedReloads(p Plan, g topology.Graph, runOperation model.Operation, re
 }
 
 // ownOperation returns a pointer to op when a task must carry it, that is when
-// op differs from the run's operation. model.OperationRun is the empty
-// operation, so an empty op is the run's only when the run's is.
+// the run's operation does not already apply it. model.OperationRun is the
+// empty operation, so an empty op is the run's when the run's is run; a build
+// run builds a node, which runs it, so it covers run too.
 func ownOperation(op, runOperation model.Operation) *model.Operation {
-	if op == runOperation {
+	if op == runOperation || (runOperation == model.OperationBuild && op == model.OperationRun) {
 		return nil
 	}
 	return &op

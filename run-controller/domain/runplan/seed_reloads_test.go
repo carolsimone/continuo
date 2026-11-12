@@ -149,3 +149,24 @@ func TestSeedReloadGraph_AdaptsTheTopologyGraph(t *testing.T) {
 	assert.Equal(t, string(seed), s.Relation)
 	assert.Equal(t, s, SeedNode(topology.Node{Key: seed, NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &no, ScheduleName: "seed"}))
 }
+
+// A build run builds a node, which runs it: a reloaded seed and its rebuilds
+// that only need run keep the build, and only a needed full refresh is
+// stamped on its task.
+func TestApplySeedReloads_ABuildRunCoversRun(t *testing.T) {
+	g := fxGraph()
+	full := model.OperationFullRefresh
+	p := ApplySeedReloads(flatPlan([]topology.NodeKey{seed}), g, model.OperationBuild, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
+		Load: seedreload.Load{Operation: model.OperationRun, DropsTable: true},
+		Rebuilds: []seedreload.Rebuild{
+			{Key: string(current), Operation: model.OperationRun},
+			{Key: string(latest), Operation: model.OperationFullRefresh},
+		}}}})
+	assert.Nil(t, taskOf(p, seed).Operation)
+	assert.Nil(t, taskOf(p, current).Operation)
+	assert.Equal(t, &full, taskOf(p, latest).Operation)
+
+	p = ApplySeedReloads(flatPlan([]topology.NodeKey{seed}), g, model.OperationBuild, []SeedReload{{Seed: seed, Plan: seedreload.Plan{
+		Load: seedreload.Load{Operation: model.OperationFullRefresh, DropsTable: true}}}})
+	assert.Equal(t, &full, taskOf(p, seed).Operation)
+}

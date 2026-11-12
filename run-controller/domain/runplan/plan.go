@@ -72,6 +72,14 @@ type SourceTask struct {
 	// run's release when the source run ran the node itself, the release of
 	// the run of its InheritedFrom task when it inherited the result.
 	BuiltOn string
+	// Operation is the operation the source task applied to its node.
+	Operation model.Operation
+	// Reason is the source task's plan reason; empty when its plan stated
+	// none.
+	Reason string
+	// RebuildOf is the seed whose load dropped the relation the source task
+	// rebuilt; empty on every other task.
+	RebuildOf topology.NodeKey
 }
 
 // Source is the run a rerun or a rebase derives from: its operation and its

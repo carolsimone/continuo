@@ -146,3 +146,16 @@ func TestRebase_LeavesAnIngestedNodeOut(t *testing.T) {
 		assert.Empty(t, got.Changed, "include changed upstream %v", widen)
 	}
 }
+
+// A preview replanned with more tasks counts each task it adds under
+// Downstream, and Inherited is what the new plan carries over.
+func TestPreview_ReplanCountsTheAddedTasksUnderDownstream(t *testing.T) {
+	pv := runplan.Preview{Plan: runplan.Plan{Tasks: []runplan.PlannedTask{{Key: "a"}, {Key: "b", Inherited: true}}}, FailedOrSkipped: 1, Inherited: 1}
+
+	got := pv.Replan(runplan.Plan{Tasks: []runplan.PlannedTask{{Key: "a"}, {Key: "b"}, {Key: "c"}}})
+
+	assert.Equal(t, 1, got.FailedOrSkipped)
+	assert.Equal(t, 2, got.Downstream)
+	assert.Equal(t, 0, got.Inherited)
+	assert.Equal(t, 3, got.Total())
+}

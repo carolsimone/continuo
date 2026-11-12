@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -34,8 +33,11 @@ type RebaseOptions struct {
 // first, under the topology lock, and a live release other than
 // opts.ExpectedReleaseID is ErrLiveReleaseMoved before anything else is read.
 // The selection carries the live release even when it is refused. Every
-// release it reads is source's tenant's. The seed reload rules apply to the
-// seeds it loads, and the preview's plan is the selection's.
+// release it reads is source's tenant's. Each rebuild source did not finish is
+// executed again, with the seed it rebuilds for, though they are in no
+// schedule (withOwedRebuilds). The seed reload rules apply to the seeds it
+// loads; the preview's plan is the selection's, and counts each task they add
+// under Downstream.
 func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, opts RebaseOptions) (Selection, runplan.Preview, error) {
 	tenantID := source.TenantID()
 	stamp, err := p.LiveStamp(ctx, u, tenantID)
@@ -60,6 +62,9 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 	if err != nil {
 		return sel, runplan.Preview{}, err
 	}
+	if sel.Graph, err = withOwedRebuilds(ctx, u, tenantID, stamp.ReleaseID, sel.Graph, src); err != nil {
+		return sel, runplan.Preview{}, fmt.Errorf("read the rebuilds run %s owes: %w", source.RunID(), err)
+	}
 	pv, err := runplan.Rebase{
 		Source: src, SourceGraphs: sourceGraphs, IncludeChangedUpstream: opts.IncludeChangedUpstream,
 	}.Preview(sel.Graph)
@@ -67,9 +72,43 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 	if err != nil {
 		return sel, pv, err
 	}
-	sel, err = p.withSeedReloads(ctx, u, tenantID, source.Operation(), seedreload.TriggerLoad, nil, sel)
-	pv.Plan = sel.Plan
-	return sel, pv, err
+	sel, err = p.withSeedReloads(ctx, u, tenantID, source.Operation(), triggerOf(source.Operation()), nil, sel)
+	if err != nil {
+		return sel, pv, err
+	}
+	return sel, pv.Replan(sel.Plan), nil
+}
+
+// withOwedRebuilds returns g, the source schedule's graph on release, read
+// again with every rebuild of src that did not succeed and the seed it
+// rebuilt for, when src ran that seed. Such a view is often in no schedule,
+// and its seed's load already dropped it, so the rebase executes it again. g
+// is returned as it is when it already holds them all.
+func withOwedRebuilds(ctx context.Context, u uow.UnitOfWork, tenantID, release string, g topology.Graph, src runplan.Source) (topology.Graph, error) {
+	ran := make(map[topology.NodeKey]bool, len(src.Tasks))
+	for _, t := range src.Tasks {
+		ran[t.Key] = true
+	}
+	var owed []topology.NodeKey
+	for _, t := range src.Tasks {
+		if t.RebuildOf == "" || t.Succeeded {
+			continue
+		}
+		owed = append(owed, t.Key)
+		if ran[t.RebuildOf] {
+			owed = append(owed, t.RebuildOf)
+		}
+	}
+	missing := false
+	for _, k := range owed {
+		if _, ok := g.Node(k); !ok {
+			missing = true
+		}
+	}
+	if !missing {
+		return g, nil
+	}
+	return u.Topology().Graph(ctx, tenantID, release, append(g.Keys(), owed...))
 }
 
 // builtOnRootReleases sets the BuiltOn of each inherited task of src to the

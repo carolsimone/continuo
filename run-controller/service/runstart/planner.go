@@ -89,7 +89,7 @@ func (p Planner) Schedule(ctx context.Context, u uow.UnitOfWork, tenantID, sched
 	if err != nil {
 		return sel, err
 	}
-	return p.withSeedReloads(ctx, u, tenantID, op, seedreload.TriggerLoad, nil, sel)
+	return p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), nil, sel)
 }
 
 // Rerun selects a rerun of source on source's own release, of source's
@@ -108,13 +108,13 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 	if err != nil {
 		return sel, err
 	}
-	return p.withSeedReloads(ctx, u, source.TenantID(), source.Operation(), seedreload.TriggerLoad, nil, sel)
+	return p.withSeedReloads(ctx, u, source.TenantID(), source.Operation(), triggerOf(source.Operation()), nil, sel)
 }
 
 // SingleNode selects a run of tenantID's node target names, with operation
 // op: on source's release when source is not nil, else on the tenant's live
 // release. A source is a run of tenantID. A full refresh of a seed is an
-// operator's request for it; acknowledged are the objects reading the seed
+// operator's request for it, and so is a rerun or a rebase of one; acknowledged are the objects reading the seed
 // that an operator named, which its preflight lets the load drop.
 func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID string, target run.NodeID, op model.Operation, source *run.Run, acknowledged []string) (Selection, error) {
 	var stamp run.ReleaseStamp
@@ -144,11 +144,7 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID stri
 	if err != nil {
 		return sel, err
 	}
-	trigger := seedreload.TriggerLoad
-	if op == model.OperationFullRefresh {
-		trigger = seedreload.TriggerFullRefresh
-	}
-	return p.withSeedReloads(ctx, u, tenantID, op, trigger, acknowledged, sel)
+	return p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), acknowledged, sel)
 }
 
 // Seeds selects a promote-seed run of keys on live, tenantID's live release,
@@ -164,7 +160,7 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, tenantID string, l
 	if err != nil {
 		return sel, err
 	}
-	return p.withSeedReloads(ctx, u, tenantID, model.OperationRun, seedreload.TriggerLoad, nil, sel)
+	return p.withSeedReloads(ctx, u, tenantID, model.OperationRun, triggerOf(model.OperationRun), nil, sel)
 }
 
 // Start stores sel's tasks on r, under r's tenant, in the run u's transaction
@@ -205,6 +201,16 @@ func (p Planner) reportRefusal(releaseID string, e run.TaskRefused) {
 		p.Logger.Warn("seed load refused: the task never starts",
 			"tenant_id", e.TenantID, "release_id", releaseID, "run_id", e.ID, "node_key", e.Key, "reason", e.Reason)
 	}
+}
+
+// triggerOf returns what asks a run of operation op to load its seeds: an
+// operator's request for a full refresh when op is full_refresh, which only a
+// single-node run, or a rerun or rebase of one, applies; else a load.
+func triggerOf(op model.Operation) seedreload.Trigger {
+	if op == model.OperationFullRefresh {
+		return seedreload.TriggerFullRefresh
+	}
+	return seedreload.TriggerLoad
 }
 
 // withSeedReloads applies the seed reload rules to sel, a selection of a run
@@ -300,7 +306,7 @@ func (p Planner) scheduleGraph(ctx context.Context, u uow.UnitOfWork, tenantID s
 }
 
 // source reads source as the runplan source of a derived run, with the keys
-// of its tasks. Every task is marked built on source's release; a rebase
+// of its tasks, each with its operation, plan reason and the seed it rebuilt. Every task is marked built on source's release; a rebase
 // replaces that, for an inherited task, with the release of the run that ran
 // the node.
 func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) (runplan.Source, []topology.NodeKey, error) {
@@ -317,7 +323,10 @@ func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) 
 		if t.NodeKey == "" {
 			return runplan.Source{}, nil, fmt.Errorf("%w: task %s of run %s names no node", ErrSourceHasNoRelease, t.TaskID, source.RunID())
 		}
-		st := runplan.SourceTask{Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID()}
+		st := runplan.SourceTask{
+			Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID(),
+			Operation: t.Operation, Reason: t.PlanReason, RebuildOf: t.RebuildOf,
+		}
 		if t.InheritedFromTaskID != nil {
 			st.InheritedFrom = *t.InheritedFromTaskID
 		}

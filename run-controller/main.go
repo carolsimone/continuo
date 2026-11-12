@@ -348,11 +348,6 @@ func main() {
 		logger.Error("Failed to build the object-storage client", "error", err)
 		os.Exit(1)
 	}
-	// The seed reconcile loads the dbt seeds whose live content the warehouse
-	// does not hold. It runs inside every release.promoted:v2 transaction that
-	// moves a tenant's live release, for that tenant, and every
-	// seedReconcileInterval from the loop started below, once per tenant with
-	// a live release; maintenance mode stops it creating runs.
 	// Every task run-controller plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
@@ -364,6 +359,11 @@ func main() {
 	planner := runstart.Planner{
 		Tasks: taskDefaults, Family: cfg.WarehouseFamily, Engine: cfg.WarehouseEngine, Metrics: runMetrics, Logger: logger,
 	}
+	// The seed reconcile loads the dbt seeds whose live content the warehouse
+	// does not hold. It runs inside every release.promoted:v2 transaction that
+	// moves a tenant's live release, for that tenant, and every
+	// seedReconcileInterval from the loop started below, once per tenant with
+	// a live release; maintenance mode stops it creating runs.
 	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, planner, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 

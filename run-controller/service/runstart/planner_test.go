@@ -831,3 +831,140 @@ func TestPlanner_StartCountsAndLogsARefusalAfterCommit(t *testing.T) {
 	assert.Equal(t, string(seed), record["node_key"])
 	assert.Equal(t, "seed_full_refresh_disabled", record["reason"])
 }
+
+// A table of the schedule that reads only a view the run rebuilds, not the
+// seed, still waits for the rebuild: without the view's edge it would be ready
+// at once.
+func TestPlanner_AScheduleNodeThatReadsOnlyARebuiltViewWaitsForTheRebuild(t *testing.T) {
+	u, topo := fxUoW(nil)
+	g := fxTopology()
+	nodes := []topology.Node{fxNode(summary, "dbt-model", "table", "daily")}
+	edges := []topology.Edge{{Upstream: current, Downstream: summary}}
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		nodes = append(nodes, n)
+		for _, d := range g.Downstreams(k) {
+			edges = append(edges, topology.Edge{Upstream: k, Downstream: d})
+		}
+	}
+	topo.graph = topology.NewGraph(nodes, edges)
+	topo.schedules = map[string][]topology.NodeKey{"daily": {summary, seed}}
+
+	sel, err := fxPlanner.Schedule(context.Background(), u, tenant, "daily", model.OperationRun)
+
+	require.NoError(t, err)
+	assert.Contains(t, keysOf(sel.Plan.Tasks), current)
+	assert.NotContains(t, sel.Plan.Ready, summary)
+	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+	assert.Equal(t, []topology.NodeKey{current}, sel.Graph.Upstreams(summary))
+}
+
+// An operator's full refresh of a seed with unchanged columns fully refreshes
+// it for that reason; with +full_refresh: false on a schema_bound warehouse no
+// command can rebuild it, so its task is refused.
+func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T) {
+	ctx := context.Background()
+	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	u, _ := fxUoW(nil)
+	u.MaterializationRepo = loadedColumns{seed: "sha256:new"}
+
+	sel, err := fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
+
+	require.NoError(t, err)
+	assert.Nil(t, taskOf(sel.Plan, seed).Operation, "the run's full_refresh")
+	assert.Equal(t, "full refresh requested by an operator", taskOf(sel.Plan, seed).Reason)
+	assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
+
+	u, topo := fxUoW(nil)
+	keep := false
+	topo.graph = withSeed(fxTopology(), func(n *topology.Node) { n.FullRefresh = &keep })
+	sel, err = fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, model.FailureReasonSeedFullRefreshDisabled, taskOf(sel.Plan, seed).Refusal)
+	assert.Empty(t, sel.Plan.Ready)
+}
+
+// A rerun of a failed single-node full refresh of a seed is still the
+// operator's full refresh, though the seed's columns did not change.
+func TestPlanner_ARerunOfASeedsFullRefreshIsStillAnOperatorsRequest(t *testing.T) {
+	u, _ := fxUoW([]run.Task{task(seed, run.TaskStatusFailed)})
+	u.MaterializationRepo = loadedColumns{seed: "sha256:new"}
+	source, err := run.NewSingleNodeRun(tenant, uuid.New(), "single-node-run-1", model.OperationFullRefresh, nil, identity.SystemUserID,
+		run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, planNow)
+	require.NoError(t, err)
+
+	sel, err := fxPlanner.Rerun(context.Background(), u, source)
+
+	require.NoError(t, err)
+	assert.Nil(t, taskOf(sel.Plan, seed).Operation, "the rerun's full_refresh")
+	assert.Equal(t, "full refresh requested by an operator", taskOf(sel.Plan, seed).Reason)
+	run := model.OperationRun
+	assert.Equal(t, &run, taskOf(sel.Plan, current).Operation)
+}
+
+// A rerun of a run whose seed loaded and whose materialized-view rebuild
+// failed re-executes the rebuild as the source planned it: a late-binding
+// materialized view is fully refreshed, for the seed whose load dropped it.
+func TestPlanner_ARerunKeepsAFailedRebuildOfAnInheritedSeed(t *testing.T) {
+	const mv topology.NodeKey = "analytics.fx_rates_mv"
+	reason := "rebuild: dropped by the load of analytics.seed_fx_rates_eur"
+	rebuild := task(mv, run.TaskStatusFailed)
+	rebuild.Operation, rebuild.PlanReason, rebuild.RebuildOf = model.OperationFullRefresh, reason, seed
+	u, topo := fxUoW([]run.Task{task(seed, run.TaskStatusSucceeded), rebuild})
+	s := fxNode(seed, "dbt-seed", "seed", "daily")
+	topo.graph = topology.NewGraph([]topology.Node{s, fxNode(mv, "dbt-model", "materialized_view", "")},
+		[]topology.Edge{{Upstream: seed, Downstream: mv}})
+	p := runstart.Planner{Tasks: defaults, Family: warehouse.LateBinding, Engine: "trino"}
+
+	sel, err := p.Rerun(context.Background(), u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}))
+
+	require.NoError(t, err)
+	full := model.OperationFullRefresh
+	assert.Equal(t, runplan.PlannedTask{Key: mv, Operation: &full, Reason: reason, RebuildOf: seed}, taskOf(sel.Plan, mv))
+	assert.True(t, taskOf(sel.Plan, seed).Inherited)
+	assert.Equal(t, []topology.NodeKey{mv}, sel.Plan.Ready)
+}
+
+// A rebase of a run whose seed loaded and whose rebuilds did not finish
+// executes them again, as the source planned them, though the views are in no
+// schedule.
+func TestPlanner_ARebaseExecutesTheRebuildsItsSourceOwes(t *testing.T) {
+	reason := "rebuild: dropped by the load of analytics.seed_fx_rates_eur"
+	owed := func(key topology.NodeKey, status run.TaskStatus) run.Task {
+		t := task(key, status)
+		t.PlanReason, t.RebuildOf = reason, seed
+		return t
+	}
+	u, topo := fxUoW([]run.Task{
+		task(seed, run.TaskStatusSucceeded), task(table, run.TaskStatusSucceeded),
+		owed(current, run.TaskStatusFailed), owed(latest, run.TaskStatusSkipped),
+	})
+	topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+
+	sel, pv, err := fxPlanner.Rebase(context.Background(), u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), runstart.RebaseOptions{})
+
+	require.NoError(t, err)
+	assert.Equal(t, runplan.PlannedTask{Key: current, Reason: reason, RebuildOf: seed}, taskOf(sel.Plan, current))
+	assert.Equal(t, runplan.PlannedTask{Key: latest, Reason: reason, RebuildOf: seed}, taskOf(sel.Plan, latest))
+	assert.True(t, taskOf(sel.Plan, seed).Inherited)
+	assert.True(t, taskOf(sel.Plan, table).Inherited)
+	assert.Equal(t, []topology.NodeKey{current}, sel.Plan.Ready)
+	assert.Equal(t, 2, pv.FailedOrSkipped)
+	assert.Equal(t, 2, pv.Inherited)
+}
+
+// A rebase preview counts the rebuilds of the seeds it loads among what it
+// executes.
+func TestPlanner_ARebasePreviewCountsTheRebuilds(t *testing.T) {
+	u, topo := fxUoW([]run.Task{task(seed, run.TaskStatusFailed), task(table, run.TaskStatusSkipped)})
+	topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+
+	sel, pv, err := fxPlanner.Rebase(context.Background(), u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), runstart.RebaseOptions{})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, pv.FailedOrSkipped)
+	assert.Equal(t, 2, pv.Downstream, "the rebuilds of current and latest")
+	assert.Equal(t, 4, pv.WillRun())
+	assert.Equal(t, len(sel.Plan.Tasks), pv.Total())
+	assert.Equal(t, sel.Plan, pv.Plan)
+}
