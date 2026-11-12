@@ -63,8 +63,9 @@ def rewrite_to_candidate_schema(
     node's relation, e.g. an incremental model selecting from {{ this }}) is
     left on its production schema: the validation runner drops and recreates
     <candidate>.<relation>, so a self-reference rewritten to the candidate
-    schema would read a relation that no longer exists. This mirrors the
-    dependency resolver, which also skips self-references.
+    schema would read a relation that no longer exists. This mirrors
+    table_refs.referenced_tables, which skips the same self-references when it
+    lists a node's upstream tables.
 
     dialect is the sqlglot dialect of the warehouse the install targets. It is
     used to both read and re-render the SQL, so it decides the syntax of the

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, create_autospec
 
 import yaml
 from continuo_contracts.hashing import fold3
+from continuo_contracts.python import PythonNode, projection_hash
 
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
@@ -170,15 +171,21 @@ def source_with_nodes(tmp_path, *nodes):
 
 
 def python_entry(**overrides):
+    """A valid python wire entry, with the hash fields a producer CI on
+    continuo-python-runtime 0.12.0 writes: config_hash is the projection hash of
+    the (possibly overridden) entry and content_hash the fold of the three
+    parts, so the parser computes the same content_hash and logs no difference.
+    An overridden hash field stands for what another CI wrote."""
     entry = {
         "schema": "test_schema", "table": "py_metrics",
         "owner": "team-py", "schedule": "daily", "criticality": "SECONDARY",
         "script": "scripts/py_metrics.py",
         "reads": {"orders": "select id from test_schema.orders"},
         "output_columns": [{"name": "id", "type": "INTEGER", "nullable": False}],
-        "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
+        "source_hash": "aaa111", "shared_code_hash": "bbb222",
     }
     entry.update(overrides)
+    entry.setdefault("config_hash", projection_hash(PythonNode.from_mapping(entry)))
     entry.setdefault("content_hash", fold3(
         entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
     return entry

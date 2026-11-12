@@ -1,0 +1,68 @@
+# Shared wire-contract fixture for python node write modes and assets.
+# Canonical wire entries as the runtime's node_entry() emits them, WITHOUT the
+# four hash fields (source_hash, shared_code_hash, config_hash, content_hash).
+# Twin copies, kept byte-identical:
+#   continuo:                topology-controller/tests/fixtures/wire_contract_write_modes.yml
+#   continuo-python-runtime: tests/fixtures/wire_contract_write_modes.yml
+nodes:
+  - schema: fixture
+    table: replace_node
+    owner: data-team
+    schedule: hourly
+    criticality: SECONDARY
+    kind: python-node
+    script: scripts/replace_node.py
+    reads:
+      src: SELECT id FROM fixture.src
+    output_columns:
+      - {name: id, type: "BIGINT", nullable: false}
+    description: ""
+    extra_columns: raise
+    config: {}
+  - schema: fixture
+    table: append_node
+    owner: data-team
+    schedule: hourly
+    criticality: SECONDARY
+    kind: python-api
+    script: scripts/append_node.py
+    reads: {}
+    output_columns:
+      - {name: collected_at, type: "TIMESTAMP", nullable: false}
+      - {name: rate, type: "DECIMAL(12,6)", nullable: true}
+    description: ""
+    extra_columns: raise
+    config: {}
+    mode_type: append
+  - schema: fixture
+    table: upsert_node
+    owner: data-team
+    schedule: hourly
+    criticality: SECONDARY
+    kind: python-api
+    script: scripts/upsert_node.py
+    reads: {}
+    output_columns:
+      - {name: rate_date, type: "DATE", nullable: false}
+      - {name: base, type: "VARCHAR(3)", nullable: false}
+      - {name: rate, type: "DECIMAL(12,6)", nullable: true}
+    description: ""
+    extra_columns: raise
+    config: {}
+    mode_type: upsert
+    primary_key: [rate_date, base]
+  - schema: fixture
+    table: assets_node
+    owner: data-team
+    schedule: hourly
+    criticality: SECONDARY
+    kind: python-node
+    script: scripts/assets_node.py
+    reads:
+      src: SELECT id FROM fixture.src
+    output_columns:
+      - {name: id, type: "BIGINT", nullable: false}
+    description: ""
+    extra_columns: raise
+    config: {}
+    assets: [data/ref.json]

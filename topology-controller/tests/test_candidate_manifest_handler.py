@@ -1137,8 +1137,9 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
 
 
 def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
-    """The bundle contract is runtime-agnostic by construction; a python node
-    needs no new key, because its parsed entry is already its raw_code."""
+    """The bundle contract is runtime-agnostic by construction: a python node's
+    parsed entry is its raw_code, and its code projection rides beside it in
+    `projection`."""
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
     source = source_of(ManifestFile(
@@ -1166,6 +1167,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     assert node["runtime"] == "python"
     assert node["compiled_code"] == ""
     assert '"output_columns"' in node["raw_code"]
+    assert json.loads(node["projection"])["kind"] == "python-node"
 
 
 def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_path):

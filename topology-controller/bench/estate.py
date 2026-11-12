@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 from continuo_contracts.hashing import fold3
+from continuo_contracts.python import PythonNode, projection_hash
 
 from domain.model import ManifestKind, ManifestRequest
 
@@ -205,11 +206,13 @@ def _compile_extras(service: int, release_id: str, seed: dict) -> dict:
 
 
 def _python_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
+    """A python contract entry with the hash fields a CI on
+    continuo-python-runtime 0.12.0 writes: config_hash is the entry's
+    projection hash, so the parser computes the CI's content_hash."""
     table = f"py_{index:05d}"
     source_hash = "sha256:" + _sha256(table)
     shared_code_hash = ""
-    config_hash = _sha256(table + "cfg")
-    return {
+    entry = {
         "schema": _PYTHON_SCHEMA,
         "table": table,
         "owner": "team-py",
@@ -218,6 +221,9 @@ def _python_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
         "script": f"scripts/{table}.py",
         "reads": reads,
         "output_columns": [{"name": column, "type": "INTEGER", "nullable": True} for column in columns],
+    }
+    config_hash = projection_hash(PythonNode.from_mapping(entry))
+    return entry | {
         "source_hash": source_hash,
         "shared_code_hash": shared_code_hash,
         "config_hash": config_hash,

@@ -1,3 +1,4 @@
+import continuo_contracts.python
 import pytest
 
 from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NODE_TYPES_WITH_SECRET_REF, NodeRuntime, NodeType
@@ -15,6 +16,10 @@ def test_secret_allowed_kinds_match_the_contract_vocabulary():
     pkg/streams/contract.yaml (secret_ref: true); execution-controller enforces
     the same generated set at Job creation."""
     assert {t for t, r in RULES.items() if r.secret_allowed} == NODE_TYPES_WITH_SECRET_REF
+
+
+def test_the_kind_rules_mode_types_are_the_librarys():
+    assert {t for r in RULES.values() for t in r.mode_types} == set(continuo_contracts.python.MODE_TYPES)
 
 
 def test_aliases_point_at_declared_kinds_only():

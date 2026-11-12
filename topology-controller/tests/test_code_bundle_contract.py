@@ -7,7 +7,9 @@ so the Go reader and this writer agree on one document.
 
 The fixture holds a dbt node and a python node. The python node comes from
 `parse_python_contract`, so its `raw_code` JSON (whose `kind`, `owner` and
-`reads` keys are part of the declared read set) is what the real parser writes.
+`reads` keys are part of the declared read set), its `projection` (the code
+projection, outside the read set) and its hashes are what the real parser
+writes.
 """
 import json
 from pathlib import Path

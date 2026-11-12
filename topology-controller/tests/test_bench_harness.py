@@ -5,7 +5,9 @@ from bench.compare import compare
 from bench.estate import generate_estate
 from bench.memory_s3 import MemoryS3
 from bench.run import build_handler
+from domain.model import ManifestKind
 from service.compile_extras import load_compile_extras
+from service.python_contract_parser import parse_python_contract
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -26,6 +28,18 @@ def test_the_real_handler_parses_the_estate():
     handler.handle(estate.release_id)
     assert publisher.ok, publisher.failure
     assert publisher.node_count == estate.dbt_nodes + estate.python_nodes
+
+
+def test_the_estate_python_nodes_carry_the_hashes_the_parser_computes(tmp_path, caplog):
+    """Each python entry's CI hashes are the ones a CI on runtime 0.12.0 writes,
+    so parsing the contract logs no content_hash difference per node."""
+    estate = generate_estate(20, columns=4)
+    (key,) = [request.key for request in estate.requests if request.kind is ManifestKind.PYTHON]
+    path = tmp_path / "contract.yaml"
+    path.write_bytes(estate.objects[key])
+    nodes = parse_python_contract(str(path)).nodes
+    assert len(nodes) == estate.python_nodes
+    assert not [r for r in caplog.records if hasattr(r, "ci_content_hash")]
 
 
 # The benchmark estate must stay parseable now that the parser reads its extras.
