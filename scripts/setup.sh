@@ -7,6 +7,10 @@ CLUSTER_NAME="continuo"
 # e2e posts this exact string as a release's image_tag; execution-controller runs a
 # python-node node's image verbatim, so the two must agree.
 PY_FIXTURE_IMAGE="continuo-e2e-py-probe:latest"
+# The same fixture's mismatch target: it adds a node whose baked contract
+# differs from the one its release carries, so the runtime harness refuses to
+# start it. The image-contract e2e test posts this exact string as its image_tag.
+PY_MISMATCH_IMAGE="continuo-e2e-py-probe:mismatch"
 KIND_VERSION="v0.30.0"
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
@@ -79,9 +83,11 @@ DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 # The python e2e fixture: a domain image built the way a real domain repository
 # builds one — the published runtime base plus that service's contracts and
 # scripts. The e2e posts this exact tag as the release's image_tag, and the
-# execution-controller runs it verbatim.
-echo "Building python e2e fixture image..."
-DOCKER_BUILDKIT=1 docker build -t "${PY_FIXTURE_IMAGE}" tests/e2e/fixtures/py-probe/
+# execution-controller runs it verbatim. The Dockerfile has two targets, and a
+# build with no --target builds the last one, so each build names its own.
+echo "Building python e2e fixture images..."
+DOCKER_BUILDKIT=1 docker build --target probe -t "${PY_FIXTURE_IMAGE}" tests/e2e/fixtures/py-probe/
+DOCKER_BUILDKIT=1 docker build --target mismatch -t "${PY_MISMATCH_IMAGE}" tests/e2e/fixtures/py-probe/
 echo "Pulling continuo-python-runtime (postgres) image..."
 docker pull ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0
 echo "Building service images (batched)..."
@@ -177,6 +183,7 @@ kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
 # Built locally from a pulled base, so a plain `kind load docker-image` works —
 # kind_load_pulled_image is only needed for images pulled directly.
 kind load docker-image "${PY_FIXTURE_IMAGE}" --name ${CLUSTER_NAME}
+kind load docker-image "${PY_MISMATCH_IMAGE}" --name ${CLUSTER_NAME}
 # The validation image is pulled, not built locally, so a plain `kind load
 # docker-image` fails on a containerd-backed image store — see
 # scripts/lib/common.sh:kind_load_pulled_image.

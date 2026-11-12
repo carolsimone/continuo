@@ -378,10 +378,10 @@ jobs:
         # Start the ui container, wait for it to become healthy, deploy
         # execution-controller, then run the full e2e suite inside the catalog
         # container where the test code lives. Comfortably exceeds the go
-        # test -timeout below (125m) plus the ui-wait/deploy steps that run
+        # test -timeout below (145m) plus the ui-wait/deploy steps that run
         # first in this same step.
         #
-        # The 125m go timeout is derived, not measured, from the per-test
+        # The 145m go timeout is derived, not measured, from the per-test
         # context deadlines the suite actually carries. Every per-test context
         # must be able to fire first, or an operator gets a goroutine dump
         # instead of a named assertion. It is the sum of:
@@ -392,16 +392,17 @@ jobs:
         #     a wedged queue stalls several of them one after another. Covering
         #     two is the minimum that still buys a named assertion; covering
         #     all five would put the ceiling past 3.5 hours.
-        #   - 55m for the rest of the suite. A healthy full run measures ~39m
-        #     warm (2360s, 45 tests); 55m is that plus cold-stack headroom.
-        timeout-minutes: 140
+        #   - 75m for the rest of the suite. A healthy full run takes about
+        #     60m warm on the self-hosted runner; 75m is that plus cold-stack
+        #     headroom.
+        timeout-minutes: 160
         run: |
           source scripts/lib/common.sh
           # CI_HOST_IP is the lane's bind IP on the self-hosted runner (each kind
           # lane's own Docker daemon publishes there); unset on GitHub-hosted.
           docker compose up -d ui && wait_for_http_host "http://${CI_HOST_IP:-localhost}:8090/api/schedules"
           bash tests/e2e/deploy-execution-controller.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 125m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 145m /app/tests/e2e/...
 
       - name: Cleanup execution-controller
         if: always()

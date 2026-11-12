@@ -114,7 +114,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/contract.yaml", dupE2EService, releaseID), contract)
 
-	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage)
+	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, 3*time.Minute)
 

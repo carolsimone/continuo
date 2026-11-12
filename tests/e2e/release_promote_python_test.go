@@ -266,7 +266,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
 	putS3Object(t, ctx, clients, contractKey, []byte(contractYAML))
 
-	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage)
+	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage, false)
 
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, validationNodes)
 
@@ -465,8 +465,9 @@ func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // postPythonRelease submits a kind=python release through the public API as
-// the CI pipeline of the python fixture repository.
-func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string) {
+// the CI pipeline of the python fixture repository. When bootstrap is true the
+// release promotes without validation.
+func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
 	t.Helper()
 	token := mintCIToken(t, e2ePyRepositoryID, "carolsimone/continuo-py-demo", releaseID)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
@@ -474,6 +475,7 @@ func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, i
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"kind":       "python",
+		"bootstrap":  bootstrap,
 	})
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
 }
