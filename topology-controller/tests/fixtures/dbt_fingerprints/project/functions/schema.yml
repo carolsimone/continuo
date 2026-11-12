@@ -1,0 +1,10 @@
+version: 2
+
+functions:
+  - name: double_it
+    description: "Doubles an integer"
+    arguments:
+      - name: x
+        data_type: integer
+    returns:
+      data_type: integer

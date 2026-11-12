@@ -1,0 +1,10 @@
+version: 2
+
+seeds:
+  - name: seed_users
+    config:
+      column_types:
+        id: integer
+  - name: seed_semi
+    config:
+      delimiter: ";"

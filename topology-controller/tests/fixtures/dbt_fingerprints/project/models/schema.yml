@@ -1,0 +1,72 @@
+version: 2
+
+groups:
+  - name: sales
+    owner:
+      name: Sales
+  - name: ops
+    owner:
+      name: Operations
+
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: events
+
+models:
+  - name: orders
+    description: "One row per order"
+    columns:
+      - name: id
+        description: "Order id"
+        data_tests:
+          - not_null
+      - name: created_at
+        data_tests:
+          - not_null:
+              config:
+                where: "created_at > '{{ run_started_at }}'"
+  - name: orders_dep_1
+    description: "Order amounts"
+  - name: contracted
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: id
+        data_type: integer
+      - name: amount
+        data_type: numeric(12,2)
+  - name: gov
+    config:
+      access: public
+      group: sales
+  - name: fresh
+    config:
+      freshness:
+        build_after:
+          count: 4
+          period: hour
+          updates_on: any
+  - name: dim_v
+    latest_version: 1
+    versions:
+      - v: 1
+      - v: 2
+
+unit_tests:
+  - name: orders_has_one_row
+    model: orders
+    given: []
+    expect:
+      rows:
+        - {id: 1, amount: 10}
+
+snapshots:
+  - name: snap_yml
+    relation: ref('orders')
+    config:
+      unique_key: id
+      strategy: check
+      check_cols: all
