@@ -53,9 +53,9 @@ type TopologyRepository interface {
 	// among them. A key the release does not hold is left out.
 	Graph(ctx context.Context, tenantID, releaseID string, keys []topology.NodeKey) (topology.Graph, error)
 
-	// NodeContentHash returns the content hash of one node of a release, and
-	// whether the release has that node.
-	NodeContentHash(ctx context.Context, tenantID, releaseID string, key topology.NodeKey) (hash string, found bool, err error)
+	// NodeHashes returns the content hash and the seed column fingerprint of one
+	// node of a release, and whether the release has that node.
+	NodeHashes(ctx context.Context, tenantID, releaseID string, key topology.NodeKey) (hashes topology.NodeHashes, found bool, err error)
 
 	// PruneReleases deletes, with their nodes and edges, the releases loaded
 	// before loadedBefore that are not live and that no run names, finished or

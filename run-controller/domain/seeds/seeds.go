@@ -32,7 +32,10 @@ type Desired struct {
 	TableName   string
 	NodeType    string
 	ContentHash string
-	ImageTag    string
+	// SeedColumnsHash is the fingerprint of the seed's CSV header and column
+	// types; empty when its release carried none.
+	SeedColumnsHash string
+	ImageTag        string
 }
 
 // AttemptState is how the run of a seed's latest build request stands.
@@ -50,10 +53,12 @@ const (
 )
 
 // Materialization is what run-controller knows about one node in the warehouse: the
-// content last loaded ("" when none is recorded) and its latest build request.
+// content last loaded ("" when none is recorded), the column fingerprint of that
+// load ("" when it was recorded without one) and its latest build request.
 type Materialization struct {
 	Key                topology.NodeKey
 	ContentHash        string
+	SeedColumnsHash    string
 	AttemptContentHash string
 	AttemptRunID       uuid.UUID
 	AttemptState       AttemptState
@@ -155,25 +160,27 @@ const (
 // Built is the version of one node last loaded into the warehouse. RunID and
 // TaskID are uuid.Nil for an adopted version.
 type Built struct {
-	Key         topology.NodeKey
-	ContentHash string
-	ImageTag    string
-	ReleaseID   string
-	RunID       uuid.UUID
-	TaskID      uuid.UUID
-	At          time.Time
-	Source      BuiltSource
+	Key             topology.NodeKey
+	ContentHash     string
+	SeedColumnsHash string
+	ImageTag        string
+	ReleaseID       string
+	RunID           uuid.UUID
+	TaskID          uuid.UUID
+	At              time.Time
+	Source          BuiltSource
 }
 
 // Adopted records d as loaded at the live release's content, without a run.
 func Adopted(d Desired, releaseID string, at time.Time) Built {
 	return Built{
-		Key:         d.Key,
-		ContentHash: d.ContentHash,
-		ImageTag:    d.ImageTag,
-		ReleaseID:   releaseID,
-		At:          at,
-		Source:      SourceAdopted,
+		Key:             d.Key,
+		ContentHash:     d.ContentHash,
+		SeedColumnsHash: d.SeedColumnsHash,
+		ImageTag:        d.ImageTag,
+		ReleaseID:       releaseID,
+		At:              at,
+		Source:          SourceAdopted,
 	}
 }
 
@@ -220,13 +227,14 @@ func RunID(tenantID, releaseID string, n int) uuid.UUID {
 
 func desiredOf(n topology.Node) Desired {
 	return Desired{
-		Key:         n.Key,
-		ServiceName: n.ServiceName,
-		SchemaName:  n.SchemaName,
-		TableName:   n.TableName,
-		NodeType:    n.NodeType,
-		ContentHash: n.ContentHash,
-		ImageTag:    n.ImageTag,
+		Key:             n.Key,
+		ServiceName:     n.ServiceName,
+		SchemaName:      n.SchemaName,
+		TableName:       n.TableName,
+		NodeType:        n.NodeType,
+		ContentHash:     n.ContentHash,
+		SeedColumnsHash: n.SeedColumnsHash,
+		ImageTag:        n.ImageTag,
 	}
 }
 

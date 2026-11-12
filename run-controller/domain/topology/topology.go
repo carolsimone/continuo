@@ -31,6 +31,7 @@ type NodeSpec struct {
 	NodeType          string
 	TestCount         *int
 	ContentHash       string
+	SeedColumnsHash   string
 	ImageTag          string
 	SecretRef         string
 	ScheduleName      string
@@ -42,18 +43,27 @@ type NodeSpec struct {
 // of data tests on the node is unknown; TimeoutSeconds is nil when the node
 // declares no task timeout.
 type Node struct {
-	Key            NodeKey
-	UniqueID       string
-	ServiceName    string
-	SchemaName     string
-	TableName      string
-	NodeType       string
-	TestCount      *int
-	ContentHash    string
-	ImageTag       string
-	SecretRef      string
-	ScheduleName   string
-	TimeoutSeconds *int
+	Key             NodeKey
+	UniqueID        string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	NodeType        string
+	TestCount       *int
+	ContentHash     string
+	SeedColumnsHash string
+	ImageTag        string
+	SecretRef       string
+	ScheduleName    string
+	TimeoutSeconds  *int
+}
+
+// NodeHashes are the two fingerprints a release states for one node: the hash
+// of its code and, for a seed, the hash of its CSV header and column types
+// (empty when the release carried no compile extras for the seed's service).
+type NodeHashes struct {
+	ContentHash     string
+	SeedColumnsHash string
 }
 
 // Edge records that Downstream reads Upstream. Both nodes belong to the same
@@ -103,18 +113,19 @@ func NewRelease(tenantID, releaseID string, seq int64, uri, sha256 string, specs
 			keyByUniqueID[s.UniqueID] = key
 		}
 		nodes = append(nodes, Node{
-			Key:            key,
-			UniqueID:       s.UniqueID,
-			ServiceName:    s.ServiceName,
-			SchemaName:     s.SchemaName,
-			TableName:      s.TableName,
-			NodeType:       s.NodeType,
-			TestCount:      cloneCount(s.TestCount),
-			ContentHash:    s.ContentHash,
-			ImageTag:       s.ImageTag,
-			SecretRef:      s.SecretRef,
-			ScheduleName:   s.ScheduleName,
-			TimeoutSeconds: cloneCount(s.TimeoutSeconds),
+			Key:             key,
+			UniqueID:        s.UniqueID,
+			ServiceName:     s.ServiceName,
+			SchemaName:      s.SchemaName,
+			TableName:       s.TableName,
+			NodeType:        s.NodeType,
+			TestCount:       cloneCount(s.TestCount),
+			ContentHash:     s.ContentHash,
+			SeedColumnsHash: s.SeedColumnsHash,
+			ImageTag:        s.ImageTag,
+			SecretRef:       s.SecretRef,
+			ScheduleName:    s.ScheduleName,
+			TimeoutSeconds:  cloneCount(s.TimeoutSeconds),
 		})
 	}
 

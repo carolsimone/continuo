@@ -21,7 +21,7 @@ import (
 const readyCandidatesQuery = `
 	SELECT t.task_id, t.job_name,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
-	       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
+	       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
 	       ARRAY(
 	           SELECT ut.status::text
 	           FROM topology_edges ue

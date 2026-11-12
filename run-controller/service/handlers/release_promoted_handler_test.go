@@ -80,8 +80,8 @@ func (f *fakeTopologyRepo) Graph(context.Context, string, string, []topology.Nod
 	return topology.Graph{}, nil
 }
 
-func (f *fakeTopologyRepo) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, nil
+func (f *fakeTopologyRepo) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, nil
 }
 
 func (f *fakeTopologyRepo) PruneReleases(context.Context, time.Time) (int64, error) { return 0, nil }

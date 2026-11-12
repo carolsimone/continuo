@@ -103,8 +103,8 @@ func (f *fakeTopology) Graph(_ context.Context, _ string, releaseID string, keys
 	return topology.NewGraph(nodes, nil), nil
 }
 
-func (f *fakeTopology) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, errors.New("NodeContentHash is not used by the seed reconcile")
+func (f *fakeTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the seed reconcile")
 }
 
 func (f *fakeTopology) PruneReleases(context.Context, time.Time) (int64, error) {

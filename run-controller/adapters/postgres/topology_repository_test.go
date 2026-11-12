@@ -211,10 +211,10 @@ func TestTopologyRepository_AnIngestedNodeIsStoredAndReadBackIntact(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, nodes[1:], ingested)
 
-	hash, found, err := repo.NodeContentHash(ctx, tenant, "rel-1", "raw.x")
+	hashes, found, err := repo.NodeHashes(ctx, tenant, "rel-1", "raw.x")
 	require.NoError(t, err)
 	assert.True(t, found)
-	assert.Empty(t, hash)
+	assert.Equal(t, topology.NodeHashes{}, hashes)
 	assert.Equal(t, 1, countTopoRows(t, db, `
 		SELECT count(*) FROM topology_edges
 		WHERE tenant_id = $1 AND release_id = 'rel-1' AND upstream_key = 'raw.x' AND downstream_key = 'a.m'`, tenant))
@@ -400,20 +400,28 @@ func TestTopologyRepository_LivePointersListsEveryTenantsLiveRelease(t *testing.
 	}, ours)
 }
 
-func TestTopologyRepository_NodeContentHash(t *testing.T) {
+func TestTopologyRepository_StoresAndReadsSeedColumnsHash(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
-	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "aa", topoSpec("raw", "orders", "dbt-seed", "h1")))
+	seed := topoSpec("raw", "countries", "dbt-seed", "h1")
+	seed.SeedColumnsHash = "sha256:e5a0"
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "aa", seed, topoSpec("stg", "orders", "dbt-model", "h2")))
 	require.NoError(t, err)
 	repo := postgres.NewTopologyRepository(db, nil)
 
-	hash, found, err := repo.NodeContentHash(ctx, tenant, "rel-1", "raw.orders")
+	nodes, err := repo.ReleaseNodes(ctx, tenant, "rel-1", "")
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	assert.Equal(t, "sha256:e5a0", nodes[0].SeedColumnsHash) // raw.countries sorts first
+	assert.Empty(t, nodes[1].SeedColumnsHash)
+
+	got, found, err := repo.NodeHashes(ctx, tenant, "rel-1", "raw.countries")
 	require.NoError(t, err)
 	assert.True(t, found)
-	assert.Equal(t, "h1", hash)
+	assert.Equal(t, topology.NodeHashes{ContentHash: "h1", SeedColumnsHash: "sha256:e5a0"}, got)
 
-	_, found, err = repo.NodeContentHash(ctx, tenant, "rel-1", "raw.missing")
+	_, found, err = repo.NodeHashes(ctx, tenant, "rel-1", "raw.missing")
 	require.NoError(t, err)
 	assert.False(t, found)
 }

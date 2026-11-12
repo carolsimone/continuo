@@ -42,6 +42,7 @@ func (r *MaterializationRepository) conn() sqlx.ExtContext {
 type materializationRow struct {
 	NodeKey            string         `db:"node_key"`
 	ContentHash        string         `db:"content_hash"`
+	SeedColumnsHash    string         `db:"seed_columns_hash"`
 	AttemptContentHash string         `db:"attempt_content_hash"`
 	AttemptRunID       uuid.NullUUID  `db:"attempt_run_id"`
 	AttemptRunStatus   sql.NullString `db:"attempt_run_status"`
@@ -51,7 +52,7 @@ type materializationRow struct {
 func (r *MaterializationRepository) List(ctx context.Context, tenantID string) (map[topology.NodeKey]seeds.Materialization, error) {
 	var rows []materializationRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
-		SELECT m.node_key, m.content_hash, m.attempt_content_hash, m.attempt_run_id, s.status AS attempt_run_status
+		SELECT m.node_key, m.content_hash, m.seed_columns_hash, m.attempt_content_hash, m.attempt_run_id, s.status AS attempt_run_status
 		FROM node_materializations m
 		LEFT JOIN runs s ON s.tenant_id = m.tenant_id AND s.run_id = m.attempt_run_id
 		WHERE m.tenant_id = $1`, tenantID); err != nil {
@@ -63,6 +64,7 @@ func (r *MaterializationRepository) List(ctx context.Context, tenantID string) (
 		out[key] = seeds.Materialization{
 			Key:                key,
 			ContentHash:        row.ContentHash,
+			SeedColumnsHash:    row.SeedColumnsHash,
 			AttemptContentHash: row.AttemptContentHash,
 			AttemptRunID:       row.AttemptRunID.UUID,
 			AttemptState:       attemptState(row.AttemptRunID, row.AttemptRunStatus),
@@ -107,17 +109,18 @@ func (r *MaterializationRepository) RecordAttempt(ctx context.Context, tenantID 
 func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID string, b seeds.Built) error {
 	if _, err := r.conn().ExecContext(ctx, `
 		INSERT INTO node_materializations
-		    (tenant_id, node_key, content_hash, image_tag, release_id, run_id, task_id, materialized_at, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		    (tenant_id, node_key, content_hash, seed_columns_hash, image_tag, release_id, run_id, task_id, materialized_at, source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (tenant_id, node_key) DO UPDATE
 		SET content_hash = EXCLUDED.content_hash,
+		    seed_columns_hash = EXCLUDED.seed_columns_hash,
 		    image_tag = EXCLUDED.image_tag,
 		    release_id = EXCLUDED.release_id,
 		    run_id = EXCLUDED.run_id,
 		    task_id = EXCLUDED.task_id,
 		    materialized_at = EXCLUDED.materialized_at,
 		    source = EXCLUDED.source`,
-		tenantID, string(b.Key), b.ContentHash, b.ImageTag, b.ReleaseID,
+		tenantID, string(b.Key), b.ContentHash, b.SeedColumnsHash, b.ImageTag, b.ReleaseID,
 		nullableUUID(b.RunID), nullableUUID(b.TaskID), b.At, string(b.Source)); err != nil {
 		return fmt.Errorf("record the loaded version of %s: %w", b.Key, err)
 	}

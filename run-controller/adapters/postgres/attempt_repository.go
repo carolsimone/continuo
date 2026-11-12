@@ -130,7 +130,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		SELECT s.run_id, s.schedule_name AS run_schedule_name, a.task_id, a.attempt, a.status, a.checks_sent, a.job_name,
 		       t.operation,
 		       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
-		       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
+		       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
 		FROM task_attempts a
 		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id

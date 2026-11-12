@@ -193,3 +193,10 @@ func TestNewRelease_KeepsAnIngestedNode(t *testing.T) {
 	}, rel.Nodes[0], "empty service name, content hash, image tag and schedule name are kept empty")
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "stg.orders"}}, rel.Edges)
 }
+
+func TestNewRelease_CopiesSeedColumnsHash(t *testing.T) {
+	rel, err := topology.NewRelease("default", "rel-1", 1, "s3://b/k", "abc", []topology.NodeSpec{
+		{UniqueID: "raw.countries", SchemaName: "raw", TableName: "countries", NodeType: "dbt-seed", ContentHash: "sha256:a", SeedColumnsHash: "sha256:e5a0"}})
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:e5a0", rel.Nodes[0].SeedColumnsHash)
+}

@@ -266,3 +266,12 @@ func TestTopologyArtifactReader_ReportsTheReleaseTheArtifactNames(t *testing.T) 
 	assert.Equal(t, "default", art.TenantID)
 	assert.Equal(t, "rel-b", art.ReleaseID)
 }
+
+func TestArtifactOf_MapsSeedColumnsHash(t *testing.T) {
+	a := artifactOf(topologyartifact.Document{TenantID: "default", ReleaseID: "rel-1", Nodes: []topologyartifact.Node{
+		{UniqueID: "raw.countries", SchemaName: "raw", TableName: "countries", NodeType: "dbt-seed", SeedColumnsHash: "sha256:e5a0"},
+		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", NodeType: "dbt-model"},
+	}})
+	assert.Equal(t, "sha256:e5a0", a.Nodes[0].SeedColumnsHash)
+	assert.Empty(t, a.Nodes[1].SeedColumnsHash)
+}

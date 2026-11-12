@@ -636,18 +636,18 @@ func TestAttemptReport_AppendErrorPropagates(t *testing.T) {
 	assert.True(t, runRepo.saveCalled, "SaveRun is called before the outbox append")
 }
 
-// hashTopology answers NodeContentHash from hashes, keyed
+// hashTopology answers NodeHashes from hashes, keyed
 // "<release>/<node key>", and records each lookup as
 // "<tenant>/<release>/<node key>".
 type hashTopology struct {
 	fakeTopologyRepo
-	hashes map[string]string
+	hashes map[string]topology.NodeHashes
 	asked  []string
 }
 
 var _ repository.TopologyRepository = (*hashTopology)(nil)
 
-func (f *hashTopology) NodeContentHash(_ context.Context, tenantID, releaseID string, key topology.NodeKey) (string, bool, error) {
+func (f *hashTopology) NodeHashes(_ context.Context, tenantID, releaseID string, key topology.NodeKey) (topology.NodeHashes, bool, error) {
 	f.asked = append(f.asked, tenantID+"/"+releaseID+"/"+string(key))
 	h, ok := f.hashes[releaseID+"/"+string(key)]
 	return h, ok, nil
@@ -710,7 +710,7 @@ func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
 		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "RAW", TableName: "Orders", ImageTag: "svc:7"},
 	}).held(taskID, 0, run.AttemptRunning)
-	topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+	topo := &hashTopology{hashes: map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}}
 	mats := &builtRecorder{}
 	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 	u.TopologyRepo, u.MaterializationRepo = topo, mats
@@ -752,7 +752,7 @@ func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 			taskColl := (&fakeTaskStatusTaskCollection{
 				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, task: orders,
 			}).held(taskID, 0, run.AttemptRunning)
-			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+			topo := &hashTopology{hashes: map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}}
 			mats := &builtRecorder{}
 			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run}, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
@@ -780,19 +780,19 @@ func TestAttemptReport_RecordsNothingWithoutAVersion(t *testing.T) {
 		run     *run.Run
 		status  run.AttemptStatus
 		getErr  error
-		hashes  map[string]string
+		hashes  map[string]topology.NodeHashes
 		lookups int
 	}{
 		{"a run without a release", newRunningTaskStatusRun(scheduleID, "daily", 1, 0), run.AttemptSucceeded, nil,
-			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+			map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}, 0},
 		{"a failed task", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptFailed, nil,
-			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+			map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}, 0},
 		{"a task row that is gone", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, run.ErrTaskNotFound,
-			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+			map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}, 0},
 		{"a node the release lacks", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, nil,
-			map[string]string{}, 1},
+			map[string]topology.NodeHashes{}, 1},
 		{"a node without a content hash", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, nil,
-			map[string]string{"rel-1/raw.orders": ""}, 1},
+			map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: ""}}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -858,7 +858,7 @@ func TestAttemptReport_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
 				prevStatus: run.TaskStatusRunning, prevAttempt: tc.prevAttempt, prevExists: true,
 				updateAffected: 1, task: orders,
 			}).held(taskID, tc.attempt, tc.held)
-			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+			topo := &hashTopology{hashes: map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}}
 			mats := &builtRecorder{}
 			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run()}, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
@@ -889,4 +889,26 @@ func TestAttemptReport_TaskReadFailureFailsTheMessage(t *testing.T) {
 	err := newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
+}
+
+func TestAttemptReport_RecordsTheSeedColumnsHashOfTheLoadedVersion(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	taskColl := (&fakeTaskStatusTaskCollection{
+		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
+		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "countries", ImageTag: "svc:7"},
+	}).held(taskID, 0, run.AttemptRunning)
+	topo := &hashTopology{hashes: map[string]topology.NodeHashes{
+		"rel-1/raw.countries": {ContentHash: "h-countries", SeedColumnsHash: "sha256:e5a0"}}}
+	mats := &builtRecorder{}
+	u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")}, &fakeTaskStatusOutboxPub{}, taskColl)
+	u.TopologyRepo, u.MaterializationRepo = topo, mats
+	u.SetClock(taskStatusClock{at: at})
+
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New()))
+
+	assert.Equal(t, []seeds.Built{{
+		Key: "raw.countries", ContentHash: "h-countries", SeedColumnsHash: "sha256:e5a0", ImageTag: "svc:7", ReleaseID: "rel-1",
+		RunID: scheduleID, TaskID: taskID, At: at, Source: seeds.SourceBuild,
+	}}, mats.built)
 }

@@ -271,3 +271,22 @@ func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *t
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+func TestMaterializationRepository_RecordBuiltWritesTheSeedColumnsHash(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	repo := postgres.NewMaterializationRepository(db, nil)
+	built := seeds.Built{Key: "raw.countries", ContentHash: "h1", SeedColumnsHash: "sha256:e5a0", ImageTag: "svc:1",
+		ReleaseID: "rel-1", At: materializedAt, Source: seeds.SourceAdopted}
+	require.NoError(t, repo.RecordBuilt(ctx, tenant, built))
+	got, err := repo.List(ctx, tenant)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:e5a0", got["raw.countries"].SeedColumnsHash)
+
+	built.ContentHash, built.SeedColumnsHash = "h2", ""
+	require.NoError(t, repo.RecordBuilt(ctx, tenant, built))
+	got, err = repo.List(ctx, tenant)
+	require.NoError(t, err)
+	assert.Empty(t, got["raw.countries"].SeedColumnsHash, "a load recorded without a fingerprint clears the old one")
+}
