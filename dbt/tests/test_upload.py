@@ -122,6 +122,83 @@ def test_dbt_interpreter_reads_the_shebang(tmp_path, monkeypatch):
     assert dbt_interpreter() == "/usr/local/bin/python3.12"
 
 
+def _dbt_with_shebang(tmp_path, monkeypatch, shebang: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dbt = bin_dir / "dbt"
+    dbt.write_text(f"{shebang}\nimport sys\n")
+    dbt.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+@pytest.mark.parametrize("shebang", ["#!/usr/bin/env python3", "#!/usr/bin/env -S python3 -u",
+                                     "#!/usr/bin/env -S PYTHONUTF8=1 python3"])
+def test_dbt_interpreter_reads_a_shebang_through_env(tmp_path, monkeypatch, shebang):
+    """dbt_interpreter names the program env runs, past env's options and variables."""
+    from dbt_upload.upload import dbt_interpreter
+
+    _dbt_with_shebang(tmp_path, monkeypatch, shebang)
+
+    assert dbt_interpreter() == "python3"
+
+
+@pytest.mark.parametrize("shebang", ["#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/env -S node --x"])
+def test_dbt_interpreter_refuses_a_shebang_that_names_no_python(tmp_path, monkeypatch, shebang):
+    """A dbt console script whose shebang runs another program than Python is refused."""
+    from dbt_upload.upload import dbt_interpreter
+
+    _dbt_with_shebang(tmp_path, monkeypatch, shebang)
+
+    with pytest.raises(RuntimeError, match="not a Python interpreter"):
+        dbt_interpreter()
+
+
+def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, monkeypatch, caplog):
+    """write_compile_extras gives the script a timeout and logs what it wrote to
+    stderr at INFO when it succeeds."""
+    import logging
+    from unittest.mock import patch
+    from dbt_upload import upload
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    monkeypatch.setattr(upload, "dbt_interpreter", lambda: "python3")
+
+    caplog.set_level(logging.INFO, logger="dbt_upload.upload")
+    with patch("dbt_upload.upload.subprocess.run") as run:
+        run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="hashed 3 seeds\n")
+        upload.write_compile_extras(str(service_dir), "rel")
+
+    assert run.call_args.kwargs["timeout"] == upload.COMPILE_EXTRAS_TIMEOUT_SECONDS
+    assert any(r.levelno == logging.INFO and "hashed 3 seeds" in r.getMessage() for r in caplog.records)
+
+
+def test_upload_services_fails_a_service_whose_compile_extras_time_out(tmp_path, monkeypatch, caplog):
+    """A compile-extras script that runs past its timeout fails the service with an
+    ERROR that says so."""
+    import logging
+    from unittest.mock import MagicMock, patch
+    from dbt_upload import upload
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    def time_out(service_dir, release_id):
+        raise subprocess.TimeoutExpired(["compile_extras.py"], upload.COMPILE_EXTRAS_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(upload, "write_compile_extras", time_out)
+    target_config = {
+        "endpoint_url": "http://minio:9000", "access_key_id": "test",
+        "secret_access_key": "test", "region": "us-east-1", "bucket": "continuo",
+    }
+    with patch("dbt_upload.upload.boto3.client", return_value=MagicMock()):
+        succeeded, failed = upload.upload_services([str(service_dir)], target_config, release_id="rel")
+
+    assert (succeeded, failed) == ([], [str(service_dir)])
+    assert any(r.levelno == logging.ERROR and "timed out" in r.getMessage() for r in caplog.records)
+
+
 def test_write_compile_extras_runs_the_script_with_the_dbt_interpreter(tmp_path, monkeypatch):
     """write_compile_extras runs /compile_extras.py with the interpreter that runs
     dbt, for the service's compiled manifest and project, and returns the
@@ -444,13 +521,15 @@ def test_compile_uploader_lands_manifest_at_canonical_key(s3):
 
 
 @pytest.mark.integration
-def test_load_uploads_compile_extras_beside_the_manifest(s3):
+def test_load_uploads_compile_extras_beside_the_manifest(s3, request):
     """`load` compiles a service and uploads its compile-extras.json, written by
     /compile_extras.py with the Python that runs dbt, beside its manifest."""
     from dbt_upload.cli import main
 
     release_id = "test-rel-compile-extras"
     service_dir = os.path.join(SERVICES_DIR, "service-1")
+    keys = [f"service-1/{release_id}/manifest.json", f"service-1/{release_id}/compile-extras.json"]
+    request.addfinalizer(lambda: [s3.delete_object(Bucket=S3_BUCKET, Key=key) for key in keys])
     assert main(["load", service_dir, "--target", "minio", "--release-id", release_id]) == 0
 
     response = s3.get_object(Bucket=S3_BUCKET, Key=f"service-1/{release_id}/compile-extras.json")

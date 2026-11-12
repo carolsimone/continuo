@@ -78,15 +78,22 @@ def upload_manifest(
 
 COMPILE_EXTRAS_SCRIPT = "/compile_extras.py"
 
+# How long compile_extras.py may run for one service. It reads the manifest and
+# hashes the service's seed files, which takes seconds; a script still running
+# after this is stuck, and the service is failed instead of waited on.
+COMPILE_EXTRAS_TIMEOUT_SECONDS = 600
+
 
 def dbt_interpreter() -> str:
     """The Python that runs dbt: the interpreter named by the shebang of the
-    `dbt` console script on PATH (the program after `env` when the shebang
-    goes through it).
+    `dbt` console script on PATH (the program `env` runs when the shebang goes
+    through it, past env's options such as `-S` and its `NAME=value` settings).
 
     compile_extras.py reads the installed dbt versions and PyYAML, which live
     with dbt and not in this package's environment. Raises RuntimeError when
-    no `dbt` is on PATH or its first line is not a shebang.
+    no `dbt` is on PATH, its first line is not a shebang, or the program it
+    names is not a Python interpreter (its file name does not start with
+    `python`).
     """
     dbt = shutil.which("dbt")
     if dbt is None:
@@ -98,8 +105,14 @@ def dbt_interpreter() -> str:
     words = first_line[2:].split()
     if words and os.path.basename(words[0]) == "env":
         words = words[1:]
+        while words and (words[0].startswith("-") or "=" in words[0]):
+            words = words[1:]
     if not words:
         raise RuntimeError(f"{dbt} has an empty shebang line")
+    if not os.path.basename(words[0]).startswith("python"):
+        raise RuntimeError(
+            f"{dbt}'s shebang runs {words[0]!r}, which is not a Python interpreter: "
+            "compile_extras.py must run with the Python that runs dbt")
     return words[0]
 
 
@@ -107,13 +120,15 @@ def write_compile_extras(service_dir: str, release_id: str) -> str:
     """Write target/compile-extras.json for a compiled service and return its path.
 
     Runs compile_extras.py with the interpreter that runs dbt, over the
-    service's target/manifest.json and its dbt project directory. Raises
-    subprocess.CalledProcessError when the script fails.
+    service's target/manifest.json and its dbt project directory, for at most
+    COMPILE_EXTRAS_TIMEOUT_SECONDS, and logs what it wrote to stderr at INFO.
+    Raises subprocess.CalledProcessError when the script fails and
+    subprocess.TimeoutExpired when it runs past its timeout.
     """
     service_name = os.path.basename(service_dir)
     target_dir = os.path.join(service_dir, "target")
     out = os.path.join(target_dir, "compile-extras.json")
-    subprocess.run(
+    result = subprocess.run(
         [
             dbt_interpreter(), COMPILE_EXTRAS_SCRIPT,
             "--manifest", os.path.join(target_dir, "manifest.json"),
@@ -125,7 +140,10 @@ def write_compile_extras(service_dir: str, release_id: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=COMPILE_EXTRAS_TIMEOUT_SECONDS,
     )
+    if result.stderr and result.stderr.strip():
+        logger.info("compile_extras.py for %s: %s", service_name, result.stderr.strip())
     return out
 
 
@@ -191,6 +209,10 @@ def upload_services(
 
         try:
             write_compile_extras(service_dir, release_id)
+        except subprocess.TimeoutExpired as exc:
+            logger.error("Writing compile extras for %s timed out after %ss", service_name, exc.timeout)
+            failed.append(service_dir)
+            continue
         except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
             stderr = getattr(exc, "stderr", None) or ""
             logger.error("Writing compile extras failed for %s: %s %s", service_name, exc, stderr.strip())
