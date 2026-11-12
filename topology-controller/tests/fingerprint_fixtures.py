@@ -18,6 +18,7 @@ from functools import cache
 from pathlib import Path
 
 from domain.model import CompileExtras, ManifestNode, NodeRegistry, ParsedArtifact
+from service.dbt_hashing import ManifestContext
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dbt_fingerprints"
 MANIFESTS_DIR = FIXTURE_DIR / "manifests"
@@ -45,6 +46,19 @@ def parse_variant(name: str, *, extras: bool = True) -> ParsedArtifact:
         manifest_path, extras_path = variant_paths(name, tmp_dir)
         loaded = load_compile_extras(extras_path, "") if extras and extras_path else None
         return parse_manifest(manifest_path, "", loaded)
+
+
+def manifest_and_context(name: str, *, extras: bool = True) -> tuple[dict, ManifestContext]:
+    """The variant's manifest as a dict and the ManifestContext the dbt hashing reads it
+    through, built with the variant's compile extras unless extras is False."""
+    from service.compile_extras import load_compile_extras
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        manifest_path, extras_path = variant_paths(name, tmp_dir)
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    loaded = load_compile_extras(extras_path, "") if extras and extras_path else None
+    return manifest, ManifestContext.from_manifest(manifest, loaded)
 
 
 def hashes(name: str, *, extras: bool = True) -> dict[str, str]:
