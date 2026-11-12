@@ -97,6 +97,11 @@ fingerprint needs and the manifest lacks: raw seed bytes and headers, the
 - `python3` must be on the image's `PATH`, and must be the Python that runs
   dbt, so that it imports the same dbt packages your project uses. An image
   without `python3` fails its compile.
+- The script reads the dbt project the `compile` command reads: the
+  command's own `--project-dir` when it has one (a relative one under the
+  directory the command runs in), otherwise the directory the command runs in,
+  your image's `WORKDIR`. It reads `dbt_project.yml` and the seed files there,
+  wherever `compile.manifest_path` puts the manifest.
 - Every run command (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
   and the optional `full_refresh` and `seed_full_refresh`) must parse with the
   same `--vars`, `--target`, `--profile`, `--profiles-dir` and `--project-dir`
@@ -104,7 +109,7 @@ fingerprint needs and the manifest lacks: raw seed bytes and headers, the
   the compiled project and a run that parsed another project would execute
   code the hash does not cover. execution-controller refuses to boot when they
   differ; `--profiles-dir /project` and `--project-dir /project` count as the
-  image default, equal to leaving the flag out.
+  image default, equal to leaving the flag out, and `-t` counts as `--target`.
 
 ## The `generate_schema_name` macro required for validation/releases
 

@@ -516,6 +516,79 @@ default:
 	assert.NotContains(t, err.Error(), "absent")
 }
 
+// dbt defines -t as the short form of --target: a block that spells the same
+// target both ways passes the parse-context and the compile-context checks.
+func TestLoad_TreatsTheShortTargetFlagAsTarget(t *testing.T) {
+	_, err := Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "-t", "prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "-tprod"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--target=prod"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "-t", "prod"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "-t", "prod"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "-t", "prod"]
+  parse:      ["dbt", "parse", "-t", "prod"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "--target", "prod"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.NoError(t, err)
+}
+
+// Spelled -t, a different target still refuses the block, in either check.
+func TestLoad_RefusesADifferentTargetSpelledShort(t *testing.T) {
+	_, err := Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "-t", "dev"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "-t", "prod"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "-t", "prod"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "-t", "prod"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "-t", "prod"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "-t", "prod"]
+  parse:      ["dbt", "parse", "--target", "prod"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "--target", "prod"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default.run")
+	assert.Contains(t, err.Error(), `(--target "dev" vs --target "prod")`)
+	assert.Contains(t, err.Error(), "does not match default.parse")
+
+	_, err = Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "-t", "prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "-t", "prod"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "-t", "prod"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "-t", "prod"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "-t", "prod"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "-t", "prod"]
+  parse:      ["dbt", "parse", "-t", "prod"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "-t", "dev"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `(--target "prod" vs --target "dev")`)
+	assert.Contains(t, err.Error(), "does not match default.compile.command")
+}
+
+// dbt reads "-t=prod" as the target "=prod", not "prod".
+func TestParseContextFlags_ReadsTheShortTargetFlagAsDbtDoes(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		want map[string]string
+	}{
+		{[]string{"dbt", "run", "-t", "prod"}, map[string]string{"--target": "prod"}},
+		{[]string{"dbt", "run", "-tprod"}, map[string]string{"--target": "prod"}},
+		{[]string{"dbt", "run", "-t=prod"}, map[string]string{"--target": "=prod"}},
+		{[]string{"dbt", "run", "--target", "dev", "-t", "prod"}, map[string]string{"--target": "prod"}},
+		{[]string{"dbt", "run", "-t", "{{ node }}"}, map[string]string{}},
+	} {
+		assert.Equal(t, tc.want, parseContextFlags(tc.argv), "argv %v", tc.argv)
+	}
+}
+
 // The refusal covers every service block, not only the default one.
 func TestLoad_RefusesAServiceRunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`

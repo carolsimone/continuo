@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -219,8 +220,8 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 		"dbt compile --profiles-dir /project"+
 		" && cp /work/project/target/manifest.json /shared/manifest.json"+
 		" && chmod 644 /shared/manifest.json"+
-		wantExtrasSuffix("/work/project", "core", "verify-rel-1-svc-a1"), compile.Command[2],
-		"the extras script reads the staged project, two directories above the staged manifest")
+		wantExtrasSuffix(`"$PWD"`, "core", "verify-rel-1-svc-a1"), compile.Command[2],
+		"the extras script reads the staged project, the directory the compile ran in")
 
 	mounts := make([]string, len(compile.VolumeMounts))
 	for i, m := range compile.VolumeMounts {
@@ -316,7 +317,7 @@ func TestCreateCompileJob_NoOverlayRunsTheExtrasScriptThenCompile(t *testing.T) 
 	assert.Equal(t, "dbt compile --profiles-dir /project"+
 		" && cp /project/target/manifest.json /shared/manifest.json"+
 		" && chmod 644 /shared/manifest.json"+
-		wantExtrasSuffix("/project", "core", "rel-1"), compile.Command[2])
+		wantExtrasSuffix(`"$PWD"`, "core", "rel-1"), compile.Command[2])
 	assert.NotContains(t, compile.Command[2], "/work")
 	require.Len(t, spec.Volumes, 1)
 	assert.Equal(t, "shared", spec.Volumes[0].Name)
@@ -338,7 +339,7 @@ func TestCreateCompileJob_CopiesAndRunsTheExtrasScript(t *testing.T) {
 	assert.Equal(t, []string{"cp", "/compile_extras.py", "/shared/compile_extras.py"}, spec.InitContainers[0].Command)
 	cmd := spec.InitContainers[1].Command[2]
 	assert.Contains(t, cmd, "command -v python3")
-	assert.Contains(t, cmd, "python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir /project --service core --release-id rel-1 --out /shared/compile-extras.json")
+	assert.Contains(t, cmd, "python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir \"$PWD\" --service core --release-id rel-1 --out /shared/compile-extras.json")
 	assert.Contains(t, cmd, "chmod 644 /shared/compile-extras.json")
 	assert.Equal(t, "/shared/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_LOCAL_PATH"))
 	assert.Equal(t, "s3://continuo/core/rel-1/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_S3_URI"))
@@ -357,13 +358,106 @@ func TestCompileExtrasURI_ReplacesTheLastSegment(t *testing.T) {
 
 // wantExtrasSuffix is the exact text the compile command gains after the
 // manifest hand-off: the python3 guard, the extras script run against the
-// project directory and the chmod that makes its output readable by the upload
-// container.
-func wantExtrasSuffix(projectDir, service, releaseID string) string {
+// project directory (projectDirWord, a shell word) and the chmod that makes
+// its output readable by the upload container.
+func wantExtrasSuffix(projectDirWord, service, releaseID string) string {
 	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
-		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir " + shellQuote(projectDir) +
+		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir " + projectDirWord +
 		" --service " + shellQuote(service) + " --release-id " + shellQuote(releaseID) +
 		" --out /shared/compile-extras.json && chmod 644 /shared/compile-extras.json"
+}
+
+// extrasCommandOf builds the compile pod for compileArgv and manifestPath
+// (staged under a source overlay when overlay is true) and returns the compile
+// container's shell command.
+func extrasCommandOf(t *testing.T, compileArgv []string, manifestPath string, overlay bool) string {
+	t.Helper()
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	p := ValidationJobParams{ServiceName: "core", ImageTag: "abc123", ReleaseID: "rel-1",
+		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json"}
+	if overlay {
+		p.SourceOverlayURI = "s3://continuo/core/rel-1/source-overlay.tar.gz"
+	}
+	spec, err := buildCompilePodSpec(p, compileArgv, manifestPath, nil, "")
+	require.NoError(t, err)
+	for _, ic := range spec.InitContainers {
+		if ic.Name == "compile" {
+			return ic.Command[2]
+		}
+	}
+	t.Fatal("no compile container")
+	return ""
+}
+
+// A compile whose --project-dir and --target-path point at unrelated
+// directories: the extras step reads the project dbt compiled, not a directory
+// derived from where the manifest was written.
+func TestBuildCompilePodSpec_ExtrasReadTheCompileProjectDir(t *testing.T) {
+	cmd := extrasCommandOf(t,
+		[]string{"dbt", "compile", "--project-dir", "/srv/dbt", "--target-path", "/tmp/dbt-target"},
+		"/tmp/dbt-target/manifest.json", false)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix("/srv/dbt", "core", "rel-1")), cmd)
+}
+
+func TestBuildCompilePodSpec_ExtrasReadTheEqualsFormProjectDir(t *testing.T) {
+	cmd := extrasCommandOf(t,
+		[]string{"dbt", "compile", "--project-dir=/srv/dbt", "--target-path=/tmp/dbt-target"},
+		"/tmp/dbt-target/manifest.json", false)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix("/srv/dbt", "core", "rel-1")), cmd)
+}
+
+// dbt keeps the last --project-dir an invocation carries.
+func TestBuildCompilePodSpec_ExtrasReadTheLastProjectDir(t *testing.T) {
+	cmd := extrasCommandOf(t,
+		[]string{"dbt", "compile", "--project-dir", "/first", "--project-dir=/srv/dbt"},
+		"/srv/dbt/target/manifest.json", false)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix("/srv/dbt", "core", "rel-1")), cmd)
+}
+
+// Without --project-dir dbt compiles the project in the container's working
+// directory (the image's WORKDIR, /project in the dbt base image), which the
+// extras step reads through the shell's $PWD.
+func TestBuildCompilePodSpec_ExtrasReadTheWorkingDirWithoutAProjectDir(t *testing.T) {
+	cmd := extrasCommandOf(t, []string{"dbt", "compile", "--profiles-dir", "/project"},
+		"/project/target/manifest.json", false)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix(`"$PWD"`, "core", "rel-1")), cmd)
+}
+
+// Under a source overlay the shell has moved into the staged copy before dbt
+// runs, so $PWD names the staged project.
+func TestBuildCompilePodSpec_ExtrasReadTheStagedProjectUnderAnOverlay(t *testing.T) {
+	cmd := extrasCommandOf(t, []string{"dbt", "compile", "--profiles-dir", "/project"},
+		"/project/target/manifest.json", true)
+	assert.True(t, strings.HasPrefix(cmd, expectedStagePrefix), cmd)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix(`"$PWD"`, "core", "rel-1")), cmd)
+}
+
+// dbt resolves a relative --project-dir against its working directory, which
+// is the shell's $PWD when the extras step runs.
+func TestBuildCompilePodSpec_ExtrasResolveARelativeProjectDirAgainstTheWorkingDir(t *testing.T) {
+	cmd := extrasCommandOf(t, []string{"dbt", "compile", "--project-dir", "sub dir/dbt"},
+		"/project/target/manifest.json", false)
+	assert.True(t, strings.HasSuffix(cmd, wantExtrasSuffix(`"$PWD"/'sub dir/dbt'`, "core", "rel-1")), cmd)
+}
+
+// The project-dir word the extras step receives expands, in a real shell, to
+// the directory dbt reads.
+func TestExtrasProjectDirWord_ExpandsAsDbtResolvesTheProjectDir(t *testing.T) {
+	work := t.TempDir()
+	for _, tc := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"dbt", "compile"}, work},
+		{[]string{"dbt", "compile", "--project-dir", "sub dir/dbt"}, work + "/sub dir/dbt"},
+		{[]string{"dbt", "compile", "--project-dir=/srv/it's"}, "/srv/it's"},
+	} {
+		cmd := exec.Command("sh", "-c", "printf %s "+extrasProjectDirWord(tc.argv)) //nolint:gosec // G204: the shell runs the word under test, built from the fixed argv above
+		cmd.Dir = work
+		out, err := cmd.Output()
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, string(out), "argv %v", tc.argv)
+	}
 }
 
 // TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged pins the parse-leg

@@ -652,11 +652,9 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     container below runs as a fixed, different uid). The same command then
 //     runs /shared/compile_extras.py against that manifest and the dbt
 //     project, writing /shared/compile-extras.json (chmod 644 likewise). The
-//     project directory is taken as the directory two levels above the
-//     compiled manifest path: that holds for every shipped config
-//     (/project/target/manifest.json) and, under the overlay, for the staged
-//     copy of it. A custom manifest_path deeper than target/ makes the script
-//     fail by naming the missing dbt_project.yml;
+//     project directory is the one the compile command compiled (see
+//     extrasProjectDirWord): its own --project-dir, or else the directory the
+//     command runs in, which under the overlay is the staged copy;
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", that (each staging the project into
 //     its own workdir first, when the overlay is set) export and rehearse the
@@ -727,7 +725,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	compileCmd := overlayPrefix + shellJoin(compileArgv) +
 		" && cp " + shellQuote(compiledManifestPath) + " /shared/manifest.json" +
 		" && chmod 644 /shared/manifest.json" +
-		compileExtrasCommand(path.Dir(path.Dir(compiledManifestPath)), p.ServiceName, p.ReleaseID)
+		compileExtrasCommand(extrasProjectDirWord(compileArgv), p.ServiceName, p.ReleaseID)
 	var initContainers []corev1.Container
 	if staged {
 		// The overlay fetcher lays the proposed files into /shared/overlay,
@@ -842,16 +840,54 @@ func compileExtrasURI(manifestURI string) (string, error) {
 // compileExtrasCommand returns the shell text appended to the compile command
 // after the manifest hand-off. It refuses a team image without python3 on
 // PATH, runs the script copied into /shared by the extras-script container
-// against the compiled manifest and the dbt project, and makes its output
-// world-readable for the upload container, which runs as another uid.
-func compileExtrasCommand(projectDir, service, releaseID string) string {
+// against the compiled manifest and the dbt project (projectDirWord, a shell
+// word from extrasProjectDirWord), and makes its output world-readable for the
+// upload container, which runs as another uid.
+func compileExtrasCommand(projectDirWord, service, releaseID string) string {
 	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
 		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json" +
-		" --project-dir " + shellQuote(projectDir) +
+		" --project-dir " + projectDirWord +
 		" --service " + shellQuote(service) +
 		" --release-id " + shellQuote(releaseID) +
 		" --out /shared/compile-extras.json" +
 		" && chmod 644 /shared/compile-extras.json"
+}
+
+// compileProjectDirFlag is the dbt option naming the project an invocation
+// reads; dbt defines no short alias for it.
+const compileProjectDirFlag = "--project-dir"
+
+// extrasProjectDirWord returns the shell word, for the compile container's
+// shell, naming the dbt project the compile command compiled, resolved as dbt
+// resolves it. The extras step runs in the same shell right after the compile
+// command, so the shell's working directory is the compile's: the image's
+// WORKDIR (/project in the dbt base image), or the staged copy once the
+// overlay prefix has moved the shell there.
+//   - compileArgv's --project-dir ("--project-dir DIR" or "--project-dir=DIR",
+//     the last one winning, as in dbt) when it carries one: an absolute DIR
+//     as it is, a relative one under "$PWD", the directory dbt resolves it
+//     against;
+//   - "$PWD" otherwise, the directory dbt takes as the project.
+func extrasProjectDirWord(compileArgv []string) string {
+	dir, set := "", false
+	for i := 0; i < len(compileArgv); i++ {
+		if value, ok := strings.CutPrefix(compileArgv[i], compileProjectDirFlag+"="); ok {
+			dir, set = value, true
+			continue
+		}
+		if compileArgv[i] == compileProjectDirFlag && i+1 < len(compileArgv) {
+			dir, set = compileArgv[i+1], true
+			i++
+		}
+	}
+	switch {
+	case !set:
+		return `"$PWD"`
+	case path.IsAbs(dir):
+		return shellQuote(dir)
+	default:
+		return `"$PWD"/` + shellQuote(dir)
+	}
 }
 
 // buildPodSpec constructs the PodSpec for the Job of one dbt attempt.
