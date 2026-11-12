@@ -40,3 +40,8 @@ def test_every_python_projection_key_is_classified():
     keys = {f"projection.{k}" for k in code_projection(node)} | {"ci.source_hash", "ci.shared_code_hash"}
     for family in ("python-node", "python-csv", "python-api"):
         assert unclassified(family, keys) == [], family
+
+
+def test_the_run_end_hook_input_is_classified_for_every_dbt_family_that_folds_hooks():
+    for family in ("dbt-model", "dbt-seed", "dbt-snapshot"):
+        assert unclassified(family, {"on_run_end"}) == [], family

@@ -348,6 +348,19 @@ def test_hash_dbt_node_folds_the_units_and_names_its_inputs():
     assert set(parts.units) == {"macro.fpshop.m", "operation.fpshop.fpshop-on-run-start-0"}
 
 
+@pytest.mark.parametrize("resource_type", ["seed", "snapshot", "test"])
+def test_an_enforced_contract_is_hashed_on_models_only(resource_type):
+    contract = {"config": {"contract": {"enforced": True}},
+                "columns": {"id": {"name": "id", "data_type": "integer"}},
+                "constraints": [{"type": "primary_key", "columns": ["id"]}]}
+    other = hash_dbt_node(_node(resource_type, **contract), _ctx())
+    assert not {"contract.columns", "constraints"} & other.inputs
+    assert not {"columns", "constraints"} & other.hashed_config.keys()
+    model = hash_dbt_node(_node("model", **contract), _ctx())
+    assert {"contract.columns", "constraints"} <= model.inputs
+    assert {"columns", "constraints"} <= model.hashed_config.keys()
+
+
 def test_a_contract_foreign_key_to_the_node_database_is_masked():
     node = {"resource_type": "model", "schema": "a", "name": "c", "database": "warehouse",
             "config": {"contract": {"enforced": True}},

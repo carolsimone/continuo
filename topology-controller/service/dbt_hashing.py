@@ -199,7 +199,10 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
 
 
 def _contract_enforced(node: Mapping) -> bool:
-    return ((node.get("config") or {}).get("contract") or {}).get("enforced") is True
+    """Whether the node is a model whose contract is enforced: dbt enforces contracts
+    on models only, so a seed, snapshot or test that sets the flag is not."""
+    return node.get("resource_type") == "model" and (
+        ((node.get("config") or {}).get("contract") or {}).get("enforced") is True)
 
 
 def config_part(config: Mapping) -> str:
