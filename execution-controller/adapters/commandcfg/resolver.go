@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
@@ -47,8 +48,13 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 // resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
 // seed to SeedFullRefresh. The default block is always complete (built-in when
 // no file, validated at load when a file exists), so the run/test/build
-// templates are never nil.
+// templates are never nil. An ingested node is never run, so every operation on
+// one fails with an error that wraps events.ErrPermanent and
+// deploy.ErrInvalidNodeType, the reason the attempt's failure report gives.
 func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error) {
+	if nt.IsIngested() {
+		return nil, fmt.Errorf("%w: %w: node type %q has no command", events.ErrPermanent, deploy.ErrInvalidNodeType, nt)
+	}
 	var pick func(*opSet) []string
 	switch op {
 	case pkg_model.OperationTest:

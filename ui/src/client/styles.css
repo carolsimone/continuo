@@ -1891,6 +1891,27 @@ a.release-author:hover { text-decoration: underline; }
   box-shadow: 0 0 0 2px #fff;
 }
 
+/* An ingested node of the schedule graph carries a small chip on its top
+   border, right-aligned, where a run graph puts its "waiting for node" pill;
+   it has that pill's size and ring. */
+.dag-ingested-chip {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  transform: translateY(-50%);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 12px;
+  padding: 0 6px;
+  z-index: 1;
+  box-shadow: 0 0 0 2px #fff;
+  background: #fff;
+  border: 1px solid #94a3b8;
+  border-radius: 999px;
+  color: #475569;
+  white-space: nowrap;
+}
+
 /* Status legend under the graph, in the same order and colours as the
    run-progress header counts. */
 .swim-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #334155; padding: 8px 4px 0; }

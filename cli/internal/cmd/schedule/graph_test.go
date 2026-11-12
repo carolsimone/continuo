@@ -124,6 +124,50 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 	assert.Equal(t, "warehouse.public.revenue", e.ToNodeId)
 }
 
+// An ingested node is a table no node builds. The schedule graph carries it
+// with node_type "ingested" and an empty service_name, and an edge from the
+// node that reads it to its id (the empty service, then schema and table). The
+// command emits all of it as it comes, and its help says what the type is and
+// that the empty service makes its node id start with a dot, so a caller that
+// reads the graph knows no node command can address it.
+func TestGraph_IngestedNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
+	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{
+		Nodes: []*runv1.ScheduleGraphNode{
+			{
+				SchemaName:  "raw",
+				TableName:   "ingest_probe",
+				ServiceName: "",
+				NodeType:    "ingested",
+			},
+		},
+		Edges: []*runv1.ScheduleGraphEdge{
+			{FromNodeId: "a.m", ToNodeId: ".raw.ingest_probe"},
+		},
+	}}
+
+	stdout, stderr, exit := runGraph(t, fake, []string{"daily_ingest"}, false)
+
+	assert.Equal(t, 0, exit)
+	assert.Empty(t, stderr)
+
+	var payload graphResponseJSON
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Nodes, 1)
+	n := payload.Nodes[0]
+	assert.Equal(t, "raw", n.SchemaName)
+	assert.Equal(t, "ingest_probe", n.TableName)
+	assert.Equal(t, "ingested", n.NodeType)
+	assert.Empty(t, n.ServiceName)
+	assert.Contains(t, stdout, `"service_name":""`, "the empty service is emitted, not omitted")
+	require.Len(t, payload.Edges, 1)
+	assert.Equal(t, "a.m", payload.Edges[0].FromNodeId)
+	assert.Equal(t, ".raw.ingest_probe", payload.Edges[0].ToNodeId)
+
+	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
+	assert.Contains(t, cmd.Long, `A node of type "ingested" is a table no node builds`, "the help says what an ingested node is")
+	assert.Contains(t, cmd.Long, "its node id starts with a dot", "the help says what the empty service does to the node id")
+}
+
 // TestScheduleGraph_OutputMatchesItsSchema holds the output_schema annotation
 // to the JSON the command emits: the same keys at the top level and in every
 // node and edge, and none of the fields the topology no longer carries.

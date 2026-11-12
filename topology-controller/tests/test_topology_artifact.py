@@ -17,6 +17,7 @@ import pytest
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.topology_artifact_writer import TopologyArtifactWriter
+from config.config import _SYSTEM_RELATIONS
 from domain.contract_vocabulary import NODE_TYPE_RUNTIME
 from domain.model import ManifestNode, NodeType, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext
@@ -240,9 +241,9 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
     """release-controller derives each node's candidate-object URI from the
     release id, unique_id and node_type (pkg/topologyartifact.CandidateObjectKey)
     instead of reading it from the topology. This drives the production builders
-    and uploaders — a seed has no compiled SQL, as the dbt parser leaves it — and
-    checks every object lands at the fixture's key, or that none is written
-    where the key is empty."""
+    and uploaders — a seed has no compiled SQL, as the dbt parser leaves it, and
+    an ingested table has no builder at all — and checks every object lands at
+    the fixture's key, or that none is written where the key is empty."""
     cases = json.loads((_FIXTURES / "candidate_object_keys_v1.json").read_text(encoding="utf-8"))
     known = {str(t) for t in NodeType}
     assert known <= {c["node_type"] for c in cases}, "the fixture must cover every node type"
@@ -251,6 +252,9 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
         if case["node_type"] not in known:
             continue  # a type topology-controller cannot parse has no builder; Go derives no key for it
         node_type = NodeType(case["node_type"])
+        if NODE_TYPE_RUNTIME[node_type] is Runtime.EXTERNAL:
+            assert case["key"] == ""  # nothing builds an externally loaded table, so no object exists
+            continue
         s3 = MagicMock()
         node = ManifestNode(
             table_name="t", schema_name="s", service_name="svc", owner="team",
@@ -262,6 +266,7 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
         ctx = RewriteContext(
             release_id=case["release_id"], registry={},
             candidate_schema="_candidate_x", dialect="postgres",
+            system_relations=_SYSTEM_RELATIONS["postgres"],
             timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
         )
 

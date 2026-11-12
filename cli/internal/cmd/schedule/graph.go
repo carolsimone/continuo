@@ -58,7 +58,10 @@ Output (stdout, JSON):
              "node_type":string}],
    "edges":[{"from_node_id":string,"to_node_id":string}]}
   A node id is "service.schema.table"; an edge runs from the dependent node to
-  its dependency.
+  its dependency. A node of type "ingested" is a table no node builds: its
+  "service_name" is empty, so its node id starts with a dot
+  (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
+  address it.
 
 A schedule the live release does not hold returns {"nodes":[],"edges":[]}, not
 an error.

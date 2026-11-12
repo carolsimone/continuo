@@ -231,3 +231,113 @@ func TestChangedAncestors_DepthIsTheMinimumHopCount(t *testing.T) {
 		{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcB", Depth: 1},
 	}, got)
 }
+
+// ingestedProbe is the node topology-controller writes for a table that a
+// reader names and no node builds: no content, no service, no upstreams.
+func ingestedProbe() release.Node {
+	return release.Node{
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
+		ResolvedRelationID: "raw.ingest_probe", NodeType: "ingested",
+		UpstreamUniqueIDs: []string{},
+	}
+}
+
+// TestDerivedChangedNodeIDs_NeverReturnsAnIngestedNode pins that an ingested
+// node is never "changed": it has no content, so it never seeds a validation
+// build whether it is new or already in production.
+func TestDerivedChangedNodeIDs_NeverReturnsAnIngestedNode(t *testing.T) {
+	cand := release.Topology{
+		ingestedProbe(),
+		{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+	}
+
+	assert.Equal(t, []string{"a.m"}, release.DerivedChangedNodeIDs(cand, nil), "a new ingested node is not a seed")
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, release.Topology{{UniqueID: "a.m", ContentHash: "h"}}),
+		"a new ingested node does not change its unchanged reader")
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, release.Topology{ingestedProbe(), {UniqueID: "a.m", ContentHash: "h"}}),
+		"an ingested node already in production is not a seed either")
+}
+
+// TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged pins the other
+// direction: when a node starts to build a table that production holds as an
+// ingested node, the candidate node is a real node with content and is changed.
+func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) {
+	prod := release.Topology{ingestedProbe()}
+	cand := release.Topology{{UniqueID: "raw.ingest_probe", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
+
+	assert.Equal(t, []string{"raw.ingest_probe"}, release.DerivedChangedNodeIDs(cand, prod))
+}
+
+// TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged pins the
+// reverse direction: when production builds a table and the candidate holds it
+// as an ingested node, the candidate node has no content to validate, so it is
+// not changed even though its content hash differs from production's.
+func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T) {
+	prod := release.Topology{{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
+	cand := release.Topology{{UniqueID: "raw.x", NodeType: "ingested", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x"}}
+
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, prod))
+}
+
+// TestFullAncestorsClosure_StopsAtAnIngestedNode pins that an ingested
+// ancestor is never part of a build closure, so it is never cloned or built.
+func TestFullAncestorsClosure_StopsAtAnIngestedNode(t *testing.T) {
+	topo := release.Topology{
+		ingestedProbe(),
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+	}
+
+	assert.Equal(t, []string{"a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
+	assert.Empty(t, release.FullAncestorsClosure(topo, []string{"raw.ingest_probe"}),
+		"an ingested seed yields nothing to build")
+}
+
+// TestFullAncestorsClosure_ReachesAnAncestorBeyondTheIngestedEdge pins that
+// only the ingested edge is dropped: the real ancestors of the same node are
+// still followed.
+func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheIngestedEdge(t *testing.T) {
+	topo := release.Topology{
+		ingestedProbe(),
+		{UniqueID: "a.up", NodeType: "dbt-model"},
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe", "a.up"}},
+	}
+
+	assert.Equal(t, []string{"a.up", "a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
+}
+
+// TestChangedAncestors_NeverNamesAnIngestedNode pins that a failing node below
+// a reader of an ingested table names only the changed reader as the place to
+// look: the changed set comes from DerivedChangedNodeIDs, which never holds an
+// ingested node, so no ingested id is offered as a fix target.
+func TestChangedAncestors_NeverNamesAnIngestedNode(t *testing.T) {
+	cand := release.Topology{
+		ingestedProbe(),
+		{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.x", NodeType: "dbt-model", ServiceName: "svcA", ContentHash: "hx", UpstreamUniqueIDs: []string{"a.m"}},
+	}
+	changed := map[string]bool{}
+	for _, id := range release.DerivedChangedNodeIDs(cand, nil) {
+		changed[id] = true
+	}
+
+	got := release.ChangedAncestors(cand, "a.x", changed)
+
+	assert.Equal(t, []release.ChangedAncestor{
+		{NodeID: "a.m", FilePath: "models/m.sql", Service: "svcA", Depth: 1},
+	}, got, "only the reader a.m: the ingested node raw.ingest_probe sits two hops up and is never changed")
+	for _, a := range got {
+		assert.NotEqual(t, "raw.ingest_probe", a.NodeID)
+	}
+}
+
+// TestUnbuildableCrossServiceUpstreams_AnIngestedUpstreamIsKnown pins that an
+// edge to an ingested node is not a dangling reference: the node is in the
+// candidate topology even though it is never built.
+func TestUnbuildableCrossServiceUpstreams_AnIngestedUpstreamIsKnown(t *testing.T) {
+	topo := release.Topology{
+		ingestedProbe(),
+		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+	}
+
+	assert.Empty(t, release.UnbuildableCrossServiceUpstreams(topo, []string{"a.m"}))
+}

@@ -23,6 +23,13 @@ func (t NodeType) IsPython() bool {
 	return t.Runtime() == NodeRuntimePython
 }
 
+// IsIngested reports whether this node type only marks a table another system
+// loads: no continuo toolchain builds it, so it is never run, built, validated
+// or fixed.
+func (t NodeType) IsIngested() bool {
+	return t.Runtime() == NodeRuntimeExternal
+}
+
 // ParseNodeType converts a raw string to NodeType. It returns an error naming
 // the value and every valid node type for an empty or undeclared value.
 func ParseNodeType(s string) (NodeType, error) {

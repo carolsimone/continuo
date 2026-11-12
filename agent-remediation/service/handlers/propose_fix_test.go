@@ -1643,7 +1643,7 @@ func TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent(t *testing.
 	d.Locator = fakeLocator{err: fmt.Errorf("node s.u is not in the promoted graph")}
 	tr := upstreamTrigger()
 	for i := range tr.Nodes {
-		tr.Nodes[i].ChangedAncestors = []ChangedAncestor{{NodeID: "s.u"}}
+		tr.Nodes[i].ChangedAncestors = []ChangedAncestor{{NodeID: "s.u", Service: "svc"}}
 	}
 
 	require.NoError(t, ProposeFix(context.Background(), d, tr))

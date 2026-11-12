@@ -1,74 +1,31 @@
-import sqlglot
-from sqlglot import exp
-from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import ManifestNode, NodeRegistryEntry, UpstreamDep
+from collections.abc import Sequence
+from domain.model import NodeRegistryEntry, TableRef, UpstreamDep
 
 
 def resolve_upstream_deps(
-    node: ManifestNode,
+    refs: Sequence[TableRef],
     registry: dict[tuple[str, str], NodeRegistryEntry],
-    *,
-    dialect: str,
 ) -> list[UpstreamDep]:
-    """Resolve a node's upstream deps from the table references in its
-    dependency SQLs.
+    """Resolve the tables a node's SQL names to the registry's nodes.
 
-    dialect is the sqlglot dialect of the warehouse the install targets; it
-    decides which syntax parses, so a query valid on one engine can raise
-    InvalidCompiledSqlError under another. It is required rather than defaulted
-    so a caller cannot silently fall back to one engine's rules.
+    A ref whose (schema, table) the registry does not hold is an external table
+    or source no known service owns, and is skipped. dbt seeds are registered
+    (the in-memory registry is built from every parsed node, seeds included),
+    so a seed reference resolves to an upstream dep like any other node. The
+    registry knows a table by schema and name, whatever its catalog, so refs
+    that differ only in catalog resolve to one dep. The deps come back in the
+    order of each table's first ref.
     """
     deps: list[UpstreamDep] = []
-    seen: set[tuple[str, str]] = set()
-
-    for dep_sql in node.dependency_sqls:
-        if not dep_sql:
+    resolved: set[tuple[str, str]] = set()
+    for ref in refs:
+        entry = registry.get((ref.schema, ref.table))
+        if entry is None or (ref.schema, ref.table) in resolved:
             continue
-
-        try:
-            parsed = sqlglot.parse_one(dep_sql, dialect=dialect)
-        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
-            raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=str(exc)) from exc
-
-        cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
-
-        for table in parsed.find_all(exp.Table):
-            name = table.name.lower()
-            schema_raw = table.db
-
-            # A CTE is always unqualified, so only an unqualified name can be
-            # one: skip it before the schema guard fires. A qualified name is a
-            # table even when a CTE of the same name is in scope.
-            if not schema_raw and name in cte_names:
-                continue
-
-            # Skip qualified self-references; unqualified self-references fall
-            # through to the guard below and raise.
-            if schema_raw and (schema_raw.lower(), name) == (node.schema_name.lower(), node.table_name.lower()):
-                continue
-
-            if not schema_raw:
-                raise UnqualifiedTableReferenceError(
-                    table_name=name,
-                    node_table_name=node.table_name,
-                )
-
-            key = (schema_raw.lower(), name)
-            if key in seen:
-                continue
-            if key not in registry:
-                # Table is not in the registry — it's an external table or source
-                # not owned by any known service. Skip it.
-                # Note: dbt seeds ARE registered (pass 2 builds the in-memory registry
-                # from every parsed node, seeds included), so seed references are
-                # resolved as upstream deps, not skipped here.
-                continue
-            seen.add(key)
-            entry = registry[key]
-            deps.append(UpstreamDep(
-                table_name=entry.table_name,
-                schema_name=entry.schema_name,
-                service_name=entry.service_name,
-            ))
-
+        resolved.add((ref.schema, ref.table))
+        deps.append(UpstreamDep(
+            table_name=entry.table_name,
+            schema_name=entry.schema_name,
+            service_name=entry.service_name,
+        ))
     return deps

@@ -229,6 +229,21 @@ echo "Materializing dbt seeds into e2e_schema..."
 docker exec dbt-compile-and-load bash -c "cd /app/services/service-1 && dbt seed --profiles-dir ."
 echo "✓ dbt seeds materialized"
 
+# Create the table that service-1's ingest_probe_reader model reads and no model
+# builds: the table an outside system loads. topology-controller turns that read
+# into an ingested node, and the ingested-node e2e test runs the reader, whose
+# Job selects from it. It is created as the warehouse's own login, the one dbt
+# and the run Jobs sign in as, so the reader may select from it. The local
+# warehouse is Postgres (WAREHOUSE_ENGINE=postgres, the dbt profiles' type), and
+# both statements are idempotent.
+echo "Creating the outside table e2e_raw.ingest_probe..."
+docker compose exec -T -e PGPASSWORD=local-continuo_warehouse postgres \
+  psql -v ON_ERROR_STOP=1 -U continuo_warehouse -d continuo_dbt <<'SQL'
+CREATE SCHEMA IF NOT EXISTS e2e_raw;
+CREATE TABLE IF NOT EXISTS e2e_raw.ingest_probe AS SELECT 1 AS id;
+SQL
+echo "✓ outside table e2e_raw.ingest_probe created"
+
 # Wait for control plane
 echo "Waiting for control plane..."
 kubectl wait --for=condition=Ready node/${CLUSTER_NAME}-control-plane --timeout=60s

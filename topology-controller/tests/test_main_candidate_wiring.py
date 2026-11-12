@@ -11,7 +11,7 @@ from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.redis.fence import PermissionFenceError
 from adapters.topology_artifact_writer import TopologyArtifactWriter
-from config.config import SERVICE_NAME
+from config.config import _SYSTEM_RELATIONS, SERVICE_NAME
 from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
 from service.errors import PermanentMessageError
@@ -260,6 +260,7 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     ]
     assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
+    assert captured["system_relations"] is _SYSTEM_RELATIONS["postgres"]
     assert isinstance(captured["clock"], MonotonicClock)
     assert isinstance(captured["memory"], ResidentMemoryProbe)
     assert captured["progress"] == candidate_consumer.refresh_heartbeat
@@ -279,6 +280,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     class FakeCandidateHandler:
         def __init__(self, **kw):
             captured["dialect"] = kw["dialect"]
+            captured["system_relations"] = kw["system_relations"]
 
         def handle(self, release_id):
             pass
@@ -299,6 +301,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     candidate_consumer.message_handler({b"payload": payload.encode()})
 
     assert captured["dialect"] == "trino"
+    assert captured["system_relations"] is _SYSTEM_RELATIONS["trino"]
 
 
 def test_both_runtimes_have_an_artifact_builder(monkeypatch):

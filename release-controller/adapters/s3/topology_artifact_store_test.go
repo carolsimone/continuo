@@ -1,6 +1,8 @@
 package s3
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -355,6 +357,50 @@ func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 	fromCache, err := writer.Load(context.Background(), ref)
 	require.NoError(t, err)
 	assert.Len(t, fromCache, 2)
+}
+
+// An ingested node has no service, no content hash, no image and no source
+// file. An artifact topology-controller wrote with those fields empty decodes
+// and loads with the node whole, and a write of it reads back the same.
+func TestTopologyArtifactStore_LoadKeepsAnIngestedNodeWithEmptyFields(t *testing.T) {
+	const doc = `{"nodes":[` +
+		`{"content_hash":"","image_tag":"","node_type":"ingested","original_file_path":"","resolved_relation_id":"raw.ingest_probe",` +
+		`"schedule":"","schema_name":"raw","service_name":"","table_name":"ingest_probe","test_count":0,"unique_id":"raw.ingest_probe","upstream_unique_ids":[]},` +
+		`{"content_hash":"h","image_tag":"img:1","node_type":"dbt-model","original_file_path":"models/m.sql","resolved_relation_id":"svc.m",` +
+		`"schedule":"","schema_name":"svc","service_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.ingest_probe"]}` +
+		`],"release_id":"r1","schema_version":1,"tenant_id":"default"}`
+	gz, sum := gzipped(t, []byte(doc))
+	mem := objectstoretest.NewMemory(bucket)
+	require.NoError(t, mem.Put(context.Background(), r1Ref, gz, "application/gzip"))
+	ref := release.TopologyRef{URI: r1Ref.String(), SHA256: sum}
+
+	got, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
+	require.NoError(t, err)
+
+	want := release.Node{
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", ResolvedRelationID: "raw.ingest_probe",
+		NodeType: "ingested", UpstreamUniqueIDs: []string{},
+	}
+	assert.Equal(t, want, byUniqueID(got)["raw.ingest_probe"])
+	assert.Equal(t, []string{"raw.ingest_probe"}, byUniqueID(got)["svc.m"].UpstreamUniqueIDs)
+
+	rewritten, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r2", got)
+	require.NoError(t, err)
+	again, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), rewritten)
+	require.NoError(t, err)
+	assert.Equal(t, byUniqueID(got), byUniqueID(again))
+}
+
+// gzipped returns doc gzipped and the lowercase hex SHA-256 of the gzipped bytes.
+func gzipped(t *testing.T, doc []byte) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write(doc)
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	sum := sha256.Sum256(buf.Bytes())
+	return buf.Bytes(), hex.EncodeToString(sum[:])
 }
 
 func indexOf(t *testing.T, topo release.Topology, uniqueID string) int {

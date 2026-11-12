@@ -34,18 +34,18 @@ def test_a_release_puts_one_object_per_node_with_sql_or_spec_plus_the_two_bundle
 def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_node_stage(monkeypatch):
     estate = generate_estate(20, columns=4, python_share=0.0)
     clock = FakeClock()
-    real_resolve = candidate_manifest_handler.resolve_upstream_deps
+    real_referenced_tables = candidate_manifest_handler.referenced_tables
 
-    def slow_resolve(node, registry, *, dialect):
+    def slow_resolve(node, *, dialect):
         clock.t += 1.0
-        return real_resolve(node, registry, dialect=dialect)
+        return real_referenced_tables(node, dialect=dialect)
 
     class _SlowStore(MemoryS3):
         def put_object(self, **kwargs):
             clock.t += 1.0
             return super().put_object(**kwargs)
 
-    monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", slow_resolve)
+    monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", slow_resolve)
     calls = []
     _run(estate, _SlowStore(estate.objects), clock=clock, progress=lambda: calls.append(clock.t))
     assert len(calls) == len(estate.requests) + 2 * estate.dbt_nodes
@@ -55,10 +55,10 @@ def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_n
 def test_progress_is_reported_after_a_node_that_fails_to_resolve(monkeypatch):
     estate = generate_estate(20, columns=4, python_share=0.0)
 
-    def refuse(node, registry, *, dialect):
+    def refuse(node, *, dialect):
         raise InvalidCompiledSqlError(node.table_name, "refused")
 
-    monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", refuse)
+    monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", refuse)
     calls = []
     handler, publisher = build_handler(
         estate, MemoryS3(estate.objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0),

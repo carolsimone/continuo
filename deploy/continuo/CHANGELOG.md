@@ -12,8 +12,31 @@ shipped in those.
 
 ## [Unreleased]
 
+**TL;DR**
+
+- A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
+- Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
+- No values change is needed.
+
+### Upgrade steps
+
+1. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
+   1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
+   2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
+   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values.
+   4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
+
+   Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
+2. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+
+This release changes no values key, and it ships as a `MINOR`.
+
 ### Added
 
+- **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
+  - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
+  - A system relation never becomes an ingested node.
+  - No values change is needed.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
   - Its pod gets the `metrics` container port, the `prometheus.io/*` annotations and a place in the scrape NetworkPolicy. `deploy/OBSERVABILITY.md` lists the new series and an example rule for a stage near the liveness budget.
   - No values change is needed.
@@ -25,6 +48,9 @@ shipped in those.
 
 ### Changed
 
+- **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
+  - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
+  - The key and its default are unchanged, and no values change is needed.
 - **topology-controller logs JSON lines.** TL;DR: topology-controller writes one JSON object per line on stderr, with every field, as the Go services do. A log agent that read its old text lines needs its JSON parser instead.
   - Each release logs one `release parsed` line with its stage times and counts. A skipped dbt node logs at INFO instead of WARNING, and a dbt test node no longer logs an ERROR on every release.
 - **The release page shows how long each node took.** TL;DR: the duration column of a release's node results shows each compile, seed-build and validation Job's run time instead of a dash.

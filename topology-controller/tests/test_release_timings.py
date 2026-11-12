@@ -86,8 +86,8 @@ def test_log_fields_carry_the_release_its_counts_and_every_stage():
     assert timings.log_fields() == {
         "release_id": "rel-1",
         "outcome": "ok",
-        "nodes": {"dbt": 2, "python": 1},
-        "columns": {"dbt": 3, "python": 2},
+        "nodes": {"dbt": 2, "python": 1, "external": 0},
+        "columns": {"dbt": 3, "python": 2, "external": 0},
         "skipped": {"no_owner": 0, "no_tag": 1, "local_stub": 0},
         "stages_ms": timings.stages_ms(),
         "peak_rss_bytes": 0,
@@ -104,5 +104,6 @@ def test_log_fields_name_the_failure_kind_of_a_failed_release():
 
 def test_a_release_with_no_nodes_counts_every_runtime_and_reason_at_zero():
     fields = _timings().log_fields()
-    assert (fields["nodes"], fields["columns"]) == ({"dbt": 0, "python": 0}, {"dbt": 0, "python": 0})
+    zero = {"dbt": 0, "python": 0, "external": 0}
+    assert (fields["nodes"], fields["columns"]) == (zero, zero)
     assert fields["skipped"] == {"no_owner": 0, "no_tag": 0, "local_stub": 0}

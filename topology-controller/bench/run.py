@@ -32,6 +32,7 @@ from adapters.sources.s3 import S3Source
 from adapters.topology_artifact_writer import TopologyArtifactWriter
 from bench.estate import Estate, generate_estate
 from bench.memory_s3 import MemoryS3
+from config.config import system_relations_for
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import FailedNode, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
@@ -95,6 +96,9 @@ def build_handler(
             Runtime.PYTHON: PythonSpecArtifactBuilder(CandidateSpecUploader(store, BUCKET)),
         },
         dialect=dialect,
+        # The benchmark's dialects are the engines the chart names, so the
+        # dialect also picks the engine's system relations.
+        system_relations=system_relations_for(dialect),
         image_tags=estate.image_tags,
         is_infrastructure_error=lambda exc: False,
         clock=clock,

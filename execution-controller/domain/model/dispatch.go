@@ -115,13 +115,18 @@ var jobNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // DispatchProblem returns the reason and message of what stops cmd, the
 // command of a dispatch run-controller knows in knownStatus (dispatched, queued or
 // running; any other value cannot run), from running; an empty
-// reason when nothing does. A job_name that is not a DNS-1123 label of 1 to 63
+// reason when nothing does. An ingested node type stops it too: a table no node
+// builds is never run. A job_name that is not a DNS-1123 label of 1 to 63
 // characters stops it: Kubernetes can never read such a Job, so no lookup of
 // the attempt's Job could ever answer. The Job itself may still be refused
 // when it is built (deploy.ErrMalformedDispatch).
 func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus) (pkgmodel.FailureReason, string) {
-	if _, err := pkgmodel.ParseNodeType(cmd.NodeType); err != nil {
+	nodeType, err := pkgmodel.ParseNodeType(cmd.NodeType)
+	if err != nil {
 		return pkgmodel.FailureReasonInvalidNodeType, err.Error()
+	}
+	if nodeType.IsIngested() {
+		return pkgmodel.FailureReasonInvalidNodeType, fmt.Sprintf("node type %q is never run", nodeType)
 	}
 	problem := ""
 	switch {

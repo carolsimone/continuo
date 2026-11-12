@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
@@ -283,6 +284,22 @@ func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
 	}
 }
 
+// An ingested node is a table nothing builds, so no operation has a command for
+// it. The refusal is permanent, since no retry can supply a command, and it is
+// an invalid node type, which is the reason the attempt's failure report gives.
+func TestResolver_NodeCommandRefusesAnIngestedNode(t *testing.T) {
+	r := Defaults()
+	for _, op := range []pkg_model.Operation{
+		pkg_model.OperationRun, pkg_model.OperationTest, pkg_model.OperationBuild, pkg_model.OperationFullRefresh,
+	} {
+		argv, err := r.NodeCommand("svc", op, pkg_model.NodeTypeIngested, "orders")
+		assert.Nil(t, argv, "operation %s", op)
+		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "operation %s", op)
+		assert.ErrorIs(t, err, deploy.ErrInvalidNodeType, "operation %s", op)
+		assert.ErrorContains(t, err, "has no command", "operation %s", op)
+	}
+}
+
 // TestNodeCommand_FullRefresh_CoversExactlyTheContractSet pins the resolver to
 // the contract's full_refresh flags: every node type that supports a full
 // refresh resolves to a command in the built-in block, and every other type is
@@ -297,6 +314,12 @@ func TestNodeCommand_FullRefresh_CoversExactlyTheContractSet(t *testing.T) {
 			continue
 		}
 		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "node type %s", nt)
+		if nt.IsIngested() {
+			// An ingested node has no command for any operation, so its refusal
+			// names that rather than the full refresh; see
+			// TestResolver_NodeCommandRefusesAnIngestedNode.
+			continue
+		}
 		assert.Contains(t, err.Error(), "full refresh is not supported", "node type %s", nt)
 	}
 }

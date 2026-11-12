@@ -86,3 +86,15 @@ func TestCheckNodeTypes_RefusesTheFirstUndeclaredTypeInKeyOrder(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidNodeType)
 	assert.Contains(t, err.Error(), `stg.b has node type "dbt-macro"`)
 }
+
+func TestCheckNodeTypes_RefusesAnIngestedNode(t *testing.T) {
+	g := topology.NewGraph([]topology.Node{
+		{Key: "stg.a", NodeType: "dbt-model"},
+		{Key: "raw.x", NodeType: "ingested"},
+	}, nil)
+
+	require.NoError(t, checkNodeTypes(g, []topology.NodeKey{"stg.a"}))
+	err := checkNodeTypes(g, []topology.NodeKey{"stg.a", "raw.x"})
+	require.ErrorIs(t, err, ErrIngestedNode)
+	assert.Equal(t, "an ingested node is never run: raw.x", err.Error())
+}

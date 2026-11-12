@@ -62,8 +62,9 @@ func (SharedUpstreamCause) Claim(remaining []FailingNode, dag DagView) ([]Cluste
 // for each, gathers the still-unclaimed group members that descend from it; a
 // candidate with at least two such members becomes one cluster targeting it.
 // Considering the smallest ancestor id first makes both the assignment and the
-// target choice deterministic regardless of map iteration or input order. Nodes
-// matching no shared ancestor are left for the independent default strategy.
+// target choice deterministic regardless of map iteration or input order. An
+// ancestor that names no service is never a candidate. Nodes matching no shared
+// ancestor are left for the independent default strategy.
 func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 	ancestorsByNode := make(map[string]map[string]bool, len(group))
 	nodeTypeByID := make(map[string]string, len(group))
@@ -72,6 +73,12 @@ func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 		nodeTypeByID[n.NodeID] = n.NodeType
 		set := map[string]bool{}
 		for _, anc := range dag.ChangedAncestorsByNode[n.NodeID] {
+			// An ancestor that names no service (in practice an ingested table
+			// that no node builds) is never a cluster target: no fix can be
+			// placed there.
+			if anc.Service == "" {
+				continue
+			}
 			set[anc.NodeID] = true
 			candidateSet[anc.NodeID] = true
 		}

@@ -13,6 +13,12 @@ import (
 //
 // Bootstrap: an empty prod topology yields an empty hash map, so every
 // candidate node is treated as new and returned — i.e. validate-all.
+//
+// An ingested candidate node is never returned: it has no content and nothing
+// builds it, so there is nothing to validate. Every consumer of this list — the
+// validation build set, the changed ancestors of a failing node, the
+// verification build sets and the changed nodes of a promotion — therefore
+// leaves it out.
 func DerivedChangedNodeIDs(candidate, prod Topology) []string {
 	prodHash := make(map[string]string, len(prod))
 	for _, n := range prod {
@@ -20,6 +26,9 @@ func DerivedChangedNodeIDs(candidate, prod Topology) []string {
 	}
 	changed := []string{}
 	for _, n := range candidate {
+		if n.IsIngested() {
+			continue
+		}
 		if h, ok := prodHash[n.UniqueID]; !ok || h != n.ContentHash {
 			changed = append(changed, n.UniqueID)
 		}
@@ -110,8 +119,10 @@ func DescendantsClosure(topo Topology, seeds []string) []string {
 // sorted topologically (upstreams before downstreams). Under self-contained
 // validation every upstream (intra- or cross-service) is built into the
 // candidate schema, so the walk follows every known edge. Seeds absent from the
-// topology are ignored. Panics on a cycle — a data-integrity violation dbt
-// rejects at compile time.
+// topology are ignored. An ingested node is never an ancestor and never a seed:
+// nothing builds it, so an edge to it is followed like an edge to an unknown
+// node. Panics on a cycle — a data-integrity violation dbt rejects at compile
+// time.
 func FullAncestorsClosure(topo Topology, seeds []string) []string {
 	byID := make(map[string]Node, len(topo))
 	parents := map[string][]string{}
@@ -120,8 +131,9 @@ func FullAncestorsClosure(topo Topology, seeds []string) []string {
 	}
 	for _, n := range topo {
 		for _, up := range n.UpstreamUniqueIDs {
-			if _, ok := byID[up]; !ok {
-				continue // unknown edge: not a buildable ancestor
+			upNode, ok := byID[up]
+			if !ok || upNode.IsIngested() {
+				continue // unknown or ingested edge: not a buildable ancestor
 			}
 			parents[n.UniqueID] = append(parents[n.UniqueID], up)
 		}
@@ -129,7 +141,7 @@ func FullAncestorsClosure(topo Topology, seeds []string) []string {
 
 	included := map[string]bool{}
 	for _, s := range seeds {
-		if _, ok := byID[s]; !ok {
+		if seed, ok := byID[s]; !ok || seed.IsIngested() {
 			continue
 		}
 		stack := []string{s}

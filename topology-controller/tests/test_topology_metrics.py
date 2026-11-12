@@ -69,10 +69,11 @@ def test_an_ok_release_counts_under_the_none_failure_kind():
 
 def test_the_last_release_gauges_drop_to_zero_for_what_the_next_release_lacks():
     metrics = TopologyMetrics("topology-controller")
-    metrics.release_finished(_finished({"dbt": 3, "python": 1}, {SkipReason.NO_TAG: 2}))
+    metrics.release_finished(_finished({"dbt": 3, "python": 1, "external": 2}, {SkipReason.NO_TAG: 2}))
     metrics.release_finished(_finished({}))
-    assert [_value(metrics, "continuo_topology_release_nodes", family=f) for f in ("dbt", "python")] == [0.0, 0.0]
-    assert [_value(metrics, "continuo_topology_release_columns", family=f) for f in ("dbt", "python")] == [0.0, 0.0]
+    families = ("dbt", "python", "external")
+    assert [_value(metrics, "continuo_topology_release_nodes", family=f) for f in families] == [0.0, 0.0, 0.0]
+    assert [_value(metrics, "continuo_topology_release_columns", family=f) for f in families] == [0.0, 0.0, 0.0]
     assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_tag") == 0.0
 
 

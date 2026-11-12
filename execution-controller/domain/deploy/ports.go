@@ -11,10 +11,15 @@ import (
 // Errors a Deployer returns for a dispatch it can never run. Each wraps
 // pkg/events.ErrPermanent, so no creation try is repeated.
 var (
-	// ErrInvalidNodeType: the node type is not one the vocabulary declares.
-	ErrInvalidNodeType = errors.New("the dispatch names an undeclared node type")
+	// ErrInvalidNodeType: the node type is not one the vocabulary declares, or
+	// is `ingested`, which no command builds.
+	ErrInvalidNodeType = errors.New("the dispatch names a node type that cannot run")
 	// ErrMalformedDispatch: another field of the dispatch cannot run (its
-	// operation, image, timeout, or a node no command builds).
+	// operation, image or timeout, or a node type that has no command for the
+	// requested operation, such as a full refresh of a type that cannot be
+	// rebuilt from scratch). The Deployer wraps it itself only for a timeout
+	// below one second; the other refusals carry just pkg/events.ErrPermanent,
+	// which the dispatcher reports under the same reason.
 	ErrMalformedDispatch = errors.New("the dispatch cannot run")
 	// ErrJobNameCollision: a Job of the name exists for another task or
 	// attempt.

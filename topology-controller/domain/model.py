@@ -103,6 +103,23 @@ class UpstreamDep:
         return f"{self.schema_name.lower()}.{self.table_name.lower()}"
 
 
+@dataclass(frozen=True)
+class TableRef:
+    """A table a node's SQL names, as written, lower-cased.
+
+    catalog is empty when the SQL does not name one. key is the "<schema>.<table>"
+    identity a registry lookup and a node's unique_id use.
+    """
+
+    schema: str
+    table: str
+    catalog: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.schema}.{self.table}"
+
+
 @dataclass
 class ManifestNode:
     table_name: str

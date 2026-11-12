@@ -61,17 +61,53 @@ func flatPlan(keys []topology.NodeKey) Plan {
 	return Plan{Tasks: tasks, Ready: distinct}
 }
 
-// checkNodeTypes refuses a selection that would execute a node whose type the
-// node_type vocabulary does not declare. keys are checked in sorted order, so
-// the refusal names the same node whatever order they come in.
+// checkNodeTypes refuses a selection that would execute an ingested node
+// (ErrIngestedNode), which no node builds, or a node whose type the node_type
+// vocabulary does not declare (ErrInvalidNodeType). keys are checked in sorted
+// order, so the refusal names the same node whatever order they come in.
 func checkNodeTypes(g topology.Graph, keys []topology.NodeKey) error {
 	for _, k := range sortedDistinct(keys) {
 		n, ok := g.Node(k)
-		if ok && !model.NodeType(n.NodeType).IsValid() {
+		if !ok {
+			continue
+		}
+		if err := checkNotIngested(k, n); err != nil {
+			return err
+		}
+		if !model.NodeType(n.NodeType).IsValid() {
 			return fmt.Errorf("%w: %s has node type %q", ErrInvalidNodeType, k, n.NodeType)
 		}
 	}
 	return nil
+}
+
+// checkNotIngested returns ErrIngestedNode naming k when n, the node of key k,
+// is an ingested node.
+func checkNotIngested(k topology.NodeKey, n topology.Node) error {
+	if isIngested(n) {
+		return fmt.Errorf("%w: %s", ErrIngestedNode, k)
+	}
+	return nil
+}
+
+func isIngested(n topology.Node) bool { return model.NodeType(n.NodeType).IsIngested() }
+
+// withoutIngested returns g without its ingested nodes and their edges. A
+// selection that reaches nodes by their place in a graph, a schedule's whole
+// run or a rebase, leaves an ingested node out: it is no task, and what reads
+// it does not wait for it. A selection that names a node by key refuses an
+// ingested one instead (checkNodeTypes).
+func withoutIngested(g topology.Graph) topology.Graph {
+	keep := make([]topology.NodeKey, 0, g.Len())
+	for _, k := range g.Keys() {
+		if n, _ := g.Node(k); !isIngested(n) {
+			keep = append(keep, k)
+		}
+	}
+	if len(keep) == g.Len() {
+		return g
+	}
+	return g.Restrict(keep)
 }
 
 func sortedDistinct(keys []topology.NodeKey) []topology.NodeKey {

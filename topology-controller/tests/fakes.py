@@ -1,5 +1,16 @@
-"""Test doubles shared by the candidate-handler test modules."""
-from domain.model import TopologyArtifactRef
+"""Test doubles and handler builders shared by the candidate-handler test modules."""
+import json
+from unittest.mock import MagicMock, create_autospec
+
+import yaml
+
+from adapters.redis.error_class import is_infrastructure
+from config.config import _SYSTEM_RELATIONS
+from domain.model import ManifestFile, Runtime, TopologyArtifactRef
+from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
+from service.candidate_manifest_handler import CandidateManifestHandler
+from service.content_hash import content_hash_fold
+from service.ports import ManifestSourcePort, NoReleaseObserver
 
 
 class RecordingArtifactWriter:
@@ -29,6 +40,158 @@ class RecordingArtifactWriter:
         """The nodes of the one artifact this writer stored."""
         assert len(self.writes) == 1, f"expected one artifact write, got {len(self.writes)}"
         return self.writes[0]["nodes"]
+
+
+def make_uploader(uri=""):
+    uploader = MagicMock()
+    uploader.upload.return_value = uri
+    return uploader
+
+
+class FakeBundleUploader:
+    """Records (release_id, bundle) calls and returns a canned URI.
+
+    Pass `fail` to make `upload` raise instead — the failing variant used to
+    exercise the CodeBundleUploadFailed path.
+    """
+
+    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None):
+        self.uploads: list[tuple[str, dict]] = []
+        self._uri = uri
+        self._fail = fail
+
+    def upload(self, release_id: str, bundle: dict) -> str:
+        if self._fail is not None:
+            raise self._fail
+        self.uploads.append((release_id, bundle))
+        return self._uri
+
+
+def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
+                  image_tags=None, artifact_writer=None,
+                  system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None,
+                  observer=None) -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect and its system relations,
+    a fake bundle uploader, a recording artifact writer, an empty image-tag map
+    and no release observer unless a test names otherwise. Outages are
+    recognised by the consumer's own classifier.
+
+    `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
+    artifact builder here so these cases keep asserting directly on the upload
+    calls the builder makes.
+    """
+    return CandidateManifestHandler(
+        source=source,
+        publisher=publisher,
+        bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
+        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
+        dialect=dialect,
+        system_relations=system_relations,
+        image_tags=image_tags if image_tags is not None else {},
+        is_infrastructure_error=is_infrastructure,
+        clock=clock or FakeClock(),
+        memory=memory or ScriptedMemoryProbe(0),
+        observer=observer if observer is not None else NoReleaseObserver(),
+    )
+
+
+def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
+                     system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None):
+    """A handler for the parse-dispatch cases.
+
+    These cases all fail (or are rejected) before any node reaches the artifact
+    builders, so the default map carries dbt only; tests that publish a python
+    node pass their own map.
+    """
+    return CandidateManifestHandler(
+        source=source,
+        publisher=publisher,
+        bundle_uploader=FakeBundleUploader(),
+        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
+        artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
+        dialect=dialect,
+        system_relations=system_relations,
+        image_tags={},
+        is_infrastructure_error=is_infrastructure,
+        clock=clock or FakeClock(),
+        memory=memory or ScriptedMemoryProbe(0),
+    )
+
+
+def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None,
+                   system_relations=_SYSTEM_RELATIONS["postgres"]):
+    """A handler wired for both kinds, for cases that publish a python node."""
+    return dispatch_handler(
+        source, publisher, dialect=dialect, artifact_writer=artifact_writer,
+        system_relations=system_relations,
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(
+                spec_uploader if spec_uploader is not None
+                else make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")),
+        },
+    )
+
+
+def dbt_node(name, *, original_file_path=""):
+    """A minimal valid dbt model node, for manifests built inline where a test
+    needs more than one node or a node with a source file_path — neither of
+    which manifest_service1.json's single, path-less fixture node has."""
+    node = {
+        "unique_id": f"model.service-1.{name}",
+        "name": name,
+        "schema": "test_schema",
+        "fqn": ["service-1", name],
+        "tags": ["daily"],
+        "resource_type": "model",
+        "config": {"meta": {"owner": "team-a", "criticality": "CORE"}},
+        "compiled_code": "SELECT 1 AS id",
+        "checksum": {"name": "sha256", "checksum": f"hash-{name}"},
+    }
+    if original_file_path:
+        node["original_file_path"] = original_file_path
+    return node
+
+
+def source_with_nodes(tmp_path, *nodes):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(manifest), image_tag="")
+    ]
+    source.manifest_count.return_value = 1
+    return source
+
+
+def python_entry(**overrides):
+    entry = {
+        "schema": "test_schema", "table": "py_metrics",
+        "owner": "team-py", "schedule": "daily", "criticality": "SECONDARY",
+        "script": "scripts/py_metrics.py",
+        "reads": {"orders": "select id from test_schema.orders"},
+        "output_columns": [{"name": "id", "type": "INTEGER", "nullable": False}],
+        "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
+    }
+    entry.update(overrides)
+    entry.setdefault("content_hash", content_hash_fold(
+        entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
+    return entry
+
+
+def python_contract(tmp_path, *entries, service="service-py", name="contract.yaml"):
+    doc = {"contract_version": 1, "service": service, "nodes": list(entries)}
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return str(path)
+
+
+def source_of(*files):
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = list(files)
+    source.manifest_count.return_value = len(files)
+    return source
 
 
 class FakeClock:

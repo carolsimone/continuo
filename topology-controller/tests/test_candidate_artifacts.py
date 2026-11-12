@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+from config.config import _SYSTEM_RELATIONS
 from domain.model import ManifestNode, NodeRegistryEntry, NodeType, Runtime
 from service.candidate_artifacts import (
     DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext,
@@ -18,6 +19,7 @@ def _ctx(**overrides):
     base = dict(
         release_id="rel-1", registry=registry,
         candidate_schema="_candidate_rel_1", dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
     )
     base.update(overrides)
@@ -63,6 +65,62 @@ def test_dbt_builder_leaves_a_self_reference_on_the_production_schema():
     DbtSqlArtifactBuilder(uploader).build(node, _ctx())
 
     assert "_candidate_rel_1" not in uploader.upload.call_args.kwargs["sql"]
+
+
+def _trino_runtime_nodes_ctx():
+    """A context on Trino whose registry holds runtime.nodes, a table some node of
+    the release builds."""
+    return _ctx(
+        registry={
+            ("runtime", "nodes"): NodeRegistryEntry(
+                table_name="nodes", schema_name="runtime",
+                service_name="service-1", owner="team-a",
+            ),
+        },
+        dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
+    )
+
+
+def test_dbt_builder_leaves_a_system_relation_of_the_contexts_engine_alone():
+    """The context carries the engine's system relations: a read of the engine's
+    own system.runtime.nodes keeps its place while the same schema and table
+    under another catalog, which a node builds, moves to the candidate schema."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    node = ManifestNode(
+        table_name="reader", schema_name="test_schema", service_name="service-2",
+        owner="team-b", schedule_name="daily", criticality="SECONDARY",
+        candidate_sql="SELECT * FROM system.runtime.nodes s, warehouse.runtime.nodes w",
+        node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
+    )
+
+    DbtSqlArtifactBuilder(uploader).build(node, _trino_runtime_nodes_ctx())
+
+    assert uploader.upload.call_args.kwargs["sql"] == (
+        'SELECT * FROM system.runtime.nodes AS s, warehouse."_candidate_rel_1".nodes AS w'
+    )
+
+
+def test_python_builder_leaves_a_system_relation_of_the_contexts_engine_alone():
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    node = ManifestNode(
+        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=[
+            "select * from system.runtime.nodes",
+            "select * from warehouse.runtime.nodes",
+        ],
+        output_columns=[{"name": "id", "type": "INTEGER", "nullable": False}],
+        node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
+    )
+
+    PythonSpecArtifactBuilder(uploader).build(node, _trino_runtime_nodes_ctx())
+
+    assert uploader.upload.call_args.kwargs["spec"]["reads"] == [
+        "SELECT * FROM system.runtime.nodes",
+        'SELECT * FROM warehouse."_candidate_rel_1".nodes',
+    ]
 
 
 def test_python_builder_uploads_rewritten_reads_columns_and_config():

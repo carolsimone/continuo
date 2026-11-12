@@ -85,14 +85,17 @@ func (s Rebase) Select(g topology.Graph) (Plan, error) {
 	return pv.Plan, err
 }
 
-// Preview selects the rebase over g and counts its tasks. It refuses a test
-// source (ErrRerunOfTestUnsupported), a selection with nothing to execute
+// Preview selects the rebase over g and counts its tasks. An ingested node of
+// g is no task and no source task names one, so it is read past: it is not a
+// new node, and an edge from it changes no node's upstreams. Preview refuses a
+// test source (ErrRerunOfTestUnsupported), a selection with nothing to execute
 // (ErrNothingToRerun) and an undeclared node type among the tasks it executes
 // (ErrInvalidNodeType).
 func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 	if s.Source.Operation == model.OperationTest {
 		return Preview{}, ErrRerunOfTestUnsupported
 	}
+	g = withoutIngested(g)
 	unsucceeded := make(map[topology.NodeKey]bool)
 	for _, k := range unsucceededIn(g, s.Source.Tasks) {
 		unsucceeded[k] = true

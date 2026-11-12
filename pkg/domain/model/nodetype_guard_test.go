@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -43,6 +45,7 @@ func TestIsPython(t *testing.T) {
 		model.NodeTypePythonNode:  true,
 		model.NodeTypePythonCsv:   true,
 		model.NodeTypePythonApi:   true,
+		model.NodeTypeIngested:    false,
 	}
 	if len(cases) != len(model.NodeTypes()) {
 		t.Fatalf("this table covers %d node types, the catalog declares %d — add the new one", len(cases), len(model.NodeTypes()))
@@ -55,13 +58,14 @@ func TestIsPython(t *testing.T) {
 }
 
 // TestEveryNodeTypeIsClassified: every NodeType falls into exactly one family —
-// a relation-producing dbt kind, a python kind, or the validation-only dbt-test.
+// a relation-producing dbt kind, a python kind, the validation-only dbt-test, or
+// the ingested kind no node builds.
 func TestEveryNodeTypeIsClassified(t *testing.T) {
 	for _, nt := range model.NodeTypes() {
 		isDbtRelation := nt.Runtime() == model.NodeRuntimeDbt && nt != model.NodeTypeDbtTest
 		isTest := nt == model.NodeTypeDbtTest
 		families := 0
-		for _, in := range []bool{isDbtRelation, nt.IsPython(), isTest} {
+		for _, in := range []bool{isDbtRelation, nt.IsPython(), isTest, nt.IsIngested()} {
 			if in {
 				families++
 			}
@@ -70,4 +74,13 @@ func TestEveryNodeTypeIsClassified(t *testing.T) {
 			t.Errorf("NodeType %q is in %d families, want exactly 1", nt, families)
 		}
 	}
+}
+
+func TestIsIngested(t *testing.T) {
+	for _, nt := range model.NodeTypes() {
+		assert.Equal(t, nt == model.NodeTypeIngested, nt.IsIngested(), nt)
+	}
+	assert.Equal(t, model.NodeRuntimeExternal, model.NodeTypeIngested.Runtime())
+	assert.False(t, model.NodeTypeIngested.SupportsFullRefresh())
+	assert.False(t, model.NodeTypeIngested.AllowsSecretRef())
 }

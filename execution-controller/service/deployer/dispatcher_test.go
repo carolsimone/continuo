@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
@@ -551,6 +552,12 @@ func TestDispatcher_WakesWithoutWaitingForTheTick(t *testing.T) {
 // A deployment whose Job cannot be created records why: Kubernetes refused it
 // on every try, or the dispatch itself cannot run.
 func TestDispatcher_RecordsWhyTheJobCouldNotBeCreated(t *testing.T) {
+	// The refusal the command resolver gives an ingested node, wrapped as the
+	// Kubernetes adapter wraps a pod spec it cannot build.
+	_, noCommand := commandcfg.Defaults().NodeCommand("svc", pkgmodel.OperationRun, pkgmodel.NodeTypeIngested, "orders")
+	require.Error(t, noCommand)
+	noCommand = fmt.Errorf("failed to build pod spec: %w", noCommand)
+
 	for name, c := range map[string]struct {
 		err        error
 		retryCount int
@@ -559,6 +566,7 @@ func TestDispatcher_RecordsWhyTheJobCouldNotBeCreated(t *testing.T) {
 		"refused on every try": {err: errors.New("apiserver down"), retryCount: 2, want: "create_failed"},
 		"a name collision":     {err: errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent), want: "job_name_collision"},
 		"an undeclared type":   {err: errors.Join(deploy.ErrInvalidNodeType, pkgevents.ErrPermanent), want: "invalid_node_type"},
+		"an ingested node":     {err: noCommand, want: "invalid_node_type"},
 		"no timeout":           {err: errors.Join(deploy.ErrMalformedDispatch, pkgevents.ErrPermanent), want: "malformed_dispatch"},
 		"another field":        {err: errors.Join(errors.New("image_tag missing"), pkgevents.ErrPermanent), want: "malformed_dispatch"},
 	} {

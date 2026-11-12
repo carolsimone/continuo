@@ -2,8 +2,12 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
+from config.config import _SYSTEM_RELATIONS
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.rewriter import candidate_schema_name, rewrite_to_candidate_schema
+
+POSTGRES = _SYSTEM_RELATIONS["postgres"]
+TRINO = _SYSTEM_RELATIONS["trino"]
 
 
 def _registry(*tables: str, schema: str = "public") -> dict:
@@ -19,15 +23,28 @@ def _schemas_of(sql_text: str, dialect: str = "postgres") -> set[str]:
     return {t.db for t in parsed.find_all(exp.Table) if t.db}
 
 
-def _rewrite(*args, dialect: str = "postgres", **kwargs) -> str:
-    """Rewrite against the postgres dialect unless a test names another.
+def _rewrite(*args, dialect: str = "postgres", system_relations=POSTGRES, **kwargs) -> str:
+    """Rewrite against the postgres dialect and its system relations unless a
+    test names another engine.
 
-    rewrite_to_candidate_schema takes dialect as a required keyword so
-    production code cannot emit one engine's SQL to another; these cases are
-    about redirection behaviour, not dialect selection, so they pin the default
-    engine here.
+    rewrite_to_candidate_schema takes dialect and system_relations as required
+    keywords so production code cannot emit one engine's SQL to another; these
+    cases are about redirection behaviour, not engine selection, so they pin the
+    default engine here.
     """
-    return rewrite_to_candidate_schema(*args, dialect=dialect, **kwargs)
+    return rewrite_to_candidate_schema(
+        *args, dialect=dialect, system_relations=system_relations, **kwargs,
+    )
+
+
+def _qualified_tables(sql_text: str, dialect: str) -> list[str]:
+    """Every table the SQL names as catalog.schema.table, omitting the parts it
+    leaves out, in source order."""
+    parsed = sqlglot.parse_one(sql_text, dialect=dialect)
+    return [
+        ".".join(part for part in (t.catalog, t.db, t.name) if part)
+        for t in parsed.find_all(exp.Table)
+    ]
 
 
 def test_candidate_schema_name_sanitizes():
@@ -96,6 +113,18 @@ def test_an_unqualified_reference_to_a_cte_is_not_given_a_schema():
     assert _schemas_of(out) == set()
 
 
+def test_a_qualified_system_read_is_not_redirected_when_a_cte_has_its_name():
+    # The CTE of the same name does not make the qualified read a CTE reference,
+    # and the system-relation rule still keeps it on the engine's own schema.
+    out = _rewrite(
+        "WITH tables AS (SELECT 1 AS id) "
+        "SELECT * FROM tables t JOIN information_schema.tables i ON 1 = 1",
+        _registry("tables", schema="information_schema"),
+        "_candidate_r1",
+    )
+    assert _schemas_of(out) == {"information_schema"}
+
+
 def test_self_reference_not_rewritten():
     # A qualified self-reference (e.g. an incremental model selecting from itself)
     # must stay on its prod schema — the runner drops+recreates the candidate copy,
@@ -149,4 +178,81 @@ def test_dialect_is_required():
     # Production callers must name the engine; there is no implicit postgres
     # fallback that would emit the wrong engine's SQL to the warehouse.
     with pytest.raises(TypeError):
-        rewrite_to_candidate_schema("SELECT 1", _registry("users"), "_candidate_r1")
+        rewrite_to_candidate_schema(
+            "SELECT 1", _registry("users"), "_candidate_r1", system_relations=POSTGRES,
+        )
+
+
+def test_system_relations_are_required():
+    # Production callers must name the engine's system relations; there is no
+    # empty default that would redirect an engine's own relation to a candidate
+    # schema that does not hold it.
+    with pytest.raises(TypeError):
+        rewrite_to_candidate_schema(
+            "SELECT 1", _registry("users"), "_candidate_r1", dialect="postgres",
+        )
+
+
+def test_a_trino_system_catalog_read_is_not_redirected_to_the_candidate_schema():
+    # system.runtime.nodes is the engine's own table. A node that builds
+    # runtime.nodes puts ('runtime', 'nodes') in the registry, but redirecting
+    # the engine's table to the candidate schema names one that does not exist.
+    out = _rewrite(
+        "SELECT * FROM system.runtime.nodes",
+        _registry("nodes", schema="runtime"),
+        "_candidate_r1",
+        dialect="trino",
+        system_relations=TRINO,
+    )
+    assert _qualified_tables(out, "trino") == ["system.runtime.nodes"]
+
+
+def test_a_trino_read_under_another_catalog_is_still_redirected():
+    # The registry knows a table by schema and name: the database part of a
+    # read that is not the engine's own is ignored, so the redirect keeps the
+    # catalog the SQL named.
+    out = _rewrite(
+        "SELECT * FROM warehouse.runtime.nodes",
+        _registry("nodes", schema="runtime"),
+        "_candidate_r1",
+        dialect="trino",
+        system_relations=TRINO,
+    )
+    assert _qualified_tables(out, "trino") == ["warehouse._candidate_r1.nodes"]
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM system.runtime.nodes n JOIN warehouse.runtime.nodes w ON 1 = 1",
+    "SELECT * FROM warehouse.runtime.nodes w JOIN system.runtime.nodes n ON 1 = 1",
+])
+def test_a_system_read_and_a_real_read_of_the_same_table_name_part_ways_in_either_order(sql):
+    out = _rewrite(
+        sql, _registry("nodes", schema="runtime"), "_candidate_r1",
+        dialect="trino", system_relations=TRINO,
+    )
+    assert sorted(_qualified_tables(out, "trino")) == [
+        "system.runtime.nodes", "warehouse._candidate_r1.nodes",
+    ]
+
+
+def test_an_information_schema_read_is_not_redirected_even_when_the_registry_names_it():
+    # No release builds information_schema.tables, so the registry misses it
+    # in practice. The rewriter does not lean on that: a system relation is
+    # left alone whatever the registry holds.
+    out = _rewrite(
+        "SELECT * FROM information_schema.tables",
+        _registry("tables", schema="information_schema"),
+        "_candidate_r1",
+        dialect="trino",
+        system_relations=TRINO,
+    )
+    assert _qualified_tables(out, "trino") == ["information_schema.tables"]
+
+
+def test_a_postgres_system_schema_read_is_not_redirected_even_when_the_registry_names_it():
+    out = _rewrite(
+        "SELECT c.relname FROM pg_catalog.pg_class c JOIN public.users u ON 1 = 1",
+        _registry("pg_class", schema="pg_catalog") | _registry("users"),
+        "_candidate_r1",
+    )
+    assert sorted(_qualified_tables(out, "postgres")) == ["_candidate_r1.users", "pg_catalog.pg_class"]

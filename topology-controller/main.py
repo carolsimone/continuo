@@ -15,6 +15,7 @@ from config.config import (
     redis_acl_mode,
     validate,
     warehouse_dialect,
+    warehouse_system_relations,
 )
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
@@ -93,8 +94,10 @@ def main() -> None:
 
     # Resolved once at boot: validate() has already rejected an unsupported
     # engine, so every release parses and re-renders SQL for the warehouse this
-    # install actually targets.
+    # install actually targets and knows which relations that warehouse keeps
+    # for itself.
     dialect = warehouse_dialect()
+    system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
@@ -111,6 +114,7 @@ def main() -> None:
                 Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
             },
             dialect=dialect,
+            system_relations=system_relations,
             image_tags=message.image_tags,
             # An S3 write failure the consumer's classifier calls an outage
             # propagates, so the consumer pauses and redelivers instead of the

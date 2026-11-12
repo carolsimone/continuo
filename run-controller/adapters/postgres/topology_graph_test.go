@@ -4,8 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,4 +117,59 @@ func TestTopologyRepository_GraphHoldsTheKeysAndTheEdgesAmongThem(t *testing.T) 
 	empty, err := repo.Graph(ctx, tenant, "rel-1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, empty.Len())
+}
+
+// A failed run was planned on rel-1, before any release held an ingested node.
+// rel-2, the live release, adds the ingested table raw.x that the failed node
+// a.m reads. The live schedule graph holds neither the ingested node nor its
+// edge, so a rebase reads no new node and finds no change, and a whole-schedule
+// run plans the tasks it planned before: neither is refused, and neither
+// selects the ingested node.
+func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAsTheyWere(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	up := topoSpec("a", "up", "dbt-model", "h-up")
+	failed := topoSpec("a", "m", "dbt-model", "h-m", "a.up")
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", up, failed))
+	require.NoError(t, err)
+	failed.UpstreamUniqueIDs = []string{"a.up", "raw.x"}
+	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", up, failed, ingestedSpec("raw", "x")))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+	require.Equal(t, 1, countTopoRows(t, db, `
+		SELECT count(*) FROM topology_edges
+		WHERE tenant_id = $1 AND release_id = 'rel-2' AND upstream_key = 'raw.x' AND downstream_key = 'a.m'`, tenant),
+		"the live release holds the ingested node and its edge")
+
+	live, err := repo.ScheduleGraph(ctx, tenant, "rel-2", "daily")
+	require.NoError(t, err)
+	builtOn, err := repo.Graph(ctx, tenant, "rel-1", []topology.NodeKey{"a.up", "a.m"})
+	require.NoError(t, err)
+	source := runplan.Source{Operation: model.OperationRun, Tasks: []runplan.SourceTask{
+		{Key: "a.m", TaskID: uuid.New(), BuiltOn: "rel-1"},
+		{Key: "a.up", TaskID: uuid.New(), Succeeded: true, BuiltOn: "rel-1"},
+	}}
+
+	for _, widen := range []bool{false, true} {
+		pv, err := runplan.Rebase{
+			Source: source, SourceGraphs: map[string]topology.Graph{"rel-1": builtOn}, IncludeChangedUpstream: widen,
+		}.Preview(live)
+		require.NoError(t, err, "include changed upstream %v", widen)
+		assert.Equal(t, runplan.Plan{
+			Tasks: []runplan.PlannedTask{{Key: "a.m"}, {Key: "a.up", Inherited: true, InheritedFrom: source.Tasks[1].TaskID}},
+			Ready: []topology.NodeKey{"a.m"},
+		}, pv.Plan, "include changed upstream %v", widen)
+		assert.Equal(t, 1, pv.FailedOrSkipped)
+		assert.Zero(t, pv.New)
+		assert.Equal(t, 1, pv.Inherited)
+		assert.Empty(t, pv.Changed)
+	}
+
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(live)
+	require.NoError(t, err)
+	assert.Equal(t, runplan.Plan{
+		Tasks: []runplan.PlannedTask{{Key: "a.m"}, {Key: "a.up"}},
+		Ready: []topology.NodeKey{"a.up"},
+	}, plan)
 }

@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 
 from adapters.redis.error_class import is_infrastructure
+from config.config import _SYSTEM_RELATIONS
 from domain.model import ManifestFile, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
@@ -69,6 +70,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
         artifact_writer=writer, is_infrastructure_error=is_infrastructure,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         clock=FakeClock(), memory=ScriptedMemoryProbe(0),
     )

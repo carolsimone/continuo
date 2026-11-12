@@ -18,7 +18,10 @@ type CommandResolver interface {
 	// full_refresh command and a seed to its seed_full_refresh command. The
 	// error wraps events.ErrPermanent when the node type cannot be
 	// full-refreshed or the service's command block defines no full_refresh
-	// (model) or seed_full_refresh (seed) command.
+	// (model) or seed_full_refresh (seed) command. An ingested node type has
+	// no command for any operation: it is refused with an error that wraps
+	// both events.ErrPermanent and deploy.ErrInvalidNodeType, which is how the
+	// dispatcher records the failure as invalid_node_type.
 	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error)
 	// SeedBuildCommand returns the argv for building a seed into the
 	// release's candidate schema. When the service has no seed_build

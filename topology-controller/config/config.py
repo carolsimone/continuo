@@ -1,8 +1,10 @@
 import logging
 import os
 import re
+from collections.abc import Iterable
 
 from config.secrets import read_secret
+from domain.ingested import SystemRelations
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V2,
@@ -47,6 +49,18 @@ _ENGINE_DIALECTS = {
 }
 
 
+def _warehouse_engine() -> str:
+    """Return the configured WAREHOUSE_ENGINE, postgres when unset or empty."""
+    return os.environ.get("WAREHOUSE_ENGINE", "") or "postgres"
+
+
+def _unsupported_engine(engine: str, supported: Iterable[str]) -> RuntimeError:
+    return RuntimeError(
+        f"unsupported WAREHOUSE_ENGINE {engine!r}: expected one of "
+        f"{', '.join(sorted(supported))}"
+    )
+
+
 def warehouse_dialect() -> str:
     """Return the sqlglot dialect for the configured warehouse engine.
 
@@ -54,14 +68,53 @@ def warehouse_dialect() -> str:
     this at startup so an unsupported engine fails at boot rather than partway
     through a release.
     """
-    engine = os.environ.get("WAREHOUSE_ENGINE", "") or "postgres"
+    engine = _warehouse_engine()
     try:
         return _ENGINE_DIALECTS[engine]
     except KeyError:
-        raise RuntimeError(
-            f"unsupported WAREHOUSE_ENGINE {engine!r}: expected one of "
-            f"{', '.join(sorted(_ENGINE_DIALECTS))}"
-        ) from None
+        raise _unsupported_engine(engine, _ENGINE_DIALECTS) from None
+
+
+# Engine name -> the relations that engine keeps for itself, which a node's SQL
+# may read but no release produces, so none of them becomes a node. The keys are
+# exactly _ENGINE_DIALECTS' (test_system_relations_cover_exactly_the_supported_engines
+# pins it), so every engine this service can read has its system relations listed.
+#
+# postgres reserves every schema name that starts with pg_ (pg_catalog, pg_toast,
+# pg_temp_N), and information_schema is the standard catalog schema. trino has an
+# information_schema in every catalog, and its system catalog holds the runtime,
+# metadata and jdbc schemas.
+_SYSTEM_RELATIONS = {
+    "postgres": SystemRelations(
+        schemas=frozenset({"information_schema"}),
+        schema_prefixes=("pg_",),
+    ),
+    "trino": SystemRelations(
+        schemas=frozenset({"information_schema"}),
+        catalogs=frozenset({"system"}),
+    ),
+}
+
+
+def system_relations_for(engine: str) -> SystemRelations:
+    """Return the system relations of a warehouse engine.
+
+    Raises RuntimeError for an engine with no entry in _SYSTEM_RELATIONS.
+    """
+    try:
+        return _SYSTEM_RELATIONS[engine]
+    except KeyError:
+        raise _unsupported_engine(engine, _SYSTEM_RELATIONS) from None
+
+
+def warehouse_system_relations() -> SystemRelations:
+    """Return the system relations of the configured warehouse engine.
+
+    Raises RuntimeError for an engine with no entry in _SYSTEM_RELATIONS.
+    validate() calls this at startup, so an engine whose system relations are
+    not listed fails at boot rather than turning one of them into a node.
+    """
+    return system_relations_for(_warehouse_engine())
 
 
 # LOG_LEVEL (the chart's global.logLevel, injected through the shared
@@ -166,9 +219,10 @@ def validate() -> None:
     empty file, raises read_secret's error. Also rejects a REDIS_URL that
     carries credentials (they come from REDIS_USERNAME and REDIS_PASSWORD), an
     unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
-    this service has a SQL dialect for, a LOG_LEVEL that names no level this
-    service logs at, a METRICS_PORT that is not a whole number from 1 to 65535,
-    and a REDIS_ACL_MODE other than shared or perService.
+    this service has a SQL dialect and a list of system relations for, a
+    LOG_LEVEL that names no level this service logs at, a METRICS_PORT that is
+    not a whole number from 1 to 65535, and a REDIS_ACL_MODE other than shared
+    or perService.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]
@@ -179,6 +233,7 @@ def validate() -> None:
             "REDIS_URL must not carry credentials; set REDIS_USERNAME and REDIS_PASSWORD"
         )
     warehouse_dialect()
+    warehouse_system_relations()
     log_level()
     metrics_port()
     redis_acl_mode()

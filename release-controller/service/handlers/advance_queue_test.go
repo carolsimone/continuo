@@ -151,6 +151,50 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
+// TestUncoveredProdServices_IgnoresIngestedNodes pins that the live production
+// topology's ingested nodes do not count as a service without a service_prod
+// pointer: an ingested node has no service, so no pointer can ever cover it,
+// and counting it would hold every release in the queue.
+func TestUncoveredProdServices_IgnoresIngestedNodes(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "bucket"
+
+	seedProd(t, deps, store, "rProd", release.Topology{
+		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+	}, time.Unix(0, 0).UTC())
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rA")
+	assert.Equal(t, pipeline.StatusCompiling, r.Status(), "svc-b is covered and the ingested node needs no pointer")
+}
+
+// TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnIngestedNode
+// is the control: an ingested node is skipped, a real service without a
+// pointer still holds the release.
+func TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnIngestedNode(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "bucket"
+
+	seedProd(t, deps, store, "rProd", release.Topology{
+		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+	}, time.Unix(0, 0).UTC())
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rA")
+	assert.Equal(t, pipeline.StatusReceived, r.Status(), "svc-b has no pointer")
+}
+
 func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"

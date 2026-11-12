@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
+from domain.ingested import SystemRelations, ingested_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
     FailedNode,
@@ -10,6 +11,7 @@ from domain.model import (
     NodeRegistryEntry,
     NodeType,
     SkippedNode,
+    TableRef,
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
@@ -27,6 +29,7 @@ from service.ports import (
 from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
+from service.table_refs import referenced_tables
 from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
@@ -51,6 +54,34 @@ def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
 def _summary(failed: list[FailedNode]) -> str:
     noun = "node" if len(failed) == 1 else "nodes"
     return f"{len(failed)} {noun} failed to parse: " + ", ".join(sorted(n.node_id for n in failed))
+
+
+def _artifact_entry(node: ManifestNode) -> dict:
+    """The topology artifact's entry for one node: its identity, the relation it
+    stands for, the service and image that run it, its schedule and the
+    unique_ids it reads. An optional key is present only when the node sets
+    it."""
+    entry = {
+        "unique_id":           node.unique_id,
+        "schema_name":         node.schema_name,
+        "table_name":          node.table_name,
+        "resolved_relation_id": node.resolved_relation_id,
+        "service_name":        node.service_name,
+        "node_type":           node.node_type,
+        "test_count":          node.test_count,
+        "content_hash":        node.content_hash,
+        "image_tag":           node.image_tag,
+        "original_file_path":  node.original_file_path,
+        "upstream_unique_ids": [
+            dep.unique_id for dep in node.upstream_deps
+        ],
+        "schedule":            node.schedule_name,
+    }
+    if node.secret_ref:
+        entry["secret_ref"] = node.secret_ref
+    if node.timeout_seconds:
+        entry["timeout_seconds"] = node.timeout_seconds
+    return entry
 
 
 class CandidateManifestHandler:
@@ -97,6 +128,17 @@ class CandidateManifestHandler:
     both dependency resolution and the candidate-schema rewrite, so the
     uploaded SQL is in the dialect the validation runner will execute.
 
+    system_relations names the relations the warehouse engine keeps for itself
+    (its information schema and catalog tables), supplied by the composition
+    root from the same configured engine as dialect.
+
+    Once every node has resolved, each table some node reads and no node builds
+    becomes an ingested node (ingested_nodes), and each node that reads it gains
+    an edge to it; the resolve stage times that step too. An ingested node
+    exists only in the topology artifact: it is in no registry or rewrite
+    lookup, has no candidate artifact, no code-bundle entry and no image tag,
+    because nothing in the release produces it.
+
     A dbt node a parse leaves out (no owner, no tag to take a schedule from, a
     local stub) is never a failure: it is logged at INFO as it is skipped and
     counted on the release's line, and release-controller is told nothing of it.
@@ -111,11 +153,25 @@ class CandidateManifestHandler:
     progress is called once after each manifest's parse, once after each node's
     resolve and once after each node's build, a failed one included, so the
     caller can tell a release that is working through its nodes from one that
-    has stopped. The two stretches with no node loop (from the start through
-    the first manifest's parse, every manifest's download included, and from
-    the last node's build through the code bundle, the topology artifact and
-    the publish) call nothing, so each stretch must end within the caller's
-    staleness budget.
+    has stopped. Between two calls the handler does one manifest's parse (after
+    the in-memory bookkeeping of the manifest before it: skip logging,
+    shared-code namespacing, service checks), one node's resolve or one node's
+    build, except in these stretches, each of which must end within the
+    caller's staleness budget:
+    - from the start through the first manifest's parse: the image-tag check,
+      the listing of every manifest (every manifest's download included) and
+      that parse;
+    - from the last manifest's parse through the first node's resolve: that
+      manifest's own bookkeeping (skip logging, shared-code namespacing,
+      service checks), the node registry and its lookup and the rewrite context
+      (in-memory work linear in the number of nodes), then that resolve;
+    - from the last node's resolve through the first node's build: the
+      ingested step (in-memory work linear in the number of table references),
+      then that build;
+    - from the last node's build through the code bundle, its upload, the
+      topology artifact and the publish.
+    A release that ends early, with no manifest or with a failure, ends in the
+    stretch it is in, after the publish of its outcome.
     """
 
     def __init__(
@@ -126,6 +182,7 @@ class CandidateManifestHandler:
         artifact_writer: TopologyArtifactWriterPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
+        system_relations: SystemRelations,
         image_tags: Mapping[str, str] | None,
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
@@ -139,6 +196,7 @@ class CandidateManifestHandler:
         self._artifact_writer = artifact_writer
         self._artifact_builders = artifact_builders
         self._dialect = dialect
+        self._system_relations = system_relations
         self._image_tags = image_tags
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
@@ -291,6 +349,7 @@ class CandidateManifestHandler:
             registry=lookup,
             candidate_schema=candidate_schema,
             dialect=self._dialect,
+            system_relations=self._system_relations,
             timings=self._timings,
         )
 
@@ -298,10 +357,23 @@ class CandidateManifestHandler:
         # node is rejected whole, and reporting every broken node at once spares
         # the operator a fix-push-reject loop per node.
         failed: list[FailedNode] = []
+        # Every table each node's SQL names, by node unique_id, for each node
+        # that writes a relation (a dbt test writes none). ingested_nodes
+        # decides which of them no node of the release builds.
+        reads: dict[str, list[TableRef]] = {}
+        ingested: list[ManifestNode] = []
         with self._timings.stage(Stage.RESOLVE, nodes=len(all_nodes)):
             for node in all_nodes:
                 try:
-                    node.upstream_deps = resolve_upstream_deps(node, lookup, dialect=self._dialect)
+                    refs = referenced_tables(node, dialect=self._dialect)
+                    # A system relation is never a node a release builds, so it
+                    # resolves to no dependency, even when a node builds a table
+                    # with the same schema and name.
+                    node.upstream_deps = resolve_upstream_deps(
+                        [ref for ref in refs if not self._system_relations.matches(ref)], lookup,
+                    )
+                    if node.node_type != NodeType.DBT_TEST:
+                        reads[node.unique_id] = refs
                 except (UnqualifiedTableReferenceError, InvalidCompiledSqlError) as exc:
                     failed.append(FailedNode(
                         node_id=node.unique_id,
@@ -312,6 +384,10 @@ class CandidateManifestHandler:
                         detail=str(exc),
                     ))
                 self._progress()
+            if not failed:
+                # Adds the edges to the readers before their entries are built below.
+                ingested = ingested_nodes(all_nodes, reads, system=self._system_relations)
+                self._timings.add_nodes(ingested)
         if failed:
             self._fail(
                 release_id,
@@ -344,27 +420,9 @@ class CandidateManifestHandler:
             finally:
                 self._progress()
 
-            entry = {
-                "unique_id":           node.unique_id,
-                "schema_name":         node.schema_name,
-                "table_name":          node.table_name,
-                "resolved_relation_id": node.resolved_relation_id,
-                "service_name":        node.service_name,
-                "node_type":           node.node_type,
-                "test_count":          node.test_count,
-                "content_hash":        node.content_hash,
-                "image_tag":           node.image_tag,
-                "original_file_path":  node.original_file_path,
-                "upstream_unique_ids": [
-                    dep.unique_id for dep in node.upstream_deps
-                ],
-                "schedule":            node.schedule_name,
-            }
-            if node.secret_ref:
-                entry["secret_ref"] = node.secret_ref
-            if node.timeout_seconds:
-                entry["timeout_seconds"] = node.timeout_seconds
-            topology.append(entry)
+            topology.append(_artifact_entry(node))
+
+        topology.extend(_artifact_entry(node) for node in ingested)
 
         upload_error: Exception | None = None
         with self._timings.stage(Stage.CODE_BUNDLE):

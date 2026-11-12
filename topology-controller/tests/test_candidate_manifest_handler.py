@@ -4,19 +4,32 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
-import yaml
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
+from config.config import _SYSTEM_RELATIONS
 from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SkipReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
-from service.content_hash import content_hash_fold
-from service.ports import ManifestSourcePort, NoReleaseObserver
+from service.ports import ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
-from tests.fakes import FakeClock, RecordingArtifactWriter, ScriptedMemoryProbe
+from tests.fakes import (
+    FakeBundleUploader,
+    FakeClock,
+    RecordingArtifactWriter,
+    ScriptedMemoryProbe,
+    build_handler,
+    dbt_node,
+    dispatch_handler,
+    make_uploader,
+    python_contract,
+    python_entry,
+    python_handler,
+    source_of,
+    source_with_nodes,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -31,93 +44,6 @@ def _make_source(*entries):
     return source
 
 
-def _make_uploader(uri=""):
-    uploader = MagicMock()
-    uploader.upload.return_value = uri
-    return uploader
-
-
-class FakeBundleUploader:
-    """Records (release_id, bundle) calls and returns a canned URI.
-
-    Pass `fail` to make `upload` raise instead — the failing variant used to
-    exercise the CodeBundleUploadFailed path.
-    """
-
-    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None):
-        self.uploads: list[tuple[str, dict]] = []
-        self._uri = uri
-        self._fail = fail
-
-    def upload(self, release_id: str, bundle: dict) -> str:
-        if self._fail is not None:
-            raise self._fail
-        self.uploads.append((release_id, bundle))
-        return self._uri
-
-
-def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-             image_tags=None, artifact_writer=None, clock=None, memory=None,
-             observer=None) -> CandidateManifestHandler:
-    """Build a handler pinned to the postgres dialect, a fake bundle uploader,
-    a recording artifact writer, an empty image-tag map and no release observer
-    unless a test names otherwise. Outages are recognised by the consumer's own
-    classifier.
-
-    `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
-    artifact builder here so these cases keep asserting directly on the upload
-    calls the builder makes.
-    """
-    return CandidateManifestHandler(
-        source=source,
-        publisher=publisher,
-        bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
-        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
-        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
-        dialect=dialect,
-        image_tags=image_tags if image_tags is not None else {},
-        is_infrastructure_error=is_infrastructure,
-        clock=clock or FakeClock(),
-        memory=memory or ScriptedMemoryProbe(0),
-        observer=observer if observer is not None else NoReleaseObserver(),
-    )
-
-
-def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
-                      clock=None, memory=None):
-    """A handler for the parse-dispatch cases.
-
-    These cases all fail (or are rejected) before any node reaches the artifact
-    builders, so the default map carries dbt only; tests that publish a python
-    node pass their own map.
-    """
-    return CandidateManifestHandler(
-        source=source,
-        publisher=publisher,
-        bundle_uploader=FakeBundleUploader(),
-        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
-        artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
-        dialect=dialect,
-        image_tags={},
-        is_infrastructure_error=is_infrastructure,
-        clock=clock or FakeClock(),
-        memory=memory or ScriptedMemoryProbe(0),
-    )
-
-
-def _python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None):
-    """A handler wired for both kinds, for cases that publish a python node."""
-    return _dispatch_handler(
-        source, publisher, dialect=dialect, artifact_writer=artifact_writer,
-        artifact_builders={
-            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
-            Runtime.PYTHON: PythonSpecArtifactBuilder(
-                spec_uploader if spec_uploader is not None
-                else _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")),
-        },
-    )
-
-
 @pytest.fixture
 def resolved_topology():
     source = _make_source(
@@ -126,7 +52,7 @@ def resolved_topology():
     )
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
-    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-1"
     assert publisher.publish_ok.call_args.kwargs["artifact"] == writer.refs[0]
@@ -144,9 +70,9 @@ def handler_with_mocks():
         "manifest_service2.json",
     )
     publisher = MagicMock()
-    uploader = _make_uploader()
+    uploader = make_uploader()
     writer = RecordingArtifactWriter()
-    handler = _handler(source, publisher, uploader, artifact_writer=writer)
+    handler = build_handler(source, publisher, uploader, artifact_writer=writer)
     return handler, publisher, uploader, writer
 
 
@@ -177,7 +103,7 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-empty")
+    build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-empty")
 
     assert writer.writes == [{"tenant_id": "default", "release_id": "rel-empty", "nodes": []}]
     publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
@@ -189,46 +115,16 @@ def _failed_kwargs(publisher):
     return publisher.publish_failed.call_args.kwargs
 
 
-def _dbt_node(name, *, original_file_path=""):
-    """A minimal valid dbt model node, for manifests built inline where a test
-    needs more than one node or a node with a source file_path — neither of
-    which manifest_service1.json's single, path-less fixture node has."""
-    node = {
-        "unique_id": f"model.service-1.{name}",
-        "name": name,
-        "schema": "test_schema",
-        "fqn": ["service-1", name],
-        "tags": ["daily"],
-        "resource_type": "model",
-        "config": {"meta": {"owner": "team-a", "criticality": "CORE"}},
-        "compiled_code": "SELECT 1 AS id",
-        "checksum": {"name": "sha256", "checksum": f"hash-{name}"},
-    }
-    if original_file_path:
-        node["original_file_path"] = original_file_path
-    return node
-
-
-def _source_with_nodes(tmp_path, *nodes):
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
-    source = create_autospec(ManifestSourcePort)
-    source.list_manifests.return_value = [
-        ManifestFile(path=str(manifest), image_tag="")
-    ]
-    return source
-
-
 def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
-    source = _source_with_nodes(tmp_path, _dbt_node("users", original_file_path="models/users.sql"))
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
+    source = source_with_nodes(tmp_path, dbt_node("users", original_file_path="models/users.sql"))
     publisher = MagicMock()
-    uploader = _make_uploader()
+    uploader = make_uploader()
 
-    _handler(source, publisher, uploader).handle(release_id="rel-fail")
+    build_handler(source, publisher, uploader).handle(release_id="rel-fail")
 
     kw = _failed_kwargs(publisher)
     assert kw["failure_kind"] == ParseFailureKind.UNQUALIFIED_REFERENCE
@@ -241,14 +137,14 @@ def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
 
 
 def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch, tmp_path):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=f"broken {node.table_name}")
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
-    source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
+    source = source_with_nodes(tmp_path, dbt_node("node_a"), dbt_node("node_b"))
     publisher = MagicMock()
 
-    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-fail")
 
     kw = _failed_kwargs(publisher)
     assert kw["failure_kind"] == ParseFailureKind.INVALID_SQL
@@ -260,17 +156,17 @@ def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch,
 def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
     calls = {"n": 0}
 
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         calls["n"] += 1
         if calls["n"] == 1:
             raise UnqualifiedTableReferenceError(table_name="x", node_table_name=node.table_name)
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
-    source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
+    source = source_with_nodes(tmp_path, dbt_node("node_a"), dbt_node("node_b"))
     publisher = MagicMock()
 
-    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-fail")
 
     kw = _failed_kwargs(publisher)
     assert kw["failure_kind"] == ParseFailureKind.INVALID_SQL
@@ -281,20 +177,20 @@ def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
 def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
     """A single broken node fails the release; the others are resolved and are
     not reported as failed."""
-    real = candidate_manifest_handler.resolve_upstream_deps
+    real = candidate_manifest_handler.referenced_tables
     calls = {"n": 0}
 
-    def _raise_once(node, lookup, *, dialect):
+    def _raise_once(node, *, dialect):
         calls["n"] += 1
         if calls["n"] == 1:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
-        return real(node, lookup, dialect=dialect)
+        return real(node, dialect=dialect)
 
-    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise_once)
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise_once)
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
-    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-fail")
 
     kw = _failed_kwargs(publisher)
     assert len(kw["failed_nodes"]) == 1
@@ -311,7 +207,7 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-malformed")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -332,7 +228,7 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-no-nodes")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -364,7 +260,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-empty-fqn")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -392,7 +288,7 @@ def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path)
     source.list_manifests.return_value = [ManifestFile(path=str(bad), image_tag="")]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-bad-timeout")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -407,7 +303,7 @@ def test_handle_propagates_transient_redis_error():
     publisher = MagicMock()
     publisher.publish_ok.side_effect = ConnectionError("redis down")
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     with pytest.raises(ConnectionError):
         handler.handle(release_id="rel-1")
 
@@ -416,24 +312,24 @@ def test_handle_calls_source_cleanup_after_publish():
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-1")
 
     source.cleanup.assert_called_once()
 
 
 def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
-    def _raise(node, lookup, *, dialect):
+    def _raise(node, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
-        "service.candidate_manifest_handler.resolve_upstream_deps", _raise
+        "service.candidate_manifest_handler.referenced_tables", _raise
     )
 
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-fail")
 
     source.cleanup.assert_called_once()
@@ -468,7 +364,7 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-empty-svc")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -504,7 +400,7 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-mismatch")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
@@ -524,7 +420,7 @@ def test_handle_publishes_ok_matching_declared_service():
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-ok")
+    build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-ok")
 
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-ok"
@@ -541,7 +437,7 @@ def test_every_node_runs_in_the_image_its_service_is_tagged_with():
     ])
     writer = RecordingArtifactWriter()
 
-    _handler(source, MagicMock(), _make_uploader(), artifact_writer=writer, image_tags={
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer, image_tags={
         "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
     }).handle(release_id="rel-1")
 
@@ -557,7 +453,7 @@ def test_a_service_the_request_names_no_tag_for_keeps_an_empty_image_tag():
     ])
     writer = RecordingArtifactWriter()
 
-    _handler(source, MagicMock(), _make_uploader(), artifact_writer=writer, image_tags={
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer, image_tags={
         "service-1": "reg/service-1:abc",
     }).handle(release_id="rel-1")
 
@@ -576,8 +472,9 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
         artifact_writer=writer,
-        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags=None,
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
@@ -609,7 +506,7 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
     ]
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
+    handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-legacy")
 
     # No service declared — falls through to publish_ok with an empty topology
@@ -654,25 +551,25 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     Rendering itself is pinned in test_rewriter.py.
     """
     seen: dict[str, list[str]] = {"resolve": [], "rewrite": []}
-    real_resolve = candidate_manifest_handler.resolve_upstream_deps
+    real_resolve = candidate_manifest_handler.referenced_tables
     real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
-    def spy_resolve(node, registry, *, dialect):
+    def spy_resolve(node, *, dialect):
         seen["resolve"].append(dialect)
-        return real_resolve(node, registry, dialect=dialect)
+        return real_resolve(node, dialect=dialect)
 
     def spy_rewrite(*args, dialect, **kwargs):
         seen["rewrite"].append(dialect)
         return real_rewrite(*args, dialect=dialect, **kwargs)
 
-    monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", spy_resolve)
+    monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", spy_resolve)
     monkeypatch.setattr(candidate_artifacts, "rewrite_to_candidate_schema", spy_rewrite)
 
     source = _make_source(
         "manifest_service1.json",
         "manifest_service2.json",
     )
-    _handler(source, MagicMock(), _make_uploader(), dialect="trino").handle(release_id="rel-1")
+    build_handler(source, MagicMock(), make_uploader(), dialect="trino").handle(release_id="rel-1")
 
     assert seen["resolve"] and set(seen["resolve"]) == {"trino"}
     assert seen["rewrite"] and set(seen["rewrite"]) == {"trino"}
@@ -691,7 +588,7 @@ def _failing_write_handler(site, failure):
     """A handler over manifest_service1.json whose `site` write raises failure."""
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
-    uploader = _make_uploader()
+    uploader = make_uploader()
     bundle_uploader = FakeBundleUploader()
     writer = RecordingArtifactWriter()
     if site == "candidate_sql":
@@ -700,7 +597,7 @@ def _failing_write_handler(site, failure):
         bundle_uploader = FakeBundleUploader(fail=failure)
     else:
         writer = RecordingArtifactWriter(fail=failure)
-    handler = _handler(source, publisher, uploader, bundle_uploader=bundle_uploader, artifact_writer=writer)
+    handler = build_handler(source, publisher, uploader, bundle_uploader=bundle_uploader, artifact_writer=writer)
     return handler, source, publisher
 
 
@@ -745,10 +642,10 @@ def test_handle_calls_source_cleanup_even_on_upload_failure():
     """source.cleanup() must run even when an upload fails mid-flight."""
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
-    uploader = _make_uploader()
+    uploader = make_uploader()
     uploader.upload.side_effect = RuntimeError("s3 down")
 
-    handler = _handler(source, publisher, uploader)
+    handler = build_handler(source, publisher, uploader)
     handler.handle(release_id="rel-upload-fail")
 
     source.cleanup.assert_called_once()
@@ -769,7 +666,7 @@ def test_bundle_uploaded_once_per_release():
     bundle_uploader = FakeBundleUploader(uri="s3://continuo/code-bundles/rel-1/bundle.json")
     writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader,
+    build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader,
              artifact_writer=writer).handle(release_id="rel-1")
 
     assert len(bundle_uploader.uploads) == 1
@@ -786,7 +683,7 @@ def test_bundle_upload_failure_publishes_failed():
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader(fail=RuntimeError("s3 down"))
 
-    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler = build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader)
     handler.handle(release_id="rel-1")  # must NOT raise
 
     publisher.publish_ok.assert_not_called()
@@ -803,7 +700,7 @@ def test_empty_manifests_publish_empty_bundle_uri():
     bundle_uploader = FakeBundleUploader()
     writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader,
+    build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader,
              artifact_writer=writer).handle(release_id="rel-empty")
 
     publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
@@ -856,7 +753,7 @@ def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, capl
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
 
-    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler = build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader)
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
         handler.handle(release_id="rel-namespaced")
 
@@ -903,7 +800,7 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
 
-    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler = build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader)
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
         handler.handle(release_id="rel-depends-on")
 
@@ -929,46 +826,17 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
 # kind dispatch: one release may carry a dbt manifest and a python contract
 # ---------------------------------------------------------------------------
 
-def _python_entry(**overrides):
-    entry = {
-        "schema": "test_schema", "table": "py_metrics",
-        "owner": "team-py", "schedule": "daily", "criticality": "SECONDARY",
-        "script": "scripts/py_metrics.py",
-        "reads": {"orders": "select id from test_schema.orders"},
-        "output_columns": [{"name": "id", "type": "INTEGER", "nullable": False}],
-        "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
-    }
-    entry.update(overrides)
-    entry.setdefault("content_hash", content_hash_fold(
-        entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
-    return entry
-
-
-def _python_contract(tmp_path, *entries, service="service-py", name="contract.yaml"):
-    doc = {"contract_version": 1, "service": service, "nodes": list(entries)}
-    path = tmp_path / name
-    path.write_text(yaml.safe_dump(doc, sort_keys=False))
-    return str(path)
-
-
-def _source_of(*files):
-    source = create_autospec(ManifestSourcePort)
-    source.list_manifests.return_value = list(files)
-    source.manifest_count.return_value = len(files)
-    return source
-
-
 def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     """The producing CI validates before upload, so a bad entry here means a
     broken pipeline — and a silently dropped node would retire from production
     on promote."""
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry(criticality="URGENT")),
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, python_entry(criticality="URGENT")),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
@@ -977,12 +845,12 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
 @pytest.mark.parametrize("value", ["2h", 0, 10081])
 def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path, value):
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry(timeout_minutes=value)),
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, python_entry(timeout_minutes=value)),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     kwargs = publisher.publish_failed.call_args.kwargs
@@ -996,11 +864,11 @@ def test_an_empty_python_contract_fails_the_release(tmp_path):
     service on promote — the same hazard as an empty dbt manifest, so the same
     guard and the same failure_kind."""
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path), declared_service="service-py", kind=ManifestKind.PYTHON,
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
@@ -1009,12 +877,12 @@ def test_an_empty_python_contract_fails_the_release(tmp_path):
 
 def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry(), service="someone-else"),
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, python_entry(), service="someone-else"),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
@@ -1023,11 +891,11 @@ def test_an_unknown_kind_fails_the_release_permanently():
     """A kind this build cannot parse is a permanent payload error: report it so
     the operator sees a rejected release, rather than retrying forever."""
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
+    source = source_of(ManifestFile(
         path="/nonexistent", declared_service="service-x", kind="spark",
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
@@ -1041,11 +909,11 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     surface a detail about a broken dbt manifest, sending the operator
     looking at the wrong artifact entirely."""
     publisher = MagicMock()
-    source = _source_of(ManifestFile(
+    source = source_of(ManifestFile(
         path="/nonexistent", declared_service="service-x", kind="",
     ))
 
-    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
@@ -1054,15 +922,17 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
 def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
-    spec_uploader = _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
+    spec_uploader = make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _python_handler(source, publisher, spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
+    python_handler(source, publisher, spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
 
     topology = writer.nodes
-    assert [n["node_type"] for n in topology] == ["python-node"]
+    # The node's read table, test_schema.orders, is built by no node of the
+    # release, so the topology also holds it as an ingested node.
+    assert [n["node_type"] for n in topology] == ["python-node", "ingested"]
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
@@ -1070,16 +940,16 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
 
 def _published_python_topology(tmp_path, entry):
     writer = RecordingArtifactWriter()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, entry),
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, entry),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
-    _python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
+    python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
     return writer.nodes
 
 
 def test_a_python_api_secret_ref_is_published_on_its_topology_entry(tmp_path):
-    entry = _python_entry(kind="python-api", reads={}, secret_ref="continuo-api-fx")
+    entry = python_entry(kind="python-api", reads={}, secret_ref="continuo-api-fx")
     (node,) = _published_python_topology(tmp_path, entry)
     assert node["node_type"] == "python-api"
     assert node["secret_ref"] == "continuo-api-fx"
@@ -1087,19 +957,19 @@ def test_a_python_api_secret_ref_is_published_on_its_topology_entry(tmp_path):
 
 
 def test_a_node_without_a_secret_ref_publishes_no_secret_ref_key(tmp_path):
-    entry = _python_entry(kind="python-api", reads={})
+    entry = python_entry(kind="python-api", reads={})
     (node,) = _published_python_topology(tmp_path, entry)
     assert "secret_ref" not in node
 
 
 def test_a_declared_timeout_is_published_on_its_topology_entry(tmp_path):
-    entry = _python_entry(kind="python-api", reads={}, timeout_minutes=480)
+    entry = python_entry(kind="python-api", reads={}, timeout_minutes=480)
     (node,) = _published_python_topology(tmp_path, entry)
     assert node["timeout_seconds"] == 28800
 
 
 def test_a_node_without_a_timeout_publishes_no_timeout_seconds_key(tmp_path):
-    (node,) = _published_python_topology(tmp_path, _python_entry(kind="python-api", reads={}))
+    (node,) = _published_python_topology(tmp_path, python_entry(kind="python-api", reads={}))
     assert "timeout_seconds" not in node
 
 
@@ -1110,23 +980,24 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
     old = ManifestFile(
-        path=_python_contract(
-            tmp_path, _python_entry(table="py_old", kind="python-model"),
+        path=python_contract(
+            tmp_path, python_entry(table="py_old", kind="python-model"),
             service="service-old", name="old.yaml"),
         declared_service="service-old", kind=ManifestKind.PYTHON,
     )
     new = ManifestFile(
-        path=_python_contract(
-            tmp_path, _python_entry(table="py_new", kind="python-node"),
+        path=python_contract(
+            tmp_path, python_entry(table="py_new", kind="python-node"),
             service="service-new", name="new.yaml"),
         declared_service="service-new", kind=ManifestKind.PYTHON,
     )
 
-    _python_handler(_source_of(old, new), publisher, artifact_writer=writer).handle(release_id="rel-1")
+    python_handler(source_of(old, new), publisher, artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_failed.assert_not_called()
     topology = writer.nodes
     assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
+        ("test_schema.orders", "ingested"),  # the table both scripts read, built by no node
         ("test_schema.py_new", "python-node"),
         ("test_schema.py_old", "python-node"),
     ]
@@ -1145,11 +1016,11 @@ def test_dbt_test_is_published_but_not_registered_or_bundled():
     read as source)."""
     source = _make_source("manifest_with_test.json")
     publisher = MagicMock()
-    uploader = _make_uploader("s3://c/candidate.sql")
+    uploader = make_uploader("s3://c/candidate.sql")
     bundle_uploader = FakeBundleUploader()
     writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, uploader, bundle_uploader=bundle_uploader,
+    build_handler(source, publisher, uploader, bundle_uploader=bundle_uploader,
              artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()
@@ -1207,13 +1078,13 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     publisher = MagicMock()
     spec_uploader = MagicMock()
     spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
-    source = _source_of(
+    source = source_of(
         ManifestFile(path=str(FIXTURES / "manifest_service2.json"), declared_service="service-2"),
-        ManifestFile(path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON),
+        ManifestFile(path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON),
         ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_service="service-4"),
     )
 
-    dbt_uploader = _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")
+    dbt_uploader = make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")
     writer = RecordingArtifactWriter()
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
@@ -1223,6 +1094,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
             Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
         },
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
@@ -1231,9 +1103,12 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     handler.handle(release_id="rel-1")
 
     topology = {n["unique_id"]: n for n in writer.nodes}
+    # service-2's orders reads test_schema.users, which no manifest of this
+    # release builds, so users is an ingested node.
     assert set(topology) == {
-        "test_schema.orders", "test_schema.py_metrics", "test_schema.summary",
+        "test_schema.orders", "test_schema.py_metrics", "test_schema.summary", "test_schema.users",
     }
+    assert topology["test_schema.users"]["node_type"] == "ingested"
     # python reads dbt
     assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
     # dbt reads python
@@ -1256,17 +1131,18 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     needs no new key, because its parsed entry is already its raw_code."""
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
-    source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
+    source = source_of(ManifestFile(
+        path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
         artifact_writer=RecordingArtifactWriter(),
         artifact_builders={
-            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
-            Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
+            Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(make_uploader("s3://x.json")),
         },
         dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
@@ -1329,10 +1205,10 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
         ManifestFile(path=str(manifest_mixed_case), image_tag="")
     ]
     publisher = MagicMock()
-    uploader = _make_uploader()
+    uploader = make_uploader()
     writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, uploader, artifact_writer=writer)
+    handler = build_handler(source, publisher, uploader, artifact_writer=writer)
     handler.handle(release_id="rel-1")
 
     topology = {n["unique_id"]: n for n in writer.nodes}
@@ -1350,7 +1226,7 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
 
 def test_handle_returns_the_timings_of_every_stage_that_ran():
     source = _make_source("manifest_service1.json", "manifest_service2.json")
-    timings = _handler(source, MagicMock(), _make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
+    timings = build_handler(source, MagicMock(), make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
     ran = {stage: record for stage, record in timings.stages.items() if record.runs}
     assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
                         Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
@@ -1365,7 +1241,7 @@ def test_a_failed_release_times_its_publish(tmp_path):
     bad = tmp_path / "manifest.json"
     bad.write_text("{not json")
     publisher = MagicMock()
-    timings = _dispatch_handler(_source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
+    timings = dispatch_handler(source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
     publisher.publish_failed.assert_called_once()
     assert timings.stages[Stage.PUBLISH].runs == 1
 
@@ -1376,10 +1252,11 @@ def _release_lines(caplog):
 
 def test_a_release_logs_one_release_line(caplog):
     with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
-        _handler(_make_source("manifest_service1.json", "manifest_service2.json"), MagicMock(),
-                 _make_uploader()).handle(release_id="rel-1")
+        build_handler(_make_source("manifest_service1.json", "manifest_service2.json"), MagicMock(),
+                 make_uploader()).handle(release_id="rel-1")
     (line,) = _release_lines(caplog)
-    assert (line.levelno, line.release_id, line.outcome, line.nodes) == (logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0})
+    assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
+        logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
     assert line.skipped == {"no_owner": 0, "no_tag": 0, "local_stub": 0}
     assert list(line.stages_ms) == [stage.value for stage in Stage]
     assert not hasattr(line, "failure_kind")
@@ -1394,7 +1271,7 @@ def test_the_download_is_logged_before_it_starts_with_the_manifest_count(caplog)
         logged_first.append(any(r.getMessage() == "candidate: downloading manifests" for r in caplog.records)),
         [ManifestFile(path=str(FIXTURES / "manifest_service1.json"), size_bytes=1580)])[1]
     with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
-        timings = _handler(source, MagicMock(), _make_uploader()).handle(release_id="rel-1")
+        timings = build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
     (line,) = [r for r in caplog.records if r.getMessage() == "candidate: downloading manifests"]
     assert (logged_first, line.release_id, line.manifests) == ([True], "rel-1", 1)
     assert timings.stages[Stage.DOWNLOAD].counts == {"manifests": 1, "bytes": 1580}
@@ -1416,7 +1293,7 @@ def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason
     path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
                               _model("stub", tags=("local_stub",)), _model("untagged", tags=()))
     with caplog.at_level(logging.INFO):
-        timings = _handler(_source_of(ManifestFile(path=path)), MagicMock(), _make_uploader()).handle(release_id="rel-1")
+        timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
     skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
     assert [(r.levelno, r.release_id, r.service, r.node_id, r.reason) for r in skips] == [
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
@@ -1430,8 +1307,8 @@ def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(t
     path = _skipping_manifest(tmp_path, _model("a", tags=()), _model("b", tags=()))
     publisher = MagicMock()
     with caplog.at_level(logging.INFO):
-        _handler(_source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
-                 _make_uploader()).handle(release_id="rel-1")
+        build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
+                 make_uploader()).handle(release_id="rel-1")
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
     (line,) = _release_lines(caplog)
@@ -1448,7 +1325,7 @@ class _RecordingReleaseObserver:
 
 def test_the_observer_gets_each_published_release_once():
     observer = _RecordingReleaseObserver()
-    timings = _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+    timings = build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
                        observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings] and timings.outcome == ReleaseOutcome.OK
 
@@ -1456,8 +1333,8 @@ def test_the_observer_gets_each_published_release_once():
 def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
     observer = _RecordingReleaseObserver()
     path = _skipping_manifest(tmp_path, _model("a", tags=()))
-    timings = _handler(_source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
-                       _make_uploader(), observer=observer).handle(release_id="rel-1")
+    timings = build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
+                       make_uploader(), observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings]
     assert (timings.outcome, timings.failure_kind) == (ReleaseOutcome.FAILED, ParseFailureKind.INVALID_ARTIFACT)
 
@@ -1467,7 +1344,7 @@ def test_the_observer_gets_the_release_after_the_release_line_is_logged(caplog):
     observer = _RecordingReleaseObserver()
     observer.release_finished = lambda timings: lines_seen.append(len(_release_lines(caplog)))
     with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
-        _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+        build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
                  observer=observer).handle(release_id="rel-1")
     assert lines_seen == [1]
 
@@ -1475,7 +1352,7 @@ def test_the_observer_gets_the_release_after_the_release_line_is_logged(caplog):
 def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplog):
     observer = _RecordingReleaseObserver()
     outage = botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000")
-    handler = _handler(_make_source("manifest_service1.json"), MagicMock(), _make_uploader(),
+    handler = build_handler(_make_source("manifest_service1.json"), MagicMock(), make_uploader(),
                        artifact_writer=RecordingArtifactWriter(fail=outage), observer=observer)
     with caplog.at_level(logging.INFO), pytest.raises(botocore.exceptions.EndpointConnectionError):
         handler.handle(release_id="rel-1")

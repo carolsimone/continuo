@@ -57,3 +57,27 @@ func TestSingleNode_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 	_, err := runplan.SingleNode{Key: key("n"), ServiceName: "service-1"}.Select(withNode("n", "dbt-macro", count(0)))
 	assert.ErrorIs(t, err, runplan.ErrInvalidNodeType)
 }
+
+// An ingested node is a table no node builds, so it is never a task. A run
+// that names its key is refused as a run of an ingested node whatever the
+// operation, and before the service it names is compared or its data tests
+// and rebuildability are looked at: the service of an ingested node is empty,
+// so a request that names one would otherwise be a node of another service.
+func TestSingleNode_RefusesAnIngestedNode(t *testing.T) {
+	g := withIngestedUpstream(releaseGraph(e2eDAG), "table_a")
+	for _, service := range []string{"", "service-1"} {
+		for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest, model.OperationFullRefresh} {
+			_, err := runplan.SingleNode{Key: ingestedProbe, ServiceName: service, Operation: op}.Select(g)
+			require.ErrorIs(t, err, runplan.ErrIngestedNode, "service %q, operation %q", service, op)
+			assert.NotErrorIs(t, err, runplan.ErrTargetNotFound, "service %q, operation %q", service, op)
+			assert.Contains(t, err.Error(), "raw.ingest_probe")
+		}
+	}
+}
+
+// A key the release does not hold is still not found: the ingested check
+// reads the node the lookup found.
+func TestSingleNode_AnIngestedKeyOfAnotherReleaseIsNotFound(t *testing.T) {
+	_, err := runplan.SingleNode{Key: ingestedProbe, ServiceName: ""}.Select(releaseGraph(e2eDAG))
+	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
+}

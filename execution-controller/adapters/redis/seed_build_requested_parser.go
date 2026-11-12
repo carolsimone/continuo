@@ -67,6 +67,9 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 		switch {
 		case s.UniqueID == "":
 			return events.SeedBuildRequested{}, fmt.Errorf("seed[%d] missing unique_id", i)
+		case pkg_model.NodeType(s.NodeType).IsIngested():
+			return events.SeedBuildRequested{},
+				fmt.Errorf("seed[%d] (%s) is an ingested node: nothing builds it", i, s.UniqueID)
 		case s.ServiceName == "":
 			return events.SeedBuildRequested{}, fmt.Errorf("seed[%d] (%s) missing service_name", i, s.UniqueID)
 		case s.SchemaName == "":

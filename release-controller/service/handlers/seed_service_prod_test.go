@@ -97,6 +97,31 @@ func TestSeedServiceProd_SkipsNodesWithEmptyServiceName(t *testing.T) {
 	assert.Equal(t, 1, n, "node with empty service_name must be skipped")
 }
 
+// An ingested node belongs to no service, so it never gets a service_prod
+// pointer and never asks for a manifest key.
+func TestSeedServiceProd_SkipsAnIngestedNode(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", NodeType: "ingested"},
+		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+	)
+	existingKeys := map[string]string{
+		"service-1": "s3://bucket/service-1/manifest.json",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only service-1 is a service")
+	pointers, err := repo.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, pointers, 1, "no pointer is written for the ingested node")
+	assert.Equal(t, "service-1", pointers[0].ServiceName())
+}
+
 func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 

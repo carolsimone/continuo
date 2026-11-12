@@ -531,6 +531,164 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 	assert.False(t, hasDeferURI, "defer_state_uri must not appear in validation.requested:v1")
 }
 
+// ingestedProbeNode is the node topology-controller writes for a table a
+// reader names and no node builds.
+func ingestedProbeNode() release.Node {
+	return release.Node{
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
+		ResolvedRelationID: "raw.ingest_probe", NodeType: "ingested",
+		UpstreamUniqueIDs: []string{},
+	}
+}
+
+// TestHandleParsedManifest_IngestedUpstreamIsNotValidated pins that an ingested
+// table a changed reader names is not part of the validation request: nothing
+// builds it, so it is neither cloned from production nor built from SQL, and
+// the reader is the only node validated.
+func TestHandleParsedManifest_IngestedUpstreamIsNotValidated(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	seedProd(t, deps, store, "prev", release.Topology{
+		{UniqueID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h1", UpstreamUniqueIDs: []string{}},
+	}, time.Unix(50, 0).UTC())
+
+	topo := release.Topology{
+		ingestedProbeNode(),
+		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, []string{"a.m"}, r.ValidationNodeIDs())
+
+	nodes := decodeValidationRequestedNodes(t, store)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, "a.m", nodes[0]["unique_id"])
+	assert.Equal(t, "build_from_sql", nodes[0]["validation_op"])
+	assert.Empty(t, nodes[0]["upstream_node_ids"], "the ingested edge gates nothing")
+	for _, n := range nodes {
+		assert.NotEqual(t, "ingested", n["node_type"])
+	}
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &raw))
+	var order []string
+	require.NoError(t, json.Unmarshal(raw["node_ids_in_order"], &order))
+	assert.Equal(t, []string{"a.m"}, order)
+}
+
+// TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated pins the move
+// from an ingested table to a built one: production holds raw.x as an ingested
+// node read by a.m, the candidate builds raw.x, so raw.x is a new node with
+// content, is built from its SQL together with its reader, and no ingested node
+// is part of the request.
+func TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	seedProd(t, deps, store, "prev", release.Topology{
+		{UniqueID: "raw.x", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h1", UpstreamUniqueIDs: []string{"raw.x"}},
+	}, time.Unix(50, 0).UTC())
+
+	topo := release.Topology{
+		{UniqueID: "raw.x", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h2", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h1", UpstreamUniqueIDs: []string{"raw.x"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
+
+	nodes := decodeValidationRequestedNodes(t, store)
+	byID := indexNodesByUniqueID(t, nodes)
+	require.Len(t, byID, 2)
+	for _, id := range []string{"raw.x", "a.m"} {
+		require.Contains(t, byID, id)
+		assert.Equal(t, "build_from_sql", byID[id]["validation_op"], id)
+	}
+	for _, n := range nodes {
+		assert.NotEqual(t, "ingested", n["node_type"])
+	}
+}
+
+// TestHandleParsedManifest_IngestedNodeAloneIsNothingToValidate pins the first
+// release that carries an ingested node: its reader is unchanged and the
+// ingested node is new, yet nothing is validated. The release promotes at once,
+// the promoted topology still holds the ingested node, and the promotion names
+// no changed node.
+func TestHandleParsedManifest_IngestedNodeAloneIsNothingToValidate(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	reader := release.Node{UniqueID: "a.m", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h1", UpstreamUniqueIDs: []string{}}
+	seedProd(t, deps, store, "prev", release.Topology{reader}, time.Unix(50, 0).UTC())
+
+	reader.UpstreamUniqueIDs = []string{"raw.ingest_probe"}
+	topo := release.Topology{ingestedProbeNode(), reader}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName)
+		assert.NotEqual(t, streams.SeedBuildRequestedV1, e.StreamName)
+	}
+
+	var promoted map[string]any
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV2).Payload, &promoted))
+	assert.Empty(t, promoted["changed_node_ids"], "an ingested node is never a changed node")
+
+	cp := store.GetCurrentProd()
+	assert.Equal(t, "rA", cp.ReleaseID())
+	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	require.NoError(t, err)
+	assert.Equal(t, byID(topo), byID(prodTopo), "the ingested node stays in current_prod")
+}
+
+// TestHandleParsedManifest_IngestedNodeIsNotADuplicateOfABuiltTable pins that
+// the duplicate-table gate skips an ingested node: a node that resolves to the
+// ingested node's table does not reject the release.
+func TestHandleParsedManifest_IngestedNodeIsNotADuplicateOfABuiltTable(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		ingestedProbeNode(),
+		{UniqueID: "a.m", SchemaName: "a", TableName: "m", ResolvedRelationID: "raw.ingest_probe", ServiceName: "svc-a", NodeType: "dbt-model",
+			ContentHash: "h", UpstreamUniqueIDs: []string{}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "a bootstrap release carrying an ingested node promotes")
+}
+
+func byID(topo release.Topology) map[string]release.Node {
+	out := make(map[string]release.Node, len(topo))
+	for _, n := range topo {
+		out[n.UniqueID] = n
+	}
+	return out
+}
+
 // findEntry returns the single outbox entry on the given stream, failing if
 // there is not exactly one.
 func findEntry(t *testing.T, store *fakeStore, stream string) *pkgoutbox.Entry {

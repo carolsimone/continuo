@@ -17,7 +17,8 @@ type Seeds struct {
 var _ Selector = Seeds{}
 
 // Select refuses an empty set (ErrEmptySelection), a key g does not hold
-// (ErrTargetNotFound) and an undeclared node type (ErrInvalidNodeType).
+// (ErrTargetNotFound), an ingested node (ErrIngestedNode) and an undeclared
+// node type (ErrInvalidNodeType).
 func (s Seeds) Select(g topology.Graph) (Plan, error) {
 	if len(s.Keys) == 0 {
 		return Plan{}, ErrEmptySelection

@@ -103,6 +103,74 @@ def test_supported_engines_match_the_chart(monkeypatch):
     assert set(_ENGINE_DIALECTS) == {"postgres", "trino"}
 
 
+def test_system_relations_cover_exactly_the_supported_engines():
+    """Every engine with a dialect also has a system-relation list, and the
+    chart accepts no other engine, so an ingested table is never judged against
+    another engine's catalog."""
+    from config.config import _ENGINE_DIALECTS, _SYSTEM_RELATIONS
+    assert set(_SYSTEM_RELATIONS) == set(_ENGINE_DIALECTS) == {"postgres", "trino"}
+
+
+def test_an_unknown_engine_has_no_system_relations(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_ENGINE", "duckdb")
+    from config.config import warehouse_system_relations
+    with pytest.raises(RuntimeError, match="unsupported WAREHOUSE_ENGINE"):
+        warehouse_system_relations()
+
+
+@pytest.mark.parametrize("engine", ["postgres", "trino"])
+def test_system_relations_for_returns_the_engines_own_entry(engine):
+    """The lookup returns the entry of the engine it is asked for, not another
+    engine's, whatever the environment says."""
+    from config.config import _SYSTEM_RELATIONS, system_relations_for
+    assert system_relations_for(engine) is _SYSTEM_RELATIONS[engine]
+
+
+def test_system_relations_for_an_unknown_engine_names_it():
+    from config.config import system_relations_for
+    with pytest.raises(RuntimeError, match="unsupported WAREHOUSE_ENGINE 'duckdb'"):
+        system_relations_for("duckdb")
+
+
+@pytest.mark.parametrize("raw", [None, ""])
+def test_system_relations_default_to_postgres(monkeypatch, raw):
+    """An unset or empty engine reads as postgres, as warehouse_dialect does."""
+    if raw is None:
+        monkeypatch.delenv("WAREHOUSE_ENGINE", raising=False)
+    else:
+        monkeypatch.setenv("WAREHOUSE_ENGINE", raw)
+    from config.config import _SYSTEM_RELATIONS, warehouse_system_relations
+    assert warehouse_system_relations() is _SYSTEM_RELATIONS["postgres"]
+
+
+@pytest.mark.parametrize("engine", ["postgres", "trino"])
+def test_system_relations_follow_the_configured_engine(monkeypatch, engine):
+    monkeypatch.setenv("WAREHOUSE_ENGINE", engine)
+    from config.config import _SYSTEM_RELATIONS, warehouse_system_relations
+    assert warehouse_system_relations() is _SYSTEM_RELATIONS[engine]
+
+
+def test_validate_requires_system_relations_for_the_configured_engine(monkeypatch):
+    """validate() resolves the system relations, so an engine that has a
+    dialect but no system-relation list stops the service at startup."""
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("WAREHOUSE_ENGINE", "trino")
+
+    from config import config
+    monkeypatch.setattr(
+        config, "_SYSTEM_RELATIONS", {"postgres": config._SYSTEM_RELATIONS["postgres"]},
+    )
+    with pytest.raises(RuntimeError, match="unsupported WAREHOUSE_ENGINE 'trino'"):
+        config.validate()
+
+
 def test_release_requested_stream_constant_sourced_from_contract():
     from streams_contract import (
         RELEASE_REQUESTED_V1,
