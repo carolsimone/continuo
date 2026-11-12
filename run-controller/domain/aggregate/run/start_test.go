@@ -10,6 +10,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -333,4 +335,204 @@ func TestTaskIDFor_IsStableAndNamesOneTaskPerRunAndNode(t *testing.T) {
 	assert.NotEqual(t, id, run.TaskIDFor("default", runID, "e2e_schema.ftable_d"))
 	assert.NotEqual(t, id, run.TaskIDFor("default", uuid.New(), "e2e_schema.ftable_c"))
 	assert.NotEqual(t, id, run.TaskIDFor("other", runID, "e2e_schema.ftable_c"))
+}
+
+// fxNode is the node table of the fx release, of type nodeType, materialized
+// as materialized.
+func fxNode(table string, nodeType model.NodeType, materialized string) topology.Node {
+	return topology.Node{Key: topology.KeyOf("analytics", table), ServiceName: "finance", SchemaName: "analytics",
+		TableName: table, NodeType: string(nodeType), Materialized: materialized, ImageTag: "finance:3", ScheduleName: "fx"}
+}
+
+// fxGraph is the fx release: analytics.seed_fx_rates_eur is a seed that the
+// view analytics.fx_rates_current and the table analytics.fx_transactions_eur
+// read. extra are nodes of the release that read nothing.
+func fxGraph(extra ...topology.Node) topology.Graph {
+	seed := topology.KeyOf("analytics", "seed_fx_rates_eur")
+	return topology.NewGraph(append([]topology.Node{
+		fxNode("seed_fx_rates_eur", model.NodeTypeDbtSeed, "seed"),
+		fxNode("fx_rates_current", model.NodeTypeDbtModel, "view"),
+		fxNode("fx_transactions_eur", model.NodeTypeDbtModel, "table"),
+	}, extra...), []topology.Edge{
+		{Upstream: seed, Downstream: topology.KeyOf("analytics", "fx_rates_current")},
+		{Upstream: seed, Downstream: topology.KeyOf("analytics", "fx_transactions_eur")},
+	})
+}
+
+// checkPreflight is the check-mode preflight of the seed's load on a
+// schema_bound engine, which allows the view the run rebuilds.
+func checkPreflight() *seedreload.Preflight {
+	return &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
+}
+
+// fxReloadPlan is the plan of a load of the seed that drops its table: the
+// seed loads with a full refresh and a preflight, and the view it drops is
+// rebuilt after it.
+func fxReloadPlan(pf *seedreload.Preflight) runplan.Plan {
+	full := model.OperationFullRefresh
+	return runplan.Plan{Tasks: []runplan.PlannedTask{
+		{Key: "analytics.fx_rates_current", Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur", RebuildOf: "analytics.seed_fx_rates_eur"},
+		{Key: "analytics.seed_fx_rates_eur", Operation: &full, Reason: "columns changed", Preflight: pf},
+	}, Ready: []topology.NodeKey{"analytics.seed_fx_rates_eur"}}
+}
+
+// promotedSeedsRun is a pending promote-seed run on the fx release, which
+// names no operation, with an empty task collection.
+func promotedSeedsRun(t *testing.T) (*run.Run, *fakeTaskCollection) {
+	t.Helper()
+	r, err := run.NewPromotedSeedsRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-ab12cd34",
+		run.ReleaseStamp{ReleaseID: "R7", PromotionSeq: 7}, startNow)
+	require.NoError(t, err)
+	tc := newFakeTaskCollection()
+	tc.derived = true
+	return r, tc
+}
+
+// scheduleRun is a pending cron run of the fx schedule, with an empty task
+// collection.
+func scheduleRun(t *testing.T) (*run.Run, *fakeTaskCollection) {
+	t.Helper()
+	r, err := run.NewPendingRun(pkgevents.DefaultTenantID, uuid.New(), "fx", run.KindCron, nil, identity.SystemUserID,
+		model.OperationRun, run.ReleaseStamp{ReleaseID: "R7", PromotionSeq: 7}, startNow)
+	require.NoError(t, err)
+	tc := newFakeTaskCollection()
+	tc.derived = true
+	return r, tc
+}
+
+// dispatchesOf returns the TaskDispatched events of events, in order.
+func dispatchesOf(events []run.DomainEvent) []run.TaskDispatched {
+	var out []run.TaskDispatched
+	for _, e := range events {
+		if d, ok := e.(run.TaskDispatched); ok {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// onlyDispatch returns the one TaskDispatched of events.
+func onlyDispatch(t *testing.T, events []run.DomainEvent) run.TaskDispatched {
+	t.Helper()
+	d := dispatchesOf(events)
+	require.Len(t, d, 1)
+	return d[0]
+}
+
+// refusalsOf returns the TaskRefused events of events, in order.
+func refusalsOf(events []run.DomainEvent) []run.TaskRefused {
+	var out []run.TaskRefused
+	for _, e := range events {
+		if d, ok := e.(run.TaskRefused); ok {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// Each task is stored with its own operation, plan reason and seed preflight,
+// and the run's operation where the plan names none; the dispatch of the seed
+// carries its own.
+func TestStart_StampsEachTasksOwnOperationReasonAndPreflight(t *testing.T) {
+	pf := checkPreflight()
+	r, tc := promotedSeedsRun(t)
+
+	events, err := r.Start(context.Background(), tc, fxReloadPlan(pf), fxGraph(), taskDefaults, startNow)
+	require.NoError(t, err)
+
+	tasks := createdByKey(tc)
+	seed, view := tasks["analytics.seed_fx_rates_eur"], tasks["analytics.fx_rates_current"]
+	assert.Equal(t, model.OperationFullRefresh, seed.Operation)
+	assert.Equal(t, "columns changed", seed.PlanReason)
+	assert.Equal(t, pf, seed.SeedPreflight)
+	assert.Empty(t, seed.RebuildOf)
+	assert.Equal(t, model.OperationRun, view.Operation)
+	assert.Equal(t, "rebuild: dropped by the load of analytics.seed_fx_rates_eur", view.PlanReason)
+	assert.Nil(t, view.SeedPreflight)
+	assert.Equal(t, topology.NodeKey("analytics.seed_fx_rates_eur"), view.RebuildOf)
+	d := onlyDispatch(t, events)
+	assert.Equal(t, seed.TaskID, d.TaskID)
+	assert.Equal(t, model.OperationFullRefresh, d.Operation)
+	assert.Equal(t, "columns changed", d.Reason)
+	assert.Equal(t, pf, d.Preflight)
+	assert.Empty(t, refusalsOf(events))
+}
+
+// A seed the planner refused is stored failed, with an attempt 0 that names
+// the refusal and was never dispatched; the task that reads it is stored
+// skipped; nothing is dispatched, the refusal is recorded, and with every task
+// ended the run fails at once.
+func TestStart_StoresARefusedSeedFailedAndSkipsWhatReadsIt(t *testing.T) {
+	full := model.OperationFullRefresh
+	reason := "columns changed; +full_refresh: false keeps the table, so no command can apply the change"
+	plan := runplan.Plan{Tasks: []runplan.PlannedTask{
+		{Key: "analytics.fx_transactions_eur"},
+		{Key: "analytics.seed_fx_rates_eur", Operation: &full, Reason: reason, Refusal: model.FailureReasonSeedFullRefreshDisabled},
+	}}
+	r, tc := scheduleRun(t)
+
+	events, err := r.Start(context.Background(), tc, plan, fxGraph(), taskDefaults, startNow)
+	require.NoError(t, err)
+
+	tasks := createdByKey(tc)
+	seed := tasks["analytics.seed_fx_rates_eur"]
+	assert.Equal(t, run.TaskStatusFailed, seed.Status)
+	assert.Nil(t, seed.DispatchedAt)
+	a, ok := tc.attemptRows[attemptKey{seed.TaskID, 0}]
+	require.True(t, ok, "the refused seed has its attempt 0")
+	assert.Equal(t, run.AttemptFailed, a.Status)
+	assert.Equal(t, "invalid", *a.FailureClass)
+	assert.Equal(t, "seed_full_refresh_disabled", *a.FailureReason)
+	assert.Equal(t, reason, *a.ErrorMessage)
+	assert.Equal(t, seed.JobName, a.JobName)
+	assert.Nil(t, a.DispatchedAt)
+	require.NotNil(t, a.FinishedAt)
+	assert.Equal(t, startNow, *a.FinishedAt)
+	assert.Equal(t, run.TaskStatusSkipped, tasks["analytics.fx_transactions_eur"].Status)
+	assert.Empty(t, dispatchesOf(events))
+	assert.Empty(t, tc.leaseTakes, "a refused or skipped task claims no lease")
+	assert.Equal(t, []run.TaskRefused{{ID: r.RunID(), TenantID: r.TenantID(), TaskID: seed.TaskID,
+		Key: "analytics.seed_fx_rates_eur", Operation: model.OperationFullRefresh,
+		Reason: model.FailureReasonSeedFullRefreshDisabled, Detail: reason}}, refusalsOf(events))
+	assert.Equal(t, run.RunStatusFailed, r.Status())
+	assert.Equal(t, int32(2), r.TerminalTaskCount())
+	assert.Nil(t, r.FailureReason(), "a run that failed because a task failed records no run failure reason")
+}
+
+// A refused seed skips only what reads it: the other ready task is dispatched
+// and the run keeps running.
+func TestStart_ARefusedSeedLeavesTheRestOfTheRunRunning(t *testing.T) {
+	full := model.OperationFullRefresh
+	g := fxGraph(fxNode("fx_calendar", model.NodeTypeDbtModel, "table"))
+	plan := runplan.Plan{Tasks: []runplan.PlannedTask{
+		{Key: "analytics.fx_calendar"},
+		{Key: "analytics.fx_transactions_eur"},
+		{Key: "analytics.seed_fx_rates_eur", Operation: &full, Reason: "r", Refusal: model.FailureReasonSeedFullRefreshDisabled},
+	}, Ready: []topology.NodeKey{"analytics.fx_calendar"}}
+	r, tc := scheduleRun(t)
+
+	events, err := r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, createdByKey(tc)["analytics.fx_calendar"].TaskID, onlyDispatch(t, events).TaskID)
+	assert.Len(t, refusalsOf(events), 1)
+	assert.Equal(t, run.RunStatusRunning, r.Status())
+	assert.Equal(t, int32(2), r.TerminalTaskCount())
+}
+
+// A plan whose ready list names a refused task, or a task below one, is
+// refused before anything is stored.
+func TestStart_RefusesAReadyTaskThePlanRefusedOrBlocked(t *testing.T) {
+	full := model.OperationFullRefresh
+	for _, ready := range []topology.NodeKey{"analytics.seed_fx_rates_eur", "analytics.fx_transactions_eur"} {
+		plan := runplan.Plan{Tasks: []runplan.PlannedTask{
+			{Key: "analytics.fx_transactions_eur"},
+			{Key: "analytics.seed_fx_rates_eur", Operation: &full, Refusal: model.FailureReasonSeedFullRefreshDisabled},
+		}, Ready: []topology.NodeKey{ready}}
+		r, tc := scheduleRun(t)
+		_, err := r.Start(context.Background(), tc, plan, fxGraph(), taskDefaults, startNow)
+		assert.ErrorIs(t, err, run.ErrPlanReadyNotPending, ready)
+		assert.Empty(t, tc.bulkCreated, ready)
+	}
 }

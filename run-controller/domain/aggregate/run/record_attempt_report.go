@@ -181,8 +181,8 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 
 // dispatchNextAttempt adds the attempt after the task's current one,
 // dispatched and due for its first check, makes the task dispatched at it and
-// records its TaskDispatched, built from the node the run's release holds. The
-// task keeps the write lease it holds on its node.
+// records its TaskDispatched, built from the node the run's release holds and
+// the task's stored spec. The task keeps the write lease it holds on its node.
 func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID,
 	task TaskAttemptState, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	node, found, err := graph.Node(ctx, r.release.ReleaseID, task.NodeKey)
@@ -204,7 +204,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 	if err := r.moveTask(ctx, tasks, taskID, TaskStatusDispatched, next, now); err != nil {
 		return nil, err
 	}
-	return []DomainEvent{r.dispatchEvent(taskID, next, node, jobName, d)}, nil
+	return []DomainEvent{r.dispatchEvent(taskID, next, node, jobName, task.Spec, d)}, nil
 }
 
 // finalizeWhenEveryTaskEnded finalizes r when every task has ended, the plan

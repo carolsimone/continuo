@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -28,9 +29,24 @@ type Task struct {
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
 	Operation           model.Operation
+	// PlanReason says why the task runs with its operation; empty when its
+	// plan stated none.
+	PlanReason string
+	// SeedPreflight is the check a seed's pod runs before a load that drops
+	// its table; nil on every other task.
+	SeedPreflight *seedreload.Preflight
+	// RebuildOf is the seed whose load drops the relation this task
+	// rebuilds; empty on every other task.
+	RebuildOf topology.NodeKey
 	// DispatchedAt is when the task's dispatch was written; nil until then,
 	// and always nil on an inherited task, which is never dispatched.
 	DispatchedAt *time.Time
+}
+
+// Spec is what every dispatch of t carries: its operation, plan reason and
+// seed preflight.
+func (t Task) Spec() DispatchSpec {
+	return DispatchSpec{Operation: t.Operation, Reason: t.PlanReason, Preflight: t.SeedPreflight}
 }
 
 // Node returns the (service, schema, table) triple identifying which model

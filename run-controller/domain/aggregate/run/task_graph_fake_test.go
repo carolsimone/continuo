@@ -59,7 +59,7 @@ func (m *memTaskGraph) ReadyCandidates(_ context.Context, _ uuid.UUID, _ string,
 		}
 		n, _ := m.g.Node(d)
 		out = append(out, run.ReadyCandidate{
-			TaskID: t.TaskID, Node: n, JobName: t.JobName,
+			TaskID: t.TaskID, Node: n, JobName: t.JobName, Spec: t.Spec(),
 			UpstreamStatuses: upstream,
 		})
 	}

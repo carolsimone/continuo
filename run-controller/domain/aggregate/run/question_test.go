@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -16,7 +18,7 @@ func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 	declared := 5400
 	q := Question{RunID: uuid.New(), ScheduleName: "daily", TaskID: uuid.New(), Attempt: 1, Status: AttemptDispatched,
 		ChecksSent: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1", Node: topology.Node{Key: "sch.tbl", TimeoutSeconds: &declared},
-		Operation: model.OperationRun}
+		Spec: DispatchSpec{Operation: model.OperationRun}}
 
 	d, next := q.Dispatch(TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour})
 
@@ -28,6 +30,21 @@ func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 	d, next = q.Dispatch(TaskDefaults{Timeout: 24 * time.Hour})
 	assert.Equal(t, AttemptRunning, d.KnownStatus)
 	assert.Equal(t, 30*time.Minute, next)
+}
+
+// A question about a seed's attempt carries the task's own operation, plan
+// reason and preflight, as the attempt's first dispatch did.
+func TestQuestion_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
+	spec := DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed",
+		Preflight: &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+			Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}}
+
+	d, _ := Question{RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1, Status: AttemptDispatched, Spec: spec}.
+		Dispatch(TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour})
+
+	assert.Equal(t, spec.Operation, d.Operation)
+	assert.Equal(t, spec.Reason, d.Reason)
+	assert.Equal(t, spec.Preflight, d.Preflight)
 }
 
 // A stop question is the run's cancel again, naming every attempt run-controller still

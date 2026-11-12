@@ -616,3 +616,66 @@ func removeID(ids []uuid.UUID, id uuid.UUID) []uuid.UUID {
 	}
 	return out
 }
+
+// runningSeedTask starts a promote-seed run whose one task loads the seed with
+// spec, holding its retry budget of 2: the seed is dispatched at attempt 0.
+func runningSeedTask(t *testing.T, spec run.DispatchSpec) (*run.Run, *fakeTaskCollection, *memTaskGraph) {
+	t.Helper()
+	r, tc := promotedSeedsRun(t)
+	g := fxGraph()
+	op := spec.Operation
+	plan := runplan.Plan{Tasks: []runplan.PlannedTask{
+		{Key: "analytics.seed_fx_rates_eur", Operation: &op, Reason: spec.Reason, Preflight: spec.Preflight},
+	}, Ready: []topology.NodeKey{"analytics.seed_fx_rates_eur"}}
+	_, err := r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
+	require.NoError(t, err)
+	return r, tc, &memTaskGraph{g: g, tc: tc}
+}
+
+// seedTaskOf is the task of r that loads the fx seed.
+func seedTaskOf(r *run.Run) uuid.UUID {
+	return run.TaskIDFor(r.TenantID(), r.RunID(), "analytics.seed_fx_rates_eur")
+}
+
+// The retry of a seed's load carries the task's own operation, plan reason
+// and preflight, not the run's operation.
+func TestRecordAttemptReport_ARetryKeepsTheTasksDispatchSpec(t *testing.T) {
+	spec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", Preflight: checkPreflight()}
+	r, tc, g := runningSeedTask(t, spec)
+
+	events, _, err := r.RecordAttemptReport(context.Background(), tc, g, run.AttemptReport{TaskID: seedTaskOf(r), Attempt: 0,
+		Status: run.AttemptFailed, FailureReason: model.FailureReasonWarehouseUnreachable}, taskDefaults, reportAt)
+	require.NoError(t, err)
+
+	d := onlyDispatch(t, events)
+	assert.Equal(t, int32(1), d.Attempt)
+	assert.Equal(t, spec.Operation, d.Operation)
+	assert.Equal(t, spec.Reason, d.Reason)
+	assert.Equal(t, spec.Preflight, d.Preflight)
+}
+
+// The success of the seed dispatches the view it rebuilds with the view's own
+// spec: the run's operation, its rebuild reason and no preflight.
+func TestRecordAttemptReport_DispatchesEachReadyCandidateWithItsSpec(t *testing.T) {
+	r, tc := promotedSeedsRun(t)
+	g := &memTaskGraph{g: fxGraph(), tc: tc}
+	_, err := r.Start(context.Background(), tc, fxReloadPlan(checkPreflight()), g.g, taskDefaults, startNow)
+	require.NoError(t, err)
+	view := createdByKey(tc)["analytics.fx_rates_current"]
+	candidates, err := g.ReadyCandidates(context.Background(), r.RunID(), r.ReleaseID(), "analytics.seed_fx_rates_eur")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, run.DispatchSpec{Operation: model.OperationRun, Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur"},
+		candidates[0].Spec)
+
+	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: seedTaskOf(r), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+	require.NoError(t, err)
+
+	assert.True(t, succeeded)
+	d := onlyDispatch(t, events)
+	assert.Equal(t, view.TaskID, d.TaskID)
+	assert.Equal(t, model.OperationRun, d.Operation)
+	assert.Equal(t, "rebuild: dropped by the load of analytics.seed_fx_rates_eur", d.Reason)
+	assert.Nil(t, d.Preflight)
+}

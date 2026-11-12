@@ -129,6 +129,79 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	assert.True(t, now.Equal(*loaded.PlannedAt()))
 }
 
+// A run whose plan refused ftable_a commits ftable_a failed, with its attempt 0
+// failed naming the refusal and no next check, every task below it skipped and
+// no dispatch of them; the tasks that do not read it run.
+func TestStartedRun_StoresARefusedTaskFailedAndSkipsWhatReadsIt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	g := failureGraph()
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	require.NoError(t, err)
+	for i, p := range plan.Tasks {
+		if p.Key == "e2e_schema.ftable_a" {
+			plan.Tasks[i].Reason = "columns changed; +full_refresh: false keeps the table, so no command can apply the change"
+			plan.Tasks[i].Refusal = model.FailureReasonSeedFullRefreshDisabled
+		}
+	}
+	plan.Ready = []topology.NodeKey{"e2e_schema.ftable_b"}
+	r := newStartRun(t, db, now)
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+	events, err := r.Start(ctx, u.TaskCollection(pkgevents.DefaultTenantID), plan, g, testTaskDefaults, now)
+	require.NoError(t, err)
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+	require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
+	require.NoError(t, u.Commit())
+
+	var statuses []struct {
+		NodeKey string `db:"node_key"`
+		Status  string `db:"status"`
+	}
+	require.NoError(t, db.Select(&statuses, `SELECT node_key, status FROM tasks WHERE run_id = $1 ORDER BY node_key`, r.RunID()))
+	byKey := map[string]string{}
+	for _, s := range statuses {
+		byKey[s.NodeKey] = s.Status
+	}
+	assert.Equal(t, map[string]string{
+		"e2e_schema.ftable_a": "failed", "e2e_schema.ftable_b": "dispatched", "e2e_schema.ftable_c": "skipped",
+		"e2e_schema.ftable_d": "skipped", "e2e_schema.ftable_e": "skipped", "e2e_schema.ftable_f": "skipped",
+		"e2e_schema.ftable_g": "skipped", "e2e_schema.ftable_h": "skipped",
+	}, byKey)
+
+	var attempt struct {
+		Status        string     `db:"status"`
+		FailureClass  string     `db:"failure_class"`
+		FailureReason string     `db:"failure_reason"`
+		ErrorMessage  string     `db:"error_message"`
+		FinishedAt    *time.Time `db:"finished_at"`
+		NextCheckAt   *time.Time `db:"next_check_at"`
+	}
+	require.NoError(t, db.Get(&attempt, `
+		SELECT status, failure_class, failure_reason, error_message, finished_at, next_check_at
+		FROM task_attempts WHERE task_id = $1 AND attempt = 0`,
+		run.TaskIDFor(pkgevents.DefaultTenantID, r.RunID(), "e2e_schema.ftable_a")))
+	assert.Equal(t, "failed", attempt.Status)
+	assert.Equal(t, "invalid", attempt.FailureClass)
+	assert.Equal(t, "seed_full_refresh_disabled", attempt.FailureReason)
+	assert.Equal(t, "columns changed; +full_refresh: false keeps the table, so no command can apply the change", attempt.ErrorMessage)
+	require.NotNil(t, attempt.FinishedAt)
+	assert.True(t, now.Equal(*attempt.FinishedAt))
+	assert.Nil(t, attempt.NextCheckAt, "a refused attempt is never asked about")
+
+	var dispatched []string
+	require.NoError(t, db.Select(&dispatched, `
+		SELECT payload->'payload'->>'table_name' FROM run_controller_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2`, r.RunID(), streams.TaskDispatchV1))
+	assert.Equal(t, []string{"ftable_b"}, dispatched)
+	var terminal int32
+	require.NoError(t, db.Get(&terminal, `SELECT terminal_task_count FROM runs WHERE run_id = $1`, r.RunID()))
+	assert.Equal(t, int32(7), terminal)
+}
+
 // A task row names its run, so a run must be saved before it is started: tasks
 // of a run with no row are refused by the foreign key and the transaction
 // stores nothing.

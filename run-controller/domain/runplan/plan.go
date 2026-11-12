@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -18,6 +19,22 @@ type PlannedTask struct {
 	// InheritedFrom when it was itself inherited, else the source task.
 	// uuid.Nil when Inherited is false.
 	InheritedFrom uuid.UUID
+	// Operation is the dbt verb the task applies to its node; nil keeps the
+	// run's.
+	Operation *model.Operation
+	// Reason says why the task runs with its operation; empty when the plan
+	// states none.
+	Reason string
+	// Preflight is the check a seed's load runs before it drops its table;
+	// nil on every other task.
+	Preflight *seedreload.Preflight
+	// RebuildOf is the seed whose load drops the relation this task
+	// rebuilds; empty on every other task.
+	RebuildOf topology.NodeKey
+	// Refusal is why the planner refused the task, which never runs: the
+	// run stores it failed and skips every pending task below it. Empty on a
+	// task the run may run.
+	Refusal model.FailureReason
 }
 
 // Plan is the selection for one run.

@@ -64,6 +64,10 @@ type TaskRow struct {
 	DispatchedAt        *time.Time     `json:"dispatched_at,omitempty" db:"dispatched_at"`
 	WaitReason          *string        `json:"wait_reason,omitempty" db:"wait_reason"`
 	LeaseWaitSince      *time.Time     `json:"lease_wait_since,omitempty" db:"lease_wait_since"`
+	PlanReason          string         `json:"plan_reason" db:"plan_reason"`
+	// SeedPreflight is the jsonb of seed_preflight as text; nil when NULL.
+	SeedPreflight  *string `json:"seed_preflight,omitempty" db:"seed_preflight"`
+	RebuildSeedKey string  `json:"rebuild_seed_key" db:"rebuild_seed_key"`
 	// WaitingOnRunID is not a column: it is the run whose task holds the node
 	// lease this task waits for, read by the task reads (GetByID,
 	// GetByRunAndNode, ListByRunID); nil when the task waits for no
