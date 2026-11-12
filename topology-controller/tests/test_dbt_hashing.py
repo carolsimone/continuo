@@ -573,9 +573,22 @@ def test_a_bare_call_from_a_package_node_runs_the_package_macro_before_the_root_
     assert resolve_name("cents", "fpshop", ctx) == ("macro.fpshop.cents",)
     assert resolve_name("cents", "dbt", ctx) == ("macro.fpshop.cents",)
     other = _project([_macro("macro.pkg_a.cents"), _macro("macro.pkg_b.cents"), _macro("macro.dbt.cents")])
-    assert resolve_name("cents", "svc", other) == ("macro.pkg_a.cents", "macro.pkg_b.cents")
+    assert resolve_name("cents", "svc", other) == ("macro.pkg_a.cents", "macro.pkg_b.cents", "macro.dbt.cents")
+    assert resolve_name("cents", "svc", _project([_macro("macro.pkg_a.cents")])) == ("macro.pkg_a.cents",)
     assert resolve_name("cents", "svc", _project([_macro("macro.dbt_postgres.cents"), _macro("macro.dbt.cents")])) == (
         "macro.dbt_postgres.cents",)
+
+
+def test_a_bare_call_an_imported_package_also_defines_still_reaches_the_built_in_and_its_root_override():
+    ctx = _project([
+        _macro("macro.dbt.is_incremental"),
+        _macro("macro.dbt.dateadd", deps=("macro.dbt_postgres.postgres__dateadd",)),
+        _macro("macro.dbt_postgres.postgres__dateadd"),
+        _macro("macro.fpshop.postgres__dateadd"),
+        _macro("macro.dbt_utils.dateadd"),
+    ])
+    node = _node(raw_code="select 1 {% if is_incremental() %}{{ dateadd('day', 1, 'x') }}{% endif %}")
+    assert macro_closure(node, ctx) == {"macro.fpshop.postgres__dateadd", "macro.dbt_utils.dateadd"}
 
 
 def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path):

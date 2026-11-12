@@ -64,9 +64,9 @@ func New(uowFactory func() uow.UnitOfWork, maintenance bool, tasks run.TaskDefau
 //
 // A rebaseline promotion records every seed of the release as loaded at its
 // content and column fingerprint (and warns when it is also the first
-// promotion, whose seeds were never loaded). Otherwise the first promotion run-controller
-// applies records the seeds it adopts as already loaded. A pass over the new
-// live release follows every move.
+// promotion, whose seeds were never loaded). Otherwise the first promotion
+// run-controller applies records the seeds it adopts as already loaded. A pass
+// over the new live release follows every move.
 func (r *Reconciler) AfterPromotion(ctx context.Context, u uow.UnitOfWork, t ports.PromotionTrigger) error {
 	if t.Outcome != topology.PointerMoved {
 		return nil

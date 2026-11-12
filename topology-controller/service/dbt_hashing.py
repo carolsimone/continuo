@@ -87,9 +87,9 @@ class ManifestContext:
     `builtin_packages` are dbt's own (`dbt`, `dbt_<adapter_type>`): their macros
     are walked but never folded. They assume the adapter has no parent adapter
     whose package dbt also loads as internal (dbt-postgres and dbt-trino have
-    none); an adapter built on another one would have that package's macros folded. `unit_tests_by_node` maps a node id to the unit
-    tests that name it; `service_units` are the units every model, seed and
-    snapshot folds. The context memoizes each macro's closure, since every node
+    none); an adapter built on another one would have that package's macros
+    folded. `unit_tests_by_node` maps a node id to the unit tests that name it;
+    `service_units` are the units every model, seed and snapshot folds. The context memoizes each macro's closure, since every node
     of a manifest walks the same macros.
     """
     run: RunMask
@@ -243,20 +243,22 @@ def resolve_name(name: str, package: str, ctx: ManifestContext) -> tuple[str, ..
     """The macros a bare call of `name` from `package` may run, in dbt's search
     order: the package's own macro of that name (unless the package is built in),
     then the root project's, then every imported package's, then the adapter's and
-    dbt's. The first step the manifest holds a macro for answers. The imported step
-    answers with every imported package's macro of that name, since dbt picks one of
-    them by an order the manifest does not record and folding an extra macro moves
-    the hash only when that macro changes. Empty when no macro of that name exists."""
+    dbt's. The first step the manifest holds a macro for answers.
+
+    The imported step answers with every imported package's macro of that name and
+    with the built-in one the last step would pick, if any: the resolver dbt parses
+    with reaches an imported package's macro by its bare name, but the namespace a
+    node renders with does not and runs the built-in one. Folding an extra macro
+    moves the hash only when that macro changes. Empty when no macro of that name
+    exists."""
     for owner in (package if package not in ctx.builtin_packages else "", ctx.root_project):
         if owner and f"macro.{owner}.{name}" in ctx.macros:
             return (f"macro.{owner}.{name}",)
+    built_in = next((f"macro.{owner}.{name}"
+                     for owner in (f"dbt_{ctx.adapter_type}" if ctx.adapter_type else "", "dbt")
+                     if owner and f"macro.{owner}.{name}" in ctx.macros), None)
     imported = tuple(m for m in ctx.macros_by_name.get(name, ()) if not _is_built_in(m, ctx))
-    if imported:
-        return imported
-    for owner in (f"dbt_{ctx.adapter_type}" if ctx.adapter_type else "", "dbt"):
-        if owner and f"macro.{owner}.{name}" in ctx.macros:
-            return (f"macro.{owner}.{name}",)
-    return ()
+    return imported + ((built_in,) if built_in else ())
 
 
 def static_macro_calls(raw_code: str, package: str, ctx: ManifestContext) -> list[str]:

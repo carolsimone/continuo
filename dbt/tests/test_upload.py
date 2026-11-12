@@ -132,7 +132,8 @@ def _dbt_with_shebang(tmp_path, monkeypatch, shebang: str) -> None:
 
 
 @pytest.mark.parametrize("shebang", ["#!/usr/bin/env python3", "#!/usr/bin/env -S python3 -u",
-                                     "#!/usr/bin/env -S PYTHONUTF8=1 python3"])
+                                     "#!/usr/bin/env -S PYTHONUTF8=1 python3", "#!/usr/bin/env -u PYTHONPATH python3",
+                                     "#!/usr/bin/env -C /opt/dbt -S python3", "#!/usr/bin/env --unset PYTHONHOME python3"])
 def test_dbt_interpreter_reads_a_shebang_through_env(tmp_path, monkeypatch, shebang):
     """dbt_interpreter names the program env runs, past env's options and variables."""
     from dbt_upload.upload import dbt_interpreter
@@ -149,8 +150,9 @@ def test_dbt_interpreter_refuses_a_shebang_that_names_no_python(tmp_path, monkey
 
     _dbt_with_shebang(tmp_path, monkeypatch, shebang)
 
-    with pytest.raises(RuntimeError, match="not a Python interpreter"):
+    with pytest.raises(RuntimeError, match="not a Python interpreter") as refused:
         dbt_interpreter()
+    assert shebang in str(refused.value), "the refusal names the shebang"
 
 
 def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, monkeypatch, caplog):

@@ -83,11 +83,15 @@ COMPILE_EXTRAS_SCRIPT = "/compile_extras.py"
 # after this is stuck, and the service is failed instead of waited on.
 COMPILE_EXTRAS_TIMEOUT_SECONDS = 600
 
+# The options of env that take the next word as their argument.
+_ENV_OPTIONS_WITH_ARGUMENT = frozenset({"-u", "--unset", "-C", "--chdir", "-P"})
+
 
 def dbt_interpreter() -> str:
     """The Python that runs dbt: the interpreter named by the shebang of the
     `dbt` console script on PATH (the program `env` runs when the shebang goes
-    through it, past env's options such as `-S` and its `NAME=value` settings).
+    through it, past env's options, with the argument of `-u`, `-C` and `-P`,
+    and its `NAME=value` settings).
 
     compile_extras.py reads the installed dbt versions and PyYAML, which live
     with dbt and not in this package's environment. Raises RuntimeError when
@@ -106,12 +110,12 @@ def dbt_interpreter() -> str:
     if words and os.path.basename(words[0]) == "env":
         words = words[1:]
         while words and (words[0].startswith("-") or "=" in words[0]):
-            words = words[1:]
+            words = words[2:] if words[0] in _ENV_OPTIONS_WITH_ARGUMENT else words[1:]
     if not words:
         raise RuntimeError(f"{dbt} has an empty shebang line")
     if not os.path.basename(words[0]).startswith("python"):
         raise RuntimeError(
-            f"{dbt}'s shebang runs {words[0]!r}, which is not a Python interpreter: "
+            f"{dbt}'s shebang {first_line!r} runs {words[0]!r}, which is not a Python interpreter: "
             "compile_extras.py must run with the Python that runs dbt")
     return words[0]
 
