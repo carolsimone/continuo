@@ -445,6 +445,20 @@ def test_dbt_compile_service1_succeeds():
 
 
 @pytest.mark.integration
+def test_compile_service_compiles_the_base_image_macros_into_the_root_project():
+    """compile_service gives service-1 the manifest its image's compile gives: the
+    dbt base image's generate_schema_name is a macro of the root project, which
+    every model, seed and snapshot content_hash folds."""
+    from dbt_upload.compile import compile_service
+
+    service_dir = os.path.join(SERVICES_DIR, "service-1")
+    assert compile_service(service_dir), "compile_service returned False"
+    with open(os.path.join(service_dir, "target", "manifest.json")) as f:
+        manifest = json.load(f)
+    assert "macro.service_1.generate_schema_name" in manifest["macros"]
+
+
+@pytest.mark.integration
 def test_upload_and_read_back_canonical(s3):
     """compile + upload produces a readable manifest.json at the canonical key."""
     from dbt_upload.compile import compile_service

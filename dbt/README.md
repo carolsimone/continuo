@@ -70,7 +70,7 @@ The `dbt_upload` package provides three subcommands for compiling dbt services a
 
 | Command   | What it does |
 |-----------|-------------|
-| `compile` | Run `dbt compile` for each service |
+| `compile` | Run `dbt compile` for each service as its image compiles it: in `target/staged-project`, a copy of the dbt base image's `/project` (its shared macros) with the service's files over it, writing the manifest to the service's `target/` |
 | `upload`  | Filter manifests (keep models, seeds, snapshots, tests and operations, strip `local_stub`), write each service's `compile-extras.json` with `/compile_extras.py` and the Python that runs dbt, and upload both to `<service>/<release_id>/` in S3 |
 | `load`    | Compile + upload in one step (primary workflow) |
 
