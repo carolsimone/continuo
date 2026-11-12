@@ -299,9 +299,13 @@ func TestLoadedSeedColumns_ReturnsTheRecordedFingerprintOfEachKey(t *testing.T) 
 	require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{Key: "stg.seed_a", ContentHash: "sha256:a",
 		SeedColumnsHash: "sha256:cols-a", Source: seeds.SourceBuild, At: materializedAt}))
 
-	got, err := repo.LoadedSeedColumns(ctx, tenant, []topology.NodeKey{"stg.seed_a", "stg.seed_none"})
+	require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{Key: "stg.seed_b", ContentHash: "sha256:b",
+		Source: seeds.SourceBuild, At: materializedAt}))
+
+	got, err := repo.LoadedSeedColumns(ctx, tenant, []topology.NodeKey{"stg.seed_a", "stg.seed_b", "stg.seed_none"})
 	require.NoError(t, err)
-	assert.Equal(t, map[topology.NodeKey]string{"stg.seed_a": "sha256:cols-a"}, got)
+	assert.Equal(t, map[topology.NodeKey]string{"stg.seed_a": "sha256:cols-a", "stg.seed_b": ""}, got,
+		"a row with no fingerprint is present with an empty one, a key with no row is absent")
 
 	other, err := repo.LoadedSeedColumns(ctx, "t-"+uuid.NewString(), []topology.NodeKey{"stg.seed_a"})
 	require.NoError(t, err)

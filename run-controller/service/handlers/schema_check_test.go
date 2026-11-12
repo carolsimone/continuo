@@ -88,3 +88,22 @@ func TestCheckSchema_RequiresTheSeedColumnsHashColumns(t *testing.T) {
 		}
 	}
 }
+
+// run-controller refuses to start until every column the seed reload reads and
+// writes exists.
+func TestCheckSchema_RequiresTheSeedReloadColumns(t *testing.T) {
+	required := map[string]bool{}
+	for _, c := range RequiredColumns {
+		required[c] = true
+	}
+	for _, c := range []string{"topology_nodes.materialized", "topology_nodes.full_refresh",
+		"topology_nodes.resolved_relation_id", "topology_releases.bootstrap",
+		"tasks.plan_reason", "tasks.seed_preflight", "tasks.rebuild_seed_key",
+		"task_attempts.seed_preflight_findings",
+		"view_outages.tenant_id", "view_outages.node_key", "view_outages.state", "view_outages.since",
+		"view_outages.seed_key", "view_outages.run_id"} {
+		if !required[c] {
+			t.Errorf("RequiredColumns lacks %s", c)
+		}
+	}
+}
