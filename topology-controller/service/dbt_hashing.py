@@ -484,11 +484,12 @@ def _macro_units(macro_ids: Iterable[str], ctx: ManifestContext) -> dict[str, Co
 def _function_unit(function_id: str, function: Mapping) -> CodeUnit:
     """A function as a unit: the SHA-256 of the canonical JSON of its body record
     (`raw_code`, `arguments`, `returns` and each overload's `arguments`, `returns`
-    and `raw_body`, as far as the manifest carries them). Raises the library's
+    and `raw_body`, as far as the manifest carries them), with every `description`
+    dropped, so a documentation edit moves no caller. Raises the library's
     `ContractsError` for a value canonical JSON refuses."""
-    body = {key: function[key] for key in _FUNCTION_BODY_KEYS if key in function}
+    body = {key: _without_descriptions(function[key]) for key in _FUNCTION_BODY_KEYS if key in function}
     if "overloads" in function:
-        body["overloads"] = [{key: overload[key] for key in _OVERLOAD_BODY_KEYS if key in overload}
+        body["overloads"] = [{key: _without_descriptions(overload[key]) for key in _OVERLOAD_BODY_KEYS if key in overload}
                              for overload in function["overloads"] or []]
     text = canonical_json(body)
     return CodeUnit(function_id, hashlib.sha256(text).hexdigest(), text.decode("utf-8"), (), "functions")
@@ -563,6 +564,15 @@ def _service_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> d
         units["project_flags"] = CodeUnit("project_flags", hashlib.sha256(text).hexdigest(), text.decode("utf-8"), (),
                                           "project_flags")
     return units
+
+
+def _without_descriptions(value: Any) -> Any:
+    """`value` with every `description` key removed from its dicts, at every depth."""
+    if isinstance(value, Mapping):
+        return {key: _without_descriptions(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list | tuple):
+        return [_without_descriptions(item) for item in value]
+    return value
 
 
 def _hook_input(node_id: str, node: Mapping) -> str:

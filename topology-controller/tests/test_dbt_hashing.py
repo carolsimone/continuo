@@ -481,3 +481,17 @@ def test_every_macro_a_walk_reaches_is_memoized():
         "macro.fpshop.c": frozenset({"macro.fpshop.b", "macro.fpshop.c", "macro.fpshop.d"}),
         "macro.fpshop.d": frozenset({"macro.fpshop.d"}),
     }
+
+
+def test_a_function_description_edit_moves_no_caller_and_a_type_edit_does():
+    def described(argument_doc: str, return_doc: str, overload_doc: str, data_type: str = "integer") -> dict:
+        return _function(
+            arguments=[{"name": "x", "data_type": data_type, "description": argument_doc}],
+            returns={"data_type": "integer", "description": return_doc},
+            overloads=[{"arguments": [{"name": "x", "data_type": "text", "description": overload_doc}],
+                        "returns": {"data_type": "text", "description": overload_doc}, "raw_body": "x || x"}])
+    base = _caller_hash(described("a", "b", "c"))
+    assert _caller_hash(described("other", "b", "c")) == base
+    assert _caller_hash(described("a", "other", "other")) == base
+    assert _caller_hash(described("a", "b", "c")) == _caller_hash(_function())
+    assert _caller_hash(described("a", "b", "c", data_type="bigint")) != base
