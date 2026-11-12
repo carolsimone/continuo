@@ -75,12 +75,83 @@ func Split(log string) (cleanLog, structuredJSON string) {
 // bump must update that constant too, or every block from the new schema is
 // silently rejected here.
 func Parse(raw []byte) (*Result, error) {
+	if r, ok := scanBlock(raw, func(r *Result) bool {
+		return r.SchemaVersion == SchemaVersion && supportedRunStatuses[r.Status]
+	}); ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("no structured validation-result JSON object found in %d bytes", len(raw))
+}
+
+// The values of a preflight block's op field, which are the VALIDATION_OP
+// values of the two runs that print one.
+const (
+	// OpSeedPreflight is the block of the check that lists what depends on a
+	// seed's table before the seed loads.
+	OpSeedPreflight = "seed_preflight"
+	// OpProbeViews is the block of the probe that queries each rebuilt view.
+	OpProbeViews = "probe_views"
+)
+
+// Preflight is the result block of a seed preflight or a view probe: a Result
+// (its Status, Message, Failures and Reason) plus the findings of the
+// warehouse. A check-mode preflight that stops the load has status error,
+// failures 1 and the reason that stopped it.
+type Preflight struct {
+	Result
+	// Op is OpSeedPreflight or OpProbeViews.
+	Op string `json:"op"`
+	// DropSemantics is how the engine treats a drop of a table that views read.
+	DropSemantics string `json:"drop_semantics"`
+	// Completeness is exact or best_effort: whether Dependents lists every dependant.
+	Completeness string `json:"completeness"`
+	// Checked is true when the warehouse was queried to the end.
+	Checked bool `json:"checked"`
+	// Dependents are the objects that depend on the seed's table.
+	Dependents []Dependent `json:"dependents"`
+	// Views are the answers of a view probe.
+	Views []ProbedView `json:"views"`
+}
+
+// Dependent is one object of a preflight's findings.
+type Dependent struct {
+	Schema  string `json:"schema"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Owner   string `json:"owner"`
+	Depth   int    `json:"depth"`
+	Allowed bool   `json:"allowed"`
+}
+
+// ProbedView is the answer of a probe of one view.
+type ProbedView struct {
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error"`
+}
+
+// ParsePreflight decodes the preflight or probe block in raw with the scan
+// Parse uses, and accepts the first candidate that Parse would accept and whose
+// op is OpSeedPreflight or OpProbeViews. An error is returned when there is
+// none.
+func ParsePreflight(raw []byte) (*Preflight, error) {
+	if p, ok := scanBlock(raw, func(p *Preflight) bool {
+		return p.SchemaVersion == SchemaVersion && supportedRunStatuses[p.Status] &&
+			(p.Op == OpSeedPreflight || p.Op == OpProbeViews)
+	}); ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("no seed preflight or view probe JSON object found in %d bytes", len(raw))
+}
+
+// scanBlock decodes a T from each '{' of raw in turn, ignoring what follows
+// each object, and returns the first that accept approves.
+func scanBlock[T any](raw []byte, accept func(*T) bool) (*T, bool) {
 	for start := bytes.IndexByte(raw, '{'); start >= 0; {
-		var candidate Result
-		if err := json.NewDecoder(bytes.NewReader(raw[start:])).Decode(&candidate); err == nil &&
-			candidate.SchemaVersion == SchemaVersion &&
-			supportedRunStatuses[candidate.Status] {
-			return &candidate, nil
+		var candidate T
+		if err := json.NewDecoder(bytes.NewReader(raw[start:])).Decode(&candidate); err == nil && accept(&candidate) {
+			return &candidate, true
 		}
 		next := bytes.IndexByte(raw[start+1:], '{')
 		if next < 0 {
@@ -88,5 +159,5 @@ func Parse(raw []byte) (*Result, error) {
 		}
 		start += next + 1
 	}
-	return nil, fmt.Errorf("no structured validation-result JSON object found in %d bytes", len(raw))
+	return nil, false
 }

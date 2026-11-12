@@ -1,0 +1,93 @@
+{
+  "input": {
+    "event_id": "e8b1d3f5-6a7c-4e90-b2d4-9f1a3c5e7b08",
+    "tenant_id": "default",
+    "producer": "execution-controller",
+    "occurred_at": "2026-11-24T09:16:31.120000Z",
+    "payload": {
+      "run_id": "5b2e8f10-3a4c-4d7e-9b61-0f8a2c4e6d13",
+      "task_id": "a1c3e5f7-2b4d-4f60-8a1c-3e5f7b9d1a2c",
+      "attempt": 0,
+      "job_name": "finance-analytics-seed-fx-rates-eur-5b2e8f10",
+      "status": "failed",
+      "queued_at": "2026-11-24T09:16:02.412Z",
+      "started_at": "2026-11-24T09:16:06.105Z",
+      "finished_at": "2026-11-24T09:16:30.93Z",
+      "execution_seconds": 24.825,
+      "exit_code": 1,
+      "failure_class": "invalid",
+      "failure_reason": "unowned_dependents",
+      "error_message": "unowned_dependents: bi.fx_rates_report (view, owner bi)",
+      "log_s3_key": "logs/task-executions/finance/analytics/seed_fx_rates_eur/7d9f1b3a-5c2e-4a80-b6d4-1e3a5c7f9b2d.log",
+      "seed_preflight": {
+        "drop_semantics": "cascade",
+        "completeness": "exact",
+        "checked": true,
+        "dependents": [
+          {
+            "schema": "analytics",
+            "name": "fx_rates_current",
+            "kind": "view",
+            "owner": "dbt",
+            "depth": 1,
+            "allowed": true
+          },
+          {
+            "schema": "bi",
+            "name": "fx_rates_report",
+            "kind": "view",
+            "owner": "bi",
+            "depth": 1,
+            "allowed": false
+          }
+        ]
+      }
+    }
+  },
+  "fields": {
+    "event_id": "e8b1d3f5-6a7c-4e90-b2d4-9f1a3c5e7b08",
+    "tenant_id": "default",
+    "producer": "execution-controller",
+    "occurred_at": "2026-11-24T09:16:31.120000Z",
+    "schema_version": "1",
+    "payload": {
+      "run_id": "5b2e8f10-3a4c-4d7e-9b61-0f8a2c4e6d13",
+      "task_id": "a1c3e5f7-2b4d-4f60-8a1c-3e5f7b9d1a2c",
+      "attempt": 0,
+      "job_name": "finance-analytics-seed-fx-rates-eur-5b2e8f10",
+      "status": "failed",
+      "queued_at": "2026-11-24T09:16:02.412Z",
+      "started_at": "2026-11-24T09:16:06.105Z",
+      "finished_at": "2026-11-24T09:16:30.93Z",
+      "execution_seconds": 24.825,
+      "exit_code": 1,
+      "failure_class": "invalid",
+      "failure_reason": "unowned_dependents",
+      "error_message": "unowned_dependents: bi.fx_rates_report (view, owner bi)",
+      "log_s3_key": "logs/task-executions/finance/analytics/seed_fx_rates_eur/7d9f1b3a-5c2e-4a80-b6d4-1e3a5c7f9b2d.log",
+      "seed_preflight": {
+        "drop_semantics": "cascade",
+        "completeness": "exact",
+        "checked": true,
+        "dependents": [
+          {
+            "schema": "analytics",
+            "name": "fx_rates_current",
+            "kind": "view",
+            "owner": "dbt",
+            "depth": 1,
+            "allowed": true
+          },
+          {
+            "schema": "bi",
+            "name": "fx_rates_report",
+            "kind": "view",
+            "owner": "bi",
+            "depth": 1,
+            "allowed": false
+          }
+        ]
+      }
+    }
+  }
+}

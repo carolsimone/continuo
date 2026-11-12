@@ -24,30 +24,59 @@ type taskDispatchFixture struct {
 	Fields map[string]json.RawMessage `json:"fields"`
 }
 
-func loadTaskDispatchFixture(t *testing.T) taskDispatchFixture {
+var taskDispatchFixtures = []string{
+	"testdata/task_dispatch_v1.json",
+	"testdata/task_dispatch_v1_seed_preflight.json",
+}
+
+func loadTaskDispatchFixture(t *testing.T, path string) taskDispatchFixture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/task_dispatch_v1.json")
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is one of the fixed fixture paths above
 	require.NoError(t, err)
 	var fx taskDispatchFixture
 	require.NoError(t, json.Unmarshal(raw, &fx))
 	return fx
 }
 
-func TestTaskDispatchFields_MatchGoldenFixture(t *testing.T) {
-	fx := loadTaskDispatchFixture(t)
-	got, err := events.TaskDispatchFields(fx.Input.EventID, fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, fx.Input.Payload)
-	require.NoError(t, err)
-	assertFieldsMatchFixture(t, fx.Fields, got)
+func TestTaskDispatchFields_MatchGoldenFixtures(t *testing.T) {
+	for _, path := range taskDispatchFixtures {
+		t.Run(path, func(t *testing.T) {
+			fx := loadTaskDispatchFixture(t, path)
+			got, err := events.TaskDispatchFields(fx.Input.EventID, fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, fx.Input.Payload)
+			require.NoError(t, err)
+			assertFieldsMatchFixture(t, fx.Fields, got)
+		})
+	}
 }
 
-func TestDecodeTaskDispatch_ReadsGoldenFixture(t *testing.T) {
-	fx := loadTaskDispatchFixture(t)
-	env, p, err := events.DecodeTaskDispatch(fixtureFields(t, fx.Fields))
-	require.NoError(t, err)
-	assert.Equal(t, fx.Input.Payload, p)
-	assert.Equal(t, fx.Input.EventID, env.EventID)
-	assert.Equal(t, fx.Input.TenantID, env.TenantID)
-	assert.Equal(t, fx.Input.Producer, env.Producer)
+func TestDecodeTaskDispatch_ReadsGoldenFixtures(t *testing.T) {
+	for _, path := range taskDispatchFixtures {
+		t.Run(path, func(t *testing.T) {
+			fx := loadTaskDispatchFixture(t, path)
+			env, p, err := events.DecodeTaskDispatch(fixtureFields(t, fx.Fields))
+			require.NoError(t, err)
+			assert.Equal(t, fx.Input.Payload, p)
+			assert.Equal(t, fx.Input.EventID, env.EventID)
+			assert.Equal(t, fx.Input.TenantID, env.TenantID)
+			assert.Equal(t, fx.Input.Producer, env.Producer)
+		})
+	}
+}
+
+func TestTaskDispatch_DecodesThePlanReasonAndTheSeedPreflight(t *testing.T) {
+	decode := func(path string) events.TaskDispatch {
+		_, p, err := events.DecodeTaskDispatch(fixtureFields(t, loadTaskDispatchFixture(t, path).Fields))
+		require.NoError(t, err)
+		return p
+	}
+	p := decode("testdata/task_dispatch_v1_seed_preflight.json")
+	assert.Equal(t, "columns changed; +full_refresh: true re-creates the table on every load", p.PlanReason)
+	assert.Equal(t, &events.SeedPreflight{Mode: "check", EngineFamily: "schema_bound", Relation: "analytics.seed_fx_rates_eur",
+		Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"}, Acknowledged: []string{}}, p.SeedPreflight)
+
+	plain := decode("testdata/task_dispatch_v1.json")
+	assert.Nil(t, plain.SeedPreflight)
+	assert.Empty(t, plain.PlanReason)
 }
 
 func TestDecodeTaskDispatch_ReadsAttemptZero(t *testing.T) {
