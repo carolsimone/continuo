@@ -193,8 +193,7 @@ func TestParsePreflight_SkipsABlockWithNoPreflightOp(t *testing.T) {
 // Preflight leaves the reason to the embedded Result: a field of its own would
 // shadow it and read empty.
 func TestPreflight_DeclaresNoReasonOfItsOwn(t *testing.T) {
-	var p Preflight
-	p.Result.Reason = "engine_mismatch"
+	p := Preflight{Result: Result{Reason: "engine_mismatch"}}
 	if p.Reason != "engine_mismatch" {
 		t.Fatalf("Reason = %q, want the embedded Result's", p.Reason)
 	}

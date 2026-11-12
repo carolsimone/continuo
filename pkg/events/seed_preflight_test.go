@@ -45,3 +45,40 @@ func TestSeedPreflightFindings_RendersNoDependentsAsAnArrayAndOmitsNoProbes(t *t
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":[]}`, string(raw))
 }
+
+// A payload that names no list, or names it null, marshals it as `[]` again:
+// the outbox publisher and the last-report resend decode a payload and encode
+// it back.
+func TestSeedPreflight_ADecodedPayloadWithoutListsMarshalsEmptyArrays(t *testing.T) {
+	for _, in := range []string{
+		`{"mode":"report","engine_family":"late_binding","relation":"a.s"}`,
+		`{"mode":"report","engine_family":"late_binding","relation":"a.s","allowed":null,"acknowledged":null}`,
+	} {
+		var p events.SeedPreflight
+		require.NoError(t, json.Unmarshal([]byte(in), &p))
+		raw, err := json.Marshal(p)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"mode":"report","engine_family":"late_binding","relation":"a.s","allowed":[],"acknowledged":[]}`, string(raw))
+
+		raw, err = json.Marshal(events.TaskDispatch{SeedPreflight: &p})
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"allowed":[],"acknowledged":[]`)
+	}
+}
+
+func TestSeedPreflightFindings_ADecodedPayloadWithoutDependentsMarshalsAnEmptyArray(t *testing.T) {
+	for _, in := range []string{
+		`{"drop_semantics":"late_binding","completeness":"best_effort","checked":true}`,
+		`{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":null}`,
+	} {
+		var f events.SeedPreflightFindings
+		require.NoError(t, json.Unmarshal([]byte(in), &f))
+		raw, err := json.Marshal(f)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"drop_semantics":"late_binding","completeness":"best_effort","checked":true,"dependents":[]}`, string(raw))
+
+		raw, err = json.Marshal(events.TaskStatusReport{SeedPreflight: &f})
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"dependents":[]`)
+	}
+}

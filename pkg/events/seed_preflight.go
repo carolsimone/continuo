@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"slices"
 
 	"github.com/carolsimone/continuo/pkg/seedreload"
@@ -11,13 +12,25 @@ import (
 // runs it in the pod, before the seed's load, against Relation. Mode is check or
 // report, EngineFamily the install's warehouse family, Allowed the relations of
 // the views the run rebuilds and Acknowledged the objects an operator named. Both
-// lists render as arrays, `[]` when empty.
+// lists marshal as arrays, `[]` when empty or nil.
 type SeedPreflight struct {
 	Mode         string   `json:"mode"`
 	EngineFamily string   `json:"engine_family"`
 	Relation     string   `json:"relation"`
 	Allowed      []string `json:"allowed"`
 	Acknowledged []string `json:"acknowledged"`
+}
+
+// MarshalJSON renders an absent list as `[]`, never `null`.
+func (p SeedPreflight) MarshalJSON() ([]byte, error) {
+	type plain SeedPreflight
+	if p.Allowed == nil {
+		p.Allowed = []string{}
+	}
+	if p.Acknowledged == nil {
+		p.Acknowledged = []string{}
+	}
+	return json.Marshal(plain(p))
 }
 
 // SeedPreflightOf renders p for the wire; nil in, nil out.
@@ -29,8 +42,8 @@ func SeedPreflightOf(p *seedreload.Preflight) *SeedPreflight {
 		Mode:         string(p.Mode),
 		EngineFamily: string(p.Family),
 		Relation:     p.Relation,
-		Allowed:      nonNil(p.Allowed),
-		Acknowledged: nonNil(p.Acknowledged),
+		Allowed:      p.Allowed,
+		Acknowledged: p.Acknowledged,
 	}
 }
 
@@ -77,8 +90,17 @@ type ViewProbe struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// SeedPreflightFindingsOf renders f for the wire; nil in, nil out. The
-// dependents render as an array, `[]` when there are none.
+// MarshalJSON renders absent dependents as `[]`, never `null`; probes are left
+// out when there are none.
+func (f SeedPreflightFindings) MarshalJSON() ([]byte, error) {
+	type plain SeedPreflightFindings
+	if f.Dependents == nil {
+		f.Dependents = []PreflightDependent{}
+	}
+	return json.Marshal(plain(f))
+}
+
+// SeedPreflightFindingsOf renders f for the wire; nil in, nil out.
 func SeedPreflightFindingsOf(f *seedreload.Findings) *SeedPreflightFindings {
 	if f == nil {
 		return nil
@@ -87,7 +109,6 @@ func SeedPreflightFindingsOf(f *seedreload.Findings) *SeedPreflightFindings {
 		DropSemantics: f.DropSemantics,
 		Completeness:  f.Completeness,
 		Checked:       f.Checked,
-		Dependents:    make([]PreflightDependent, 0, len(f.Dependents)),
 	}
 	for _, d := range f.Dependents {
 		out.Dependents = append(out.Dependents, PreflightDependent(d))
@@ -115,12 +136,4 @@ func (f *SeedPreflightFindings) ToDomain() *seedreload.Findings {
 		out.Probes = append(out.Probes, seedreload.Probe(p))
 	}
 	return out
-}
-
-// nonNil returns s, or an empty slice for nil, so it renders as `[]`.
-func nonNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
