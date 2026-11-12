@@ -676,3 +676,7 @@ vocabularies:
         const: ImageContractMismatch
         class: invalid
         description: the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.
+      - value: seed_full_refresh_disabled
+        const: SeedFullRefreshDisabled
+        class: invalid
+        description: the seed sets +full_refresh false where only a full refresh can apply its change, so no command can rebuild it; refused before any container starts.

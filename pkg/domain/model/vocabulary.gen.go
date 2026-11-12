@@ -680,6 +680,8 @@ const (
 	FailureReasonJobNameCollision FailureReason = "job_name_collision"
 	// FailureReasonImageContractMismatch — the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.
 	FailureReasonImageContractMismatch FailureReason = "image_contract_mismatch"
+	// FailureReasonSeedFullRefreshDisabled — the seed sets +full_refresh false where only a full refresh can apply its change, so no command can rebuild it; refused before any container starts.
+	FailureReasonSeedFullRefreshDisabled FailureReason = "seed_full_refresh_disabled"
 )
 
 // FailureReasons returns every value in contract.yaml declaration order.
@@ -703,6 +705,7 @@ func FailureReasons() []FailureReason {
 		FailureReasonMalformedDispatch,
 		FailureReasonJobNameCollision,
 		FailureReasonImageContractMismatch,
+		FailureReasonSeedFullRefreshDisabled,
 	}
 }
 
@@ -744,6 +747,8 @@ func (v FailureReason) IsValid() bool {
 	case FailureReasonJobNameCollision:
 		return true
 	case FailureReasonImageContractMismatch:
+		return true
+	case FailureReasonSeedFullRefreshDisabled:
 		return true
 	}
 	return false
@@ -787,6 +792,8 @@ func (v FailureReason) Class() FailureClass {
 	case FailureReasonJobNameCollision:
 		return FailureClassInvalid
 	case FailureReasonImageContractMismatch:
+		return FailureClassInvalid
+	case FailureReasonSeedFullRefreshDisabled:
 		return FailureClassInvalid
 	}
 	return ""
