@@ -130,9 +130,10 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// Break ftable_e's compiled SQL in a copy of service-2's baseline manifest
-	// and pin service-2's production pointer at it, so the assembled set the
-	// parse leg reads carries the broken node.
+	// Break ftable_e's compiled SQL in a copy of service-2's baseline manifest,
+	// copy the baseline's compile extras beside it, and pin service-2's
+	// production pointer at it, so the assembled set the parse leg reads
+	// carries the broken node.
 	brokenReleaseID := releaseID + "-src"
 	baselineKey := fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenService, e2eBaselineReleaseID)
 	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
@@ -156,6 +157,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	require.NoError(t, err)
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenService, brokenReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, parseFixBrokenService, brokenReleaseID)
 	pinServiceProd(t, ctx, clients, parseFixBrokenService, brokenReleaseID, broken.imageTag)
 	// Put the pointer back so no later test parses the broken manifest. Deferred, so it
 	// runs when the test function returns, while the pool is open.

@@ -1,4 +1,4 @@
-# Source the three S3 I/O scripts from the already-built continuo-owned s3-sidecar
+# Source the S3 I/O scripts and compile_extras.py from the already-built continuo-owned s3-sidecar
 # image (top-level s3-sidecar/) — single source of truth, no local copy under dbt/.
 FROM s3-sidecar:latest AS sidecar
 
@@ -31,6 +31,9 @@ COPY tests/ ./tests/
 COPY --from=sidecar /s3_common.py /s3_common.py
 COPY --from=sidecar /compile_uploader.py /compile_uploader.py
 COPY --from=sidecar /parse_cache_fetcher.py /parse_cache_fetcher.py
+# compile_extras.py is not test-only: `dbt_upload load|upload` runs it with the
+# Python that runs dbt to write each service's compile-extras.json.
+COPY --from=sidecar /compile_extras.py /compile_extras.py
 
 # pytest and dbt both write under /app (target/, logs/, .pytest_cache); hand
 # the tree to the unprivileged dbt user and run as it.

@@ -51,10 +51,12 @@ def s3():
 
 
 def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
-    """filter_manifest keeps model/seed/snapshot/test and drops local_stub and
-    non-topology kinds. Tests must survive: topology-controller emits a
-    dbt-test node per test of a tracked model, so a test-less baseline would
-    make every test read as newly changed against the release candidate.
+    """filter_manifest keeps model/seed/snapshot/test/operation and drops
+    local_stub and every other kind. Tests must survive: topology-controller
+    emits a dbt-test node per test of a tracked model, so a test-less baseline
+    would make every test read as newly changed against the release candidate.
+    Operations must survive: topology-controller hashes each project hook (an
+    operation node) into the nodes that run with it.
     """
     target = tmp_path / "target"
     target.mkdir()
@@ -82,7 +84,113 @@ def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
         "seed.svc.s",
         "snapshot.svc.sn",
         "test.svc.not_null_m_id.ab",
+        "operation.svc.op",
     }
+
+
+def test_filter_manifest_keeps_operation_nodes(tmp_path):
+    """An operation node (a project hook) survives the filter; a source does not."""
+    target = tmp_path / "target"
+    target.mkdir()
+    manifest = {
+        "nodes": {
+            "operation.svc.svc-on-run-start-0": {
+                "resource_type": "operation", "name": "svc-on-run-start-0", "tags": []
+            },
+            "source.svc.raw.orders": {"resource_type": "source", "name": "orders", "tags": []},
+        }
+    }
+    (target / "manifest.json").write_text(json.dumps(manifest))
+
+    filter_manifest(str(tmp_path))
+
+    kept = set(json.loads((target / "manifest.json").read_text())["nodes"])
+    assert kept == {"operation.svc.svc-on-run-start-0"}
+
+
+def test_dbt_interpreter_reads_the_shebang(tmp_path, monkeypatch):
+    """dbt_interpreter names the Python of the dbt console script's shebang."""
+    from dbt_upload.upload import dbt_interpreter
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dbt = bin_dir / "dbt"
+    dbt.write_text("#!/usr/local/bin/python3.12\nimport sys\n")
+    dbt.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    assert dbt_interpreter() == "/usr/local/bin/python3.12"
+
+
+def test_write_compile_extras_runs_the_script_with_the_dbt_interpreter(tmp_path, monkeypatch):
+    """write_compile_extras runs /compile_extras.py with the interpreter that runs
+    dbt, for the service's compiled manifest and project, and returns the
+    compile-extras.json it writes under target/."""
+    from unittest.mock import patch
+    from dbt_upload import upload
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    monkeypatch.setattr(upload, "dbt_interpreter", lambda: "/usr/local/bin/python3.12")
+
+    with patch("dbt_upload.upload.subprocess.run") as run:
+        run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        out = upload.write_compile_extras(str(service_dir), "e2e-baseline")
+
+    expected_out = str(service_dir / "target" / "compile-extras.json")
+    assert out == expected_out
+    argv = run.call_args.args[0]
+    assert argv == [
+        "/usr/local/bin/python3.12", "/compile_extras.py",
+        "--manifest", str(service_dir / "target" / "manifest.json"),
+        "--project-dir", str(service_dir),
+        "--service", "service-1",
+        "--release-id", "e2e-baseline",
+        "--out", expected_out,
+    ]
+
+
+def test_upload_compile_extras_writes_beside_the_manifest(tmp_path):
+    """upload_compile_extras puts target/compile-extras.json at
+    <service>/<release_id>/compile-extras.json, beside the manifest."""
+    from unittest.mock import MagicMock
+    from dbt_upload.upload import upload_compile_extras
+
+    service_dir = tmp_path / "service-2"
+    (service_dir / "target").mkdir(parents=True)
+    extras = service_dir / "target" / "compile-extras.json"
+    extras.write_text("{}")
+    mock_s3 = MagicMock()
+
+    assert upload_compile_extras(mock_s3, str(service_dir), "continuo", "rel-abc") is True
+    mock_s3.upload_file.assert_called_once_with(
+        str(extras), "continuo", "service-2/rel-abc/compile-extras.json"
+    )
+
+
+def test_upload_services_fails_a_service_whose_compile_extras_cannot_be_written(tmp_path, monkeypatch):
+    """A service whose compile extras the script cannot write is failed, though
+    its manifest uploaded."""
+    from unittest.mock import MagicMock, patch
+    from dbt_upload import upload
+
+    service_dir = tmp_path / "service-1"
+    (service_dir / "target").mkdir(parents=True)
+    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+
+    def fail(service_dir, release_id):
+        raise subprocess.CalledProcessError(1, ["compile_extras.py"])
+
+    monkeypatch.setattr(upload, "write_compile_extras", fail)
+    target_config = {
+        "endpoint_url": "http://minio:9000", "access_key_id": "test",
+        "secret_access_key": "test", "region": "us-east-1", "bucket": "continuo",
+    }
+    with patch("dbt_upload.upload.boto3.client", return_value=MagicMock()):
+        succeeded, failed = upload.upload_services([str(service_dir)], target_config, release_id="rel")
+
+    assert succeeded == []
+    assert failed == [str(service_dir)]
 
 
 def test_upload_manifest_canonical_key(tmp_path):
@@ -181,9 +289,19 @@ def test_upload_manifest_missing_manifest_returns_false(tmp_path):
 
 def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatch):
     """With release_id set and IMAGE_TAG_PER_SERVICE empty, every service still
-    uploads to <service>/<release_id>/manifest.json with no sidecar."""
+    uploads to <service>/<release_id>/manifest.json, with its compile-extras.json
+    beside it and no other sidecar."""
     from unittest.mock import MagicMock, patch
+    from dbt_upload import upload
     from dbt_upload.upload import upload_services
+
+    def write_extras(service_dir, release_id):
+        path = os.path.join(service_dir, "target", "compile-extras.json")
+        with open(path, "w") as f:
+            f.write("{}")
+        return path
+
+    monkeypatch.setattr(upload, "write_compile_extras", write_extras)
 
     services = ["service-1", "service-2"]
     service_dirs = []
@@ -220,6 +338,9 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
         assert any(
             f"{name}/rel-xyz/manifest.json" in c for c in upload_calls
         ), f"missing canonical manifest for {name}; calls={upload_calls}"
+        assert any(
+            f"{name}/rel-xyz/compile-extras.json" in c for c in upload_calls
+        ), f"missing compile extras for {name}; calls={upload_calls}"
     assert not any("service_metadata.json" in c for c in upload_calls), \
         f"no sidecar on the release path; calls={upload_calls}"
 
@@ -320,3 +441,23 @@ def test_compile_uploader_lands_manifest_at_canonical_key(s3):
     assert "nodes" in content
     node_names = [n["name"] for n in content["nodes"].values()]
     assert "table_a" in node_names
+
+
+@pytest.mark.integration
+def test_load_uploads_compile_extras_beside_the_manifest(s3):
+    """`load` compiles a service and uploads its compile-extras.json, written by
+    /compile_extras.py with the Python that runs dbt, beside its manifest."""
+    from dbt_upload.cli import main
+
+    release_id = "test-rel-compile-extras"
+    service_dir = os.path.join(SERVICES_DIR, "service-1")
+    assert main(["load", service_dir, "--target", "minio", "--release-id", release_id]) == 0
+
+    response = s3.get_object(Bucket=S3_BUCKET, Key=f"service-1/{release_id}/compile-extras.json")
+    extras = json.loads(response["Body"].read())
+    assert extras["version"] == 1
+    assert extras["service"] == "service-1"
+    assert extras["release_id"] == release_id
+    assert "dbt-core" in extras["packages"]
+    assert any(seed_id.startswith("seed.") for seed_id in extras["seeds"]), extras["seeds"]
+    s3.head_object(Bucket=S3_BUCKET, Key=f"service-1/{release_id}/manifest.json")

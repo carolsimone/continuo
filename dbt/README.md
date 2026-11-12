@@ -45,7 +45,7 @@ dbt/
     cli.py                   # Argparse: compile, upload, load subcommands
     config.py                # Target profile loading, service dir resolution
     compile.py               # dbt compile wrapper
-    upload.py                # Manifest filtering + S3 upload
+    upload.py                # Manifest filtering, compile extras + S3 upload
   targets.yaml              # Named S3 target profiles (minio, hetzner)
   .env.hetzner              # Hetzner credentials (gitignored)
   Dockerfile.upload         # Image for dbt-compile-and-load service
@@ -71,7 +71,7 @@ The `dbt_upload` package provides three subcommands for compiling dbt services a
 | Command   | What it does |
 |-----------|-------------|
 | `compile` | Run `dbt compile` for each service |
-| `upload`  | Filter manifests (keep models + seeds, strip `local_stub`) and upload to S3 |
+| `upload`  | Filter manifests (keep models, seeds, snapshots, tests and operations, strip `local_stub`), write each service's `compile-extras.json` with `/compile_extras.py` and the Python that runs dbt, and upload both to `<service>/<release_id>/` in S3 |
 | `load`    | Compile + upload in one step (primary workflow) |
 
 ### Usage

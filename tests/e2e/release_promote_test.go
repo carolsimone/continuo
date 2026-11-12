@@ -3,18 +3,21 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -665,7 +668,8 @@ func canonicalManifestS3URI(service, releaseID string) string {
 }
 
 // baselineServices loads every service's baseline manifest from S3 (written by
-// setup.sh with --release-id e2e-baseline) and its current image tag from the
+// setup.sh with --release-id e2e-baseline), with the compile-extras.json beside
+// it when the baseline has one, and its current image tag from the
 // release-controller service_prod table, returning a map keyed by service name.
 // The map is used to seed current_prod topology snapshots and service_prod rows.
 func baselineServices(t *testing.T, ctx context.Context, clients *testClients) map[string]serviceInfo {
@@ -696,7 +700,8 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 			if strings.Contains(service, "/") {
 				continue // skip keys with extra path segments
 			}
-			nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
+			extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(service))
+			nodes := parseManifestNodes(t, ctx, getS3Object(t, ctx, clients, key), extras)
 			imageTag := readServiceImageTag(t, ctx, clients, service)
 			services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 		}
@@ -737,116 +742,67 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 	return body
 }
 
-// parseManifestNodes extracts the model/seed/snapshot nodes plus every
-// tracked dbt-test node from a dbt manifest.json, mirroring
-// topology-controller's identity derivation (unique_id = "<schema>.<name>"
-// for a model/seed/snapshot, dbt's own manifest id for a test) and
-// RECOMPUTING content_hash with the same three-part formula the live
-// topology-controller uses (see content_hash.go / topology-controller's
-// parser: _content_hash). Seeding current_prod from dbt's raw per-node
-// checksum alone (the old, two-part-era behavior) would never match the live
-// formula's output, making every candidate node look "changed" regardless of
-// whether it actually changed.
-func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
+// getS3ObjectIfPresent downloads an object body from the e2e bucket, or
+// returns nil when the bucket holds no object at key.
+func getS3ObjectIfPresent(t *testing.T, ctx context.Context, clients *testClients, key string) []byte {
 	t.Helper()
-	doc, err := decodeJSONDoc(body)
-	require.NoError(t, err, "parse manifest.json")
-	macros := asObjectMap(doc["macros"])
-	rawNodes := asObjectMap(doc["nodes"])
-
-	supported := map[string]bool{"model": true, "seed": true, "snapshot": true}
-	var nodes []manifestNode
-	for key, nv := range rawNodes {
-		n, ok := nv.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		resourceType, _ := n["resource_type"].(string)
-		if supported[resourceType] {
-			schema, _ := n["schema"].(string)
-			name, _ := n["name"].(string)
-			nodes = append(nodes, manifestNode{
-				uniqueID:    schema + "." + name,
-				contentHash: computeContentHash(n, macros),
-			})
-			continue
-		}
-		if resourceType == "test" {
-			// A test is a node too, identified by dbt's own manifest id and
-			// hashed with the same formula (dbt's checksum is empty for a
-			// generic test, so the fallback hashes its compiled SQL). Seeding
-			// production with them keeps an unchanged test from reading as
-			// new in every release the suite posts.
-			if !testIsTracked(n, rawNodes) {
-				continue
-			}
-			nodes = append(nodes, manifestNode{uniqueID: key, contentHash: computeContentHash(n, macros)})
-			continue
-		}
+	resp, err := clients.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(e2eS3Bucket),
+		Key:    aws.String(key),
+	})
+	var noSuchKey *s3types.NoSuchKey
+	if errors.As(err, &noSuchKey) {
+		return nil
 	}
-	return nodes
+	require.NoError(t, err, "get S3 object %s", key)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "read S3 object %s", key)
+	return body
 }
 
-// testIsTracked reports whether a dbt test node counts toward the
-// change-detector baseline: whether its attached_node (or, absent that, any
-// depends_on.nodes entry) names a node present in rawNodes that
-// topology-controller's parser would itself track as a manifest node — its
-// full first-pass rule, not owner alone: resource_type is one of
-// model/seed/snapshot, config.meta.owner is present and non-empty,
-// "local_stub" is not among its tags, and it carries at least one tag unless
-// its resource_type has a default schedule (only "seed" does — a model or
-// snapshot with no tags is dropped for lacking a schedule). A test attached
-// only to a node the parser would itself drop is not a node in the topology
-// either.
-func testIsTracked(n map[string]interface{}, rawNodes map[string]interface{}) bool {
-	var targets []string
-	if attached, ok := n["attached_node"].(string); ok && attached != "" {
-		targets = []string{attached}
-	} else {
-		dependsOn := asObjectMap(n["depends_on"])
-		if arr, ok := dependsOn["nodes"].([]interface{}); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					targets = append(targets, s)
-				}
-			}
-		}
+// baselineExtrasKey is the key of a service's baseline compile-extras.json.
+func baselineExtrasKey(service string) string {
+	return service + "/" + e2eBaselineReleaseID + "/compile-extras.json"
+}
+
+// copyBaselineExtras copies a service's baseline compile-extras.json beside
+// the manifest a test writes under releaseID, when the baseline has one, so
+// topology-controller reads that manifest with the same seed hashes it reads
+// the baseline with. The copy is deleted when the test ends.
+func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients, service, releaseID string) {
+	t.Helper()
+	extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(service))
+	if extras == nil {
+		return
 	}
-	for _, id := range targets {
-		target := asObjectMap(rawNodes[id])
-		rt, _ := target["resource_type"].(string)
-		if rt != "model" && rt != "seed" && rt != "snapshot" {
-			continue
+	key := service + "/" + releaseID + "/compile-extras.json"
+	putS3Object(t, ctx, clients, key, extras)
+	t.Cleanup(func() {
+		_, err := clients.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(e2eS3Bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			t.Logf("delete copied compile extras s3://%s/%s: %v", e2eS3Bucket, key, err)
 		}
-		meta := asObjectMap(asObjectMap(target["config"])["meta"])
-		owner, _ := meta["owner"].(string)
-		if owner == "" {
-			continue
-		}
-		var tags []string
-		if arr, ok := target["tags"].([]interface{}); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					tags = append(tags, s)
-				}
-			}
-		}
-		isLocalStub := false
-		for _, tag := range tags {
-			if tag == "local_stub" {
-				isLocalStub = true
-				break
-			}
-		}
-		if isLocalStub {
-			continue
-		}
-		if len(tags) == 0 && rt != "seed" { // only seed has a default schedule
-			continue
-		}
-		return true
+	})
+}
+
+// parseManifestNodes returns one manifestNode per node topology-controller's
+// parser yields from a dbt manifest and its compile extras (nil when the
+// compile wrote none), with the unique_id and content_hash the live parser
+// gives it (see contentHashesOf), sorted by unique_id. Seeding current_prod
+// with these makes a node the release leaves unchanged read as unchanged.
+func parseManifestNodes(t *testing.T, ctx context.Context, manifest, extras []byte) []manifestNode {
+	t.Helper()
+	hashes := contentHashesOf(t, ctx, manifest, extras)
+	nodes := make([]manifestNode, 0, len(hashes))
+	for uniqueID, contentHash := range hashes {
+		nodes = append(nodes, manifestNode{uniqueID: uniqueID, contentHash: contentHash})
 	}
-	return false
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].uniqueID < nodes[j].uniqueID })
+	return nodes
 }
 
 // resetReleaseControllerQueue clears any release left mid-flight by a prior run

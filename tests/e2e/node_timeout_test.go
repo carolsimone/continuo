@@ -104,13 +104,14 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// Copy service-2's baseline manifest, declare the timeout on one model, and
-	// pin service-2's production pointer at the copy so the assembled set the
-	// release parses carries it.
+	// Copy service-2's baseline manifest, declare the timeout on one model, copy
+	// the baseline's compile extras beside it, and pin service-2's production
+	// pointer at the copy so the assembled set the release parses carries it.
 	stagedReleaseID := releaseID + "-src"
 	stagedKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringService, stagedReleaseID)
 	baselineKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringService, e2eBaselineReleaseID)
 	putS3Object(t, ctx, clients, stagedKey, manifestDeclaringTimeout(t, getS3Object(t, ctx, clients, baselineKey)))
+	copyBaselineExtras(t, ctx, clients, timeoutOnlyDeclaringService, stagedReleaseID)
 	// Put the pointer back and drop the staged manifest so no later test reads
 	// the declared timeout. Deferred, so it runs when the test function returns,
 	// before the cleanup setupClients registered closes the pools.

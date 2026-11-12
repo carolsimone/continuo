@@ -94,8 +94,13 @@ var pyCsvFixtureData []byte
 // make_csv_entry), its source_hash is the sha256 of its declared csv uri
 // instead, so editing the uri re-fingerprints the node. shared_code_hash is
 // empty for every node (nothing here imports in-repo code). topology-controller
-// recomputes only the fold, not config_hash, so any deterministic config_hash
-// value is accepted as long as the fold matches.
+// computes the config part itself, from the node's code projection, and ignores
+// the config_hash and content_hash CI sends: it keeps the CI source_hash and
+// shared_code_hash and folds them with its own config part, so these hand-built
+// values only have to be present. An entry that leaves out kind, extra_columns
+// and config hashes as one stating their defaults, which is what lets these
+// hand-built entries match the hash the validation runtime's harness computes
+// from the contract baked into the fixture image.
 func pythonContractYAML(t *testing.T) string {
 	t.Helper()
 
