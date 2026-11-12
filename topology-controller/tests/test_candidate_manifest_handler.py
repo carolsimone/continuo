@@ -1426,3 +1426,16 @@ def test_the_topology_entry_carries_relation_name_only_when_the_alias_differs(tm
     nodes = {n["unique_id"]: n for n in writer.nodes}
     assert nodes["test_schema.orders"]["relation_name"] == "Orders_Tbl"
     assert "relation_name" not in nodes["test_schema.plain"]
+
+
+def test_the_reader_of_an_ephemeral_model_depends_on_it_and_on_the_tables_it_inlines(tmp_path):
+    writer = RecordingArtifactWriter()
+    meta = {"owner": "team-a", "criticality": "CORE"}
+    eph = dbt_node("eph") | {"config": {"materialized": "ephemeral", "meta": meta},
+                              "compiled_code": "SELECT id FROM test_schema.orders"}
+    reader = dbt_node("reader") | {
+        "compiled_code": "WITH __dbt__cte__eph AS (SELECT id FROM test_schema.orders) SELECT id FROM __dbt__cte__eph"}
+    source = source_with_nodes(tmp_path, dbt_node("orders"), eph, reader)
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert set(nodes["test_schema.reader"]["upstream_unique_ids"]) == {"test_schema.eph", "test_schema.orders"}
