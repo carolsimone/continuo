@@ -13,9 +13,9 @@ var (
 	reConsecutiveHyphens = regexp.MustCompile(`-+`)
 )
 
-// retryHashLen is how many hex characters of the full prefix's SHA-256 a retry
-// name carries when its prefix is cut to make room for the attempt suffix.
-const retryHashLen = 6
+// cutHashLen is how many hex characters of the full prefix's SHA-256 a name
+// carries when its prefix is cut to fit.
+const cutHashLen = 6
 
 // ComputeJobName generates the Kubernetes Job name of one attempt of a task:
 // the sanitized {service}-{schema}-{table} prefix, the first 8 characters of
@@ -30,12 +30,14 @@ const retryHashLen = 6
 // collapse and leading and trailing hyphens are stripped. It is then clamped so
 // the run-id suffix and the attempt suffix always fit whole, and a hyphen the
 // clamp leaves at its end is trimmed. With a full 8-character run id the prefix
-// keeps up to 54 characters at attempt 0. A later attempt whose prefix is longer
-// than its room (51 characters at attempts 1-9, 50 at 10-99) keeps the first 44
-// (43 from attempt 10) and ends with -{hash}, the first 6 hex characters of the
+// has room for 54 characters at attempt 0, 51 at attempts 1-9 and 50 at 10-99.
+// A prefix longer than its room keeps the first 47 characters (44 at attempts
+// 1-9, 43 at 10-99) and ends with -{hash}, the first 6 hex characters of the
 // full prefix's SHA-256, so two nodes whose prefixes differ only past the cut
-// keep distinct retry names. A negative attempt, or a name that is empty after
-// sanitization, is an error.
+// keep distinct names at every attempt: the versions of one dbt model
+// ("<name>.v1", "<name>.v2") differ only at the end of the table name, and
+// can run in one run. A prefix that fits is not cut and carries no hash. A
+// negative attempt, or a name that is empty after sanitization, is an error.
 func ComputeJobName(serviceName, schemaName, tableName, runID string, attempt int) (string, error) {
 	if attempt < 0 {
 		return "", fmt.Errorf("attempt %d is negative", attempt)
@@ -64,13 +66,9 @@ func ComputeJobName(serviceName, schemaName, tableName, runID string, attempt in
 	if idSuffix != "" {
 		maxPrefixLen := 63 - 1 - len(idSuffix) - len(attemptSuffix)
 		if len(prefix) > maxPrefixLen {
-			if attempt == 0 {
-				prefix = strings.TrimRight(prefix[:maxPrefixLen], "-")
-			} else {
-				sum := sha256.Sum256([]byte(prefix))
-				tag := hex.EncodeToString(sum[:])[:retryHashLen]
-				prefix = strings.TrimRight(prefix[:maxPrefixLen-1-retryHashLen], "-") + "-" + tag
-			}
+			sum := sha256.Sum256([]byte(prefix))
+			tag := hex.EncodeToString(sum[:])[:cutHashLen]
+			prefix = strings.TrimRight(prefix[:maxPrefixLen-1-cutHashLen], "-") + "-" + tag
 		}
 	}
 

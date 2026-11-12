@@ -156,14 +156,14 @@ func TestDispatchProblemRefusesAJobNameKubernetesCannotRead(t *testing.T) {
 // service-1 / analytics / orders in run 3f2a9c1e-..., at the attempts shown.
 func TestDispatchProblemAcceptsTheJobNamesRunControllerComputes(t *testing.T) {
 	for name, jobName := range map[string]string{
-		"a short name":                             "service-1-analytics-orders-3f2a9c1e",
-		"a short retry":                            "service-1-analytics-orders-3f2a9c1e-r1",
-		"a retry from attempt 10":                  "service-1-analytics-orders-3f2a9c1e-r10",
-		"the longest first attempt, 63 characters": "service-1-analytics-int-customer-orders-aggregated-dai-3f2a9c1e",
-		"a cut retry, 63 characters":               "service-1-analytics-int-customer-orders-aggr-3c1270-3f2a9c1e-r1",
-		"a cut retry from attempt 10":              "service-1-analytics-int-customer-orders-agg-3c1270-3f2a9c1e-r10",
-		"a single character":                       "a",
-		"63 characters":                            strings.Repeat("a", 63),
+		"a short name":                       "service-1-analytics-orders-3f2a9c1e",
+		"a short retry":                      "service-1-analytics-orders-3f2a9c1e-r1",
+		"a retry from attempt 10":            "service-1-analytics-orders-3f2a9c1e-r10",
+		"a cut first attempt, 63 characters": "service-1-analytics-int-customer-orders-aggrega-3c1270-3f2a9c1e",
+		"a cut retry, 63 characters":         "service-1-analytics-int-customer-orders-aggr-3c1270-3f2a9c1e-r1",
+		"a cut retry from attempt 10":        "service-1-analytics-int-customer-orders-agg-3c1270-3f2a9c1e-r10",
+		"a single character":                 "a",
+		"63 characters":                      strings.Repeat("a", 63),
 	} {
 		cmd := validDispatch()
 		cmd.JobName = jobName
