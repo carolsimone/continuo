@@ -47,6 +47,7 @@ _OPTIONAL_ENTRY_KEYS = {
     "description", "extra_columns", "config", "kind", "secret_ref", "timeout_minutes",
     "mode_type", "primary_key", "assets",
 }
+_DEFAULT_MODE_TYPE = "replace"
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
 
@@ -90,7 +91,7 @@ def _parse_columns(raw, label: str) -> list[dict]:
 
 
 def _parse_mode_type(entry: dict, rules: KindRules, node_type: NodeType, label: str) -> str:
-    mode_type = entry.get("mode_type", "replace")
+    mode_type = entry.get("mode_type", _DEFAULT_MODE_TYPE)
     if not isinstance(mode_type, str) or mode_type not in rules.mode_types:
         _fail(
             f"{label}: mode_type must be one of {sorted(rules.mode_types)}"
@@ -261,8 +262,9 @@ def _parse_entry(
     if ci_content_hash != content_hash:
         logger.warning(
             "python contract: the producer CI's content_hash differs from the one"
-            " topology-controller computes; expected until the service's rebaseline"
-            " release on continuo-python-runtime 0.12.0",
+            " topology-controller computes: a CI on continuo-python-runtime older than"
+            " 0.12.0 hashes the config part differently, and the two agree once the"
+            " service releases on 0.12.0 or later",
             extra={
                 "node_id": f"{schema}.{table}".lower(),
                 "service": service,
@@ -272,9 +274,11 @@ def _parse_entry(
         )
 
     # The contract entry the code bundle's read set names (docs/read-contract.md):
-    # the normalized entry, hash fields excluded, serialized deterministically for
-    # the code bundle and the remediation LLM. The hashed code projection rides
-    # beside it in `projection`.
+    # the entry's parsed fields, hash fields and timeout excluded, with
+    # `script`, `secret_ref`, `mode_type`, `primary_key` and `assets` only where
+    # they apply or differ from the default, serialized deterministically for the
+    # code bundle and the remediation LLM. The hashed code projection rides beside
+    # it in `projection`.
     raw_entry = {
         "schema": schema,
         "table": table,
@@ -292,6 +296,12 @@ def _parse_entry(
         raw_entry["script"] = script
     if secret_ref:
         raw_entry["secret_ref"] = secret_ref
+    if mode_type != _DEFAULT_MODE_TYPE:
+        raw_entry["mode_type"] = mode_type
+    if primary_key:
+        raw_entry["primary_key"] = primary_key
+    if assets:
+        raw_entry["assets"] = assets
 
     raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
 

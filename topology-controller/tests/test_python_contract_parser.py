@@ -640,3 +640,21 @@ def test_a_type_the_projection_refuses_rejects_the_artifact(tmp_path):
     cols = [{"name": "id", "type": "FLOAT", "nullable": False}]
     with pytest.raises(MalformedContractError, match="unsupported or invalid SQL type"):
         _parse_one(tmp_path, make_entry(output_columns=cols))
+
+
+def test_raw_code_carries_the_mode_primary_key_and_assets_that_differ_from_the_default(tmp_path):
+    cols = [{"name": "id", "type": "INTEGER", "nullable": False}, {"name": "amount", "type": "NUMERIC(10,2)"}]
+    raw = json.loads(_parse_one(tmp_path, make_entry(mode_type="upsert", primary_key=["id"], output_columns=cols,
+                                                     assets=["lib/ref.json"])).raw_code)
+    assert (raw["mode_type"], raw["primary_key"], raw["assets"]) == ("upsert", ["id"], ["lib/ref.json"])
+    default = json.loads(_parse_one(tmp_path, make_entry(mode_type="replace")).raw_code)
+    assert not {"mode_type", "primary_key", "assets"} & set(default)
+
+
+def test_a_ci_content_hash_mismatch_warns_that_a_ci_older_than_0_12_hashes_the_config_part_differently(tmp_path, caplog):
+    _parse_one(tmp_path, make_entry(content_hash="sha256:" + "0" * 64))
+    (record,) = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert record.getMessage() == (
+        "python contract: the producer CI's content_hash differs from the one topology-controller computes:"
+        " a CI on continuo-python-runtime older than 0.12.0 hashes the config part differently, and the two"
+        " agree once the service releases on 0.12.0 or later")
