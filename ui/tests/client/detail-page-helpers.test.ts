@@ -141,6 +141,14 @@ describe('detail page graph helpers', () => {
     });
   });
 
+  it('keeps a versioned table name whole', () => {
+    expect(parseNodeId('svc.analytics.orders.v2')).toEqual({
+      service_name: 'svc',
+      schema_name: 'analytics',
+      table_name: 'orders.v2',
+    });
+  });
+
   it('returns empty strings for missing node_id segments', () => {
     expect(parseNodeId('only')).toEqual({
       service_name: 'only',

@@ -139,8 +139,8 @@ export function parseNodeId(nodeId: string): {
   schema_name: string;
   table_name: string;
 } {
-  const [service_name = '', schema_name = '', table_name = ''] = nodeId.split('.');
-  return { service_name, schema_name, table_name };
+  const [service_name = '', schema_name = '', ...rest] = nodeId.split('.');
+  return { service_name, schema_name, table_name: rest.join('.') };
 }
 
 // ingestedNodeName is how the graph and its focus legend name an ingested

@@ -16,7 +16,7 @@ export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
 // every few seconds per job, with headroom for parallel jobs of one repository.
 export const READ_RATE_LIMIT_PER_MINUTE = 300;
 const CI_CONFLICT_MESSAGE = 'release id already exists with different content';
-const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'kind', 'repo', 'commit_sha']);
+const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'rebaseline', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // A release id is a single URL path segment and an object-key component
 // downstream, so the public API admits only this shape.
@@ -29,6 +29,7 @@ export interface PublicRelease {
   status: string;
   terminal: boolean;
   bootstrap: boolean;
+  rebaseline: boolean;
   repo: string;
   commit_sha: string;
   reject_reason: string;
@@ -82,11 +83,13 @@ function parseSubmit(raw: unknown): { body: ReleaseSubmission } | { error: strin
     return { error: `release_id must match ${RELEASE_ID_PATTERN.source}` };
   }
   if (o.bootstrap !== undefined && typeof o.bootstrap !== 'boolean') return { error: 'bootstrap must be a boolean' };
+  if (o.rebaseline !== undefined && typeof o.rebaseline !== 'boolean') return { error: 'rebaseline must be a boolean' };
   for (const k of ['kind', 'repo', 'commit_sha']) {
     if (o[k] !== undefined && typeof o[k] !== 'string') return { error: `${k} must be a string` };
   }
   const body: ReleaseSubmission = { release_id: o.release_id as string, service: o.service as string, image_tag: o.image_tag as string };
   if (o.bootstrap !== undefined) body.bootstrap = o.bootstrap as boolean;
+  if (o.rebaseline !== undefined) body.rebaseline = o.rebaseline as boolean;
   for (const k of ['kind', 'repo', 'commit_sha'] as const) {
     if (o[k] !== undefined) body[k] = o[k] as string;
   }
@@ -102,6 +105,7 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
     status,
     terminal: TERMINAL.has(status),
     bootstrap: rel.bootstrap === true,
+    rebaseline: rel.rebaseline === true,
     repo: str(rel.repo),
     commit_sha: str(rel.commit_sha),
     reject_reason: str(rel.reject_reason),
@@ -133,7 +137,7 @@ function acceptedBody(text: string, releaseId: string): PublicSubmitAccepted {
 }
 
 // The audit line for a submit. The body may not have passed validation yet, so
-// only values that are strings (and a literal true for bootstrap) are recorded.
+// only values that are strings (and a literal true for bootstrap or rebaseline) are recorded.
 function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
   const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
   audit('release_submit', {
@@ -141,6 +145,7 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
     service: typeof o.service === 'string' ? o.service : undefined,
     release_id: typeof o.release_id === 'string' ? o.release_id : undefined,
     bootstrap: o.bootstrap === true,
+    rebaseline: o.rebaseline === true,
     outcome,
   });
 }
@@ -221,7 +226,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     auditSubmit(p, body, upstream.status);
     // release-controller answers 409 when the release id already names a run
     // of another kind or a candidate with a different service, image tag,
-    // kind, bootstrap flag or source change. A person gets its message; a CI
+    // kind, bootstrap or rebaseline flag, or source change. A person gets its message; a CI
     // identity gets a generic one, because the id may belong to a release of a
     // service its repository is not bound to, and the message names the run's
     // kind.
