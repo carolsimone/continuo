@@ -19,6 +19,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/adapters/redis"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
@@ -210,7 +211,7 @@ func TestTenantEdges(t *testing.T) {
 	t.Run("reports", func(t *testing.T) {
 		h := newBuiltHarness(runControllerDB)
 		binding := redis.NewTaskStatusReportBinding(h.factory,
-			svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, h.logger), h.logger)
+			svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, h.logger), h.logger)
 
 		err := binding(ctx, e.report(t, pkgevents.DefaultTenantID))
 		require.ErrorIs(t, err, pkgevents.ErrPermanent, "a report naming another tenant than its run's is dead-lettered")

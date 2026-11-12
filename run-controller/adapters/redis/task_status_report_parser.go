@@ -53,6 +53,7 @@ func ParseTaskStatusReport(msg goredis.XMessage) (events.AttemptReported, error)
 		RunResultsURI:    reported(p.RunResultsURI),
 		ParseCache:       reported(p.ParseCache),
 		ParseCacheReason: reported(p.ParseCacheReason),
+		SeedPreflight:    p.SeedPreflight.ToDomain(),
 	}}, nil
 }
 

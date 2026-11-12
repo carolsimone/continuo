@@ -17,7 +17,8 @@ import (
 // of a command that creates or cancels a run ended. It counts the outcomes of
 // the cron loop's fires and gauges the schedules scheduled, paused and unparsable.
 // It counts the seed loads that ended, by action and outcome, and the tasks of
-// a seed reload a seed rule stopped, by reason.
+// a seed reload a seed rule stopped, by reason, and times how long each view a
+// seed load left missing or stale waited for its rebuild.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -31,6 +32,7 @@ type RunMetrics struct {
 	schedules         *prometheus.GaugeVec
 	seedReloads       *prometheus.CounterVec
 	seedReloadStops   *prometheus.CounterVec
+	viewOutageSeconds prometheus.Histogram
 }
 
 var (
@@ -55,8 +57,8 @@ var (
 // continuo_runs_cancelling_overdue, continuo_run_cancel_seconds,
 // continuo_node_lease_waiters, continuo_node_lease_wait_seconds,
 // continuo_node_leases_repaired_total, continuo_command_requests_total,
-// continuo_cron_fires_total, continuo_schedules, continuo_seed_reloads_total
-// and continuo_seed_reload_stops_total on reg.
+// continuo_cron_fires_total, continuo_schedules, continuo_seed_reloads_total,
+// continuo_seed_reload_stops_total and continuo_view_outage_seconds on reg.
 func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 	m := &RunMetrics{
 		stalled: prometheus.NewCounter(prometheus.CounterOpts{
@@ -109,6 +111,11 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 			Name: "continuo_seed_reload_stops_total",
 			Help: "Tasks of a seed reload, a seed's load or a view's rebuild, that a seed rule stopped before they changed the warehouse, by failure reason: unowned_dependents, engine_mismatch, seed_full_refresh_disabled, seed_full_refresh_undefined or full_refresh_undefined.",
 		}, []string{"reason"}),
+		viewOutageSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "continuo_view_outage_seconds",
+			Help:    "Seconds a view a seed load dropped (missing) or left stale stayed so, from the commit of that load until a task of the view succeeded.",
+			Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400},
+		}),
 	}
 	for _, action := range seedReloadActions {
 		for _, outcome := range seedReloadOutcomes {
@@ -119,7 +126,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		m.seedReloadStops.WithLabelValues(string(reason))
 	}
 	reg.Register(m.stalled, m.cancelling, m.cancellingOverdue, m.cancelSeconds, m.leaseWaiters, m.leaseWaitSeconds, m.leasesRepaired,
-		m.commandRequests, m.cronFires, m.schedules, m.seedReloads, m.seedReloadStops)
+		m.commandRequests, m.cronFires, m.schedules, m.seedReloads, m.seedReloadStops, m.viewOutageSeconds)
 	return m
 }
 
@@ -175,3 +182,7 @@ func (m *RunMetrics) SeedReloadEnded(action, outcome string) {
 func (m *RunMetrics) SeedReloadStopped(reason string) {
 	m.seedReloadStops.WithLabelValues(reason).Inc()
 }
+
+// ViewRebuilt observes the seconds a view stayed missing or stale until its
+// rebuild succeeded.
+func (m *RunMetrics) ViewRebuilt(after time.Duration) { m.viewOutageSeconds.Observe(after.Seconds()) }

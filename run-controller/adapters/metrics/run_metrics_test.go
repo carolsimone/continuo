@@ -186,6 +186,27 @@ func TestRunMetrics_SeedReloadSeriesStartAtZero(t *testing.T) {
 	}
 }
 
+// The outage histogram observes the seconds a view was missing or stale until
+// its rebuild succeeded, in the buckets from 5 s to a day.
+func TestRunMetrics_ViewRebuiltObservesTheOutage(t *testing.T) {
+	reg := pkgmetrics.New("run-controller")
+	m := NewRunMetrics(reg)
+	m.ViewRebuilt(90 * time.Second)
+
+	body := scrape(reg)
+	for _, want := range []string{
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="60"} 0`,
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="120"} 1`,
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="86400"} 1`,
+		`continuo_view_outage_seconds_count{service="run-controller"} 1`,
+		`continuo_view_outage_seconds_sum{service="run-controller"} 90`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}
+
 // scrape returns what reg's /metrics handler serves.
 func scrape(reg *pkgmetrics.Registry) string {
 	rec := httptest.NewRecorder()

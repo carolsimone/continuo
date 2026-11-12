@@ -38,9 +38,9 @@ type ReleasePromotedInput struct {
 // Handle then, in the message's transaction, stores the release once and moves
 // the pointer only to a higher promotion seq: a redelivery changes nothing, an
 // older promotion is kept as history, and another release under the live seq
-// is logged and leaves the pointer. A move deletes the materialization rows of
-// nodes the new live release does not have. When a SeedReconciler is set, it
-// runs last.
+// is logged and leaves the pointer. A move deletes the materialization rows and
+// the view outages of nodes the new live release does not have. When a
+// SeedReconciler is set, it runs last.
 type ReleasePromotedHandler struct {
 	artifacts ports.TopologyArtifactReader
 	seeds     SeedReconciler
@@ -115,10 +115,14 @@ func (h *ReleasePromotedHandler) Handle(ctx context.Context, u uow.UnitOfWork, i
 		if err != nil {
 			return fmt.Errorf("delete the materializations of removed nodes: %w", err)
 		}
+		outagesRemoved, err := u.ViewOutages().DeleteAbsentFrom(ctx, p.TenantID, p.ReleaseID)
+		if err != nil {
+			return fmt.Errorf("delete the view outages of removed nodes: %w", err)
+		}
 		h.logger.Info("release.promoted: live release moved",
 			"tenant_id", p.TenantID, "release_id", p.ReleaseID, "promotion_seq", p.PromotionSeq,
 			"previous_release_id", live.ReleaseID, "previous_promotion_seq", live.PromotionSeq,
-			"loaded", loaded, "materializations_removed", removed)
+			"loaded", loaded, "materializations_removed", removed, "view_outages_removed", outagesRemoved)
 	case topology.PointerConflict:
 		h.logger.Error("release.promoted: another release is live under the same promotion seq; live release unchanged",
 			"tenant_id", p.TenantID, "release_id", p.ReleaseID, "promotion_seq", p.PromotionSeq,

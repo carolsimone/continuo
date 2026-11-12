@@ -38,6 +38,35 @@ func seedPreflightFromColumn(s *string) (*seedreload.Preflight, error) {
 	return p.ToDomain(), nil
 }
 
+// seedPreflightFindingsColumn renders f as the value
+// task_attempts.seed_preflight_findings stores: the JSON of
+// pkgevents.SeedPreflightFindings, the shape a report carries, as text; nil,
+// which writes NULL, for nil findings.
+func seedPreflightFindingsColumn(f *seedreload.Findings) (*string, error) {
+	if f == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(pkgevents.SeedPreflightFindingsOf(f))
+	if err != nil {
+		return nil, fmt.Errorf("encode seed preflight findings: %w", err)
+	}
+	s := string(b)
+	return &s, nil
+}
+
+// seedPreflightFindingsFromColumn reads task_attempts.seed_preflight_findings
+// back through pkgevents.SeedPreflightFindings; NULL reads as nil.
+func seedPreflightFindingsFromColumn(s *string) (*seedreload.Findings, error) {
+	if s == nil {
+		return nil, nil
+	}
+	var f pkgevents.SeedPreflightFindings
+	if err := json.Unmarshal([]byte(*s), &f); err != nil {
+		return nil, fmt.Errorf("decode stored seed preflight findings: %w", err)
+	}
+	return f.ToDomain(), nil
+}
+
 // dispatchSpecColumns are the columns of a task row every dispatch of the task
 // carries. A read that scans them selects operation, plan_reason and
 // seed_preflight.

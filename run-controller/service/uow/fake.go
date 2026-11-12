@@ -41,6 +41,9 @@ type FakeUnitOfWork struct {
 	// MaterializationRepo backs Materializations().
 	MaterializationRepo repository.MaterializationRepository
 
+	// ViewOutageRepo backs ViewOutages().
+	ViewOutageRepo repository.ViewOutageRepository
+
 	// Graph backs TaskGraph(); GraphTenant records the tenant it was last
 	// asked for.
 	Graph       run.TaskGraph
@@ -130,6 +133,10 @@ func (f *FakeUnitOfWork) Topology() repository.TopologyRepository { return f.Top
 func (f *FakeUnitOfWork) Materializations() repository.MaterializationRepository {
 	return f.MaterializationRepo
 }
+
+// ViewOutages returns the repository.ViewOutageRepository set via the
+// ViewOutageRepo field.
+func (f *FakeUnitOfWork) ViewOutages() repository.ViewOutageRepository { return f.ViewOutageRepo }
 
 // TaskGraph returns the run.TaskGraph set via the Graph field and records
 // tenantID.

@@ -29,6 +29,7 @@ func newTopoTenant(t *testing.T, db *sqlx.DB) string {
 		_, _ = db.ExecContext(ctx, `DELETE FROM live_release WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(ctx, `DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(ctx, `DELETE FROM node_materializations WHERE tenant_id = $1`, tenant)
+		_, _ = db.ExecContext(ctx, `DELETE FROM view_outages WHERE tenant_id = $1`, tenant)
 	})
 	return tenant
 }

@@ -352,6 +352,9 @@ func main() {
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
 	runMetrics := rcmetrics.NewRunMetrics(metricsReg)
+	// continuo_views_missing reads the open view outages of every tenant at
+	// each scrape.
+	rcmetrics.NewViewsMissingCollector(metricsReg, postgres.NewViewOutageRepository(db, nil), logger)
 	// Every run, the seed reconcile's promote-seed runs included, is planned
 	// by one planner for the tenant its entry point chose. It applies the seed
 	// reload rules of the install's warehouse family, and counts and logs each
@@ -385,7 +388,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.RunControllerTaskStatusUpdated,
-			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, runMetrics, cfg.WarehouseFamily, logger), logger),
 		},
 		{
 			name:    "release_promoted",

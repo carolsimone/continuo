@@ -793,6 +793,7 @@ func (r *reloadCounts) SeedReloadEnded(action, outcome string) {
 	r.ended = append(r.ended, action+" "+outcome)
 }
 func (r *reloadCounts) SeedReloadStopped(reason string) { r.stopped = append(r.stopped, reason) }
+func (r *reloadCounts) ViewRebuilt(time.Duration)       {}
 
 // A refused seed is counted and logged only once the run's transaction
 // commits.

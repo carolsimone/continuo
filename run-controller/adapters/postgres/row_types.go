@@ -102,4 +102,5 @@ type taskAttemptRow struct {
 	RunResultsURI    *string    `db:"run_results_uri"`
 	ParseCache       *string    `db:"parse_cache"`
 	ParseCacheReason *string    `db:"parse_cache_reason"`
+	SeedFindings     *string    `db:"seed_preflight_findings"`
 }
