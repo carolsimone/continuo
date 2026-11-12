@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 import pytest
+from continuo_contracts.hashing import shared_fold
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import SkippedNode, SkipReason
 from service.parser import parse_manifest
@@ -11,71 +12,71 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_parse_valid_manifest():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     assert len(nodes) == 4
     names = {n.table_name for n in nodes}
     assert names == {"orders", "users", "my_seed", "my_snapshot"}
 
 
 def test_parse_sets_node_type_model():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     orders = next(n for n in nodes if n.table_name == "orders")
     assert orders.node_type == "dbt-model"
 
 
 def test_parse_sets_node_type_seed():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     my_seed = next(n for n in nodes if n.table_name == "my_seed")
     assert my_seed.node_type == "dbt-seed"
 
 
 def test_parse_sets_node_type_snapshot():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     my_snapshot = next(n for n in nodes if n.table_name == "my_snapshot")
     assert my_snapshot.node_type == "dbt-snapshot"
 
 
 def test_parse_sets_criticality_default():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     users = next(n for n in nodes if n.table_name == "users")
     assert users.criticality == "SECONDARY"
 
 
 def test_parse_sets_criticality_from_meta():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     orders = next(n for n in nodes if n.table_name == "orders")
     assert orders.criticality == "CORE"
 
 
 def test_parse_sets_schedule_from_first_tag():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     assert all(n.schedule_name == "daily" for n in nodes)
 
 
 def test_parse_sets_service_from_fqn():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
     assert all(n.service_name == "service-1" for n in nodes)
 
 
 def test_parse_skips_node_missing_owner():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_missing_owner.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_missing_owner.json")).nodes
     assert nodes == []
 
 
 def test_parse_skips_node_missing_tags():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json")).nodes
     assert nodes == []
 
 
 def test_parse_seed_without_tags_defaults_schedule_to_seed():
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_seed_no_tags.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_seed_no_tags.json")).nodes
     assert len(nodes) == 1
     assert nodes[0].schedule_name == "seed"
 
 
-def test_parse_sets_source_hash_from_checksum(tmp_path):
-    # dbt's own per-node checksum feeds the source_hash component verbatim; the
-    # published content_hash is the derived three-part sha256:-prefixed fold.
+def test_parse_sets_source_hash_from_the_normalised_raw_code_not_the_dbt_checksum(tmp_path):
+    # A model's source part is the SHA-256 of its raw_code with line endings and
+    # outer whitespace normalised; dbt's own file checksum is not read.
     manifest = {
         "nodes": {
             "model.svc.users": {
@@ -86,16 +87,17 @@ def test_parse_sets_source_hash_from_checksum(tmp_path):
                 "config": {"meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": "deadbeefcafef00d"},
+                "raw_code": "select 1\r\n",
             }
         }
     }
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes, _ = parse_manifest(str(path))
+    nodes = parse_manifest(str(path)).nodes
 
     assert len(nodes) == 1
-    assert nodes[0].source_hash == "deadbeefcafef00d"
+    assert nodes[0].source_hash == hashlib.sha256(b"select 1").hexdigest()
     assert nodes[0].content_hash.startswith("sha256:")
 
 
@@ -113,33 +115,32 @@ def _manifest_with(raw_code: str | None) -> dict:
     return {"nodes": {"model.svc.users": node}}
 
 
-def test_parse_falls_back_to_nonempty_hash_when_checksum_absent(tmp_path):
-    # A supported node without checksum must still get a non-empty, change-sensitive
-    # fingerprint — release-controller uses content_hash as the sole change detector,
-    # so an empty hash would make later edits to the node undetectable.
+def test_parse_hashes_the_empty_text_for_a_model_without_raw_code(tmp_path):
+    # A model with no raw_code still gets a source part (the SHA-256 of the empty
+    # text) and a non-empty content_hash, which release-controller compares.
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(_manifest_with(raw_code="select 1")))
+    path.write_text(json.dumps(_manifest_with(raw_code=None)))
 
-    nodes, _ = parse_manifest(str(path))
+    nodes = parse_manifest(str(path)).nodes
 
     assert len(nodes) == 1
-    assert nodes[0].content_hash != ""
+    assert nodes[0].source_hash == hashlib.sha256(b"").hexdigest()
     assert nodes[0].content_hash.startswith("sha256:")
 
 
-def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
+def test_the_source_hash_is_deterministic_and_change_sensitive(tmp_path):
     def hash_for(raw_code, fname):
         p = tmp_path / fname
         p.write_text(json.dumps(_manifest_with(raw_code=raw_code)))
-        nodes, _ = parse_manifest(str(p))
+        nodes = parse_manifest(str(p)).nodes
         return nodes[0].content_hash
 
     h1 = hash_for("select 1", "a.json")
     h1_again = hash_for("select 1", "a_again.json")
     h2 = hash_for("select 2", "b.json")
 
-    assert h1 == h1_again, "same source -> same fallback hash (deterministic)"
-    assert h1 != h2, "different source -> different fallback hash (change-sensitive)"
+    assert h1 == h1_again, "same source -> same hash (deterministic)"
+    assert h1 != h2, "different source -> different hash (change-sensitive)"
 
 
 def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
@@ -157,6 +158,7 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
         "config": {"meta": {"owner": "team-a"}},
         "tags": ["nightly"],
         "checksum": {"name": "sha256", "checksum": "modelsource0001"},
+        "raw_code": "select 1 as orders",
         "depends_on": {"macros": list(model_macros.keys())},
     }
     macros = {
@@ -169,7 +171,7 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
 def _hash_of(manifest: dict, tmp_path, fname: str) -> str:
     p = tmp_path / fname
     p.write_text(json.dumps(manifest))
-    nodes, _ = parse_manifest(str(p))
+    nodes = parse_manifest(str(p)).nodes
     return nodes[0].content_hash
 
 
@@ -231,12 +233,12 @@ def test_transitive_macro_change_flips_model_hash(tmp_path):
 
 def test_node_without_macros_has_empty_shared_code_hash(tmp_path):
     # A model with no macro dependencies gets shared_code_hash == "" and its
-    # source_hash is the verbatim dbt checksum, untouched by macro-folding.
+    # source_hash is the hash of its own raw_code, untouched by macro-folding.
     p = tmp_path / "n.json"
     p.write_text(json.dumps(_manifest_with_macros({})))
-    nodes, _ = parse_manifest(str(p))
+    nodes = parse_manifest(str(p)).nodes
     node = nodes[0]
-    assert node.source_hash == "modelsource0001"
+    assert node.source_hash == hashlib.sha256(b"select 1 as orders").hexdigest()
     assert node.shared_code_hash == ""
     assert node.content_hash.startswith("sha256:")
 
@@ -257,7 +259,7 @@ def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes, _ = parse_manifest(str(path), image_tag="abc123-1714300000")
+    nodes = parse_manifest(str(path), image_tag="abc123-1714300000").nodes
 
     assert len(nodes) == 1
     assert nodes[0].image_tag == "abc123-1714300000"
@@ -280,7 +282,7 @@ def test_parse_manifest_captures_original_file_path(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes, _ = parse_manifest(str(path))
+    nodes = parse_manifest(str(path)).nodes
 
     assert len(nodes) == 1
     assert nodes[0].original_file_path == "models/staging/stg_orders.sql"
@@ -312,7 +314,7 @@ def test_parse_manifest_drops_local_stub_nodes(tmp_path):
         },
     }
     path = _write(tmp_path, manifest)
-    nodes, _ = parse_manifest(path, "v1")
+    nodes = parse_manifest(path, "v1").nodes
     names = {n.table_name for n in nodes}
     assert "keep" in names
     assert "stub" not in names
@@ -349,8 +351,8 @@ def test_out_of_file_config_change_flips_content_hash(tmp_path):
         {"model.svc.revenue": _node(config={"meta": {"owner": "team-a"}, "materialized": "incremental"})},
         name="b.json",
     )
-    (n1,), _ = parse_manifest(table, "v1")
-    (n2,), _ = parse_manifest(incr, "v1")
+    (n1,) = parse_manifest(table, "v1").nodes
+    (n2,) = parse_manifest(incr, "v1").nodes
     assert n1.source_hash == n2.source_hash          # file bytes identical
     assert n1.config_hash != n2.config_hash
     assert n1.content_hash != n2.content_hash        # the gate now sees it
@@ -366,8 +368,8 @@ def test_denylisted_config_keys_do_not_flip_hash(tmp_path):
         })},
         name="b.json",
     )
-    (n1,), _ = parse_manifest(base, "v1")
-    (n2,), _ = parse_manifest(noisy, "v1")
+    (n1,) = parse_manifest(base, "v1").nodes
+    (n2,) = parse_manifest(noisy, "v1").nodes
     assert n1.content_hash == n2.content_hash
 
 
@@ -379,8 +381,8 @@ def test_unknown_config_key_participates(tmp_path):
                                             "some_future_key": True})},
         name="b.json",
     )
-    (n1,), _ = parse_manifest(base, "v1")
-    (n2,), _ = parse_manifest(future, "v1")
+    (n1,) = parse_manifest(base, "v1").nodes
+    (n2,) = parse_manifest(future, "v1").nodes
     assert n1.content_hash != n2.content_hash
 
 
@@ -396,9 +398,11 @@ def test_transitive_shared_code_change_flips_hash(tmp_path):
     node = _node(depends_on={"macros": ["macro.svc.m1"], "nodes": []})
     p1 = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros_v1, name="a.json")
     p2 = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros_v2, name="b.json")
-    (n1,), _ = parse_manifest(p1, "v1")
-    (n2,), _ = parse_manifest(p2, "v1")
+    (n1,) = parse_manifest(p1, "v1").nodes
+    (n2,) = parse_manifest(p2, "v1").nodes
     assert n1.source_hash == n2.source_hash
+    assert n1.shared_code_hash == shared_fold({"macro.svc.m1": hashlib.sha256(b"select 1").hexdigest(),
+                                               "macro.svc.m2": hashlib.sha256(b"select 2").hexdigest()})
     assert n1.shared_code_hash != n2.shared_code_hash
     assert n1.content_hash != n2.content_hash
 
@@ -411,17 +415,19 @@ def test_shared_code_map_covers_transitive_units(tmp_path):
     }
     node = _node(depends_on={"macros": ["macro.svc.m1"], "nodes": []})
     p = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros)
-    (n,), shared = parse_manifest(p, "v1")
+    parsed = parse_manifest(p, "v1")
+    (n,), shared = parsed.nodes, parsed.shared_code
     assert set(shared) == {"macro.svc.m1", "macro.svc.m2"}   # unused macro excluded
     assert shared["macro.svc.m1"]["source"] == "select 1"
     assert shared["macro.svc.m1"]["depends_on"] == ["macro.svc.m2"]
     assert shared["macro.svc.m2"]["checksum"] == hashlib.sha256(b"select 2").hexdigest()
-    assert n.code_unit_ids == ["macro.svc.m1"]               # direct deps only
+    assert n.code_unit_ids == ["macro.svc.m1", "macro.svc.m2"]   # every folded unit
 
 
 def test_node_carries_new_fields(tmp_path):
     p = _manifest_path(tmp_path, {"model.svc.revenue": _node()})
-    (n,), shared = parse_manifest(p, "v1")
+    parsed = parse_manifest(p, "v1")
+    (n,), shared = parsed.nodes, parsed.shared_code
     assert n.runtime == "dbt"
     assert n.raw_code == "select 1 as x"
     assert n.config["materialized"] == "table"
@@ -437,7 +443,7 @@ def test_parser_fills_dependency_and_candidate_sql_from_compiled_code(tmp_path):
     manifest = {"nodes": {"model.svc.orders": node}}
     manifest_path = _write(tmp_path, manifest)
 
-    nodes, _ = parse_manifest(manifest_path, "v1")
+    nodes = parse_manifest(manifest_path, "v1").nodes
 
     model = next(n for n in nodes if n.node_type == "dbt-model")
     assert model.dependency_sqls == ["select 1 as x"]
@@ -447,7 +453,7 @@ def test_parser_fills_dependency_and_candidate_sql_from_compiled_code(tmp_path):
 def test_parser_seed_yields_empty_dependency_sqls():
     # Seed nodes have no compiled_code; manifest_valid.json's my_seed already
     # carries compiled_code="", so no extra fixture needs to be built here.
-    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"))
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
 
     seed = next(n for n in nodes if n.node_type == "dbt-seed")
     assert seed.dependency_sqls == []
@@ -464,7 +470,7 @@ def test_parse_reads_alias_when_present(tmp_path):
     manifest = {"nodes": {"model.svc.orders_v2": node}}
     path = _write(tmp_path, manifest)
 
-    nodes, _ = parse_manifest(path, "v1")
+    nodes = parse_manifest(path, "v1").nodes
 
     assert len(nodes) == 1
     assert nodes[0].table_name == "orders_v2"
@@ -481,7 +487,7 @@ def test_parse_falls_back_to_name_when_alias_absent(tmp_path):
     manifest = {"nodes": {"model.svc.orders": node}}
     path = _write(tmp_path, manifest)
 
-    nodes, _ = parse_manifest(path, "v1")
+    nodes = parse_manifest(path, "v1").nodes
 
     assert len(nodes) == 1
     assert nodes[0].resolved_relation == "orders"
@@ -494,13 +500,13 @@ def _timeout_node(**meta):
 
 def test_parse_reads_the_timeout_dbt_resolved_into_config_meta(tmp_path):
     path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=480)})
-    (node,), _ = parse_manifest(path, "v1")
+    (node,) = parse_manifest(path, "v1").nodes
     assert node.timeout_seconds == 28800
 
 
 def test_parse_leaves_an_undeclared_timeout_unset(tmp_path):
     path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node()})
-    (node,), _ = parse_manifest(path, "v1")
+    (node,) = parse_manifest(path, "v1").nodes
     assert node.timeout_seconds is None
 
 
@@ -519,7 +525,7 @@ def test_parse_ignores_a_bad_timeout_on_a_node_it_drops(tmp_path):
         config={"meta": {"owner": "o", "timeout_minutes": "2h"}, "materialized": "table"},
     )
     path = _manifest_path(tmp_path, {"model.svc.revenue": dropped})
-    nodes, _ = parse_manifest(path, "v1")
+    nodes = parse_manifest(path, "v1").nodes
     assert nodes == []
 
 
@@ -529,7 +535,7 @@ def test_a_timeout_change_keeps_the_content_hash(tmp_path):
         path = _manifest_path(
             tmp_path, {"model.svc.revenue": _timeout_node(**meta)}, name=f"{name}.json"
         )
-        (node,), _ = parse_manifest(path, "v1")
+        (node,) = parse_manifest(path, "v1").nodes
         hashes.append(node.content_hash)
     assert hashes[0] == hashes[1] == hashes[2]
 
@@ -541,7 +547,7 @@ def test_parse_skips_node_without_meta_owner_whether_meta_is_null_or_empty(tmp_p
     node = _node()
     node["config"]["meta"] = meta
     path = _manifest_path(tmp_path, {"model.svc.revenue": node})
-    nodes, _ = parse_manifest(path, "v1")
+    nodes = parse_manifest(path, "v1").nodes
     assert nodes == []
 
 
@@ -605,7 +611,7 @@ def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp
     )
     skipped: list[SkippedNode] = []
     with caplog.at_level(logging.DEBUG, logger="service.parser"):
-        nodes, _ = parse_manifest(path, skipped=skipped)
+        nodes = parse_manifest(path, skipped=skipped).nodes
     assert [n.table_name for n in nodes] == ["kept"]
     assert skipped == [
         SkippedNode("model.svc_a.no_owner", "svc-a", SkipReason.NO_OWNER),
@@ -626,10 +632,10 @@ def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_service(tmp_path):
 def test_a_model_counts_its_declared_columns(tmp_path):
     columns = {name: {"name": name} for name in ("id", "amount", "created_at")}
     path = _write_nodes(tmp_path, **{"model.svc_a.wide": _svc_a_model("wide", columns=columns)})
-    nodes, _ = parse_manifest(path)
+    nodes = parse_manifest(path).nodes
     assert nodes[0].declared_columns == 3
 
 
 def test_a_model_with_no_columns_block_declares_none(tmp_path):
-    nodes, _ = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare")}))
+    nodes = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare")})).nodes
     assert nodes[0].declared_columns == 0

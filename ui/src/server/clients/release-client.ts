@@ -4,6 +4,7 @@ export interface ReleaseSubmission {
   service: string;
   image_tag: string;
   bootstrap?: boolean;
+  rebaseline?: boolean;
   kind?: string;
   repo?: string;
   commit_sha?: string;

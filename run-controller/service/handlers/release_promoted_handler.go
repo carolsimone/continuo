@@ -139,6 +139,7 @@ func (h *ReleasePromotedHandler) Handle(ctx context.Context, u uow.UnitOfWork, i
 		Outcome:             outcome,
 		FirstPromotion:      live.IsZero(),
 		Bootstrap:           p.Bootstrap,
+		Rebaseline:          p.Rebaseline,
 		ChangedNodeIDs:      p.ChangedNodeIDs,
 		MessageProcessingID: msgProcID,
 	}); err != nil {

@@ -164,9 +164,10 @@ func restoreDefaultTopologyAfter(t *testing.T, clients *testClients, releaseID s
 	waitForPromoteSeedRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
 }
 
-// waitForPromoteSeedRunsToEnd waits until no promote-seed run of releaseID is
-// active. It returns without failing when one still is after timeout: a seed
-// load that runs long is not what the calling test asserts.
+// waitForPromoteSeedRunsToEnd waits until no promote-seed run of releaseID, or
+// of any release when releaseID is "", is active. It returns without failing
+// when one still is after timeout: a seed load that runs long is not what the
+// calling test asserts.
 func waitForPromoteSeedRunsToEnd(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -174,7 +175,7 @@ func waitForPromoteSeedRunsToEnd(t *testing.T, ctx context.Context, clients *tes
 		var active int
 		err := clients.runControllerDB.GetContext(ctx, &active, `
 			SELECT count(*) FROM runs
-			 WHERE tenant_id = $1 AND kind = 'promote_seed' AND release_id = $2
+			 WHERE tenant_id = $1 AND kind = 'promote_seed' AND ($2::text = '' OR release_id = $2)
 			   AND status IN ('pending', 'running', 'cancelling')`,
 			events.DefaultTenantID, releaseID)
 		if err == nil && active == 0 {

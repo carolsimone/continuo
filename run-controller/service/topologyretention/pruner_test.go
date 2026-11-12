@@ -70,8 +70,8 @@ func (f *pruneTopology) Graph(context.Context, string, string, []topology.NodeKe
 	return topology.Graph{}, errors.New("Graph is not used by the pruner")
 }
 
-func (f *pruneTopology) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, errors.New("NodeContentHash is not used by the pruner")
+func (f *pruneTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the pruner")
 }
 
 func newPruner(topo *pruneTopology) (*topologyretention.Pruner, *uow.FakeUnitOfWork) {

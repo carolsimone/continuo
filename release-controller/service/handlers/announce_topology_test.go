@@ -53,7 +53,7 @@ func TestAnnounceTopology_AnnouncesWithoutMovingCurrentProd(t *testing.T) {
 func TestAnnounceTopology_RefusesATakenReleaseID(t *testing.T) {
 	t.Run("a pipeline run", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
-		store.SeedRelease(pipeline.NewCandidate("rA", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0)))
+		store.SeedRelease(pipeline.NewCandidate("rA", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0)))
 		_, err := handlers.AnnounceTopology(context.Background(), deps, "rA", benchTopology())
 		require.ErrorIs(t, err, handlers.ErrReleaseIDTaken)
 		assert.Equal(t, int64(0), store.LastPromotionSeq())

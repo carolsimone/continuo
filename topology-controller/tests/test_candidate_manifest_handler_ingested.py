@@ -115,6 +115,25 @@ def test_a_table_written_under_an_alias_is_no_ingested_node(tmp_path):
     assert sorted(_topology(source_with_nodes(tmp_path, reader, aliased))) == ["test_schema.orders_v2", "test_schema.reader"]
 
 
+def test_a_raw_read_of_an_aliased_models_declared_name_is_no_node_no_edge_and_no_redirect(tmp_path):
+    """The model named orders_v2 whose alias is orders writes test_schema.orders.
+    A raw read of test_schema.orders_v2 names that model's identity, not a
+    relation it writes: it makes no ingested node, no edge, and the reader's
+    candidate SQL keeps the name as written."""
+    reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.orders_v2"}
+    aliased = dbt_node("orders_v2") | {"alias": "orders"}
+    writer, uploader = RecordingArtifactWriter(), make_uploader()
+    build_handler(
+        source_with_nodes(tmp_path, reader, aliased), MagicMock(), uploader, artifact_writer=writer,
+    ).handle(release_id="rel-1")
+    by_id = {n["unique_id"]: n for n in writer.nodes}
+    assert sorted(by_id) == ["test_schema.orders_v2", "test_schema.reader"]
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
+    sqls = {c.kwargs["unique_id"]: c.kwargs["sql"] for c in uploader.upload.call_args_list}
+    assert "test_schema.orders_v2" in sqls["test_schema.reader"]
+    assert "_candidate_rel_1" not in sqls["test_schema.reader"]
+
+
 def test_a_system_table_is_no_ingested_node(tmp_path):
     reader = dbt_node("reader") | {
         "compiled_code": "SELECT c.relname FROM pg_catalog.pg_class c JOIN information_schema.tables t ON true",
@@ -167,13 +186,17 @@ def _trino_topology_bytes(tmp_path, compiled_code):
         source_with_nodes(tmp_path, reader), MagicMock(), make_uploader(), artifact_writer=writer,
         dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
     ).handle(release_id="rel-1")
-    return writer.nodes, canonical_topology_json(tenant_id="default", release_id="rel-1", nodes=writer.nodes)
+    # The reader's content_hash folds its compiled SQL, which differs with the
+    # order the SQL names its tables in, so its bytes leave that one field out.
+    comparable = [n | {"content_hash": ""} if n["unique_id"] == "test_schema.reader" else n for n in writer.nodes]
+    return writer.nodes, canonical_topology_json(tenant_id="default", release_id="rel-1", nodes=comparable)
 
 
 def test_a_system_catalog_read_before_or_after_a_real_table_read_writes_the_real_table_and_its_edge(tmp_path):
     """On Trino system.runtime.nodes is the engine's own and warehouse.runtime.nodes
     is a real table with the same schema and name: the topology holds the real
-    table and its edge whichever the SQL names first, in the same bytes."""
+    table and its edge whichever the SQL names first, in the same bytes apart
+    from the reader's content_hash."""
     written = [_trino_topology_bytes(tmp_path, sql) for sql in SYSTEM_AND_REAL_READS]
     for nodes, _ in written:
         by_id = {n["unique_id"]: n for n in nodes}

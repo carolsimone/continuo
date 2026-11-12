@@ -8,8 +8,8 @@ from domain.model import (
     ManifestKind,
     ManifestNode,
     NodeRegistry,
-    NodeRegistryEntry,
     NodeType,
+    ServiceProvenance,
     SkippedNode,
     TableRef,
 )
@@ -81,6 +81,10 @@ def _artifact_entry(node: ManifestNode) -> dict:
         entry["secret_ref"] = node.secret_ref
     if node.timeout_seconds:
         entry["timeout_seconds"] = node.timeout_seconds
+    if node.relation_name:
+        entry["relation_name"] = node.relation_name
+    if node.seed_columns_hash:
+        entry["seed_columns_hash"] = node.seed_columns_hash
     return entry
 
 
@@ -103,11 +107,12 @@ class CandidateManifestHandler:
     artifact carries no reference to it.
 
     A single code-bundle document (one per release, covering every published
-    node plus the shared-code units they depend on) is uploaded via
-    bundle_uploader, then the topology artifact via artifact_writer, and only
-    then is the outcome published, so a published reference never dangles. An
-    empty release (no manifests) writes an artifact with no nodes and publishes
-    an empty code_bundle_uri.
+    node plus the shared-code units they depend on, the tracked dbt tests, and
+    each dbt service's provenance with the image tag the request names for it)
+    is uploaded via bundle_uploader, then the topology artifact via
+    artifact_writer, and only then is the outcome published, so a published
+    reference never dangles. An empty release (no manifests) writes an artifact
+    with no nodes and publishes an empty code_bundle_uri.
 
     A write that fails with an S3 outage (is_infrastructure_error: S3
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
@@ -142,6 +147,18 @@ class CandidateManifestHandler:
     A dbt node a parse leaves out (no owner, no tag to take a schedule from, a
     local stub) is never a failure: it is logged at INFO as it is skipped and
     counted on the release's line, and release-controller is told nothing of it.
+
+    A dbt seed whose source part is still dbt's `path` checksum (a seed over
+    1 MiB that its service's compile extras do not name) is logged at WARNING,
+    one line per seed, after its manifest's parse. A seed node whose extras
+    give it a column fingerprint carries it on its topology entry as
+    seed_columns_hash; any other node's entry has no such key.
+
+    A node whose build writes a relation named other than its table_name (an
+    alias, or a versioned model's "<name>_v<version>") carries that relation on
+    its topology entry as relation_name; any other node's entry has no such key.
+    Every node's upstreams resolve through the relation each node writes, and a
+    reader of an ephemeral dbt model of its own service depends on that model.
 
     handle() times each stage of the parse (see service.release_timings) with
     clock and memory and returns the record, whether the release was published,
@@ -239,6 +256,7 @@ class CandidateManifestHandler:
 
         all_nodes = []
         shared_code: dict[str, dict] = {}
+        provenance: dict[str, dict] = {}
         for mf in manifests:
             parser = parser_for(mf.kind)
             if parser is None:
@@ -256,8 +274,8 @@ class CandidateManifestHandler:
             manifest_skips: list[SkippedNode] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
-                    nodes, mf_shared = parser.parse(mf.path, mf.image_tag, skipped=manifest_skips)
-                    record.add(nodes=len(nodes))
+                    parsed = parser.parse(mf, skipped=manifest_skips)
+                    record.add(nodes=len(parsed.nodes))
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
                 # node are all permanent — re-delivery cannot fix them, so
@@ -267,6 +285,7 @@ class CandidateManifestHandler:
                 self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, f"{mf.path}: {exc!r}")
                 return
             self._progress()
+            nodes, mf_shared = parsed.nodes, parsed.shared_code
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -279,9 +298,11 @@ class CandidateManifestHandler:
             # same-named macro gets its own bundle entry, and every node keeps
             # pointing at the copy its own manifest actually hashed against.
             # Per-node hashes fold each manifest's own copy of a unit already
-            # (see parser._shared_code_hash), so this never changes a hash —
+            # (see dbt_hashing.shared_units), so this never changes a hash —
             # it only disambiguates which copy the bundle records for a unit id.
             namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
+            if parsed.provenance is not None and namespace:
+                provenance[namespace] = self._service_provenance(release_id, namespace, parsed.provenance)
 
             for unit_id, unit in mf_shared.items():
                 namespaced_id = f"{namespace}:{unit_id}"
@@ -331,17 +352,9 @@ class CandidateManifestHandler:
             all_nodes.extend(nodes)
 
         with self._timings.stage(Stage.REGISTRY) as record:
-            registry = NodeRegistry(entries=[
-                NodeRegistryEntry(
-                    table_name=n.table_name,
-                    schema_name=n.schema_name,
-                    service_name=n.service_name,
-                    owner=n.owner,
-                )
-                for n in all_nodes
-                if n.node_type != NodeType.DBT_TEST  # a test writes no relation: nothing can reference it
-            ])
+            registry = NodeRegistry.of_nodes(all_nodes)
             lookup = registry.to_lookup()
+            ephemeral_ctes = registry.ephemeral_ctes()
             record.add(entries=len(registry.entries))
         candidate_schema = candidate_schema_name(release_id)
         ctx = RewriteContext(
@@ -365,12 +378,14 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.RESOLVE, nodes=len(all_nodes)):
             for node in all_nodes:
                 try:
-                    refs = referenced_tables(node, dialect=self._dialect)
+                    ctes: set[str] = set()
+                    refs = referenced_tables(node, dialect=self._dialect, ctes=ctes)
                     # A system relation is never a node a release builds, so it
                     # resolves to no dependency, even when a node builds a table
                     # with the same schema and name.
                     node.upstream_deps = resolve_upstream_deps(
                         [ref for ref in refs if not self._system_relations.matches(ref)], lookup,
+                        service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
                     )
                     if node.node_type != NodeType.DBT_TEST:
                         reads[node.unique_id] = refs
@@ -428,8 +443,11 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.CODE_BUNDLE):
             bundle = build_code_bundle(
                 release_id,
-                [n for n in all_nodes if n.node_type != NodeType.DBT_TEST],  # tests are never fix targets nor source the agent reads
+                # tests are never fix targets nor source the agent reads: they ride in the tests map
+                [n for n in all_nodes if n.node_type != NodeType.DBT_TEST],
                 shared_code,
+                tests=[n for n in all_nodes if n.node_type == NodeType.DBT_TEST],
+                provenance=provenance,
             )
             try:
                 code_bundle_uri = self._bundle_uploader.upload(release_id, bundle)
@@ -460,6 +478,22 @@ class CandidateManifestHandler:
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
             )
         self._timings.outcome = ReleaseOutcome.OK
+
+    def _service_provenance(self, release_id: str, service: str, parsed: ServiceProvenance) -> dict:
+        """Log each of a dbt service's seeds that keeps dbt's path checksum and
+        return the service's bundle provenance entry, with the image tag the
+        release request names for the service."""
+        for seed in parsed.path_checksum_seeds:
+            logger.warning(
+                "candidate: seed keeps dbt's path checksum until its service's rebaseline release",
+                extra={"release_id": release_id, "service": service, "seed": seed},
+            )
+        return {
+            "dbt_version": parsed.dbt_version,
+            "image_tag": self._image_tags.get(service, ""),
+            "packages": dict(parsed.packages),
+            "path_checksum_seeds": list(parsed.path_checksum_seeds),
+        }
 
     def _record_parse(self, release_id: str, nodes: list[ManifestNode], skips: list[SkippedNode]) -> None:
         """Log each node a manifest's parse skipped, then add the manifest's

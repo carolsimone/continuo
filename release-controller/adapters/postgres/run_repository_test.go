@@ -64,7 +64,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 func TestRunRepository_SaveAndGet(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
-	r := pipeline.NewCandidate("rA", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rA", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), r))
 
 	got, err := repo.Get(context.Background(), "rA")
@@ -87,7 +87,7 @@ func TestRunRepository_SaveRejectsCrossKindIDCollision(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	cand := pipeline.NewCandidate("rClash", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	cand := pipeline.NewCandidate("rClash", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, cand))
 
 	verify := pipeline.NewVerification("rClash", "svc", "t", "rOrig", 1, "", release.ManifestKindDbt, time.Unix(200, 0).UTC())
@@ -106,12 +106,12 @@ func TestRunRepository_CreateInsertsOnlyAFreeID(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	first := pipeline.NewCandidate("rCreate", "svc", "img:1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	first := pipeline.NewCandidate("rCreate", "svc", "img:1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	inserted, err := repo.Create(ctx, first)
 	require.NoError(t, err)
 	require.True(t, inserted)
 
-	second := pipeline.NewCandidate("rCreate", "svc", "img:2", true, "acme/fork", "cafebabe", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	second := pipeline.NewCandidate("rCreate", "svc", "img:2", true, false, "acme/fork", "cafebabe", release.ManifestKindPython, time.Unix(200, 0).UTC())
 	inserted, err = repo.Create(ctx, second)
 	require.NoError(t, err)
 	require.False(t, inserted)
@@ -140,7 +140,7 @@ func TestRunRepository_ManifestKindRoundTrips(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rel-kind", "svc-py", "img:1", false, "acme/py", "cafebabe",
+	r := pipeline.NewCandidate("rel-kind", "svc-py", "img:1", false, false, "acme/py", "cafebabe",
 		release.ManifestKindPython, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
@@ -155,9 +155,9 @@ func TestRunRepository_BootstrapRoundTrips(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	boot := pipeline.NewCandidate("r-boot", "svc-a", "sha-a", true, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	boot := pipeline.NewCandidate("r-boot", "svc-a", "sha-a", true, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, boot))
-	plain := pipeline.NewCandidate("r-plain", "svc-a", "sha-a", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	plain := pipeline.NewCandidate("r-plain", "svc-a", "sha-a", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, plain))
 
 	gotBoot, err := repo.Get(ctx, "r-boot")
@@ -174,8 +174,8 @@ func TestRunRepository_BootstrapRoundTrips(t *testing.T) {
 func TestRunRepository_NextQueuedAndActive(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
-	older := pipeline.NewCandidate("rOLD", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
-	newer := pipeline.NewCandidate("rNEW", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(200, 0).UTC())
+	older := pipeline.NewCandidate("rOLD", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	newer := pipeline.NewCandidate("rNEW", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(context.Background(), older))
 	require.NoError(t, repo.Save(context.Background(), newer))
 
@@ -198,7 +198,7 @@ func TestRunRepository_ChangedServiceRoundTrips(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rCS", "service-x", "img-1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rCS", "service-x", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rCS")
@@ -213,7 +213,7 @@ func TestRunRepository_SetAssembledImageTagsRoundTrips(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rIT", "svc-a", "tag-a", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rIT", "svc-a", "tag-a", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	// Simulate AdvanceQueue overwriting image_tags with the assembled set.
@@ -230,7 +230,7 @@ func TestRunRepository_ListPaginatesNewestFirst(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	for i, id := range []string{"r1", "r2", "r3"} {
-		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(int64(100+i), 0).UTC())
+		r := pipeline.NewCandidate(id, "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(int64(100+i), 0).UTC())
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	page1, next, err := repo.List(ctx, repository.ListFilter{Limit: 2})
@@ -252,8 +252,8 @@ func TestRunRepository_ListTiebreaksByRunIDOnEqualTimestamp(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	ts := time.Unix(200, 0).UTC()
-	ra := pipeline.NewCandidate("ra", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, ts)
-	rb := pipeline.NewCandidate("rb", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, ts)
+	ra := pipeline.NewCandidate("ra", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, ts)
+	rb := pipeline.NewCandidate("rb", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, ts)
 	require.NoError(t, repo.Save(ctx, ra))
 	require.NoError(t, repo.Save(ctx, rb))
 
@@ -274,9 +274,9 @@ func TestRunRepository_ListFiltersByStatus(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
-	a := pipeline.NewCandidate("ra", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	a := pipeline.NewCandidate("ra", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, a))
-	b := pipeline.NewCandidate("rb", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(101, 0).UTC())
+	b := pipeline.NewCandidate("rb", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(101, 0).UTC())
 	require.NoError(t, b.TransitionToParsing(time.Unix(102, 0).UTC()))
 	require.NoError(t, b.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(103, 0).UTC()))
 	require.NoError(t, b.Fail("validation_failed", "", []string{"x"}, time.Unix(104, 0).UTC()))
@@ -293,7 +293,7 @@ func TestRunRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
-	r := pipeline.NewCandidate("rp", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rp", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	r.RecordValidationResults([]pipeline.NodeValidationResult{{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 9}})
@@ -319,7 +319,7 @@ func TestRunRepository_RoundTripsFailDetail(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rel-detail", "finance", "tag", false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-detail", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.Fail("duplicate_table",
@@ -345,7 +345,7 @@ func TestRunRepository_RoundTripsRemediationRoundAndPayload(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rel-remediation", "finance", "tag", false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-remediation", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(300, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(301, 0).UTC()))
 	require.NoError(t, r.Fail("duplicate_table", "",
@@ -364,7 +364,7 @@ func TestRunRepository_RoundTripsRemediationRoundAndPayload(t *testing.T) {
 	assert.Equal(t, 2, got.RemediationRound())
 	assert.JSONEq(t, `{"release_id":"rel-x"}`, string(got.RejectionPayload()))
 
-	noPayload := pipeline.NewCandidate("rel-no-payload", "finance", "tag", false, "owner/repo", "abc123",
+	noPayload := pipeline.NewCandidate("rel-no-payload", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(310, 0).UTC())
 	require.NoError(t, noPayload.TransitionToParsing(time.Unix(311, 0).UTC()))
 	require.NoError(t, noPayload.Fail("invalid_artifact", "",
@@ -389,7 +389,7 @@ func TestRunRepository_List_IncludesFailDetail(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rel-list-detail", "finance", "tag", false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-list-detail", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(200, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(201, 0).UTC()))
 	require.NoError(t, r.Fail("duplicate_table",
@@ -418,14 +418,14 @@ func TestRunRepository_DeleteFinishedBeforeKeepsCurrentProd(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	mkRejected := func(id string, ts int64) {
-		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
+		r := pipeline.NewCandidate(id, "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Fail("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	mkPromoted := func(id string, ts int64) {
-		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
+		r := pipeline.NewCandidate(id, "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Promote(time.Unix(ts+3, 0).UTC()))
@@ -434,7 +434,7 @@ func TestRunRepository_DeleteFinishedBeforeKeepsCurrentProd(t *testing.T) {
 	mkRejected("old-rejected", 100)
 	mkPromoted("old-promoted", 100)
 	mkRejected("old-keep", 100)
-	r := pipeline.NewCandidate("received-young", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("received-young", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	cutoff := time.Unix(1000, 0).UTC()
@@ -459,7 +459,7 @@ func TestRunRepository_DeleteFinishedBeforeKeepsServiceProdRefs(t *testing.T) {
 	ctx := context.Background()
 
 	mkPromoted := func(id string, ts int64) {
-		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
+		r := pipeline.NewCandidate(id, "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Promote(time.Unix(ts+3, 0).UTC()))
@@ -499,7 +499,7 @@ func TestRunRepository_DeleteFinishedBeforeEmptyKeepSlice(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("old-prom", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("old-prom", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	require.NoError(t, r.Promote(time.Unix(103, 0).UTC()))
@@ -520,7 +520,7 @@ func TestRunRepository_Load_ReturnsRow(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
-	r := pipeline.NewCandidate("rLoad", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rLoad", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -559,7 +559,7 @@ func TestRunRepository_Load_BlocksConcurrentLoad(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
-	r := pipeline.NewCandidate("rLock", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rLock", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	tx1, err := db.BeginTxx(ctx, nil)
@@ -607,7 +607,7 @@ func TestRunRepository_RoundTripsProvenance(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rPROV", "svc-a", "img-1", false, false, "acme/demo", "deadbeefcafe1234", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	r.SetCodeBundleURI("s3://b/code-bundles/rPROV/bundle.json")
 	require.NoError(t, repo.Save(ctx, r))
 
@@ -629,7 +629,7 @@ func TestRunRepository_CodeBundleURIUpdatesAfterCreation(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rCBU", "svc-a", "img-1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rCBU", "svc-a", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rCBU")
@@ -653,7 +653,7 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 	ctx := context.Background()
 
 	mkTerminal := func(id string, ts int64) {
-		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
+		r := pipeline.NewCandidate(id, "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Fail("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
@@ -703,7 +703,7 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 	})
 
 	t.Run("a promoted run keeps its topology artifact", func(t *testing.T) {
-		r := pipeline.NewCandidate("prune-promoted", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(105, 0).UTC())
+		r := pipeline.NewCandidate("prune-promoted", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(105, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(106, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(107, 0).UTC()))
 		require.NoError(t, r.Promote(time.Unix(108, 0).UTC()))
@@ -730,7 +730,7 @@ func TestRunRepository_VerificationKindRoundTrips(t *testing.T) {
 	verification := pipeline.NewVerification("r-verify", "svc-a", "img-1", "rel-orig", 1,
 		"s3://bucket/svc-a/r-verify/source-overlay.tar.gz", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, verification))
-	candidate := pipeline.NewCandidate("r-plain-candidate", "svc-a", "img-1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	candidate := pipeline.NewCandidate("r-plain-candidate", "svc-a", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, candidate))
 
 	gotVerification, err := repo.Get(ctx, "r-verify")
@@ -777,9 +777,9 @@ func TestRunRepository_QueueInterleavesBothKindsByCreatedAt(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	t0 := time.Now().UTC().Truncate(time.Millisecond)
-	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-a", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, t0)))
+	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-a", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0)))
 	require.NoError(t, repo.Save(ctx, pipeline.NewVerification("verify-rel-a-core-a1", "core", "img", "rel-a", 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
-	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-b", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, t0.Add(2*time.Second))))
+	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-b", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0.Add(2*time.Second))))
 
 	next, err := repo.NextQueued(ctx)
 	require.NoError(t, err)
@@ -800,7 +800,7 @@ func TestRunRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	t0 := time.Now().UTC().Truncate(time.Millisecond)
-	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-a", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, t0)))
+	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rel-a", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, t0)))
 	require.NoError(t, repo.Save(ctx, pipeline.NewVerification("verify-rel-a-core-a1", "core", "img", "rel-a", 1, "", release.ManifestKindDbt, t0.Add(time.Second))))
 	require.NoError(t, repo.Save(ctx, pipeline.NewVerification("verify-rel-z-core-a1", "core", "img", "rel-z", 1, "", release.ManifestKindDbt, t0.Add(2*time.Second))))
 
@@ -824,7 +824,7 @@ func TestRunRepository_NextQueuedOfKind(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
-	cand := pipeline.NewCandidate("rCAND", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	cand := pipeline.NewCandidate("rCAND", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	verify := pipeline.NewVerification("rVERIFY", "svc", "t", "rCAND", 1, "", release.ManifestKindPython, time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(ctx, cand))
 	require.NoError(t, repo.Save(ctx, verify))
@@ -855,7 +855,7 @@ func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 
-	r := pipeline.NewCandidate("rRef", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	r := pipeline.NewCandidate("rRef", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 	var uriIsNull bool
 	require.NoError(t, db.Get(&uriIsNull, `SELECT candidate_topology_uri IS NULL FROM release_pipeline_runs WHERE run_id = 'rRef'`))
@@ -873,4 +873,29 @@ func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, reread)
 	assert.Equal(t, ref, reread.CandidateTopologyRef(), "the upsert must write the reference recorded after the first insert")
+}
+
+func TestRunRepository_RebaselineRoundTrips(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+	inserted, err := repo.Create(ctx, pipeline.NewCandidate("r-rebase", "svc-a", "sha-a", true, true, "acme/demo", "deadbeef",
+		release.ManifestKindDbt, time.Unix(100, 0).UTC()))
+	require.NoError(t, err)
+	require.True(t, inserted)
+	got, err := repo.Get(ctx, "r-rebase")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.IsBootstrap())
+	assert.True(t, got.IsRebaseline())
+}
+
+func TestRunRepository_RefusesRebaselineWithoutBootstrap(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	r := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "r-bad", Kind: pipeline.KindCandidate, Status: pipeline.StatusReceived,
+		ChangedService: "svc-a", ImageTags: map[string]string{"svc-a": "sha-a"}, ManifestKind: release.ManifestKindDbt,
+		Repo: "acme/demo", CommitSHA: "deadbeef", Rebaseline: true, CreatedAt: time.Unix(100, 0).UTC()})
+	_, err := repo.Create(context.Background(), r)
+	require.ErrorContains(t, err, "release_pipeline_runs_rebaseline_needs_bootstrap")
 }

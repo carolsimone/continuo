@@ -21,7 +21,7 @@ import (
 func rejectedRelease(t *testing.T, id, payload string) *pipeline.Run {
 	t.Helper()
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	r := pipeline.NewCandidate(id, "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
 	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	if payload != "" {
@@ -91,17 +91,17 @@ func TestRetryRemediation_Refusals(t *testing.T) {
 		want error
 	}{
 		{"not rejected", func() *pipeline.Run {
-			return pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+			return pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 		}, pipeline.ErrNotRejected},
 		{"not healable", func() *pipeline.Run {
-			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.Fail("invalid_artifact", "", nil, now))
 			r.SetRejectionPayload([]byte(`{}`))
 			return r
 		}, handlers.ErrNotHealable},
 		{"parse invalid_sql is healable (fails later on no payload)", func() *pipeline.Run {
-			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.Fail("invalid_sql", "", []string{"a.b"}, now))
 			return r

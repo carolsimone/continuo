@@ -116,19 +116,7 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// catalog and run-controller apply a promotion through groups of their own,
 	// so run-controller's copy is awaited too: its live release is this one, with
 	// a model of the schedule.
-	var live runControllerLiveRelease
-	var liveErr error
-	pollUntilDescribed(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		live, liveErr = readRunControllerLiveRelease(ctx, clients)
-		if liveErr != nil {
-			return false, liveErr
-		}
-		return live.releaseID == releaseID && live.models[ingestProbeSchedule] > 0, nil
-	}, func() string {
-		return fmt.Sprintf("timeout waiting for run-controller's live release to be %s with a model of schedule %s: "+
-			"its live release is %q with models %v (last read error: %v)",
-			releaseID, ingestProbeSchedule, live.releaseID, live.models, liveErr)
-	})
+	waitForRunControllerToApply(t, ctx, clients, releaseID, ingestProbeSchedule, 2*time.Minute)
 
 	// ── 2. run-controller stores the ingested node ───────────────────────────
 	var stored struct {

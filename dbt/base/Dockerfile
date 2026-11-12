@@ -6,7 +6,10 @@ FROM python:3.12-slim
 # validated against. This image is the dbt project base inherited by every team
 # service image; it is run only for compile, seed-build, and scheduled dbt runs.
 # Validation nodes run in a separate minimal image (continuo-python-runtime-<engine>), not here.
-RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0"
+# dbt-adapters and dbt-common are pinned too: they hold dbt's built-in macros, which
+# a node's fingerprint leaves out, so an unpinned upgrade of either would change
+# what runs with no change to any node's hash.
+RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0" "dbt-adapters==1.24.5" "dbt-common==1.39.0"
 
 WORKDIR /project
 

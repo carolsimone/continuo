@@ -176,8 +176,10 @@ func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 
 	job := fetchJob(t, client, "default", "compile-svc-rel123")
 	podSpec := job.Spec.Template.Spec
-	assert.Equal(t, "carolsimone/service-1:abc123", podSpec.InitContainers[0].Image)
+	require.Equal(t, "compile", podSpec.InitContainers[1].Name)
+	assert.Equal(t, "carolsimone/service-1:abc123", podSpec.InitContainers[1].Image)
 	assert.Equal(t, "s3://continuo/svc/rel123/manifest.json", envByName(podSpec, "MANIFEST_S3_URI"))
+	assert.Equal(t, "s3://continuo/svc/rel123/compile-extras.json", envByName(podSpec, "COMPILE_EXTRAS_S3_URI"))
 	assert.Equal(t, "rel123", job.Annotations[annotationReleaseID])
 	assert.Equal(t, "svc.orders", job.Annotations[annotationNodeID])
 	assert.Equal(t, "compile", job.Spec.Template.Labels["mode"])
@@ -225,10 +227,12 @@ func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
 		NodeType:    string(pkg_model.NodeTypePythonApi),
 		ImageTag:    "ghcr.io/acme/py:1",
 		SecretRef:   "continuo-api-fx",
+		ContentHash: "sha256:91d4c0",
 	}
 
 	params := jobParamsFromSpec(spec, pkg_model.NodeTypePythonApi, "default")
 
+	assert.Equal(t, "sha256:91d4c0", params.ContentHash)
 	assert.Equal(t, "continuo-api-fx", params.SecretRef)
 	assert.Equal(t, "ghcr.io/acme/py:1", params.ImageTag)
 	assert.Equal(t, "default", params.Namespace)

@@ -542,3 +542,27 @@ func TestWriteBatch_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
 	require.True(t, ok, "promoted_at is a datetime, got %T", edge["promoted_at"])
 	assert.True(t, promotedAtOf(1).Equal(at))
 }
+
+func TestWriteBatch_StoresCompiledHashAndReportsCompiledOnlyMoves(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode("analytics.revenue")
+	version := func(hash, source, compiled string) codeversion.NodeVersion {
+		v := versionOf("analytics.revenue", hash)
+		v.SourceHash, v.CompiledHash = source, compiled
+		return v
+	}
+
+	res := f.writeBatch(batchOf("r1", 1, version("sha256:v1", "s1", "c1")))
+	assert.Empty(t, res.CompiledOnlyMoved, "a first version has nothing to compare")
+	assert.Equal(t, []string{"c1"}, f.column(`MATCH (v:NodeVersion {tenant_id: $tenant_id, unique_id: 'analytics.revenue'})
+		RETURN v.compiled_hash AS v`, nil))
+
+	res = f.writeBatch(batchOf("r2", 2, version("sha256:v2", "s1", "c2")))
+	assert.Equal(t, []string{"analytics.revenue"}, res.CompiledOnlyMoved)
+
+	res = f.writeBatch(batchOf("r3", 3, version("sha256:v3", "s2", "c3")))
+	assert.Empty(t, res.CompiledOnlyMoved, "the source moved too")
+
+	res = f.writeBatch(batchOf("r4", 4, version("sha256:v4", "s2", "")))
+	assert.Empty(t, res.CompiledOnlyMoved, "a node with no compiled part never counts")
+}

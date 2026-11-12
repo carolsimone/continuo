@@ -114,22 +114,17 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	putS3Object(t, ctx, clients,
 		fmt.Sprintf("%s/%s/contract.yaml", dupE2EService, releaseID), contract)
 
-	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage)
+	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, 3*time.Minute)
 
 	detail := getReleaseJSON(t, clients, releaseID)
 	assert.Equal(t, "duplicate_table", detail["reject_reason"])
 	rejectDetail, _ := detail["reject_detail"].(string)
-	// victimUniqueID comes from parseManifestNodes, which mirrors
-	// topology-controller's identity derivation in DECLARED case (see its own
-	// doc comment) — it does not lowercase, because that helper is shared with
-	// tests that need the declared-case value. Candidate parsing, however,
-	// mints unique_id (and the relation identity the gate groups on) already
-	// lowercased, so the rejection detail never contains the declared-case
-	// string verbatim. Normalizing here, at the assertion, keeps that
-	// lowercasing decision local to this test instead of leaking into the
-	// shared helper.
+	// victimUniqueID comes from parseManifestNodes, which takes it from
+	// topology-controller's own parser, so it is already lowercased, as the
+	// relation identity the gate groups on is; lowercasing it here keeps the
+	// assertion about the identity rather than its spelling.
 	assert.Contains(t, rejectDetail, strings.ToLower(victimUniqueID),
 		"the rejection must name the contested relation")
 	assert.Contains(t, rejectDetail, victimService,

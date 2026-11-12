@@ -12,7 +12,7 @@ TRINO = _SYSTEM_RELATIONS["trino"]
 
 def _registry(*tables: str, schema: str = "public") -> dict:
     entries = [
-        NodeRegistryEntry(table_name=t, schema_name=schema, service_name="svc", owner="o")
+        NodeRegistryEntry(table_name=t, schema_name=schema, service_name="svc", owner="o", relation=t)
         for t in tables
     ]
     return NodeRegistry(entries=entries).to_lookup()

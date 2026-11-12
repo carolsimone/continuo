@@ -16,7 +16,7 @@ import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import { GraphEdge, GraphNode, Task } from './types';
 import NodeTypeIcon, { isIngestedNodeType } from './NodeTypeIcon';
-import { ingestedNodeName, resolveNodeStatus, taskNodeId } from './detail-page-helpers';
+import { ingestedNodeName, parseNodeId, resolveNodeStatus, taskNodeId } from './detail-page-helpers';
 import {
   DisplayEdge,
   ServiceVertex,
@@ -287,7 +287,7 @@ function buildLayout(
         label: ingested ? ingestedLabel(n.node_id) : (
           <div className="dag-node-label">
             <NodeTypeIcon nodeType={n.node_type} />
-            <span>{n.node_id.split('.').pop() ?? n.node_id}</span>
+            <span>{parseNodeId(n.node_id).table_name || n.node_id}</span>
           </div>
         ),
       },

@@ -540,13 +540,24 @@ aws --endpoint-url http://localhost:9000 \
 ```
 
 Now build the contract from the service's `contracts/` directory, using the
-runtime CLI the release gate uses (a service's image base must be on the same
-runtime release or later to run a contract that declares `timeout_minutes`).
-[uv](https://docs.astral.sh/uv/) installs it: `brew install uv` on macOS, or the
-[uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
+runtime CLI the release gate uses. The image base and the CLI that builds the
+contract are the same runtime release: the harness checks the image against the
+released hash when a node starts, and a node whose image does not hash to it
+fails with `image_contract_mismatch` and is not retried.
+
+A node's `assets` lists the files its script reads besides its own code, such
+as a lookup table or a trained model, as paths from the repository root. Their
+bytes are part of the node's fingerprint, so editing one changes its
+`content_hash`. Your Dockerfile must copy every listed file into the image, at
+the same path under the app directory as in the repository: the harness hashes
+what the image holds, and a file that is missing or different fails the node
+with `image_contract_mismatch`.
+
+[uv](https://docs.astral.sh/uv/) installs the CLI: `brew install uv` on macOS,
+or the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install continuo-python-runtime==0.11.0
+uv tool install continuo-python-runtime==0.12.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 

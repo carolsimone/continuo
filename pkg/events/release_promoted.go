@@ -31,6 +31,10 @@ type ReleasePromoted struct {
 	Repo            string    `json:"repo"`
 	CommitSHA       string    `json:"commit_sha"`
 	Bootstrap       bool      `json:"bootstrap"`
+	// Rebaseline marks a bootstrap promotion that re-baselines fingerprints:
+	// run-controller records every live seed as loaded at its new hash instead of
+	// reloading it. It is set only together with Bootstrap.
+	Rebaseline bool `json:"rebaseline"`
 }
 
 // ReleasePromotedEventID derives the event id of the release.promoted:v2 entry

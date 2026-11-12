@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func desired(table, hash string) seeds.Desired {
@@ -168,4 +169,17 @@ func TestSeedsRunID_IsStablePerTenantReleaseAndCount(t *testing.T) {
 func TestSeedsRunID_DiffersPerTenant(t *testing.T) {
 	assert.NotEqual(t, seeds.RunID("acme", "rel-1", 1), seeds.RunID("globex", "rel-1", 1))
 	assert.NotEqual(t, seeds.RunID("acme", "rel-1", 3), seeds.RunID("globex", "rel-1", 3))
+}
+
+func TestRebaselineAdoptions_AdoptsEverySeedWithAHash(t *testing.T) {
+	live := []topology.Node{
+		{Key: "raw.b", NodeType: "dbt-seed", ContentHash: "sha256:b", SeedColumnsHash: "sha256:cb"},
+		{Key: "raw.a", NodeType: "dbt-seed", ContentHash: "sha256:a"},
+		{Key: "raw.none", NodeType: "dbt-seed"},
+		{Key: "an.model", NodeType: "dbt-model", ContentHash: "sha256:m"},
+	}
+	got := seeds.RebaselineAdoptions(live)
+	require.Len(t, got, 2)
+	assert.Equal(t, topology.NodeKey("raw.a"), got[0].Key)
+	assert.Equal(t, "sha256:cb", got[1].SeedColumnsHash)
 }

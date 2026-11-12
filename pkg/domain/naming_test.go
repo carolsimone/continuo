@@ -82,9 +82,10 @@ func TestComputeJobName(t *testing.T) {
 			schema:  "very-long-schema-name",
 			table:   "very-long-table-name",
 			runID:   runID,
-			// Prefix truncates to "...limits" (53 chars) to make room for the suffix;
-			// total is 62 chars (within the 63-char K8s limit).
-			expected: "very-long-service-name-that-exceeds-kubernetes-limits-a1b2c3d4",
+			// The prefix is cut to 47 characters, a trailing hyphen trimmed, and
+			// ends with the first six hex characters of the full prefix's
+			// SHA-256; the run-id suffix stays whole.
+			expected: "very-long-service-name-that-exceeds-kubernetes-ecf83f-a1b2c3d4",
 		},
 		{
 			name:     "all numeric values",
@@ -152,15 +153,15 @@ func TestComputeJobName(t *testing.T) {
 			expected: "svc-sc-t-abcdef12",
 		},
 		{
-			// Regression: suffix must survive truncation for long identifiers.
-			// Prefix sanitizes to 65 chars; fixed code truncates prefix to 54 and
-			// appends the 8-char suffix so different runs stay distinct.
+			// The suffix survives the cut of a long identifier: the prefix
+			// sanitizes to 65 characters, keeps 47 with a hash of the full
+			// prefix, and the 8-character run-id suffix keeps runs distinct.
 			name:     "suffix preserved when prefix exceeds 54 chars",
 			service:  "very-long-service-name",
 			schema:   "very-long-schema-name",
 			table:    "very-long-table-name",
 			runID:    "a1b2c3d4-xxxx",
-			expected: "very-long-service-name-very-long-schema-name-very-long-a1b2c3d4",
+			expected: "very-long-service-name-very-long-schema-name-ve-bc2309-a1b2c3d4",
 		},
 		{
 			// Regression: two runs with the same long prefix must NOT collide.
@@ -169,7 +170,7 @@ func TestComputeJobName(t *testing.T) {
 			schema:   "very-long-schema-name",
 			table:    "very-long-table-name",
 			runID:    "b5c6d7e8-yyyy",
-			expected: "very-long-service-name-very-long-schema-name-very-long-b5c6d7e8",
+			expected: "very-long-service-name-very-long-schema-name-ve-bc2309-b5c6d7e8",
 		},
 		{
 			name:     "attempt 1 appends -r1",
@@ -256,10 +257,9 @@ func TestComputeJobName(t *testing.T) {
 	}
 }
 
-// Two nodes whose prefixes the retry cut would make equal still get distinct
-// retry names, since a cut retry prefix carries a hash of the full prefix; the
-// run-id suffix stays whole and attempt 0's name keeps the plain 54-character
-// prefix.
+// Two nodes whose prefixes the cut would make equal still get distinct names
+// at every attempt, since a cut prefix carries a hash of the full prefix; the
+// run-id suffix stays whole.
 func TestComputeJobName_RetriesOfNodesThatDifferOnlyPastTheCutStayDistinct(t *testing.T) {
 	const runID = "3f2a9c1e-0000-4000-8000-000000000001"
 	daily, weekly := "int_customer_orders_aggregated_daily", "int_customer_orders_aggregated_weekly"
@@ -290,7 +290,42 @@ func TestComputeJobName_RetriesOfNodesThatDifferOnlyPastTheCutStayDistinct(t *te
 		}
 	}
 	first, _ := ComputeJobName("service-1", "analytics", daily, runID, 0)
-	if first != "service-1-analytics-int-customer-orders-aggregated-dai-3f2a9c1e" {
-		t.Fatalf("attempt 0 is %q; its name must not change", first)
+	if first != "service-1-analytics-int-customer-orders-aggrega-3c1270-3f2a9c1e" {
+		t.Fatalf("attempt 0 is %q", first)
+	}
+}
+
+// Two versions of one dbt model differ only at the end of their table name
+// ("<name>.v1", "<name>.v2"), where a long prefix is cut, so a cut prefix
+// carries a hash of the full prefix at attempt 0 as well: both versions can
+// run in one run under distinct Job names.
+func TestComputeJobName_VersionsOfALongModelStayDistinctAtAttemptZero(t *testing.T) {
+	const runID = "3f2a9c1e-0000-4000-8000-000000000001"
+	v1, err := ComputeJobName("orders-service", "analytics_marts", "customer_lifetime_value.v1", runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := ComputeJobName("orders-service", "analytics_marts", "customer_lifetime_value.v2", runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v1 == v2 {
+		t.Fatalf("both versions are named %q", v1)
+	}
+	for _, name := range []string{v1, v2} {
+		if len(name) > 63 || !strings.HasSuffix(name, "-3f2a9c1e") {
+			t.Fatalf("%q is longer than 63 or does not end with the run id", name)
+		}
+	}
+}
+
+// A name whose prefix fits is not cut and carries no hash.
+func TestComputeJobName_AShortVersionedNameIsUnchanged(t *testing.T) {
+	name, err := ComputeJobName("service-1", "analytics", "dim_v.v2", "3f2a9c1e-0000", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "service-1-analytics-dim-v-v2-3f2a9c1e" {
+		t.Fatalf("got %q", name)
 	}
 }

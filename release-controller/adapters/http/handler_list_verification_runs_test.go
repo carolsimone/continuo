@@ -30,7 +30,7 @@ func TestHandleListVerificationRuns_ReturnsOnlyRunsForTheGivenRelease(t *testing
 	releases.releases["verify-rel-1-a1"] = pipeline.NewVerification("verify-rel-1-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
 	releases.releases["verify-rel-1-a2"] = pipeline.NewVerification("verify-rel-1-a2", "core", "img", "rel-1", 2, "", release.ManifestKindDbt, now.Add(time.Minute))
 	releases.releases["verify-rel-2-a1"] = pipeline.NewVerification("verify-rel-2-a1", "core", "img", "rel-2", 1, "", release.ManifestKindDbt, now)
-	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now)
+	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/verification-runs?verifies=rel-1", nil)

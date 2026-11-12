@@ -28,6 +28,7 @@ import (
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -1104,4 +1105,24 @@ func TestObserver_JudgesAnUndeployedJobByTheAttemptItRuns(t *testing.T) {
 		"the row of attempt %d of task %s, refused on the shared name, does not get another attempt's Job deleted",
 		collided.Command().Attempt, collided.Command().TaskID)
 	assert.Equal(t, []string{"ended_undeployed", "ended_undeployed"}, h.stop.reaped)
+}
+
+func TestProcess_AnImageContractMismatchBlockFailsTheAttemptInvalid(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true, JobFailureReason: "BackoffLimitExceeded",
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
+	h.logs.full = "harness: checking the image\n" + validationresult.SentinelBegin + "\n" +
+		`{"schema_version":1,"status":"error","message":"image does not match","failures":1,"unique_id":"e2e_schema.ftable_e","reason":"image_contract_mismatch"}` +
+		"\n" + validationresult.SentinelEnd + "\n"
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	assert.Equal(t, pkgmodel.FailureReasonImageContractMismatch, h.reload(t, dep.JobName()).Facts().Reason)
+	status := h.reports(t)
+	require.Len(t, status, 1)
+	assert.Equal(t, "failed", status[0]["status"])
+	assert.Equal(t, "invalid", status[0]["failure_class"])
+	assert.Equal(t, "image_contract_mismatch", status[0]["failure_reason"], "the block's reason, not exit_code")
+	assert.Equal(t, "image does not match", status[0]["error_message"])
 }

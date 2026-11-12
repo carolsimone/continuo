@@ -7,11 +7,12 @@ import pytest
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SkipReason
+from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SeedExtras, SkipReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.compile_extras import seed_columns_hash
 from service.ports import ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
@@ -115,8 +116,16 @@ def _failed_kwargs(publisher):
     return publisher.publish_failed.call_args.kwargs
 
 
+def _write_compile_extras(tmp_path, seeds: dict, *, service: str = "service-1") -> str:
+    """Write a compile-extras.json holding `seeds` and return its path."""
+    path = tmp_path / "compile-extras.json"
+    path.write_text(json.dumps({"version": 1, "service": service, "release_id": "rel-1", "seeds": seeds,
+                                "project_flags": {}, "packages": {}}))
+    return str(path)
+
+
 def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
@@ -137,7 +146,7 @@ def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
 
 
 def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch, tmp_path):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=f"broken {node.table_name}")
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
@@ -156,7 +165,7 @@ def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch,
 def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
     calls = {"n": 0}
 
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise UnqualifiedTableReferenceError(table_name="x", node_table_name=node.table_name)
@@ -180,11 +189,11 @@ def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
     real = candidate_manifest_handler.referenced_tables
     calls = {"n": 0}
 
-    def _raise_once(node, *, dialect):
+    def _raise_once(node, *, dialect, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
-        return real(node, dialect=dialect)
+        return real(node, dialect=dialect, **kwargs)
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise_once)
     source = _make_source("manifest_service1.json")
@@ -319,7 +328,7 @@ def test_handle_calls_source_cleanup_after_publish():
 
 
 def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
@@ -554,9 +563,9 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     real_resolve = candidate_manifest_handler.referenced_tables
     real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
-    def spy_resolve(node, *, dialect):
+    def spy_resolve(node, *, dialect, **kwargs):
         seen["resolve"].append(dialect)
-        return real_resolve(node, dialect=dialect)
+        return real_resolve(node, dialect=dialect, **kwargs)
 
     def spy_rewrite(*args, dialect, **kwargs):
         seen["rewrite"].append(dialect)
@@ -783,10 +792,11 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
     walking unit->unit edges never needs to re-derive the namespace. Exercises
     the fallback path where declared_service is unset: the namespace is
     derived from the manifest's own node service instead."""
+    with_dependency = _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
+    with_dependency["macros"]["macro.svc.m2"] = {"unique_id": "macro.svc.m2", "macro_sql": "SELECT 2",
+                                                 "depends_on": {"macros": []}}
     first = tmp_path / "first.json"
-    first.write_text(json.dumps(
-        _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
-    ))
+    first.write_text(json.dumps(with_dependency))
     second = tmp_path / "second.json"
     second.write_text(json.dumps(
         _manifest_with_single_macro("SELECT 1", "node_b", "service-b", macro_depends_on=[])
@@ -1064,7 +1074,7 @@ def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
-        "content_hash": "sha256:dfe4669111f4209fd63db2ad347b82aaaf149563a5f749edb454c70b7c4a3f0b",
+        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
         "image_tag": "",
         "original_file_path": "",
         "upstream_unique_ids": ["test_schema.users"],
@@ -1127,8 +1137,9 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
 
 
 def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
-    """The bundle contract is runtime-agnostic by construction; a python node
-    needs no new key, because its parsed entry is already its raw_code."""
+    """The bundle contract is runtime-agnostic by construction: a python node's
+    parsed entry is its raw_code, and its code projection rides beside it in
+    `projection`."""
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
     source = source_of(ManifestFile(
@@ -1156,6 +1167,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     assert node["runtime"] == "python"
     assert node["compiled_code"] == ""
     assert '"output_columns"' in node["raw_code"]
+    assert json.loads(node["projection"])["kind"] == "python-node"
 
 
 def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_path):
@@ -1358,3 +1370,74 @@ def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplo
         handler.handle(release_id="rel-1")
     assert observer.finished == []
     assert not _release_lines(caplog)
+
+
+def test_extras_of_another_service_reject_the_release_as_invalid_artifact(tmp_path):
+    publisher = MagicMock()
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+                                     extras_path=_write_compile_extras(tmp_path, {}, service="other")))
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "compile-extras.json" in kw["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_extras_of_the_declared_service_leave_the_release_parsed(tmp_path):
+    publisher = MagicMock()
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+                                     extras_path=_write_compile_extras(tmp_path, {})))
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+
+
+_PATH_CHECKSUM_LINE = "candidate: seed keeps dbt's path checksum until its service's rebaseline release"
+
+
+def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
+    big = dbt_node("seed_big") | {"unique_id": "seed.service-1.seed_big", "resource_type": "seed", "compiled_code": "",
+                                  "checksum": {"name": "path", "checksum": "seeds/seed_big.csv"}}
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source_with_nodes(tmp_path, big), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    (record,) = [r for r in caplog.records if r.getMessage() == _PATH_CHECKSUM_LINE]
+    assert (record.levelno, record.release_id, record.service, record.seed) == (
+        logging.WARNING, "rel-1", "service-1", "test_schema.seed_big")
+
+
+def test_the_topology_entry_carries_seed_columns_hash_only_when_set(tmp_path):
+    seed = dbt_node("seed_countries") | {"unique_id": "seed.service-1.seed_countries", "resource_type": "seed",
+                                          "compiled_code": ""}
+    plain = dbt_node("plain_seed") | {"unique_id": "seed.service-1.plain_seed", "resource_type": "seed",
+                                       "compiled_code": ""}
+    source = source_with_nodes(tmp_path, seed, plain)
+    _write_compile_extras(tmp_path, {"seed.service-1.seed_countries": {
+        "sha256": "4a" * 32, "header": ["code", "name"], "column_types": {"code": "varchar(2)"}}})
+    writer = RecordingArtifactWriter()
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert nodes["test_schema.seed_countries"]["seed_columns_hash"] == seed_columns_hash(
+        SeedExtras(sha256="4a" * 32, header=("code", "name"), column_types={"code": "varchar(2)"}))
+    assert "seed_columns_hash" not in nodes["test_schema.plain_seed"]
+
+
+def test_the_topology_entry_carries_relation_name_only_when_the_alias_differs(tmp_path):
+    writer = RecordingArtifactWriter()
+    source = source_with_nodes(tmp_path, dbt_node("orders") | {"alias": "Orders_Tbl"}, dbt_node("plain"))
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert nodes["test_schema.orders"]["relation_name"] == "Orders_Tbl"
+    assert "relation_name" not in nodes["test_schema.plain"]
+
+
+def test_the_reader_of_an_ephemeral_model_depends_on_it_and_on_the_tables_it_inlines(tmp_path):
+    writer = RecordingArtifactWriter()
+    meta = {"owner": "team-a", "criticality": "CORE"}
+    eph = dbt_node("eph") | {"config": {"materialized": "ephemeral", "meta": meta},
+                              "compiled_code": "SELECT id FROM test_schema.orders"}
+    reader = dbt_node("reader") | {
+        "compiled_code": "WITH __dbt__cte__eph AS (SELECT id FROM test_schema.orders) SELECT id FROM __dbt__cte__eph"}
+    source = source_with_nodes(tmp_path, dbt_node("orders"), eph, reader)
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert set(nodes["test_schema.reader"]["upstream_unique_ids"]) == {"test_schema.eph", "test_schema.orders"}

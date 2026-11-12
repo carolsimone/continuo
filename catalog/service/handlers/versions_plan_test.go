@@ -290,3 +290,43 @@ func TestPlanVersionWrite_WritesNoVersionForAnIngestedNode(t *testing.T) {
 	require.Len(t, batches, 1)
 	assert.NotContains(t, batches[0].Topology, "raw.ingest_probe", "a node without a version has no entry in the version write")
 }
+
+func TestPlanVersionWrite_StoresHashedConfigWhenTheBundleHasIt(t *testing.T) {
+	b := bundleFixture()
+	n := b.Nodes["analytics.revenue"]
+	n.HashedConfig = map[string]any{"materialized": "table", "relation": map[string]any{"schema": "analytics", "alias": "revenue"}}
+	n.Config = map[string]any{"materialized": "table", "meta": map[string]any{"owner": "a"}}
+	n.CompiledHash = "6e0f"
+	b.Nodes["analytics.revenue"] = n
+	got := planVersionWrite(inputFixture(true, false), b, nodesFixture(), versionsTestLogger()).Nodes[0]
+	assert.Equal(t, `{"materialized":"table","relation":{"alias":"revenue","schema":"analytics"}}`, got.ConfigJSON)
+	assert.Equal(t, "6e0f", got.CompiledHash)
+}
+
+// A python node, or a bundle written before hashed_config, keeps its config as the version's config_json.
+func TestPlanVersionWrite_FallsBackToConfigWithoutHashedConfig(t *testing.T) {
+	got := planVersionWrite(inputFixture(true, false), bundleFixture(), nodesFixture(), versionsTestLogger()).Nodes[0]
+	assert.Equal(t, `{"materialized":"table"}`, got.ConfigJSON)
+	assert.Empty(t, got.CompiledHash)
+}
+
+// A python node's version stores its code projection, not the contract entry its bundle raw_code holds.
+func TestPlanVersionWrite_StoresAPythonNodesProjectionAsItsRawCode(t *testing.T) {
+	b := bundleFixture()
+	n := b.Nodes["analytics.revenue"]
+	n.Runtime, n.RawCode, n.Projection = "python", `{"kind": "python-node", "owner": "e2e"}`, `{"kind": "python-node", "table": "revenue"}`
+	b.Nodes["analytics.revenue"] = n
+	got := planVersionWrite(inputFixture(true, false), b, nodesFixture(), versionsTestLogger()).Nodes[0]
+	assert.Equal(t, `{"kind": "python-node", "table": "revenue"}`, got.RawCode)
+}
+
+// A bundle without a projection (a dbt node, or a python node whose bundle carries none) keeps its raw_code.
+func TestPlanVersionWrite_KeepsRawCodeWithoutAProjection(t *testing.T) {
+	b := bundleFixture()
+	n := b.Nodes["analytics.revenue"]
+	n.Runtime, n.RawCode = "python", `{"kind": "python-node", "owner": "e2e"}`
+	b.Nodes["analytics.revenue"] = n
+	got := planVersionWrite(inputFixture(true, false), b, nodesFixture(), versionsTestLogger()).Nodes[0]
+	assert.Equal(t, `{"kind": "python-node", "owner": "e2e"}`, got.RawCode)
+	assert.Equal(t, "select 1", planVersionWrite(inputFixture(true, false), bundleFixture(), nodesFixture(), versionsTestLogger()).Nodes[0].RawCode)
+}

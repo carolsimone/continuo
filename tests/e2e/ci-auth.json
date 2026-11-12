@@ -8,6 +8,7 @@
     "svc-py-e2e": [{ "repositoryId": "100000002", "allowBootstrap": true }],
     "svc-py-e2e-loop": [{ "repositoryId": "100000002", "allowBootstrap": true }],
     "svc-py-e2e-parse": [{ "repositoryId": "100000002", "allowBootstrap": true }],
+    "svc-py-mismatch-e2e": [{ "repositoryId": "100000002", "allowBootstrap": true }],
     "e2e-dup-collider": [{ "repositoryId": "100000002", "allowBootstrap": true }],
     "e2e-ci-no-bootstrap": [{ "repositoryId": "100000003" }]
   }

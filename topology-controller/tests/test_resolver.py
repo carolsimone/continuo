@@ -12,6 +12,7 @@ def _make_registry(*table_names: str) -> dict:
             schema_name="public",
             service_name="service-1",
             owner="data-platform",
+            relation=t,
         )
         for t in table_names
     ]
@@ -152,8 +153,8 @@ def test_resolves_same_table_name_in_different_schemas():
     # Core regression test: same table_name in two schemas must resolve
     # to the correct service — the bug this change fixes.
     lookup = NodeRegistry(entries=[
-        NodeRegistryEntry("orders", "public", "service-a", "team-a"),
-        NodeRegistryEntry("orders", "billing", "service-b", "team-b"),
+        NodeRegistryEntry("orders", "public", "service-a", "team-a", relation="orders"),
+        NodeRegistryEntry("orders", "billing", "service-b", "team-b", relation="orders"),
     ]).to_lookup()
     node = _make_node("summary", "SELECT id FROM billing.orders")
     deps = _resolve(node, lookup)
@@ -284,3 +285,52 @@ def test_an_unqualified_reference_to_a_cte_is_still_skipped():
     registry = _make_registry("users")
     sql = "WITH users AS (SELECT 1 AS id) SELECT id FROM users"
     assert _resolve(_make_node("orders", sql), registry) == []
+
+
+def _entry(table_name: str, *, relation: str = "", service: str = "service-1", ephemeral: bool = False):
+    return NodeRegistryEntry(table_name, "public", service, "team", relation=relation or table_name, ephemeral=ephemeral)
+
+
+def test_a_reference_to_an_alias_resolves_to_the_node_that_writes_it():
+    lookup = NodeRegistry(entries=[_entry("orders", relation="Orders_Tbl")]).to_lookup()
+    deps = _resolve(_make_node("summary", 'SELECT id FROM public."Orders_Tbl"'), lookup)
+    assert [d.unique_id for d in deps] == ["public.orders"]
+
+
+def test_a_self_reference_by_alias_is_skipped():
+    lookup = NodeRegistry(entries=[_entry("orders", relation="orders_tbl")]).to_lookup()
+    node = _make_node("orders", "SELECT id FROM public.orders_tbl")
+    node.resolved_relation = "orders_tbl"
+    assert _resolve(node, lookup) == []
+
+
+def _resolve_with_ephemerals(node: ManifestNode, registry: NodeRegistry) -> list:
+    ctes: set[str] = set()
+    refs = referenced_tables(node, dialect="postgres", ctes=ctes)
+    return resolve_upstream_deps(
+        refs, registry.to_lookup(),
+        service_name=node.service_name, ctes=ctes, ephemeral_ctes=registry.ephemeral_ctes(),
+    )
+
+
+def test_an_ephemeral_cte_is_an_upstream_and_the_tables_it_reads_stay_upstreams():
+    registry = NodeRegistry(entries=[_entry("eph", ephemeral=True), _entry("raw_orders")])
+    sql = """
+        WITH __dbt__cte__eph AS (SELECT id FROM public.raw_orders)
+        SELECT id FROM __dbt__cte__eph
+    """
+    deps = _resolve_with_ephemerals(_make_node("orders", sql), registry)
+    assert {d.unique_id for d in deps} == {"public.eph", "public.raw_orders"}
+
+
+def test_an_ephemeral_cte_of_another_service_is_not_an_upstream():
+    registry = NodeRegistry(entries=[_entry("eph", service="service-2", ephemeral=True)])
+    sql = "WITH __dbt__cte__eph AS (SELECT 1 AS id) SELECT id FROM __dbt__cte__eph"
+    deps = _resolve_with_ephemerals(_make_node("orders", sql), registry)
+    assert deps == []
+
+
+def test_a_cte_named_like_an_ephemeral_is_no_upstream_without_ephemeral_ctes():
+    lookup = NodeRegistry(entries=[_entry("eph", ephemeral=True)]).to_lookup()
+    sql = "WITH __dbt__cte__eph AS (SELECT 1 AS id) SELECT id FROM __dbt__cte__eph"
+    assert _resolve(_make_node("orders", sql), lookup) == []

@@ -2,6 +2,7 @@ package events_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -107,4 +108,24 @@ func TestDecodeReleasePromoted_RejectsMalformedEntries(t *testing.T) {
 			assert.ErrorIs(t, err, events.ErrMalformedEnvelope)
 		})
 	}
+}
+
+func TestReleasePromoted_RoundTripsRebaseline(t *testing.T) {
+	fields, err := events.ReleasePromotedFields("default", "release-controller", time.Unix(0, 0), events.ReleasePromoted{
+		ReleaseID: "rel-1", PromotionSeq: 1, TopologyURI: "s3://b/k", TopologySHA256: "abc", Bootstrap: true, Rebaseline: true,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, fields["payload"], `"rebaseline":true`)
+	_, got, err := events.DecodeReleasePromoted(stringFields(fields))
+	require.NoError(t, err)
+	assert.True(t, got.Rebaseline)
+}
+
+// stringFields copies an entry's fields the way the stream returns them: every value a string.
+func stringFields(fields map[string]any) map[string]string {
+	out := make(map[string]string, len(fields))
+	for k, v := range fields {
+		out[k] = fmt.Sprint(v)
+	}
+	return out
 }

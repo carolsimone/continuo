@@ -1,0 +1,22 @@
+version: 2
+
+# The aliased and versioned models. They carry their own tag, so they form the
+# schedule e2e-alias-version and no run of another schedule builds them: the
+# e2e test of aliased and versioned models validates them in a release, with
+# their dependants.
+models:
+  - name: alias_src
+    config:
+      tags: ["e2e-alias-version"]
+  - name: alias_dep
+    config:
+      tags: ["e2e-alias-version"]
+  - name: ver_src
+    latest_version: 2
+    config:
+      tags: ["e2e-alias-version"]
+    versions:
+      - v: 2
+  - name: ver_dep
+    config:
+      tags: ["e2e-alias-version"]

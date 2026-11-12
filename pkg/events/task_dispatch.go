@@ -33,6 +33,10 @@ type TaskDispatch struct {
 	SecretRef      string              `json:"secret_ref"`
 	JobName        string              `json:"job_name"`
 	TimeoutSeconds int64               `json:"timeout_seconds"`
+	// ContentHash is the node's content_hash in the run's release. A python node's
+	// harness recomputes it from what its image holds and refuses to run on a
+	// mismatch. Empty when run-controller holds none.
+	ContentHash string `json:"content_hash,omitempty"`
 }
 
 // TaskDispatchFields renders p as the Redis fields of one task.dispatch:v1

@@ -1,0 +1,12 @@
+fpshop:
+  target: fp
+  outputs:
+    fp:
+      type: postgres
+      host: "{{ env_var('FP_PG_HOST', 'postgres') }}"
+      port: "{{ env_var('FP_PG_PORT', '5432') | as_number }}"
+      user: "{{ env_var('FP_PG_USER', 'continuo_warehouse') }}"
+      password: "{{ env_var('FP_PG_PASSWORD', 'local-continuo_warehouse') }}"
+      dbname: "{{ env_var('FP_PG_DBNAME', 'continuo_dbt') }}"
+      schema: fp_analytics
+      threads: 1

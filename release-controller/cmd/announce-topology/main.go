@@ -200,6 +200,7 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			UniqueID:           n.UniqueID,
 			SchemaName:         n.SchemaName,
 			TableName:          n.TableName,
+			RelationName:       n.RelationName,
 			ResolvedRelationID: n.ResolvedRelationID,
 			ServiceName:        n.ServiceName,
 			NodeType:           n.NodeType,
@@ -211,6 +212,7 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			OriginalFilePath:   n.OriginalFilePath,
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
+			SeedColumnsHash:    n.SeedColumnsHash,
 		})
 	}
 	// Catalog strips every dbt-test node before it applies a promotion, so
@@ -230,6 +232,7 @@ func fromTopology(topo release.Topology) []topologyartifact.Node {
 			UniqueID:           n.UniqueID,
 			SchemaName:         n.SchemaName,
 			TableName:          n.TableName,
+			RelationName:       n.RelationName,
 			ResolvedRelationID: n.ResolvedRelationID,
 			ServiceName:        n.ServiceName,
 			NodeType:           n.NodeType,
@@ -241,6 +244,7 @@ func fromTopology(topo release.Topology) []topologyartifact.Node {
 			Schedule:           n.Schedule,
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
+			SeedColumnsHash:    n.SeedColumnsHash,
 		})
 	}
 	return nodes

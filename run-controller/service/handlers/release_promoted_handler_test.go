@@ -80,8 +80,8 @@ func (f *fakeTopologyRepo) Graph(context.Context, string, string, []topology.Nod
 	return topology.Graph{}, nil
 }
 
-func (f *fakeTopologyRepo) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, nil
+func (f *fakeTopologyRepo) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, nil
 }
 
 func (f *fakeTopologyRepo) PruneReleases(context.Context, time.Time) (int64, error) { return 0, nil }
@@ -324,4 +324,19 @@ func TestReleasePromotedHandler_SeedReconcilerFailureFailsTheMessage(t *testing.
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
+func TestReleasePromotedHandler_PassesRebaselineToTheSeedReconcile(t *testing.T) {
+	topo := &fakeTopologyRepo{live: topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 3}, loaded: true}
+	reconciler := &recordingSeedReconciler{}
+	h := handlers.NewReleasePromotedHandler(&fakeArtifactReader{}, reconciler, testLogger())
+	p := promotedRelease("rel-2", 4)
+	p.Bootstrap, p.Rebaseline = true, true
+
+	require.NoError(t, h.Handle(context.Background(), promotedUoW(topo, &fakeMaterializationRepo{}),
+		handlers.ReleasePromotedInput{Promotion: p}, uuid.New()))
+
+	require.Len(t, reconciler.triggers, 1)
+	assert.True(t, reconciler.triggers[0].Bootstrap)
+	assert.True(t, reconciler.triggers[0].Rebaseline)
 }

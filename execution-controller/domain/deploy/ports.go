@@ -51,6 +51,9 @@ type JobSpec struct {
 	// TimeoutSeconds is how long the attempt's container may run once the
 	// Job has started its pod.
 	TimeoutSeconds int64
+	// ContentHash is the node's content hash; a python node's pod receives it
+	// as CONTENT_HASH. Empty when the dispatch carries none.
+	ContentHash string
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.

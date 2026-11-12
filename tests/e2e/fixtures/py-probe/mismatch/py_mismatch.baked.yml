@@ -1,0 +1,17 @@
+nodes:
+  # The contract the mismatch image holds. It is py_mismatch.released.yml with
+  # one read changed in meaning (tablename, not schemaname), so the harness's
+  # start check recomputes another content_hash than the release's and refuses
+  # to run the node.
+  - schema: e2e_schema
+    table: py_mismatch
+    owner: e2e
+    schedule: e2e-py-mismatch
+    criticality: SECONDARY
+    script: scripts/py_probe.py
+    description: "python node whose image holds another contract than its release"
+    reads:
+      tables: select tablename from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
+      - {name: label, type: VARCHAR(16)}

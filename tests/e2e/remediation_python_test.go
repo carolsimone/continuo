@@ -411,7 +411,7 @@ func rejectPythonFixtureRelease(
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", service, releaseID)
 	putS3Object(t, ctx, clients, contractKey,
 		[]byte(pyRemediationContractYAML(t, service, contractPath, scriptPath)))
-	postPythonRelease(t, clients, service, releaseID, pyFixtureImage)
+	postPythonRelease(t, clients, service, releaseID, pyFixtureImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, pyReleaseVerdictBudget)
 	return cleanup

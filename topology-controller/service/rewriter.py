@@ -46,20 +46,26 @@ def rewrite_to_candidate_schema(
     redirected to candidate_schema. Empty input (e.g. a seed, which has no SQL)
     is returned unchanged.
 
+    registry is NodeRegistry.to_lookup(), keyed by the relation each node
+    writes, so a reference to an alias is redirected too. Only the schema is
+    replaced: the table keeps the spelling the SQL gives it.
+
     A system relation (see system_relations) is never redirected, whatever the
     registry holds: the engine's own table has no copy in the candidate schema,
     and a node that builds a table with the same schema and name is a different
     relation. The catalog of a read matters only for that system-relation check
     (the engine's own catalog, such as Trino's `system`). A read that is not a
-    system relation is matched to the registry by its schema and table alone,
+    system relation is matched to the registry by its schema and relation name alone,
     whatever catalog it names, and a read of a registered table is redirected
     and keeps the catalog it named.
 
-    A qualified self-reference (self_schema.self_table — e.g. an incremental model
-    selecting from {{ this }}) is left on its production schema: the validation
-    runner drops and recreates <candidate>.<table>, so a self-reference rewritten
-    to the candidate schema would read a relation that no longer exists. This
-    mirrors the dependency resolver, which also skips self-references.
+    A qualified self-reference (self_schema.self_table, where self_table is the
+    node's relation, e.g. an incremental model selecting from {{ this }}) is
+    left on its production schema: the validation runner drops and recreates
+    <candidate>.<relation>, so a self-reference rewritten to the candidate
+    schema would read a relation that no longer exists. This mirrors
+    table_refs.referenced_tables, which skips the same self-references when it
+    lists a node's upstream tables.
 
     dialect is the sqlglot dialect of the warehouse the install targets. It is
     used to both read and re-render the SQL, so it decides the syntax of the

@@ -15,7 +15,7 @@ var t0 = time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
 
 func candidate(t *testing.T) *pipeline.Run {
 	t.Helper()
-	return pipeline.NewCandidate("rel-1", "core", "img:1", false, "org/repo", "abc123", release.ManifestKindDbt, t0)
+	return pipeline.NewCandidate("rel-1", "core", "img:1", false, false, "org/repo", "abc123", release.ManifestKindDbt, t0)
 }
 
 func verification(t *testing.T) *pipeline.Run {
@@ -208,4 +208,13 @@ func TestRun_CandidateTopologyRefRehydratesAndIsRecordedByTheTransition(t *testi
 	require.NoError(t, fresh.TransitionToParsing(t0))
 	require.NoError(t, fresh.TransitionToValidating(ref, []string{"n"}, t0))
 	assert.Equal(t, ref, fresh.CandidateTopologyRef())
+}
+
+func TestMatchesSubmission_ComparesRebaseline(t *testing.T) {
+	r := pipeline.NewCandidate("rel-1", "core", "abc", true, true, "o/r", "sha", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	same := pipeline.CandidateSubmission{Service: "core", ImageTag: "abc", Kind: release.ManifestKindDbt, Bootstrap: true, Rebaseline: true, Repo: "o/r", CommitSHA: "sha"}
+	assert.True(t, r.MatchesSubmission(same))
+	other := same
+	other.Rebaseline = false
+	assert.False(t, r.MatchesSubmission(other))
 }

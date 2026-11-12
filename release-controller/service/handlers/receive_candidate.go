@@ -17,14 +17,16 @@ var ErrInvalidCandidate = errors.New("invalid candidate")
 
 // ErrReleaseIDConflict marks a submission whose release id already names a
 // candidate with a different service, image tag, manifest kind, bootstrap
-// flag or source change. Callers answer it as a conflict, as they do
+// flag, rebaseline flag or source change. Callers answer it as a conflict, as they do
 // ErrRunKindConflict.
 var ErrReleaseIDConflict = errors.New("release id already names a different candidate")
 
 // ReceiveCandidateInput carries the fields required to register a new release
 // candidate. Service, ReleaseID, ImageTag, Repo, and CommitSHA are mandatory;
 // Bootstrap is optional (defaults false) and, when true, promotes the release
-// without validation. Repo (GitHub owner/name) and CommitSHA (full SHA) identify
+// without validation. Rebaseline is optional (defaults false), is accepted only
+// together with Bootstrap, and marks the release as one that re-baselines
+// fingerprints. Repo (GitHub owner/name) and CommitSHA (full SHA) identify
 // the source change so a downstream agent can locate it; they are opaque to
 // release-controller. The manifest-key assembly and image-tag collection for
 // other services happen later in AdvanceQueue, not here, so that we always read
@@ -34,8 +36,11 @@ type ReceiveCandidateInput struct {
 	ReleaseID string
 	ImageTag  string
 	Bootstrap bool
-	Repo      string
-	CommitSHA string
+	// Rebaseline asks a bootstrap release to tell run-controller to record
+	// every live seed as loaded at its new hash instead of reloading it.
+	Rebaseline bool
+	Repo       string
+	CommitSHA  string
 	// Kind selects how this service's artifact is parsed: "dbt"
 	// (manifest.json — the default when absent, so existing CI callers are
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
@@ -60,6 +65,9 @@ func (i ReceiveCandidateInput) validate() error {
 	}
 	if i.ImageTag == "" {
 		return errors.New("image_tag is required")
+	}
+	if i.Rebaseline && !i.Bootstrap {
+		return errors.New("rebaseline is accepted only together with bootstrap")
 	}
 	if i.Repo == "" {
 		return errors.New("repo is required")
@@ -93,10 +101,10 @@ func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind rele
 	}
 	submitted := pipeline.CandidateSubmission{
 		Service: in.Service, ImageTag: in.ImageTag, Kind: kind,
-		Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
+		Bootstrap: in.Bootstrap, Rebaseline: in.Rebaseline, Repo: in.Repo, CommitSHA: in.CommitSHA,
 	}
 	if !existing.MatchesSubmission(submitted) {
-		return fmt.Errorf("%w: %q has a different service, image tag, kind, bootstrap flag or source change",
+		return fmt.Errorf("%w: %q has a different service, image tag, kind, bootstrap or rebaseline flag, or source change",
 			ErrReleaseIDConflict, in.ReleaseID)
 	}
 	return nil
@@ -132,7 +140,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return fmt.Errorf("load run: %w", err)
 	}
 	if existing == nil {
-		r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+		r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Rebaseline, in.Repo, in.CommitSHA, kind, d.Clock.Now())
 		inserted, err := u.RunRepo().Create(ctx, r)
 		if err != nil {
 			return fmt.Errorf("create release: %w", err)

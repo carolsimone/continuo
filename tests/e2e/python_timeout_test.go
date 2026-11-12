@@ -77,7 +77,7 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	contract := mergeContractWithRuntime(t, ctx, pyFixtureImage, pyE2EService)
+	contract := mergeContractWithRuntime(t, ctx, pyFixtureImage, pyE2EService, pyTimeoutFixture, pyTimeoutFixtureRoot)
 	requireWireEntryTimeout(t, contract, pyTimeoutUniqueID, pyTimeoutMinutes)
 	requireWireEntryTimeout(t, contract, pyNoTimeoutUniqueID, 0)
 
@@ -96,25 +96,26 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 		releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 }
 
-// mergeContractWithRuntime runs the runtime CLI's `merge` inside image over the
-// timeout fixture and returns the wire contract it writes. The fixture travels
-// on stdin as a tar archive, so the run needs no bind mount: the docker daemon
-// may live on another filesystem than this process.
-func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service string) []byte {
+// mergeContractWithRuntime runs the runtime CLI's `merge` inside image over a
+// domain repository fixture, the tree under root in fixture (its contracts/ and
+// scripts/), and returns the wire contract it writes. The fixture travels on
+// stdin as a tar archive, so the run needs no bind mount: the docker daemon may
+// live on another filesystem than this process.
+func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service string, fixture fs.FS, root string) []byte {
 	t.Helper()
 
 	var archive bytes.Buffer
 	tw := tar.NewWriter(&archive)
-	root, err := fs.Sub(pyTimeoutFixture, pyTimeoutFixtureRoot)
+	tree, err := fs.Sub(fixture, root)
 	require.NoError(t, err)
-	require.NoError(t, fs.WalkDir(root, ".", func(name string, d fs.DirEntry, walkErr error) error {
+	require.NoError(t, fs.WalkDir(tree, ".", func(name string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || name == "." {
 			return walkErr
 		}
 		if d.IsDir() {
 			return tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: name + "/", Mode: 0o755})
 		}
-		body, err := fs.ReadFile(root, name)
+		body, err := fs.ReadFile(tree, name)
 		if err != nil {
 			return err
 		}
@@ -123,7 +124,7 @@ func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service 
 		}
 		_, err = tw.Write(body)
 		return err
-	}), "archive the timeout fixture")
+	}), "archive the fixture under %s", root)
 	require.NoError(t, tw.Close())
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "--entrypoint", "sh", //nolint:gosec // fixed arguments; image and service are test constants
@@ -132,7 +133,7 @@ func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	require.NoError(t, cmd.Run(),
-		"continuo-runtime merge in %s failed (a stale local image built on an older runtime rejects timeout_minutes; rebuild it with scripts/setup.sh): %s",
+		"continuo-runtime merge in %s failed (a stale local image built on an older runtime rejects newer contract keys; rebuild it with scripts/setup.sh): %s",
 		image, stderr.String())
 	require.NotEmpty(t, stdout.Bytes(), "continuo-runtime merge wrote no contract: %s", stderr.String())
 	return stdout.Bytes()

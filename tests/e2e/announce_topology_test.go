@@ -137,6 +137,28 @@ func (l runControllerLiveRelease) withoutModels(schedules []string) []string {
 	return missing
 }
 
+// waitForRunControllerToApply waits until run-controller has applied the
+// promotion of releaseID: its live release is releaseID, with a node of
+// schedule when schedule is not empty. run-controller and catalog read a
+// promotion through groups of their own, so catalog's swap does not show
+// run-controller's.
+func waitForRunControllerToApply(t *testing.T, ctx context.Context, clients *testClients, releaseID, schedule string, timeout time.Duration) {
+	t.Helper()
+	var live runControllerLiveRelease
+	var liveErr error
+	pollUntilDescribed(t, ctx, timeout, time.Second, func() (bool, error) {
+		live, liveErr = readRunControllerLiveRelease(ctx, clients)
+		if liveErr != nil {
+			return false, liveErr
+		}
+		return live.releaseID == releaseID && (schedule == "" || live.models[schedule] > 0), nil
+	}, func() string {
+		return fmt.Sprintf("timeout waiting for run-controller's live release to be %s (with a node of schedule %q): "+
+			"its live release is %q with models %v (last read error: %v)",
+			releaseID, schedule, live.releaseID, live.models, liveErr)
+	})
+}
+
 // waitForAnnouncedTopology waits until both readers of a promotion have
 // applied the announcement: catalog's :Meta names its release, at its
 // seq or later, and run-controller's live release is the announced release, with a

@@ -49,6 +49,9 @@ type JobParams struct {
 	// ActiveDeadlineSeconds is how long Kubernetes lets the Job run, counted
 	// from the Job's start.
 	ActiveDeadlineSeconds int64
+	// ContentHash is the node's content hash; a python node's pod receives it
+	// as CONTENT_HASH. Empty when the dispatch carries none.
+	ContentHash string
 }
 
 // K8sClient provides methods to interact with Kubernetes

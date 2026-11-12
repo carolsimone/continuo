@@ -114,6 +114,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			NodeType:       e.Node.NodeType,
 			Operation:      string(e.Operation),
 			ImageTag:       e.Node.ImageTag,
+			ContentHash:    e.Node.ContentHash,
 			SecretRef:      e.Node.SecretRef,
 			JobName:        e.JobName,
 			TimeoutSeconds: int64(e.Timeout / time.Second),

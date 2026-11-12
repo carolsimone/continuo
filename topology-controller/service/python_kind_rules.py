@@ -1,8 +1,9 @@
 """Per-kind rules for python contract entries.
 
-Each python node type is one KindRules entry: whether it carries a script and
-how its reads are validated and turned into upstream SQL or a csv source. The
-parser looks the kind up here instead of branching on its name.
+Each python node type is one KindRules entry: whether it carries a script, how
+its reads are validated and turned into upstream SQL or a csv source, which
+write modes it takes and whether it may list assets. The parser looks the kind
+up here instead of branching on its name.
 """
 from __future__ import annotations
 
@@ -102,17 +103,32 @@ def _validate_csv_uri(uri: str, label: str) -> None:
         )
 
 
+# The write modes a python node declares in `mode_type`; absent means replace.
+_ALL_MODE_TYPES = frozenset({"replace", "append", "upsert"})
+
+
 @dataclass(frozen=True)
 class KindRules:
     script_required: bool
     reads: ReadsRule
+    mode_types: frozenset[str]
+    # Whether the entry may list `assets`, the files its script reads; a kind
+    # without a script has nothing that reads a file.
+    assets_allowed: bool
     secret_allowed: bool = False
 
 
 RULES: dict[NodeType, KindRules] = {
-    NodeType.PYTHON_NODE: KindRules(script_required=True, reads=SqlReads()),
-    NodeType.PYTHON_CSV: KindRules(script_required=False, reads=CsvRead()),
-    NodeType.PYTHON_API: KindRules(script_required=True, reads=NoReads(), secret_allowed=True),
+    NodeType.PYTHON_NODE: KindRules(
+        script_required=True, reads=SqlReads(), mode_types=_ALL_MODE_TYPES, assets_allowed=True,
+    ),
+    NodeType.PYTHON_CSV: KindRules(
+        script_required=False, reads=CsvRead(), mode_types=frozenset({"replace"}), assets_allowed=False,
+    ),
+    NodeType.PYTHON_API: KindRules(
+        script_required=True, reads=NoReads(), mode_types=_ALL_MODE_TYPES, assets_allowed=True,
+        secret_allowed=True,
+    ),
 }
 
 # Contracts produced by continuo-python-runtime < 0.6.0 declare python-node as

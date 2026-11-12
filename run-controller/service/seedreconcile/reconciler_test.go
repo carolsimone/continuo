@@ -1,7 +1,9 @@
 package seedreconcile_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -103,8 +105,8 @@ func (f *fakeTopology) Graph(_ context.Context, _ string, releaseID string, keys
 	return topology.NewGraph(nodes, nil), nil
 }
 
-func (f *fakeTopology) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, errors.New("NodeContentHash is not used by the seed reconcile")
+func (f *fakeTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the seed reconcile")
 }
 
 func (f *fakeTopology) PruneReleases(context.Context, time.Time) (int64, error) {
@@ -666,4 +668,83 @@ func TestRunOnce_NothingLiveReadsNothingElse(t *testing.T) {
 	assert.Equal(t, []string{"pointers"}, w.topo.calls)
 	require.Len(t, w.uows, 1)
 	assert.Zero(t, w.uows[0].BeginCalled)
+}
+
+func TestAfterPromotion_RebaselineAdoptsEverySeedAtItsFingerprintAndBuildsNothing(t *testing.T) {
+	countries := seedNode("countries", "sha256:new")
+	countries.SeedColumnsHash = "sha256:cols"
+	w := newWorld(live7, countries, seedNode("blank", ""), modelNode("revenue"))
+	w.loaded("countries", "sha256:old")
+	trigger := moved("rel-2", 7)
+	trigger.Bootstrap, trigger.Rebaseline = true, true
+
+	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Equal(t, []seeds.Built{{
+		Key: "raw.countries", ContentHash: "sha256:new", SeedColumnsHash: "sha256:cols", ImageTag: "svc:2",
+		ReleaseID: "rel-2", At: testNow, Source: seeds.SourceAdopted,
+	}}, w.mats.built)
+	assert.Empty(t, w.runs.saved, "the pass after the adoption finds every seed loaded")
+	assert.Empty(t, w.outbox.appended)
+}
+
+func TestAfterPromotion_RebaselineOnTheFirstPromotionAdoptsEverySeed(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
+	trigger := moved("rel-2", 7)
+	trigger.FirstPromotion, trigger.Bootstrap, trigger.Rebaseline = true, true, true
+	trigger.ChangedNodeIDs = []string{"seed.svc.orders"}
+
+	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Len(t, w.mats.built, 2, "the changed seed is adopted too")
+	assert.Empty(t, w.runs.existsAsk, "a rebaseline does not look for the release's first run")
+	assert.Empty(t, w.runs.saved)
+	assert.Empty(t, w.outbox.appended)
+}
+
+// warnings returns the WARN records a JSON slog handler wrote to buf.
+func warnings(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["level"] == "WARN" {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func TestAfterPromotion_RebaselineOnTheFirstPromotionWarnsThatSeedsWereAdoptedUnloaded(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
+	var buf bytes.Buffer
+	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
+		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	trigger := moved("rel-2", 7)
+	trigger.FirstPromotion, trigger.Bootstrap, trigger.Rebaseline = true, true, true
+
+	require.NoError(t, r.AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	warns := warnings(t, &buf)
+	require.Len(t, warns, 1)
+	assert.Equal(t, "default", warns[0]["tenant_id"])
+	assert.Equal(t, "rel-2", warns[0]["release_id"])
+	assert.EqualValues(t, 2, warns[0]["adopted"])
+}
+
+func TestAfterPromotion_RebaselineAfterTheFirstPromotionDoesNotWarn(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"))
+	var buf bytes.Buffer
+	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
+		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	trigger := moved("rel-2", 7)
+	trigger.Bootstrap, trigger.Rebaseline = true, true
+
+	require.NoError(t, r.AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Empty(t, warnings(t, &buf))
 }

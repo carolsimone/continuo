@@ -40,7 +40,7 @@ def test_test_count_counts_generic_and_singular(tmp_path):
             "assert_orders_positive", targets=["model.svc_a.orders"],
         ),
     }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     nodes = {n.table_name: n for n in parsed}
     assert nodes["orders"].test_count == 2
     assert nodes["customers"].test_count == 0
@@ -59,7 +59,30 @@ def test_relationships_test_counts_once_via_attached_node(tmp_path):
             targets=["model.svc_a.orders", "model.svc_a.customers"],
         ),
     }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     nodes = {n.table_name: n for n in parsed}
     assert nodes["orders"].test_count == 1
     assert nodes["customers"].test_count == 0
+
+
+def _unit_test(name, model_id):
+    return {"unique_id": f"unit_test.svc_a.{name}", "resource_type": "unit_test", "name": name,
+            "checksum": "cd" * 32, "depends_on": {"macros": [], "nodes": [model_id]}}
+
+
+def test_a_model_counts_its_unit_tests(tmp_path):
+    manifest = {"macros": {}, "nodes": {
+        "model.svc_a.orders": _model("orders"),
+        "model.svc_a.customers": _model("customers"),
+        "test.svc_a.not_null_orders_id": _test(
+            "not_null_orders_id", attached="model.svc_a.orders", targets=["model.svc_a.orders"],
+        ),
+    }, "unit_tests": {
+        "unit_test.svc_a.orders_one": _unit_test("orders_one", "model.svc_a.orders"),
+        "unit_test.svc_a.orders_two": _unit_test("orders_two", "model.svc_a.orders"),
+    }}
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
+    nodes = {n.table_name: n for n in parsed}
+    assert nodes["orders"].test_count == 3
+    assert nodes["customers"].test_count == 0
+    assert len(parsed) == 3   # a unit test is folded into its model, never a node of its own

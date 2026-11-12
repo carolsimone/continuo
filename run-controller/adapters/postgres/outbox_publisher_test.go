@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
+	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -294,4 +295,27 @@ func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
 	default:
 		return evt
 	}
+}
+
+func TestTranslateRunEvent_DispatchCarriesTheNodesContentHash(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := uuid.New()
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM run_controller_outbox WHERE aggregate_id = $1", id) })
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{
+		run.TaskDispatched{ID: id, TenantID: "default", ScheduleName: "daily", TaskID: uuid.New(),
+			Node: topology.Node{Key: "analytics.py_daily_kpis", NodeType: "python-node", ContentHash: "sha256:91d4c0"}},
+	}, uuid.Nil))
+	require.NoError(t, tx.Commit())
+
+	var stored []byte
+	require.NoError(t, db.GetContext(ctx, &stored, `SELECT payload FROM run_controller_outbox WHERE aggregate_id = $1`, id))
+	_, wire, err := pkgoutbox.UnwrapTenant(stored)
+	require.NoError(t, err)
+	var dispatch pkgevents.TaskDispatch
+	require.NoError(t, json.Unmarshal(wire, &dispatch))
+	assert.Equal(t, "sha256:91d4c0", dispatch.ContentHash)
 }

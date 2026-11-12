@@ -1,0 +1,29 @@
+name: fpshop
+version: '1.0'
+profile: fpshop
+config-version: 2
+model-paths: [models]
+macro-paths: [macros]
+seed-paths: [seeds]
+snapshot-paths: [snapshots]
+function-paths: [functions]
+vars:
+  cutoff_days: 30
+on-run-start:
+  - "select 1 as hook_start"
+models:
+  fpshop:
+    +materialized: table
+    +meta:
+      owner: shop
+    +tags: [daily]
+seeds:
+  fpshop:
+    +meta:
+      owner: shop
+    +tags: [daily]
+snapshots:
+  fpshop:
+    +meta:
+      owner: shop
+    +tags: [daily]

@@ -51,6 +51,13 @@ type Node struct {
 	UpstreamUniqueIDs  []string `json:"upstream_unique_ids"`
 	Schedule           string   `json:"schedule"`
 	SecretRef          string   `json:"secret_ref,omitempty"`
+	// RelationName is the relation the node writes, as declared, when it
+	// differs from TableName (an alias, or `<name>_v<n>` for a versioned
+	// model); empty otherwise.
+	RelationName string `json:"relation_name,omitempty"`
+	// SeedColumnsHash is the hash of a seed's column declaration; empty for
+	// every other node.
+	SeedColumnsHash string `json:"seed_columns_hash,omitempty"`
 	// TimeoutSeconds is the node's declared task timeout; 0 when it declares none.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
@@ -81,8 +88,9 @@ func Key(tenantID, releaseID string) string {
 // CanonicalJSON renders d in the one byte form every writer produces: nodes
 // ordered by unique_id (a stable sort, so equal ids keep their input order),
 // each node's upstream ids sorted, object keys sorted, compact separators,
-// UTF-8 text without HTML escaping, secret_ref omitted when empty,
-// timeout_seconds omitted when not above 0, schema_version set to SchemaVersion, no trailing newline.
+// UTF-8 text without HTML escaping, secret_ref, relation_name and
+// seed_columns_hash omitted when empty, timeout_seconds omitted when not above
+// 0, schema_version set to SchemaVersion, no trailing newline.
 // encoding/json writes the line and paragraph separators U+2028 and U+2029 as
 // six-character escape sequences, so a writer in another language must too.
 func CanonicalJSON(d Document) ([]byte, error) {
@@ -109,6 +117,12 @@ func CanonicalJSON(d Document) ([]byte, error) {
 		}
 		if n.SecretRef != "" {
 			node["secret_ref"] = n.SecretRef
+		}
+		if n.RelationName != "" {
+			node["relation_name"] = n.RelationName
+		}
+		if n.SeedColumnsHash != "" {
+			node["seed_columns_hash"] = n.SeedColumnsHash
 		}
 		if n.TimeoutSeconds > 0 {
 			node["timeout_seconds"] = n.TimeoutSeconds

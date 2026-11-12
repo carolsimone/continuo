@@ -450,3 +450,24 @@ func TestCloneTopology_CoversEveryReferenceField(t *testing.T) {
 	assert.Equal(t, []string{"UpstreamUniqueIDs"}, referenceFields,
 		"cloneTopology copies only UpstreamUniqueIDs; extend it for any other reference-typed field")
 }
+
+func TestTopologyArtifactStore_RoundTripsRelationNameAndSeedColumnsHash(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", RelationName: "Orders_Tbl", ServiceName: "svc",
+			NodeType: "dbt-model", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
+		{UniqueID: "svc.countries", SchemaName: "svc", TableName: "countries", ServiceName: "svc", NodeType: "dbt-seed",
+			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed", SeedColumnsHash: "sha256:e5a0"},
+	}
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", topo)
+	require.NoError(t, err)
+
+	// A second store has an empty cache, so this decodes the stored object.
+	got, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
+	require.NoError(t, err)
+	byID := byUniqueID(got)
+	assert.Equal(t, "Orders_Tbl", byID["svc.orders"].RelationName)
+	assert.Empty(t, byID["svc.orders"].SeedColumnsHash)
+	assert.Equal(t, "sha256:e5a0", byID["svc.countries"].SeedColumnsHash)
+	assert.Empty(t, byID["svc.countries"].RelationName)
+}

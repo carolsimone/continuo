@@ -129,3 +129,23 @@ func TestParse_UnsupportedStatusIgnored(t *testing.T) {
 		t.Fatalf("expected the supported-status block's message, got %q", r.Message)
 	}
 }
+
+func TestParse_ReadsTheReason(t *testing.T) {
+	r, err := Parse([]byte(`{"schema_version":1,"status":"error","message":"m","failures":1,"unique_id":"u","reason":"image_contract_mismatch"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if r.Reason != "image_contract_mismatch" {
+		t.Fatalf("Reason = %q, want image_contract_mismatch", r.Reason)
+	}
+}
+
+func TestParse_ReasonIsEmptyWhenAbsent(t *testing.T) {
+	r, err := Parse([]byte(`{"schema_version":1,"status":"error","message":"m","failures":0,"unique_id":"u"}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if r.Reason != "" {
+		t.Fatalf("Reason = %q, want empty", r.Reason)
+	}
+}

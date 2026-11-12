@@ -1,10 +1,14 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -643,4 +647,31 @@ func TestVersionsHandler_BundleDbtTestReachesNoTopologyEntry(t *testing.T) {
 	require.Len(t, repo.calls, 1)
 	assert.NotContains(t, repo.calls[0].In.Topology, "test.revenue_not_null", "a dbt-test has no topology entry")
 	assert.Equal(t, []string{"analytics.revenue"}, topologyIDs(repo.calls[0].In))
+}
+
+func TestVersionsHandler_LogsCompiledOnlyMovesWithAtMostTenIDs(t *testing.T) {
+	ids := make([]string, 12)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("analytics.m%02d", i)
+	}
+	repo := &fakeCodeVersionRepository{res: codeversion.WriteResult{NodeVersionsCreated: 12, CompiledOnlyMoved: ids}}
+	u := newVersionsUnitOfWork(repo)
+	reader := &fakeBundleReader{bundle: versionsBundle()}
+	artifacts := &fakeArtifactReader{}
+	var logs bytes.Buffer
+	h := handlers.NewReleasePromotedVersionsHandler(u, reader, artifacts, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	require.NoError(t, h.Handle(context.Background(), "1-0", nil, versionsInput(artifacts)))
+
+	var finished map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &rec))
+		if rec["msg"] == "Code version ingestion finished" {
+			finished = rec
+		}
+	}
+	require.NotNil(t, finished)
+	assert.EqualValues(t, 12, finished["compiled_only_moves"])
+	assert.Len(t, finished["compiled_only_move_ids"], 10)
 }

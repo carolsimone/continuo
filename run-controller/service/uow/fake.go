@@ -210,8 +210,8 @@ func (f *LiveReleaseOnly) Graph(context.Context, string, string, []topology.Node
 	return topology.Graph{}, ErrNotFaked
 }
 
-func (f *LiveReleaseOnly) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
-	return "", false, ErrNotFaked
+func (f *LiveReleaseOnly) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
+	return topology.NodeHashes{}, false, ErrNotFaked
 }
 func (f *LiveReleaseOnly) PruneReleases(context.Context, time.Time) (int64, error) {
 	return 0, ErrNotFaked

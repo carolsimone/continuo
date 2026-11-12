@@ -124,6 +124,7 @@ func documentFromTopology(releaseID string, topo release.Topology) topologyartif
 			UniqueID:           n.UniqueID,
 			SchemaName:         n.SchemaName,
 			TableName:          n.TableName,
+			RelationName:       n.RelationName,
 			ResolvedRelationID: n.ResolvedRelationID,
 			ServiceName:        n.ServiceName,
 			NodeType:           n.NodeType,
@@ -135,6 +136,7 @@ func documentFromTopology(releaseID string, topo release.Topology) topologyartif
 			Schedule:           n.Schedule,
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
+			SeedColumnsHash:    n.SeedColumnsHash,
 		}
 	}
 	return topologyartifact.Document{
@@ -152,6 +154,7 @@ func topologyFromDocument(doc topologyartifact.Document) release.Topology {
 			UniqueID:           n.UniqueID,
 			SchemaName:         n.SchemaName,
 			TableName:          n.TableName,
+			RelationName:       n.RelationName,
 			ResolvedRelationID: n.ResolvedRelationID,
 			ServiceName:        n.ServiceName,
 			NodeType:           n.NodeType,
@@ -163,6 +166,7 @@ func topologyFromDocument(doc topologyartifact.Document) release.Topology {
 			OriginalFilePath:   n.OriginalFilePath,
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
+			SeedColumnsHash:    n.SeedColumnsHash,
 		}
 	}
 	return topo

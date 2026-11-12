@@ -68,7 +68,7 @@ func TestHandleReceiveVerification_ValidationIs400(t *testing.T) {
 func TestHandleReceiveVerification_CandidateIDConflictIs409(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["rel-9"] = pipeline.NewCandidate("rel-9", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now)
+	releases.releases["rel-9"] = pipeline.NewCandidate("rel-9", "core", "img", false, false, "org/r", "sha", release.ManifestKindDbt, now)
 
 	in := validVerificationInput()
 	in.RunID = "rel-9"

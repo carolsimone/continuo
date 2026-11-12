@@ -2,28 +2,39 @@
 
 One release may carry a dbt manifest.json and a python contract.yaml at once.
 They are parsed by different code with different failure vocabularies, but they
-produce the same ManifestNode, so this is the only place downstream code has to
-know a kind exists.
+produce the same ParsedArtifact, so this is the only place downstream code has to
+know a kind exists. A dbt manifest is parsed together with the compile-extras.json
+downloaded beside it, when the release has one.
 """
 import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from domain.exceptions import InvalidNodeSettingError, MalformedContractError
-from domain.model import ManifestKind, ManifestNode, SkippedNode
+from domain.exceptions import InvalidCompileExtrasError, InvalidNodeSettingError, MalformedContractError
+from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
+from service.compile_extras import load_compile_extras
 from service.parser import parse_manifest
 from service.python_contract_parser import parse_python_contract
 
 
 class ParseFn(Protocol):
-    """A kind's parse function: the artifact at `path` to its nodes and shared
+    """A kind's parse function: the downloaded artifact to its nodes and shared
     code. A node the parse leaves out without failing is appended to `skipped`
     when it is given."""
 
-    def __call__(
-        self, path: str, image_tag: str, *, skipped: list[SkippedNode] | None = None
-    ) -> tuple[list[ManifestNode], dict]:
+    def __call__(self, mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
         ...
+
+
+def _parse_dbt(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
+    """Parse a dbt manifest with the compile extras downloaded beside it, when
+    there are any. The extras must name the manifest's declared service."""
+    extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
+    return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped)
+
+
+def _parse_python(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
+    return parse_python_contract(mf.path, mf.image_tag, skipped=skipped)
 
 
 @dataclass(frozen=True)
@@ -41,12 +52,14 @@ class ManifestParser:
 
 _PARSERS: dict[str, ManifestParser] = {
     ManifestKind.DBT: ManifestParser(
-        parse=parse_manifest,
-        permanent_errors=(json.JSONDecodeError, KeyError, IndexError, InvalidNodeSettingError),
+        parse=_parse_dbt,
+        permanent_errors=(
+            json.JSONDecodeError, KeyError, IndexError, InvalidNodeSettingError, InvalidCompileExtrasError,
+        ),
         empty_detail="manifest contains no model/seed nodes",
     ),
     ManifestKind.PYTHON: ManifestParser(
-        parse=parse_python_contract,
+        parse=_parse_python,
         permanent_errors=(MalformedContractError,),
         empty_detail="contract declares no nodes",
     ),

@@ -1,101 +1,56 @@
-import hashlib
+"""Parses a dbt manifest.json into ManifestNodes and the shared code they use.
+
+Every node carries a content_hash folded from its own source, the shared code it
+uses (macros, functions, unit tests and the project's service units), its hashed
+config and, for a model or snapshot, its compiled SQL (service/dbt_hashing.py
+holds the parts and their fold). A seed the compile extras name also carries its
+column fingerprint, CSV header and column types, and the parse reports the
+service's provenance: the manifest's dbt version, the extras' package versions
+and the seeds whose source part is still dbt's `path` checksum. A model, seed or
+snapshot a gate leaves out (no owner, no tag to take a schedule from, a local
+stub) is reported through the caller's `skipped` list, never raised.
+"""
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from continuo_contracts.errors import ContractsError
+
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import ManifestNode, NodeType, SkippedNode, SkipReason
+from domain.model import (
+    CompileExtras,
+    ManifestNode,
+    NodeType,
+    ParsedArtifact,
+    ServiceProvenance,
+    SkippedNode,
+    SkipReason,
+)
 from domain.node_timeout import timeout_seconds
-from service.content_hash import content_hash_fold
+from service.compile_extras import seed_columns_hash
+from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
 
 
-def _node_source_hash(node: dict) -> str:
-    """Return a non-empty, change-sensitive fingerprint for a dbt node's own source.
-
-    release-controller uses content_hash as the SOLE change detector, so an empty
-    value would make later edits to the node undetectable (empty == empty); the
-    result here is therefore always non-empty.
-
-    A dbt TEST is fingerprinted by its COMPILED assertion, never its raw source or
-    dbt checksum. A generic test's `raw_code` is only the macro call (e.g.
-    `{{ test_not_null(**_dbt_generic_test_kwargs) }}`) and its dbt checksum is
-    empty; only the compiled SQL reflects the columns and relations the test
-    actually asserts against and binds to. Hashing `raw_code` (or the empty
-    checksum) would miss an upstream macro/var change that rewrites the compiled
-    assertion while leaving the macro call untouched, so the changed test would
-    promote without ever being bind-checked. A test therefore hashes
-    `compiled_code` (falling back to `raw_code`, then a stable JSON dump).
-
-    Every other node prefers dbt's own per-node `checksum.checksum` (a sha256 of
-    the node's source file); for a node dbt did not check-sum it falls back to a
-    deterministic sha256 over the node's source (`raw_code`/`compiled_code`) or,
-    failing that, a stable JSON dump — so the fingerprint is never empty and still
-    changes when the node changes.
-    """
-    if node.get("resource_type") == "test":
-        basis = node.get("compiled_code") or node.get("raw_code") or ""
-        if not basis:
-            basis = json.dumps(node, sort_keys=True, default=str)
-        return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
-    checksum = node.get("checksum", {}).get("checksum", "")
-    if checksum:
-        return checksum
-    basis = node.get("raw_code") or node.get("compiled_code") or ""
-    if not basis:
-        basis = json.dumps(node, sort_keys=True, default=str)
-    return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
+@contextmanager
+def _rejecting_hash_input(label: str) -> Iterator[None]:
+    """Raise a value the hashing refuses (a value canonical JSON cannot write or
+    `shared_fold` refuses, text UTF-8 cannot encode) as an InvalidNodeSettingError
+    naming where it was found: it is the artifact's fault, so the release is
+    rejected instead of retried."""
+    try:
+        yield
+    except (ContractsError, UnicodeEncodeError) as error:
+        raise InvalidNodeSettingError(f"{label}: {error}") from error
 
 
-def _transitive_macro_ids(direct_ids: list[str], macros: dict) -> set[str]:
-    """Resolve the transitive closure of a node's macro dependencies.
-
-    Walks macro->macro edges (each macro's own `depends_on.macros`) so a change to
-    a macro reached only through another macro still affects the dependent node,
-    mirroring dbt's transitive `state:modified.macros` behaviour. Ids absent from
-    the manifest's macro map (e.g. unresolved built-ins) stay in the closure but
-    contribute no checksum.
-    """
-    seen: set[str] = set()
-    stack = list(direct_ids)
-    while stack:
-        mid = stack.pop()
-        if mid in seen:
-            continue
-        seen.add(mid)
-        macro = macros.get(mid)
-        if macro:
-            stack.extend(macro.get("depends_on", {}).get("macros", []))
-    return seen
-
-
-CONFIG_HASH_DENYLIST = {"meta", "docs", "description", "grants", "tags"}
-
-
-def _config_hash(node: dict) -> str:
-    """Fingerprint of the node's resolved config, denylist-filtered.
-
-    Out-of-file config (dbt_project.yml / schema.yml properties) reaches only the
-    manifest's resolved config, never dbt's file checksum — without this component
-    a materialization change would promote with no revalidation. Unknown keys
-    participate by default: a spurious revalidation is cheaper than a silently
-    missed change.
-    """
-    cfg = {k: v for k, v in (node.get("config") or {}).items()
-           if k not in CONFIG_HASH_DENYLIST}
-    return hashlib.sha256(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest()
-
-
-def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
-    """Fold of the source checksums of the given shared-code units; "" if none."""
-    unit_hashes = sorted(
-        hashlib.sha256((macros[mid].get("macro_sql") or "").encode()).hexdigest()
-        for mid in unit_ids if mid in macros
-    )
-    if not unit_hashes:
-        return ""
-    return hashlib.sha256("".join(unit_hashes).encode()).hexdigest()
+def _hash(label: str, node: dict, ctx: ManifestContext) -> DbtHashParts:
+    with _rejecting_hash_input(label):
+        return hash_dbt_node(node, ctx)
 
 
 _RESOURCE_TYPE_TO_NODE_TYPE = {
@@ -120,10 +75,30 @@ def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
     return SkippedNode(node_id=node_id, service=service, reason=reason)
 
 
+def _table_name(node: dict) -> str:
+    """The table name a dbt node is known by: its name, or "<name>.v<version>"
+    for a versioned model, so each version of a model is a node of its own and
+    the name is also the dbt selector of that version."""
+    version = node.get("version")
+    if version is None or version == "":
+        return node["name"]
+    return f"{node['name']}.v{version}"
+
+
 def parse_manifest(
-    manifest_path: str, image_tag: str = "", *, skipped: list[SkippedNode] | None = None
-) -> tuple[list[ManifestNode], dict]:
+    manifest_path: str,
+    image_tag: str = "",
+    extras: CompileExtras | None = None,
+    *,
+    skipped: list[SkippedNode] | None = None,
+) -> ParsedArtifact:
     """Parse a dbt manifest into its nodes and the shared code they use.
+
+    `extras` is the compile-extras.json of the same service when its compile wrote
+    one. A seed's source part is the SHA-256 of its file bytes the extras record,
+    or dbt's own checksum when the extras are absent or do not name the seed; a
+    seed the extras name also carries seed_columns_hash, seed_header and
+    seed_column_types from its entry, which stay empty otherwise.
 
     A model, seed or snapshot that a gate leaves out (no owner, no tag to take
     a schedule from, a local stub) is never an error: when `skipped` is given,
@@ -133,10 +108,12 @@ def parse_manifest(
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    macros = manifest.get("macros", {})
+    with _rejecting_hash_input(manifest_path):
+        ctx = ManifestContext.from_manifest(manifest, extras)
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
-    used_unit_ids: set[str] = set()
+    used_units: dict[str, CodeUnit] = {}
+    path_checksum_seeds: list[str] = []
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in SUPPORTED_RESOURCE_TYPES:
@@ -168,17 +145,17 @@ def parse_manifest(
         meta = node.get("config", {}).get("meta") or {}
         criticality = meta.get("criticality", "SECONDARY")
 
-        direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
-        transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
-        used_unit_ids |= transitive_ids
-        source_hash = _node_source_hash(node)
-        shared_hash = _shared_code_hash(transitive_ids, macros)
-        config_hash = _config_hash(node)
+        node.setdefault("unique_id", node_id)
+        table_name = _table_name(node)
+        label = f"{node['schema']}.{table_name}".lower()
+        parts = _hash(label, node, ctx)
+        used_units.update(parts.units)
 
         manifest_node = ManifestNode(
-            table_name=node["name"],
+            table_name=table_name,
             schema_name=node["schema"],
-            resolved_relation=node.get("alias") or node["name"],
+            resolved_relation=node.get("alias") or table_name,
+            materialized=(node.get("config") or {}).get("materialized") or "",
             service_name=node["fqn"][0].replace("_", "-"),
             owner=owner,
             schedule_name=schedule_name,
@@ -186,17 +163,30 @@ def parse_manifest(
             dependency_sqls=[node["compiled_code"]] if node.get("compiled_code") else [],
             candidate_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
-            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
+            content_hash=parts.content_hash,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),
             config=node.get("config") or {},
-            source_hash=source_hash,
-            shared_code_hash=shared_hash,
-            config_hash=config_hash,
-            code_unit_ids=direct_unit_ids,
+            source_hash=parts.source_hash,
+            shared_code_hash=parts.shared_code_hash,
+            config_hash=parts.config_hash,
+            compiled_hash=parts.compiled_hash,
+            hashed_config=parts.hashed_config,
+            code_unit_ids=sorted(parts.units),
             declared_columns=len(node.get("columns") or {}),
         )
+        if resource_type == "model":
+            manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
+        if resource_type == "seed":
+            seed = extras.seeds.get(node_id) if extras is not None else None
+            if seed is not None:
+                with _rejecting_hash_input(label):
+                    manifest_node.seed_columns_hash = seed_columns_hash(seed)
+                manifest_node.seed_header = seed.header
+                manifest_node.seed_column_types = dict(seed.column_types)
+            if parts.path_checksum:
+                path_checksum_seeds.append(manifest_node.unique_id)
         try:
             manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))
         except ValueError as exc:
@@ -230,12 +220,9 @@ def parse_manifest(
         if not tracked:
             continue
         compiled = node.get("compiled_code", "")
-        direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
-        transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
-        used_unit_ids |= transitive_ids
-        source_hash = _node_source_hash(node)
-        shared_hash = _shared_code_hash(transitive_ids, macros)
-        config_hash = _config_hash(node)
+        node.setdefault("unique_id", node_id)
+        parts = _hash(node_id, node, ctx)
+        used_units.update(parts.units)
         test_nodes.append(ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
@@ -246,25 +233,32 @@ def parse_manifest(
             dependency_sqls=[compiled] if compiled else [],
             candidate_sql=compiled,
             node_type=NodeType.DBT_TEST,
-            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
+            content_hash=parts.content_hash,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),
             config=node.get("config") or {},
-            source_hash=source_hash,
-            shared_code_hash=shared_hash,
-            config_hash=config_hash,
-            code_unit_ids=direct_unit_ids,
+            source_hash=parts.source_hash,
+            shared_code_hash=parts.shared_code_hash,
+            config_hash=parts.config_hash,
+            compiled_hash=parts.compiled_hash,
+            hashed_config=parts.hashed_config,
+            code_unit_ids=sorted(parts.units),
             identity=node_id,
         ))
     nodes.extend(test_nodes)
 
     shared_code = {
-        mid: {
-            "source": macros[mid].get("macro_sql") or "",
-            "checksum": hashlib.sha256((macros[mid].get("macro_sql") or "").encode()).hexdigest(),
-            "depends_on": list(macros[mid].get("depends_on", {}).get("macros", [])),
+        unit_id: {
+            "source": unit.source,
+            "checksum": unit.digest,
+            "depends_on": [dep for dep in unit.depends_on if dep in used_units],
         }
-        for mid in sorted(used_unit_ids) if mid in macros
+        for unit_id, unit in sorted(used_units.items())
     }
-    return nodes, shared_code
+    provenance = ServiceProvenance(
+        dbt_version=(manifest.get("metadata") or {}).get("dbt_version", ""),
+        packages=dict(extras.packages) if extras is not None else {},
+        path_checksum_seeds=tuple(sorted(path_checksum_seeds)),
+    )
+    return ParsedArtifact(nodes=nodes, shared_code=shared_code, provenance=provenance)

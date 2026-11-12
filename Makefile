@@ -6,7 +6,7 @@ DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docke
 # scripts/check-validation-image-pin.sh reads the literal off this assignment
 # and asserts it agrees with every other pinned location, so keep the complete
 # ghcr ref on this line (a bare version string would be invisible to it).
-VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.11.0
+VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0
 
 # Build base image (run once or when base changes)
 .PHONY: build-base
@@ -87,7 +87,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -138,7 +138,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
 	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
@@ -416,7 +416,7 @@ e2e:
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-execution-controller.sh
-	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 100m /app/tests/e2e/...
+	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
 	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).

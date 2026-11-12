@@ -36,9 +36,9 @@ def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_n
     clock = FakeClock()
     real_referenced_tables = candidate_manifest_handler.referenced_tables
 
-    def slow_resolve(node, *, dialect):
+    def slow_resolve(node, *, dialect, **kwargs):
         clock.t += 1.0
-        return real_referenced_tables(node, dialect=dialect)
+        return real_referenced_tables(node, dialect=dialect, **kwargs)
 
     class _SlowStore(MemoryS3):
         def put_object(self, **kwargs):
@@ -55,7 +55,7 @@ def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_n
 def test_progress_is_reported_after_a_node_that_fails_to_resolve(monkeypatch):
     estate = generate_estate(20, columns=4, python_share=0.0)
 
-    def refuse(node, *, dialect):
+    def refuse(node, *, dialect, **kwargs):
         raise InvalidCompiledSqlError(node.table_name, "refused")
 
     monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", refuse)

@@ -103,6 +103,24 @@ describe('POST /api/v1/releases', () => {
     expect([none.status, none.body.code]).toEqual([403, 'forbidden']);
   });
 
+  it('forwards rebaseline with bootstrap', async () => {
+    const client = fakeClient();
+    const res = await request(appAs(ci({ core: true }), client)).post('/api/v1/releases').send({ ...body, bootstrap: true, rebaseline: true });
+    expect(res.status).toBe(202);
+    expect(client.submitRelease).toHaveBeenCalledWith(expect.objectContaining({ bootstrap: true, rebaseline: true }));
+  });
+
+  it('a string rebaseline is a 400', async () => {
+    const res = await request(appAs(operator, fakeClient())).post('/api/v1/releases').send({ ...body, rebaseline: 'true' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/rebaseline must be a boolean/);
+  });
+
+  it('rebaseline with bootstrap from a binding without allowBootstrap is bootstrap_not_allowed', async () => {
+    const res = await request(appAs(ci({ core: false }), fakeClient())).post('/api/v1/releases').send({ ...body, bootstrap: true, rebaseline: true });
+    expect(res.body.code).toBe('bootstrap_not_allowed');
+  });
+
   it('humans keep their body provenance; viewers cannot submit', async () => {
     const client = fakeClient();
     const human = { ...body, repo: 'me/proj', commit_sha: 'deadbeef', bootstrap: true };
@@ -147,7 +165,7 @@ describe('POST /api/v1/releases', () => {
   });
 
   it("passes release-controller's 409 through with its message to a person, and asks it nothing else", async () => {
-    const msg = 'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap flag or source change\n';
+    const msg = 'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n';
     const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
     const res = await request(appAs(operator, client)).post('/api/v1/releases').send(body);
     expect(res.status).toBe(409);
@@ -208,7 +226,7 @@ describe('release_submit audit', () => {
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatchObject({
         principal: 'ci', repository: 'carolsimone/continuo-demo', repository_id: expect.any(String),
-        service: 'core', release_id: 'rel-1', bootstrap: false, outcome: 202,
+        service: 'core', release_id: 'rel-1', bootstrap: false, rebaseline: false, outcome: 202,
       });
     } finally { spy.mockRestore(); }
   });
@@ -258,7 +276,7 @@ describe('GET /api/v1/releases/:id', () => {
     expect(res.status).toBe(200);
     expect(client.getRelease).toHaveBeenCalledWith('r.1');
     expect(res.body).toEqual({
-      release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false,
+      release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
       repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x',
       ui_url: 'https://continuo.example.com/releases/r.1',
     });
@@ -289,6 +307,11 @@ describe('GET /api/v1/releases/:id', () => {
     expect((await request(appAs(operator, down)).get('/api/v1/releases/x')).status).toBe(503);
   });
 
+  it('projectRelease carries rebaseline', () => {
+    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_service: 'core', bootstrap: true, rebaseline: true }).rebaseline).toBe(true);
+    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_service: 'core' }).rebaseline).toBe(false);
+  });
+
   it('projectRelease: non-terminal status and no publicUrl gives ui_url null', () => {
     expect(projectRelease({ ...rel, status: 'validating' })).toMatchObject({ terminal: false, ui_url: null });
   });
@@ -296,7 +319,7 @@ describe('GET /api/v1/releases/:id', () => {
   it('projectRelease: a field of the wrong type becomes its empty value, never a different shape', () => {
     const odd = { release_id: 7, status: null, changed_service: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
     expect(projectRelease(odd)).toEqual({
-      release_id: '', service: '', status: '', terminal: false, bootstrap: false,
+      release_id: '', service: '', status: '', terminal: false, bootstrap: false, rebaseline: false,
       repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null,
     });
   });

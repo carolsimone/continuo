@@ -1,0 +1,17 @@
+nodes:
+  # The contract the release carries. The e2e test merges it with the image's
+  # own continuo-runtime and uploads the result, so the release hashes this read.
+  # py_mismatch.baked.yml, which the mismatch image holds instead, reads another
+  # column, so the image cannot reproduce the released content_hash.
+  - schema: e2e_schema
+    table: py_mismatch
+    owner: e2e
+    schedule: e2e-py-mismatch
+    criticality: SECONDARY
+    script: scripts/py_probe.py
+    description: "python node whose image holds another contract than its release"
+    reads:
+      tables: select schemaname from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
+      - {name: label, type: VARCHAR(16)}

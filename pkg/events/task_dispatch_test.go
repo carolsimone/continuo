@@ -110,3 +110,15 @@ func withField(fields map[string]string, key, value string) map[string]string {
 	fields[key] = value
 	return fields
 }
+
+func TestDecodeTaskDispatch_ReadsContentHash(t *testing.T) {
+	_, p, err := events.DecodeTaskDispatch(validDispatchFields(`"attempt":0,"content_hash":"sha256:91d4c0"`))
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:91d4c0", p.ContentHash)
+}
+
+func TestTaskDispatch_OmitsAnEmptyContentHash(t *testing.T) {
+	raw, err := json.Marshal(events.TaskDispatch{RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "content_hash")
+}

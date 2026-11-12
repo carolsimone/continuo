@@ -16,18 +16,27 @@ shipped in those.
 
 - A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
 - Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
+- Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
+- The default validation image is `v0.12.0`.
 - No values change is needed.
 
 ### Upgrade steps
 
-1. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
+0. **Check every dbt team image for `python3` with PyYAML and dbt.** The compile Job runs `compile_extras.py` with the image's `python3`, so run `docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` for each one. An image where it fails fails its compile after the upgrade.
+1. **Freeze producer merges.** Keep them frozen until step 6, so no service releases a change between the upgrade and its re-baseline release.
+2. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
    2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
    3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values.
    4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
 
    Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
-2. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+3. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+4. **Re-baseline the fingerprints.** After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`.
+5. Release one service with no change: nothing validates.
+6. Unfreeze producer merges.
+
+Rebuild a Python service on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them moves its hashes outside the window and starts a validation.
 
 This release changes no values key, and it ships as a `MINOR`.
 
@@ -45,9 +54,19 @@ This release changes no values key, and it ships as a `MINOR`.
 - **The code bundle and topology keys external tools read are declared and versioned.** TL;DR: [docs/read-contract.md](../../docs/read-contract.md) names the keys of the code bundle (`contract_version` 1), the topology artifact (`schema_version` 1) and `GET /api/v1/current-prod` that a reader may rely on, and what raises a version. Tests pin them.
   - With your own bucket, set no lifecycle expiry on `code-bundles/` or `tenants/`: an age rule can delete the objects of the release in production. release-controller deletes a release's objects when its retention prunes it, and never for the production release.
   - No values change is needed.
+- **`rebaseline` on `POST /api/v1/releases`.** TL;DR: a bootstrap that re-baselines fingerprints; accepted only with `"bootstrap": true` and authorized like it. Its promotion records every live seed as loaded at its new fingerprint, so no seed is reloaded.
 
 ### Changed
 
+- **Code fingerprints close 23 gaps.** TL;DR: `content_hash` now covers compiled SQL, the macros, hooks and `flags:` block teams write, functions, unit tests, raw seed bytes and enforced contract columns, and leaves out access, group, freshness and a Python node's owner, schedule, criticality and description. topology-controller pins `continuo-contracts` 0.1.0.
+  - The compile Job runs `compile_extras.py` with the team image's `python3` and uploads `compile-extras.json` beside `manifest.json`. A team image without `python3` fails its compile. The script reads the project the compile command reads: its `--project-dir`, or else the directory the command runs in.
+  - topology-controller reads `compile-extras.json` beside each manifest. With your own bucket, grant it `s3:ListBucket` on the manifest prefixes: without it, a release stored before this version answers 403 for its missing extras, which topology-controller logs as a WARNING and treats as none.
+  - execution-controller refuses to start when a run command parses with other `--vars`, `--target`, `--profile`, `--profiles-dir` or `--project-dir` values than the compile command; `--profiles-dir /project` and `--project-dir /project` count as the default, and `-t` counts as `--target`.
+  - A Python task whose image does not hash to its released `content_hash` fails with reason `image_contract_mismatch`, class `invalid`, and is not retried.
+  - Each version of a dbt model is its own node, `<schema>.<name>.v<version>`, and a reference to an aliased model keeps its edge.
+  - A function's body (its language, arguments, return type, config, compiled SQL and overload bodies, but not its descriptions), the functions it calls and the macros that on-run hooks and functions call are in the fingerprint. A bare macro call resolves in dbt's order: the node's own package, the root project, other packages, then dbt's own. An enforced contract is hashed on models only.
+  - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
+- **The default validation image is `v0.12.0`** (`validation.imageTag`).
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
   - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
   - The key and its default are unchanged, and no values change is needed.

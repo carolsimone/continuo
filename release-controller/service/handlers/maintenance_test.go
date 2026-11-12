@@ -59,7 +59,7 @@ func TestAdvanceQueue_MaintenanceActivatesOnlyVerificationRuns(t *testing.T) {
 	deps.Bucket = "b"
 	deps.Maintenance = true
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedRelease(pipeline.NewCandidate("rCand", "svc-a", "tag-c", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
+	store.SeedRelease(pipeline.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
 	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -78,8 +78,8 @@ func TestAdvanceQueue_CandidatesResumeInOrderAfterMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	deps.Maintenance = true
-	store.SeedRelease(pipeline.NewCandidate("rFirst", "svc-a", "t1", false, "acme/demo", "aaa", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
-	store.SeedRelease(pipeline.NewCandidate("rSecond", "svc-a", "t2", false, "acme/demo", "bbb", release.ManifestKindDbt, time.Unix(150, 0).UTC()))
+	store.SeedRelease(pipeline.NewCandidate("rFirst", "svc-a", "t1", false, false, "acme/demo", "aaa", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
+	store.SeedRelease(pipeline.NewCandidate("rSecond", "svc-a", "t2", false, false, "acme/demo", "bbb", release.ManifestKindDbt, time.Unix(150, 0).UTC()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	first, _ := store.GetRelease("rFirst")

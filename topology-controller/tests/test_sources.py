@@ -1,6 +1,11 @@
 import json
+import logging
 import os
 from unittest.mock import MagicMock
+
+import pytest
+from botocore.exceptions import ClientError
+
 from adapters.sources.s3 import S3Source
 from domain.model import ManifestKind, ManifestRequest
 
@@ -99,7 +104,9 @@ def test_s3_source_downloads_correct_keys():
         source.cleanup()
 
     assert downloaded == [("my-bucket", "svc-a/r1/manifest.json"),
-                          ("my-bucket", "svc-b/r1/manifest.json")]
+                          ("my-bucket", "svc-a/r1/compile-extras.json"),
+                          ("my-bucket", "svc-b/r1/manifest.json"),
+                          ("my-bucket", "svc-b/r1/compile-extras.json")]
 
 
 def test_s3_source_temp_files_exist_after_list():
@@ -194,5 +201,80 @@ def test_s3_source_records_each_files_size():
     try:
         (file,) = source.list_manifests()
         assert file.size_bytes == 13
+    finally:
+        source.cleanup()
+
+
+def _source(download, keys):
+    s3 = MagicMock()
+    s3.download_file.side_effect = download
+    return S3Source(bucket="continuo", env="local", s3_client=s3, keys=keys), s3
+
+
+def _write(_bucket, _key, filename):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w") as f:
+        f.write("{}")
+
+
+def test_s3_source_downloads_the_extras_beside_a_dbt_manifest():
+    source, s3 = _source(_write, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    try:
+        [mf] = source.list_manifests()
+        assert s3.download_file.call_args_list[1].args[1] == "core/rel-1/compile-extras.json"
+        assert mf.extras_path and os.path.exists(mf.extras_path)
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_treats_a_missing_extras_object_as_none():
+    def download(bucket, key, filename):
+        if key.endswith("compile-extras.json"):
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+        _write(bucket, key, filename)
+
+    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    try:
+        assert source.list_manifests()[0].extras_path == ""
+    finally:
+        source.cleanup()
+
+
+# Without s3:ListBucket on the manifest prefix, S3 answers a missing object with 403, not 404.
+def test_s3_source_treats_a_forbidden_extras_object_as_none_and_warns(caplog):
+    def download(bucket, key, filename):
+        if key.endswith("compile-extras.json"):
+            raise ClientError({"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject")
+        _write(bucket, key, filename)
+
+    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    try:
+        with caplog.at_level(logging.INFO):
+            assert source.list_manifests()[0].extras_path == ""
+        (record,) = [r for r in caplog.records if "compile-extras.json" in r.getMessage()]
+        assert record.levelno == logging.WARNING
+        assert "s3:ListBucket" in record.getMessage() and record.key == "core/rel-1/compile-extras.json"
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_propagates_an_extras_outage():
+    def download(bucket, key, filename):
+        if key.endswith("compile-extras.json"):
+            raise ClientError({"Error": {"Code": "503", "Message": "Slow Down"}}, "HeadObject")
+        _write(bucket, key, filename)
+
+    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    try:
+        with pytest.raises(ClientError):
+            source.list_manifests()
+    finally:
+        source.cleanup()
+
+
+def test_s3_source_reads_no_extras_for_a_python_contract():
+    source, s3 = _source(_write, [ManifestRequest(service="py", key="py/rel-1/contract.yaml", kind=ManifestKind.PYTHON)])
+    try:
+        assert source.list_manifests()[0].extras_path == "" and s3.download_file.call_count == 1
     finally:
         source.cleanup()

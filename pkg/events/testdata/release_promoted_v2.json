@@ -17,7 +17,8 @@
       "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
       "repo": "carolsimone/continuo-demo",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
-      "bootstrap": false
+      "bootstrap": false,
+      "rebaseline": false
     }
   },
   "fields": {
@@ -40,7 +41,8 @@
       "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
       "repo": "carolsimone/continuo-demo",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
-      "bootstrap": false
+      "bootstrap": false,
+      "rebaseline": false
     }
   }
 }

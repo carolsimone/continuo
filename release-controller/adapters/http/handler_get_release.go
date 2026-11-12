@@ -23,6 +23,7 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"per_node_results":    serialization.NodeValidationResultsFromDomain(rel.PerNodeResults()),
 		"image_tags":          rel.ImageTags(),
 		"bootstrap":           rel.IsBootstrap(),
+		"rebaseline":          rel.IsRebaseline(),
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
 		"remediation_round":   rel.RemediationRound(),

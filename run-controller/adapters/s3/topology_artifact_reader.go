@@ -121,6 +121,7 @@ func artifactOf(doc topologyartifact.Document) ports.TopologyArtifact {
 			NodeType:          n.NodeType,
 			TestCount:         &testCount,
 			ContentHash:       n.ContentHash,
+			SeedColumnsHash:   n.SeedColumnsHash,
 			ImageTag:          n.ImageTag,
 			SecretRef:         n.SecretRef,
 			ScheduleName:      n.Schedule,

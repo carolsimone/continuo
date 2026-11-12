@@ -28,6 +28,6 @@ func ParseTaskDispatch(msg goredis.XMessage) (events.TaskDispatch, error) {
 		KnownStatus: p.KnownStatus, ScheduleName: p.ScheduleName,
 		ServiceName: p.ServiceName, SchemaName: p.SchemaName, TableName: p.TableName,
 		NodeType: p.NodeType, Operation: p.Operation, ImageTag: p.ImageTag, SecretRef: p.SecretRef,
-		JobName: p.JobName, TimeoutSeconds: p.TimeoutSeconds,
+		JobName: p.JobName, TimeoutSeconds: p.TimeoutSeconds, ContentHash: p.ContentHash,
 	}, nil
 }

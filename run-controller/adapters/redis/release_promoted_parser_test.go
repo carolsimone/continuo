@@ -49,3 +49,12 @@ func TestParseReleasePromoted_RejectsAnUnreadableEntryAsPermanent(t *testing.T) 
 		})
 	}
 }
+
+func TestParseReleasePromoted_ReadsRebaseline(t *testing.T) {
+	evt, err := ParseReleasePromoted(releasePromotedMessage(t, "default", pkgevents.ReleasePromoted{
+		ReleaseID: "rel-1", PromotionSeq: 4, TopologyURI: "s3://continuo/k", TopologySHA256: "abc", Bootstrap: true, Rebaseline: true,
+	}))
+	require.NoError(t, err)
+	assert.True(t, evt.Bootstrap)
+	assert.True(t, evt.Rebaseline)
+}

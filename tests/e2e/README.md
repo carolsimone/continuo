@@ -55,7 +55,7 @@ bash tests/e2e/deploy-execution-controller.sh
 
 # 7. Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 125m /app/tests/e2e/...
+  go test -v -count=1 -timeout 145m /app/tests/e2e/...
 
 # 8. Clean up k8s resources
 bash tests/e2e/cleanup-execution-controller.sh
@@ -98,7 +98,7 @@ bash tests/e2e/provision-k8s-test-env.sh
 
 # Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 125m /app/tests/e2e/...
+  go test -v -count=1 -timeout 145m /app/tests/e2e/...
 
 # Clean up k8s resources
 bash tests/e2e/cleanup-execution-controller.sh
@@ -156,7 +156,7 @@ CI mirrors the blank-state flow above:
 5. Build + start `topology-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-execution-controller.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 125m /app/tests/e2e/...`
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 145m /app/tests/e2e/...`
 9. `bash tests/e2e/cleanup-execution-controller.sh`
 
 CI uses `deploy-execution-controller.sh` (not `provision-k8s-test-env.sh`) because
@@ -213,10 +213,13 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
 | `catalog_history_test.go` | `TestDroppedNodeKeepsItsHistory` — a release of service-1 promotes with no changed node (production holds the baseline's own hashes), so it needs no validation, and its promotion carries the release's code bundle: catalog makes `e2e_schema.rel_probe` active and records its code version (the test waits until the node's `code_version_promotion_seq` reaches the promotion's seq, which works warm and cold). As a control, `GetNode` finds the node live and `GetNodeVersions` marks exactly one version current. The test then announces the e2e DAG without `rel_probe`: `GetNode` with `include_inactive` reports it `inactive`, `GetNode` without it is `NOT_FOUND`, `GetNodeVersions` returns exactly the versions it returned before the drop, none current, and with `current_only` an empty list. A deferred restore announces the default e2e DAG again (`seedTopology`) and waits for the promote-seed runs the first release planned, so the next test finds the DAG live with `rel_probe` active; `current_prod` stays on the test's first release, which every test that reads it seeds first |
 | `ingested_node_test.go` | `TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns` — service-1's `ingest_probe_reader` model (schedule `ingest-probe`) reads `e2e_raw.ingest_probe`, a table no model builds, which `setup.sh` creates in the warehouse. A bootstrap release of service-1 promotes, and the test asserts the table is an `ingested` node everywhere: in run-controller's copy of the release (`topology_nodes` with no service and no schedule, and the edge into the reader), in catalog's graph (an active `:Node` of type `ingested` that the reader `:DEPENDS_ON`) and in the ui's schedule graph (`GET /api/schedules/ingest-probe/graph` lists node `.e2e_raw.ingest_probe`, typed `ingested`, and the edge from it to `service-1.e2e_schema.ingest_probe_reader`). `StartRun(ingest-probe)` then plans exactly the reader, which succeeds, and no Job is created for the table; a `TriggerSingleNodeRun` of the table is `INVALID_ARGUMENT`, with no service and with the reader's service. A deferred restore announces the default e2e DAG again and waits for the promote-seed runs the release planned |
+| `rebaseline_test.go` | `TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing` — with production on the baseline, a release of service-1 posted with `"bootstrap": true, "rebaseline": true` promotes and no validation Job is created for it. run-controller plans no promote-seed run for it and records each service-1 seed in `node_materializations` with `source` `adopted`, the release's id, and the `content_hash` and non-empty `seed_columns_hash` the release stores for it; every `:NodeVersion` catalog records for the release is `healed` (catalog writes a version once per unique id and hash, so a stack where an earlier release wrote these hashes has none to check, and the count is logged); `GET /api/v1/releases/<id>` answers `"rebaseline": true`. A deferred restore announces the default e2e DAG again. `TestE2E_RebaselineWithoutBootstrap_Is400` — `"rebaseline": true` without `"bootstrap": true` is a 400 `bad_request` that names the rule, and release-controller records no release |
+| `alias_version_test.go` | `TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants` — service-1's models of schedule `e2e-alias-version`: `alias_src` (alias `alias_src_tbl`), `alias_dep` (reads it through `ref()`), version 2 of the versioned model `ver_src` (unique id `e2e_schema.ver_src.v2`, built as `ver_src_v2`) and `ver_dep` (reads that version through `ref()`). With production holding every baseline node but those four, a release of service-1 validates exactly the four: its `validation.requested:v1` carries `relation_name` `alias_src_tbl` and `ver_src_v2` on the two upstream models, none on the dependants, and names each upstream among its dependant's `upstream_node_ids`. The release promotes, which needs each dependant to read its upstream's copy in the candidate schema, since no run builds the four in production |
 | `catalog_backup_test.go` | `TestCatalogBackupExportWritesAnObjectAndMetric` — runs `go run ./cmd/catalog-backup export --tenant default` in `/app/catalog` with the catalog container's environment (run again, up to three times, when it exits 3 because the scheduled export holds the lease). stdout is exactly one JSON object (`object_key`, `bytes`, `nodes`, `relationships`, `duration_seconds`); the key is new under `tenants/default/backups/catalog/`, ends in `.jsonl.gz` and its MinIO object's size equals `bytes`; the object gunzips to a header of `format_version` 1 and tenant `default` whose node and relationship totals equal the printed counts and the number of record lines. `catalog-backup list --tenant default` lists the key, newest first. catalog's `/metrics` reports `continuo_catalog_export_last_success_timestamp_seconds` at or after the second the test started (polled for up to 90 s, past the gauge's 60 s cache). `t.Cleanup` deletes the object it wrote |
 | `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
 | `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image. The contract's mixed DAG includes a `python-csv` node (`py_csv`, no script) whose source csv is seeded into MinIO S3 before the release posts: the validation runner range-fetches its header and checks it against `output_columns`, and the run path fetches the full object and lands its rows in the warehouse. A `python-api` node (`py_api`) names Secret `continuo-api-probe`: the run test creates that Secret in the Jobs' `default` namespace and checks the script received its key as an env var, then deletes it and checks the run fails instead of hanging |
 | `python_timeout_test.go` | `TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI` — a python contract (`fixtures/py-timeout`) declares `timeout_minutes: 90` on one of two nodes. The test streams the fixture into the fixture image and runs the image's own `continuo-runtime merge` (`docker run`, no bind mount) to build the wire contract, so the key is written by the runtime release the chart defaults to, not by the test. The contract is uploaded and a python release posted; once it promotes, run-controller's live release carries `timeout_seconds = 5400` on that node and NULL on every other node. The image must be built on a runtime that accepts `timeout_minutes` (0.10.0 or later); `scripts/setup.sh` rebuilds it |
+| `image_contract_test.go` | `TestE2E_PythonImageContractMismatch_FailsInvalid` — the release of python service `svc-py-mismatch-e2e` carries a contract built from `fixtures/py-probe/mismatch/py_mismatch.released.yml` by the fixture image's own `continuo-runtime merge`, and names the image `continuo-e2e-py-probe:mismatch` (the Dockerfile's `mismatch` target), which bakes `py_mismatch.baked.yml` instead: the same node `e2e_schema.py_mismatch` with one read changed in meaning. The test first checks the image's `continuo-runtime hash` differs from the released `content_hash`. The release is a bootstrap one, so it promotes without validation; `StartRun(e2e-py-mismatch)` then runs the node, the runtime harness finds the image cannot reproduce the `CONTENT_HASH` execution-controller passes, and the task fails `invalid` `image_contract_mismatch` after a single attempt. A deferred cleanup deletes the service's `service_prod` row |
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_VerifiedFix`, `TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt`, `TestE2E_PythonParseFailure_VerifiedFix` — a rejected python node is repaired in the contract yaml, verified by a real verification run that stops at `passed`, and proposed for review; the second test proves a failed verification run's error feeds the next attempt and reaches no classifier at all; the third drives the same lane from a parse-stage rejection (a read whose relation is not schema-qualified), where the rejection carries the parser's text inline and no log. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `dead_letter_test.go` | `TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped`, `TestDeadLetter_RedriveReachesOnlyItsGroup`, `TestDeadLetter_CLIListsAndRedrives`, `TestDeadLetter_BacklogMetricIsExposed` — a message no consumer can parse is stored by dead-letter-controller and served through `ListDeadLetters`; a redrive of it on `release.promoted:v2` is handled only by the group that failed it (the other groups acknowledge it without a handler) and a repeated redrive publishes nothing; the real `continuo dlq list`/`redrive` binary (built from the `./cli` mount with `GOWORK=off`) drives the same flow; the backlog gauge appears once a dead letter is open. dead-letter-controller is started by `start-services.sh` (health `:8096/ready`, gRPC `:50055`) |
 | `egress_test.go` | `TestEgress_ProxyRefusesHostNotOnAllowlist`, `TestEgress_ProxyAdmitsListedHost`, `TestEgress_ChatTrafficGoesThroughProxy` — a `CONNECT` to a host off the allowlist is answered 403 and one to `stub-llm:9100` is answered 200; one chat turn raises the proxy's `continuo_egress_requests_total{decision="allowed"}` count, which shows agent-chat reaches its LLM through egress-proxy. The remediation tests' LLM and GitHub calls go through the proxy as well |
@@ -253,13 +256,13 @@ same transaction as the observation) → validation.result:v1 (kind=complete)
 | `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
 | `TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation` (`node_timeout_test.go`) | A release that changes only a node's `meta.timeout_minutes` promotes without validation: no node is in the changed set, no `validation.requested:v1` is published and no validation Job runs, and run-controller's live release stores the timeout (`topology_nodes.timeout_seconds`) on the declaring node only. `requireNoOtherNodeTimeout` checks the other nodes and tolerates exactly one timeout besides it: the 60 s that service-1's `e2e_schema.ftable_deadline` model declares for itself (the Python timeout test uses the same check). |
 
-These tests read the dbt manifests that `setup.sh` uploads to MinIO S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
+These tests read the dbt manifests that `setup.sh` uploads to MinIO S3, with the `compile-extras.json` it uploads beside each, and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. They seed `current_prod` with the `content_hash` topology-controller's own parser gives each baseline node (`contentHashesOf` in `content_hash.go` runs `parse_manifest` in the `topology-controller` container over the manifest and its compile extras), so a node a release leaves unchanged reads as unchanged; a test that writes a manifest of its own copies the baseline's compile extras beside it (`copyBaselineExtras`). Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
 
 Run only the blue/green tests:
 
 ```bash
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 125m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
+  go test -v -count=1 -timeout 145m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
 ```
 
 ## Failure Path Test
@@ -308,15 +311,14 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 attempts, each retry dispatched at once)
-- Whole suite: ~39 minutes warm, measured without the retry, start-failure, start-timeout and deadline
-  scenarios (`TestE2E_Retry_*`, `TestE2E_StartFailure_*`, `TestE2E_NodeTimeout_*`); the CI e2e job
-  measures the whole suite on every run. A cold stack is slower.
-- Timeout: 125 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
+- Whole suite: about 60 minutes in the CI e2e job, which starts the stack cold and measures the
+  whole suite on every run.
+- Timeout: 145 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
   Derived, not measured: the two longest per-test context ceilings (35m each)
-  wedging in one run, plus 55m for the rest of the suite. Every per-test
+  wedging in one run, plus 75m for the rest of the suite. Every per-test
   context has to be able to fire before the package timeout, or a wedge
   prints a goroutine dump instead of a named assertion. `.github/workflows/ci.yml`
-  uses the same value and allows 140 `timeout-minutes` around it.
+  uses the same value and allows 160 `timeout-minutes` around it.
 
 ## Troubleshooting
 

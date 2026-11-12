@@ -31,7 +31,7 @@ def test_generic_test_becomes_a_dbt_test_node(tmp_path):
                     "test.svc_a.not_null_orders_id.9f": _generic_test("not_null_orders_id", "model.svc_a.orders",
                                                                      "select id from analytics.orders where id is null"),
                 }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     by_id = {n.unique_id: n for n in parsed}
 
     t = by_id["test.svc_a.not_null_orders_id.9f"]
@@ -56,7 +56,7 @@ def test_singular_test_without_attached_node_is_tracked_through_depends_on(tmp_p
             "original_file_path": "tests/assert_orders_positive.sql", "config": {},
             "checksum": {"checksum": "def"}, "compiled_code": "select * from analytics.orders where amount < 0",
         }}}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     ids = {n.unique_id for n in parsed}
     assert "test.svc_a.assert_orders_positive" in ids
 
@@ -67,7 +67,7 @@ def test_test_on_an_untracked_node_is_skipped(tmp_path):
         "model.svc_a.draft": untracked,
         "test.svc_a.not_null_draft_id.1": _generic_test("not_null_draft_id", "model.svc_a.draft", "select 1"),
     }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     assert parsed == []
 
 
@@ -90,9 +90,9 @@ def test_test_content_hash_tracks_compiled_sql_not_raw_code(tmp_path):
     raw_changed = json.loads(json.dumps(base))
     raw_changed["nodes"][tid]["raw_code"] = "{{ test_not_null(model=ref('orders'), column_name='id') }}"
 
-    h_base = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, base), "v1")[0]}
-    h_compiled = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, compiled_changed), "v1")[0]}
-    h_raw = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, raw_changed), "v1")[0]}
+    h_base = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, base), "v1").nodes}
+    h_compiled = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, compiled_changed), "v1").nodes}
+    h_raw = {n.unique_id: n.content_hash for n in parse_manifest(_write(tmp_path, raw_changed), "v1").nodes}
 
     # (a) changing the compiled assertion flips the test's content_hash.
     assert h_base[tid] != h_compiled[tid]

@@ -23,6 +23,7 @@ type TaskDispatch struct {
 	NodeType       string
 	Operation      string
 	ImageTag       string
+	ContentHash    string
 	SecretRef      string
 	JobName        string
 	TimeoutSeconds int64
@@ -34,6 +35,6 @@ func (d TaskDispatch) Command() command.DeployTask {
 		TenantID: d.TenantID, TaskID: d.TaskID.String(), RunID: d.RunID.String(), ScheduleName: d.ScheduleName,
 		ServiceName: d.ServiceName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
 		NodeType: d.NodeType, ImageTag: d.ImageTag, SecretRef: d.SecretRef, Attempt: d.Attempt,
-		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds,
+		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds, ContentHash: d.ContentHash,
 	}
 }

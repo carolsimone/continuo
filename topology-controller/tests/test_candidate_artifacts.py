@@ -13,7 +13,7 @@ def _ctx(**overrides):
     registry = {
         ("test_schema", "users"): NodeRegistryEntry(
             table_name="users", schema_name="test_schema",
-            service_name="service-1", owner="team-a",
+            service_name="service-1", owner="team-a", relation="users",
         ),
     }
     base = dict(
@@ -74,7 +74,7 @@ def _trino_runtime_nodes_ctx():
         registry={
             ("runtime", "nodes"): NodeRegistryEntry(
                 table_name="nodes", schema_name="runtime",
-                service_name="service-1", owner="team-a",
+                service_name="service-1", owner="team-a", relation="nodes",
             ),
         },
         dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
@@ -121,6 +121,29 @@ def test_python_builder_leaves_a_system_relation_of_the_contexts_engine_alone():
         "SELECT * FROM system.runtime.nodes",
         'SELECT * FROM warehouse."_candidate_rel_1".nodes',
     ]
+
+
+def test_dbt_builder_leaves_a_self_reference_to_its_alias_on_the_production_schema():
+    """An aliased incremental model reads itself by its alias, which is the
+    relation its build writes, so the alias is what is left on production."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    registry = {
+        ("test_schema", "users_tbl"): NodeRegistryEntry(
+            table_name="users", schema_name="test_schema",
+            service_name="service-1", owner="team-a", relation="users_tbl",
+        ),
+    }
+    node = ManifestNode(
+        table_name="users", schema_name="test_schema", service_name="service-1",
+        owner="team-a", schedule_name="daily", criticality="SECONDARY",
+        candidate_sql="SELECT * FROM test_schema.users_tbl", resolved_relation="users_tbl",
+        node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
+    )
+
+    DbtSqlArtifactBuilder(uploader).build(node, _ctx(registry=registry))
+
+    assert "_candidate_rel_1" not in uploader.upload.call_args.kwargs["sql"]
 
 
 def test_python_builder_uploads_rewritten_reads_columns_and_config():
@@ -224,7 +247,7 @@ def test_python_builder_leaves_a_self_reference_on_the_production_schema():
     registry = {
         ("test_schema", "py_metrics"): NodeRegistryEntry(
             table_name="py_metrics", schema_name="test_schema",
-            service_name="service-py", owner="team-py",
+            service_name="service-py", owner="team-py", relation="py_metrics",
         ),
     }
     node = ManifestNode(

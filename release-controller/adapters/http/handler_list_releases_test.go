@@ -58,7 +58,7 @@ func TestToReleaseListItem_CarriesProvenance(t *testing.T) {
 func TestHandleListReleases_OmitsVerificationRuns(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)
-	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123", release.ManifestKindDbt, now)
+	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "finance", "tag", false, false, "owner/repo", "abc123", release.ManifestKindDbt, now)
 	releases.releases["verify-1"] = pipeline.NewVerification("verify-1", "finance", "tag", "rel-0", 1, "", release.ManifestKindDbt, now)
 
 	rec := httptest.NewRecorder()

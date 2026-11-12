@@ -40,6 +40,18 @@ wheels = [
 ]
 
 [[package]]
+name = "continuo-contracts"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/e5/d7f04f9a902c110ac99e2a7dc4d7f5cd5370100fedc78b32b942788ea2ad/continuo_contracts-0.1.0.tar.gz", hash = "sha256:70576fd4f886b5d55cb9b04925d9568a3a1f49bf14276b80c5b32ca09eb07a8b", size = 121308, upload-time = "2026-11-11T09:09:06.079Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/76/6a37fed62b1c57399a3146dae573e606d7f5bcaf6beda36a4f0d22264e16/continuo_contracts-0.1.0-py3-none-any.whl", hash = "sha256:c292859ad553c2d6ce518798c209cbe0a521daa1e62440c2d7d206860d1b2734", size = 48470, upload-time = "2026-11-11T09:09:04.814Z" },
+]
+
+[[package]]
 name = "grpcio"
 version = "1.85.1"
 source = { registry = "https://pypi.org/simple" }
@@ -292,6 +304,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
+    { name = "continuo-contracts" },
     { name = "grpcio" },
     { name = "prometheus-client" },
     { name = "protobuf" },
@@ -310,6 +323,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.43.125" },
+    { name = "continuo-contracts", specifier = "==0.1.0" },
     { name = "grpcio", specifier = ">=1.85.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.85.1" },
     { name = "prometheus-client", specifier = "==0.26.0" },

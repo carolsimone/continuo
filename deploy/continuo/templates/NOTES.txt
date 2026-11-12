@@ -23,6 +23,16 @@ UPGRADE NOTES
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
 
+  From continuo 0.21.x or earlier: this version computes every node's content_hash
+  anew. Freeze producer merges, then release each service once (Python services
+  rebuilt on continuo-python-runtime 0.12.0 first) with "bootstrap": true and
+  "rebaseline": true, so nothing is validated or reloaded; the steps are in
+  deploy/README.md, "Re-baseline after a fingerprint change".
+  The default validation image is now v0.12.0.
+  An overridden dbt-commands file whose run commands parse with other --vars,
+  --target, --profile, --profiles-dir or --project-dir values than its compile
+  command stops execution-controller from starting.
+
   From continuo 0.11.x or earlier: the run-controller service now plans every
   run. When it first starts on this version, it cancels each run still pending
   or running that it did not plan (cancelled by "system", reason "the run's

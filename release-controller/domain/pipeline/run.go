@@ -103,11 +103,13 @@ type NodeValidationResult struct {
 }
 
 // Candidate holds the facts only a candidate release has: where its source
-// came from, whether it bootstraps production, and its remediation history.
+// came from, whether it bootstraps production, whether that bootstrap
+// re-baselines fingerprints, and its remediation history.
 type Candidate struct {
 	Repo             string
 	CommitSHA        string
 	Bootstrap        bool
+	Rebaseline       bool
 	RemediationRound int
 	// RejectionPayload is the exact release.rejected:v1 payload the
 	// candidate emitted at its rejection, kept so a later remediation round
@@ -163,10 +165,12 @@ func newRun(id string, kind Kind, service, imageTag string, manifestKind release
 // imageTags starts with just the changed service's tag and is overwritten
 // with the full assembled map at activation (SetAssembledImageTags). repo
 // (GitHub owner/name) and commitSHA record the source change; kind records
-// how the service's artifact is parsed. All three are immutable.
-func NewCandidate(id, service, imageTag string, bootstrap bool, repo, commitSHA string, kind release.ManifestKind, now time.Time) *Run {
+// how the service's artifact is parsed. All three are immutable. rebaseline
+// marks a bootstrap that re-baselines fingerprints; it is valid only together
+// with bootstrap.
+func NewCandidate(id, service, imageTag string, bootstrap, rebaseline bool, repo, commitSHA string, kind release.ManifestKind, now time.Time) *Run {
 	r := newRun(id, KindCandidate, service, imageTag, kind, now)
-	r.candidate = &Candidate{Repo: repo, CommitSHA: commitSHA, Bootstrap: bootstrap, RemediationRound: 1}
+	r.candidate = &Candidate{Repo: repo, CommitSHA: commitSHA, Bootstrap: bootstrap, Rebaseline: rebaseline, RemediationRound: 1}
 	return r
 }
 
@@ -207,6 +211,9 @@ func (r *Run) Verification() *Verification { return r.verification }
 // not branch on kind; a caller that decides on kind uses Kind().
 func (r *Run) IsBootstrap() bool {
 	return r.candidate != nil && r.candidate.Bootstrap
+}
+func (r *Run) IsRebaseline() bool {
+	return r.candidate != nil && r.candidate.Rebaseline
 }
 func (r *Run) Repo() string {
 	if r.candidate == nil {
@@ -253,14 +260,16 @@ func (r *Run) SourceOverlayURI() string {
 
 // CandidateSubmission is what a team's CI states when it submits a candidate
 // release: the changed service, its image tag, how its artifact is parsed,
-// whether it bootstraps production, and the source change it was built from.
+// whether it bootstraps production, whether that bootstrap re-baselines
+// fingerprints, and the source change it was built from.
 type CandidateSubmission struct {
-	Service   string
-	ImageTag  string
-	Kind      release.ManifestKind
-	Bootstrap bool
-	Repo      string
-	CommitSHA string
+	Service    string
+	ImageTag   string
+	Kind       release.ManifestKind
+	Bootstrap  bool
+	Rebaseline bool
+	Repo       string
+	CommitSHA  string
 }
 
 // MatchesSubmission reports whether s describes this candidate, so that a
@@ -277,6 +286,7 @@ func (r *Run) MatchesSubmission(s CandidateSubmission) bool {
 		r.imageTags[r.changedService] == s.ImageTag &&
 		r.manifestKind == s.Kind &&
 		r.candidate.Bootstrap == s.Bootstrap &&
+		r.candidate.Rebaseline == s.Rebaseline &&
 		r.candidate.Repo == s.Repo &&
 		r.candidate.CommitSHA == s.CommitSHA
 }
@@ -532,6 +542,7 @@ type RehydrateInput struct {
 	Transitions       []Transition
 	// Candidate-only.
 	Bootstrap        bool
+	Rebaseline       bool
 	Repo             string
 	CommitSHA        string
 	RemediationRound int
@@ -569,7 +580,7 @@ func Rehydrate(in RehydrateInput) *Run {
 		if round < 1 {
 			round = 1
 		}
-		r.candidate = &Candidate{Repo: in.Repo, CommitSHA: in.CommitSHA, Bootstrap: in.Bootstrap, RemediationRound: round, RejectionPayload: in.RejectionPayload}
+		r.candidate = &Candidate{Repo: in.Repo, CommitSHA: in.CommitSHA, Bootstrap: in.Bootstrap, Rebaseline: in.Rebaseline, RemediationRound: round, RejectionPayload: in.RejectionPayload}
 	}
 	return r
 }

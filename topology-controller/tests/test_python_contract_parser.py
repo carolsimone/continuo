@@ -1,22 +1,35 @@
 import datetime
 import hashlib
+import importlib.resources
 import json
+from pathlib import Path
 
 import pytest
 import yaml
+from continuo_contracts.hashing import fold3
+from continuo_contracts.python import PythonColumn, PythonNode, code_projection, projection_hash
 
 from domain.exceptions import MalformedContractError
 from domain.model import NodeType, Runtime
-from service.content_hash import content_hash_fold
 from service.python_contract_parser import parse_python_contract
+
+
+def _fold_of(entry):
+    """The fold of the entry's three parts. A part a test replaced with a value that
+    is not a string (which the parser refuses) is folded as its repr, so the
+    entry still carries a content_hash."""
+    parts = (entry.get(key, "") for key in ("source_hash", "shared_code_hash", "config_hash"))
+    return fold3(*(part if isinstance(part, str) else repr(part) for part in parts))
 
 
 def make_entry(remove=(), **overrides):
     """A valid wire entry; overrides mutate it, remove drops keys entirely.
 
-    content_hash defaults to the correct fold of the (possibly overridden)
-    parts, so part mutations stay internally consistent unless a test
-    overrides content_hash itself.
+    The four hash fields stand for what a producer CI writes. config_hash is a
+    placeholder and content_hash the fold of the three CI parts: the parser
+    keeps the CI source_hash and shared_code_hash, computes the config part
+    itself from the entry's code projection, and only logs a CI content_hash
+    that differs from the fold it computes.
     """
     entry = {
         "schema": "analytics",
@@ -38,14 +51,7 @@ def make_entry(remove=(), **overrides):
         "config_hash": "ccc333",
     }
     entry.update(overrides)
-    entry.setdefault(
-        "content_hash",
-        content_hash_fold(
-            entry.get("source_hash", ""),
-            entry.get("shared_code_hash", ""),
-            entry.get("config_hash", ""),
-        ),
-    )
+    entry.setdefault("content_hash", _fold_of(entry))
     for key in remove:
         entry.pop(key, None)
     return entry
@@ -57,13 +63,13 @@ def make_csv_entry(remove=(), **overrides):
     A csv node has no script and its sole read is {"csv": <uri>}. The
     "script": "" key mirrors the wire-exact shape: the runtime's merge tool
     (merge.py node_entry()) emits "script": node.script unconditionally, so
-    every real csv entry MC receives carries an empty-string script, never an
-    absent one. Its hash parts mirror what the runtime's merge computes for a
-    csv node: source_hash over the uri bytes, shared_code_hash empty (no
-    in-repo imports), and an opaque config_hash — MC verifies only that
-    content_hash equals the fold of these three parts, never recomputing
-    config_hash from the entry itself, so the fixture does not need to
-    reproduce the runtime's canonical_entry.
+    every real csv entry topology-controller receives carries an empty-string
+    script, never an absent one. Its CI hash parts mirror what the runtime's
+    merge computes for a csv node: source_hash over the uri bytes and
+    shared_code_hash empty (no in-repo imports). config_hash is a placeholder:
+    the parser computes the config part from the entry's code projection and
+    folds it with the two CI parts, so the fixture does not need to reproduce
+    the runtime's hash.
     """
     uri = "s3://drops/orders.csv"
     entry = {
@@ -81,14 +87,7 @@ def make_csv_entry(remove=(), **overrides):
         "config_hash": "csvcfg000",
     }
     entry.update(overrides)
-    entry.setdefault(
-        "content_hash",
-        content_hash_fold(
-            entry.get("source_hash", ""),
-            entry.get("shared_code_hash", ""),
-            entry.get("config_hash", ""),
-        ),
-    )
+    entry.setdefault("content_hash", _fold_of(entry))
     for key in remove:
         entry.pop(key, None)
     return entry
@@ -102,16 +101,32 @@ def write_contract(tmp_path, *entries, **doc_overrides):
     return str(path)
 
 
+WIRE_FIXTURE = Path(__file__).parent / "fixtures" / "wire_contract_write_modes.yml"
+# Placeholders for the four hash fields an entry needs and a vector or the shared fixture leaves out.
+# topology-controller computes the config part and only logs a CI content_hash that differs.
+HASH_FIELDS = {"source_hash": "aaa111", "shared_code_hash": "", "config_hash": "ccc333", "content_hash": "sha256:" + "0" * 64}
+# The keys topology-controller's wire parser requires that a projection vector's node does not carry.
+VECTOR_CONTRACT_KEYS = {"owner": "vectors", "schedule": "daily", "criticality": "SECONDARY"}
+
+
+def _projection(**over):
+    base = dict(schema="analytics", table="table_test", kind="python-node", script="scripts/table_test.py",
+                reads={"joined": "select a from analytics.table_a", "ids": "select id from analytics.table_b"},
+                output_columns=[PythonColumn("id", "INTEGER", False), PythonColumn("amount", "NUMERIC(10,2)", True)],
+                extra_columns="raise", config={}, secret_ref="", mode_type="replace", primary_key=[], assets=[])
+    return PythonNode(**{**base, **over})
+
+
 def test_happy_path_maps_every_manifest_node_field(tmp_path):
     entry = make_entry(
         config={"indexes": [{"columns": ["id"], "unique": True}]},
         description="test data",
         extra_columns="warn",
     )
-    nodes, shared = parse_python_contract(write_contract(tmp_path, entry), "img:1")
+    parsed = parse_python_contract(write_contract(tmp_path, entry), "img:1")
 
-    assert shared == {}
-    (node,) = nodes
+    assert parsed.shared_code == {}
+    (node,) = parsed.nodes
     assert node.table_name == "table_test"
     assert node.schema_name == "analytics"
     # A python contract has no alias concept: the resolved relation is always
@@ -142,12 +157,15 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
     assert node.upstream_deps == []
     assert node.source_hash == "aaa111"
     assert node.shared_code_hash == "bbb222"
-    assert node.config_hash == "ccc333"
-    assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
+    expected = projection_hash(_projection(
+        config={"indexes": [{"columns": ["id"], "unique": True}]}, extra_columns="warn",
+    ))
+    assert node.config_hash == expected
+    assert node.content_hash == fold3("aaa111", "bbb222", expected)
 
 
 def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     raw = json.loads(nodes[0].raw_code)
     assert raw["reads"] == make_entry()["reads"]
     assert raw["output_columns"] == [
@@ -167,19 +185,19 @@ def test_empty_reads_are_rejected(tmp_path):
 
 
 def test_stored_python_model_contract_parses_as_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model")))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model"))).nodes
     assert nodes[0].node_type == NodeType.PYTHON_NODE
     assert json.loads(nodes[0].raw_code)["kind"] == "python-node"
 
 
 def test_empty_nodes_list_yields_no_nodes(tmp_path):
-    nodes, shared = parse_python_contract(write_contract(tmp_path))
-    assert nodes == []
-    assert shared == {}
+    parsed = parse_python_contract(write_contract(tmp_path))
+    assert parsed.nodes == []
+    assert parsed.shared_code == {}
 
 
 def test_image_tag_defaults_to_empty(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     assert nodes[0].image_tag == ""
 
 
@@ -201,7 +219,6 @@ def test_image_tag_defaults_to_empty(tmp_path):
         ({"config": "btree"}, "config"),
         ({"source_hash": ""}, "source_hash"),
         ({"shared_code_hash": None}, "shared_code_hash"),
-        ({"content_hash": "sha256:doesnotmatchparts"}, "fold"),
     ],
 )
 def test_malformed_entries_fail_the_whole_artifact(tmp_path, mutation, match):
@@ -271,8 +288,16 @@ def test_invalid_yaml_fails_as_malformed_contract(tmp_path):
 
 def test_non_serializable_config_value_fails(tmp_path):
     entry = make_entry(config={"refresh_after": datetime.date(2026, 8, 7)})
-    with pytest.raises(MalformedContractError, match="JSON-serializable"):
+    with pytest.raises(MalformedContractError, match="unsupported type date"):
         parse_python_contract(write_contract(tmp_path, entry))
+
+
+def test_a_config_nested_deeper_than_the_projection_allows_rejects_the_artifact(tmp_path):
+    nested: list = []
+    for _ in range(100):
+        nested = [nested]
+    with pytest.raises(MalformedContractError):
+        parse_python_contract(write_contract(tmp_path, make_entry(config={"deep": nested})))
 
 
 def test_boolean_contract_version_fails(tmp_path):
@@ -329,7 +354,7 @@ def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
 
 
 def test_csv_entry_parses(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_csv_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_csv_entry())).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_CSV
     assert node.runtime == Runtime.PYTHON
@@ -341,13 +366,16 @@ def test_csv_entry_parses(tmp_path):
 def test_csv_entry_hash_fields_verify(tmp_path):
     uri = "s3://drops/orders.csv"
     entry = make_csv_entry()
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.source_hash == hashlib.sha256(uri.encode()).hexdigest()
     assert node.shared_code_hash == ""
-    assert node.content_hash == content_hash_fold(
-        node.source_hash, node.shared_code_hash, entry["config_hash"]
-    )
+    expected = projection_hash(PythonNode(
+        schema="analytics", table="orders_csv", kind="python-csv", reads={"csv": uri},
+        output_columns=[PythonColumn("order_id", "INTEGER", False)],
+    ))
+    assert node.config_hash == expected
+    assert node.content_hash == fold3(node.source_hash, node.shared_code_hash, expected)
 
 
 def test_csv_entry_with_script_rejected(tmp_path):
@@ -406,7 +434,7 @@ def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
     """https://<host> with no trailing path is a valid uri — only an empty
     host is rejected, not an absent path."""
     entry = make_csv_entry(reads={"csv": "https://example.com"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.csv_source == "https://example.com"
 
@@ -414,7 +442,7 @@ def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
 def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
     """The valid shape this whole grammar exists to keep accepting."""
     entry = make_csv_entry(reads={"csv": "s3://bucket/path/to/orders.csv"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.csv_source == "s3://bucket/path/to/orders.csv"
 
@@ -432,7 +460,7 @@ def test_non_string_kind_rejected_cleanly(tmp_path):
 
 
 def test_entry_without_kind_defaults_to_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.csv_source == ""
@@ -443,10 +471,11 @@ def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
     kind as "python-model"; STORED_KIND_ALIASES resolves it to python-node so
     the stored contract keeps parsing."""
     entry = make_entry(kind="python-model")
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
-    assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
+    assert node.config_hash == projection_hash(_projection())
+    assert node.content_hash == fold3("aaa111", "bbb222", projection_hash(_projection()))
 
 
 def make_api_entry(remove=(), **overrides):
@@ -454,9 +483,7 @@ def make_api_entry(remove=(), **overrides):
 
 
 def _parse_one(tmp_path, entry):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "img:1")
-    (node,) = nodes
-    return node
+    return parse_python_contract(write_contract(tmp_path, entry), "img:1").nodes[0]
 
 
 def test_python_api_entry_parses_as_a_root(tmp_path):
@@ -516,7 +543,7 @@ def test_timeout_minutes_is_not_in_raw_code(tmp_path):
 
 
 def test_a_python_node_counts_its_output_columns(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     assert nodes[0].declared_columns == 2
 
 
@@ -524,3 +551,110 @@ def test_a_python_contract_skips_no_node(tmp_path):
     skipped = []
     parse_python_contract(write_contract(tmp_path, make_entry()), skipped=skipped)
     assert skipped == []
+
+
+def test_the_content_hash_folds_ci_source_and_shared_with_the_projection_hash(tmp_path):
+    node = _parse_one(tmp_path, make_entry())
+    assert node.config_hash == projection_hash(_projection())
+    assert node.content_hash == fold3("aaa111", "bbb222", projection_hash(_projection()))
+
+
+def test_c19_owner_schedule_criticality_and_description_do_not_move_the_hash(tmp_path):
+    a = _parse_one(tmp_path, make_entry()).content_hash
+    b = _parse_one(tmp_path, make_entry(owner="other", schedule="hourly", criticality="CORE", description="x")).content_hash
+    assert a == b
+
+
+def test_c20_int_and_integer_and_the_python_model_alias_hash_alike(tmp_path):
+    cols = [{"name": "id", "type": "INT", "nullable": False}, {"name": "amount", "type": "NUMERIC(10, 2)"}]
+    assert _parse_one(tmp_path, make_entry(output_columns=cols, kind="python-model")).content_hash == _parse_one(tmp_path, make_entry()).content_hash
+
+
+def test_c21_a_read_edited_after_ci_hashed_moves_the_hash(tmp_path):
+    edited = make_entry(reads={"joined": "select a from analytics.other", "ids": "select id from analytics.table_b"})
+    assert _parse_one(tmp_path, edited).content_hash != _parse_one(tmp_path, make_entry()).content_hash
+
+
+def test_a_contract_from_runtime_0_11_parses_and_logs_the_hash_difference(tmp_path, caplog):
+    node = _parse_one(tmp_path, make_entry(config_hash="ccc333", content_hash="sha256:" + "0" * 64))
+    assert node.content_hash == fold3("aaa111", "bbb222", projection_hash(_projection()))
+    assert any(r.levelname == "WARNING" and getattr(r, "ci_content_hash", None) == "sha256:" + "0" * 64 for r in caplog.records)
+
+
+def test_n19_the_projection_is_the_code_projection_and_raw_code_keeps_the_entry(tmp_path):
+    node = _parse_one(tmp_path, make_entry())
+    assert json.loads(node.projection) == code_projection(_projection())
+    assert node.projection == json.dumps(code_projection(_projection()), sort_keys=True, indent=2)
+    assert "owner" not in json.loads(node.projection)
+    assert json.loads(node.raw_code)["owner"] == "marketing", "raw_code keeps the read set's owner"
+
+
+# Runtime 0.12.0's harness hashes the loaded node with its defaults; an entry that leaves them out must hash alike.
+def test_an_entry_omitting_kind_extra_columns_and_config_hashes_as_one_stating_the_defaults(tmp_path):
+    stated = _parse_one(tmp_path, make_entry(kind="python-node", extra_columns="raise", config={}))
+    omitted = _parse_one(tmp_path, make_entry(remove=("kind", "extra_columns", "config")))
+    assert omitted.config_hash == stated.config_hash == projection_hash(_projection())
+    assert omitted.content_hash == stated.content_hash
+
+
+def test_upsert_takes_a_primary_key_and_other_modes_refuse_one(tmp_path):
+    cols = [{"name": "id", "type": "INTEGER", "nullable": False}, {"name": "amount", "type": "NUMERIC(10,2)"}]
+    node = _parse_one(tmp_path, make_entry(mode_type="upsert", primary_key=["id"], output_columns=cols))
+    assert node.config_hash == projection_hash(_projection(mode_type="upsert", primary_key=["id"]))
+    with pytest.raises(MalformedContractError, match="primary_key"):
+        _parse_one(tmp_path, make_entry(primary_key=["id"]))
+    with pytest.raises(MalformedContractError, match="primary_key"):
+        _parse_one(tmp_path, make_entry(mode_type="upsert"))
+
+
+def test_csv_nodes_accept_only_replace_and_no_assets(tmp_path):
+    with pytest.raises(MalformedContractError, match="mode_type"):
+        _parse_one(tmp_path, make_csv_entry(mode_type="append"))
+    with pytest.raises(MalformedContractError, match="assets"):
+        _parse_one(tmp_path, make_csv_entry(assets=["data/x.json"]))
+
+
+def test_assets_join_the_projection(tmp_path):
+    node = _parse_one(tmp_path, make_entry(assets=["lib/ref.json"]))
+    assert node.config_hash == projection_hash(_projection(assets=["lib/ref.json"]))
+
+
+@pytest.mark.parametrize("vector", json.loads((importlib.resources.files("continuo_contracts") / "vectors" / "projection.json").read_text()), ids=lambda v: v["name"])
+def test_the_library_projection_vectors(tmp_path, vector):
+    entry = {**HASH_FIELDS, **VECTOR_CONTRACT_KEYS, **vector["node"]}
+    node = _parse_one(tmp_path, entry)
+    assert node.config_hash == vector["projection_hash"]
+    assert json.loads(node.projection) == vector["projection"]
+
+
+def test_the_runtime_wire_fixture_parses(tmp_path):
+    entries = [{**HASH_FIELDS, **entry} for entry in yaml.safe_load(WIRE_FIXTURE.read_text())["nodes"]]
+    nodes = {n.table_name: n for n in parse_python_contract(write_contract(tmp_path, *entries), "img:1").nodes}
+    assert set(nodes) == {"replace_node", "append_node", "upsert_node", "assets_node"}
+    assert json.loads(nodes["append_node"].projection)["mode_type"] == "append"
+    assert json.loads(nodes["upsert_node"].projection)["primary_key"] == ["rate_date", "base"]
+    assert json.loads(nodes["assets_node"].projection)["assets"] == ["data/ref.json"]
+
+
+def test_a_type_the_projection_refuses_rejects_the_artifact(tmp_path):
+    cols = [{"name": "id", "type": "FLOAT", "nullable": False}]
+    with pytest.raises(MalformedContractError, match="unsupported or invalid SQL type"):
+        _parse_one(tmp_path, make_entry(output_columns=cols))
+
+
+def test_raw_code_carries_the_mode_primary_key_and_assets_that_differ_from_the_default(tmp_path):
+    cols = [{"name": "id", "type": "INTEGER", "nullable": False}, {"name": "amount", "type": "NUMERIC(10,2)"}]
+    raw = json.loads(_parse_one(tmp_path, make_entry(mode_type="upsert", primary_key=["id"], output_columns=cols,
+                                                     assets=["lib/ref.json"])).raw_code)
+    assert (raw["mode_type"], raw["primary_key"], raw["assets"]) == ("upsert", ["id"], ["lib/ref.json"])
+    default = json.loads(_parse_one(tmp_path, make_entry(mode_type="replace")).raw_code)
+    assert not {"mode_type", "primary_key", "assets"} & set(default)
+
+
+def test_a_ci_content_hash_mismatch_warns_that_a_ci_older_than_0_12_hashes_the_config_part_differently(tmp_path, caplog):
+    _parse_one(tmp_path, make_entry(content_hash="sha256:" + "0" * 64))
+    (record,) = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert record.getMessage() == (
+        "python contract: the producer CI's content_hash differs from the one topology-controller computes:"
+        " a CI on continuo-python-runtime older than 0.12.0 hashes the config part differently, and the two"
+        " agree once the service releases on 0.12.0 or later")

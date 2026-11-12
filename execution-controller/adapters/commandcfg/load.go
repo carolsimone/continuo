@@ -221,6 +221,11 @@ func validateOpSet(path string, ops *opSet) error {
 			return err
 		}
 	}
+	if ops.Compile != nil {
+		if err := validateCompileContext(path, ops); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -240,37 +245,67 @@ var parseAffectingValueFlags = map[string]bool{
 // (with no value) is itself parse-affecting.
 const noPartialParseFlag = "--no-partial-parse"
 
+// parseAffectingShortFlags maps each short alias dbt defines for one of the
+// parse-affecting value flags to its long form. -t is the only one: --vars,
+// --profile, --profiles-dir and --project-dir have none.
+var parseAffectingShortFlags = map[string]string{"-t": "--target"}
+
 // parseContextFlags extracts the parse-affecting flags (and, for the five
-// value flags, their values) from a dbt argv template. Both "--flag value"
-// and "--flag=value" forms are recognized; the last occurrence of a flag
-// wins. A value that is itself an unsubstituted {{ placeholder }} is ignored
-// (the flag is treated as absent) — its real value is only known once the
-// execution-controller substitutes it per-dispatch, so it can never be compared
-// statically against a literal value in the parse argv (which cannot itself
-// contain placeholders — validateTemplate rejects that).
+// value flags, their values) from a dbt argv template, keyed by the long flag
+// name. "--flag value" and "--flag=value" are recognized, and a short alias
+// as dbt's option parser reads it: "-t value" and "-tvalue" (so "-t=prod"
+// names the target "=prod", as it does for dbt). The last occurrence of a
+// flag wins, whichever spelling it uses. A value that is itself an
+// unsubstituted {{ placeholder }} is ignored (the flag is treated as absent) —
+// its real value is only known once the execution-controller substitutes it
+// per-dispatch, so it can never be compared statically against a literal
+// value in the parse argv (which cannot itself contain placeholders —
+// validateTemplate rejects that).
 func parseContextFlags(argv []string) map[string]string {
 	flags := map[string]string{}
+	set := func(name, value string) {
+		if !placeholderRe.MatchString(value) {
+			flags[name] = value
+		}
+	}
 	for i := 0; i < len(argv); i++ {
 		elem := argv[i]
 		if elem == noPartialParseFlag {
 			flags[noPartialParseFlag] = "true"
 			continue
 		}
-		if name, value, ok := strings.Cut(elem, "="); ok && parseAffectingValueFlags[name] {
-			if !placeholderRe.MatchString(value) {
-				flags[name] = value
+		if long, ok := parseAffectingShortFlags[elem]; ok {
+			if i+1 < len(argv) {
+				i++
+				set(long, argv[i])
 			}
 			continue
 		}
+		if long, value, ok := shortFlagWithValue(elem); ok {
+			set(long, value)
+			continue
+		}
+		if name, value, ok := strings.Cut(elem, "="); ok && parseAffectingValueFlags[name] {
+			set(name, value)
+			continue
+		}
 		if parseAffectingValueFlags[elem] && i+1 < len(argv) {
-			value := argv[i+1]
 			i++
-			if !placeholderRe.MatchString(value) {
-				flags[elem] = value
-			}
+			set(elem, argv[i])
 		}
 	}
 	return flags
+}
+
+// shortFlagWithValue reads elem as a parse-affecting short alias with its
+// value attached ("-tprod"), returning the alias's long form and the value.
+func shortFlagWithValue(elem string) (string, string, bool) {
+	for short, long := range parseAffectingShortFlags {
+		if value, ok := strings.CutPrefix(elem, short); ok && value != "" {
+			return long, value, true
+		}
+	}
+	return "", "", false
 }
 
 // firstDivergentFlag returns the lexicographically-first flag name whose
@@ -332,6 +367,72 @@ func validateParseContext(path string, ops *opSet) error {
 					"dbt folds this flag into its partial-parse validity check, so a mismatch "+
 					"means the compile rehearsal validates a context the runtime dispatch never reproduces",
 				path, op.name, flag, path, describeFlag(flag, opVal, opHas), describeFlag(flag, parseVal, parseHas))
+		}
+	}
+	return nil
+}
+
+// imageDefaultDir is the working directory of the dbt image: dbt reads
+// profiles.yml from it and takes it as the project when an invocation carries
+// no --profiles-dir or --project-dir.
+const imageDefaultDir = "/project"
+
+// imageDefaultDirFlags are the parse-context flags whose value imageDefaultDir
+// means the same as leaving the flag out.
+var imageDefaultDirFlags = map[string]bool{"--profiles-dir": true, "--project-dir": true}
+
+// compileContextFlags is parseContextFlags without the --no-partial-parse
+// presence flag, and without --profiles-dir or --project-dir when it names the
+// image's default directory, so an argv that spells the default out equals one
+// that omits it.
+func compileContextFlags(argv []string) map[string]string {
+	flags := parseContextFlags(argv)
+	delete(flags, noPartialParseFlag)
+	for flag := range imageDefaultDirFlags {
+		if value, ok := flags[flag]; ok && value == imageDefaultDir {
+			delete(flags, flag)
+		}
+	}
+	return flags
+}
+
+// describeCompileFlag is describeFlag for the flags compileContextFlags
+// returns: a directory flag it does not hold is the image default.
+func describeCompileFlag(flag, value string, present bool) string {
+	if !present && imageDefaultDirFlags[flag] {
+		return fmt.Sprintf("%s the image default (%s)", flag, imageDefaultDir)
+	}
+	return describeFlag(flag, value, present)
+}
+
+// validateCompileContext requires that every node-dispatch op in ops parses
+// the project with the same --vars, --target, --profile, --profiles-dir and
+// --project-dir as ops.Compile.Command. Every fingerprint is read from the
+// manifest the compile step writes, so a run step that parses with other
+// values runs code no fingerprint saw.
+func validateCompileContext(path string, ops *opSet) error {
+	compileFlags := compileContextFlags(ops.Compile.Command)
+	nodeOps := []struct {
+		name string
+		argv []string
+	}{
+		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
+		{"test", ops.Test}, {"build", ops.Build}, {"seed_build", ops.SeedBuild},
+		{"full_refresh", ops.FullRefresh}, {"seed_full_refresh", ops.SeedFullRefresh},
+	}
+	for _, op := range nodeOps {
+		if op.argv == nil {
+			continue
+		}
+		opFlags := compileContextFlags(op.argv)
+		if flag := firstDivergentFlag(opFlags, compileFlags); flag != "" {
+			opVal, opHas := opFlags[flag]
+			compileVal, compileHas := compileFlags[flag]
+			return fmt.Errorf(
+				"%s.%s: parse-context flag %s does not match %s.compile.command (%s vs %s) — "+
+					"every fingerprint reads the manifest the compile step writes, so a run step "+
+					"that parses with other values runs code no fingerprint saw",
+				path, op.name, flag, path, describeCompileFlag(flag, opVal, opHas), describeCompileFlag(flag, compileVal, compileHas))
 		}
 	}
 	return nil

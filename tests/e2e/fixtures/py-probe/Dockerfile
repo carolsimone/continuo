@@ -2,7 +2,13 @@
 # template prescribes: the engine-matched runtime base plus this service's
 # contracts and scripts. One image serves every one of the service's nodes — the
 # harness selects between them from NODE_ID at run time.
-FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.11.0
+#
+# Two targets. `probe` is the fixture image every python e2e test releases
+# (scripts/setup.sh builds it as continuo-e2e-py-probe:latest). `mismatch` adds
+# the py_mismatch node with a contract that differs in one read from the one its
+# release carries (continuo-e2e-py-probe:mismatch), so the harness's start check
+# refuses to run it.
+FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0 AS probe
 COPY contracts/ /app/contracts/
 COPY scripts/ /app/scripts/
 # The runtime base already declares USER 65532:65532 — a frozen cross-repo
@@ -12,4 +18,8 @@ COPY scripts/ /app/scripts/
 # top of the base's default user. Restating it here is redundant at runtime
 # (the base's own USER already applies) but makes it visible to Dockerfile
 # scanners that only read this file's text and can't resolve the base image.
+USER 65532:65532
+
+FROM probe AS mismatch
+COPY mismatch/py_mismatch.baked.yml /app/contracts/py_mismatch.yml
 USER 65532:65532
