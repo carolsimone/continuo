@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 import pytest
+from continuo_contracts.hashing import shared_fold
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import SkippedNode, SkipReason
 from service.parser import parse_manifest
@@ -400,6 +401,8 @@ def test_transitive_shared_code_change_flips_hash(tmp_path):
     (n1,) = parse_manifest(p1, "v1").nodes
     (n2,) = parse_manifest(p2, "v1").nodes
     assert n1.source_hash == n2.source_hash
+    assert n1.shared_code_hash == shared_fold({"macro.svc.m1": hashlib.sha256(b"select 1").hexdigest(),
+                                               "macro.svc.m2": hashlib.sha256(b"select 2").hexdigest()})
     assert n1.shared_code_hash != n2.shared_code_hash
     assert n1.content_hash != n2.content_hash
 
@@ -418,7 +421,7 @@ def test_shared_code_map_covers_transitive_units(tmp_path):
     assert shared["macro.svc.m1"]["source"] == "select 1"
     assert shared["macro.svc.m1"]["depends_on"] == ["macro.svc.m2"]
     assert shared["macro.svc.m2"]["checksum"] == hashlib.sha256(b"select 2").hexdigest()
-    assert n.code_unit_ids == ["macro.svc.m1"]               # direct deps only
+    assert n.code_unit_ids == ["macro.svc.m1", "macro.svc.m2"]   # every folded unit
 
 
 def test_node_carries_new_fields(tmp_path):

@@ -1,10 +1,15 @@
-"""The source, compiled and config parts of a dbt node's content_hash.
+"""The four parts of a dbt node's content_hash and their fold.
 
 A dbt node's content_hash is `fold4(source, shared, config, compiled)`:
 
 - source: a model's or snapshot's `raw_code`, normalised (line endings, outer
   whitespace); a test's compiled SQL, masked; a seed's raw file bytes, as the
   SHA-256 the compile extras recorded, else dbt's own checksum as written.
+- shared: `shared_fold` of the code units the node runs that its team writes
+  (see `shared_units`): the non-built-in macros its build reaches, the functions
+  it calls, a model's unit tests and, for a model, seed or snapshot, the service
+  units every build of the project runs (on-run hooks, the root project's
+  `generate_schema_name` / `generate_alias_name`, a non-empty flags block).
 - compiled: a model's or snapshot's compiled SQL, masked; `""` for every other node.
 - config: the SHA-256 of the RFC 8785 canonical JSON of `hashed_config`.
 
@@ -18,11 +23,12 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from continuo_contracts.canonical import canonical_json, normalise_text
 from continuo_contracts.fingerprints import hashed_config_denylist
+from continuo_contracts.hashing import fold4, shared_fold
 
 from domain.model import CompileExtras
 
@@ -31,6 +37,28 @@ _RUN_STARTED = "__CONTINUO_RUN_STARTED_AT__"
 _DATABASE = "__CONTINUO_DATABASE__"
 
 _SOURCE_FROM_RAW_CODE = frozenset({"model", "snapshot"})
+_FOLDS_SERVICE_UNITS = frozenset({"model", "seed", "snapshot"})
+_MATERIALIZED_BY_TYPE = {"seed": "seed", "snapshot": "snapshot", "test": "test"}
+_EXPLICIT_OVERRIDES_FLAG = "require_explicit_package_overrides_for_builtin_materializations"
+
+_JINJA_BLOCK = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}", re.DOTALL)
+_JINJA_CALL = re.compile(r"(?<![\w.])([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?\s*\(")
+
+# Locality of a materialization macro's package: the root project wins over an
+# imported package, which wins over a built-in one.
+_ROOT, _IMPORTED, _BUILT_IN = 2, 1, 0
+
+
+@dataclass(frozen=True)
+class CodeUnit:
+    """One unit of code a node's shared part folds: its id, the SHA-256 of its
+    bytes, its text, the folded macros it calls directly and the name of the
+    input it stands for (`macros`, `functions`, `unit_tests`, `on_run_start`, ...)."""
+    unit_id: str
+    digest: str
+    source: str
+    depends_on: tuple[str, ...]
+    input_name: str
 
 
 @dataclass(frozen=True)
@@ -50,18 +78,54 @@ class RunMask:
 
 @dataclass(frozen=True)
 class ManifestContext:
-    """What hashing a node needs from the manifest and the compile around it."""
+    """What hashing a node needs from the manifest and the compile around it.
+
+    `builtin_packages` are dbt's own (`dbt`, `dbt_<adapter_type>`): their macros
+    are walked but never folded. `unit_tests_by_node` maps a node id to the unit
+    tests that name it; `service_units` are the units every model, seed and
+    snapshot folds. The context memoizes each macro's closure, since every node
+    of a manifest walks the same macros.
+    """
     run: RunMask
     extras: CompileExtras | None
     denylist: frozenset[str]
+    root_project: str = ""
+    adapter_type: str = ""
+    builtin_packages: frozenset[str] = frozenset({"dbt"})
+    macros: Mapping[str, dict] = field(default_factory=dict)
+    macros_by_name: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    functions: Mapping[str, dict] = field(default_factory=dict)
+    unit_tests_by_node: Mapping[str, tuple[CodeUnit, ...]] = field(default_factory=dict)
+    service_units: Mapping[str, CodeUnit] = field(default_factory=dict)
+    explicit_package_overrides_required: bool = True
+    _closures: dict[str, frozenset[str]] = field(default_factory=dict, init=False, compare=False, repr=False)
+    _macro_units: dict[str, CodeUnit] = field(default_factory=dict, init=False, compare=False, repr=False)
 
     @classmethod
     def from_manifest(cls, manifest: Mapping, extras: CompileExtras | None) -> ManifestContext:
-        return cls(
-            run=RunMask.from_metadata(manifest.get("metadata") or {}),
+        """The context of one manifest and its compile extras. Raises the library's
+        `ContractsError` for a flags block or unit test canonical JSON refuses."""
+        metadata = manifest.get("metadata") or {}
+        adapter_type = metadata.get("adapter_type") or ""
+        macros = manifest.get("macros") or {}
+        by_name: dict[str, list[str]] = {}
+        for macro_id, macro in macros.items():
+            by_name.setdefault(_macro_name(macro_id, macro), []).append(macro_id)
+        flags = extras.project_flags if extras is not None else {}
+        ctx = cls(
+            run=RunMask.from_metadata(metadata),
             extras=extras,
             denylist=hashed_config_denylist(),
+            root_project=metadata.get("project_name") or "",
+            adapter_type=adapter_type,
+            builtin_packages=frozenset({"dbt", f"dbt_{adapter_type}"} if adapter_type else {"dbt"}),
+            macros=macros,
+            macros_by_name={name: tuple(sorted(ids)) for name, ids in by_name.items()},
+            functions=manifest.get("functions") or {},
+            unit_tests_by_node=_unit_tests_by_node(manifest.get("unit_tests") or {}),
+            explicit_package_overrides_required=flags.get(_EXPLICIT_OVERRIDES_FLAG, True) is not False,
         )
+        return replace(ctx, service_units=_service_units(manifest, flags, ctx))
 
 
 def mask_text(text: str, run: RunMask, database: str) -> str:
@@ -110,8 +174,9 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
     The denylisted keys are dropped and the rendered values masked; a test's
     `severity` is lower-cased; `relation` carries the schema and alias the node
     writes, in their declared spelling; a model whose contract is enforced adds
-    its declared columns in order and its model-level constraints. Nulls and
-    empty containers are dropped last.
+    its declared columns in order and its model-level constraints, masked like
+    the rest (a foreign key's `to` names the node's database). Nulls and empty
+    containers are dropped last.
     """
     database = node.get("database") or ""
     raw_config = node.get("config") or {}
@@ -119,14 +184,18 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
     if node.get("resource_type") == "test" and isinstance(config.get("severity"), str):
         config["severity"] = config["severity"].lower()
     config["relation"] = {"schema": node.get("schema") or "", "alias": node.get("alias") or node.get("name") or ""}
-    if (raw_config.get("contract") or {}).get("enforced") is True:
-        config["columns"] = [
+    if _contract_enforced(node):
+        config["columns"] = mask_value([
             {"name": c.get("name"), "data_type": c.get("data_type"),
              "constraints": c.get("constraints"), "quote": c.get("quote")}
             for c in (node.get("columns") or {}).values()
-        ]
-        config["constraints"] = node.get("constraints")
+        ], ctx.run, database)
+        config["constraints"] = mask_value(node.get("constraints"), ctx.run, database)
     return drop_empty(config)
+
+
+def _contract_enforced(node: Mapping) -> bool:
+    return ((node.get("config") or {}).get("contract") or {}).get("enforced") is True
 
 
 def config_part(config: Mapping) -> str:
@@ -159,6 +228,263 @@ def compiled_part(node: Mapping, ctx: ManifestContext) -> str:
     if node.get("resource_type") not in _SOURCE_FROM_RAW_CODE or not compiled:
         return ""
     return _sha256(mask_text(compiled, ctx.run, node.get("database") or ""))
+
+
+def resolve_name(name: str, package: str, ctx: ManifestContext) -> str | None:
+    """The macro a bare call of `name` from `package` runs: the first of the root
+    project's, the package's, the adapter's and dbt's macro of that name that the
+    manifest holds, or None."""
+    for owner in (ctx.root_project, package, f"dbt_{ctx.adapter_type}" if ctx.adapter_type else "", "dbt"):
+        if owner and f"macro.{owner}.{name}" in ctx.macros:
+            return f"macro.{owner}.{name}"
+    return None
+
+
+def static_macro_calls(raw_code: str, package: str, ctx: ManifestContext) -> list[str]:
+    """The macros `raw_code` calls inside its `{{ ... }}` and `{% ... %}` blocks, in
+    order of first call. `pkg.name(...)` names `macro.<pkg>.<name>`, a bare call
+    is resolved with `resolve_name`; a call the manifest holds no macro for (`ref`,
+    `config`, `range`, `adapter.dispatch`) is dropped. This finds a macro a model
+    calls only inside a block its compile did not render (`is_incremental()`
+    before the table exists)."""
+    calls: dict[str, None] = {}
+    for block in _JINJA_BLOCK.finditer(raw_code):
+        for call in _JINJA_CALL.finditer(block.group(1) or block.group(2) or ""):
+            first, second = call.group(1), call.group(2)
+            macro_id = (f"macro.{first}.{second}" if f"macro.{first}.{second}" in ctx.macros else None) \
+                if second else resolve_name(first, package, ctx)
+            if macro_id is not None:
+                calls.setdefault(macro_id)
+    return list(calls)
+
+
+def materialization_macro(materialized: str, ctx: ManifestContext) -> str | None:
+    """The macro dbt builds a `materialized` node with, as dbt chooses it: an
+    adapter-specific materialization beats a default one, then the root project
+    beats an imported package, which beats a built-in one. An imported package's
+    macro is passed over while the project requires explicit overrides of a
+    built-in materialization and a built-in package defines one of that name."""
+    candidates: list[tuple[tuple[int, int], str]] = []
+    for specificity, flavour in ((1, ctx.adapter_type), (0, "default")):
+        if not flavour:
+            continue
+        for macro_id in ctx.macros_by_name.get(f"materialization_{materialized}_{flavour}", ()):
+            candidates.append(((specificity, _locality(macro_id, ctx)), macro_id))
+    if ctx.explicit_package_overrides_required and any(rank[1] == _BUILT_IN for rank, _ in candidates):
+        candidates = [c for c in candidates if c[0][1] != _IMPORTED]
+    return max(candidates)[1] if candidates else None
+
+
+def macro_closure(node: Mapping, ctx: ManifestContext) -> set[str]:
+    """The non-built-in macros the node's build reaches.
+
+    The roots are the node's `depends_on.macros`, the static calls of its raw
+    code, its materialization and its strategy macro (an incremental model's
+    `get_incremental_<strategy>_sql`, a snapshot's `snapshot_<strategy>_strategy`).
+    The walk follows every macro's `depends_on.macros`, built-ins included, and on
+    every step runs the root project's macro in place of a built-in one of the
+    same name, as dbt does."""
+    package = node.get("package_name") or ""
+    roots = list((node.get("depends_on") or {}).get("macros") or [])
+    roots += static_macro_calls(node.get("raw_code") or "", package, ctx)
+    materialized = _MATERIALIZED_BY_TYPE.get(node.get("resource_type") or "") \
+        or (node.get("config") or {}).get("materialized") or ""
+    roots += [m for m in (materialization_macro(materialized, ctx) if materialized else None,
+                          _strategy_macro(node, package, ctx)) if m]
+    reached: set[str] = set()
+    for root in roots:
+        reached |= _closure_of(_runs_as(root, ctx), ctx)
+    return reached
+
+
+def shared_units(node: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
+    """The units the node's shared part folds, by unit id: its macro closure, the
+    functions in its `depends_on.nodes`, a model's unit tests and, for a model,
+    seed or snapshot, the service units. A test folds no service unit."""
+    units = {macro_id: _macro_unit(macro_id, "macros", ctx) for macro_id in sorted(macro_closure(node, ctx))}
+    for node_id in (node.get("depends_on") or {}).get("nodes") or []:
+        function = ctx.functions.get(node_id) if node_id.startswith("function.") else None
+        if function is not None:
+            code = function.get("raw_code") or ""
+            units[node_id] = CodeUnit(node_id, _sha256(code), code, (), "functions")
+    resource_type = node.get("resource_type")
+    if resource_type == "model":
+        units.update({u.unit_id: u for u in ctx.unit_tests_by_node.get(node.get("unique_id") or "", ())})
+    if resource_type in _FOLDS_SERVICE_UNITS:
+        units.update(ctx.service_units)
+    return units
+
+
+@dataclass(frozen=True)
+class DbtHashParts:
+    """A dbt node's four content_hash parts, their fold, the hashed config, the
+    units of the shared part, the names of the inputs the parts hash and whether
+    the source part is dbt's `path` checksum."""
+    source_hash: str
+    shared_code_hash: str
+    config_hash: str
+    compiled_hash: str
+    content_hash: str
+    hashed_config: dict
+    units: Mapping[str, CodeUnit]
+    inputs: frozenset[str]
+    path_checksum: bool
+
+
+def hash_dbt_node(node: Mapping, ctx: ManifestContext) -> DbtHashParts:
+    """Hash a dbt node. Raises the library's `ContractsError` for a value canonical
+    JSON or `shared_fold` refuses and `UnicodeEncodeError` for text UTF-8 cannot
+    encode."""
+    config = hashed_config(node, ctx)
+    source, source_input, path_checksum = source_part(node, ctx)
+    units = shared_units(node, ctx)
+    shared = shared_fold({u.unit_id: u.digest for u in units.values()})
+    config_hash = config_part(config)
+    compiled = compiled_part(node, ctx)
+    inputs = {source_input, "relation.schema", "relation.alias"}
+    inputs |= {f"config.{key}" for key in config if key not in ("relation", "columns", "constraints")}
+    if compiled:
+        inputs.add("compiled_code")
+    if _contract_enforced(node):
+        inputs |= {"contract.columns", "constraints"}
+    inputs |= {u.input_name for u in units.values()}
+    return DbtHashParts(
+        source_hash=source,
+        shared_code_hash=shared,
+        config_hash=config_hash,
+        compiled_hash=compiled,
+        content_hash=fold4(source, shared, config_hash, compiled),
+        hashed_config=config,
+        units=units,
+        inputs=frozenset(inputs),
+        path_checksum=path_checksum,
+    )
+
+
+def _macro_package(macro_id: str, macro: Mapping | None) -> str:
+    """A macro's package, from the manifest or else from its `macro.<package>.<name>` id."""
+    return (macro or {}).get("package_name") or (macro_id.split(".", 2) + ["", ""])[1]
+
+
+def _macro_name(macro_id: str, macro: Mapping | None) -> str:
+    return (macro or {}).get("name") or (macro_id.split(".", 2) + ["", "", ""])[2]
+
+
+def _is_built_in(macro_id: str, ctx: ManifestContext) -> bool:
+    return _macro_package(macro_id, ctx.macros.get(macro_id)) in ctx.builtin_packages
+
+
+def _folds(macro_id: str, ctx: ManifestContext) -> bool:
+    """Whether a macro is folded: the manifest holds it and its package is not built in."""
+    return macro_id in ctx.macros and not _is_built_in(macro_id, ctx)
+
+
+def _locality(macro_id: str, ctx: ManifestContext) -> int:
+    package = _macro_package(macro_id, ctx.macros.get(macro_id))
+    if package == ctx.root_project:
+        return _ROOT
+    return _BUILT_IN if package in ctx.builtin_packages else _IMPORTED
+
+
+def _runs_as(macro_id: str, ctx: ManifestContext) -> str:
+    """The macro that runs for `macro_id`: the root project's macro of the same
+    name in place of a built-in one, else `macro_id` itself."""
+    if not ctx.root_project or not _is_built_in(macro_id, ctx):
+        return macro_id
+    override = f"macro.{ctx.root_project}.{_macro_name(macro_id, ctx.macros.get(macro_id))}"
+    return override if override in ctx.macros else macro_id
+
+
+def _closure_of(macro_id: str, ctx: ManifestContext) -> frozenset[str]:
+    """The folded macros reached from `macro_id` (itself included), memoized. A
+    macro whose closure is already known contributes it without being walked again;
+    a closure is stored only once its walk is complete, so a cycle is safe."""
+    known = ctx._closures.get(macro_id)
+    if known is not None:
+        return known
+    folded: set[str] = set()
+    seen: set[str] = set()
+    stack = [macro_id]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        done = ctx._closures.get(current)
+        if done is not None:
+            folded |= done
+            continue
+        macro = ctx.macros.get(current)
+        if macro is None:
+            continue
+        if not _is_built_in(current, ctx):
+            folded.add(current)
+        stack.extend(_runs_as(dep, ctx) for dep in (macro.get("depends_on") or {}).get("macros") or [])
+    closure = frozenset(folded)
+    ctx._closures[macro_id] = closure
+    return closure
+
+
+def _macro_unit(macro_id: str, input_name: str, ctx: ManifestContext) -> CodeUnit:
+    """The unit of a macro the manifest holds: its `macro_sql` and the folded
+    macros it runs directly."""
+    key = f"{input_name}\x00{macro_id}"
+    unit = ctx._macro_units.get(key)
+    if unit is None:
+        macro = ctx.macros[macro_id]
+        sql = macro.get("macro_sql") or ""
+        deps = (_runs_as(dep, ctx) for dep in (macro.get("depends_on") or {}).get("macros") or [])
+        unit = CodeUnit(macro_id, _sha256(sql), sql, tuple(dict.fromkeys(d for d in deps if _folds(d, ctx))), input_name)
+        ctx._macro_units[key] = unit
+    return unit
+
+
+def _strategy_macro(node: Mapping, package: str, ctx: ManifestContext) -> str | None:
+    config = node.get("config") or {}
+    if node.get("resource_type") == "snapshot":
+        strategy = config.get("strategy")
+        return resolve_name(f"snapshot_{strategy}_strategy", package, ctx) if strategy else None
+    if node.get("resource_type") == "model" and config.get("materialized") == "incremental":
+        return resolve_name(f"get_incremental_{config.get('incremental_strategy') or 'default'}_sql", package, ctx)
+    return None
+
+
+def _unit_tests_by_node(unit_tests: Mapping[str, dict]) -> dict[str, tuple[CodeUnit, ...]]:
+    """Each unit test as a unit, under every node id its `depends_on.nodes` names.
+    Its digest is dbt's own checksum, or the SHA-256 of its canonical JSON without
+    `created_at` when dbt wrote none."""
+    by_node: dict[str, list[CodeUnit]] = {}
+    for unit_id in sorted(unit_tests):
+        definition = {k: v for k, v in unit_tests[unit_id].items() if k != "created_at"}
+        text = canonical_json(definition)
+        checksum = definition.get("checksum")
+        digest = checksum if isinstance(checksum, str) and checksum else hashlib.sha256(text).hexdigest()
+        unit = CodeUnit(unit_id, digest, text.decode("utf-8"), (), "unit_tests")
+        for node_id in (definition.get("depends_on") or {}).get("nodes") or []:
+            by_node.setdefault(node_id, []).append(unit)
+    return {node_id: tuple(units) for node_id, units in by_node.items()}
+
+
+def _service_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
+    """The units every model, seed and snapshot of the project folds: each on-run
+    hook (an operation node), the root project's `generate_schema_name` and
+    `generate_alias_name`, and the flags block when it is not empty."""
+    units: dict[str, CodeUnit] = {}
+    for node_id, node in (manifest.get("nodes") or {}).items():
+        if node.get("resource_type") != "operation":
+            continue
+        code = node.get("raw_code") or ""
+        is_end = "on-run-end" in (node.get("tags") or []) or "on-run-end" in node_id
+        units[node_id] = CodeUnit(node_id, _sha256(code), code, (), "on_run_end" if is_end else "on_run_start")
+    for name in ("generate_schema_name", "generate_alias_name"):
+        macro_id = f"macro.{ctx.root_project}.{name}"
+        if ctx.root_project and macro_id in ctx.macros:
+            units[macro_id] = _macro_unit(macro_id, name, ctx)
+    if flags:
+        text = canonical_json(dict(flags))
+        units["project_flags"] = CodeUnit("project_flags", hashlib.sha256(text).hexdigest(), text.decode("utf-8"), (),
+                                          "project_flags")
+    return units
 
 
 def _sha256(text: str) -> str:

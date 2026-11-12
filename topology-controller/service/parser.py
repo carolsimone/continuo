@@ -1,97 +1,44 @@
-"""Parses a dbt manifest.json into ManifestNodes and the shared code (macros) they use.
+"""Parses a dbt manifest.json into ManifestNodes and the shared code they use.
 
 Every node carries a content_hash folded from its own source, the shared code it
-uses, its hashed config and, for a model or snapshot, its compiled SQL
-(service/dbt_hashing.py holds the source, compiled and config parts). A model,
-seed or snapshot a gate leaves out (no owner, no tag to take a schedule from, a
-local stub) is reported through the caller's `skipped` list, never raised.
+uses (macros, functions, unit tests and the project's service units), its hashed
+config and, for a model or snapshot, its compiled SQL (service/dbt_hashing.py
+holds the parts and their fold). A model, seed or snapshot a gate leaves out (no
+owner, no tag to take a schedule from, a local stub) is reported through the
+caller's `skipped` list, never raised.
 """
-import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from continuo_contracts.errors import ContractsError
-from continuo_contracts.hashing import fold4
 
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, ManifestNode, NodeType, ParsedArtifact, SkippedNode, SkipReason
 from domain.node_timeout import timeout_seconds
-from service.dbt_hashing import ManifestContext, compiled_part, config_part, hashed_config, source_part
+from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
 
 
-def _transitive_macro_ids(direct_ids: list[str], macros: dict) -> set[str]:
-    """Resolve the transitive closure of a node's macro dependencies.
-
-    Walks macro->macro edges (each macro's own `depends_on.macros`) so a change to
-    a macro reached only through another macro still affects the dependent node,
-    mirroring dbt's transitive `state:modified.macros` behaviour. Ids absent from
-    the manifest's macro map (e.g. unresolved built-ins) stay in the closure but
-    contribute no checksum.
-    """
-    seen: set[str] = set()
-    stack = list(direct_ids)
-    while stack:
-        mid = stack.pop()
-        if mid in seen:
-            continue
-        seen.add(mid)
-        macro = macros.get(mid)
-        if macro:
-            stack.extend(macro.get("depends_on", {}).get("macros", []))
-    return seen
-
-
-def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
-    """Fold of the source checksums of the given shared-code units; "" if none."""
-    unit_hashes = sorted(
-        hashlib.sha256((macros[mid].get("macro_sql") or "").encode()).hexdigest()
-        for mid in unit_ids if mid in macros
-    )
-    if not unit_hashes:
-        return ""
-    return hashlib.sha256("".join(unit_hashes).encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class _HashParts:
-    source_hash: str
-    shared_code_hash: str
-    config_hash: str
-    compiled_hash: str
-    content_hash: str
-    hashed_config: dict
-
-
-def _hash_parts(label: str, node: dict, ctx: ManifestContext, unit_ids: set[str], macros: dict) -> _HashParts:
-    """The four parts of a dbt node's content_hash and their fold.
-
-    A value the hashing refuses (a config value canonical JSON cannot write, text
-    UTF-8 cannot encode) is the artifact's fault, so it is raised as an
-    InvalidNodeSettingError naming the node, which rejects the release instead of
-    retrying it.
-    """
+@contextmanager
+def _rejecting_hash_input(label: str) -> Iterator[None]:
+    """Raise a value the hashing refuses (a value canonical JSON cannot write or
+    `shared_fold` refuses, text UTF-8 cannot encode) as an InvalidNodeSettingError
+    naming where it was found: it is the artifact's fault, so the release is
+    rejected instead of retried."""
     try:
-        config = hashed_config(node, ctx)
-        source = source_part(node, ctx)[0]
-        shared = _shared_code_hash(unit_ids, macros)
-        config_hash = config_part(config)
-        compiled = compiled_part(node, ctx)
-        content_hash = fold4(source, shared, config_hash, compiled)
+        yield
     except (ContractsError, UnicodeEncodeError) as error:
         raise InvalidNodeSettingError(f"{label}: {error}") from error
-    return _HashParts(
-        source_hash=source,
-        shared_code_hash=shared,
-        config_hash=config_hash,
-        compiled_hash=compiled,
-        content_hash=content_hash,
-        hashed_config=config,
-    )
+
+
+def _hash(label: str, node: dict, ctx: ManifestContext) -> DbtHashParts:
+    with _rejecting_hash_input(label):
+        return hash_dbt_node(node, ctx)
 
 
 _RESOURCE_TYPE_TO_NODE_TYPE = {
@@ -137,11 +84,11 @@ def parse_manifest(
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    macros = manifest.get("macros", {})
-    ctx = ManifestContext.from_manifest(manifest, extras)
+    with _rejecting_hash_input(manifest_path):
+        ctx = ManifestContext.from_manifest(manifest, extras)
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
-    used_unit_ids: set[str] = set()
+    used_units: dict[str, CodeUnit] = {}
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in SUPPORTED_RESOURCE_TYPES:
@@ -173,10 +120,9 @@ def parse_manifest(
         meta = node.get("config", {}).get("meta") or {}
         criticality = meta.get("criticality", "SECONDARY")
 
-        direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
-        transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
-        used_unit_ids |= transitive_ids
-        parts = _hash_parts(f"{node['schema']}.{node['name']}".lower(), node, ctx, transitive_ids, macros)
+        node.setdefault("unique_id", node_id)
+        parts = _hash(f"{node['schema']}.{node['name']}".lower(), node, ctx)
+        used_units.update(parts.units)
 
         manifest_node = ManifestNode(
             table_name=node["name"],
@@ -199,9 +145,11 @@ def parse_manifest(
             config_hash=parts.config_hash,
             compiled_hash=parts.compiled_hash,
             hashed_config=parts.hashed_config,
-            code_unit_ids=direct_unit_ids,
+            code_unit_ids=sorted(parts.units),
             declared_columns=len(node.get("columns") or {}),
         )
+        if resource_type == "model":
+            manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
         try:
             manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))
         except ValueError as exc:
@@ -235,10 +183,9 @@ def parse_manifest(
         if not tracked:
             continue
         compiled = node.get("compiled_code", "")
-        direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
-        transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
-        used_unit_ids |= transitive_ids
-        parts = _hash_parts(node_id, node, ctx, transitive_ids, macros)
+        node.setdefault("unique_id", node_id)
+        parts = _hash(node_id, node, ctx)
+        used_units.update(parts.units)
         test_nodes.append(ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
@@ -259,17 +206,17 @@ def parse_manifest(
             config_hash=parts.config_hash,
             compiled_hash=parts.compiled_hash,
             hashed_config=parts.hashed_config,
-            code_unit_ids=direct_unit_ids,
+            code_unit_ids=sorted(parts.units),
             identity=node_id,
         ))
     nodes.extend(test_nodes)
 
     shared_code = {
-        mid: {
-            "source": macros[mid].get("macro_sql") or "",
-            "checksum": hashlib.sha256((macros[mid].get("macro_sql") or "").encode()).hexdigest(),
-            "depends_on": list(macros[mid].get("depends_on", {}).get("macros", [])),
+        unit_id: {
+            "source": unit.source,
+            "checksum": unit.digest,
+            "depends_on": [dep for dep in unit.depends_on if dep in used_units],
         }
-        for mid in sorted(used_unit_ids) if mid in macros
+        for unit_id, unit in sorted(used_units.items())
     }
     return ParsedArtifact(nodes=nodes, shared_code=shared_code)

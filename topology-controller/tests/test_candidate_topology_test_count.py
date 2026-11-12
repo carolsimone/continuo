@@ -40,8 +40,9 @@ def test_candidate_topology_carries_test_count(tmp_path):
     """The node dict published into the candidate topology carries test_count,
     forwarding the count resolved by parse_manifest (task 1) so downstream
     services (release-controller, catalog) can consume it. Each tracked
-    test is itself published as a dbt-test node alongside the model it tests,
-    so the topology holds three entries: the model plus its two tests."""
+    data test is itself published as a dbt-test node alongside the model it
+    tests, so the topology holds three entries: the model plus its two data
+    tests. Its unit test adds to test_count and publishes no node."""
     manifest = {"macros": {}, "nodes": {
         "model.svc_a.orders": _model("orders"),
         # generic test attached via attached_node
@@ -52,6 +53,12 @@ def test_candidate_topology_carries_test_count(tmp_path):
         "test.svc_a.assert_orders_positive": _test(
             "assert_orders_positive", targets=["model.svc_a.orders"],
         ),
+    }, "unit_tests": {
+        # a unit test counts toward its model but is published as no node of its own
+        "unit_test.svc_a.orders_one": {
+            "unique_id": "unit_test.svc_a.orders_one", "resource_type": "unit_test", "checksum": "cd" * 32,
+            "depends_on": {"macros": [], "nodes": ["model.svc_a.orders"]},
+        },
     }}
 
     source = create_autospec(ManifestSourcePort)
@@ -80,7 +87,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
     topology = writer.nodes
     assert len(topology) == 3
     by_id = {n["unique_id"]: n for n in topology}
-    assert by_id["analytics.orders"]["test_count"] == 2
+    assert by_id["analytics.orders"]["test_count"] == 3
     tests = [n for n in topology if n["node_type"] == "dbt-test"]
     assert len(tests) == 2
     assert all(t["test_count"] == 0 for t in tests)

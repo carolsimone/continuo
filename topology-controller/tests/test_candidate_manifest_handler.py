@@ -791,10 +791,11 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
     walking unit->unit edges never needs to re-derive the namespace. Exercises
     the fallback path where declared_service is unset: the namespace is
     derived from the manifest's own node service instead."""
+    with_dependency = _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
+    with_dependency["macros"]["macro.svc.m2"] = {"unique_id": "macro.svc.m2", "macro_sql": "SELECT 2",
+                                                 "depends_on": {"macros": []}}
     first = tmp_path / "first.json"
-    first.write_text(json.dumps(
-        _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
-    ))
+    first.write_text(json.dumps(with_dependency))
     second = tmp_path / "second.json"
     second.write_text(json.dumps(
         _manifest_with_single_macro("SELECT 1", "node_b", "service-b", macro_depends_on=[])

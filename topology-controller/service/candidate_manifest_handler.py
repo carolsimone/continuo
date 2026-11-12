@@ -280,7 +280,7 @@ class CandidateManifestHandler:
             # same-named macro gets its own bundle entry, and every node keeps
             # pointing at the copy its own manifest actually hashed against.
             # Per-node hashes fold each manifest's own copy of a unit already
-            # (see parser._shared_code_hash), so this never changes a hash —
+            # (see dbt_hashing.shared_units), so this never changes a hash —
             # it only disambiguates which copy the bundle records for a unit id.
             namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
 

@@ -166,13 +166,14 @@ class ManifestNode:
     raw_code: str = ""  # node's own source (dbt raw_code), pre-compilation
     config: dict = field(default_factory=dict)  # node's resolved dbt config
     source_hash: str = ""  # fingerprint of this node's own source (see dbt_hashing.source_part)
-    shared_code_hash: str = ""  # fold of transitive shared-code checksums; "" if none
+    shared_code_hash: str = ""  # shared_fold of the node's shared-code units; "" if none
     config_hash: str = ""  # fingerprint of the hashed config (dbt) or code projection (python)
     compiled_hash: str = ""  # fingerprint of a dbt model's or snapshot's masked
     # compiled SQL; "" for every other node
     hashed_config: dict | None = None  # the config a dbt node's config_hash hashes;
     # None for a python node
-    code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
+    code_unit_ids: list[str] = field(default_factory=list)  # the shared-code units its
+    # shared part folds, sorted
     runtime: Runtime = Runtime.DBT
     resolved_relation: str = ""  # the name this node's build actually writes: a
     # dbt node's alias when it overrides one, else "" (see resolved_relation_id,
