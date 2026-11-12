@@ -16,9 +16,10 @@ import (
 // (present in the built image, not on a bare host) against a minimal
 // contract dir shaped like tests/e2e/fixtures/py-probe/contracts/*.yml, and
 // asserts the merged output is a parseable wire contract whose every node
-// entry carries the hash fold topology-controller recomputes and checks. A
-// wrong subprocess argument order, a wrong --out path, or a CLI that never
-// ran at all would each surface here as a missing field or a parse failure —
+// entry carries CI's hash parts and their fold, of which topology-controller
+// keeps the source and shared parts. A wrong subprocess argument order, a
+// wrong --out path, or a CLI that never ran at all would each surface here
+// as a missing field or a parse failure —
 // the same rejection topology-controller would give the merged contract.
 func TestMerge_ProducesHashFoldedWireContract(t *testing.T) {
 	if _, err := exec.LookPath("continuo-runtime"); err != nil {
@@ -198,5 +199,57 @@ func TestMerge_AcceptsAPythonCsvContract(t *testing.T) {
 	}
 	if n.Reads["csv"] != "s3://continuo/fixtures/orders.csv" {
 		t.Errorf("reads[csv] = %q, want the declared uri preserved", n.Reads["csv"])
+	}
+}
+
+// TestMerge_PackagesAContractThatDeclaresAssets runs the image's continuo-runtime
+// CLI on a python-node contract that declares a file its script reads. Runtime
+// 0.12.0 writes the list on the wire entry and folds the file into
+// shared_code_hash; an image pinned below it refuses the key.
+func TestMerge_PackagesAContractThatDeclaresAssets(t *testing.T) {
+	if _, err := exec.LookPath("continuo-runtime"); err != nil {
+		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", err)
+	}
+	repoRoot := t.TempDir()
+	for path, body := range map[string]string{
+		"scripts/kpis.py": "import pyarrow as pa\n\n\ndef run(ctx):\n    ctx.read(\"src\")\n    return pa.table({\"id\": pa.array([1], type=pa.int64())})\n",
+		"lib/ref.json":    "{\"rate\": 1}\n",
+		"contracts/kpis.yml": "nodes:\n  - schema: analytics\n    table: kpis\n    owner: e2e\n    schedule: daily\n" +
+			"    criticality: SECONDARY\n    script: scripts/kpis.py\n    assets: [lib/ref.json]\n" +
+			"    reads:\n      src: select id from analytics.src\n    output_columns:\n      - {name: id, type: BIGINT, nullable: false}\n",
+	} {
+		full := filepath.Join(repoRoot, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	p, err := NewCLIPackager()
+	if err != nil {
+		t.Fatalf("NewCLIPackager: %v", err)
+	}
+	out, err := p.Merge(context.Background(), filepath.Join(repoRoot, "contracts"), repoRoot, "kpis-test", "postgres")
+	if err != nil {
+		t.Fatalf("Merge refused a contract that declares assets (the CLI on PATH predates continuo-python-runtime 0.12.0): %v", err)
+	}
+	var doc struct {
+		Nodes []struct {
+			Assets         []string `yaml:"assets"`
+			SharedCodeHash string   `yaml:"shared_code_hash"`
+		} `yaml:"nodes"`
+	}
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("merged output does not parse as yaml: %v\n---\n%s", err, out)
+	}
+	if len(doc.Nodes) != 1 {
+		t.Fatalf("nodes = %d entries, want 1", len(doc.Nodes))
+	}
+	if got := doc.Nodes[0].Assets; len(got) != 1 || got[0] != "lib/ref.json" {
+		t.Errorf("assets = %v, want [lib/ref.json]", got)
+	}
+	if doc.Nodes[0].SharedCodeHash == "" {
+		t.Error("shared_code_hash is empty, want the fold of lib/ref.json")
 	}
 }
