@@ -325,3 +325,18 @@ func TestReleasePromotedHandler_SeedReconcilerFailureFailsTheMessage(t *testing.
 	assert.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
 }
+
+func TestReleasePromotedHandler_PassesRebaselineToTheSeedReconcile(t *testing.T) {
+	topo := &fakeTopologyRepo{live: topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 3}, loaded: true}
+	reconciler := &recordingSeedReconciler{}
+	h := handlers.NewReleasePromotedHandler(&fakeArtifactReader{}, reconciler, testLogger())
+	p := promotedRelease("rel-2", 4)
+	p.Bootstrap, p.Rebaseline = true, true
+
+	require.NoError(t, h.Handle(context.Background(), promotedUoW(topo, &fakeMaterializationRepo{}),
+		handlers.ReleasePromotedInput{Promotion: p}, uuid.New()))
+
+	require.Len(t, reconciler.triggers, 1)
+	assert.True(t, reconciler.triggers[0].Bootstrap)
+	assert.True(t, reconciler.triggers[0].Rebaseline)
+}

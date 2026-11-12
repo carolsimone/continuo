@@ -212,6 +212,14 @@ func Adoptions(live []topology.Node, changedUniqueIDs []string, bootstrap, first
 	return out
 }
 
+// RebaselineAdoptions returns the seeds to record as already loaded when a
+// rebaseline release is promoted, in key order: every dbt seed with a content
+// hash, whether or not the release changed it and whether or not it is the
+// install's first release.
+func RebaselineAdoptions(live []topology.Node) []Desired {
+	return Adoptions(live, nil, false, true)
+}
+
 // RunID is the id of the n-th promote-seed run planned for a release of a
 // tenant, counting from 1. The first is the UUIDv5 of the tenant and the
 // release id and every later one also carries its count; n below 1 names the

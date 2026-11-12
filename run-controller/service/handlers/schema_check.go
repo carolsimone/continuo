@@ -15,7 +15,8 @@ import (
 // failed when no task of it failed, when a stop was requested of an attempt,
 // the node leases and the wait for one, and the tenant of each run, task and
 // attempt, the command requests that make a command run once per request id,
-// and the schedules table with the slot a scheduled run records. A migration
+// the schedules table with the slot a scheduled run records, and the column
+// fingerprint of each seed a release stores and each load records. A migration
 // applies whole, so a column also stands for what else its migration adds:
 // task_attempts.stop_requested_at for the cancelling, stopping and stopped
 // statuses, the node lease columns for node_leases' release trigger and the
@@ -30,7 +31,8 @@ var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topolo
 	"command_requests.request_id",
 	"schedules.tenant_id", "schedules.name", "schedules.cron", "schedules.timezone", "schedules.description",
 	"schedules.paused", "schedules.next_fire_at", "schedules.version", "schedules.updated_by", "schedules.updated_at",
-	"runs.scheduled_for"}
+	"runs.scheduled_for",
+	"topology_nodes.seed_columns_hash", "node_materializations.seed_columns_hash"}
 
 // ErrSchemaNotReady reports a run-controller database that lacks a column the running
 // code reads.

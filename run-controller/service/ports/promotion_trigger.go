@@ -8,7 +8,7 @@ import (
 // PromotionTrigger is what one applied release.promoted:v2 message tells the
 // seed reconcile: the promotion, what it did to the live-release pointer,
 // whether it is the first promotion run-controller applied (no release was live before
-// it), the release's bootstrap flag and changed nodes, and the dedup row of the
+// it), the release's bootstrap and rebaseline flags and changed nodes, and the dedup row of the
 // message's transaction, which rows written in that transaction name.
 type PromotionTrigger struct {
 	TenantID            string
@@ -17,6 +17,7 @@ type PromotionTrigger struct {
 	Outcome             topology.PointerOutcome
 	FirstPromotion      bool
 	Bootstrap           bool
+	Rebaseline          bool
 	ChangedNodeIDs      []string
 	MessageProcessingID uuid.UUID
 }

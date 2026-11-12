@@ -667,3 +667,35 @@ func TestRunOnce_NothingLiveReadsNothingElse(t *testing.T) {
 	require.Len(t, w.uows, 1)
 	assert.Zero(t, w.uows[0].BeginCalled)
 }
+
+func TestAfterPromotion_RebaselineAdoptsEverySeedAtItsFingerprintAndBuildsNothing(t *testing.T) {
+	countries := seedNode("countries", "sha256:new")
+	countries.SeedColumnsHash = "sha256:cols"
+	w := newWorld(live7, countries, seedNode("blank", ""), modelNode("revenue"))
+	w.loaded("countries", "sha256:old")
+	trigger := moved("rel-2", 7)
+	trigger.Bootstrap, trigger.Rebaseline = true, true
+
+	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Equal(t, []seeds.Built{{
+		Key: "raw.countries", ContentHash: "sha256:new", SeedColumnsHash: "sha256:cols", ImageTag: "svc:2",
+		ReleaseID: "rel-2", At: testNow, Source: seeds.SourceAdopted,
+	}}, w.mats.built)
+	assert.Empty(t, w.runs.saved, "the pass after the adoption finds every seed loaded")
+	assert.Empty(t, w.outbox.appended)
+}
+
+func TestAfterPromotion_RebaselineOnTheFirstPromotionAdoptsEverySeed(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
+	trigger := moved("rel-2", 7)
+	trigger.FirstPromotion, trigger.Bootstrap, trigger.Rebaseline = true, true, true
+	trigger.ChangedNodeIDs = []string{"seed.svc.orders"}
+
+	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Len(t, w.mats.built, 2, "the changed seed is adopted too")
+	assert.Empty(t, w.runs.existsAsk, "a rebaseline does not look for the release's first run")
+	assert.Empty(t, w.runs.saved)
+	assert.Empty(t, w.outbox.appended)
+}

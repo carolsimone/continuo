@@ -31,6 +31,7 @@ func ParseReleasePromoted(msg goredis.XMessage) (events.ReleasePromoted, error) 
 		TopologySHA256: p.TopologySHA256,
 		ChangedNodeIDs: p.ChangedNodeIDs,
 		Bootstrap:      p.Bootstrap,
+		Rebaseline:     p.Rebaseline,
 	}, nil
 }
 

@@ -62,13 +62,20 @@ func New(uowFactory func() uow.UnitOfWork, maintenance bool, tasks run.TaskDefau
 // nothing and creates nothing: the pass that followed the live release's own
 // move committed with it, and the periodic pass covers whatever changed since.
 //
-// The first promotion run-controller applies records the seeds it adopts as already
-// loaded, and a pass over the new live release follows every move.
+// A rebaseline promotion records every seed of the release as loaded at its
+// content and column fingerprint. Otherwise the first promotion run-controller
+// applies records the seeds it adopts as already loaded. A pass over the new
+// live release follows every move.
 func (r *Reconciler) AfterPromotion(ctx context.Context, u uow.UnitOfWork, t ports.PromotionTrigger) error {
 	if t.Outcome != topology.PointerMoved {
 		return nil
 	}
-	if t.FirstPromotion {
+	switch {
+	case t.Rebaseline:
+		if err := r.adoptAll(ctx, u, t); err != nil {
+			return err
+		}
+	case t.FirstPromotion:
 		if err := r.adopt(ctx, u, t); err != nil {
 			return err
 		}
@@ -179,6 +186,26 @@ func (r *Reconciler) adopt(ctx context.Context, u uow.UnitOfWork, t ports.Promot
 	r.logger.Info("seed reconcile: seeds adopted on the first promotion",
 		"tenant_id", t.TenantID, "release_id", t.ReleaseID,
 		"adopted", len(adopted), "first_run_exists", firstRunExists)
+	return nil
+}
+
+// adoptAll records, on a rebaseline promotion, every seed of the release as
+// loaded at its content hash and column fingerprint. The pass that follows
+// finds each seed loaded at its live hash and creates no run.
+func (r *Reconciler) adoptAll(ctx context.Context, u uow.UnitOfWork, t ports.PromotionTrigger) error {
+	live, err := u.Topology().ReleaseNodes(ctx, t.TenantID, t.ReleaseID, string(model.NodeTypeDbtSeed))
+	if err != nil {
+		return fmt.Errorf("read the seeds of release %s: %w", t.ReleaseID, err)
+	}
+	now := u.Clock().Now()
+	adopted := seeds.RebaselineAdoptions(live)
+	for _, d := range adopted {
+		if err := u.Materializations().RecordBuilt(ctx, t.TenantID, seeds.Adopted(d, t.ReleaseID, now)); err != nil {
+			return fmt.Errorf("adopt seed %s: %w", d.Key, err)
+		}
+	}
+	r.logger.Info("seed reconcile: every seed adopted on a rebaseline promotion",
+		"tenant_id", t.TenantID, "release_id", t.ReleaseID, "adopted", len(adopted))
 	return nil
 }
 

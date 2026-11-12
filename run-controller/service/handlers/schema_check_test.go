@@ -74,3 +74,17 @@ func TestCheckSchema_RequiresTheSchedulesColumns(t *testing.T) {
 		}
 	}
 }
+
+// run-controller refuses to start until the seed column fingerprint exists on
+// the topology's nodes and on each load a node records.
+func TestCheckSchema_RequiresTheSeedColumnsHashColumns(t *testing.T) {
+	required := map[string]bool{}
+	for _, c := range RequiredColumns {
+		required[c] = true
+	}
+	for _, c := range []string{"topology_nodes.seed_columns_hash", "node_materializations.seed_columns_hash"} {
+		if !required[c] {
+			t.Errorf("RequiredColumns lacks %s", c)
+		}
+	}
+}
