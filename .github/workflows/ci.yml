@@ -46,8 +46,9 @@ jobs:
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. Deliberately below the sum of the two step caps
     # below (50 + 160) and above the e2e step's own cap, so the e2e step's go
-    # test timeout fires first and names the wedged test: it is a backstop
-    # against a hang, not a budget any healthy run approaches.
+    # test timeout fires first when setup finishes within its cap, and names
+    # the wedged test: it is a backstop against a hang, not a budget any
+    # healthy run approaches.
     timeout-minutes: 200
 
     # The repo's default workflow token is restricted (contents/metadata/packages

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +54,10 @@ func sha256Hex(s string) string {
 // computes the baseline hashes.
 const topologyControllerContainer = "topology-controller"
 
+// workDirCleanupTimeout bounds the removal of the work directory a hash run
+// leaves in the container, so a wedged docker exec cannot hang the test's end.
+const workDirCleanupTimeout = 30 * time.Second
+
 // contentHashScript parses the manifest.json in the directory named by its one
 // argument, with the compile-extras.json beside it when there is one, through
 // topology-controller's own parser, and prints {unique_id: content_hash} of
@@ -76,15 +81,18 @@ var (
 )
 
 // contentHashesOf returns the content_hash topology-controller computes for
-// every node it yields from a dbt manifest and that compile's
+// every node it yields from service's dbt manifest and that compile's
 // compile-extras.json (nil when the compile wrote none), keyed by unique_id.
+// A manifest it yields no node from fails the test.
 // topology-controller's parser is the one implementation of the formula, so
 // the harness asks it rather than keeping a copy: both files are copied into
 // the topology-controller container and a short script there runs
-// parse_manifest over them. Results are kept for the life of the process,
+// parse_manifest over them with the container's installed environment
+// (`uv run --no-sync`, so the running service's venv is never re-synced).
+// Results are kept for the life of the process,
 // keyed by the SHA-256 of both inputs, since every test seeds production from
 // the same baseline manifests.
-func contentHashesOf(t *testing.T, ctx context.Context, manifest, extras []byte) map[string]string {
+func contentHashesOf(t *testing.T, ctx context.Context, service string, manifest, extras []byte) map[string]string {
 	t.Helper()
 	cacheKey := sha256Hex(string(manifest)) + ":"
 	if extras != nil {
@@ -106,7 +114,9 @@ func contentHashesOf(t *testing.T, ctx context.Context, manifest, extras []byte)
 	require.NoError(t, err, "create a work directory in %s: %s", topologyControllerContainer, exitStderr(err))
 	remote := strings.TrimSpace(string(out))
 	defer func() {
-		if out, err := exec.CommandContext(context.Background(), "docker", "exec", topologyControllerContainer, "rm", "-rf", remote).CombinedOutput(); err != nil { //nolint:gosec // remote is the directory mktemp named
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), workDirCleanupTimeout)
+		defer cancel()
+		if out, err := exec.CommandContext(cleanupCtx, "docker", "exec", topologyControllerContainer, "rm", "-rf", remote).CombinedOutput(); err != nil { //nolint:gosec // remote is the directory mktemp named
 			t.Logf("remove %s:%s: %v: %s", topologyControllerContainer, remote, err, out)
 		}
 	}()
@@ -122,12 +132,13 @@ func contentHashesOf(t *testing.T, ctx context.Context, manifest, extras []byte)
 	}
 
 	out, err = exec.CommandContext(ctx, "docker", "exec", "-w", "/app", "-e", "PYTHONPATH=/app/proto", //nolint:gosec // fixed script, directory mktemp named
-		topologyControllerContainer, "uv", "run", "--frozen", "python", "-c", contentHashScript, remote).Output()
+		topologyControllerContainer, "uv", "run", "--no-sync", "python", "-c", contentHashScript, remote).Output()
 	require.NoError(t, err, "hash the manifest with topology-controller's parser: %s", exitStderr(err))
 
 	var hashes map[string]string
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out), &hashes),
 		"topology-controller's hash script must print one JSON object, got %q", out)
+	require.NotEmpty(t, hashes, "topology-controller's parser yields no node from the manifest of service %s", service)
 	contentHashCache[cacheKey] = hashes
 	return copyHashes(hashes)
 }

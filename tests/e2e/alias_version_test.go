@@ -46,8 +46,8 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 
 	// additive polls: assertValidationRequestedNodes (8m) + the payload read
 	// (2m) + waitForReleasePromoted (12m, two validation levels) +
-	// waitForTopologySwap (2m) = 24m.
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	// waitForTopologySwap (2m) + waitForPromoteSeedRunsToEnd (5m) = 29m.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -113,6 +113,9 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, aliasDepUniqueID, 2*time.Minute)
+	// The promotion may plan promote-seed runs of service-1's seeds; the next
+	// test must not find them active.
+	waitForPromoteSeedRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
 	t.Log("✅ the aliased and versioned models validated with their dependants, and the release promoted")
 }
 

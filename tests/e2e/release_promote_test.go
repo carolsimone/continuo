@@ -701,7 +701,7 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 				continue // skip keys with extra path segments
 			}
 			extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(service))
-			nodes := parseManifestNodes(t, ctx, getS3Object(t, ctx, clients, key), extras)
+			nodes := parseManifestNodes(t, ctx, service, getS3Object(t, ctx, clients, key), extras)
 			imageTag := readServiceImageTag(t, ctx, clients, service)
 			services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 		}
@@ -790,13 +790,13 @@ func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients,
 }
 
 // parseManifestNodes returns one manifestNode per node topology-controller's
-// parser yields from a dbt manifest and its compile extras (nil when the
-// compile wrote none), with the unique_id and content_hash the live parser
+// parser yields from service's dbt manifest and its compile extras (nil when
+// the compile wrote none), with the unique_id and content_hash the live parser
 // gives it (see contentHashesOf), sorted by unique_id. Seeding current_prod
 // with these makes a node the release leaves unchanged read as unchanged.
-func parseManifestNodes(t *testing.T, ctx context.Context, manifest, extras []byte) []manifestNode {
+func parseManifestNodes(t *testing.T, ctx context.Context, service string, manifest, extras []byte) []manifestNode {
 	t.Helper()
-	hashes := contentHashesOf(t, ctx, manifest, extras)
+	hashes := contentHashesOf(t, ctx, service, manifest, extras)
 	nodes := make([]manifestNode, 0, len(hashes))
 	for uniqueID, contentHash := range hashes {
 		nodes = append(nodes, manifestNode{uniqueID: uniqueID, contentHash: contentHash})

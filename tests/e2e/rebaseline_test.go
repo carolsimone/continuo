@@ -49,10 +49,11 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	// additive polls: the promotion (10m) + run-controller applying it (2m) +
-	// catalog's topology swap (2m) and versions (2m) + the no-validation grace
-	// window (20s). The restore has a context of its own.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// additive polls: the wait for earlier promote-seed runs (5m) + the
+	// promotion (10m) + run-controller applying it (2m) + catalog's topology
+	// swap (2m) and versions (2m) + the no-validation grace window (20s). The
+	// restore has a context of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -79,6 +80,9 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 	}
 
 	// ── 1. production holds the baseline; the rebaseline release is posted ──
+	// A promote-seed run an earlier test's release planned would record its
+	// seeds as built after this release adopts them.
+	waitForPromoteSeedRunsToEnd(t, ctx, clients, "", 5*time.Minute)
 	defer restoreDefaultTopologyAfter(t, clients, releaseID)
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
