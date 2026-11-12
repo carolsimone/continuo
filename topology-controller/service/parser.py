@@ -3,9 +3,12 @@
 Every node carries a content_hash folded from its own source, the shared code it
 uses (macros, functions, unit tests and the project's service units), its hashed
 config and, for a model or snapshot, its compiled SQL (service/dbt_hashing.py
-holds the parts and their fold). A model, seed or snapshot a gate leaves out (no
-owner, no tag to take a schedule from, a local stub) is reported through the
-caller's `skipped` list, never raised.
+holds the parts and their fold). A seed the compile extras name also carries its
+column fingerprint, CSV header and column types, and the parse reports the
+service's provenance: the manifest's dbt version, the extras' package versions
+and the seeds whose source part is still dbt's `path` checksum. A model, seed or
+snapshot a gate leaves out (no owner, no tag to take a schedule from, a local
+stub) is reported through the caller's `skipped` list, never raised.
 """
 import json
 import logging
@@ -15,8 +18,17 @@ from contextlib import contextmanager
 from continuo_contracts.errors import ContractsError
 
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import CompileExtras, ManifestNode, NodeType, ParsedArtifact, SkippedNode, SkipReason
+from domain.model import (
+    CompileExtras,
+    ManifestNode,
+    NodeType,
+    ParsedArtifact,
+    ServiceProvenance,
+    SkippedNode,
+    SkipReason,
+)
 from domain.node_timeout import timeout_seconds
+from service.compile_extras import seed_columns_hash
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 
 logger = logging.getLogger(__name__)
@@ -74,7 +86,9 @@ def parse_manifest(
 
     `extras` is the compile-extras.json of the same service when its compile wrote
     one. A seed's source part is the SHA-256 of its file bytes the extras record,
-    or dbt's own checksum when the extras are absent or do not name the seed.
+    or dbt's own checksum when the extras are absent or do not name the seed; a
+    seed the extras name also carries seed_columns_hash, seed_header and
+    seed_column_types from its entry, which stay empty otherwise.
 
     A model, seed or snapshot that a gate leaves out (no owner, no tag to take
     a schedule from, a local stub) is never an error: when `skipped` is given,
@@ -89,6 +103,7 @@ def parse_manifest(
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
     used_units: dict[str, CodeUnit] = {}
+    path_checksum_seeds: list[str] = []
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in SUPPORTED_RESOURCE_TYPES:
@@ -150,6 +165,14 @@ def parse_manifest(
         )
         if resource_type == "model":
             manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
+        if resource_type == "seed":
+            seed = extras.seeds.get(node_id) if extras is not None else None
+            if seed is not None:
+                manifest_node.seed_columns_hash = seed_columns_hash(seed)
+                manifest_node.seed_header = seed.header
+                manifest_node.seed_column_types = dict(seed.column_types)
+            if parts.path_checksum:
+                path_checksum_seeds.append(manifest_node.unique_id)
         try:
             manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))
         except ValueError as exc:
@@ -219,4 +242,9 @@ def parse_manifest(
         }
         for unit_id, unit in sorted(used_units.items())
     }
-    return ParsedArtifact(nodes=nodes, shared_code=shared_code)
+    provenance = ServiceProvenance(
+        dbt_version=(manifest.get("metadata") or {}).get("dbt_version", ""),
+        packages=dict(extras.packages) if extras is not None else {},
+        path_checksum_seeds=tuple(sorted(path_checksum_seeds)),
+    )
+    return ParsedArtifact(nodes=nodes, shared_code=shared_code, provenance=provenance)

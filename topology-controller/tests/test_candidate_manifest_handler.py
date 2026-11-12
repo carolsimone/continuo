@@ -7,11 +7,12 @@ import pytest
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SkipReason
+from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SeedExtras, SkipReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.compile_extras import seed_columns_hash
 from service.ports import ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
@@ -1387,3 +1388,32 @@ def test_extras_of_the_declared_service_leave_the_release_parsed(tmp_path):
     build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
     publisher.publish_failed.assert_not_called()
     publisher.publish_ok.assert_called_once()
+
+
+_PATH_CHECKSUM_LINE = "candidate: seed keeps dbt's path checksum until its service's rebaseline release"
+
+
+def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
+    big = dbt_node("seed_big") | {"unique_id": "seed.service-1.seed_big", "resource_type": "seed", "compiled_code": "",
+                                  "checksum": {"name": "path", "checksum": "seeds/seed_big.csv"}}
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source_with_nodes(tmp_path, big), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    (record,) = [r for r in caplog.records if r.getMessage() == _PATH_CHECKSUM_LINE]
+    assert (record.levelno, record.release_id, record.service, record.seed) == (
+        logging.WARNING, "rel-1", "service-1", "test_schema.seed_big")
+
+
+def test_the_topology_entry_carries_seed_columns_hash_only_when_set(tmp_path):
+    seed = dbt_node("seed_countries") | {"unique_id": "seed.service-1.seed_countries", "resource_type": "seed",
+                                          "compiled_code": ""}
+    plain = dbt_node("plain_seed") | {"unique_id": "seed.service-1.plain_seed", "resource_type": "seed",
+                                       "compiled_code": ""}
+    source = source_with_nodes(tmp_path, seed, plain)
+    _write_compile_extras(tmp_path, {"seed.service-1.seed_countries": {
+        "sha256": "4a" * 32, "header": ["code", "name"], "column_types": {"code": "varchar(2)"}}})
+    writer = RecordingArtifactWriter()
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert nodes["test_schema.seed_countries"]["seed_columns_hash"] == seed_columns_hash(
+        SeedExtras(sha256="4a" * 32, header=("code", "name"), column_types={"code": "varchar(2)"}))
+    assert "seed_columns_hash" not in nodes["test_schema.plain_seed"]

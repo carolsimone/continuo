@@ -109,6 +109,17 @@ class CompileExtras:
     packages: dict[str, str]
 
 
+@dataclass(frozen=True)
+class ServiceProvenance:
+    """What one service's dbt compile ran with: the dbt version its manifest
+    names, the installed dbt distributions and their versions (empty without
+    compile extras), and the unique ids of its seeds whose source part is
+    still dbt's `path` checksum, sorted."""
+    dbt_version: str
+    packages: dict[str, str]
+    path_checksum_seeds: tuple[str, ...]
+
+
 @dataclass
 class UpstreamDep:
     table_name: str
@@ -190,6 +201,15 @@ class ManifestNode:
     # node, whose identity is "<schema>.<table>".
     declared_columns: int = 0  # how many columns the node declares: a dbt
     # node's `columns` block, a python node's output columns.
+    seed_columns_hash: str = ""  # a dbt seed's column fingerprint
+    # (compile_extras.seed_columns_hash); "" without an extras entry for the seed
+    seed_header: tuple[str, ...] = ()  # a dbt seed's CSV header, in file order;
+    # () without an extras entry for the seed
+    seed_column_types: dict[str, str] = field(default_factory=dict)  # a dbt
+    # seed's configured column types as its compile wrote them; {} without an
+    # extras entry for the seed
+    projection: str = ""  # a python node's code projection as JSON text; ""
+    # for a dbt node
 
     @property
     def unique_id(self) -> str:
@@ -257,8 +277,9 @@ class NodeRegistry:
 
 @dataclass(frozen=True)
 class ParsedArtifact:
-    """The result of parsing one service's artifact: its nodes and the shared
-    code (dbt macros) they use, keyed by unit id."""
+    """The result of parsing one service's artifact: its nodes, the shared
+    code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
+    its compile ran with (None for a python contract)."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
-    provenance: object | None = None
+    provenance: ServiceProvenance | None = None

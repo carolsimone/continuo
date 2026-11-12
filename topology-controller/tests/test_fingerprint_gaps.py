@@ -103,3 +103,28 @@ def test_a_generate_alias_name_override_moves_every_model_seed_and_snapshot():
 
 def test_swapping_two_macro_bodies_moves_their_caller():
     assert "fp_analytics.macro_user" in moved("base", "macro_swap")
+
+
+def test_the_seed_column_fingerprint_moves_only_with_the_columns():
+    def seed(variant, **kw):
+        return node_of(parse_variant(variant, **kw), "fp_analytics.seed_users")
+
+    base = seed("base")
+    assert base.seed_columns_hash.startswith("sha256:")
+    assert base.seed_header == ("id", "name", "amount")
+    assert base.seed_column_types == {"id": "integer"}
+    assert seed("seed_trailing_space").seed_columns_hash == base.seed_columns_hash
+    assert seed("seed_column_add").seed_columns_hash != base.seed_columns_hash
+    assert seed("seed_column_add").seed_header == ("id", "name", "amount", "source")
+    without = seed("base", extras=False)
+    assert (without.seed_columns_hash, without.seed_header, without.seed_column_types) == ("", (), {})
+    extras = base_extras()
+    trimmed = replace(extras, seeds={k: v for k, v in extras.seeds.items() if not k.endswith(".seed_users")})
+    missing = node_of(parse_manifest(base_manifest_path(), "", trimmed), "fp_analytics.seed_users")
+    assert (missing.seed_columns_hash, missing.seed_header, missing.seed_column_types) == ("", (), {})
+
+
+def test_provenance_lists_the_path_checksum_seeds_only_without_extras():
+    assert parse_variant("base", extras=False).provenance.path_checksum_seeds == ("fp_analytics.seed_big",)
+    assert parse_variant("base").provenance.path_checksum_seeds == ()
+    assert parse_variant("base").provenance.packages["dbt-adapters"] == "1.24.5"

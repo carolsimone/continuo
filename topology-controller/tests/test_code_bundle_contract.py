@@ -39,6 +39,8 @@ def _dbt_node() -> ManifestNode:
         config={"materialized": "table", "meta": {"owner": "team-a"}},
         source_hash="s1", shared_code_hash="m1", config_hash="c1",
         content_hash="sha256:aaa", code_unit_ids=["service-a:macro.svc.m1"],
+        compiled_hash="d1",
+        hashed_config={"materialized": "table", "relation": {"schema": "analytics", "alias": "revenue"}},
     )
 
 
@@ -49,7 +51,7 @@ def _bundle(tmp_path) -> dict:
     shared = {
         "service-a:macro.svc.m1": {"source": "select 1", "checksum": "u1", "depends_on": []},
     }
-    return build_code_bundle("rel-1", [_dbt_node(), *python_nodes], shared)
+    return build_code_bundle("rel-1", [_dbt_node(), *python_nodes], shared, tests=[], provenance={})
 
 
 def test_the_bundle_matches_the_v1_fixture(tmp_path):

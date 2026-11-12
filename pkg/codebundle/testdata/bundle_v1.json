@@ -6,6 +6,7 @@
         "service-a:macro.svc.m1"
       ],
       "compiled_code": "select 1 as id from analytics.orders",
+      "compiled_hash": "d1",
       "config": {
         "materialized": "table",
         "meta": {
@@ -14,6 +15,13 @@
       },
       "config_hash": "c1",
       "content_hash": "sha256:aaa",
+      "hashed_config": {
+        "materialized": "table",
+        "relation": {
+          "alias": "revenue",
+          "schema": "analytics"
+        }
+      },
       "raw_code": "select 1 as id from {{ ref('orders') }}",
       "runtime": "dbt",
       "shared_code_hash": "m1",
@@ -22,6 +30,7 @@
     "analytics.table_test": {
       "code_unit_ids": [],
       "compiled_code": "",
+      "compiled_hash": "",
       "config": {},
       "config_hash": "ccc333",
       "content_hash": "sha256:10a14c17d608c8b04b7ca68417edef546c444ded9c5b144523eaa778da8b45f5",
@@ -31,6 +40,7 @@
       "source_hash": "aaa111"
     }
   },
+  "provenance": {},
   "release_id": "rel-1",
   "shared_code": {
     "service-a:macro.svc.m1": {
@@ -38,5 +48,6 @@
       "depends_on": [],
       "source": "select 1"
     }
-  }
+  },
+  "tests": {}
 }
