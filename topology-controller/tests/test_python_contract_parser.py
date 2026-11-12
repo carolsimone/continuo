@@ -4,11 +4,19 @@ import json
 
 import pytest
 import yaml
+from continuo_contracts.hashing import fold3
 
 from domain.exceptions import MalformedContractError
 from domain.model import NodeType, Runtime
-from service.content_hash import content_hash_fold
 from service.python_contract_parser import parse_python_contract
+
+
+def _fold_of(entry):
+    """The fold of the entry's three parts. A part a test replaced with a value that
+    is not a string (which the parser refuses) is folded as its repr, so the
+    entry still carries a content_hash."""
+    parts = (entry.get(key, "") for key in ("source_hash", "shared_code_hash", "config_hash"))
+    return fold3(*(part if isinstance(part, str) else repr(part) for part in parts))
 
 
 def make_entry(remove=(), **overrides):
@@ -38,14 +46,7 @@ def make_entry(remove=(), **overrides):
         "config_hash": "ccc333",
     }
     entry.update(overrides)
-    entry.setdefault(
-        "content_hash",
-        content_hash_fold(
-            entry.get("source_hash", ""),
-            entry.get("shared_code_hash", ""),
-            entry.get("config_hash", ""),
-        ),
-    )
+    entry.setdefault("content_hash", _fold_of(entry))
     for key in remove:
         entry.pop(key, None)
     return entry
@@ -81,14 +82,7 @@ def make_csv_entry(remove=(), **overrides):
         "config_hash": "csvcfg000",
     }
     entry.update(overrides)
-    entry.setdefault(
-        "content_hash",
-        content_hash_fold(
-            entry.get("source_hash", ""),
-            entry.get("shared_code_hash", ""),
-            entry.get("config_hash", ""),
-        ),
-    )
+    entry.setdefault("content_hash", _fold_of(entry))
     for key in remove:
         entry.pop(key, None)
     return entry
@@ -143,7 +137,7 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
     assert node.source_hash == "aaa111"
     assert node.shared_code_hash == "bbb222"
     assert node.config_hash == "ccc333"
-    assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
+    assert node.content_hash == fold3("aaa111", "bbb222", "ccc333")
 
 
 def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
@@ -345,7 +339,7 @@ def test_csv_entry_hash_fields_verify(tmp_path):
     (node,) = nodes
     assert node.source_hash == hashlib.sha256(uri.encode()).hexdigest()
     assert node.shared_code_hash == ""
-    assert node.content_hash == content_hash_fold(
+    assert node.content_hash == fold3(
         node.source_hash, node.shared_code_hash, entry["config_hash"]
     )
 
@@ -446,7 +440,7 @@ def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
     nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
-    assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
+    assert node.content_hash == fold3("aaa111", "bbb222", "ccc333")
 
 
 def make_api_entry(remove=(), **overrides):

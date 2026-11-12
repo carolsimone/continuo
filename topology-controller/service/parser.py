@@ -1,58 +1,27 @@
 """Parses a dbt manifest.json into ManifestNodes and the shared code (macros) they use.
 
 Every node carries a content_hash folded from its own source, the shared code it
-uses and its resolved config. A model, seed or snapshot a gate leaves out (no owner,
-no tag to take a schedule from, a local stub) is reported through the caller's
-`skipped` list, never raised.
+uses, its hashed config and, for a model or snapshot, its compiled SQL
+(service/dbt_hashing.py holds the source, compiled and config parts). A model,
+seed or snapshot a gate leaves out (no owner, no tag to take a schedule from, a
+local stub) is reported through the caller's `skipped` list, never raised.
 """
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
+
+from continuo_contracts.errors import ContractsError
+from continuo_contracts.hashing import fold4
+
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, ManifestNode, NodeType, ParsedArtifact, SkippedNode, SkipReason
 from domain.node_timeout import timeout_seconds
-from service.content_hash import content_hash_fold
+from service.dbt_hashing import ManifestContext, compiled_part, config_part, hashed_config, source_part
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
-
-
-def _node_source_hash(node: dict) -> str:
-    """Return a non-empty, change-sensitive fingerprint for a dbt node's own source.
-
-    release-controller uses content_hash as the SOLE change detector, so an empty
-    value would make later edits to the node undetectable (empty == empty); the
-    result here is therefore always non-empty.
-
-    A dbt TEST is fingerprinted by its COMPILED assertion, never its raw source or
-    dbt checksum. A generic test's `raw_code` is only the macro call (e.g.
-    `{{ test_not_null(**_dbt_generic_test_kwargs) }}`) and its dbt checksum is
-    empty; only the compiled SQL reflects the columns and relations the test
-    actually asserts against and binds to. Hashing `raw_code` (or the empty
-    checksum) would miss an upstream macro/var change that rewrites the compiled
-    assertion while leaving the macro call untouched, so the changed test would
-    promote without ever being bind-checked. A test therefore hashes
-    `compiled_code` (falling back to `raw_code`, then a stable JSON dump).
-
-    Every other node prefers dbt's own per-node `checksum.checksum` (a sha256 of
-    the node's source file); for a node dbt did not check-sum it falls back to a
-    deterministic sha256 over the node's source (`raw_code`/`compiled_code`) or,
-    failing that, a stable JSON dump — so the fingerprint is never empty and still
-    changes when the node changes.
-    """
-    if node.get("resource_type") == "test":
-        basis = node.get("compiled_code") or node.get("raw_code") or ""
-        if not basis:
-            basis = json.dumps(node, sort_keys=True, default=str)
-        return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
-    checksum = node.get("checksum", {}).get("checksum", "")
-    if checksum:
-        return checksum
-    basis = node.get("raw_code") or node.get("compiled_code") or ""
-    if not basis:
-        basis = json.dumps(node, sort_keys=True, default=str)
-    return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
 
 
 def _transitive_macro_ids(direct_ids: list[str], macros: dict) -> set[str]:
@@ -77,23 +46,6 @@ def _transitive_macro_ids(direct_ids: list[str], macros: dict) -> set[str]:
     return seen
 
 
-CONFIG_HASH_DENYLIST = {"meta", "docs", "description", "grants", "tags"}
-
-
-def _config_hash(node: dict) -> str:
-    """Fingerprint of the node's resolved config, denylist-filtered.
-
-    Out-of-file config (dbt_project.yml / schema.yml properties) reaches only the
-    manifest's resolved config, never dbt's file checksum — without this component
-    a materialization change would promote with no revalidation. Unknown keys
-    participate by default: a spurious revalidation is cheaper than a silently
-    missed change.
-    """
-    cfg = {k: v for k, v in (node.get("config") or {}).items()
-           if k not in CONFIG_HASH_DENYLIST}
-    return hashlib.sha256(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest()
-
-
 def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
     """Fold of the source checksums of the given shared-code units; "" if none."""
     unit_hashes = sorted(
@@ -103,6 +55,43 @@ def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
     if not unit_hashes:
         return ""
     return hashlib.sha256("".join(unit_hashes).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class _HashParts:
+    source_hash: str
+    shared_code_hash: str
+    config_hash: str
+    compiled_hash: str
+    content_hash: str
+    hashed_config: dict
+
+
+def _hash_parts(label: str, node: dict, ctx: ManifestContext, unit_ids: set[str], macros: dict) -> _HashParts:
+    """The four parts of a dbt node's content_hash and their fold.
+
+    A value the hashing refuses (a config value canonical JSON cannot write, text
+    UTF-8 cannot encode) is the artifact's fault, so it is raised as an
+    InvalidNodeSettingError naming the node, which rejects the release instead of
+    retrying it.
+    """
+    try:
+        config = hashed_config(node, ctx)
+        source = source_part(node, ctx)[0]
+        shared = _shared_code_hash(unit_ids, macros)
+        config_hash = config_part(config)
+        compiled = compiled_part(node, ctx)
+        content_hash = fold4(source, shared, config_hash, compiled)
+    except (ContractsError, UnicodeEncodeError) as error:
+        raise InvalidNodeSettingError(f"{label}: {error}") from error
+    return _HashParts(
+        source_hash=source,
+        shared_code_hash=shared,
+        config_hash=config_hash,
+        compiled_hash=compiled,
+        content_hash=content_hash,
+        hashed_config=config,
+    )
 
 
 _RESOURCE_TYPE_TO_NODE_TYPE = {
@@ -137,8 +126,8 @@ def parse_manifest(
     """Parse a dbt manifest into its nodes and the shared code they use.
 
     `extras` is the compile-extras.json of the same service when its compile wrote
-    one. The node hashes are computed from the manifest alone, so a parse with or
-    without extras yields the same nodes.
+    one. A seed's source part is the SHA-256 of its file bytes the extras record,
+    or dbt's own checksum when the extras are absent or do not name the seed.
 
     A model, seed or snapshot that a gate leaves out (no owner, no tag to take
     a schedule from, a local stub) is never an error: when `skipped` is given,
@@ -149,6 +138,7 @@ def parse_manifest(
         manifest = json.load(f)
 
     macros = manifest.get("macros", {})
+    ctx = ManifestContext.from_manifest(manifest, extras)
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
     used_unit_ids: set[str] = set()
@@ -186,9 +176,7 @@ def parse_manifest(
         direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
         transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
         used_unit_ids |= transitive_ids
-        source_hash = _node_source_hash(node)
-        shared_hash = _shared_code_hash(transitive_ids, macros)
-        config_hash = _config_hash(node)
+        parts = _hash_parts(f"{node['schema']}.{node['name']}".lower(), node, ctx, transitive_ids, macros)
 
         manifest_node = ManifestNode(
             table_name=node["name"],
@@ -201,14 +189,16 @@ def parse_manifest(
             dependency_sqls=[node["compiled_code"]] if node.get("compiled_code") else [],
             candidate_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
-            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
+            content_hash=parts.content_hash,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),
             config=node.get("config") or {},
-            source_hash=source_hash,
-            shared_code_hash=shared_hash,
-            config_hash=config_hash,
+            source_hash=parts.source_hash,
+            shared_code_hash=parts.shared_code_hash,
+            config_hash=parts.config_hash,
+            compiled_hash=parts.compiled_hash,
+            hashed_config=parts.hashed_config,
             code_unit_ids=direct_unit_ids,
             declared_columns=len(node.get("columns") or {}),
         )
@@ -248,9 +238,7 @@ def parse_manifest(
         direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
         transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
         used_unit_ids |= transitive_ids
-        source_hash = _node_source_hash(node)
-        shared_hash = _shared_code_hash(transitive_ids, macros)
-        config_hash = _config_hash(node)
+        parts = _hash_parts(node_id, node, ctx, transitive_ids, macros)
         test_nodes.append(ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
@@ -261,14 +249,16 @@ def parse_manifest(
             dependency_sqls=[compiled] if compiled else [],
             candidate_sql=compiled,
             node_type=NodeType.DBT_TEST,
-            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
+            content_hash=parts.content_hash,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),
             config=node.get("config") or {},
-            source_hash=source_hash,
-            shared_code_hash=shared_hash,
-            config_hash=config_hash,
+            source_hash=parts.source_hash,
+            shared_code_hash=parts.shared_code_hash,
+            config_hash=parts.config_hash,
+            compiled_hash=parts.compiled_hash,
+            hashed_config=parts.hashed_config,
             code_unit_ids=direct_unit_ids,
             identity=node_id,
         ))

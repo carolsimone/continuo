@@ -14,12 +14,12 @@ import json
 import logging
 
 import yaml
+from continuo_contracts.hashing import fold3
 
 from domain.exceptions import MalformedContractError
 from domain.model import ManifestNode, ParsedArtifact, Runtime, SkippedNode
 from domain.node_timeout import timeout_seconds
 from domain.secret_ref import validate_secret_ref
-from service.content_hash import content_hash_fold
 from service.python_kind_rules import RULES, resolve_kind
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ def _parse_entry(
             ' ("" when the script has no in-repo imports)'
         )
 
-    expected = content_hash_fold(source_hash, shared_code_hash, config_hash)
+    expected = fold3(source_hash, shared_code_hash, config_hash)
     if content_hash != expected:
         _fail(
             f"{label}: content_hash does not equal the fold of its parts"

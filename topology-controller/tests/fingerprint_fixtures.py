@@ -8,13 +8,16 @@ parser and compare its content hashes with another variant's.
 """
 from __future__ import annotations
 
+import atexit
 import gzip
+import json
 import os
 import shutil
 import tempfile
+from functools import cache
 from pathlib import Path
 
-from domain.model import ParsedArtifact
+from domain.model import CompileExtras, ManifestNode, ParsedArtifact
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dbt_fingerprints"
 MANIFESTS_DIR = FIXTURE_DIR / "manifests"
@@ -55,3 +58,32 @@ def moved(base: str, variant: str, *, extras: bool = True) -> set[str]:
     before = hashes(base, extras=extras)
     after = hashes(variant, extras=extras)
     return {uid for uid in before.keys() | after.keys() if before.get(uid) != after.get(uid)}
+
+
+def node_of(parsed: ParsedArtifact, unique_id: str) -> ManifestNode:
+    """The node of the parsed artifact whose unique id is unique_id."""
+    return next(node for node in parsed.nodes if node.unique_id == unique_id)
+
+
+@cache
+def base_manifest_path() -> str:
+    """The base variant's manifest, gunzipped once into a directory that is removed
+    when the test process exits."""
+    tmp_dir = tempfile.mkdtemp(prefix="fpshop-base-")
+    atexit.register(shutil.rmtree, tmp_dir, True)
+    manifest_path, _ = variant_paths("base", tmp_dir)
+    return manifest_path
+
+
+def base_extras() -> CompileExtras:
+    """The base variant's compile extras, loaded."""
+    from service.compile_extras import load_compile_extras
+
+    return load_compile_extras(str(MANIFESTS_DIR / "base" / "compile-extras.json"), "")
+
+
+def manifest_checksum(dbt_unique_id: str) -> str:
+    """dbt's own checksum of a node of the base variant, as the manifest writes it."""
+    with gzip.open(MANIFESTS_DIR / "base" / "manifest.json.gz", "rt", encoding="utf-8") as f:
+        manifest = json.load(f)
+    return manifest["nodes"][dbt_unique_id]["checksum"]["checksum"]

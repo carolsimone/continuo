@@ -15,19 +15,26 @@ import gzip
 import hashlib
 import json
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
 import yaml
+from continuo_contracts.hashing import fold3
 
 from domain.model import ManifestKind, ManifestRequest
-from service.content_hash import content_hash_fold
 
 DEFAULT_SEED = 1
 MACROS_PATH = Path(__file__).parent / "fixtures" / "macros.json.gz"
 
 _IMAGE_TAG = "bench"
+# What a real compile writes into every manifest and node: the run's id and
+# start time, which the parser masks out of the hashed text, and the target
+# database.
+_INVOCATION_ID = "5f0c6d2e-8a41-4b7e-9d3c-2e1f0a9b8c7d"
+_RUN_STARTED_AT = "2026-11-10T06:00:00.000000+00:00"
+_DATABASE = "warehouse"
 _PYTHON_SERVICE = "svc-py"
 _PYTHON_SCHEMA = "py"
 _DBT_PACKAGES = {
@@ -90,10 +97,19 @@ def _split(total: int, parts: int) -> list[int]:
     return [base + 1 if part < remainder else base for part in range(parts)]
 
 
-def _model_sql(columns: list[str], upstreams: list[tuple[str, str]]) -> str:
+def _compiled_relation(schema: str, table: str) -> str:
+    return f"{schema}.{table}"
+
+
+def _ref(_schema: str, table: str) -> str:
+    return f"{{{{ ref('{table}') }}}}"
+
+
+def _model_sql(columns: list[str], upstreams: list[tuple[str, str]], relation: Callable[[str, str], str] = _compiled_relation) -> str:
     """A CTE over the first upstream, a window sum, and a left join to each
-    further upstream."""
-    first_schema, first_table = upstreams[0]
+    further upstream, each upstream written by `relation`: as `<schema>.<name>`
+    for the compiled SQL, as a `ref` call for the raw code."""
+    first_relation = relation(*upstreams[0])
     inner = ",\n        ".join(columns)
     outer = [f"a.{column}" for column in columns]
     outer.append("sum(a.c2) over (partition by a.c0) as c2_total")
@@ -101,21 +117,22 @@ def _model_sql(columns: list[str], upstreams: list[tuple[str, str]]) -> str:
     for position, (schema, table) in enumerate(upstreams[1:], start=1):
         alias = f"b{position}"
         outer.append(f"{alias}.c1 as {alias}_c1")
-        joins.append(f"left join {schema}.{table} as {alias} on a.c0 = {alias}.c0")
+        joins.append(f"left join {relation(schema, table)} as {alias} on a.c0 = {alias}.c0")
     outer_list = ",\n    ".join(outer)
     join_lines = "".join(f"\n{join}" for join in joins)
     return (
-        f"with src as (\n    select\n        {inner}\n    from {first_schema}.{first_table}\n)\n"
+        f"with src as (\n    select\n        {inner}\n    from {first_relation}\n)\n"
         f"select\n    {outer_list}\nfrom src as a{join_lines}"
     )
 
 
-def _model_node(service: int, name: str, columns: list[str], sql: str) -> dict:
+def _model_node(service: int, name: str, columns: list[str], upstreams: list[tuple[str, str]]) -> dict:
     schema = f"s{service}"
     return {
         "unique_id": f"model.svc_{service}.{name}",
         "resource_type": "model",
         "name": name,
+        "database": _DATABASE,
         "schema": schema,
         "fqn": [f"svc_{service}", name],
         "tags": ["daily"],
@@ -127,7 +144,8 @@ def _model_node(service: int, name: str, columns: list[str], sql: str) -> dict:
             for column in columns
         },
         "depends_on": {"macros": list(_MODEL_MACROS)},
-        "compiled_code": sql,
+        "raw_code": _model_sql(columns, upstreams, _ref),
+        "compiled_code": _model_sql(columns, upstreams),
     }
 
 
@@ -138,6 +156,7 @@ def _test_node(service: int, model: dict, column: str) -> dict:
         "unique_id": f"test.svc_{service}.{name}",
         "resource_type": "test",
         "name": name,
+        "database": _DATABASE,
         "schema": schema,
         "fqn": [f"svc_{service}", name],
         "tags": [],
@@ -155,6 +174,7 @@ def _seed_node(service: int) -> dict:
         "unique_id": f"seed.svc_{service}.{name}",
         "resource_type": "seed",
         "name": name,
+        "database": _DATABASE,
         "schema": f"s{service}",
         "fqn": [f"svc_{service}", name],
         "tags": [],
@@ -201,7 +221,7 @@ def _python_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
         "source_hash": source_hash,
         "shared_code_hash": shared_code_hash,
         "config_hash": config_hash,
-        "content_hash": content_hash_fold(source_hash, shared_code_hash, config_hash),
+        "content_hash": fold3(source_hash, shared_code_hash, config_hash),
     }
 
 
@@ -249,7 +269,7 @@ def generate_estate(
             else:
                 picks = rng.sample(range(len(built)), min(2, len(built)))
                 upstreams = [built[pick] for pick in picks]
-            model = _model_node(service, name, column_names, _model_sql(column_names, upstreams))
+            model = _model_node(service, name, column_names, upstreams)
             nodes[model["unique_id"]] = model
             for column in column_names[:tests_per_model]:
                 test = _test_node(service, model, column)
@@ -257,7 +277,14 @@ def generate_estate(
             built.append((schema, name))
             index += 1
 
-        manifest = {"metadata": {"dbt_version": _DBT_PACKAGES["dbt-core"]}, "nodes": nodes, "macros": macros}
+        metadata = {
+            "dbt_version": _DBT_PACKAGES["dbt-core"],
+            "project_name": f"svc_{service}",
+            "adapter_type": "postgres",
+            "invocation_id": _INVOCATION_ID,
+            "run_started_at": _RUN_STARTED_AT,
+        }
+        manifest = {"metadata": metadata, "nodes": nodes, "macros": macros}
         manifest_key = f"{service_name}/{release_id}/manifest.json"
         objects[manifest_key] = json.dumps(manifest, sort_keys=True).encode()
         objects[f"{service_name}/{release_id}/compile-extras.json"] = json.dumps(

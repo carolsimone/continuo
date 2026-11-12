@@ -157,16 +157,21 @@ class ManifestNode:
     output_columns: list[dict] = field(default_factory=list)  # python nodes' declared
     # output shape ({name, type, nullable}); empty for dbt nodes
     node_type: NodeType = NodeType.DBT_MODEL
-    content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
+    content_hash: str = ""  # sha256:-prefixed fold of the parts: a dbt node's
+    # source_hash|shared_code_hash|config_hash|compiled_hash, a python node's first three
     image_tag: str = ""
     original_file_path: str = ""  # dbt original_file_path (project-relative)
     test_count: int = 0  # number of dbt tests attached to this node
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
     raw_code: str = ""  # node's own source (dbt raw_code), pre-compilation
     config: dict = field(default_factory=dict)  # node's resolved dbt config
-    source_hash: str = ""  # fingerprint of this node's own source (see _node_source_hash)
+    source_hash: str = ""  # fingerprint of this node's own source (see dbt_hashing.source_part)
     shared_code_hash: str = ""  # fold of transitive shared-code checksums; "" if none
-    config_hash: str = ""  # fingerprint of resolved config, denylist-filtered
+    config_hash: str = ""  # fingerprint of the hashed config (dbt) or code projection (python)
+    compiled_hash: str = ""  # fingerprint of a dbt model's or snapshot's masked
+    # compiled SQL; "" for every other node
+    hashed_config: dict | None = None  # the config a dbt node's config_hash hashes;
+    # None for a python node
     code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
     runtime: Runtime = Runtime.DBT
     resolved_relation: str = ""  # the name this node's build actually writes: a

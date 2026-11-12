@@ -1072,7 +1072,7 @@ def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
-        "content_hash": "sha256:dfe4669111f4209fd63db2ad347b82aaaf149563a5f749edb454c70b7c4a3f0b",
+        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
         "image_tag": "",
         "original_file_path": "",
         "upstream_unique_ids": ["test_schema.users"],

@@ -3,13 +3,13 @@ import json
 from unittest.mock import MagicMock, create_autospec
 
 import yaml
+from continuo_contracts.hashing import fold3
 
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
 from domain.model import ManifestFile, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
-from service.content_hash import content_hash_fold
 from service.ports import ManifestSourcePort, NoReleaseObserver
 
 
@@ -179,7 +179,7 @@ def python_entry(**overrides):
         "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
     }
     entry.update(overrides)
-    entry.setdefault("content_hash", content_hash_fold(
+    entry.setdefault("content_hash", fold3(
         entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
     return entry
 

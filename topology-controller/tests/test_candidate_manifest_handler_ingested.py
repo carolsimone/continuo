@@ -167,13 +167,17 @@ def _trino_topology_bytes(tmp_path, compiled_code):
         source_with_nodes(tmp_path, reader), MagicMock(), make_uploader(), artifact_writer=writer,
         dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
     ).handle(release_id="rel-1")
-    return writer.nodes, canonical_topology_json(tenant_id="default", release_id="rel-1", nodes=writer.nodes)
+    # The reader's content_hash folds its compiled SQL, which differs with the
+    # order the SQL names its tables in, so its bytes leave that one field out.
+    comparable = [n | {"content_hash": ""} if n["unique_id"] == "test_schema.reader" else n for n in writer.nodes]
+    return writer.nodes, canonical_topology_json(tenant_id="default", release_id="rel-1", nodes=comparable)
 
 
 def test_a_system_catalog_read_before_or_after_a_real_table_read_writes_the_real_table_and_its_edge(tmp_path):
     """On Trino system.runtime.nodes is the engine's own and warehouse.runtime.nodes
     is a real table with the same schema and name: the topology holds the real
-    table and its edge whichever the SQL names first, in the same bytes."""
+    table and its edge whichever the SQL names first, in the same bytes apart
+    from the reader's content_hash."""
     written = [_trino_topology_bytes(tmp_path, sql) for sql in SYSTEM_AND_REAL_READS]
     for nodes, _ in written:
         by_id = {n["unique_id"]: n for n in nodes}

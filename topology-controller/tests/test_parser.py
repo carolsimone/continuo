@@ -73,9 +73,9 @@ def test_parse_seed_without_tags_defaults_schedule_to_seed():
     assert nodes[0].schedule_name == "seed"
 
 
-def test_parse_sets_source_hash_from_checksum(tmp_path):
-    # dbt's own per-node checksum feeds the source_hash component verbatim; the
-    # published content_hash is the derived three-part sha256:-prefixed fold.
+def test_parse_sets_source_hash_from_the_normalised_raw_code_not_the_dbt_checksum(tmp_path):
+    # A model's source part is the SHA-256 of its raw_code with line endings and
+    # outer whitespace normalised; dbt's own file checksum is not read.
     manifest = {
         "nodes": {
             "model.svc.users": {
@@ -86,6 +86,7 @@ def test_parse_sets_source_hash_from_checksum(tmp_path):
                 "config": {"meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": "deadbeefcafef00d"},
+                "raw_code": "select 1\r\n",
             }
         }
     }
@@ -95,7 +96,7 @@ def test_parse_sets_source_hash_from_checksum(tmp_path):
     nodes = parse_manifest(str(path)).nodes
 
     assert len(nodes) == 1
-    assert nodes[0].source_hash == "deadbeefcafef00d"
+    assert nodes[0].source_hash == hashlib.sha256(b"select 1").hexdigest()
     assert nodes[0].content_hash.startswith("sha256:")
 
 
@@ -113,21 +114,20 @@ def _manifest_with(raw_code: str | None) -> dict:
     return {"nodes": {"model.svc.users": node}}
 
 
-def test_parse_falls_back_to_nonempty_hash_when_checksum_absent(tmp_path):
-    # A supported node without checksum must still get a non-empty, change-sensitive
-    # fingerprint — release-controller uses content_hash as the sole change detector,
-    # so an empty hash would make later edits to the node undetectable.
+def test_parse_hashes_the_empty_text_for_a_model_without_raw_code(tmp_path):
+    # A model with no raw_code still gets a source part (the SHA-256 of the empty
+    # text) and a non-empty content_hash, which release-controller compares.
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(_manifest_with(raw_code="select 1")))
+    path.write_text(json.dumps(_manifest_with(raw_code=None)))
 
     nodes = parse_manifest(str(path)).nodes
 
     assert len(nodes) == 1
-    assert nodes[0].content_hash != ""
+    assert nodes[0].source_hash == hashlib.sha256(b"").hexdigest()
     assert nodes[0].content_hash.startswith("sha256:")
 
 
-def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
+def test_the_source_hash_is_deterministic_and_change_sensitive(tmp_path):
     def hash_for(raw_code, fname):
         p = tmp_path / fname
         p.write_text(json.dumps(_manifest_with(raw_code=raw_code)))
@@ -138,8 +138,8 @@ def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
     h1_again = hash_for("select 1", "a_again.json")
     h2 = hash_for("select 2", "b.json")
 
-    assert h1 == h1_again, "same source -> same fallback hash (deterministic)"
-    assert h1 != h2, "different source -> different fallback hash (change-sensitive)"
+    assert h1 == h1_again, "same source -> same hash (deterministic)"
+    assert h1 != h2, "different source -> different hash (change-sensitive)"
 
 
 def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
@@ -157,6 +157,7 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
         "config": {"meta": {"owner": "team-a"}},
         "tags": ["nightly"],
         "checksum": {"name": "sha256", "checksum": "modelsource0001"},
+        "raw_code": "select 1 as orders",
         "depends_on": {"macros": list(model_macros.keys())},
     }
     macros = {
@@ -231,12 +232,12 @@ def test_transitive_macro_change_flips_model_hash(tmp_path):
 
 def test_node_without_macros_has_empty_shared_code_hash(tmp_path):
     # A model with no macro dependencies gets shared_code_hash == "" and its
-    # source_hash is the verbatim dbt checksum, untouched by macro-folding.
+    # source_hash is the hash of its own raw_code, untouched by macro-folding.
     p = tmp_path / "n.json"
     p.write_text(json.dumps(_manifest_with_macros({})))
     nodes = parse_manifest(str(p)).nodes
     node = nodes[0]
-    assert node.source_hash == "modelsource0001"
+    assert node.source_hash == hashlib.sha256(b"select 1 as orders").hexdigest()
     assert node.shared_code_hash == ""
     assert node.content_hash.startswith("sha256:")
 
