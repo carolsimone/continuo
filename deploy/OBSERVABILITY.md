@@ -91,6 +91,8 @@ Every series also carries a `service` label.
 | `continuo_command_requests_total` | counter | `command`, `outcome` | `run-controller` |
 | `continuo_cron_fires_total` | counter | `outcome` | `run-controller` |
 | `continuo_schedules` | gauge | `state` | `run-controller` |
+| `continuo_seed_reloads_total` | counter | `action`, `outcome` | `run-controller` |
+| `continuo_seed_reload_stops_total` | counter | `reason` | `run-controller` |
 | `continuo_catalog_exports_total` | counter | `outcome` (`success`, `failure`, `skipped`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_duration_seconds` | histogram | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_bytes` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |

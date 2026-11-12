@@ -1,16 +1,23 @@
 package runstart_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
+	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/carolsimone/continuo/run-controller/service/runstart"
 	"github.com/carolsimone/continuo/run-controller/service/uow"
@@ -21,14 +28,18 @@ import (
 
 var planNow = time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
 
-// graphTopology serves each release's graph as every schedule's and every key
-// set's slice of it, records each read, and grants the topology lock. A
-// release without an entry in releases is served graph.
+// graphTopology serves each release's graph as every key set's slice of it
+// and as every schedule's, restricted to the schedule's keys in schedules when
+// it has an entry there; records each read, and grants the topology lock. A
+// release without an entry in releases is served graph, and a release is
+// bootstrap when bootstrap says so.
 type graphTopology struct {
 	uow.LiveReleaseOnly
-	graph    topology.Graph
-	releases map[string]topology.Graph
-	calls    []string
+	graph     topology.Graph
+	releases  map[string]topology.Graph
+	schedules map[string][]topology.NodeKey
+	bootstrap map[string]bool
+	calls     []string
 }
 
 func (g *graphTopology) of(releaseID string) topology.Graph {
@@ -50,7 +61,38 @@ func (g *graphTopology) LivePointer(ctx context.Context, tenant string) (topolog
 
 func (g *graphTopology) ScheduleGraph(_ context.Context, tenant, releaseID, schedule string) (topology.Graph, error) {
 	g.calls = append(g.calls, "schedule "+tenant+" "+releaseID+" "+schedule)
+	if keys, ok := g.schedules[schedule]; ok {
+		return g.of(releaseID).Restrict(keys), nil
+	}
 	return g.of(releaseID), nil
+}
+
+// ViewClosure walks down from seeds through the nodes materialized as a view,
+// a materialized view or ephemeral, as the Postgres repository does.
+func (g *graphTopology) ViewClosure(_ context.Context, _, releaseID string, seeds []topology.NodeKey) (topology.Graph, error) {
+	rg := g.of(releaseID)
+	seen := map[topology.NodeKey]bool{}
+	var keys []topology.NodeKey
+	queue := slices.Clone(seeds)
+	for len(queue) > 0 {
+		k := queue[0]
+		queue = queue[1:]
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		keys = append(keys, k)
+		for _, d := range rg.Downstreams(k) {
+			if n, _ := rg.Node(d); slices.Contains([]string{"view", "materialized_view", "ephemeral"}, n.Materialized) {
+				queue = append(queue, d)
+			}
+		}
+	}
+	return rg.Restrict(keys), nil
+}
+
+func (g *graphTopology) IsBootstrapRelease(_ context.Context, _, releaseID string) (bool, error) {
+	return g.bootstrap[releaseID], nil
 }
 
 func (g *graphTopology) Graph(_ context.Context, tenant, releaseID string, keys []topology.NodeKey) (topology.Graph, error) {
@@ -84,6 +126,11 @@ func (s *sourceTasks) RunReleasesOf(_ context.Context, taskIDs []uuid.UUID) (map
 		}
 	}
 	return out, nil
+}
+
+func (s *sourceTasks) SaveAttempt(_ context.Context, a run.Attempt) error {
+	s.attempts = append(s.attempts, a)
+	return nil
 }
 
 func (s *sourceTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
@@ -351,7 +398,7 @@ func TestPlanner_ASourceWithoutAReleaseIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 	_, _, err = planner.Rebase(ctx, u, noRelease, runstart.RebaseOptions{})
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
-	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease, nil)
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 
 	u, _ = fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []run.Task{task("", run.TaskStatusFailed)})
@@ -368,19 +415,19 @@ func TestPlanner_SingleNodeReadsOneNodeOfTheLiveOrTheSourceRelease(t *testing.T)
 	target := run.NodeID{ServiceName: "svc", SchemaName: "mart", TableName: "b"}
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
 
-	sel, err := planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, nil)
+	sel, err := planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
 	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-7"}, topo.calls)
 
 	topo.calls = nil
-	sel, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}))
+	sel, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), nil)
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}, sel.Stamp)
 	assert.Equal(t, []string{"graph default rel-3"}, topo.calls)
 
-	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil, nil)
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
 
@@ -431,7 +478,7 @@ func TestPlanner_ReadsAndWritesTheTenantItIsGivenOrTheRunsTenant(t *testing.T) {
 	u, topo := fakeUoW(live, nil)
 	sel, err := planner.Schedule(ctx, u, "acme", "daily", model.OperationRun)
 	require.NoError(t, err)
-	_, err = planner.SingleNode(ctx, u, "acme", target, model.OperationRun, nil)
+	_, err = planner.SingleNode(ctx, u, "acme", target, model.OperationRun, nil, nil)
 	require.NoError(t, err)
 	_, err = planner.Seeds(ctx, u, "acme", live, []topology.NodeKey{"raw.a"})
 	require.NoError(t, err)
@@ -472,4 +519,315 @@ func assertEvery(t *testing.T, want string, got []string) {
 	for _, g := range got {
 		assert.Equal(t, want, g)
 	}
+}
+
+const (
+	seed    topology.NodeKey = "analytics.seed_fx_rates_eur"
+	current topology.NodeKey = "analytics.fx_rates_current"
+	latest  topology.NodeKey = "analytics.fx_rates_latest_eur"
+	table   topology.NodeKey = "analytics.fx_transactions_eur"
+	summary topology.NodeKey = "analytics.fx_summary"
+)
+
+var (
+	livePointer = topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}
+	defaults    = run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}
+	tenant      = pkgevents.DefaultTenantID
+	fxPlanner   = runstart.Planner{Tasks: defaults, Family: warehouse.SchemaBound, Engine: "postgres"}
+)
+
+// fxNode is a node of the fx release: the svc service's, in the analytics
+// schema, materialized as materialized and in schedule.
+func fxNode(key topology.NodeKey, nodeType, materialized, schedule string) topology.Node {
+	table := string(key)[len("analytics."):]
+	return topology.Node{
+		Key: key, ServiceName: "svc", SchemaName: "analytics", TableName: table, NodeType: nodeType,
+		Materialized: materialized, ImageTag: "svc:7", ScheduleName: schedule,
+	}
+}
+
+// fxTopology is the seed (no +full_refresh, columns sha256:new), the view
+// fx_rates_current that reads it, the view fx_rates_latest_eur that reads that
+// view, and the table fx_transactions_eur that reads the seed. The seed and the
+// table are in the daily schedule; the views are in none.
+func fxTopology() topology.Graph {
+	s := fxNode(seed, "dbt-seed", "seed", "daily")
+	s.SeedColumnsHash = "sha256:new"
+	return topology.NewGraph(
+		[]topology.Node{s, fxNode(current, "dbt-model", "view", ""), fxNode(latest, "dbt-model", "view", ""),
+			fxNode(table, "dbt-model", "table", "daily")},
+		[]topology.Edge{{Upstream: seed, Downstream: current}, {Upstream: current, Downstream: latest}, {Upstream: seed, Downstream: table}},
+	)
+}
+
+// withSeed is g with the seed changed by change.
+func withSeed(g topology.Graph, change func(*topology.Node)) topology.Graph {
+	nodes := make([]topology.Node, 0, g.Len())
+	var edges []topology.Edge
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		if k == seed {
+			change(&n)
+		}
+		nodes = append(nodes, n)
+		for _, d := range g.Downstreams(k) {
+			edges = append(edges, topology.Edge{Upstream: k, Downstream: d})
+		}
+	}
+	return topology.NewGraph(nodes, edges)
+}
+
+// loadedColumns is a MaterializationRepository that answers only
+// LoadedSeedColumns, with the column fingerprint each seed last loaded.
+type loadedColumns map[topology.NodeKey]string
+
+var _ repository.MaterializationRepository = loadedColumns{}
+
+func (l loadedColumns) LoadedSeedColumns(_ context.Context, _ string, keys []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	out := map[topology.NodeKey]string{}
+	for _, k := range keys {
+		if c, ok := l[k]; ok {
+			out[k] = c
+		}
+	}
+	return out, nil
+}
+func (loadedColumns) List(context.Context, string) (map[topology.NodeKey]seeds.Materialization, error) {
+	return nil, uow.ErrNotFaked
+}
+func (loadedColumns) RecordAttempt(context.Context, string, topology.NodeKey, string, uuid.UUID, time.Time) error {
+	return uow.ErrNotFaked
+}
+func (loadedColumns) RecordBuilt(context.Context, string, seeds.Built) error { return uow.ErrNotFaked }
+func (loadedColumns) DeleteAbsentFrom(context.Context, string, string) (int64, error) {
+	return 0, uow.ErrNotFaked
+}
+
+// fxUoW is a unit of work over fxTopology on the live rel-7, whose seed last
+// loaded sha256:old, and the source tasks given.
+func fxUoW(tasks []run.Task) (*uow.FakeUnitOfWork, *graphTopology) {
+	u, topo := fakeUoW(livePointer, tasks)
+	topo.graph = fxTopology()
+	u.MaterializationRepo = loadedColumns{seed: "sha256:old"}
+	return u, topo
+}
+
+func keysOf(tasks []runplan.PlannedTask) []topology.NodeKey {
+	out := make([]topology.NodeKey, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, t.Key)
+	}
+	return out
+}
+
+func taskOf(p runplan.Plan, k topology.NodeKey) runplan.PlannedTask {
+	for _, t := range p.Tasks {
+		if t.Key == k {
+			return t
+		}
+	}
+	return runplan.PlannedTask{}
+}
+
+// A promote-seed run of a seed whose columns changed fully refreshes it, after
+// a check that only the views it rebuilds read it, and rebuilds the views
+// below it once it has loaded.
+func TestPlanner_SeedsPlansTheLoadAndTheRebuildsBelowIt(t *testing.T) {
+	u, _ := fxUoW(nil)
+
+	sel, err := fxPlanner.Seeds(context.Background(), u, tenant, livePointer, []topology.NodeKey{seed})
+
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{current, latest, seed}, keysOf(sel.Plan.Tasks))
+	full := model.OperationFullRefresh
+	assert.Equal(t, &full, taskOf(sel.Plan, seed).Operation)
+	assert.Equal(t, "columns changed", taskOf(sel.Plan, seed).Reason)
+	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
+	assert.Equal(t, seedreload.PreflightCheck, taskOf(sel.Plan, seed).Preflight.Mode)
+	assert.Equal(t, []string{string(current), string(latest)}, taskOf(sel.Plan, seed).Preflight.Allowed)
+	assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
+	assert.Equal(t, seed, taskOf(sel.Plan, latest).RebuildOf)
+	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+	_, held := sel.Graph.Node(latest)
+	assert.True(t, held)
+}
+
+// A seed whose table recorded no column fingerprint, or whose fingerprints
+// match, has new rows only: it loads with the run's operation, drops nothing
+// and rebuilds nothing.
+func TestPlanner_AnEmptyFingerprintIsARowChange(t *testing.T) {
+	for name, recorded := range map[string]loadedColumns{"no row": {}, "same columns": {seed: "sha256:new"}} {
+		t.Run(name, func(t *testing.T) {
+			u, _ := fxUoW(nil)
+			u.MaterializationRepo = recorded
+
+			sel, err := fxPlanner.Seeds(context.Background(), u, tenant, livePointer, []topology.NodeKey{seed})
+
+			require.NoError(t, err)
+			assert.Equal(t, []runplan.PlannedTask{{Key: seed}}, sel.Plan.Tasks)
+			assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+		})
+	}
+}
+
+// Every kind of run that loads a seed rebuilds the views its load drops.
+func TestPlanner_EveryRunKindThatLoadsASeedAppliesTheRules(t *testing.T) {
+	ctx := context.Background()
+	failedSeed := func() []run.Task {
+		return []run.Task{task(seed, run.TaskStatusFailed), task(table, run.TaskStatusSkipped)}
+	}
+	kinds := map[string]func(t *testing.T) runstart.Selection{
+		"schedule": func(t *testing.T) runstart.Selection {
+			u, topo := fxUoW(nil)
+			topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+			sel, err := fxPlanner.Schedule(ctx, u, tenant, "daily", model.OperationRun)
+			require.NoError(t, err)
+			return sel
+		},
+		"rerun": func(t *testing.T) runstart.Selection {
+			u, _ := fxUoW(failedSeed())
+			sel, err := fxPlanner.Rerun(ctx, u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}))
+			require.NoError(t, err)
+			return sel
+		},
+		"single node": func(t *testing.T) runstart.Selection {
+			u, _ := fxUoW(nil)
+			target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+			sel, err := fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationRun, nil, nil)
+			require.NoError(t, err)
+			return sel
+		},
+		"rebase": func(t *testing.T) runstart.Selection {
+			u, topo := fxUoW(failedSeed())
+			topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+			sel, pv, err := fxPlanner.Rebase(ctx, u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), runstart.RebaseOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, sel.Plan, pv.Plan)
+			return sel
+		},
+	}
+	for name, plan := range kinds {
+		t.Run(name, func(t *testing.T) {
+			sel := plan(t)
+			assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
+			assert.Equal(t, seed, taskOf(sel.Plan, latest).RebuildOf)
+			require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
+			assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+		})
+	}
+}
+
+// A test run of a schedule loads no seed, so it plans no reload.
+func TestPlanner_ATestRunPlansNoReload(t *testing.T) {
+	u, topo := fxUoW(nil)
+	two := 2
+	topo.graph = withSeed(fxTopology(), func(n *topology.Node) { n.TestCount = &two })
+	topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+
+	sel, err := fxPlanner.Schedule(context.Background(), u, tenant, "daily", model.OperationTest)
+
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{seed}, keysOf(sel.Plan.Tasks))
+	for _, task := range sel.Plan.Tasks {
+		assert.Nil(t, task.Preflight, task.Key)
+		assert.Empty(t, task.Reason, task.Key)
+		assert.Empty(t, task.RebuildOf, task.Key)
+		assert.Nil(t, task.Operation, task.Key)
+	}
+}
+
+// A table of the schedule that reads a view the run rebuilds waits for the
+// rebuild, though the view is in no schedule.
+func TestPlanner_AScheduleNodeThatReadsARebuiltViewWaitsForTheRebuild(t *testing.T) {
+	u, topo := fxUoW(nil)
+	g := fxTopology()
+	nodes := []topology.Node{fxNode(summary, "dbt-model", "table", "daily")}
+	edges := []topology.Edge{{Upstream: seed, Downstream: summary}, {Upstream: current, Downstream: summary}}
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		nodes = append(nodes, n)
+		for _, d := range g.Downstreams(k) {
+			edges = append(edges, topology.Edge{Upstream: k, Downstream: d})
+		}
+	}
+	topo.graph = topology.NewGraph(nodes, edges)
+	topo.schedules = map[string][]topology.NodeKey{"daily": {summary, seed}}
+
+	sel, err := fxPlanner.Schedule(context.Background(), u, tenant, "daily", model.OperationRun)
+
+	require.NoError(t, err)
+	assert.Contains(t, keysOf(sel.Plan.Tasks), current)
+	assert.NotContains(t, sel.Plan.Ready, summary)
+	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+	assert.Equal(t, []topology.NodeKey{current, seed}, sel.Graph.Upstreams(summary))
+}
+
+// A column change of a release that skipped validation says so at the end of
+// the seed's reason.
+func TestPlanner_ABootstrapReleaseMarksAColumnChangeUnvalidated(t *testing.T) {
+	u, topo := fxUoW(nil)
+	topo.bootstrap = map[string]bool{livePointer.ReleaseID: true}
+
+	sel, err := fxPlanner.Seeds(context.Background(), u, tenant, livePointer, []topology.NodeKey{seed})
+
+	require.NoError(t, err)
+	assert.Equal(t, "columns changed; unvalidated: its release skipped validation", taskOf(sel.Plan, seed).Reason)
+}
+
+// What a seed's load drops depends on the warehouse family, so a planner
+// without one refuses to plan a seed's load; a run that loads no seed needs
+// none.
+func TestPlanner_RefusesToPlanASeedLoadWithoutAWarehouseFamily(t *testing.T) {
+	u, _ := fxUoW(nil)
+	_, err := runstart.Planner{Tasks: defaults}.Seeds(context.Background(), u, tenant, livePointer, []topology.NodeKey{seed})
+	assert.ErrorIs(t, err, runstart.ErrNoWarehouseFamily)
+
+	_, err = runstart.Planner{Tasks: defaults}.Seeds(context.Background(), u, tenant, livePointer, []topology.NodeKey{table})
+	assert.NoError(t, err)
+}
+
+// reloadCounts records the seed reload series.
+type reloadCounts struct{ ended, stopped []string }
+
+func (r *reloadCounts) SeedReloadEnded(action, outcome string) {
+	r.ended = append(r.ended, action+" "+outcome)
+}
+func (r *reloadCounts) SeedReloadStopped(reason string) { r.stopped = append(r.stopped, reason) }
+
+// A refused seed is counted and logged only once the run's transaction
+// commits.
+func TestPlanner_StartCountsAndLogsARefusalAfterCommit(t *testing.T) {
+	ctx := context.Background()
+	u, topo := fxUoW(nil)
+	keep := false
+	topo.graph = withSeed(fxTopology(), func(n *topology.Node) { n.FullRefresh = &keep })
+	u.SetRunRepo(&savedRuns{})
+	u.SetOutboxPublisher(&appendedEvents{})
+	counts := &reloadCounts{}
+	var logs bytes.Buffer
+	p := fxPlanner
+	p.Metrics = counts
+	p.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	require.NoError(t, u.Begin(ctx))
+	sel, err := p.Seeds(ctx, u, tenant, livePointer, []topology.NodeKey{seed})
+	require.NoError(t, err)
+	require.Equal(t, model.FailureReasonSeedFullRefreshDisabled, taskOf(sel.Plan, seed).Refusal)
+	r := sourceRun(t, sel.Stamp)
+
+	require.NoError(t, p.Start(ctx, u, r, sel, uuid.Nil))
+	assert.Empty(t, counts.ended)
+	assert.Empty(t, counts.stopped)
+	assert.Empty(t, logs.String())
+
+	require.NoError(t, u.Commit())
+	assert.Equal(t, []string{"full_refresh refused"}, counts.ended)
+	assert.Equal(t, []string{"seed_full_refresh_disabled"}, counts.stopped)
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+	assert.Equal(t, "WARN", record["level"])
+	assert.Equal(t, tenant, record["tenant_id"])
+	assert.Equal(t, "rel-7", record["release_id"])
+	assert.Equal(t, r.RunID().String(), record["run_id"])
+	assert.Equal(t, string(seed), record["node_key"])
+	assert.Equal(t, "seed_full_refresh_disabled", record["reason"])
 }

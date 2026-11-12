@@ -113,6 +113,8 @@ services:
       # The chart's runs.taskMaxRetries and runs.taskTimeoutHours defaults.
       - TASK_MAX_RETRIES=2
       - TASK_TIMEOUT_SECONDS=86400
+      # The chart's validation.engine: the local stack's warehouse is Postgres.
+      - WAREHOUSE_ENGINE=postgres
     ports:
       - "8082:8082"   # Health check HTTP
       - "50051:50051" # gRPC

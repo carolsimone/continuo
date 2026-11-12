@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -33,7 +34,8 @@ type RebaseOptions struct {
 // first, under the topology lock, and a live release other than
 // opts.ExpectedReleaseID is ErrLiveReleaseMoved before anything else is read.
 // The selection carries the live release even when it is refused. Every
-// release it reads is source's tenant's.
+// release it reads is source's tenant's. The seed reload rules apply to the
+// seeds it loads, and the preview's plan is the selection's.
 func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, opts RebaseOptions) (Selection, runplan.Preview, error) {
 	tenantID := source.TenantID()
 	stamp, err := p.LiveStamp(ctx, u, tenantID)
@@ -62,6 +64,11 @@ func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run, 
 		Source: src, SourceGraphs: sourceGraphs, IncludeChangedUpstream: opts.IncludeChangedUpstream,
 	}.Preview(sel.Graph)
 	sel.Plan = pv.Plan
+	if err != nil {
+		return sel, pv, err
+	}
+	sel, err = p.withSeedReloads(ctx, u, tenantID, source.Operation(), seedreload.TriggerLoad, nil, sel)
+	pv.Plan = sel.Plan
 	return sel, pv, err
 }
 

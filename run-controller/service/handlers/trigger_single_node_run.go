@@ -95,7 +95,7 @@ func (h *TriggerSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWo
 // first eight hex digits of its id, stores its task and dispatches it, inside
 // u's open transaction. It returns the run's schedule name.
 func (h *TriggerSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput, src *run.Run) (string, error) {
-	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src)
+	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src, nil)
 	if err != nil {
 		return "", err
 	}

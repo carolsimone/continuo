@@ -357,7 +357,14 @@ func main() {
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
 	runMetrics := rcmetrics.NewRunMetrics(metricsReg)
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
+	// Every run, the seed reconcile's promote-seed runs included, is planned
+	// by one planner for the tenant its entry point chose. It applies the seed
+	// reload rules of the install's warehouse family, and counts and logs each
+	// seed load it refuses once the run commits.
+	planner := runstart.Planner{
+		Tasks: taskDefaults, Family: cfg.WarehouseFamily, Engine: cfg.WarehouseEngine, Metrics: runMetrics, Logger: logger,
+	}
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, planner, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every run-controller consumer is the same shape: a domain handler wrapped by a
@@ -432,11 +439,6 @@ func main() {
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
 	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
-
-	// The cron loop and the gRPC entry points plan each run for the tenant its
-	// entry point chose; the seed reconcile builds its own planner for each
-	// pass.
-	planner := runstart.Planner{Tasks: taskDefaults}
 
 	// The cron loop fires the due schedules of every tenant, each under the
 	// tenant of its row: in one transaction per schedule it starts the run of
