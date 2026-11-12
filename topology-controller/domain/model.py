@@ -128,7 +128,9 @@ class UpstreamDep:
 
     @property
     def unique_id(self) -> str:
-        """The upstream node's identity key: "<schema>.<table>", lowercased.
+        """The upstream node's identity key: "<schema>.<table>", lowercased,
+        where table is the upstream's declared table_name ("<name>.v<version>"
+        for a versioned dbt model).
 
         Must match ManifestNode.unique_id exactly — the two are compared against
         each other when building DEPENDS_ON edges in catalog's Neo4j
@@ -210,11 +212,14 @@ class ManifestNode:
     # extras entry for the seed
     projection: str = ""  # a python node's code projection as JSON text; ""
     # for a dbt node
+    materialized: str = ""  # a dbt node's config.materialized ("table",
+    # "view", "incremental", "ephemeral", ...); "" for a python node
 
     @property
     def unique_id(self) -> str:
         """The node's identity across the whole system: "<schema>.<table>",
-        lowercased.
+        lowercased. A versioned dbt model's table_name is "<name>.v<version>",
+        so each version is a node of its own: "<schema>.<name>.v<version>".
 
         The same string keys the topology entry, the code-bundle node map, and
         the node's candidate-artifact S3 object, so it is derived in one place.
@@ -250,29 +255,87 @@ class ManifestNode:
         without going through that parser (a python node, or a node built
         directly in a test) still resolves correctly.
 
+        A versioned dbt model resolves to its alias, which dbt defaults to
+        "<name>_v<version>".
+
         A dbt test writes no relation and resolves to "" so it can never
         claim, or collide on, a table.
         """
         if self.node_type == NodeType.DBT_TEST:
             return ""
-        resolved = self.resolved_relation or self.table_name
-        return f"{self.schema_name.lower()}.{resolved.lower()}"
+        return f"{self.schema_name.lower()}.{self.relation.lower()}"
+
+    @property
+    def relation(self) -> str:
+        """The name of the relation this node's build writes, in its declared
+        spelling: resolved_relation when set, else table_name. A reference to
+        the node in another node's SQL names this relation, and a node reading
+        it is reading itself."""
+        return self.resolved_relation or self.table_name
+
+    @property
+    def relation_name(self) -> str:
+        """relation when it differs from table_name (an alias, or a versioned
+        model's "<name>_v<version>"), else "". A dbt test writes no relation,
+        so its relation_name is always ""."""
+        if self.node_type == NodeType.DBT_TEST or self.relation == self.table_name:
+            return ""
+        return self.relation
 
 
 @dataclass
 class NodeRegistryEntry:
+    """One node a release's SQL can reference: its declared table_name (which
+    names it, see ManifestNode.unique_id), the relation its build writes (which
+    SQL names it by) and whether it is an ephemeral dbt model, which writes no
+    relation and reaches its readers as a CTE dbt inlines into their SQL."""
     table_name: str
     schema_name: str
     service_name: str
     owner: str
+    relation: str
+    ephemeral: bool = False
 
 
 @dataclass
 class NodeRegistry:
+    """Every node of a release that SQL can reference: each model, seed,
+    snapshot and python node, never a test, which writes no relation."""
     entries: list[NodeRegistryEntry]
 
+    @classmethod
+    def of_nodes(cls, nodes: list[ManifestNode]) -> NodeRegistry:
+        """The registry of a release's nodes: one entry per node that is not a
+        dbt test, keyed later by the relation the node writes."""
+        return cls(entries=[
+            NodeRegistryEntry(
+                table_name=n.table_name,
+                schema_name=n.schema_name,
+                service_name=n.service_name,
+                owner=n.owner,
+                relation=n.relation,
+                ephemeral=n.materialized == "ephemeral",
+            )
+            for n in nodes
+            if n.node_type != NodeType.DBT_TEST
+        ])
+
     def to_lookup(self) -> dict[tuple[str, str], NodeRegistryEntry]:
-        return {(e.schema_name.lower(), e.table_name.lower()): e for e in self.entries}
+        """Each entry keyed by (schema, relation), lowercased: the key a
+        schema-qualified table reference in SQL resolves through, so a
+        reference to an alias finds the node that writes it."""
+        return {(e.schema_name.lower(), e.relation.lower()): e for e in self.entries}
+
+    def ephemeral_ctes(self) -> dict[tuple[str, str], NodeRegistryEntry]:
+        """Each ephemeral entry keyed by (service, CTE name): dbt inlines an
+        ephemeral model into a reader of the same project as a CTE named
+        "__dbt__cte__<relation>", so a CTE of that name in a node of that
+        service is a read of the ephemeral model."""
+        return {
+            (e.service_name, "__dbt__cte__" + e.relation.lower()): e
+            for e in self.entries
+            if e.ephemeral
+        }
 
 
 @dataclass(frozen=True)

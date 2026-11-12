@@ -17,7 +17,7 @@ import tempfile
 from functools import cache
 from pathlib import Path
 
-from domain.model import CompileExtras, ManifestNode, ParsedArtifact
+from domain.model import CompileExtras, ManifestNode, NodeRegistry, ParsedArtifact
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dbt_fingerprints"
 MANIFESTS_DIR = FIXTURE_DIR / "manifests"
@@ -63,6 +63,54 @@ def moved(base: str, variant: str, *, extras: bool = True) -> set[str]:
 def node_of(parsed: ParsedArtifact, unique_id: str) -> ManifestNode:
     """The node of the parsed artifact whose unique id is unique_id."""
     return next(node for node in parsed.nodes if node.unique_id == unique_id)
+
+
+def parse_and_resolve(name: str) -> ParsedArtifact:
+    """The parsed artifact of a variant with each node's upstream_deps resolved
+    against the registry of its non-test nodes, as the candidate handler builds it."""
+    from service.resolver import resolve_upstream_deps
+    from service.table_refs import referenced_tables
+
+    parsed = parse_variant(name)
+    registry = NodeRegistry.of_nodes(parsed.nodes)
+    lookup = registry.to_lookup()
+    ephemeral_ctes = registry.ephemeral_ctes()
+    for node in parsed.nodes:
+        ctes: set[str] = set()
+        refs = referenced_tables(node, dialect="postgres", ctes=ctes)
+        node.upstream_deps = resolve_upstream_deps(
+            refs, lookup, service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
+        )
+    return parsed
+
+
+def candidate_sql_of(name: str, unique_id: str) -> str:
+    """The candidate SQL the dbt builder uploads for one node of a variant, for a
+    release whose id is rel-1, so the candidate schema is _candidate_rel_1."""
+    from config.config import _SYSTEM_RELATIONS
+    from service.candidate_artifacts import DbtSqlArtifactBuilder, RewriteContext
+    from service.release_timings import ReleaseTimings
+    from service.rewriter import candidate_schema_name
+    from tests.fakes import FakeClock, ScriptedMemoryProbe
+
+    parsed = parse_variant(name)
+    uploaded: dict[str, str] = {}
+
+    class _RecordingUploader:
+        def upload(self, release_id: str, unique_id: str, sql: str) -> str:
+            uploaded[unique_id] = sql
+            return ""
+
+    ctx = RewriteContext(
+        release_id="rel-1",
+        registry=NodeRegistry.of_nodes(parsed.nodes).to_lookup(),
+        candidate_schema=candidate_schema_name("rel-1"),
+        dialect="postgres",
+        system_relations=_SYSTEM_RELATIONS["postgres"],
+        timings=ReleaseTimings("rel-1", FakeClock(), ScriptedMemoryProbe(0)),
+    )
+    DbtSqlArtifactBuilder(_RecordingUploader()).build(node_of(parsed, unique_id), ctx)
+    return uploaded[unique_id]
 
 
 @cache

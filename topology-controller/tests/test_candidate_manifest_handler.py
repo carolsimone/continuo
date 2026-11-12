@@ -125,7 +125,7 @@ def _write_compile_extras(tmp_path, seeds: dict, *, service: str = "service-1") 
 
 
 def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
@@ -146,7 +146,7 @@ def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
 
 
 def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch, tmp_path):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=f"broken {node.table_name}")
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
@@ -165,7 +165,7 @@ def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch,
 def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
     calls = {"n": 0}
 
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise UnqualifiedTableReferenceError(table_name="x", node_table_name=node.table_name)
@@ -189,11 +189,11 @@ def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
     real = candidate_manifest_handler.referenced_tables
     calls = {"n": 0}
 
-    def _raise_once(node, *, dialect):
+    def _raise_once(node, *, dialect, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
-        return real(node, dialect=dialect)
+        return real(node, dialect=dialect, **kwargs)
 
     monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise_once)
     source = _make_source("manifest_service1.json")
@@ -328,7 +328,7 @@ def test_handle_calls_source_cleanup_after_publish():
 
 
 def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
-    def _raise(node, *, dialect):
+    def _raise(node, *, dialect, **kwargs):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
@@ -563,9 +563,9 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     real_resolve = candidate_manifest_handler.referenced_tables
     real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
-    def spy_resolve(node, *, dialect):
+    def spy_resolve(node, *, dialect, **kwargs):
         seen["resolve"].append(dialect)
-        return real_resolve(node, dialect=dialect)
+        return real_resolve(node, dialect=dialect, **kwargs)
 
     def spy_rewrite(*args, dialect, **kwargs):
         seen["rewrite"].append(dialect)
@@ -1417,3 +1417,12 @@ def test_the_topology_entry_carries_seed_columns_hash_only_when_set(tmp_path):
     assert nodes["test_schema.seed_countries"]["seed_columns_hash"] == seed_columns_hash(
         SeedExtras(sha256="4a" * 32, header=("code", "name"), column_types={"code": "varchar(2)"}))
     assert "seed_columns_hash" not in nodes["test_schema.plain_seed"]
+
+
+def test_the_topology_entry_carries_relation_name_only_when_the_alias_differs(tmp_path):
+    writer = RecordingArtifactWriter()
+    source = source_with_nodes(tmp_path, dbt_node("orders") | {"alias": "Orders_Tbl"}, dbt_node("plain"))
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert nodes["test_schema.orders"]["relation_name"] == "Orders_Tbl"
+    assert "relation_name" not in nodes["test_schema.plain"]

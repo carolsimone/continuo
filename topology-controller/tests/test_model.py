@@ -59,14 +59,15 @@ def test_node_registry_entry():
         schema_name="public",
         service_name="service-1",
         owner="data-platform",
+        relation="orders",
     )
     assert entry.table_name == "orders"
 
 
 def test_node_registry_to_lookup():
     entries = [
-        NodeRegistryEntry("orders", "public", "service-1", "data-platform"),
-        NodeRegistryEntry("users", "public", "service-2", "core-team"),
+        NodeRegistryEntry("orders", "public", "service-1", "data-platform", relation="orders"),
+        NodeRegistryEntry("users", "public", "service-2", "core-team", relation="users"),
     ]
     registry = NodeRegistry(entries=entries)
     lookup = registry.to_lookup()
@@ -117,3 +118,44 @@ def test_resolved_relation_id_uses_resolved_relation_when_set():
 def test_resolved_relation_id_is_lowercased():
     node = _node(schema_name="Analytics", table_name="Orders", resolved_relation="Orders")
     assert node.resolved_relation_id == "analytics.orders"
+
+
+def test_relation_name_is_empty_for_a_test_and_a_python_node():
+    common = dict(service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    test = ManifestNode(table_name="not_null_x", schema_name="", node_type=NodeType.DBT_TEST, identity="test.s.not_null_x.1", **common)
+    py = ManifestNode(table_name="t", schema_name="analytics", node_type=NodeType.PYTHON_NODE, resolved_relation="t",
+                      runtime=Runtime.PYTHON, **common)
+    assert (test.relation_name, py.relation_name) == ("", "")
+
+
+def test_relation_falls_back_to_the_table_name_and_keeps_the_declared_spelling():
+    common = dict(schema_name="analytics", service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    assert ManifestNode(table_name="orders", **common).relation == "orders"
+    aliased = ManifestNode(table_name="orders", resolved_relation="Orders_Tbl", **common)
+    assert (aliased.relation, aliased.relation_name) == ("Orders_Tbl", "Orders_Tbl")
+
+
+def test_the_lookup_keys_each_entry_by_its_relation():
+    lookup = NodeRegistry(entries=[
+        NodeRegistryEntry("orders", "Analytics", "svc", "o", relation="Orders_Tbl"),
+        NodeRegistryEntry("dim.v2", "analytics", "svc", "o", relation="dim_v2"),
+    ]).to_lookup()
+    assert set(lookup) == {("analytics", "orders_tbl"), ("analytics", "dim_v2")}
+    assert lookup[("analytics", "orders_tbl")].table_name == "orders"
+
+
+def test_ephemeral_ctes_key_each_ephemeral_entry_by_its_service_and_cte_name():
+    eph = NodeRegistryEntry("eph", "analytics", "svc", "o", relation="Eph", ephemeral=True)
+    registry = NodeRegistry(entries=[eph, NodeRegistryEntry("orders", "analytics", "svc", "o", relation="orders")])
+    assert registry.ephemeral_ctes() == {("svc", "__dbt__cte__eph"): eph}
+
+
+def test_the_registry_of_nodes_leaves_tests_out_and_marks_ephemeral_models():
+    common = dict(schema_name="analytics", service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    registry = NodeRegistry.of_nodes([
+        ManifestNode(table_name="orders", resolved_relation="orders_tbl", **common),
+        ManifestNode(table_name="eph", materialized="ephemeral", **common),
+        ManifestNode(table_name="not_null_x", node_type=NodeType.DBT_TEST, identity="test.s.not_null_x.1", **common),
+    ])
+    assert [(e.table_name, e.relation, e.ephemeral) for e in registry.entries] == [
+        ("orders", "orders_tbl", False), ("eph", "eph", True)]

@@ -8,7 +8,6 @@ from domain.model import (
     ManifestKind,
     ManifestNode,
     NodeRegistry,
-    NodeRegistryEntry,
     NodeType,
     ServiceProvenance,
     SkippedNode,
@@ -82,6 +81,8 @@ def _artifact_entry(node: ManifestNode) -> dict:
         entry["secret_ref"] = node.secret_ref
     if node.timeout_seconds:
         entry["timeout_seconds"] = node.timeout_seconds
+    if node.relation_name:
+        entry["relation_name"] = node.relation_name
     if node.seed_columns_hash:
         entry["seed_columns_hash"] = node.seed_columns_hash
     return entry
@@ -152,6 +153,12 @@ class CandidateManifestHandler:
     one line per seed, after its manifest's parse. A seed node whose extras
     give it a column fingerprint carries it on its topology entry as
     seed_columns_hash; any other node's entry has no such key.
+
+    A node whose build writes a relation named other than its table_name (an
+    alias, or a versioned model's "<name>_v<version>") carries that relation on
+    its topology entry as relation_name; any other node's entry has no such key.
+    Every node's upstreams resolve through the relation each node writes, and a
+    reader of an ephemeral dbt model of its own service depends on that model.
 
     handle() times each stage of the parse (see service.release_timings) with
     clock and memory and returns the record, whether the release was published,
@@ -345,17 +352,9 @@ class CandidateManifestHandler:
             all_nodes.extend(nodes)
 
         with self._timings.stage(Stage.REGISTRY) as record:
-            registry = NodeRegistry(entries=[
-                NodeRegistryEntry(
-                    table_name=n.table_name,
-                    schema_name=n.schema_name,
-                    service_name=n.service_name,
-                    owner=n.owner,
-                )
-                for n in all_nodes
-                if n.node_type != NodeType.DBT_TEST  # a test writes no relation: nothing can reference it
-            ])
+            registry = NodeRegistry.of_nodes(all_nodes)
             lookup = registry.to_lookup()
+            ephemeral_ctes = registry.ephemeral_ctes()
             record.add(entries=len(registry.entries))
         candidate_schema = candidate_schema_name(release_id)
         ctx = RewriteContext(
@@ -379,12 +378,14 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.RESOLVE, nodes=len(all_nodes)):
             for node in all_nodes:
                 try:
-                    refs = referenced_tables(node, dialect=self._dialect)
+                    ctes: set[str] = set()
+                    refs = referenced_tables(node, dialect=self._dialect, ctes=ctes)
                     # A system relation is never a node a release builds, so it
                     # resolves to no dependency, even when a node builds a table
                     # with the same schema and name.
                     node.upstream_deps = resolve_upstream_deps(
                         [ref for ref in refs if not self._system_relations.matches(ref)], lookup,
+                        service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
                     )
                     if node.node_type != NodeType.DBT_TEST:
                         reads[node.unique_id] = refs

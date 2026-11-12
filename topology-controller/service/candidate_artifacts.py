@@ -63,7 +63,7 @@ class DbtSqlArtifactBuilder(CandidateArtifactBuilder):
         with ctx.timings.stage(Stage.REWRITE, sample_memory=False, nodes=1):
             candidate_sql = rewrite_to_candidate_schema(
                 node.candidate_sql, ctx.registry, ctx.candidate_schema,
-                self_schema=node.schema_name, self_table=node.table_name,
+                self_schema=node.schema_name, self_table=node.relation,
                 dialect=ctx.dialect, system_relations=ctx.system_relations,
             )
         with ctx.timings.stage(Stage.CANDIDATE_UPLOAD, sample_memory=False, nodes=1):
@@ -92,7 +92,7 @@ class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
             reads = [
                 rewrite_to_candidate_schema(
                     sql, ctx.registry, ctx.candidate_schema,
-                    self_schema=node.schema_name, self_table=node.table_name,
+                    self_schema=node.schema_name, self_table=node.relation,
                     dialect=ctx.dialect, system_relations=ctx.system_relations,
                 )
                 for sql in node.dependency_sqls

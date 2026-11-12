@@ -6,7 +6,9 @@ no tests, so the moved sets that name them are exact.
 from dataclasses import replace
 
 from domain.model import NodeType
-from tests.fingerprint_fixtures import base_extras, base_manifest_path, manifest_checksum, moved, node_of, parse_variant
+from tests.fingerprint_fixtures import (
+    base_extras, base_manifest_path, candidate_sql_of, manifest_checksum, moved, node_of, parse_and_resolve, parse_variant,
+)
 from service.parser import parse_manifest
 
 
@@ -128,3 +130,46 @@ def test_provenance_lists_the_path_checksum_seeds_only_without_extras():
     assert parse_variant("base", extras=False).provenance.path_checksum_seeds == ("fp_analytics.seed_big",)
     assert parse_variant("base").provenance.path_checksum_seeds == ()
     assert parse_variant("base").provenance.packages["dbt-adapters"] == "1.24.5"
+
+
+def ups(variant, uid):
+    return {d.unique_id for d in node_of(parse_and_resolve(variant), uid).upstream_deps}
+
+
+def test_c2_a_dependant_of_an_aliased_model_keeps_its_edge_and_moves():
+    assert "fp_analytics.orders" in ups("alias_change", "fp_analytics.orders_dep_1")
+    assert {"fp_analytics.orders", "fp_analytics.orders_dep_1", "fp_analytics.orders_dep_2"} <= moved("base", "alias_change")
+
+
+def test_c3_the_consumer_of_an_ephemeral_model_depends_on_it_and_moves_with_it():
+    assert "fp_analytics.eph" in ups("base", "fp_analytics.from_eph")
+    assert "fp_analytics.orders" in ups("base", "fp_analytics.from_eph"), "the table eph reads stays a direct upstream"
+    assert {"fp_analytics.eph", "fp_analytics.from_eph"} <= moved("base", "ephemeral_change")
+
+
+def test_n37_each_model_version_is_its_own_node():
+    parsed = parse_variant("base")
+    v2 = node_of(parsed, "fp_analytics.dim_v.v2")
+    assert v2.table_name == "dim_v.v2" and v2.resolved_relation_id == "fp_analytics.dim_v_v2" and v2.relation_name == "dim_v_v2"
+    assert node_of(parsed, "fp_analytics.dim_v.v1").table_name == "dim_v.v1"
+
+
+def test_c1_a_latest_version_change_moves_the_unversioned_consumer():
+    assert "fp_analytics.uses_dim" in moved("base", "latest_version_change")
+    assert "fp_analytics.dim_v.v1" in ups("base", "fp_analytics.uses_dim")
+
+
+def test_n38_relation_name_keeps_the_declared_spelling():
+    parsed = parse_variant("base")
+    assert node_of(parsed, "fp_analytics.cap_src").relation_name == "OrdersCap"
+    assert node_of(parsed, "fp_analytics.orders").relation_name == ""
+
+
+def test_n38_a_dependant_reads_the_candidate_table_in_the_declared_spelling():
+    sql = candidate_sql_of("base", "fp_analytics.cap_dep")
+    assert '"_candidate_rel_1"."OrdersCap"' in sql
+
+
+def test_n38_an_aliased_incremental_model_reads_itself_from_production():
+    assert "fp_analytics.self_incr" not in ups("base", "fp_analytics.self_incr")
+    assert '"_candidate_rel_1"."self_incr_tbl"' not in candidate_sql_of("base", "fp_analytics.self_incr")

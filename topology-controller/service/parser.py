@@ -75,6 +75,16 @@ def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
     return SkippedNode(node_id=node_id, service=service, reason=reason)
 
 
+def _table_name(node: dict) -> str:
+    """The table name a dbt node is known by: its name, or "<name>.v<version>"
+    for a versioned model, so each version of a model is a node of its own and
+    the name is also the dbt selector of that version."""
+    version = node.get("version")
+    if version is None or version == "":
+        return node["name"]
+    return f"{node['name']}.v{version}"
+
+
 def parse_manifest(
     manifest_path: str,
     image_tag: str = "",
@@ -136,13 +146,15 @@ def parse_manifest(
         criticality = meta.get("criticality", "SECONDARY")
 
         node.setdefault("unique_id", node_id)
-        parts = _hash(f"{node['schema']}.{node['name']}".lower(), node, ctx)
+        table_name = _table_name(node)
+        parts = _hash(f"{node['schema']}.{table_name}".lower(), node, ctx)
         used_units.update(parts.units)
 
         manifest_node = ManifestNode(
-            table_name=node["name"],
+            table_name=table_name,
             schema_name=node["schema"],
-            resolved_relation=node.get("alias") or node["name"],
+            resolved_relation=node.get("alias") or table_name,
+            materialized=(node.get("config") or {}).get("materialized") or "",
             service_name=node["fqn"][0].replace("_", "-"),
             owner=owner,
             schedule_name=schedule_name,
