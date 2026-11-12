@@ -540,13 +540,16 @@ aws --endpoint-url http://localhost:9000 \
 ```
 
 Now build the contract from the service's `contracts/` directory, using the
-runtime CLI the release gate uses (a service's image base must be on the same
-runtime release or later to run a contract that declares `timeout_minutes`).
-[uv](https://docs.astral.sh/uv/) installs it: `brew install uv` on macOS, or the
+runtime CLI the release gate uses. The image base and the CLI that builds the
+contract are the same runtime release: the harness checks the image against the
+released hash when a node starts, and a node whose image does not hash to it
+fails with `image_contract_mismatch` and is not retried. Every file a node lists in `assets` is copied into
+the image. [uv](https://docs.astral.sh/uv/) installs the CLI: `brew install uv`
+on macOS, or the
 [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install continuo-python-runtime==0.11.0
+uv tool install continuo-python-runtime==0.12.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 

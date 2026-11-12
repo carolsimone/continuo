@@ -16,6 +16,8 @@ shipped in those.
 
 - A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
 - Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
+- Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
+- The default validation image is `v0.12.0`.
 - No values change is needed.
 
 ### Upgrade steps
@@ -28,6 +30,11 @@ shipped in those.
 
    Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
 2. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+3. **Re-baseline the fingerprints.** Freeze producer merges before the upgrade, and keep them frozen until step 5. After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`.
+4. Release one service with no change: nothing validates.
+5. Unfreeze producer merges.
+
+Rebuild a Python service on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them moves its hashes outside the window and starts a validation.
 
 This release changes no values key, and it ships as a `MINOR`.
 
@@ -45,9 +52,19 @@ This release changes no values key, and it ships as a `MINOR`.
 - **The code bundle and topology keys external tools read are declared and versioned.** TL;DR: [docs/read-contract.md](../../docs/read-contract.md) names the keys of the code bundle (`contract_version` 1), the topology artifact (`schema_version` 1) and `GET /api/v1/current-prod` that a reader may rely on, and what raises a version. Tests pin them.
   - With your own bucket, set no lifecycle expiry on `code-bundles/` or `tenants/`: an age rule can delete the objects of the release in production. release-controller deletes a release's objects when its retention prunes it, and never for the production release.
   - No values change is needed.
+- **`rebaseline` on `POST /api/v1/releases`.** TL;DR: a bootstrap that re-baselines fingerprints; accepted only with `"bootstrap": true` and authorized like it. Its promotion records every live seed as loaded at its new fingerprint, so no seed is reloaded.
 
 ### Changed
 
+- **Code fingerprints close 23 gaps.** TL;DR: `content_hash` now covers compiled SQL, the macros, hooks and `flags:` block teams write, functions, unit tests, raw seed bytes and enforced contract columns, and leaves out access, group, freshness and a Python node's owner, schedule, criticality and description. topology-controller pins `continuo-contracts` 0.1.0.
+  - The compile Job runs `compile_extras.py` with the team image's `python3` and uploads `compile-extras.json` beside `manifest.json`. A team image without `python3` fails its compile.
+  - topology-controller reads `compile-extras.json` beside each manifest. With your own bucket, grant it `s3:ListBucket` on the manifest prefixes: without it, a release stored before this version answers 403 for its missing extras, which topology-controller logs as a WARNING and treats as none.
+  - execution-controller refuses to start when a run command parses with other `--vars`, `--target`, `--profile`, `--profiles-dir` or `--project-dir` values than the compile command; `--profiles-dir /project` counts as the default.
+  - A Python task whose image does not hash to its released `content_hash` fails with reason `image_contract_mismatch`, class `invalid`, and is not retried.
+  - Each version of a dbt model is its own node, `<schema>.<name>.v<version>`, and a reference to an aliased model keeps its edge.
+  - A function's body (its arguments, return type and overload bodies, but not its descriptions) and the macros that on-run hooks and functions call are in the fingerprint. An enforced contract is hashed on models only.
+  - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
+- **The default validation image is `v0.12.0`** (`validation.imageTag`).
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
   - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
   - The key and its default are unchanged, and no values change is needed.

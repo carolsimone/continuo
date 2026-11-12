@@ -179,8 +179,8 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `service` and `image_tag` are required;
-`bootstrap` (a JSON boolean), `kind` (`dbt`, the default, or `python`), `repo`
-and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default, or
+`python`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
 continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
 anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
@@ -189,14 +189,19 @@ token's, because a different value is a `403` `claim_mismatch`. A person calling
 with their own token (see [AUTH.md](AUTH.md#bearer-tokens)) must send `repo` and
 `commit_sha` in the body. `"bootstrap": true` promotes without validation and is
 for the first release of a service; a CI token may send it only when its
-binding sets `allowBootstrap`. Submitting the same `release_id` again with the
+binding sets `allowBootstrap`. `"rebaseline": true` is a bootstrap that also
+records every live seed as loaded at its new fingerprint, so no seed is
+reloaded ([below](#re-baseline-after-a-fingerprint-change)); it is accepted only
+with `"bootstrap": true`, otherwise a `400`, and a CI token needs
+`allowBootstrap` to send it. Submitting the same `release_id` again with the
 same body is idempotent and answers `202`; the same `release_id` with a
-different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`
-is a `409` `release_kind_conflict`, so use a fresh id for a new release.
+different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo`
+or `commit_sha` is a `409` `release_kind_conflict`, so use a fresh id for a new
+release.
 
 **Release read.** The answer carries `release_id`, `service`, `status`,
 `terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
-`bootstrap`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
+`bootstrap`, `rebaseline`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
 the release's page in the dashboard. A CI token can read only releases of the
 services its bindings grant; a release of any other service answers `404`
 `not_found`, exactly as a release that does not exist. A pipeline polling for
@@ -207,16 +212,59 @@ one read every few seconds.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, or a `release_id` outside the pattern above. |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, or a `release_id` outside the pattern above. |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
 | 403 | `forbidden` | The identity may not do this: a repository not bound to the service it submits, a repository bound to no service at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
 | 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
-| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`. The release service makes this check. A person's `error` carries its message; a CI token gets `release id already exists with different content`, which names no other release. |
+| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. The release service makes this check. A person's `error` carries its message; a CI token gets `release id already exists with different content`, which names no other release. |
 | 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
 | 503 | `auth_unavailable` | The token's issuer could not be reached, its discovery document or signing keys could not be read, or its key set has no usable RS256 key, publishes a `kid` twice, or holds an RSA key shorter than 2048 bits; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
+
+### Re-baseline after a fingerprint change
+
+Every node carries a `content_hash`, a fingerprint of the code it runs. When a
+continuo upgrade changes what the fingerprint covers, every node's hash moves
+at once. Done through ordinary releases, the next release of each service would
+validate the whole estate and reload every seed with unchanged data. A
+`rebaseline` release avoids both: it is a bootstrap, so nothing is validated,
+and its promotion records every live seed as loaded at its new fingerprint, so
+no seed is reloaded. Each service is released once, because a stored artifact
+lacks inputs that only a fresh compile (dbt) or a fresh CI run (Python)
+produces. The release notes of a version that needs this say so; a fresh
+install needs none of it, because its first release is a bootstrap with the new
+fingerprint.
+
+1. **Freeze producer merges.** No pipeline may release a service until step 6
+   ends: an ordinary release inside the window validates a large set of nodes
+   and reloads every seed.
+2. **Upgrade continuo.**
+3. **Release each dbt service** with its current `image_tag` and both flags.
+   `repo` and `commit_sha` (the full SHA) are required for a call with your own
+   token, as in the CI example above:
+
+   ```json
+   {"release_id":"rel-rebase-finance-1","service":"finance","image_tag":"cddbcbc","bootstrap":true,"rebaseline":true,"repo":"carolsimone/continuo-demo","commit_sha":"cddbcbc981380257edf435e2a0627246e9908129"}
+   ```
+
+4. **Release each Python service.** Rebuild its image on
+   `continuo-python-runtime` 0.12.0 (the image's `FROM` tag and the runtime your
+   CI installs) with no other change, and release it with the same two flags and
+   `"kind": "python"`. Its `image_tag` is the full registry reference, not the
+   bare short SHA, for example
+   `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
+   on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
+   moves its hashes outside the window and starts a validation.
+5. **Check.** Release any one service normally with no change. Its release must
+   validate nothing.
+6. **Unfreeze.**
+
+While the window is open, some nodes get two new hashes: the first when another
+service's re-baseline re-parses their stored artifact, the second at their own
+service's. Neither validates or reloads, and each is recorded as a healed code
+version.
 
 ### Networking
 

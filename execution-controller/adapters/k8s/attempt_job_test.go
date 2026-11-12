@@ -204,7 +204,7 @@ func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.11.0")
+			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0")
 			client := newValidationTestClient()
 
 			require.NoError(t, deployLeg(NewDeployer(client, "default", 15*time.Minute, 2*time.Hour)))

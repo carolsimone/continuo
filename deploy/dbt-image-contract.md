@@ -86,6 +86,26 @@ the `manifest.json` your compile command produces and uploads it to
 is that the `compile` command writes the manifest to the path declared as
 `compile.manifest_path` in `dbt-commands.yaml`.
 
+## What the compile Job needs from your image
+
+After `dbt compile`, the compile Job runs continuo's `compile_extras.py` with
+your image's `python3`, and the sidecar uploads the `compile-extras.json` it
+writes beside `manifest.json`. The file carries the inputs a node's code
+fingerprint needs and the manifest lacks: raw seed bytes and headers, the
+`flags:` block and library versions. So:
+
+- `python3` must be on the image's `PATH`, and must be the Python that runs
+  dbt, so that it imports the same dbt packages your project uses. An image
+  without `python3` fails its compile.
+- Every run command (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
+  and the optional `full_refresh` and `seed_full_refresh`) must parse with the
+  same `--vars`, `--target`, `--profile`, `--profiles-dir` and `--project-dir`
+  values as the `compile` command, because the fingerprint is computed from
+  the compiled project and a run that parsed another project would execute
+  code the hash does not cover. execution-controller refuses to boot when they
+  differ; `--profiles-dir /project` counts as the default, equal to leaving the
+  flag out.
+
 ## The `generate_schema_name` macro required for validation/releases
 
 Your dbt project MUST route schema resolution through a `generate_schema_name`
@@ -136,8 +156,11 @@ env var for another purpose must rename one of the two.
 ## Base image
 
 `dbt/base` in this repo (`FROM python:3.12-slim`) pins
-`dbt-core==1.12.0b1` and `dbt-postgres==1.10.0` (an unpinned install now
-resolves to dbt Fusion, which dropped the Postgres adapter), bakes the
+`dbt-core==1.12.0b1`, `dbt-postgres==1.10.0`, `dbt-adapters==1.24.5` and
+`dbt-common==1.39.0` (an unpinned install now resolves to dbt Fusion, which
+dropped the Postgres adapter; dbt-adapters and dbt-common hold dbt's built-in
+macros, which a node's code fingerprint leaves out, so an unpinned upgrade of
+either would change what runs with no change to any hash), bakes the
 macro above into `/project/macros/`, and is what the in-repo e2e fixture
 images build from. Real team images may build from it or replicate its
 contract on any base — `continuo-demo` builds `FROM python:3.12-slim`

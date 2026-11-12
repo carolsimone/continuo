@@ -252,7 +252,7 @@ Every container in this chart, bundled or not, gets:
 | `global.env` | Names the install's environment (`ENV` on the shared ConfigMap, default `production`). No service reads it yet. |
 | `global.logLevel` | Level every Go service and topology-controller log at (`LOG_LEVEL` on the shared ConfigMap, default `INFO`): `DEBUG`, `INFO`, `WARN`, `WARNING` or `ERROR`, in any case. Rendering fails on any other value. ui's server log has no level. |
 | `global.teamImagePrefix` | Registry/namespace prefix execution-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names continuo's own images). |
-| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.11.0`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. |
+| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.12.0`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
@@ -507,6 +507,15 @@ roles, give each role the actions of its own rows, so catalog's role gets the
 `catalog` rows only. The shared key also needs the bucket's other prefixes (job
 logs and results, dbt manifests and parse caches, chat archives and remediation
 proposals), which the table leaves out.
+
+topology-controller also reads `<service>/<release>/compile-extras.json` beside
+each dbt manifest. With your own bucket, grant it `s3:GetObject` there and
+`s3:ListBucket` on the bucket for those prefixes, so that a stored release
+without extras reads as 404, not 403. A 403 still counts as "no extras", with a
+WARNING in topology-controller's log that names the key, so the release parses
+with dbt's checksum for its seeds until the grant is in place. A 404 is also
+"no extras", logged at INFO; any other S3 error pauses the release and
+redelivers it.
 
 ```json
 {
