@@ -1,7 +1,9 @@
 package seedreconcile_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -698,4 +700,51 @@ func TestAfterPromotion_RebaselineOnTheFirstPromotionAdoptsEverySeed(t *testing.
 	assert.Empty(t, w.runs.existsAsk, "a rebaseline does not look for the release's first run")
 	assert.Empty(t, w.runs.saved)
 	assert.Empty(t, w.outbox.appended)
+}
+
+// warnings returns the WARN records a JSON slog handler wrote to buf.
+func warnings(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["level"] == "WARN" {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func TestAfterPromotion_RebaselineOnTheFirstPromotionWarnsThatSeedsWereAdoptedUnloaded(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
+	var buf bytes.Buffer
+	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
+		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	trigger := moved("rel-2", 7)
+	trigger.FirstPromotion, trigger.Bootstrap, trigger.Rebaseline = true, true, true
+
+	require.NoError(t, r.AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	warns := warnings(t, &buf)
+	require.Len(t, warns, 1)
+	assert.Equal(t, "default", warns[0]["tenant_id"])
+	assert.Equal(t, "rel-2", warns[0]["release_id"])
+	assert.EqualValues(t, 2, warns[0]["adopted"])
+}
+
+func TestAfterPromotion_RebaselineAfterTheFirstPromotionDoesNotWarn(t *testing.T) {
+	w := newWorld(live7, seedNode("orders", "h-orders-2"))
+	var buf bytes.Buffer
+	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
+		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	trigger := moved("rel-2", 7)
+	trigger.Bootstrap, trigger.Rebaseline = true, true
+
+	require.NoError(t, r.AfterPromotion(context.Background(), w.newUoW(), trigger))
+
+	assert.Empty(t, warnings(t, &buf))
 }

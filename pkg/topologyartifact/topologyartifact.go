@@ -51,8 +51,9 @@ type Node struct {
 	UpstreamUniqueIDs  []string `json:"upstream_unique_ids"`
 	Schedule           string   `json:"schedule"`
 	SecretRef          string   `json:"secret_ref,omitempty"`
-	// RelationName is the relation's name in the warehouse, in the case the
-	// warehouse stores it; empty when it is the lowercased table name.
+	// RelationName is the relation the node writes, as declared, when it
+	// differs from TableName (an alias, or `<name>_v<n>` for a versioned
+	// model); empty otherwise.
 	RelationName string `json:"relation_name,omitempty"`
 	// SeedColumnsHash is the hash of a seed's column declaration; empty for
 	// every other node.

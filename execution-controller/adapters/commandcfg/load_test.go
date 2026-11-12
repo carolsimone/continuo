@@ -447,6 +447,75 @@ default:
 	assert.Contains(t, err.Error(), "does not match default.compile.command")
 }
 
+// --project-dir /project names the image default like --profiles-dir /project, on either side.
+func TestLoad_TreatsTheDefaultProjectDirAsEqual(t *testing.T) {
+	_, err := Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--project-dir", "/project"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "--project-dir", "/project"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--project-dir", "/project"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "--project-dir", "/project"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "--project-dir", "/project"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "--project-dir", "/project"]
+  parse:      ["dbt", "parse", "--project-dir", "/project"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.NoError(t, err)
+
+	_, err = Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "--project-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.NoError(t, err)
+}
+
+// A side whose directory flag is dropped as the image default is named as that default.
+func TestLoad_NamesADroppedDirectoryFlagAsTheImageDefault(t *testing.T) {
+	_, err := Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/profiles"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `(--profiles-dir the image default (/project) vs --profiles-dir "/profiles")`)
+
+	_, err = Load(writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "--project-dir", "/srv/dbt"]
+  parse:      ["dbt", "parse", "--project-dir", "/srv/dbt"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project", "--project-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`), testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `(--project-dir "/srv/dbt" vs --project-dir the image default (/project))`)
+	assert.NotContains(t, err.Error(), "absent")
+}
+
 // The refusal covers every service block, not only the default one.
 func TestLoad_RefusesAServiceRunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`

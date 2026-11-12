@@ -103,8 +103,8 @@ fingerprint needs and the manifest lacks: raw seed bytes and headers, the
   values as the `compile` command, because the fingerprint is computed from
   the compiled project and a run that parsed another project would execute
   code the hash does not cover. execution-controller refuses to boot when they
-  differ; `--profiles-dir /project` counts as the default, equal to leaving the
-  flag out.
+  differ; `--profiles-dir /project` and `--project-dir /project` count as the
+  image default, equal to leaving the flag out.
 
 ## The `generate_schema_name` macro required for validation/releases
 

@@ -342,20 +342,37 @@ func validateParseContext(path string, ops *opSet) error {
 	return nil
 }
 
-// defaultProfilesDir is the directory dbt reads profiles.yml from when an
-// invocation carries no --profiles-dir: the working directory of the dbt image.
-const defaultProfilesDir = "/project"
+// imageDefaultDir is the working directory of the dbt image: dbt reads
+// profiles.yml from it and takes it as the project when an invocation carries
+// no --profiles-dir or --project-dir.
+const imageDefaultDir = "/project"
+
+// imageDefaultDirFlags are the parse-context flags whose value imageDefaultDir
+// means the same as leaving the flag out.
+var imageDefaultDirFlags = map[string]bool{"--profiles-dir": true, "--project-dir": true}
 
 // compileContextFlags is parseContextFlags without the --no-partial-parse
-// presence flag, and without --profiles-dir when it names the image's default
-// directory, so an argv that spells the default out equals one that omits it.
+// presence flag, and without --profiles-dir or --project-dir when it names the
+// image's default directory, so an argv that spells the default out equals one
+// that omits it.
 func compileContextFlags(argv []string) map[string]string {
 	flags := parseContextFlags(argv)
 	delete(flags, noPartialParseFlag)
-	if flags["--profiles-dir"] == defaultProfilesDir {
-		delete(flags, "--profiles-dir")
+	for flag := range imageDefaultDirFlags {
+		if value, ok := flags[flag]; ok && value == imageDefaultDir {
+			delete(flags, flag)
+		}
 	}
 	return flags
+}
+
+// describeCompileFlag is describeFlag for the flags compileContextFlags
+// returns: a directory flag it does not hold is the image default.
+func describeCompileFlag(flag, value string, present bool) string {
+	if !present && imageDefaultDirFlags[flag] {
+		return fmt.Sprintf("%s the image default (%s)", flag, imageDefaultDir)
+	}
+	return describeFlag(flag, value, present)
 }
 
 // validateCompileContext requires that every node-dispatch op in ops parses
@@ -385,7 +402,7 @@ func validateCompileContext(path string, ops *opSet) error {
 				"%s.%s: parse-context flag %s does not match %s.compile.command (%s vs %s) — "+
 					"every fingerprint reads the manifest the compile step writes, so a run step "+
 					"that parses with other values runs code no fingerprint saw",
-				path, op.name, flag, path, describeFlag(flag, opVal, opHas), describeFlag(flag, compileVal, compileHas))
+				path, op.name, flag, path, describeCompileFlag(flag, opVal, opHas), describeCompileFlag(flag, compileVal, compileHas))
 		}
 	}
 	return nil
