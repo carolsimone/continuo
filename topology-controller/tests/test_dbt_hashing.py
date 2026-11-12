@@ -328,7 +328,7 @@ def test_a_model_folds_its_unit_tests_and_the_functions_it_calls():
     assert units["unit_test.fpshop.n.t"].digest == "ab" * 32
     unchecked = {k: v for k, v in no_checksum.items() if k != "created_at"}
     assert units["unit_test.fpshop.n.u"].digest == hashlib.sha256(canonical_json(unchecked)).hexdigest()
-    assert units["function.fpshop.double_it"].digest == _sha("x * 2")
+    assert units["function.fpshop.double_it"].digest == hashlib.sha256(canonical_json({"raw_code": "x * 2"})).hexdigest()
     assert {u.input_name for u in units.values()} == {"unit_tests", "functions"}
     assert "unit_test.fpshop.n.t" not in shared_units({**node, "resource_type": "snapshot"}, ctx)
 
@@ -368,3 +368,116 @@ def test_a_unit_test_canonical_json_refuses_rejects_the_artifact(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(InvalidNodeSettingError, match="manifest.json"):
         parse_manifest(path)
+
+
+def test_a_unit_test_with_a_checksum_and_a_value_canonical_json_refuses_parses(tmp_path):
+    path = _manifest(tmp_path, {"materialized": "table"})
+    manifest = json.loads(open(path).read())
+    manifest["unit_tests"] = {"unit_test.svc.deep.t": {
+        "unique_id": "unit_test.svc.deep.t", "checksum": "ab" * 32, "given": [{"rows": [{"id": 9007199254740993}]}],
+        "depends_on": {"macros": [], "nodes": ["model.svc.deep"]}}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    (node,) = parse_manifest(path).nodes
+    assert node.shared_code_hash == shared_fold({"unit_test.svc.deep.t": "ab" * 32})
+
+
+def _hook(project: str, kind: str, raw_code: str = "select 1", macros: tuple[str, ...] = ()) -> dict:
+    unique_id = f"operation.{project}.{project}-on-run-{kind}-0"
+    return {"unique_id": unique_id, "resource_type": "operation", "package_name": project,
+            "name": unique_id.split(".", 2)[2], "tags": [f"on-run-{kind}"], "raw_code": raw_code,
+            "depends_on": {"macros": list(macros)}}
+
+
+def _moved_nodes(before: ManifestContext, after: ManifestContext) -> set[str]:
+    nodes = [_node("model"), _node("seed"), _node("snapshot"), _node("test")]
+    return {n["resource_type"] for n in nodes if hash_dbt_node(n, before).content_hash != hash_dbt_node(n, after).content_hash}
+
+
+def test_an_on_run_hook_folds_the_root_macros_it_calls():
+    def ctx(body: str, helper: str = "h") -> ManifestContext:
+        hook = _hook("fpshop", "start", "{{ grant_usage() }}", macros=("macro.dbt.run_query",))
+        return _project([_macro("macro.fpshop.grant_usage", body), _macro("macro.dbt.run_query", deps=("macro.dbt.statement",)),
+                         _macro("macro.dbt.statement"), _macro("macro.fpshop.statement", helper)],
+                        nodes={hook["unique_id"]: hook})
+    assert _moved_nodes(ctx("grant a"), ctx("grant b")) == {"model", "seed", "snapshot"}
+    assert _moved_nodes(ctx("grant a"), ctx("grant a", helper="changed")) == {"model", "seed", "snapshot"}
+    units = ctx("grant a").service_units
+    assert units["macro.fpshop.grant_usage"].input_name == "macros"
+    assert units["macro.fpshop.statement"].input_name == "macros"
+
+
+def test_a_hook_is_classified_by_the_suffix_of_its_id():
+    start = _hook("on-run-end-tools", "start")
+    end = _hook("on-run-start-tools", "end")
+    untagged = {**_hook("on-run-end-tools", "start"), "tags": []}
+    ctx = _project([], nodes={start["unique_id"]: start, end["unique_id"]: end})
+    assert ctx.service_units[start["unique_id"]].input_name == "on_run_start"
+    assert ctx.service_units[end["unique_id"]].input_name == "on_run_end"
+    assert _project([], nodes={untagged["unique_id"]: untagged}).service_units[untagged["unique_id"]].input_name == "on_run_start"
+
+
+def _function(**over) -> dict:
+    function = {"unique_id": "function.fpshop.f", "resource_type": "function", "raw_code": "x * 2",
+                "arguments": [{"name": "x", "data_type": "integer"}], "returns": {"data_type": "integer"},
+                "overloads": [{"arguments": [{"name": "x", "data_type": "text"}], "returns": {"data_type": "text"},
+                               "raw_body": "x || x"}],
+                "depends_on": {"macros": [], "nodes": []}, "description": "d"}
+    function.update(over)
+    return function
+
+
+def _caller_hash(function: dict, macros: list[dict] | None = None) -> str:
+    ctx = _project(macros or [], functions={"function.fpshop.f": function})
+    return hash_dbt_node(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), ctx).content_hash
+
+
+def test_a_function_digest_is_its_body_record():
+    function = _function()
+    ctx = _project([], functions={"function.fpshop.f": function})
+    unit = shared_units(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), ctx)["function.fpshop.f"]
+    body = {"raw_code": "x * 2", "arguments": [{"name": "x", "data_type": "integer"}], "returns": {"data_type": "integer"},
+            "overloads": [{"arguments": [{"name": "x", "data_type": "text"}], "returns": {"data_type": "text"},
+                           "raw_body": "x || x"}]}
+    assert unit.digest == hashlib.sha256(canonical_json(body)).hexdigest()
+    bare = {"unique_id": "function.fpshop.f", "resource_type": "function", "raw_code": "x"}
+    bare_ctx = _project([], functions={"function.fpshop.f": bare})
+    bare_unit = shared_units(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), bare_ctx)["function.fpshop.f"]
+    assert bare_unit.digest == hashlib.sha256(canonical_json({"raw_code": "x"})).hexdigest()
+
+
+def test_a_function_overload_or_return_type_change_moves_the_caller():
+    base = _caller_hash(_function())
+    changed_overload = _function(overloads=[{"arguments": [{"name": "x", "data_type": "text"}],
+                                             "returns": {"data_type": "text"}, "raw_body": "x || x || x"}])
+    assert _caller_hash(changed_overload) != base
+    assert _caller_hash(_function(returns={"data_type": "bigint"})) != base
+    assert _caller_hash(_function(description="other")) == base
+
+
+def test_a_function_folds_the_root_macros_it_depends_on():
+    function = _function(depends_on={"macros": ["macro.fpshop.helper"], "nodes": []})
+    assert _caller_hash(function, [_macro("macro.fpshop.helper", "a")]) != _caller_hash(
+        function, [_macro("macro.fpshop.helper", "b")])
+
+
+def test_a_function_record_canonical_json_refuses_rejects_the_artifact(tmp_path):
+    path = _manifest(tmp_path, {"materialized": "table"})
+    manifest = json.loads(open(path).read())
+    manifest["nodes"]["model.svc.deep"]["depends_on"] = {"macros": [], "nodes": ["function.svc.f"]}
+    manifest["functions"] = {"function.svc.f": {"unique_id": "function.svc.f", "raw_code": "x",
+                                                "arguments": [{"name": "x", "default_value": 9007199254740993}]}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(InvalidNodeSettingError, match="analytics.deep"):
+        parse_manifest(path)
+
+
+def test_every_macro_a_walk_reaches_is_memoized():
+    ctx = _project([_macro("macro.fpshop.a", deps=("macro.fpshop.b",)), _macro("macro.fpshop.b", deps=("macro.fpshop.c",)),
+                    _macro("macro.fpshop.c", deps=("macro.fpshop.b", "macro.fpshop.d")), _macro("macro.fpshop.d")])
+    macro_closure(_node(depends_on={"macros": ["macro.fpshop.a"], "nodes": []}), ctx)
+    assert ctx._closures == {
+        "macro.fpshop.a": frozenset({"macro.fpshop.a", "macro.fpshop.b", "macro.fpshop.c", "macro.fpshop.d"}),
+        "macro.fpshop.b": frozenset({"macro.fpshop.b", "macro.fpshop.c", "macro.fpshop.d"}),
+        "macro.fpshop.c": frozenset({"macro.fpshop.b", "macro.fpshop.c", "macro.fpshop.d"}),
+        "macro.fpshop.d": frozenset({"macro.fpshop.d"}),
+    }

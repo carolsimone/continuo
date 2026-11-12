@@ -21,8 +21,9 @@ target, rather than with the code: the manifest's `invocation_id`, its
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -43,6 +44,9 @@ _EXPLICIT_OVERRIDES_FLAG = "require_explicit_package_overrides_for_builtin_mater
 
 _JINJA_BLOCK = re.compile(r"\{\{(.*?)\}\}|\{%(.*?)%\}", re.DOTALL)
 _JINJA_CALL = re.compile(r"(?<![\w.])([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?\s*\(")
+_HOOK_ID = re.compile(r"-on-run-(start|end)-\d+$")
+_FUNCTION_BODY_KEYS = ("raw_code", "arguments", "returns")
+_OVERLOAD_BODY_KEYS = ("arguments", "returns", "raw_body")
 
 # Locality of a materialization macro's package: the root project wins over an
 # imported package, which wins over a built-in one.
@@ -291,22 +295,20 @@ def macro_closure(node: Mapping, ctx: ManifestContext) -> set[str]:
         or (node.get("config") or {}).get("materialized") or ""
     roots += [m for m in (materialization_macro(materialized, ctx) if materialized else None,
                           _strategy_macro(node, package, ctx)) if m]
-    reached: set[str] = set()
-    for root in roots:
-        reached |= _closure_of(_runs_as(root, ctx), ctx)
-    return reached
+    return _closure_of_roots(roots, ctx)
 
 
 def shared_units(node: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
     """The units the node's shared part folds, by unit id: its macro closure, the
-    functions in its `depends_on.nodes`, a model's unit tests and, for a model,
-    seed or snapshot, the service units. A test folds no service unit."""
-    units = {macro_id: _macro_unit(macro_id, "macros", ctx) for macro_id in sorted(macro_closure(node, ctx))}
+    functions in its `depends_on.nodes` with the macro closure of each function's
+    `depends_on.macros`, a model's unit tests and, for a model, seed or snapshot,
+    the service units. A test folds no service unit."""
+    units = _macro_units(macro_closure(node, ctx), ctx)
     for node_id in (node.get("depends_on") or {}).get("nodes") or []:
         function = ctx.functions.get(node_id) if node_id.startswith("function.") else None
         if function is not None:
-            code = function.get("raw_code") or ""
-            units[node_id] = CodeUnit(node_id, _sha256(code), code, (), "functions")
+            units[node_id] = _function_unit(node_id, function)
+            units.update(_macro_units(_closure_of_roots((function.get("depends_on") or {}).get("macros") or [], ctx), ctx))
     resource_type = node.get("resource_type")
     if resource_type == "model":
         units.update({u.unit_id: u for u in ctx.unit_tests_by_node.get(node.get("unique_id") or "", ())})
@@ -395,34 +397,101 @@ def _runs_as(macro_id: str, ctx: ManifestContext) -> str:
     return override if override in ctx.macros else macro_id
 
 
+def _closure_of_roots(roots: Iterable[str], ctx: ManifestContext) -> set[str]:
+    """The folded macros reached from `roots`, each run as `_runs_as` picks."""
+    reached: set[str] = set()
+    for root in roots:
+        reached |= _closure_of(_runs_as(root, ctx), ctx)
+    return reached
+
+
 def _closure_of(macro_id: str, ctx: ManifestContext) -> frozenset[str]:
-    """The folded macros reached from `macro_id` (itself included), memoized. A
-    macro whose closure is already known contributes it without being walked again;
-    a closure is stored only once its walk is complete, so a cycle is safe."""
-    known = ctx._closures.get(macro_id)
-    if known is not None:
-        return known
-    folded: set[str] = set()
-    seen: set[str] = set()
-    stack = [macro_id]
-    while stack:
-        current = stack.pop()
-        if current in seen:
+    """The folded macros reached from `macro_id` (itself included).
+
+    One depth-first walk (Tarjan's strongly connected components) stores the
+    closure of every macro it reaches, not only of `macro_id`: the macros of a
+    cycle share one closure, stored once the whole cycle is walked, and a macro
+    whose closure is already stored is not walked again.
+    """
+    memo = ctx._closures
+    if macro_id in memo:
+        return memo[macro_id]
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    partial: dict[str, set[str]] = {}
+    component: list[str] = []
+    on_component: set[str] = set()
+    work: list[tuple[str, Iterator[str]]] = []
+
+    def enter(current: str) -> None:
+        index[current] = low[current] = len(index)
+        partial[current] = {current} if _folds(current, ctx) else set()
+        component.append(current)
+        on_component.add(current)
+        work.append((current, iter(_runs_next(current, ctx))))
+
+    enter(macro_id)
+    while work:
+        current, successors = work[-1]
+        descended = False
+        for successor in successors:
+            if successor in memo:
+                partial[current] |= memo[successor]
+            elif successor not in index:
+                enter(successor)
+                descended = True
+                break
+            elif successor in on_component:
+                low[current] = min(low[current], index[successor])
+        if descended:
             continue
-        seen.add(current)
-        done = ctx._closures.get(current)
-        if done is not None:
-            folded |= done
-            continue
-        macro = ctx.macros.get(current)
-        if macro is None:
-            continue
-        if not _is_built_in(current, ctx):
-            folded.add(current)
-        stack.extend(_runs_as(dep, ctx) for dep in (macro.get("depends_on") or {}).get("macros") or [])
-    closure = frozenset(folded)
-    ctx._closures[macro_id] = closure
-    return closure
+        work.pop()
+        parent = work[-1][0] if work else None
+        if low[current] == index[current]:
+            members: list[str] = []
+            union: set[str] = set()
+            while True:
+                member = component.pop()
+                on_component.discard(member)
+                members.append(member)
+                union |= partial[member]
+                if member == current:
+                    break
+            closure = frozenset(union)
+            for member in members:
+                memo[member] = closure
+            if parent is not None:
+                partial[parent] |= closure
+        elif parent is not None:
+            low[parent] = min(low[parent], low[current])
+            partial[parent] |= partial[current]
+    return memo[macro_id]
+
+
+def _runs_next(macro_id: str, ctx: ManifestContext) -> list[str]:
+    """The macros `macro_id` calls, each run as `_runs_as` picks; none for a macro
+    the manifest does not hold."""
+    macro = ctx.macros.get(macro_id)
+    if macro is None:
+        return []
+    return [_runs_as(dep, ctx) for dep in (macro.get("depends_on") or {}).get("macros") or []]
+
+
+def _macro_units(macro_ids: Iterable[str], ctx: ManifestContext) -> dict[str, CodeUnit]:
+    return {macro_id: _macro_unit(macro_id, "macros", ctx) for macro_id in sorted(macro_ids)}
+
+
+def _function_unit(function_id: str, function: Mapping) -> CodeUnit:
+    """A function as a unit: the SHA-256 of the canonical JSON of its body record
+    (`raw_code`, `arguments`, `returns` and each overload's `arguments`, `returns`
+    and `raw_body`, as far as the manifest carries them). Raises the library's
+    `ContractsError` for a value canonical JSON refuses."""
+    body = {key: function[key] for key in _FUNCTION_BODY_KEYS if key in function}
+    if "overloads" in function:
+        body["overloads"] = [{key: overload[key] for key in _OVERLOAD_BODY_KEYS if key in overload}
+                             for overload in function["overloads"] or []]
+    text = canonical_json(body)
+    return CodeUnit(function_id, hashlib.sha256(text).hexdigest(), text.decode("utf-8"), (), "functions")
 
 
 def _macro_unit(macro_id: str, input_name: str, ctx: ManifestContext) -> CodeUnit:
@@ -452,14 +521,19 @@ def _strategy_macro(node: Mapping, package: str, ctx: ManifestContext) -> str | 
 def _unit_tests_by_node(unit_tests: Mapping[str, dict]) -> dict[str, tuple[CodeUnit, ...]]:
     """Each unit test as a unit, under every node id its `depends_on.nodes` names.
     Its digest is dbt's own checksum, or the SHA-256 of its canonical JSON without
-    `created_at` when dbt wrote none."""
+    `created_at` when dbt wrote none; only that fallback can be refused, so a
+    fixture value canonical JSON cannot write fails only a unit test without a
+    checksum."""
     by_node: dict[str, list[CodeUnit]] = {}
     for unit_id in sorted(unit_tests):
         definition = {k: v for k, v in unit_tests[unit_id].items() if k != "created_at"}
-        text = canonical_json(definition)
         checksum = definition.get("checksum")
-        digest = checksum if isinstance(checksum, str) and checksum else hashlib.sha256(text).hexdigest()
-        unit = CodeUnit(unit_id, digest, text.decode("utf-8"), (), "unit_tests")
+        if isinstance(checksum, str) and checksum:
+            digest = checksum
+        else:
+            digest = hashlib.sha256(canonical_json(definition)).hexdigest()
+        source = json.dumps(definition, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        unit = CodeUnit(unit_id, digest, source, (), "unit_tests")
         for node_id in (definition.get("depends_on") or {}).get("nodes") or []:
             by_node.setdefault(node_id, []).append(unit)
     return {node_id: tuple(units) for node_id, units in by_node.items()}
@@ -467,15 +541,19 @@ def _unit_tests_by_node(unit_tests: Mapping[str, dict]) -> dict[str, tuple[CodeU
 
 def _service_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
     """The units every model, seed and snapshot of the project folds: each on-run
-    hook (an operation node), the root project's `generate_schema_name` and
-    `generate_alias_name`, and the flags block when it is not empty."""
+    hook (an operation node) with the macros it reaches (its `depends_on.macros`
+    and the static calls of its raw code), the root project's
+    `generate_schema_name` and `generate_alias_name`, and the flags block when it
+    is not empty."""
     units: dict[str, CodeUnit] = {}
     for node_id, node in (manifest.get("nodes") or {}).items():
         if node.get("resource_type") != "operation":
             continue
         code = node.get("raw_code") or ""
-        is_end = "on-run-end" in (node.get("tags") or []) or "on-run-end" in node_id
-        units[node_id] = CodeUnit(node_id, _sha256(code), code, (), "on_run_end" if is_end else "on_run_start")
+        units[node_id] = CodeUnit(node_id, _sha256(code), code, (), _hook_input(node_id, node))
+        roots = list((node.get("depends_on") or {}).get("macros") or [])
+        roots += static_macro_calls(code, node.get("package_name") or "", ctx)
+        units.update(_macro_units(_closure_of_roots(roots, ctx), ctx))
     for name in ("generate_schema_name", "generate_alias_name"):
         macro_id = f"macro.{ctx.root_project}.{name}"
         if ctx.root_project and macro_id in ctx.macros:
@@ -485,6 +563,15 @@ def _service_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> d
         units["project_flags"] = CodeUnit("project_flags", hashlib.sha256(text).hexdigest(), text.decode("utf-8"), (),
                                           "project_flags")
     return units
+
+
+def _hook_input(node_id: str, node: Mapping) -> str:
+    """`on_run_end` or `on_run_start`: from the `-on-run-<kind>-<n>` suffix of the
+    hook's id, else from its tags, else `on_run_start`."""
+    suffix = _HOOK_ID.search(node_id)
+    if suffix is not None:
+        return f"on_run_{suffix.group(1)}"
+    return "on_run_end" if "on-run-end" in (node.get("tags") or []) else "on_run_start"
 
 
 def _sha256(text: str) -> str:
