@@ -543,10 +543,18 @@ Now build the contract from the service's `contracts/` directory, using the
 runtime CLI the release gate uses. The image base and the CLI that builds the
 contract are the same runtime release: the harness checks the image against the
 released hash when a node starts, and a node whose image does not hash to it
-fails with `image_contract_mismatch` and is not retried. Every file a node lists in `assets` is copied into
-the image. [uv](https://docs.astral.sh/uv/) installs the CLI: `brew install uv`
-on macOS, or the
-[uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
+fails with `image_contract_mismatch` and is not retried.
+
+A node's `assets` lists the files its script reads besides its own code, such
+as a lookup table or a trained model, as paths from the repository root. Their
+bytes are part of the node's fingerprint, so editing one changes its
+`content_hash`. Your Dockerfile must copy every listed file into the image, at
+the same path under the app directory as in the repository: the harness hashes
+what the image holds, and a file that is missing or different fails the node
+with `image_contract_mismatch`.
+
+[uv](https://docs.astral.sh/uv/) installs the CLI: `brew install uv` on macOS,
+or the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
 uv tool install continuo-python-runtime==0.12.0

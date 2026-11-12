@@ -508,6 +508,10 @@ roles, give each role the actions of its own rows, so catalog's role gets the
 logs and results, dbt manifests and parse caches, chat archives and remediation
 proposals), which the table leaves out.
 
+The validation and compile Jobs write `<service>/<release>/compile-extras.json`
+beside the manifest they upload, so their key needs `s3:PutObject` on that key
+too. A key scoped to `*/manifest.json` alone fails the upload of the extras.
+
 topology-controller also reads `<service>/<release>/compile-extras.json` beside
 each dbt manifest. With your own bucket, grant it `s3:GetObject` there and
 `s3:ListBucket` on the bucket for those prefixes, so that a stored release

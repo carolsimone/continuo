@@ -237,13 +237,20 @@ produces. The release notes of a version that needs this say so; a fresh
 install needs none of it, because its first release is a bootstrap with the new
 fingerprint.
 
+Before you start, check every dbt team image: the compile Job runs
+`compile_extras.py` with the image's `python3`, so
+`docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` must
+succeed for each one. An image where it fails fails its compile after the
+upgrade.
+
 1. **Freeze producer merges.** No pipeline may release a service until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
 2. **Upgrade continuo.**
 3. **Release each dbt service** with its current `image_tag` and both flags.
-   `repo` and `commit_sha` (the full SHA) are required for a call with your own
-   token, as in the CI example above:
+   The pipeline that posts these releases needs `allowBootstrap: true` on its CI
+   binding. `repo` and `commit_sha` (the full SHA) are required for a call with
+   your own token, as in the CI example above:
 
    ```json
    {"release_id":"rel-rebase-finance-1","service":"finance","image_tag":"cddbcbc","bootstrap":true,"rebaseline":true,"repo":"carolsimone/continuo-demo","commit_sha":"cddbcbc981380257edf435e2a0627246e9908129"}
@@ -252,7 +259,8 @@ fingerprint.
 4. **Release each Python service.** Rebuild its image on
    `continuo-python-runtime` 0.12.0 (the image's `FROM` tag and the runtime your
    CI installs) with no other change, and release it with the same two flags and
-   `"kind": "python"`. Its `image_tag` is the full registry reference, not the
+   `"kind": "python"`, through the pipeline that uploads its contract written
+   by 0.12.0. Its `image_tag` is the full registry reference, not the
    bare short SHA, for example
    `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
    on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
