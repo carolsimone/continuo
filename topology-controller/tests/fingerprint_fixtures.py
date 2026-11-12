@@ -14,6 +14,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from domain.model import ParsedArtifact
+
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dbt_fingerprints"
 MANIFESTS_DIR = FIXTURE_DIR / "manifests"
 
@@ -31,7 +33,7 @@ def variant_paths(name: str, tmp_dir: str) -> tuple[str, str]:
     return manifest_path, str(extras) if extras.is_file() else ""
 
 
-def parse_variant(name: str, *, extras: bool = True):
+def parse_variant(name: str, *, extras: bool = True) -> ParsedArtifact:
     """The parsed artifact of a variant, with its compile extras unless extras is False."""
     from service.compile_extras import load_compile_extras
     from service.parser import parse_manifest

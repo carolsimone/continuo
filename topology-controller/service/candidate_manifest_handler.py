@@ -256,8 +256,8 @@ class CandidateManifestHandler:
             manifest_skips: list[SkippedNode] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
-                    nodes, mf_shared = parser.parse(mf.path, mf.image_tag, skipped=manifest_skips)
-                    record.add(nodes=len(nodes))
+                    parsed = parser.parse(mf, skipped=manifest_skips)
+                    record.add(nodes=len(parsed.nodes))
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
                 # node are all permanent — re-delivery cannot fix them, so
@@ -267,6 +267,7 @@ class CandidateManifestHandler:
                 self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, f"{mf.path}: {exc!r}")
                 return
             self._progress()
+            nodes, mf_shared = parsed.nodes, parsed.shared_code
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are

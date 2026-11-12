@@ -16,7 +16,7 @@ import logging
 import yaml
 
 from domain.exceptions import MalformedContractError
-from domain.model import ManifestNode, Runtime, SkippedNode
+from domain.model import ManifestNode, ParsedArtifact, Runtime, SkippedNode
 from domain.node_timeout import timeout_seconds
 from domain.secret_ref import validate_secret_ref
 from service.content_hash import content_hash_fold
@@ -224,8 +224,8 @@ def _parse_entry(
 
 def parse_python_contract(
     contract_path: str, image_tag: str = "", *, skipped: list[SkippedNode] | None = None
-) -> tuple[list[ManifestNode], dict]:
-    """Parse a python contract into its nodes.
+) -> ParsedArtifact:
+    """Parse a python contract into its nodes. A python service has no shared code.
 
     `skipped` is accepted so every parse function takes the same arguments and
     is never appended to: a python contract skips no node, a malformed entry
@@ -266,4 +266,4 @@ def parse_python_contract(
             _fail(f"duplicate node {node.schema_name}.{node.table_name}")
         seen.add(key)
         nodes.append(node)
-    return nodes, {}
+    return ParsedArtifact(nodes=nodes, shared_code={})

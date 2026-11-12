@@ -33,3 +33,12 @@ class MalformedContractError(ValueError):
 class InvalidNodeSettingError(ValueError):
     """A node declares a setting the system cannot honour (a bad value for one
     of its `meta` keys). The detail names the node and the key."""
+
+
+class InvalidCompileExtrasError(ValueError):
+    """A compile-extras.json that cannot be read or does not hold what the
+    compile promises to write. A re-delivery cannot fix it."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"compile-extras.json: {detail}")

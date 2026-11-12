@@ -40,7 +40,7 @@ def test_test_count_counts_generic_and_singular(tmp_path):
             "assert_orders_positive", targets=["model.svc_a.orders"],
         ),
     }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     nodes = {n.table_name: n for n in parsed}
     assert nodes["orders"].test_count == 2
     assert nodes["customers"].test_count == 0
@@ -59,7 +59,7 @@ def test_relationships_test_counts_once_via_attached_node(tmp_path):
             targets=["model.svc_a.orders", "model.svc_a.customers"],
         ),
     }}
-    parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
+    parsed = parse_manifest(_write(tmp_path, manifest), "v1").nodes
     nodes = {n.table_name: n for n in parsed}
     assert nodes["orders"].test_count == 1
     assert nodes["customers"].test_count == 0

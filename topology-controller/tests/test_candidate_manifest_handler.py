@@ -115,6 +115,14 @@ def _failed_kwargs(publisher):
     return publisher.publish_failed.call_args.kwargs
 
 
+def _write_compile_extras(tmp_path, seeds: dict, *, service: str = "service-1") -> str:
+    """Write a compile-extras.json holding `seeds` and return its path."""
+    path = tmp_path / "compile-extras.json"
+    path.write_text(json.dumps({"version": 1, "service": service, "release_id": "rel-1", "seeds": seeds,
+                                "project_flags": {}, "packages": {}}))
+    return str(path)
+
+
 def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
     def _raise(node, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
@@ -1358,3 +1366,23 @@ def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplo
         handler.handle(release_id="rel-1")
     assert observer.finished == []
     assert not _release_lines(caplog)
+
+
+def test_extras_of_another_service_reject_the_release_as_invalid_artifact(tmp_path):
+    publisher = MagicMock()
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+                                     extras_path=_write_compile_extras(tmp_path, {}, service="other")))
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "compile-extras.json" in kw["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_extras_of_the_declared_service_leave_the_release_parsed(tmp_path):
+    publisher = MagicMock()
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+                                     extras_path=_write_compile_extras(tmp_path, {})))
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()

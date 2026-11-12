@@ -43,9 +43,9 @@ def _dbt_node() -> ManifestNode:
 
 
 def _bundle(tmp_path) -> dict:
-    python_nodes, _ = parse_python_contract(
+    python_nodes = parse_python_contract(
         write_contract(tmp_path, make_entry(owner="marketing")), "img:1"
-    )
+    ).nodes
     shared = {
         "service-a:macro.svc.m1": {"source": "select 1", "checksum": "u1", "depends_on": []},
     }

@@ -155,11 +155,15 @@ def dbt_node(name, *, original_file_path=""):
 
 
 def source_with_nodes(tmp_path, *nodes):
+    """A source whose one manifest holds `nodes`. The manifest carries the
+    compile-extras.json in tmp_path when that file exists at the moment
+    list_manifests() is called, so a test may write it after building the source."""
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
+    extras = tmp_path / "compile-extras.json"
     source = create_autospec(ManifestSourcePort)
-    source.list_manifests.return_value = [
-        ManifestFile(path=str(manifest), image_tag="")
+    source.list_manifests.side_effect = lambda: [
+        ManifestFile(path=str(manifest), image_tag="", extras_path=str(extras) if extras.exists() else "")
     ]
     source.manifest_count.return_value = 1
     return source

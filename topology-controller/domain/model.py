@@ -83,6 +83,30 @@ class ManifestFile:
     # a permanent failure the handler reports, not an exception at decode time.
     kind: str = ManifestKind.DBT
     size_bytes: int = 0  # the fetched file's size on disk
+    # The downloaded compile-extras.json that sits beside a dbt manifest; "" when
+    # the object is absent or the artifact is not dbt.
+    extras_path: str = ""
+
+
+@dataclass(frozen=True)
+class SeedExtras:
+    """What the compile recorded about one seed: the SHA-256 of its file bytes,
+    its CSV header and the column types its configuration declares."""
+    sha256: str
+    header: tuple[str, ...]
+    column_types: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CompileExtras:
+    """The contents of a compile-extras.json: what a dbt compile knows about a
+    service that its manifest does not carry. `seeds` is keyed by the seed's dbt
+    unique id and `packages` maps each installed dbt distribution to its version."""
+    service: str
+    release_id: str
+    seeds: dict[str, SeedExtras]
+    project_flags: dict
+    packages: dict[str, str]
 
 
 @dataclass
@@ -223,3 +247,12 @@ class NodeRegistry:
 
     def to_lookup(self) -> dict[tuple[str, str], NodeRegistryEntry]:
         return {(e.schema_name.lower(), e.table_name.lower()): e for e in self.entries}
+
+
+@dataclass(frozen=True)
+class ParsedArtifact:
+    """The result of parsing one service's artifact: its nodes and the shared
+    code (dbt macros) they use, keyed by unit id."""
+    nodes: list[ManifestNode]
+    shared_code: dict[str, dict]
+    provenance: object | None = None

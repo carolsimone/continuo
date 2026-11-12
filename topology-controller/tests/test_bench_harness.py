@@ -1,7 +1,11 @@
+import posixpath
+import re
+
 from bench.compare import compare
 from bench.estate import generate_estate
 from bench.memory_s3 import MemoryS3
 from bench.run import build_handler
+from service.compile_extras import load_compile_extras
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -22,6 +26,23 @@ def test_the_real_handler_parses_the_estate():
     handler.handle(estate.release_id)
     assert publisher.ok, publisher.failure
     assert publisher.node_count == estate.dbt_nodes + estate.python_nodes
+
+
+# The benchmark estate must stay parseable now that the parser reads its extras.
+def test_every_estate_extras_object_passes_the_loader(tmp_path):
+    estate = generate_estate(20, columns=4)
+    loaded = 0
+    for request in estate.requests:
+        key = posixpath.join(posixpath.dirname(request.key), "compile-extras.json")
+        if key not in estate.objects:
+            continue
+        path = tmp_path / request.service / "compile-extras.json"
+        path.parent.mkdir()
+        path.write_bytes(estate.objects[key])
+        extras = load_compile_extras(str(path), request.service)
+        assert extras.seeds and all(re.fullmatch(r"[0-9a-f]{64}", s.sha256) for s in extras.seeds.values())
+        loaded += 1
+    assert loaded == 10
 
 
 def test_memory_s3_counts_puts_and_serves_downloads(tmp_path):

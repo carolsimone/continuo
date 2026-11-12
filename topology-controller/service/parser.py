@@ -1,8 +1,15 @@
+"""Parses a dbt manifest.json into ManifestNodes and the shared code (macros) they use.
+
+Every node carries a content_hash folded from its own source, the shared code it
+uses and its resolved config. A model, seed or snapshot a gate leaves out (no owner,
+no tag to take a schedule from, a local stub) is reported through the caller's
+`skipped` list, never raised.
+"""
 import hashlib
 import json
 import logging
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import ManifestNode, NodeType, SkippedNode, SkipReason
+from domain.model import CompileExtras, ManifestNode, NodeType, ParsedArtifact, SkippedNode, SkipReason
 from domain.node_timeout import timeout_seconds
 from service.content_hash import content_hash_fold
 
@@ -121,9 +128,17 @@ def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
 
 
 def parse_manifest(
-    manifest_path: str, image_tag: str = "", *, skipped: list[SkippedNode] | None = None
-) -> tuple[list[ManifestNode], dict]:
+    manifest_path: str,
+    image_tag: str = "",
+    extras: CompileExtras | None = None,
+    *,
+    skipped: list[SkippedNode] | None = None,
+) -> ParsedArtifact:
     """Parse a dbt manifest into its nodes and the shared code they use.
+
+    `extras` is the compile-extras.json of the same service when its compile wrote
+    one. The node hashes are computed from the manifest alone, so a parse with or
+    without extras yields the same nodes.
 
     A model, seed or snapshot that a gate leaves out (no owner, no tag to take
     a schedule from, a local stub) is never an error: when `skipped` is given,
@@ -267,4 +282,4 @@ def parse_manifest(
         }
         for mid in sorted(used_unit_ids) if mid in macros
     }
-    return nodes, shared_code
+    return ParsedArtifact(nodes=nodes, shared_code=shared_code)

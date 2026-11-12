@@ -108,10 +108,10 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
         description="test data",
         extra_columns="warn",
     )
-    nodes, shared = parse_python_contract(write_contract(tmp_path, entry), "img:1")
+    parsed = parse_python_contract(write_contract(tmp_path, entry), "img:1")
 
-    assert shared == {}
-    (node,) = nodes
+    assert parsed.shared_code == {}
+    (node,) = parsed.nodes
     assert node.table_name == "table_test"
     assert node.schema_name == "analytics"
     # A python contract has no alias concept: the resolved relation is always
@@ -147,7 +147,7 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
 
 
 def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     raw = json.loads(nodes[0].raw_code)
     assert raw["reads"] == make_entry()["reads"]
     assert raw["output_columns"] == [
@@ -167,19 +167,19 @@ def test_empty_reads_are_rejected(tmp_path):
 
 
 def test_stored_python_model_contract_parses_as_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model")))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model"))).nodes
     assert nodes[0].node_type == NodeType.PYTHON_NODE
     assert json.loads(nodes[0].raw_code)["kind"] == "python-node"
 
 
 def test_empty_nodes_list_yields_no_nodes(tmp_path):
-    nodes, shared = parse_python_contract(write_contract(tmp_path))
-    assert nodes == []
-    assert shared == {}
+    parsed = parse_python_contract(write_contract(tmp_path))
+    assert parsed.nodes == []
+    assert parsed.shared_code == {}
 
 
 def test_image_tag_defaults_to_empty(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     assert nodes[0].image_tag == ""
 
 
@@ -329,7 +329,7 @@ def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
 
 
 def test_csv_entry_parses(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_csv_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_csv_entry())).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_CSV
     assert node.runtime == Runtime.PYTHON
@@ -341,7 +341,7 @@ def test_csv_entry_parses(tmp_path):
 def test_csv_entry_hash_fields_verify(tmp_path):
     uri = "s3://drops/orders.csv"
     entry = make_csv_entry()
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.source_hash == hashlib.sha256(uri.encode()).hexdigest()
     assert node.shared_code_hash == ""
@@ -406,7 +406,7 @@ def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
     """https://<host> with no trailing path is a valid uri — only an empty
     host is rejected, not an absent path."""
     entry = make_csv_entry(reads={"csv": "https://example.com"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.csv_source == "https://example.com"
 
@@ -414,7 +414,7 @@ def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
 def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
     """The valid shape this whole grammar exists to keep accepting."""
     entry = make_csv_entry(reads={"csv": "s3://bucket/path/to/orders.csv"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.csv_source == "s3://bucket/path/to/orders.csv"
 
@@ -432,7 +432,7 @@ def test_non_string_kind_rejected_cleanly(tmp_path):
 
 
 def test_entry_without_kind_defaults_to_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.csv_source == ""
@@ -443,7 +443,7 @@ def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
     kind as "python-model"; STORED_KIND_ALIASES resolves it to python-node so
     the stored contract keeps parsing."""
     entry = make_entry(kind="python-model")
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
+    nodes = parse_python_contract(write_contract(tmp_path, entry)).nodes
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
@@ -454,9 +454,7 @@ def make_api_entry(remove=(), **overrides):
 
 
 def _parse_one(tmp_path, entry):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "img:1")
-    (node,) = nodes
-    return node
+    return parse_python_contract(write_contract(tmp_path, entry), "img:1").nodes[0]
 
 
 def test_python_api_entry_parses_as_a_root(tmp_path):
@@ -516,7 +514,7 @@ def test_timeout_minutes_is_not_in_raw_code(tmp_path):
 
 
 def test_a_python_node_counts_its_output_columns(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
+    nodes = parse_python_contract(write_contract(tmp_path, make_entry())).nodes
     assert nodes[0].declared_columns == 2
 
 
