@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"sort"
@@ -76,10 +77,11 @@ func planVersionWrite(
 			SharedCodeHash:    n.SharedCodeHash,
 			ConfigHash:        n.ConfigHash,
 			Runtime:           n.Runtime,
-			RawCode:           sanitize.Text(n.RawCode),
+			RawCode:           sanitize.Text(cmp.Or(n.Projection, n.RawCode)),
 			CompiledCode:      compiled,
+			CompiledHash:      n.CompiledHash,
 			CompiledTruncated: truncated,
-			ConfigJSON:        canonicalJSON(n.Config),
+			ConfigJSON:        configJSON(n),
 			// A bundle node outside changed_node_ids is carried by a release
 			// that did not author it, so its commit and release stamps are
 			// approximate; a bootstrap release authored none of its code.
@@ -214,4 +216,13 @@ func canonicalJSON(cfg map[string]any) string {
 		return "{}"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// configJSON is the config a version stores: a dbt node's hashed config when
+// the bundle carries it, the node's config otherwise.
+func configJSON(n codebundle.Node) string {
+	if n.HashedConfig != nil {
+		return canonicalJSON(n.HashedConfig)
+	}
+	return canonicalJSON(n.Config)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
 	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
@@ -16,6 +17,16 @@ import (
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 )
+
+// maxLoggedCompiledOnlyMoves bounds the ids the ingestion log line names for
+// the nodes whose compiled part moved alone.
+const maxLoggedCompiledOnlyMoves = 10
+
+// firstIDs returns at most n of ids, never nil, so a log line shows an empty
+// list rather than null.
+func firstIDs(ids []string, n int) []string {
+	return append([]string{}, ids[:min(len(ids), n)]...)
+}
 
 // ReleasePromotedVersionsHandler consumes release.promoted:v2 on its own
 // consumer group and records the release's code versions in the tenant's
@@ -191,6 +202,8 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		"unit_versions_created", total.UnitVersionsCreated,
 		"current_pointers_moved", total.CurrentPointersMoved,
 		"rejections_resolved", total.RejectionsResolved,
+		"compiled_only_moves", len(total.CompiledOnlyMoved),
+		"compiled_only_move_ids", firstIDs(total.CompiledOnlyMoved, maxLoggedCompiledOnlyMoves),
 	)
 	return nil
 }
@@ -211,6 +224,7 @@ func addWriteResults(a, b codeversion.WriteResult) codeversion.WriteResult {
 		UnitVersionsCreated:  a.UnitVersionsCreated + b.UnitVersionsCreated,
 		CurrentPointersMoved: a.CurrentPointersMoved + b.CurrentPointersMoved,
 		RejectionsResolved:   a.RejectionsResolved + b.RejectionsResolved,
+		CompiledOnlyMoved:    append(slices.Clone(a.CompiledOnlyMoved), b.CompiledOnlyMoved...),
 	}
 }
 

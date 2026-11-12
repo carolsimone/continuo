@@ -38,7 +38,7 @@ ON CREATE SET n.schema_name        = t.schema_name,
               n.active             = false`
 
 // readNodeStatesCypher returns, per node of the batch, the hash of its current
-// version and the highest version_seq of its versions. Only unique_id is a
+// version with that version's source and compiled parts, and the highest version_seq of its versions. Only unique_id is a
 // grouping key, so every other column stays inside an aggregate:
 // head(collect(...)) collapses the at-most-one pointer row while max folds the
 // version rows. A node with no versions yields a zero maximum.
@@ -49,6 +49,8 @@ OPTIONAL MATCH (n)-[:CURRENT]->(cv:NodeVersion {tenant_id: $tenant_id})
 OPTIONAL MATCH (av:NodeVersion {tenant_id: $tenant_id, unique_id: uid})
 RETURN uid                                     AS unique_id,
        head(collect(DISTINCT cv.content_hash)) AS current_hash,
+       head(collect(DISTINCT cv.source_hash))  AS current_source_hash,
+       head(collect(DISTINCT cv.compiled_hash)) AS current_compiled_hash,
        coalesce(max(av.version_seq), 0)        AS max_seq`
 
 // advanceNodeWatermarkCypher sets each node's watermark to the larger of its
@@ -114,6 +116,7 @@ ON CREATE SET v.source_hash        = n.source_hash,
               v.runtime            = n.runtime,
               v.raw_code           = n.raw_code,
               v.compiled_code      = n.compiled_code,
+              v.compiled_hash      = n.compiled_hash,
               v.compiled_truncated = n.compiled_truncated,
               v.config_json        = n.config_json,
               v.repo               = $repo,
@@ -198,7 +201,11 @@ var _ repository.CodeVersionRepository = (*codeVersionRepository)(nil)
 // nodeState is the graph's current knowledge about one node of the batch.
 type nodeState struct {
 	currentHash string
-	maxSeq      int64
+	// currentSource and currentCompiled are the source and compiled parts of
+	// the current version's hash, empty when the version has none.
+	currentSource   string
+	currentCompiled string
+	maxSeq          int64
 }
 
 // WriteBatch writes one batch of a release's versions for tenantID on the open
@@ -274,6 +281,10 @@ func (r *codeVersionRepository) WriteBatch(
 		st := states[n.UniqueID]
 		if st.currentHash == n.ContentHash {
 			continue // the graph already records this code
+		}
+		if st.currentCompiled != "" && n.CompiledHash != "" &&
+			n.CompiledHash != st.currentCompiled && n.SourceHash == st.currentSource {
+			out.CompiledOnlyMoved = append(out.CompiledOnlyMoved, n.UniqueID)
 		}
 		versions = append(versions, versionParams(n, st.maxSeq+1))
 		currents = append(currents, map[string]any{"unique_id": n.UniqueID, "content_hash": n.ContentHash})
@@ -434,7 +445,9 @@ func (r *codeVersionRepository) readNodeStates(ctx context.Context, uniqueIDs []
 		if v, ok := rec.Get("max_seq"); ok {
 			maxSeq, _ = v.(int64)
 		}
-		states[uid] = nodeState{currentHash: hash, maxSeq: maxSeq}
+		source, _ := recordString(rec, "current_source_hash")
+		compiled, _ := recordString(rec, "current_compiled_hash")
+		states[uid] = nodeState{currentHash: hash, currentSource: source, currentCompiled: compiled, maxSeq: maxSeq}
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("iterate node version state: %w", err)
@@ -473,6 +486,7 @@ func versionParams(n codeversion.NodeVersion, seq int64) map[string]any {
 		"runtime":            n.Runtime,
 		"raw_code":           n.RawCode,
 		"compiled_code":      n.CompiledCode,
+		"compiled_hash":      n.CompiledHash,
 		"compiled_truncated": n.CompiledTruncated,
 		"config_json":        n.ConfigJSON,
 		"version_seq":        seq,

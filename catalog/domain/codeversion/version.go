@@ -25,13 +25,18 @@ type NodeVersion struct {
 	SharedCodeHash string
 	ConfigHash     string
 	Runtime        string
-	RawCode        string
-	CompiledCode   string
+	// RawCode is a dbt node's raw SQL, or a python node's code projection.
+	RawCode      string
+	CompiledCode string
+	// CompiledHash is the compiled-SQL part of ContentHash; empty for a node
+	// with no compiled part.
+	CompiledHash string
 	// CompiledTruncated marks compiled code cut down to the ingestion size
 	// guard: the stored text is a prefix, not the whole compilation.
 	CompiledTruncated bool
-	// ConfigJSON is the node's full resolved config, canonically encoded, so a
-	// reader can see a materialization or partition change without diffing SQL.
+	// ConfigJSON is the node's hashed config (dbt), or its config (python),
+	// canonically encoded, so a reader can see a materialization or partition
+	// change without diffing SQL.
 	ConfigJSON string
 	// Healed marks a version whose commit and release stamps are approximate:
 	// the release that carried it into the graph is not the one that authored it.
@@ -82,4 +87,8 @@ type WriteResult struct {
 	// RejectionsResolved counts open :Rejection nodes this write linked to a
 	// newly-current version via [:RESOLVED_BY].
 	RejectionsResolved int
+	// CompiledOnlyMoved lists the unique ids of the nodes whose new version
+	// keeps the current version's source part and changes its non-empty
+	// compiled part. It is nil when no node moved so.
+	CompiledOnlyMoved []string
 }
