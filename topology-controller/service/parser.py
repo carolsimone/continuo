@@ -147,7 +147,8 @@ def parse_manifest(
 
         node.setdefault("unique_id", node_id)
         table_name = _table_name(node)
-        parts = _hash(f"{node['schema']}.{table_name}".lower(), node, ctx)
+        label = f"{node['schema']}.{table_name}".lower()
+        parts = _hash(label, node, ctx)
         used_units.update(parts.units)
 
         manifest_node = ManifestNode(
@@ -180,7 +181,8 @@ def parse_manifest(
         if resource_type == "seed":
             seed = extras.seeds.get(node_id) if extras is not None else None
             if seed is not None:
-                manifest_node.seed_columns_hash = seed_columns_hash(seed)
+                with _rejecting_hash_input(label):
+                    manifest_node.seed_columns_hash = seed_columns_hash(seed)
                 manifest_node.seed_header = seed.header
                 manifest_node.seed_column_types = dict(seed.column_types)
             if parts.path_checksum:

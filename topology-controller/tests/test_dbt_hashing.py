@@ -7,7 +7,7 @@ from continuo_contracts.fingerprints import hashed_config_denylist
 from continuo_contracts.hashing import fold4, shared_fold
 
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import CompileExtras
+from domain.model import CompileExtras, SeedExtras
 from service.dbt_hashing import (
     ManifestContext,
     RunMask,
@@ -226,7 +226,7 @@ def test_a_root_macro_replaces_a_global_macro_of_the_same_name():
         "macro.fpshop.should_full_refresh"}
 
 
-def test_static_calls_resolve_root_first_and_drop_unknown_names():
+def test_static_calls_resolve_in_dbt_search_order_and_drop_unknown_names():
     ctx = _project([
         _macro("macro.fpshop.since"), _macro("macro.svc.since"), _macro("macro.svc.cents"),
         _macro("macro.dbt.is_incremental"), _macro("macro.dbt_utils.star"), _macro("macro.fpshop.outside"),
@@ -235,9 +235,10 @@ def test_static_calls_resolve_root_first_and_drop_unknown_names():
            "{% if is_incremental() %} {{ dbt_utils.star('a') }} {% endif %}\n"
            "{% for i in range(3) %}{{ adapter.dispatch('f')() }}{% endfor %} {{ cents (1) }}")
     assert static_macro_calls(raw, "svc", ctx) == [
-        "macro.fpshop.since", "macro.dbt.is_incremental", "macro.dbt_utils.star", "macro.svc.cents"]
-    assert resolve_name("cents", "svc", ctx) == "macro.svc.cents"
-    assert resolve_name("ref", "svc", ctx) is None
+        "macro.svc.since", "macro.dbt.is_incremental", "macro.dbt_utils.star", "macro.svc.cents"]
+    assert static_macro_calls(raw, "fpshop", ctx)[0] == "macro.fpshop.since"
+    assert resolve_name("cents", "svc", ctx) == ("macro.svc.cents",)
+    assert resolve_name("ref", "svc", ctx) == ()
 
 
 def test_a_macro_called_only_inside_is_incremental_is_folded():
@@ -328,7 +329,8 @@ def test_a_model_folds_its_unit_tests_and_the_functions_it_calls():
     assert units["unit_test.fpshop.n.t"].digest == "ab" * 32
     unchecked = {k: v for k, v in no_checksum.items() if k != "created_at"}
     assert units["unit_test.fpshop.n.u"].digest == hashlib.sha256(canonical_json(unchecked)).hexdigest()
-    assert units["function.fpshop.double_it"].digest == hashlib.sha256(canonical_json({"raw_code": "x * 2"})).hexdigest()
+    assert units["function.fpshop.double_it"].digest == hashlib.sha256(canonical_json(
+        {"raw_code": "x * 2", "config": {"relation": {"schema": "", "alias": ""}}})).hexdigest()
     assert {u.input_name for u in units.values()} == {"unit_tests", "functions"}
     assert "unit_test.fpshop.n.t" not in shared_units({**node, "resource_type": "snapshot"}, ctx)
 
@@ -450,12 +452,17 @@ def test_a_function_digest_is_its_body_record():
     unit = shared_units(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), ctx)["function.fpshop.f"]
     body = {"raw_code": "x * 2", "arguments": [{"name": "x", "data_type": "integer"}], "returns": {"data_type": "integer"},
             "overloads": [{"arguments": [{"name": "x", "data_type": "text"}], "returns": {"data_type": "text"},
-                           "raw_body": "x || x"}]}
+                           "raw_body": "x || x"}],
+            "config": {"relation": {"schema": "", "alias": ""}}}
     assert unit.digest == hashlib.sha256(canonical_json(body)).hexdigest()
-    bare = {"unique_id": "function.fpshop.f", "resource_type": "function", "raw_code": "x"}
+    bare = {"unique_id": "function.fpshop.f", "resource_type": "function", "name": "f", "schema": "s",
+            "database": "warehouse", "raw_code": "x", "language": "sql", "compiled_code": "warehouse.s.g(x)",
+            "config": {"type": "scalar", "volatility": None, "meta": {"owner": "o"}}}
     bare_ctx = _project([], functions={"function.fpshop.f": bare})
     bare_unit = shared_units(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), bare_ctx)["function.fpshop.f"]
-    assert bare_unit.digest == hashlib.sha256(canonical_json({"raw_code": "x"})).hexdigest()
+    assert bare_unit.digest == hashlib.sha256(canonical_json({
+        "raw_code": "x", "language": "sql", "config": {"type": "scalar", "relation": {"schema": "s", "alias": "f"}},
+        "compiled_code": "__CONTINUO_DATABASE__.s.g(x)"})).hexdigest()
 
 
 def test_a_function_overload_or_return_type_change_moves_the_caller():
@@ -508,3 +515,75 @@ def test_a_function_description_edit_moves_no_caller_and_a_type_edit_does():
     assert _caller_hash(described("a", "other", "other")) == base
     assert _caller_hash(described("a", "b", "c")) == _caller_hash(_function())
     assert _caller_hash(described("a", "b", "c", data_type="bigint")) != base
+
+
+def test_a_function_config_language_or_compiled_body_change_moves_the_caller():
+    base = _caller_hash(_function(config={"type": "scalar"}, compiled_code="x * 2"))
+    assert _caller_hash(_function(config={"type": "aggregate"}, compiled_code="x * 2")) != base
+    assert _caller_hash(_function(config={"type": "scalar", "volatility": "stable"}, compiled_code="x * 2")) != base
+    assert _caller_hash(_function(config={"type": "scalar"}, compiled_code="x * 2", language="python")) != base
+    assert _caller_hash(_function(config={"type": "scalar", "meta": {"owner": "o"}}, compiled_code="x * 2")) == base
+
+
+def test_a_function_whose_compiled_body_alone_changes_moves_the_caller():
+    raw = "x * {{ var('factor') }}"
+    assert _caller_hash(_function(raw_code=raw, compiled_code="x * 2")) != _caller_hash(
+        _function(raw_code=raw, compiled_code="x * 3"))
+
+
+def _caller_of_nested(inner_body: str, helper_sql: str = "h") -> tuple[str, dict]:
+    outer = _function(depends_on={"macros": [], "nodes": ["function.fpshop.inner"]})
+    inner = _function(unique_id="function.fpshop.inner", raw_code=inner_body,
+                      depends_on={"macros": ["macro.fpshop.helper"], "nodes": ["function.fpshop.f"]})
+    ctx = _project([_macro("macro.fpshop.helper", helper_sql)],
+                   functions={"function.fpshop.f": outer, "function.fpshop.inner": inner})
+    parts = hash_dbt_node(_node(depends_on={"macros": [], "nodes": ["function.fpshop.f"]}), ctx)
+    return parts.content_hash, dict(parts.units)
+
+
+def test_a_function_folds_the_functions_it_calls_and_their_macros():
+    base, units = _caller_of_nested("x + 1")
+    assert {unit_id: unit.input_name for unit_id, unit in units.items()} == {
+        "function.fpshop.f": "functions", "function.fpshop.inner": "functions", "macro.fpshop.helper": "macros"}
+    assert _caller_of_nested("x + 2")[0] != base
+    assert _caller_of_nested("x + 1", helper_sql="other")[0] != base
+
+
+def test_a_root_override_that_calls_its_built_in_reaches_what_the_built_in_calls():
+    ctx = _project([
+        _macro("macro.fpshop.should_full_refresh", deps=("macro.dbt.should_full_refresh",)),
+        _macro("macro.dbt.should_full_refresh", deps=("macro.dbt.helper",)),
+        _macro("macro.dbt.helper"),
+        _macro("macro.fpshop.helper"),
+    ])
+    node = _node(depends_on={"macros": ["macro.dbt.should_full_refresh"], "nodes": []})
+    assert macro_closure(node, ctx) == {"macro.fpshop.should_full_refresh", "macro.fpshop.helper"}
+    assert shared_units(node, ctx)["macro.fpshop.should_full_refresh"].depends_on == ()
+
+
+def test_a_bare_call_to_an_imported_package_macro_folds_it():
+    ctx = _project([_macro("macro.dbt.is_incremental"), _macro("macro.dbt_utils.star")])
+    node = _node(raw_code="select 1 {% if is_incremental() %}{{ star() }}{% endif %}")
+    assert macro_closure(node, ctx) == {"macro.dbt_utils.star"}
+
+
+def test_a_bare_call_from_a_package_node_runs_the_package_macro_before_the_root_one():
+    ctx = _project([_macro("macro.fpshop.cents"), _macro("macro.svc.cents"), _macro("macro.dbt.cents")])
+    assert resolve_name("cents", "svc", ctx) == ("macro.svc.cents",)
+    assert resolve_name("cents", "fpshop", ctx) == ("macro.fpshop.cents",)
+    assert resolve_name("cents", "dbt", ctx) == ("macro.fpshop.cents",)
+    other = _project([_macro("macro.pkg_a.cents"), _macro("macro.pkg_b.cents"), _macro("macro.dbt.cents")])
+    assert resolve_name("cents", "svc", other) == ("macro.pkg_a.cents", "macro.pkg_b.cents")
+    assert resolve_name("cents", "svc", _project([_macro("macro.dbt_postgres.cents"), _macro("macro.dbt.cents")])) == (
+        "macro.dbt_postgres.cents",)
+
+
+def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path):
+    manifest = {"metadata": {}, "nodes": {"seed.svc.users": {
+        "resource_type": "seed", "name": "users", "schema": "analytics", "fqn": ["svc", "users"], "tags": ["daily"],
+        "raw_code": "", "config": {"meta": {"owner": "o"}}, "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    seed = SeedExtras(sha256="cd" * 32, header=("id\ud800",), column_types={})
+    extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
+    with pytest.raises(InvalidNodeSettingError, match="analytics.users"):
+        parse_manifest(str(tmp_path / "manifest.json"), extras=extras)

@@ -62,7 +62,7 @@ This release changes no values key, and it ships as a `MINOR`.
   - execution-controller refuses to start when a run command parses with other `--vars`, `--target`, `--profile`, `--profiles-dir` or `--project-dir` values than the compile command; `--profiles-dir /project` counts as the default.
   - A Python task whose image does not hash to its released `content_hash` fails with reason `image_contract_mismatch`, class `invalid`, and is not retried.
   - Each version of a dbt model is its own node, `<schema>.<name>.v<version>`, and a reference to an aliased model keeps its edge.
-  - A function's body (its arguments, return type and overload bodies, but not its descriptions) and the macros that on-run hooks and functions call are in the fingerprint. An enforced contract is hashed on models only.
+  - A function's body (its language, arguments, return type, config, compiled SQL and overload bodies, but not its descriptions), the functions it calls and the macros that on-run hooks and functions call are in the fingerprint. A bare macro call resolves in dbt's order: the node's own package, the root project, other packages, then dbt's own. An enforced contract is hashed on models only.
   - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
 - **The default validation image is `v0.12.0`** (`validation.imageTag`).
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
