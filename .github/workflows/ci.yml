@@ -45,9 +45,10 @@ jobs:
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. Deliberately below the sum of the two step caps
-    # below (50 + 110), keeping the same ratio to them this cap has always had:
-    # it is a backstop against a hang, not a budget any healthy run approaches.
-    timeout-minutes: 125
+    # below (50 + 160) and above the e2e step's own cap, so the e2e step's go
+    # test timeout fires first and names the wedged test: it is a backstop
+    # against a hang, not a budget any healthy run approaches.
+    timeout-minutes: 200
 
     # The repo's default workflow token is restricted (contents/metadata/packages
     # read only), which denies the pull-requests API that paths-filter uses to
@@ -392,9 +393,9 @@ jobs:
         #     a wedged queue stalls several of them one after another. Covering
         #     two is the minimum that still buys a named assertion; covering
         #     all five would put the ceiling past 3.5 hours.
-        #   - 75m for the rest of the suite. A healthy full run takes about
-        #     60m warm on the self-hosted runner; 75m is that plus cold-stack
-        #     headroom.
+        #   - 75m for the rest of the suite. A healthy full run in this job,
+        #     which starts the stack cold, takes about 60m; 75m leaves about
+        #     15m for a slower run.
         timeout-minutes: 160
         run: |
           source scripts/lib/common.sh

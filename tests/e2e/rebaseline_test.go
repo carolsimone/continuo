@@ -138,6 +138,9 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 // release that asks to re-baseline without bootstrapping, and records no
 // release for it.
 func TestE2E_RebaselineWithoutBootstrap_Is400(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
@@ -155,7 +158,9 @@ func TestE2E_RebaselineWithoutBootstrap_Is400(t *testing.T) {
 	errText, _ := body["error"].(string)
 	assert.Contains(t, errText, rebaselineRefusal, "the 400 says why")
 
-	resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID), nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err, "GET release-controller /releases/%s", releaseID)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "a refused release is never recorded")

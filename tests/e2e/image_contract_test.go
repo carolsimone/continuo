@@ -129,8 +129,9 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, pyMismatchUniqueID, 2*time.Minute)
 	waitForRunControllerToApply(t, ctx, clients, releaseID, pyMismatchSchedule, 2*time.Minute)
-	// A bootstrap promotion adopts no seed, so it may plan promote-seed runs.
-	// Wait for them, so the run cleanup below deletes none of their Jobs.
+	// This promotion is neither the install's first nor a rebaseline, so it
+	// adopts no seed, and its seed pass may plan promote-seed runs. Wait for
+	// them, so the run cleanup below deletes none of their Jobs.
 	waitForPromoteSeedRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
 
 	// ── 3. the node's run fails invalid image_contract_mismatch, once ────────

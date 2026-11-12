@@ -311,8 +311,8 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 attempts, each retry dispatched at once)
-- Whole suite: about 60 minutes warm on the CI e2e job's self-hosted runner, which measures the
-  whole suite on every run. A cold stack is slower.
+- Whole suite: about 60 minutes in the CI e2e job, which starts the stack cold and measures the
+  whole suite on every run.
 - Timeout: 145 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
   Derived, not measured: the two longest per-test context ceilings (35m each)
   wedging in one run, plus 75m for the rest of the suite. Every per-test
