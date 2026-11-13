@@ -114,6 +114,8 @@ export interface RunSummary {
   completed_at: string | null;
   // Why the run failed when no task of it failed; null otherwise.
   failure_reason?: string | null;
+  // The release the run executed on; null when run-controller recorded none.
+  release_id?: string | null;
 }
 
 export interface RunGraphNode {

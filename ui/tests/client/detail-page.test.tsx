@@ -2202,3 +2202,100 @@ describe('DetailPage — following the newest run', () => {
     expect(screen.getByText('old_orders')).toBeInTheDocument();
   });
 });
+
+describe('DetailPage — the release link of the shown run', () => {
+  const OLD_RUN_ID = 'run-old';
+  const taskRow = (name: string) => ({
+    task_id: `t-${name}`, service_name: 'svc1', schema_name: 'public', table_name: name,
+    job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
+  });
+  const latestRun = {
+    run_id: RUN_ID, schedule_name: SCHED, status: 'failed', release_id: 'rel-latest',
+    created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+  };
+
+  // The page shows the latest run (rel-latest) and lists one past run, whose
+  // summary carries pastRelease.
+  function routesWithPastRun(pastRelease: string | null, oldTasks?: () => Promise<unknown>) {
+    return {
+      ...freshRoutes(),
+      [`/api/runs/${RUN_ID}`]: async () => latestRun,
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, status: 'failed', release_id: pastRelease,
+            created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+        ],
+      }),
+      [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      [`/api/runs/${OLD_RUN_ID}/tasks`]: oldTasks ?? (async () => ({ total_count: 1, tasks: [taskRow('old_orders')] })),
+      [`/api/runs/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    };
+  }
+
+  async function selectPastRun(container: HTMLElement) {
+    fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+    // The latest run is terminal, so the list holds only the past run.
+    await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(1));
+    fireEvent.click(container.querySelector('.run-row')!);
+    fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+  }
+
+  const releaseLinks = () => screen.queryAllByRole('link').map((a) => a.getAttribute('href')).filter((h) => h?.startsWith('/releases/'));
+
+  it('links the latest run to its release when no past run is selected', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(routesWithPastRun('rel-old')));
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByRole('link', { name: 'rel-latest' })).toHaveAttribute('href', '/releases/rel-latest');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('links a selected past run to its own release, never the latest run\'s', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(routesWithPastRun('rel-old')));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByRole('link', { name: 'rel-latest' })).toBeInTheDocument();
+      await selectPastRun(container);
+      expect(await screen.findByText('old_orders')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'rel-old' })).toHaveAttribute('href', '/releases/rel-old');
+      expect(screen.queryByRole('link', { name: 'rel-latest' })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows no release link for a past run without a release', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(routesWithPastRun(null)));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByRole('link', { name: 'rel-latest' })).toBeInTheDocument();
+      await selectPastRun(container);
+      expect(await screen.findByText('old_orders')).toBeInTheDocument();
+      expect(releaseLinks()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows no release link from the latest run while a past run is loading', async () => {
+    let releaseTasks: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => { releaseTasks = resolve; });
+    vi.stubGlobal('fetch', mockFetchSequence(routesWithPastRun('rel-old', async () => {
+      await held;
+      return { total_count: 1, tasks: [taskRow('old_orders')] };
+    })));
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByRole('link', { name: 'rel-latest' })).toBeInTheDocument();
+      await selectPastRun(container);
+      await screen.findByText('Loading run…');
+      expect(releaseLinks()).toEqual([]);
+      releaseTasks?.();
+      expect(await screen.findByRole('link', { name: 'rel-old' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
