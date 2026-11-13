@@ -618,10 +618,14 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 
 // releaseNotices returns the seed reload notices of r against the production
 // topology prod, and the report-mode preflight of each noticed seed whose load
-// goes ahead. A rebaseline release gets an empty list and an empty map: its
-// promotion records every seed as loaded at its new fingerprint and reloads
-// none.
+// goes ahead. A verification run gets an empty list and an empty map, since it
+// never promotes. So does a rebaseline release: its promotion records every
+// seed as loaded at its new fingerprint and reloads none.
 func releaseNotices(d *Deps, r *pipeline.Run, candidate, prod release.Topology) ([]release.Notice, map[string]*seedreload.Preflight) {
+	if r.Kind() == pipeline.KindVerification {
+		d.Logger.Info("verification run: no seed reload notices", "release_id", r.ID())
+		return []release.Notice{}, map[string]*seedreload.Preflight{}
+	}
 	if r.IsRebaseline() {
 		d.Logger.Info("rebaseline release: no seed reload notices", "release_id", r.ID())
 		return []release.Notice{}, map[string]*seedreload.Preflight{}

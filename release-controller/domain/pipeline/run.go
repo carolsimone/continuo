@@ -13,6 +13,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/seedreload"
@@ -205,9 +206,9 @@ func (r *Run) Transitions() []Transition                 { return r.transitions 
 // Notices returns the run's seed reload notices, in node-id order.
 func (r *Run) Notices() []release.Notice { return r.notices }
 
-// SetNotices records the seed reload notices of the release, computed against
-// the production topology it would replace.
-func (r *Run) SetNotices(notices []release.Notice) { r.notices = notices }
+// SetNotices records a copy of the seed reload notices of the release,
+// computed against the production topology it would replace.
+func (r *Run) SetNotices(notices []release.Notice) { r.notices = slices.Clone(notices) }
 
 // ApplyWarehouseFindings records what the preflight of seed nodeID found in
 // the warehouse on that seed's notice. It reports false when the run holds no

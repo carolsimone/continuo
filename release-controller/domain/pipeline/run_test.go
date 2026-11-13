@@ -243,3 +243,14 @@ func TestRun_NoticesRoundTripAndTakeTheWarehouseFindings(t *testing.T) {
 	rehydrated := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "rel-n", Kind: pipeline.KindCandidate, Notices: got})
 	assert.Equal(t, got, rehydrated.Notices())
 }
+
+// SetNotices keeps its own copy, so findings applied to the run never change
+// the caller's slice.
+func TestRun_SetNoticesCopiesTheSlice(t *testing.T) {
+	r := pipeline.NewCandidate("rel-c", "finance", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	in := []release.Notice{{Kind: "seed_reload", NodeID: "analytics.seed_a", EngineFamily: warehouse.SchemaBound, Prediction: "reloads"}}
+	r.SetNotices(in)
+	require.True(t, r.ApplyWarehouseFindings("analytics.seed_a", seedreload.Findings{Checked: true, Completeness: "none"}))
+	assert.Equal(t, "stops", r.Notices()[0].Prediction)
+	assert.Equal(t, "reloads", in[0].Prediction)
+}
