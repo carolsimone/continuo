@@ -163,10 +163,8 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	if err := repo.SaveRemediation(ctx, rem); err != nil {
 		return fmt.Errorf("save remediation: %w", err)
 	}
-	if rem.Failures > 0 {
-		if err := repo.ClearFailures(ctx, rem.ID); err != nil {
-			return fmt.Errorf("clear the failures of remediation %s: %w", rem.ID, err)
-		}
+	if err := repo.ClearFailures(ctx, rem.ID); err != nil {
+		return fmt.Errorf("clear the failures of remediation %s: %w", rem.ID, err)
 	}
 	r.logger.Info("remediation try opened", "remediation", rem.ID, "release", t.ReleaseID,
 		"try", try.Try, "attempt", attempt, "clusters", len(groups))

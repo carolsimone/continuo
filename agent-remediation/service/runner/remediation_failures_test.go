@@ -111,6 +111,29 @@ func TestRunner_ATryThatOpensClearsTheRemediationsFailures(t *testing.T) {
 	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
 }
 
+// The try that opens clears the failures in its own transaction: right after
+// NextTry opens it, before any step of the try commits, the remediation's own
+// row counts none.
+func TestRunner_NextTryClearsTheRemediationsFailuresAsTheTryOpens(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	for range remediationFailureLimit - 1 {
+		h.store.FailNextCommit()
+		require.Error(t, h.drive(id))
+	}
+	require.Equal(t, remediationFailureLimit-1, h.remediation(id).Failures)
+
+	h.reclaim(id)
+	require.NoError(t, h.runner.NextTry(ctx, id))
+
+	rem := h.remediation(id)
+	require.Equal(t, 1, rem.CurrentTry, "the try opened")
+	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status)
+	assert.Empty(t, h.store.Steps(id), "no step of the try has committed")
+	assert.Zero(t, rem.Failures)
+	assert.Empty(t, rem.LastError)
+}
+
 // The gate's poller loads the remediation too: a verifying remediation whose
 // flow the files no longer define has each poll counted on its own row, and
 // the sweeper ends it at the fifth, failing the attempt's verifying row with
