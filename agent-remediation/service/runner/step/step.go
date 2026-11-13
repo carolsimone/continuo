@@ -63,9 +63,11 @@ type ContextInput struct {
 }
 
 // ContextOutput is what a context step returns: the evidence it gathered, or a
-// reason to decline the cluster.
+// decision to decline the cluster. A step declines by setting Declined; Decline
+// is the optional reason text, and may be empty.
 type ContextOutput struct {
 	Evidence map[remediation.EvidenceKey]any
+	Declined bool
 	Decline  string
 }
 
@@ -93,10 +95,12 @@ type PromptInput struct {
 }
 
 // PromptOutput is the draft a prompt step read from the model's answer, or a
-// reason to decline the cluster.
+// decision to decline the cluster. A step declines by setting Declined; Decline
+// is the optional reason text, and may be empty.
 type PromptOutput struct {
-	Draft   remediation.Draft
-	Decline string
+	Draft    remediation.Draft
+	Declined bool
+	Decline  string
 }
 
 // Check checks one cluster's draft before it is verified.

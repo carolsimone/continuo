@@ -33,6 +33,7 @@ func gather(t *testing.T, s *source.FailingNodeSource, f remediation.Failure) st
 
 func sourceFiles(t *testing.T, out step.ContextOutput) remediation.SourceFiles {
 	t.Helper()
+	require.False(t, out.Declined)
 	require.Empty(t, out.Decline)
 	sf, ok := out.Evidence[remediation.KeySourceFiles].(remediation.SourceFiles)
 	require.True(t, ok, "the step provides source_files")
@@ -144,6 +145,7 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := source.NewFailingNodeSource(missing, &fakeLocator{}, repoPaths, discardLogger())
 			out := gather(t, s, failure(c.src, c.node))
+			assert.True(t, out.Declined)
 			assert.Equal(t, c.want, out.Decline)
 			assert.Empty(t, out.Evidence)
 		})
@@ -197,6 +199,7 @@ func TestFailingNodeSource_SeedDeclinesWithTheLocatorsError(t *testing.T) {
 
 	out := gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "n1"}))
 
+	assert.True(t, out.Declined)
 	assert.Equal(t, fmt.Sprintf("the seed's source location could not be resolved from the graph: %v", errBoom), out.Decline)
 }
 

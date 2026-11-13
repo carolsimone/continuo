@@ -88,7 +88,7 @@ func (s *FailingNodeSource) Gather(ctx context.Context, in step.ContextInput) (s
 	if skipReason != "" {
 		s.logger.Info("source-file fix skipped", "node", f.Target.NodeID, "node_type", f.Target.NodeType,
 			"source", f.Trigger.Source, "reason", skipReason)
-		return step.ContextOutput{Decline: skipReason}, nil
+		return step.ContextOutput{Declined: true, Decline: skipReason}, nil
 	}
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeySourceFiles: files}}, nil
 }
