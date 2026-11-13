@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -141,8 +142,8 @@ func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID
 
 // TestMain_RunnerLoopsStartInLegacyMode: startRunner, which main calls with its
 // lifecycle's Go, starts the worker, the gate poller and the sweeper, and each
-// does its work with either engine, so a remediation the runner started finishes whichever engine runs
-// now.
+// does its work with either engine, so a remediation the runner started
+// finishes whichever engine runs now.
 func TestMain_RunnerLoopsStartInLegacyMode(t *testing.T) {
 	for _, engine := range []string{config.EngineLegacy, config.EngineRunner} {
 		t.Run(engine, func(t *testing.T) {
@@ -238,6 +239,82 @@ func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
 	set, err := loadRunnerFiles(workflows.Builtin, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
+}
+
+// builtinRenamed is the built-in files with the flow every heal trigger runs
+// renamed to name.
+func builtinRenamed(t *testing.T, name string) fstest.MapFS {
+	t.Helper()
+	out := fstest.MapFS{}
+	require.NoError(t, fs.WalkDir(workflows.Builtin, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(workflows.Builtin, p)
+		if err != nil {
+			return err
+		}
+		out[p] = &fstest.MapFile{Data: data}
+		return nil
+	}))
+	flow := out["flows/rejected-release.yaml"]
+	require.NotNil(t, flow)
+	renamed := strings.Replace(string(flow.Data), "\nname: rejected-release\n", "\nname: "+name+"\n", 1)
+	require.NotEqual(t, string(flow.Data), renamed)
+	flow.Data = []byte(renamed)
+	return out
+}
+
+// TestMain_FilesWithoutTheTriggerFlowStopStartup: files that validate but do
+// not define the flow every heal trigger runs stop startup, with either engine,
+// since every remediation the runner accepted would follow a flow no file
+// defines.
+func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	_, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), runner.Collaborators{}, logger)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"rejected-release"`)
+	assert.Contains(t, buf.String(), `"level":"ERROR"`)
+	assert.Contains(t, buf.String(), "rejected-release", "the refusal is logged")
+}
+
+// TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts: under the runner the flow
+// file's tries govern, so a different AGENT_REMEDIATION_MAX_ATTEMPTS is
+// warned about at startup. The legacy engine reads the variable, and an equal
+// value changes nothing, so neither warns.
+func TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts(t *testing.T) {
+	files, err := loadRunnerFiles(workflows.Builtin, runner.Collaborators{}, discardLogger())
+	require.NoError(t, err)
+	tries := files.Flows["rejected-release"].Tries
+
+	for _, tc := range []struct {
+		name        string
+		engine      string
+		maxAttempts int
+		warns       bool
+	}{
+		{"runner with a different value", config.EngineRunner, tries + 2, true},
+		{"runner with the flow's tries", config.EngineRunner, tries, false},
+		{"legacy with a different value", config.EngineLegacy, tries + 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			warnIgnoredMaxAttempts(config.Config{Engine: tc.engine, MaxAttempts: tc.maxAttempts}, files, logger)
+
+			if !tc.warns {
+				assert.Empty(t, buf.String())
+				return
+			}
+			assert.Contains(t, buf.String(), `"level":"WARN"`)
+			assert.Contains(t, buf.String(), "AGENT_REMEDIATION_MAX_ATTEMPTS")
+			assert.Contains(t, buf.String(), `"tries":3`)
+		})
+	}
 }
 
 // TestMain_RefusedFilesStopStartupAndEveryRefusalIsLogged.

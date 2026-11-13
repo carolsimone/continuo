@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// report is the JSON object `files` prints.
+// wireReport is the JSON object `files` prints, as a reader decodes it.
 type wireReport struct {
 	Files     int            `json:"files"`
 	Errors    []string       `json:"errors"`
@@ -163,4 +163,74 @@ func TestFiles_OutputIsDeterministic(t *testing.T) {
 	_, second, _ := runFiles(t, "files", builtinDir)
 
 	assert.Equal(t, first, second)
+}
+
+// copyBuiltin copies the built-in files into a new directory, with the flow
+// file's text changed by edit, and returns the directory.
+func copyBuiltin(t *testing.T, edit func(flow string) string) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, filepath.WalkDir(builtinDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(builtinDir, p)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(filepath.Clean(p)) //nolint:gosec // G304: a file of the repository's built-in directory.
+		if err != nil {
+			return err
+		}
+		if rel == filepath.Join("flows", "rejected-release.yaml") {
+			edited := edit(string(data))
+			require.NotEqual(t, string(data), edited, "the edit changes the flow file")
+			data = []byte(edited)
+		}
+		dst := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0o600)
+	}))
+	return dir
+}
+
+// A gate is one step that runs the verification: a flow with two gate steps
+// would validate each step and then fail every remediation at its gate.
+func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
+	for name, gate := range map[string]string{
+		"two steps":      "gate: [verification_run, one_manifest_kind]",
+		"one step twice": "gate: [verification_run, verification_run]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := copyBuiltin(t, func(flow string) string {
+				return strings.Replace(flow, "gate: [verification_run]", gate, 1)
+			})
+
+			code, stdout, stderr := runFiles(t, "files", dir)
+
+			assert.Equal(t, 1, code, stderr)
+			r := decode(t, stdout)
+			assert.Contains(t, strings.Join(r.Errors, "\n"), "flows/rejected-release.yaml:")
+			assert.Contains(t, strings.Join(r.Errors, "\n"), "2 gate steps")
+			assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
+		})
+	}
+}
+
+// Every heal trigger runs the flow rejected-release, so files that do not
+// define it are refused, as the service refuses them at startup.
+func TestFiles_FilesWithoutTheTriggerFlowExitOne(t *testing.T) {
+	dir := copyBuiltin(t, func(flow string) string {
+		return strings.Replace(flow, "\nname: rejected-release\n", "\nname: another-flow\n", 1)
+	})
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	require.Len(t, r.Errors, 1, "%v", r.Errors)
+	assert.Contains(t, r.Errors[0], `"rejected-release"`)
+	assert.Empty(t, r.Scenarios)
 }

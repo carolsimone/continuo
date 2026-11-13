@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -14,6 +15,17 @@ import (
 
 // flowRejectedRelease is the flow a heal trigger for a rejected release runs.
 const flowRejectedRelease = "rejected-release"
+
+// TriggerFlow returns the flow of set that every accepted heal trigger runs. It
+// is an error when set does not define it: every remediation Accept records
+// would then follow a flow no file defines, and could never be driven.
+func TriggerFlow(set workflow.Set) (workflow.Flow, error) {
+	f, ok := set.Flows[flowRejectedRelease]
+	if !ok {
+		return workflow.Flow{}, fmt.Errorf("no file defines flow %q, which every heal trigger runs", flowRejectedRelease)
+	}
+	return f, nil
+}
 
 // Accepted is one heal trigger as the stream delivered it: the decoded trigger,
 // the payload bytes it was decoded from, the message's id and stream fields,

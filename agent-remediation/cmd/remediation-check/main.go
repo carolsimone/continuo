@@ -4,8 +4,8 @@
 //	remediation-check files <dir>
 //
 // files loads the flow, type and fixture files under <dir>, validates them
-// against the steps the runner registers, and runs the conformance suite over
-// them: every type a flow lists through every type scenario, and every flow
+// against the steps the runner registers, checks that they define the flow
+// every heal trigger runs, and runs the conformance suite over them: every type a flow lists through every type scenario, and every flow
 // through every flow scenario, in worlds of scripted fakes over the memory
 // store. When the files do not load or do not validate it reports the errors
 // and skips the suite.
@@ -31,6 +31,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
@@ -78,8 +79,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
-	dir := args[1]
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	dir := filepath.Clean(args[1])
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() { //nolint:gosec // G703: the operator names the directory to check on the command line.
 		_, _ = fmt.Fprintf(stderr, "%s is not a directory\n%s\n", dir, usage)
 		return exitUsage
 	}
@@ -127,6 +128,9 @@ func checkFiles(ctx context.Context, dir string) report {
 	warnings, err := runner.Validate(set, runner.NewRegistry(runner.Collaborators{}))
 	rep.Warnings = append(rep.Warnings, warnings...)
 	rep.Errors = append(rep.Errors, messages(err)...)
+	if _, err := runner.TriggerFlow(set); err != nil {
+		rep.Errors = append(rep.Errors, err.Error())
+	}
 	if len(rep.Errors) > 0 {
 		return rep
 	}

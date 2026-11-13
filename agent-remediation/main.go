@@ -349,6 +349,7 @@ func main() {
 		logger.Error("the built-in remediation files are refused", "error", err)
 		os.Exit(1)
 	}
+	warnIgnoredMaxAttempts(cfg, files, logger)
 	remediationRepo := postgres.NewRemediationRepository(db)
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
 		llm:    cachedLLM,
@@ -554,12 +555,11 @@ func startRunner(ctx context.Context, cfg config.Config, collab runner.Collabora
 	return accept
 }
 
-// buildRunner builds the runner, its three loops and the function that accepts a
-// heal trigger as a remediation. The
-// worker and the poller are registered with the liveness registry: each beats
-// as it works, and a loop that stops, or stops beating, fails the pod's
-// probes. The sweeper takes its own lease name, so a worker and the sweeper of
-// one process never share a lease.
+// buildRunner builds the runner, its three loops and the function that accepts
+// a heal trigger as a remediation. The worker and the poller are registered
+// with the liveness registry: each beats as it works, and a loop that stops, or
+// stops beating, fails the pod's probes. The sweeper takes its own lease name,
+// so a worker and the sweeper of one process never share a lease.
 func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
 	r := runner.New(newRunnerDeps(cfg, collab, files, w.newUoW, w.llm, w.owner, w.logger))
 	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
@@ -584,8 +584,8 @@ func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.
 }
 
 // registerLoop registers a background loop with the liveness registry, as a
-// stream consumer is, with the longest it may go without beating, and returns the function the loop calls to show it is
-// working.
+// stream consumer is, with the longest it may go without beating, and returns
+// the function the loop calls to show it is working.
 func registerLoop(live *liveness.Registry, name string, budget time.Duration) func() {
 	h := &loopHealth{}
 	h.beat()
@@ -671,10 +671,12 @@ func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflo
 	}
 }
 
-// loadRunnerFiles loads the remediation files of fsys and checks every flow and
-// type of them against the steps collab's registry holds. Every refusal is
-// logged on its own line and the error that joins them is returned; a warning
-// is logged and does not stop startup.
+// loadRunnerFiles loads the remediation files of fsys, checks every flow and
+// type of them against the steps collab's registry holds, and checks that they
+// define the flow every heal trigger runs. Every refusal is logged on its own
+// line and the error that joins them is returned; a warning is logged and does
+// not stop startup. The worker drives the runner's remediations with either
+// engine, so files without the trigger's flow stop startup with either.
 func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
 	set, err := workflowfile.Load(fsys)
 	if err != nil {
@@ -685,11 +687,30 @@ func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logge
 	for _, w := range warnings {
 		logger.Warn("remediation file", "warning", w)
 	}
+	if _, ferr := runner.TriggerFlow(set); ferr != nil {
+		err = errors.Join(err, ferr)
+	}
 	if err != nil {
 		logRefusals(logger, err)
 		return workflow.Set{}, err
 	}
 	return set, nil
+}
+
+// warnIgnoredMaxAttempts warns at startup when the engine is the runner and
+// AGENT_REMEDIATION_MAX_ATTEMPTS differs from the tries of the flow every heal
+// trigger runs: the runner gives up after the flow file's tries and never reads
+// the variable, which only the legacy handler reads.
+func warnIgnoredMaxAttempts(cfg config.Config, files workflow.Set, logger *slog.Logger) {
+	if cfg.Engine != config.EngineRunner {
+		return
+	}
+	flow, err := runner.TriggerFlow(files)
+	if err != nil || flow.Tries == cfg.MaxAttempts {
+		return
+	}
+	logger.Warn("AGENT_REMEDIATION_MAX_ATTEMPTS is not read by the runner engine; the flow file's tries govern",
+		"max_attempts", cfg.MaxAttempts, "flow", flow.Name, "tries", flow.Tries)
 }
 
 // logRefusals logs each error joined in err on a line of its own.
