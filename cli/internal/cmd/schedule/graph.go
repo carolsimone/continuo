@@ -58,8 +58,9 @@ Output (stdout, JSON):
              "node_type":string}],
    "edges":[{"from_node_id":string,"to_node_id":string}]}
   A node id is "service.schema.table"; an edge runs from the dependent node to
-  its dependency. A node of type "ingested" is a table no node builds: its
-  "service_name" is empty, so its node id starts with a dot
+  its dependency.
+  A node of type "unknown-external" is a table continuo reads and does not build:
+  its "service_name" is empty, so its node id starts with a dot
   (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
   address it.
 

@@ -66,24 +66,24 @@ func saveTopoRelease(t *testing.T, db *sqlx.DB, rel topology.Release) (bool, err
 	return loaded, nil
 }
 
-// ingestedSpec is the ingested node of schema.table as a topology artifact
+// unknownExternalSpec is the unknown-external node of schema.table as a topology artifact
 // states it: a node no service owns, with no content hash, schedule or image,
 // that no run builds.
-func ingestedSpec(schema, table string) topology.NodeSpec {
+func unknownExternalSpec(schema, table string) topology.NodeSpec {
 	zero := 0
 	return topology.NodeSpec{
-		UniqueID: schema + "." + table, SchemaName: schema, TableName: table, NodeType: "ingested", TestCount: &zero,
+		UniqueID: schema + "." + table, SchemaName: schema, TableName: table, NodeType: "unknown-external", TestCount: &zero,
 	}
 }
 
-// ingestedRelease stores rel-1 of a new tenant and makes it live. Its reader
-// a.m, of schedule "s", reads the ingested table raw.x. It returns the tenant.
-func ingestedRelease(t *testing.T, db *sqlx.DB) string {
+// unknownExternalRelease stores rel-1 of a new tenant and makes it live. Its reader
+// a.m, of schedule "s", reads the unknown-external table raw.x. It returns the tenant.
+func unknownExternalRelease(t *testing.T, db *sqlx.DB) string {
 	t.Helper()
 	tenant := newTopoTenant(t, db)
 	reader := topoSpec("a", "m", "dbt-model", "h-m", "raw.x")
 	reader.ScheduleName = "s"
-	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", reader, ingestedSpec("raw", "x")))
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", reader, unknownExternalSpec("raw", "x")))
 	require.NoError(t, err)
 	makeTenantLive(t, db, tenant, "rel-1", 1)
 	return tenant
@@ -190,13 +190,13 @@ func TestTopologyRepository_ReleaseNodesRoundTripsEveryColumnInKeyOrder(t *testi
 	assert.Empty(t, none)
 }
 
-// An ingested node has an empty service name, content hash, image tag and
+// An unknown-external node has an empty service name, content hash, image tag and
 // schedule name. It is stored like any other node and read back with every
 // field as the artifact stated it, and the edge from it to its reader is kept.
-func TestTopologyRepository_AnIngestedNodeIsStoredAndReadBackIntact(t *testing.T) {
+func TestTopologyRepository_AnUnknownExternalNodeIsStoredAndReadBackIntact(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	tenant := ingestedRelease(t, db)
+	tenant := unknownExternalRelease(t, db)
 	repo := postgres.NewTopologyRepository(db, nil)
 	zero := 0
 
@@ -204,12 +204,12 @@ func TestTopologyRepository_AnIngestedNodeIsStoredAndReadBackIntact(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	assert.Equal(t, topology.Node{
-		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "ingested", TestCount: &zero,
+		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "unknown-external", TestCount: &zero,
 	}, nodes[1], "empty service name, content hash, image tag, secret ref and schedule name come back empty")
 
-	ingested, err := repo.ReleaseNodes(ctx, tenant, "rel-1", "ingested")
+	unknownExternal, err := repo.ReleaseNodes(ctx, tenant, "rel-1", "unknown-external")
 	require.NoError(t, err)
-	assert.Equal(t, nodes[1:], ingested)
+	assert.Equal(t, nodes[1:], unknownExternal)
 
 	hashes, found, err := repo.NodeHashes(ctx, tenant, "rel-1", "raw.x")
 	require.NoError(t, err)
@@ -221,11 +221,11 @@ func TestTopologyRepository_AnIngestedNodeIsStoredAndReadBackIntact(t *testing.T
 }
 
 // The graph a schedule's run plans from is the schedule's nodes and the seeds
-// they read. An ingested node has no schedule and is no seed, so the reader's
+// they read. An unknown-external node has no schedule and is no seed, so the reader's
 // graph holds neither it nor its edge.
-func TestScheduleGraph_LeavesOutAnIngestedUpstream(t *testing.T) {
+func TestScheduleGraph_LeavesOutAnUnknownExternalUpstream(t *testing.T) {
 	db := newTestDB(t)
-	tenant := ingestedRelease(t, db)
+	tenant := unknownExternalRelease(t, db)
 
 	g, err := postgres.NewTopologyRepository(db, nil).ScheduleGraph(context.Background(), tenant, "rel-1", "s")
 	require.NoError(t, err)

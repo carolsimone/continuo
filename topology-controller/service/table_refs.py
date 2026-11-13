@@ -9,7 +9,7 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
 
     A table is returned once per catalog, schema and table, however many of the
     node's SQLs name it. The catalog is part of the identity because the
-    system-relation filter that follows (domain.ingested.SystemRelations) decides
+    system-relation filter that follows (domain.external.SystemRelations) decides
     per catalog: on an engine that keeps its own relations in a catalog,
     system.runtime.nodes and warehouse.runtime.nodes share a schema and a name,
     and merging them by schema and name would let whichever the SQL names first

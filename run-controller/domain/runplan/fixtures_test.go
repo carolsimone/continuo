@@ -138,23 +138,23 @@ func withNode(table, nodeType string, testCount *int) topology.Graph {
 	}}, nil)
 }
 
-// ingestedProbe is the key of the ingested table the fixtures use: a table
+// unknownExternalProbe is the key of the unknown-external table the fixtures use: a table
 // some node reads and no node builds.
-var ingestedProbe = topology.KeyOf("raw", "ingest_probe")
+var unknownExternalProbe = topology.KeyOf("raw", "ingest_probe")
 
-// ingestedNode is the ingested node as the release stores it: no service, no
+// unknownExternalNode is the unknown-external node as the release stores it: no service, no
 // schedule, no content hash, no image and no data test.
-func ingestedNode() topology.Node {
+func unknownExternalNode() topology.Node {
 	return topology.Node{
-		Key: ingestedProbe, UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
-		NodeType: "ingested", TestCount: count(0),
+		Key: unknownExternalProbe, UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
+		NodeType: "unknown-external", TestCount: count(0),
 	}
 }
 
-// withIngestedUpstream returns g with the ingested node added, read by each of
+// withUnknownExternalUpstream returns g with the unknown-external node added, read by each of
 // tables.
-func withIngestedUpstream(g topology.Graph, tables ...string) topology.Graph {
-	nodes := []topology.Node{ingestedNode()}
+func withUnknownExternalUpstream(g topology.Graph, tables ...string) topology.Graph {
+	nodes := []topology.Node{unknownExternalNode()}
 	var edges []topology.Edge
 	for _, k := range g.Keys() {
 		n, _ := g.Node(k)
@@ -164,7 +164,7 @@ func withIngestedUpstream(g topology.Graph, tables ...string) topology.Graph {
 		}
 	}
 	for _, t := range tables {
-		edges = append(edges, topology.Edge{Upstream: ingestedProbe, Downstream: key(t)})
+		edges = append(edges, topology.Edge{Upstream: unknownExternalProbe, Downstream: key(t)})
 	}
 	return topology.NewGraph(nodes, edges)
 }

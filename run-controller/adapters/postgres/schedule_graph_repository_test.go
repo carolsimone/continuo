@@ -99,11 +99,11 @@ func TestScheduleGraph_AScheduleWithNoUpstreamInAnotherScheduleHasNoCrossEdge(t 
 }
 
 // The schedule graph the UI draws returns the upstreams of a schedule's nodes
-// whatever their type, so an ingested node shows up with the edge to its
+// whatever their type, so an unknown-external node shows up with the edge to its
 // reader, and with no service.
-func TestGraph_ReturnsAnIngestedUpstreamAndItsEdge(t *testing.T) {
+func TestGraph_ReturnsAnUnknownExternalUpstreamAndItsEdge(t *testing.T) {
 	db := newTestDB(t)
-	tenant := ingestedRelease(t, db)
+	tenant := unknownExternalRelease(t, db)
 
 	g, err := postgres.NewScheduleGraphRepository(db).Graph(context.Background(), tenant, "s")
 	require.NoError(t, err)
@@ -112,18 +112,18 @@ func TestGraph_ReturnsAnIngestedUpstreamAndItsEdge(t *testing.T) {
 	require.Equal(t, []topology.NodeKey{"a.m", "raw.x"}, keysOf(g.Nodes))
 	zero := 0
 	assert.Equal(t, topology.Node{
-		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "ingested", TestCount: &zero,
+		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "unknown-external", TestCount: &zero,
 	}, g.Nodes[1])
 	assert.Equal(t, "", g.Nodes[1].ServiceName)
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.x", Downstream: "a.m"}}, g.Edges)
 }
 
-// An ingested node has an empty schedule name, which belongs to no schedule:
+// An unknown-external node has an empty schedule name, which belongs to no schedule:
 // it adds no schedule to the list, no tile and no model to any count.
-func TestScheduleSummaries_AnIngestedNodeIsNoSchedule(t *testing.T) {
+func TestScheduleSummaries_AnUnknownExternalNodeIsNoSchedule(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	tenant := ingestedRelease(t, db)
+	tenant := unknownExternalRelease(t, db)
 
 	got, err := postgres.NewScheduleGraphRepository(db).Summaries(ctx, tenant)
 	require.NoError(t, err)

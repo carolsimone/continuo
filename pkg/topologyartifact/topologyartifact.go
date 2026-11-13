@@ -210,11 +210,11 @@ func Decode(gz []byte, wantSHA256 string) (Document, error) {
 // CandidateObjectKey is the S3 key of the object a node's validation Job
 // fetches: the compiled SQL rewritten to the candidate schema for a dbt node
 // (.sql), the validation spec for a python node (.json). topology-controller
-// writes these objects; a dbt seed has none, an ingested node has none, and
+// writes these objects; a dbt seed has none, an unknown-external node has none, and
 // neither does a node type this build does not know, so all three return "".
 func CandidateObjectKey(releaseID, uniqueID, nodeType string) string {
 	t := model.NodeType(nodeType)
-	if !t.IsValid() || t == model.NodeTypeDbtSeed || t.IsIngested() {
+	if !t.IsValid() || t == model.NodeTypeDbtSeed || t.IsExternal() {
 		return ""
 	}
 	ext := "sql"

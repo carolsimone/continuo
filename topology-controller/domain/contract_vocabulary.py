@@ -64,7 +64,7 @@ class NodeType(StrEnum):
     PYTHON_CSV = "python-csv"
     PYTHON_API = "python-api"
     DBT_TEST = "dbt-test"
-    INGESTED = "ingested"
+    UNKNOWN_EXTERNAL = "unknown-external"
 
 
 NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT_SEED})
@@ -75,7 +75,7 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 """Values of NodeType whose contract may name one Secret for the node's pod."""
 
 
-NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.INGESTED: NodeRuntime.EXTERNAL}
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.UNKNOWN_EXTERNAL: NodeRuntime.EXTERNAL}
 """Which toolchain builds each NodeType, or external when nothing in continuo builds it."""
 
 

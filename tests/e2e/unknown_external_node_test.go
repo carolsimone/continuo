@@ -31,24 +31,24 @@ const (
 	ingestProbeReaderGraphID = ingestProbeReaderService + "." + ingestProbeReaderKey
 	// The outside table the reader selects from: scripts/setup.sh creates it in
 	// the warehouse, and no model builds it.
-	ingestedSchema      = "e2e_raw"
-	ingestedTable       = "ingest_probe"
-	ingestedKey         = ingestedSchema + "." + ingestedTable
-	ingestedGraphNodeID = "." + ingestedKey // an ingested node has no service, so its id starts with a dot
+	unknownExternalSchema      = "e2e_raw"
+	unknownExternalTable       = "ingest_probe"
+	unknownExternalKey         = unknownExternalSchema + "." + unknownExternalTable
+	unknownExternalGraphNodeID = "." + unknownExternalKey // an unknown-external node has no service, so its id starts with a dot
 )
 
-// TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns proves that a table a model
-// reads and no model builds is part of the topology as an ingested node and is
+// TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns proves that a table a model
+// reads and no model builds is part of the topology as an unknown-external node and is
 // never run:
 //
 //  1. A bootstrap release of service-1 promotes. service-1's
 //     ingest_probe_reader model reads e2e_raw.ingest_probe, a table
 //     scripts/setup.sh creates in the warehouse and no model builds.
 //  2. run-controller's copy of the release holds a node for the table, of type
-//     ingested, with no service and no schedule, and an edge into the reader.
-//  3. catalog's live graph holds an active :Node of type ingested for it, and
+//     unknown-external, with no service and no schedule, and an edge into the reader.
+//  3. catalog's live graph holds an active :Node of type unknown-external for it, and
 //     the reader's :DEPENDS_ON reaches it.
-//  4. The ui's schedule graph of ingest-probe lists the node, typed ingested
+//  4. The ui's schedule graph of ingest-probe lists the node, typed unknown-external
 //     and named without a service, and the edge from it to the reader.
 //  5. StartRun(ingest-probe) plans exactly the reader, which runs and
 //     succeeds: the Job selects from the outside table. No Job is created for
@@ -61,7 +61,7 @@ const (
 // promote-seed runs of its seeds, so a deferred restore announces the default
 // e2e DAG again and waits for those runs to end, the way
 // TestDroppedNodeKeepsItsHistory does.
-func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
+func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -118,7 +118,7 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// a model of the schedule.
 	waitForRunControllerToApply(t, ctx, clients, releaseID, ingestProbeSchedule, 2*time.Minute)
 
-	// ── 2. run-controller stores the ingested node ───────────────────────────
+	// ── 2. run-controller stores the unknown-external node ───────────────────────────
 	var stored struct {
 		UniqueID     string `db:"unique_id"`
 		ServiceName  string `db:"service_name"`
@@ -131,48 +131,48 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 		SELECT unique_id, service_name, schema_name, table_name, node_type, schedule_name
 		  FROM topology_nodes
 		 WHERE tenant_id = $1 AND release_id = $2 AND node_key = $3`,
-		events.DefaultTenantID, releaseID, ingestedKey),
-		"run-controller's copy of release %s holds no node %s", releaseID, ingestedKey)
-	assert.Equal(t, string(model.NodeTypeIngested), stored.NodeType, "the table's node is ingested")
-	assert.Empty(t, stored.ServiceName, "no service builds an ingested node")
-	assert.Empty(t, stored.ScheduleName, "an ingested node belongs to no schedule")
-	assert.Equal(t, ingestedKey, stored.UniqueID)
-	assert.Equal(t, ingestedSchema, stored.SchemaName)
-	assert.Equal(t, ingestedTable, stored.TableName)
+		events.DefaultTenantID, releaseID, unknownExternalKey),
+		"run-controller's copy of release %s holds no node %s", releaseID, unknownExternalKey)
+	assert.Equal(t, string(model.NodeTypeUnknownExternal), stored.NodeType, "the table's node is unknown-external")
+	assert.Empty(t, stored.ServiceName, "no service builds an unknown-external node")
+	assert.Empty(t, stored.ScheduleName, "an unknown-external node belongs to no schedule")
+	assert.Equal(t, unknownExternalKey, stored.UniqueID)
+	assert.Equal(t, unknownExternalSchema, stored.SchemaName)
+	assert.Equal(t, unknownExternalTable, stored.TableName)
 	var readers int
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &readers, `
 		SELECT count(*) FROM topology_edges
 		 WHERE tenant_id = $1 AND release_id = $2 AND upstream_key = $3 AND downstream_key = $4`,
-		events.DefaultTenantID, releaseID, ingestedKey, ingestProbeReaderKey))
-	assert.Equal(t, 1, readers, "run-controller stores the edge from %s into %s", ingestedKey, ingestProbeReaderKey)
-	t.Logf("✅ run-controller stores %s as a %s node with no service and no schedule", ingestedKey, stored.NodeType)
+		events.DefaultTenantID, releaseID, unknownExternalKey, ingestProbeReaderKey))
+	assert.Equal(t, 1, readers, "run-controller stores the edge from %s into %s", unknownExternalKey, ingestProbeReaderKey)
+	t.Logf("✅ run-controller stores %s as a %s node with no service and no schedule", unknownExternalKey, stored.NodeType)
 
 	// ── 3. catalog's graph holds it, and the reader depends on it ────────────
-	require.Equal(t, ingestedKey, neo4jScalarString(ctx, clients,
+	require.Equal(t, unknownExternalKey, neo4jScalarString(ctx, clients,
 		`MATCH (n:Node {tenant_id: 'default', unique_id: $uid, node_type: $type, active: true}) RETURN n.unique_id AS v`,
-		map[string]any{"uid": ingestedKey, "type": string(model.NodeTypeIngested)}),
-		"catalog holds an active :Node %s of type %s", ingestedKey, model.NodeTypeIngested)
-	require.Equal(t, ingestedKey, neo4jScalarString(ctx, clients,
+		map[string]any{"uid": unknownExternalKey, "type": string(model.NodeTypeUnknownExternal)}),
+		"catalog holds an active :Node %s of type %s", unknownExternalKey, model.NodeTypeUnknownExternal)
+	require.Equal(t, unknownExternalKey, neo4jScalarString(ctx, clients,
 		`MATCH (:Node {tenant_id: 'default', unique_id: $reader, active: true})-[:DEPENDS_ON]->
 		       (n:Node {tenant_id: 'default', unique_id: $uid, node_type: $type, active: true})
 		 RETURN n.unique_id AS v`,
-		map[string]any{"reader": ingestProbeReaderKey, "uid": ingestedKey, "type": string(model.NodeTypeIngested)}),
-		"%s depends on the ingested node %s in catalog's graph", ingestProbeReaderKey, ingestedKey)
-	t.Logf("✅ catalog holds the ingested :Node %s, and %s depends on it", ingestedKey, ingestProbeReaderKey)
+		map[string]any{"reader": ingestProbeReaderKey, "uid": unknownExternalKey, "type": string(model.NodeTypeUnknownExternal)}),
+		"%s depends on the unknown-external node %s in catalog's graph", ingestProbeReaderKey, unknownExternalKey)
+	t.Logf("✅ catalog holds the unknown-external :Node %s, and %s depends on it", unknownExternalKey, ingestProbeReaderKey)
 
 	// ── 4. the ui's schedule graph draws it ──────────────────────────────────
 	graph := mustGetJSON(t, fmt.Sprintf("%s/api/schedules/%s/graph", clients.uiBase, ingestProbeSchedule))
 	nodeTypes := uiGraphNodeTypes(t, graph)
-	require.Contains(t, nodeTypes, ingestedGraphNodeID,
-		"the graph of %s holds the ingested node, whose id has no service: %v", ingestProbeSchedule, nodeTypes)
-	assert.Equal(t, string(model.NodeTypeIngested), nodeTypes[ingestedGraphNodeID])
+	require.Contains(t, nodeTypes, unknownExternalGraphNodeID,
+		"the graph of %s holds the unknown-external node, whose id has no service: %v", ingestProbeSchedule, nodeTypes)
+	assert.Equal(t, string(model.NodeTypeUnknownExternal), nodeTypes[unknownExternalGraphNodeID])
 	require.Contains(t, nodeTypes, ingestProbeReaderGraphID, "the graph of %s holds the reader: %v", ingestProbeSchedule, nodeTypes)
 	// The ui sends an edge in execution order: from the node that runs first to
 	// the node that reads it.
-	assert.True(t, uiGraphHasEdge(t, graph, ingestedGraphNodeID, ingestProbeReaderGraphID),
-		"the graph of %s has the edge from %s to %s: %v", ingestProbeSchedule, ingestedGraphNodeID, ingestProbeReaderGraphID, graph["edges"])
+	assert.True(t, uiGraphHasEdge(t, graph, unknownExternalGraphNodeID, ingestProbeReaderGraphID),
+		"the graph of %s has the edge from %s to %s: %v", ingestProbeSchedule, unknownExternalGraphNodeID, ingestProbeReaderGraphID, graph["edges"])
 	t.Logf("✅ ui /api/schedules/%s/graph draws %s (%s) with an edge into %s",
-		ingestProbeSchedule, ingestedGraphNodeID, nodeTypes[ingestedGraphNodeID], ingestProbeReaderGraphID)
+		ingestProbeSchedule, unknownExternalGraphNodeID, nodeTypes[unknownExternalGraphNodeID], ingestProbeReaderGraphID)
 
 	// The release planned the promote-seed runs of its seeds in the transaction
 	// that made it live. Wait for them, so the run below meets no Job of theirs
@@ -196,7 +196,7 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 		SELECT coalesce(node_key, '') FROM tasks WHERE tenant_id = $1 AND run_id = $2 ORDER BY node_key`,
 		events.DefaultTenantID, runID))
 	require.Equal(t, []string{ingestProbeReaderKey}, plannedKeys,
-		"the run of %s holds one task, the reader's, and none for the ingested table", ingestProbeSchedule)
+		"the run of %s holds one task, the reader's, and none for the unknown-external table", ingestProbeSchedule)
 
 	var runStatus, failureReason string
 	pollUntilDescribed(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
@@ -219,32 +219,32 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	attempts, attemptsErr := attemptRows(ctx, clients, taskOfRun(t, ctx, clients, runID, ingestProbeReaderTable))
 	require.Equal(t, "succeeded", runStatus,
 		"the run of %s succeeds: its Job selects from the outside table %s (failure_reason %q, attempts %v, attempts read error %v)",
-		ingestProbeSchedule, ingestedKey, failureReason, attempts, attemptsErr)
-	verifyNoJobsDeployed(t, ctx, []string{ingestedTable})
+		ingestProbeSchedule, unknownExternalKey, failureReason, attempts, attemptsErr)
+	verifyNoJobsDeployed(t, ctx, []string{unknownExternalTable})
 	t.Logf("✅ the run of %s planned only %s and succeeded; no Job was created for %s",
-		ingestProbeSchedule, ingestProbeReaderKey, ingestedKey)
+		ingestProbeSchedule, ingestProbeReaderKey, unknownExternalKey)
 
 	// ── 6. a single-node run of the table is refused ─────────────────────────
 	// With no service the request is incomplete: a node run names its service.
 	noServiceID := uuid.NewString()
 	_, err = clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: noServiceID, ServiceName: "", SchemaName: ingestedSchema, TableName: ingestedTable, MetadataSource: "latest",
+		RequestId: noServiceID, ServiceName: "", SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
-	require.Error(t, err, "a node run of %s with no service must be refused", ingestedKey)
+	require.Error(t, err, "a node run of %s with no service must be refused", unknownExternalKey)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a node run with no service is INVALID_ARGUMENT: %v", err)
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, noServiceID), "a refused command stores no record")
 
 	// With the reader's service the request is complete, so the refusal is the
-	// planner's: a node run never names an ingested node.
+	// planner's: a node run never names an unknown-external node.
 	namedServiceID := uuid.NewString()
 	_, err = clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: namedServiceID, ServiceName: ingestProbeReaderService, SchemaName: ingestedSchema, TableName: ingestedTable, MetadataSource: "latest",
+		RequestId: namedServiceID, ServiceName: ingestProbeReaderService, SchemaName: unknownExternalSchema, TableName: unknownExternalTable, MetadataSource: "latest",
 	})
-	require.Error(t, err, "a node run of the ingested node %s must be refused", ingestedKey)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a node run of an ingested node is INVALID_ARGUMENT: %v", err)
-	assert.Contains(t, status.Convert(err).Message(), "ingested", "the refusal names why: %v", err)
+	require.Error(t, err, "a node run of the unknown-external node %s must be refused", unknownExternalKey)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a node run of an unknown-external node is INVALID_ARGUMENT: %v", err)
+	assert.Contains(t, status.Convert(err).Message(), "unknown-external", "the refusal names why: %v", err)
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, namedServiceID), "a refused command stores no record")
-	t.Logf("✅ a single-node run of %s was refused with INVALID_ARGUMENT, with and without a service", ingestedKey)
+	t.Logf("✅ a single-node run of %s was refused with INVALID_ARGUMENT, with and without a service", unknownExternalKey)
 
 	// ── 7. no run ever holds a task for the table ────────────────────────────
 	// In this test's own flow nothing that could select the node ever runs: the
@@ -253,12 +253,12 @@ func TestE2E_IngestedNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// that refusal). So this count cannot show that the planner ignores the node,
 	// any more than step 5's exact-task-set assertion can. It catches a task for
 	// the node from any run of the tenant.
-	var ingestedTasks int
-	require.NoError(t, clients.runControllerDB.GetContext(ctx, &ingestedTasks,
+	var unknownExternalTasks int
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &unknownExternalTasks,
 		`SELECT count(*) FROM tasks WHERE tenant_id = $1 AND node_key = $2`,
-		events.DefaultTenantID, ingestedKey))
-	assert.Zero(t, ingestedTasks, "no run of tenant %s holds a task for the ingested node %s", events.DefaultTenantID, ingestedKey)
-	t.Logf("✅ no task row of any run names %s", ingestedKey)
+		events.DefaultTenantID, unknownExternalKey))
+	assert.Zero(t, unknownExternalTasks, "no run of tenant %s holds a task for the unknown-external node %s", events.DefaultTenantID, unknownExternalKey)
+	t.Logf("✅ no task row of any run names %s", unknownExternalKey)
 }
 
 // uiGraphNodeTypes returns the node type of each node of a ui schedule graph,

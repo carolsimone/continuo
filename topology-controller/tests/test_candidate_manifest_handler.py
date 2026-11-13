@@ -941,8 +941,8 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
 
     topology = writer.nodes
     # The node's read table, test_schema.orders, is built by no node of the
-    # release, so the topology also holds it as an ingested node.
-    assert [n["node_type"] for n in topology] == ["python-node", "ingested"]
+    # release, so the topology also holds it as an unknown-external node.
+    assert [n["node_type"] for n in topology] == ["python-node", "unknown-external"]
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
@@ -1007,7 +1007,7 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
     publisher.publish_failed.assert_not_called()
     topology = writer.nodes
     assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
-        ("test_schema.orders", "ingested"),  # the table both scripts read, built by no node
+        ("test_schema.orders", "unknown-external"),  # the table both scripts read, built by no node
         ("test_schema.py_new", "python-node"),
         ("test_schema.py_old", "python-node"),
     ]
@@ -1114,11 +1114,11 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
 
     topology = {n["unique_id"]: n for n in writer.nodes}
     # service-2's orders reads test_schema.users, which no manifest of this
-    # release builds, so users is an ingested node.
+    # release builds, so users is an unknown-external node.
     assert set(topology) == {
         "test_schema.orders", "test_schema.py_metrics", "test_schema.summary", "test_schema.users",
     }
-    assert topology["test_schema.users"]["node_type"] == "ingested"
+    assert topology["test_schema.users"]["node_type"] == "unknown-external"
     # python reads dbt
     assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
     # dbt reads python

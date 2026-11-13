@@ -1,4 +1,4 @@
-"""The ingested nodes the candidate handler adds to a release's topology: one
+"""The unknown-external nodes the candidate handler adds to a release's topology: one
 for every table some node reads and no node builds."""
 import json
 from unittest.mock import MagicMock
@@ -42,11 +42,11 @@ def _topology(source, **handler_options):
     return {n["unique_id"]: n for n in writer.nodes}
 
 
-def test_the_probe_release_writes_one_ingested_node_and_two_edges(tmp_path):
+def test_the_probe_release_writes_one_unknown_external_node_and_two_edges(tmp_path):
     by_id = _topology(_probe_release(tmp_path))
     assert by_id["raw.ingest_probe"] == {
         "unique_id": "raw.ingest_probe", "schema_name": "raw", "table_name": "ingest_probe",
-        "resolved_relation_id": "raw.ingest_probe", "service_name": "", "node_type": "ingested",
+        "resolved_relation_id": "raw.ingest_probe", "service_name": "", "node_type": "unknown-external",
         "test_count": 0, "content_hash": "", "image_tag": "", "original_file_path": "",
         "upstream_unique_ids": [], "schedule": "",
     }
@@ -55,7 +55,7 @@ def test_the_probe_release_writes_one_ingested_node_and_two_edges(tmp_path):
     assert len(by_id) == 3
 
 
-def test_an_ingested_node_gets_no_candidate_object_and_no_bundle_entry(tmp_path):
+def test_an_unknown_external_node_gets_no_candidate_object_and_no_bundle_entry(tmp_path):
     uploader, bundle_uploader = make_uploader(), FakeBundleUploader()
     build_handler(
         _probe_release(tmp_path), MagicMock(), uploader, bundle_uploader=bundle_uploader,
@@ -67,8 +67,8 @@ def test_an_ingested_node_gets_no_candidate_object_and_no_bundle_entry(tmp_path)
     assert sorted(bundle["nodes"]) == ["test_schema.probe_reads_raw_name", "test_schema.probe_reads_source"]
 
 
-def test_a_reader_of_an_ingested_table_still_reads_it_where_it_is(tmp_path):
-    """An ingested node is not in the rewriter's lookup, so the candidate
+def test_a_reader_of_an_unknown_external_table_still_reads_it_where_it_is(tmp_path):
+    """An unknown-external node is not in the rewriter's lookup, so the candidate
     schema never takes the table's place in a reader's SQL."""
     uploader = make_uploader()
     build_handler(_probe_release(tmp_path), MagicMock(), uploader).handle(release_id="rel-1")
@@ -77,20 +77,20 @@ def test_a_reader_of_an_ingested_table_still_reads_it_where_it_is(tmp_path):
         assert "_candidate_rel_1" not in call.kwargs["sql"]
 
 
-def test_an_ingested_node_never_takes_an_image_tag(tmp_path):
+def test_an_unknown_external_node_never_takes_an_image_tag(tmp_path):
     by_id = _topology(_probe_release(tmp_path), image_tags={"service-1": "registry/service-1:abc"})
     assert by_id["raw.ingest_probe"]["image_tag"] == ""
     assert by_id["test_schema.probe_reads_source"]["image_tag"] == "registry/service-1:abc"
 
 
-def test_the_release_counts_its_ingested_nodes_under_the_external_runtime(tmp_path):
+def test_the_release_counts_its_unknown_external_nodes_under_the_external_runtime(tmp_path):
     timings = build_handler(_probe_release(tmp_path), MagicMock(), make_uploader()).handle(release_id="rel-1")
     assert timings.nodes == {"dbt": 2, "python": 0, "external": 1}
     assert timings.columns == {"dbt": 0, "python": 0, "external": 0}
 
 
-def test_the_resolve_stage_times_the_ingested_step_in_its_one_run(tmp_path):
-    """Making the ingested nodes is part of resolving: it adds no stage and no
+def test_the_resolve_stage_times_the_unknown_external_step_in_its_one_run(tmp_path):
+    """Making the unknown-external nodes is part of resolving: it adds no stage and no
     second run of the resolve stage."""
     timings = build_handler(
         _probe_release(tmp_path), MagicMock(), make_uploader(), clock=FakeClock(step=1.0),
@@ -99,7 +99,7 @@ def test_the_resolve_stage_times_the_ingested_step_in_its_one_run(tmp_path):
     assert (resolve.runs, resolve.seconds, resolve.counts) == (1, 1.0, {"nodes": 2})
 
 
-def test_a_table_a_node_builds_is_no_ingested_node(tmp_path):
+def test_a_table_a_node_builds_is_no_unknown_external_node(tmp_path):
     reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.built"}
     built = dbt_node("built")
     by_id = _topology(source_with_nodes(tmp_path, reader, built))
@@ -107,7 +107,7 @@ def test_a_table_a_node_builds_is_no_ingested_node(tmp_path):
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["test_schema.built"]
 
 
-def test_a_table_written_under_an_alias_is_no_ingested_node(tmp_path):
+def test_a_table_written_under_an_alias_is_no_unknown_external_node(tmp_path):
     """dbt writes test_schema.orders for the model named orders_v2 whose alias is
     orders: a read of that table is a read of a table a node builds."""
     reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.orders"}
@@ -118,7 +118,7 @@ def test_a_table_written_under_an_alias_is_no_ingested_node(tmp_path):
 def test_a_raw_read_of_an_aliased_models_declared_name_is_no_node_no_edge_and_no_redirect(tmp_path):
     """The model named orders_v2 whose alias is orders writes test_schema.orders.
     A raw read of test_schema.orders_v2 names that model's identity, not a
-    relation it writes: it makes no ingested node, no edge, and the reader's
+    relation it writes: it makes no unknown-external node, no edge, and the reader's
     candidate SQL keeps the name as written."""
     reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.orders_v2"}
     aliased = dbt_node("orders_v2") | {"alias": "orders"}
@@ -134,7 +134,7 @@ def test_a_raw_read_of_an_aliased_models_declared_name_is_no_node_no_edge_and_no
     assert "_candidate_rel_1" not in sqls["test_schema.reader"]
 
 
-def test_a_system_table_is_no_ingested_node(tmp_path):
+def test_a_system_table_is_no_unknown_external_node(tmp_path):
     reader = dbt_node("reader") | {
         "compiled_code": "SELECT c.relname FROM pg_catalog.pg_class c JOIN information_schema.tables t ON true",
     }
@@ -143,7 +143,7 @@ def test_a_system_table_is_no_ingested_node(tmp_path):
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
 
 
-def test_a_schema_qualified_function_call_is_no_ingested_node(tmp_path):
+def test_a_schema_qualified_function_call_is_no_unknown_external_node(tmp_path):
     """public.my_fn(1) is a function call, not a table: it makes no node and no
     edge, beside a real table the same model reads."""
     reader = dbt_node("reader") | {
@@ -201,7 +201,7 @@ def test_a_system_catalog_read_before_or_after_a_real_table_read_writes_the_real
     for nodes, _ in written:
         by_id = {n["unique_id"]: n for n in nodes}
         assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
-        assert by_id["runtime.nodes"]["node_type"] == "ingested"
+        assert by_id["runtime.nodes"]["node_type"] == "unknown-external"
         assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
     assert written[0][1] == written[1][1]
 
@@ -230,7 +230,7 @@ def test_a_system_catalog_read_gets_no_edge_to_a_node_that_builds_the_same_schem
     is not what the reader reads, so the reader gets no edge to it."""
     by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, "SELECT * FROM system.runtime.nodes")
     assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
-    assert by_id["runtime.nodes"]["node_type"] != "ingested"
+    assert by_id["runtime.nodes"]["node_type"] != "unknown-external"
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == []
 
 
@@ -239,7 +239,7 @@ def test_a_read_under_a_non_system_catalog_gets_an_edge_to_the_node_that_builds_
     read that is not the engine's own is ignored."""
     by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, "SELECT * FROM warehouse.runtime.nodes")
     assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
-    assert by_id["runtime.nodes"]["node_type"] != "ingested"
+    assert by_id["runtime.nodes"]["node_type"] != "unknown-external"
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
 
 
@@ -247,7 +247,7 @@ def test_a_system_read_beside_a_real_read_of_a_built_table_gets_one_edge_to_the_
     for sql in SYSTEM_AND_REAL_READS:
         by_id = _trino_topology_with_a_node_building_runtime_nodes(tmp_path, sql)
         assert sorted(by_id) == ["runtime.nodes", "test_schema.reader"]
-        assert by_id["runtime.nodes"]["node_type"] != "ingested"
+        assert by_id["runtime.nodes"]["node_type"] != "unknown-external"
         assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["runtime.nodes"]
 
 
@@ -335,7 +335,7 @@ def test_a_dbt_test_reading_an_outside_table_makes_no_node_and_no_edge(tmp_path)
     assert by_id["test.service-1.assert_outside_is_empty"]["upstream_unique_ids"] == ["test_schema.orders"]
 
 
-def test_a_python_node_read_of_an_outside_table_makes_an_ingested_node(tmp_path):
+def test_a_python_node_read_of_an_outside_table_makes_an_unknown_external_node(tmp_path):
     entry = python_entry(reads={"ext": "select id from raw.ext"})
     source = source_of(ManifestFile(
         path=python_contract(tmp_path, entry), declared_service="service-py", kind=ManifestKind.PYTHON,
@@ -344,15 +344,15 @@ def test_a_python_node_read_of_an_outside_table_makes_an_ingested_node(tmp_path)
     python_handler(source, MagicMock(), spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
     by_id = {n["unique_id"]: n for n in writer.nodes}
     assert sorted(by_id) == ["raw.ext", "test_schema.py_metrics"]
-    assert by_id["raw.ext"]["node_type"] == "ingested"
+    assert by_id["raw.ext"]["node_type"] == "unknown-external"
     assert by_id["test_schema.py_metrics"]["upstream_unique_ids"] == ["raw.ext"]
     assert [c.kwargs["unique_id"] for c in spec_uploader.upload.call_args_list] == ["test_schema.py_metrics"]
 
 
-def test_one_python_node_naming_a_table_two_ways_gets_one_ingested_node_and_one_edge(tmp_path):
+def test_one_python_node_naming_a_table_two_ways_gets_one_unknown_external_node_and_one_edge(tmp_path):
     """Two reads of one node name the same outside table, one with a catalog
     and in mixed case (an unquoted name, which Postgres folds to lower case) and
-    one with no catalog and in lower case: the release holds one ingested node
+    one with no catalog and in lower case: the release holds one unknown-external node
     for it and the python node has one edge to it."""
     entry = python_entry(reads={
         "with_catalog": "select id from continuo_dbt.RAW.Ingest_Probe",
@@ -367,11 +367,11 @@ def test_one_python_node_naming_a_table_two_ways_gets_one_ingested_node_and_one_
     ).handle(release_id="rel-1")
     by_id = {n["unique_id"]: n for n in writer.nodes}
     assert sorted(by_id) == ["raw.ingest_probe", "test_schema.py_metrics"]
-    assert by_id["raw.ingest_probe"]["node_type"] == "ingested"
+    assert by_id["raw.ingest_probe"]["node_type"] == "unknown-external"
     assert by_id["test_schema.py_metrics"]["upstream_unique_ids"] == ["raw.ingest_probe"]
 
 
-def test_a_python_csv_node_makes_no_ingested_node(tmp_path):
+def test_a_python_csv_node_makes_no_unknown_external_node(tmp_path):
     entry = python_entry(
         kind="python-csv", script="", reads={"csv": "s3://drops/orders.csv"},
         source_hash="csvsrc000", shared_code_hash="", config_hash="csvcfg000",
@@ -385,11 +385,11 @@ def test_a_python_csv_node_makes_no_ingested_node(tmp_path):
     assert writer.nodes[0]["upstream_unique_ids"] == []
 
 
-def test_a_release_with_a_failed_node_publishes_the_failure_and_no_ingested_nodes(tmp_path, monkeypatch):
-    """The ingested nodes are made only once every node has resolved."""
+def test_a_release_with_a_failed_node_publishes_the_failure_and_no_unknown_external_nodes(tmp_path, monkeypatch):
+    """The unknown-external nodes are made only once every node has resolved."""
     calls = []
     monkeypatch.setattr(
-        candidate_manifest_handler, "ingested_nodes", lambda *a, **k: calls.append(1) or [],
+        candidate_manifest_handler, "unknown_external_nodes", lambda *a, **k: calls.append(1) or [],
     )
     broken = dbt_node("broken") | {"compiled_code": "SELECT * FROM unqualified_table"}
     reader = dbt_node("reader") | {"compiled_code": RAW_NAME_READ}
@@ -407,7 +407,7 @@ def test_a_release_with_no_outside_table_gets_the_topology_it_always_got(tmp_pat
     a, b = dbt_node("a"), dbt_node("b") | {"compiled_code": "SELECT * FROM test_schema.a"}
     by_id = _topology(source_with_nodes(tmp_path, a, b))
     assert sorted(by_id) == ["test_schema.a", "test_schema.b"]
-    assert all(n["node_type"] != "ingested" for n in by_id.values())
+    assert all(n["node_type"] != "unknown-external" for n in by_id.values())
 
 
 def test_the_same_release_always_writes_the_same_bytes(tmp_path):

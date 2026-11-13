@@ -93,8 +93,8 @@ var (
 	ErrInvalidNodeType = errors.New("runplan: a selected node has a node type the vocabulary does not declare")
 	// ErrNothingToRerun: a rerun or a rebase would execute no task.
 	ErrNothingToRerun = errors.New("runplan: the source run has no task to re-execute")
-	// ErrIngestedNode: a run names a node of the ingested type, a table that
+	// ErrExternalNode: a run names a node of the unknown-external type, a table that
 	// nodes read and no node builds. It is never a task, so no run executes
 	// it.
-	ErrIngestedNode = errors.New("an ingested node is never run")
+	ErrExternalNode = errors.New("an unknown-external node is never run")
 )

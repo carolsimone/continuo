@@ -232,37 +232,37 @@ func TestChangedAncestors_DepthIsTheMinimumHopCount(t *testing.T) {
 	}, got)
 }
 
-// ingestedProbe is the node topology-controller writes for a table that a
+// unknownExternalProbe is the node topology-controller writes for a table that a
 // reader names and no node builds: no content, no service, no upstreams.
-func ingestedProbe() release.Node {
+func unknownExternalProbe() release.Node {
 	return release.Node{
 		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
-		ResolvedRelationID: "raw.ingest_probe", NodeType: "ingested",
+		ResolvedRelationID: "raw.ingest_probe", NodeType: "unknown-external",
 		UpstreamUniqueIDs: []string{},
 	}
 }
 
-// TestDerivedChangedNodeIDs_NeverReturnsAnIngestedNode pins that an ingested
+// TestDerivedChangedNodeIDs_NeverReturnsAnUnknownExternalNode pins that an unknown-external
 // node is never "changed": it has no content, so it never seeds a validation
 // build whether it is new or already in production.
-func TestDerivedChangedNodeIDs_NeverReturnsAnIngestedNode(t *testing.T) {
+func TestDerivedChangedNodeIDs_NeverReturnsAnUnknownExternalNode(t *testing.T) {
 	cand := release.Topology{
-		ingestedProbe(),
+		unknownExternalProbe(),
 		{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
 	}
 
-	assert.Equal(t, []string{"a.m"}, release.DerivedChangedNodeIDs(cand, nil), "a new ingested node is not a seed")
+	assert.Equal(t, []string{"a.m"}, release.DerivedChangedNodeIDs(cand, nil), "a new unknown-external node is not a seed")
 	assert.Empty(t, release.DerivedChangedNodeIDs(cand, release.Topology{{UniqueID: "a.m", ContentHash: "h"}}),
-		"a new ingested node does not change its unchanged reader")
-	assert.Empty(t, release.DerivedChangedNodeIDs(cand, release.Topology{ingestedProbe(), {UniqueID: "a.m", ContentHash: "h"}}),
-		"an ingested node already in production is not a seed either")
+		"a new unknown-external node does not change its unchanged reader")
+	assert.Empty(t, release.DerivedChangedNodeIDs(cand, release.Topology{unknownExternalProbe(), {UniqueID: "a.m", ContentHash: "h"}}),
+		"an unknown-external node already in production is not a seed either")
 }
 
 // TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged pins the other
 // direction: when a node starts to build a table that production holds as an
-// ingested node, the candidate node is a real node with content and is changed.
+// unknown-external node, the candidate node is a real node with content and is changed.
 func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) {
-	prod := release.Topology{ingestedProbe()}
+	prod := release.Topology{unknownExternalProbe()}
 	cand := release.Topology{{UniqueID: "raw.ingest_probe", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
 
 	assert.Equal(t, []string{"raw.ingest_probe"}, release.DerivedChangedNodeIDs(cand, prod))
@@ -270,34 +270,34 @@ func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) 
 
 // TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged pins the
 // reverse direction: when production builds a table and the candidate holds it
-// as an ingested node, the candidate node has no content to validate, so it is
+// as an unknown-external node, the candidate node has no content to validate, so it is
 // not changed even though its content hash differs from production's.
 func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T) {
 	prod := release.Topology{{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
-	cand := release.Topology{{UniqueID: "raw.x", NodeType: "ingested", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x"}}
+	cand := release.Topology{{UniqueID: "raw.x", NodeType: "unknown-external", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x"}}
 
 	assert.Empty(t, release.DerivedChangedNodeIDs(cand, prod))
 }
 
-// TestFullAncestorsClosure_StopsAtAnIngestedNode pins that an ingested
+// TestFullAncestorsClosure_StopsAtAnUnknownExternalNode pins that an unknown-external
 // ancestor is never part of a build closure, so it is never cloned or built.
-func TestFullAncestorsClosure_StopsAtAnIngestedNode(t *testing.T) {
+func TestFullAncestorsClosure_StopsAtAnUnknownExternalNode(t *testing.T) {
 	topo := release.Topology{
-		ingestedProbe(),
+		unknownExternalProbe(),
 		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
 	}
 
 	assert.Equal(t, []string{"a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
 	assert.Empty(t, release.FullAncestorsClosure(topo, []string{"raw.ingest_probe"}),
-		"an ingested seed yields nothing to build")
+		"an unknown-external seed yields nothing to build")
 }
 
-// TestFullAncestorsClosure_ReachesAnAncestorBeyondTheIngestedEdge pins that
-// only the ingested edge is dropped: the real ancestors of the same node are
+// TestFullAncestorsClosure_ReachesAnAncestorBeyondTheUnknownExternalEdge pins that
+// only the unknown-external edge is dropped: the real ancestors of the same node are
 // still followed.
-func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheIngestedEdge(t *testing.T) {
+func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheUnknownExternalEdge(t *testing.T) {
 	topo := release.Topology{
-		ingestedProbe(),
+		unknownExternalProbe(),
 		{UniqueID: "a.up", NodeType: "dbt-model"},
 		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe", "a.up"}},
 	}
@@ -305,13 +305,13 @@ func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheIngestedEdge(t *testing.
 	assert.Equal(t, []string{"a.up", "a.m"}, release.FullAncestorsClosure(topo, []string{"a.m"}))
 }
 
-// TestChangedAncestors_NeverNamesAnIngestedNode pins that a failing node below
-// a reader of an ingested table names only the changed reader as the place to
+// TestChangedAncestors_NeverNamesAnUnknownExternalNode pins that a failing node below
+// a reader of an unknown-external table names only the changed reader as the place to
 // look: the changed set comes from DerivedChangedNodeIDs, which never holds an
-// ingested node, so no ingested id is offered as a fix target.
-func TestChangedAncestors_NeverNamesAnIngestedNode(t *testing.T) {
+// unknown-external node, so no unknown-external id is offered as a fix target.
+func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 	cand := release.Topology{
-		ingestedProbe(),
+		unknownExternalProbe(),
 		{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
 		{UniqueID: "a.x", NodeType: "dbt-model", ServiceName: "svcA", ContentHash: "hx", UpstreamUniqueIDs: []string{"a.m"}},
 	}
@@ -324,18 +324,18 @@ func TestChangedAncestors_NeverNamesAnIngestedNode(t *testing.T) {
 
 	assert.Equal(t, []release.ChangedAncestor{
 		{NodeID: "a.m", FilePath: "models/m.sql", Service: "svcA", Depth: 1},
-	}, got, "only the reader a.m: the ingested node raw.ingest_probe sits two hops up and is never changed")
+	}, got, "only the reader a.m: the unknown-external node raw.ingest_probe sits two hops up and is never changed")
 	for _, a := range got {
 		assert.NotEqual(t, "raw.ingest_probe", a.NodeID)
 	}
 }
 
-// TestUnbuildableCrossServiceUpstreams_AnIngestedUpstreamIsKnown pins that an
-// edge to an ingested node is not a dangling reference: the node is in the
+// TestUnbuildableCrossServiceUpstreams_AnUnknownExternalUpstreamIsKnown pins that an
+// edge to an unknown-external node is not a dangling reference: the node is in the
 // candidate topology even though it is never built.
-func TestUnbuildableCrossServiceUpstreams_AnIngestedUpstreamIsKnown(t *testing.T) {
+func TestUnbuildableCrossServiceUpstreams_AnUnknownExternalUpstreamIsKnown(t *testing.T) {
 	topo := release.Topology{
-		ingestedProbe(),
+		unknownExternalProbe(),
 		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
 	}
 

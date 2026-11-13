@@ -123,15 +123,15 @@ func TestRebase_ASingleNodeRunHasNothingToRebase(t *testing.T) {
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun)
 }
 
-// The live release holds an ingested node (a table the source run's older
-// release did not know) that ftable_d reads. The ingested node is no task: the
+// The live release holds an unknown-external node (a table the source run's older
+// release did not know) that ftable_d reads. The unknown-external node is no task: the
 // rebase neither runs it as a new node nor refuses over it, and the reader's
 // extra upstream makes ftable_d no more changed than it was. The rebase
-// selects what it selects on the live release without the ingested node,
+// selects what it selects on the live release without the unknown-external node,
 // whether or not it widens to the changed nodes upstream.
-func TestRebase_LeavesAnIngestedNodeOut(t *testing.T) {
+func TestRebase_LeavesAnUnknownExternalNodeOut(t *testing.T) {
 	older := scheduleGraph(e2eDAG, "e2e-schedule-failure")
-	live := withIngestedUpstream(older, "ftable_d")
+	live := withUnknownExternalUpstream(older, "ftable_d")
 	sourceGraphs := map[string]topology.Graph{sourceRelease: older}
 
 	for _, widen := range []bool{false, true} {
@@ -141,8 +141,8 @@ func TestRebase_LeavesAnIngestedNodeOut(t *testing.T) {
 		want, err := rebase.Preview(older)
 		require.NoError(t, err, "include changed upstream %v", widen)
 		assert.Equal(t, want, got, "include changed upstream %v", widen)
-		assert.NotContains(t, got.Plan.Tasks, runplan.PlannedTask{Key: ingestedProbe}, "include changed upstream %v", widen)
-		assert.Zero(t, got.New, "the ingested node is not a new node")
+		assert.NotContains(t, got.Plan.Tasks, runplan.PlannedTask{Key: unknownExternalProbe}, "include changed upstream %v", widen)
+		assert.Zero(t, got.New, "the unknown-external node is not a new node")
 		assert.Empty(t, got.Changed, "include changed upstream %v", widen)
 	}
 }

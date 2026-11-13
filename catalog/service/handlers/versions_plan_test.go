@@ -268,15 +268,15 @@ func TestVersionBatches_KeepANodeWithoutArtifactEntry(t *testing.T) {
 	assert.Empty(t, batches[0].Topology)
 }
 
-// An ingested node is a table no node builds, so the code bundle holds no code
+// An unknown-external node is a table no node builds, so the code bundle holds no code
 // for it. A release whose topology holds one and whose code bundle has no entry
 // for it gives a plan with no version for it. The plan still carries its
 // topology entry, but versionBatches forwards only the entries of nodes that
 // have a version, so the entry never reaches the version write: the topology
 // swap is what creates the node.
-func TestPlanVersionWrite_WritesNoVersionForAnIngestedNode(t *testing.T) {
+func TestPlanVersionWrite_WritesNoVersionForAnUnknownExternalNode(t *testing.T) {
 	nodes := append(nodesFixture(), topology.ReleasePromotedTopologyNode{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested",
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external",
 	})
 
 	in := planVersionWrite(inputFixture(true, false), bundleFixture(), nodes, versionsTestLogger())
@@ -284,7 +284,7 @@ func TestPlanVersionWrite_WritesNoVersionForAnIngestedNode(t *testing.T) {
 	require.Len(t, in.Nodes, 1)
 	assert.Equal(t, "analytics.revenue", in.Nodes[0].UniqueID)
 	assert.Contains(t, in.Topology, "raw.ingest_probe")
-	assert.Equal(t, "ingested", in.Topology["raw.ingest_probe"].NodeType)
+	assert.Equal(t, "unknown-external", in.Topology["raw.ingest_probe"].NodeType)
 
 	batches := versionBatches(in, VersionsBatchSize)
 	require.Len(t, batches, 1)

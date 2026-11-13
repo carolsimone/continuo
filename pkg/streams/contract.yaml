@@ -445,8 +445,8 @@ vocabularies:
         const: DbtTest
         runtime: dbt
         description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
-      - value: ingested
-        const: Ingested
+      - value: unknown-external
+        const: UnknownExternal
         runtime: external
         description: a table a node reads that no node builds, never run, built, validated or fixed.
 

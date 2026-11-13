@@ -35,9 +35,10 @@ models:
     rel_probe_down:
       +tags: ["rel-probe"]
     # ingest_probe_reader reads e2e_raw.ingest_probe, a table no model builds
-    # (scripts/setup.sh creates it), so the release's topology holds an ingested
-    # node upstream of it. Its own schedule keeps every other run from building
-    # it, and the ingested-node e2e test is the only one that starts that run.
+    # (scripts/setup.sh creates it), so the release's topology holds an
+    # unknown-external node upstream of it. Its own schedule keeps every other
+    # run from building it, and the unknown-external-node e2e test is the only
+    # one that starts that run.
     ingest_probe_reader:
       +tags: ["ingest-probe"]
     # The execution-protocol fixtures. A model with no tag is dropped by

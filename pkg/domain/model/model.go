@@ -23,10 +23,10 @@ func (t NodeType) IsPython() bool {
 	return t.Runtime() == NodeRuntimePython
 }
 
-// IsIngested reports whether this node type only marks a table another system
+// IsExternal reports whether this node type only marks a table another system
 // loads: no continuo toolchain builds it, so it is never run, built, validated
 // or fixed.
-func (t NodeType) IsIngested() bool {
+func (t NodeType) IsExternal() bool {
 	return t.Runtime() == NodeRuntimeExternal
 }
 

@@ -259,8 +259,8 @@ const (
 	NodeTypePythonApi NodeType = "python-api"
 	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
-	// NodeTypeIngested — a table a node reads that no node builds, never run, built, validated or fixed.
-	NodeTypeIngested NodeType = "ingested"
+	// NodeTypeUnknownExternal — a table a node reads that no node builds, never run, built, validated or fixed.
+	NodeTypeUnknownExternal NodeType = "unknown-external"
 )
 
 // NodeTypes returns every value in contract.yaml declaration order.
@@ -273,7 +273,7 @@ func NodeTypes() []NodeType {
 		NodeTypePythonCsv,
 		NodeTypePythonApi,
 		NodeTypeDbtTest,
-		NodeTypeIngested,
+		NodeTypeUnknownExternal,
 	}
 }
 
@@ -294,7 +294,7 @@ func (v NodeType) IsValid() bool {
 		return true
 	case NodeTypeDbtTest:
 		return true
-	case NodeTypeIngested:
+	case NodeTypeUnknownExternal:
 		return true
 	}
 	return false
@@ -340,7 +340,7 @@ func (v NodeType) Runtime() NodeRuntime {
 		return NodeRuntimePython
 	case NodeTypeDbtTest:
 		return NodeRuntimeDbt
-	case NodeTypeIngested:
+	case NodeTypeUnknownExternal:
 		return NodeRuntimeExternal
 	}
 	return ""

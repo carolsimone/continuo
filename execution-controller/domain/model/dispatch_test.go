@@ -101,12 +101,12 @@ func TestDispatchProblem(t *testing.T) {
 	}
 }
 
-// An ingested node is a table nothing builds, so a dispatch that names one is
+// An unknown-external node is a table nothing builds, so a dispatch that names one is
 // refused with the invalid-node-type reason and a message that says the type is
 // never run, whatever else the dispatch carries.
-func TestDispatchProblem_RefusesAnIngestedNode(t *testing.T) {
+func TestDispatchProblem_RefusesAnUnknownExternalNode(t *testing.T) {
 	cmd := validDispatch()
-	cmd.NodeType = string(pkgmodel.NodeTypeIngested)
+	cmd.NodeType = string(pkgmodel.NodeTypeUnknownExternal)
 	for _, op := range []pkgmodel.Operation{
 		pkgmodel.OperationRun, pkgmodel.OperationTest, pkgmodel.OperationBuild, pkgmodel.OperationFullRefresh,
 	} {
@@ -114,7 +114,7 @@ func TestDispatchProblem_RefusesAnIngestedNode(t *testing.T) {
 		reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
 		assert.Equal(t, pkgmodel.FailureReasonInvalidNodeType, reason, "operation %q", op)
 		assert.Contains(t, message, "never run", "operation %q", op)
-		assert.Contains(t, message, "ingested", "operation %q", op)
+		assert.Contains(t, message, "unknown-external", "operation %q", op)
 	}
 }
 

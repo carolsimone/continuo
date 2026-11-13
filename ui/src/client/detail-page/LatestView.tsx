@@ -2,9 +2,9 @@ import type { ComponentProps } from 'react';
 import { useNavigate } from 'react-router';
 import { ReactFlowProvider } from '@xyflow/react';
 import DAGPanel from '../DAGPanel';
-import NodeTypeIcon, { isIngestedNodeType } from '../NodeTypeIcon';
+import NodeTypeIcon, { isExternalNodeType } from '../NodeTypeIcon';
 import PastRunsPanel from '../PastRunsPanel';
-import { ingestedNodeName, parseNodeId, type GraphState } from '../detail-page-helpers';
+import { externalNodeName, parseNodeId, type GraphState } from '../detail-page-helpers';
 import type { ScheduleGraph } from '../types';
 
 // The latest layout, a topology-catalog view: the schedule's current
@@ -79,8 +79,8 @@ export default function LatestView({
                 <div className="dag-focus-legend">
                   <div className="dag-focus-legend-title">
                     <NodeTypeIcon nodeType={selectedNodeType} size={12} />
-                    {isIngestedNodeType(selectedNodeType)
-                      ? ingestedNodeName(selectedNodeId)
+                    {isExternalNodeType(selectedNodeType)
+                      ? externalNodeName(selectedNodeId)
                       : parseNodeId(selectedNodeId).table_name}
                   </div>
                   <div className="dag-focus-legend-row">
@@ -97,9 +97,9 @@ export default function LatestView({
                   <div className="dag-focus-legend-row">
                     <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
                   </div>
-                  {/* An ingested node has no node page: a click on it only
+                  {/* An unknown-external node has no node page: a click on it only
                       highlights the nodes it feeds. */}
-                  {selectedNodeId && name && !isIngestedNodeType(selectedNodeType) && (
+                  {selectedNodeId && name && !isExternalNodeType(selectedNodeType) && (
                     <a
                       className="dag-focus-open-link"
                       href={`/node/${encodeURIComponent(selectedNodeId)}`}

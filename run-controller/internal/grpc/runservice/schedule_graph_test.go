@@ -73,16 +73,16 @@ func TestGetScheduleGraph_MapsEveryField(t *testing.T) {
 	}, got)
 }
 
-// The graph keeps an ingested node a schedule's node reads, with no service
+// The graph keeps an unknown-external node a schedule's node reads, with no service
 // and no schedule, and the edge to its reader: the node id starts with a dot,
 // the empty service followed by the schema and table.
-func TestGetScheduleGraph_ReturnsAnIngestedNodeAndItsEdge(t *testing.T) {
+func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", topology.ScheduleGraph{
 		PromotionSeq: 3,
 		Nodes: []topology.Node{
 			{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"},
-			{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested"},
+			{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"},
 		},
 		Edges: []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"}},
 	})
@@ -91,12 +91,12 @@ func TestGetScheduleGraph_ReturnsAnIngestedNodeAndItsEdge(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, resp.GetNodes(), 2)
-	ingested := resp.GetNodes()[1]
-	assert.Equal(t, "", ingested.GetServiceName())
-	assert.Equal(t, "raw", ingested.GetSchemaName())
-	assert.Equal(t, "ingest_probe", ingested.GetTableName())
-	assert.Equal(t, "ingested", ingested.GetNodeType())
-	assert.Equal(t, "", ingested.GetScheduleName())
+	unknownExternal := resp.GetNodes()[1]
+	assert.Equal(t, "", unknownExternal.GetServiceName())
+	assert.Equal(t, "raw", unknownExternal.GetSchemaName())
+	assert.Equal(t, "ingest_probe", unknownExternal.GetTableName())
+	assert.Equal(t, "unknown-external", unknownExternal.GetNodeType())
+	assert.Equal(t, "", unknownExternal.GetScheduleName())
 	require.Len(t, resp.GetEdges(), 1)
 	assert.Equal(t, "svc-a.analytics.table_a", resp.GetEdges()[0].GetFromNodeId())
 	assert.Equal(t, ".raw.ingest_probe", resp.GetEdges()[0].GetToNodeId())

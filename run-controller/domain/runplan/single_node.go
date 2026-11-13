@@ -20,15 +20,15 @@ type SingleNode struct {
 var _ Selector = SingleNode{}
 
 // Select refuses a node g does not hold or another service owns
-// (ErrTargetNotFound), an ingested node (ErrIngestedNode), an undeclared node
+// (ErrTargetNotFound), an unknown-external node (ErrExternalNode), an undeclared node
 // type (ErrInvalidNodeType), a test of a node without a known, positive
 // data-test count (ErrNoTests) and a full refresh of a type that cannot be
-// rebuilt from scratch (ErrFullRefreshUnsupported). An ingested node has no
+// rebuilt from scratch (ErrFullRefreshUnsupported). An unknown-external node has no
 // service, so it is refused as such before the service is compared.
 func (s SingleNode) Select(g topology.Graph) (Plan, error) {
 	n, ok := g.Node(s.Key)
 	if ok {
-		if err := checkNotIngested(s.Key, n); err != nil {
+		if err := checkNotExternal(s.Key, n); err != nil {
 			return Plan{}, err
 		}
 	}

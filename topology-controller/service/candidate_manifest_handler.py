@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.ingested import SystemRelations, ingested_nodes
+from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
     FailedNode,
@@ -138,8 +138,8 @@ class CandidateManifestHandler:
     root from the same configured engine as dialect.
 
     Once every node has resolved, each table some node reads and no node builds
-    becomes an ingested node (ingested_nodes), and each node that reads it gains
-    an edge to it; the resolve stage times that step too. An ingested node
+    becomes an unknown-external node (unknown_external_nodes), and each node that reads it gains
+    an edge to it; the resolve stage times that step too. An unknown-external node
     exists only in the topology artifact: it is in no registry or rewrite
     lookup, has no candidate artifact, no code-bundle entry and no image tag,
     because nothing in the release produces it.
@@ -183,7 +183,7 @@ class CandidateManifestHandler:
       service checks), the node registry and its lookup and the rewrite context
       (in-memory work linear in the number of nodes), then that resolve;
     - from the last node's resolve through the first node's build: the
-      ingested step (in-memory work linear in the number of table references),
+      unknown-external step (in-memory work linear in the number of table references),
       then that build;
     - from the last node's build through the code bundle, its upload, the
       topology artifact and the publish.
@@ -371,10 +371,10 @@ class CandidateManifestHandler:
         # the operator a fix-push-reject loop per node.
         failed: list[FailedNode] = []
         # Every table each node's SQL names, by node unique_id, for each node
-        # that writes a relation (a dbt test writes none). ingested_nodes
+        # that writes a relation (a dbt test writes none). unknown_external_nodes
         # decides which of them no node of the release builds.
         reads: dict[str, list[TableRef]] = {}
-        ingested: list[ManifestNode] = []
+        unknown_external: list[ManifestNode] = []
         with self._timings.stage(Stage.RESOLVE, nodes=len(all_nodes)):
             for node in all_nodes:
                 try:
@@ -401,8 +401,8 @@ class CandidateManifestHandler:
                 self._progress()
             if not failed:
                 # Adds the edges to the readers before their entries are built below.
-                ingested = ingested_nodes(all_nodes, reads, system=self._system_relations)
-                self._timings.add_nodes(ingested)
+                unknown_external = unknown_external_nodes(all_nodes, reads, system=self._system_relations)
+                self._timings.add_nodes(unknown_external)
         if failed:
             self._fail(
                 release_id,
@@ -437,7 +437,7 @@ class CandidateManifestHandler:
 
             topology.append(_artifact_entry(node))
 
-        topology.extend(_artifact_entry(node) for node in ingested)
+        topology.extend(_artifact_entry(node) for node in unknown_external)
 
         upload_error: Exception | None = None
         with self._timings.stage(Stage.CODE_BUNDLE):

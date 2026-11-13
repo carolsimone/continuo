@@ -172,24 +172,24 @@ func TestPointerOutcome_String(t *testing.T) {
 	assert.Equal(t, "unknown", topology.PointerOutcome(0).String())
 }
 
-// An ingested node is a table a node reads and no node builds. It has no
+// An unknown-external node is a table a node reads and no node builds. It has no
 // service, no content hash, no schedule and no image, and it is a node of the
 // release like any other: it is kept with every field as the artifact states
 // it, and the node that reads it has an edge from it.
-func TestNewRelease_KeepsAnIngestedNode(t *testing.T) {
-	ingested := topology.NodeSpec{
-		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested", TestCount: count(0),
+func TestNewRelease_KeepsAnUnknownExternalNode(t *testing.T) {
+	unknownExternal := topology.NodeSpec{
+		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external", TestCount: count(0),
 	}
 	rel, err := topology.NewRelease("default", "rel-1", 1, "u", "s", []topology.NodeSpec{
 		spec("stg", "orders", "dbt-model", "raw.ingest_probe"),
-		ingested,
+		unknownExternal,
 	})
 	require.NoError(t, err)
 
 	require.Len(t, rel.Nodes, 2)
 	assert.Equal(t, topology.Node{
 		Key: "raw.ingest_probe", UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
-		NodeType: "ingested", TestCount: count(0),
+		NodeType: "unknown-external", TestCount: count(0),
 	}, rel.Nodes[0], "empty service name, content hash, image tag and schedule name are kept empty")
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "stg.orders"}}, rel.Edges)
 }

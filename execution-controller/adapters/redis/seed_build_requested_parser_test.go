@@ -154,15 +154,15 @@ func TestParseSeedBuildRequested_NonDbtSeedNodeTypeIsError(t *testing.T) {
 	require.Error(t, err, "non-dbt-seed node_type must be rejected in seed build event")
 }
 
-// An ingested node is a table nothing builds, so release-controller never sends
-// one in a seed build. A message that names one anyway is refused as an ingested
+// An unknown-external node is a table nothing builds, so release-controller never sends
+// one in a seed build. A message that names one anyway is refused as an unknown-external
 // node, not as a node that is merely not a seed, whether or not the rest of its
 // fields are present.
-func TestParseSeedBuildRequested_RefusesAnIngestedNode(t *testing.T) {
+func TestParseSeedBuildRequested_RefusesAnUnknownExternalNode(t *testing.T) {
 	for name, edit := range map[string]func(map[string]any){
-		"a complete seed": func(s map[string]any) { s["node_type"] = "ingested" },
+		"a complete seed": func(s map[string]any) { s["node_type"] = "unknown-external" },
 		"a seed with no service name": func(s map[string]any) {
-			s["node_type"] = "ingested"
+			s["node_type"] = "unknown-external"
 			delete(s, "service_name")
 		},
 	} {
@@ -172,7 +172,7 @@ func TestParseSeedBuildRequested_RefusesAnIngestedNode(t *testing.T) {
 			edit(seeds[1])
 			_, err := ParseSeedBuildRequested(seedBuildMsg(t, p, ""))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "is an ingested node")
+			assert.Contains(t, err.Error(), "is an unknown-external node")
 			assert.Contains(t, err.Error(), "seed.shop.currencies")
 		})
 	}

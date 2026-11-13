@@ -1,7 +1,7 @@
 """Guard: a module under domain/ imports the standard library and domain modules only.
 
 The domain holds the release's vocabulary and rules (nodes, table references,
-ingested nodes, failure kinds). Anything else it imports ties the rules to a
+unknown-external nodes, failure kinds). Anything else it imports ties the rules to a
 technology or reaches inward from a layer above it: the SQL parser, YAML,
 gRPC and protobuf, the generated `proto` stubs, the install configuration, the
 service layer, the adapters, Redis, S3, Prometheus, the process entry point and

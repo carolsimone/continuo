@@ -512,24 +512,24 @@ func TestPromoteRelease_RefreshesContentHash(t *testing.T) {
 	assert.Equal(t, "sha256:bbb", f.node("b")["content_hash"])
 }
 
-// ingestedNode is a table that the release's models read and no model builds,
+// unknownExternalNode is a table that the release's models read and no model builds,
 // as the topology artifact carries it: no service, no content hash, no image,
 // no schedule.
-func ingestedNode(uniqueID, schema, table string) topology.ReleasePromotedTopologyNode {
+func unknownExternalNode(uniqueID, schema, table string) topology.ReleasePromotedTopologyNode {
 	return topology.ReleasePromotedTopologyNode{
 		UniqueID: uniqueID, SchemaName: schema, TableName: table,
-		NodeType: "ingested", UpstreamUniqueIDs: []string{},
+		NodeType: "unknown-external", UpstreamUniqueIDs: []string{},
 	}
 }
 
-// An ingested node is stored as a live :Node with its type and an empty
+// An unknown-external node is stored as a live :Node with its type and an empty
 // service, and each reader draws its :DEPENDS_ON to it.
-func TestPromoteRelease_StoresAnIngestedNodeWithItsEdges(t *testing.T) {
+func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 	f := newSwapFixture(t)
 	const probe = "raw.ingest_probe"
 
 	outcome := f.promote("rel-1", releaseOf(
-		ingestedNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "ingest_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), time.Now().UTC())
@@ -538,32 +538,32 @@ func TestPromoteRelease_StoresAnIngestedNodeWithItsEdges(t *testing.T) {
 	n := f.node(probe)
 	require.NotNil(t, n)
 	assert.Equal(t, true, n["active"])
-	assert.Equal(t, "ingested", n["node_type"])
+	assert.Equal(t, "unknown-external", n["node_type"])
 	assert.Equal(t, "", n["service_name"])
 	assert.Equal(t, "raw", n["schema_name"])
 	assert.Equal(t, "ingest_probe", n["table_name"])
 	assert.NotContains(t, n, "retired_at")
 	assert.Equal(t, []string{"analytics.a", "analytics.b", probe}, f.activeIDs())
 	assert.Equal(t, []string{"analytics.a->" + probe, "analytics.b->" + probe}, f.edges(),
-		"each reader depends on the ingested node")
+		"each reader depends on the unknown-external node")
 	assert.Equal(t, int64(2), f.count(
 		`MATCH (:Node {tenant_id: $tenant_id})-[r:DEPENDS_ON]->(:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(r) AS n`,
 		map[string]any{"uid": probe}))
 }
 
-// A release that builds the table with a model turns the ingested :Node into
+// A release that builds the table with a model turns the unknown-external :Node into
 // that model in place: one :Node holds the id, its readers keep their edges.
-func TestPromoteRelease_TurnsAnIngestedNodeIntoTheModelThatBuildsIt(t *testing.T) {
+func TestPromoteRelease_TurnsAnUnknownExternalNodeIntoTheModelThatBuildsIt(t *testing.T) {
 	f := newSwapFixture(t)
 	const probe = "raw.ingest_probe"
 	now := time.Now().UTC()
 
 	f.promote("rel-1", releaseOf(
-		ingestedNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "ingest_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), now)
-	require.Equal(t, "ingested", f.node(probe)["node_type"])
+	require.Equal(t, "unknown-external", f.node(probe)["node_type"])
 
 	built := topology.ReleasePromotedTopologyNode{
 		UniqueID: probe, SchemaName: "raw", TableName: "ingest_probe", ServiceName: "service-1",
@@ -592,14 +592,14 @@ func TestPromoteRelease_TurnsAnIngestedNodeIntoTheModelThatBuildsIt(t *testing.T
 }
 
 // When no model reads the table any more, the next release does not carry the
-// ingested node and the swap retires it like any node it drops.
-func TestPromoteRelease_RetiresAnIngestedNodeNoOneReads(t *testing.T) {
+// unknown-external node and the swap retires it like any node it drops.
+func TestPromoteRelease_RetiresAnUnknownExternalNodeNoOneReads(t *testing.T) {
 	f := newSwapFixture(t)
 	const probe = "raw.ingest_probe"
 	r1At := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 
 	f.promote("rel-1", releaseOf(
-		ingestedNode(probe, "raw", "ingest_probe"),
+		unknownExternalNode(probe, "raw", "ingest_probe"),
 		modelNode("analytics.a", probe),
 		modelNode("analytics.b", probe),
 	), r1At)
@@ -612,12 +612,12 @@ func TestPromoteRelease_RetiresAnIngestedNodeNoOneReads(t *testing.T) {
 	), r2At))
 
 	n := f.node(probe)
-	require.NotNil(t, n, "a dropped ingested node stays in the graph")
+	require.NotNil(t, n, "a dropped unknown-external node stays in the graph")
 	assert.Equal(t, false, n["active"])
 	retiredAt, ok := n["retired_at"].(time.Time)
 	require.True(t, ok, "retired_at is a datetime, got %T", n["retired_at"])
 	assert.True(t, r2At.Equal(retiredAt), "retired_at is the time of the release that dropped it: %v", retiredAt)
-	assert.Equal(t, "ingested", n["node_type"], "a retired node keeps its type")
+	assert.Equal(t, "unknown-external", n["node_type"], "a retired node keeps its type")
 	assert.Equal(t, []string{"analytics.a", "analytics.b"}, f.activeIDs())
 	assert.Empty(t, f.edges(), "no live reader depends on the retired node")
 }

@@ -163,14 +163,14 @@ func TestParseValidationRequested_InvalidNodeType(t *testing.T) {
 	require.Error(t, err)
 }
 
-// An ingested node is a table nothing builds, so release-controller never
+// An unknown-external node is a table nothing builds, so release-controller never
 // validates one. A message that names one anyway is refused naming the node and
 // the reason, whether or not the rest of its fields are present.
-func TestParseValidationRequested_RefusesAnIngestedNode(t *testing.T) {
+func TestParseValidationRequested_RefusesAnUnknownExternalNode(t *testing.T) {
 	for name, edit := range map[string]func(map[string]any){
-		"a complete node": func(n map[string]any) { n["node_type"] = "ingested" },
+		"a complete node": func(n map[string]any) { n["node_type"] = "unknown-external" },
 		"a node with no service name": func(n map[string]any) {
-			n["node_type"] = "ingested"
+			n["node_type"] = "unknown-external"
 			delete(n, "service_name")
 		},
 	} {
@@ -180,7 +180,7 @@ func TestParseValidationRequested_RefusesAnIngestedNode(t *testing.T) {
 			edit(nodes[1])
 			_, err := ParseValidationRequested(validationMsg(t, p, ""))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "ingested")
+			assert.Contains(t, err.Error(), "unknown-external")
 			assert.Contains(t, err.Error(), "model.shop.customers")
 		})
 	}

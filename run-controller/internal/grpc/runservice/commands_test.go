@@ -339,11 +339,11 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 	assert.Zero(t, cmds.calls)
 }
 
-// A run of an ingested node is refused as an invalid argument, with the
+// A run of an unknown-external node is refused as an invalid argument, with the
 // refusal's own message, which names the node. It is the request that is
 // wrong, so no retry or other state of the system changes the answer.
-func TestCommandError_IngestedNodeIsInvalidArgument(t *testing.T) {
-	refusal := fmt.Errorf("select: %w", fmt.Errorf("%w: raw.ingest_probe", runplan.ErrIngestedNode))
+func TestCommandError_UnknownExternalNodeIsInvalidArgument(t *testing.T) {
+	refusal := fmt.Errorf("select: %w", fmt.Errorf("%w: raw.ingest_probe", runplan.ErrExternalNode))
 	cmds := &fakeCommands{err: refusal}
 	srv := newCommandServer(newStore(), cmds)
 
@@ -392,7 +392,7 @@ func TestCommands_MapTheRefusals(t *testing.T) {
 		{runplan.ErrTargetNotFound, codes.NotFound},
 		{run.ErrTaskNotFound, codes.NotFound},
 		{runplan.ErrFullRefreshUnsupported, codes.InvalidArgument},
-		{runplan.ErrIngestedNode, codes.InvalidArgument},
+		{runplan.ErrExternalNode, codes.InvalidArgument},
 		{run.ErrScheduleNameTooLong, codes.InvalidArgument},
 		{run.ErrScheduleHasActiveRun, codes.FailedPrecondition},
 		{runplan.ErrEmptySelection, codes.FailedPrecondition},

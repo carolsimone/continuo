@@ -1891,10 +1891,12 @@ a.release-author:hover { text-decoration: underline; }
   box-shadow: 0 0 0 2px #fff;
 }
 
-/* An ingested node of the schedule graph carries a small chip on its top
-   border, right-aligned, where a run graph puts its "waiting for node" pill;
-   it has that pill's size and ring. */
-.dag-ingested-chip {
+/* A node of the schedule graph that is no task carries a small chip on its
+   top border, right-aligned, where a run graph puts its "waiting for node"
+   pill; it has that pill's size and ring, and a modifier gives it its colours.
+   The chip of an unknown-external node (a table another system loads) is
+   --external. */
+.dag-node-chip {
   position: absolute;
   top: 0;
   right: 8px;
@@ -1906,10 +1908,14 @@ a.release-author:hover { text-decoration: underline; }
   z-index: 1;
   box-shadow: 0 0 0 2px #fff;
   background: #fff;
-  border: 1px solid #94a3b8;
+  border: 1px solid;
   border-radius: 999px;
-  color: #475569;
   white-space: nowrap;
+}
+
+.dag-node-chip--external {
+  border-color: #94a3b8;
+  color: #475569;
 }
 
 /* Status legend under the graph, in the same order and colours as the

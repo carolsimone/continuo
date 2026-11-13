@@ -143,10 +143,10 @@ export function parseNodeId(nodeId: string): {
   return { service_name, schema_name, table_name: rest.join('.') };
 }
 
-// ingestedNodeName is how the graph and its focus legend name an ingested
+// externalNodeName is how the graph and its focus legend name an unknown-external
 // node: its schema and table, the only way to tell two such tables of the same
 // name apart.
-export function ingestedNodeName(nodeId: string): string {
+export function externalNodeName(nodeId: string): string {
   const { schema_name, table_name } = parseNodeId(nodeId);
   return `${schema_name}.${table_name}`;
 }

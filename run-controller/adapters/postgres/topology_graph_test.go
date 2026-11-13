@@ -119,13 +119,13 @@ func TestTopologyRepository_GraphHoldsTheKeysAndTheEdgesAmongThem(t *testing.T) 
 	assert.Equal(t, 0, empty.Len())
 }
 
-// A failed run was planned on rel-1, before any release held an ingested node.
-// rel-2, the live release, adds the ingested table raw.x that the failed node
-// a.m reads. The live schedule graph holds neither the ingested node nor its
+// A failed run was planned on rel-1, before any release held an unknown-external node.
+// rel-2, the live release, adds the unknown-external table raw.x that the failed node
+// a.m reads. The live schedule graph holds neither the unknown-external node nor its
 // edge, so a rebase reads no new node and finds no change, and a whole-schedule
 // run plans the tasks it planned before: neither is refused, and neither
-// selects the ingested node.
-func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAsTheyWere(t *testing.T) {
+// selects the unknown-external node.
+func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeScheduleRunsAsTheyWere(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
@@ -134,13 +134,13 @@ func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAs
 	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", up, failed))
 	require.NoError(t, err)
 	failed.UpstreamUniqueIDs = []string{"a.up", "raw.x"}
-	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", up, failed, ingestedSpec("raw", "x")))
+	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", up, failed, unknownExternalSpec("raw", "x")))
 	require.NoError(t, err)
 	repo := postgres.NewTopologyRepository(db, nil)
 	require.Equal(t, 1, countTopoRows(t, db, `
 		SELECT count(*) FROM topology_edges
 		WHERE tenant_id = $1 AND release_id = 'rel-2' AND upstream_key = 'raw.x' AND downstream_key = 'a.m'`, tenant),
-		"the live release holds the ingested node and its edge")
+		"the live release holds the unknown-external node and its edge")
 
 	live, err := repo.ScheduleGraph(ctx, tenant, "rel-2", "daily")
 	require.NoError(t, err)
