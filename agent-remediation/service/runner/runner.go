@@ -91,15 +91,20 @@ type tryRun struct {
 
 // Drive runs the remediation's steps, one committed step at a time, until it
 // waits on something outside the worker, ends, or the worker's lease is lost.
-// The caller holds the lease. A remediation with no try, or whose try failed,
-// gets its next try opened first. Then every cluster of the try runs its steps
-// to an end, and the try is finished: settled when it has nothing to verify,
-// otherwise checked across its clusters and submitted to the gate, where it
-// waits on the gate's poller. A lost lease stops the drive quietly with nil,
-// since another worker holds the remediation. A step that errors is recorded
-// on its journal row, and its error is returned; the next drive runs it again.
-// A remediation that cannot be loaded, or whose next try cannot open, has the
-// error counted on its own row, and the error is returned.
+// The caller holds the lease. Before every step the stuck rules are applied to
+// the remediation as last committed, and a remediation that can go no further
+// is ended as a system failure and the drive stops with nil: a step failed
+// five times in a row, the remediation failed five times in a row before a
+// step could run, or its try is drafting or checking past its deadline. A
+// remediation with no try, or whose try failed, gets its next try opened
+// first. Then every cluster of the try runs its steps to an end, and the try
+// is finished: settled when it has nothing to verify, otherwise checked across
+// its clusters and submitted to the gate, where it waits on the gate's
+// poller. A lost lease stops the drive quietly with nil, since another worker
+// holds the remediation. A step that errors is recorded on its journal row,
+// and its error is returned; the next drive runs it again. A remediation that
+// cannot be loaded, or whose next try cannot open, has the error counted on
+// its own row, and the error is returned.
 func (r *Runner) Drive(ctx context.Context, id uuid.UUID) error {
 	err := r.drive(ctx, id)
 	if errors.Is(err, repository.ErrLeaseLost) {
@@ -116,6 +121,9 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 		}
 		run, running, err := r.load(ctx, id)
 		if err != nil || !running {
+			return err
+		}
+		if ended, err := r.endIfStuck(ctx, run); err != nil || ended {
 			return err
 		}
 		if run.snap.Try == nil || run.snap.Try.Status == remediation.TryFailed {

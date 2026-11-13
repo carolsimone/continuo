@@ -15,9 +15,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
-// stuckEnder ends a remediation that can go no further. The worker uses it on
-// the remediation of a drive that failed, and the sweeper on the remediations
-// nobody drives.
+// stuckEnder ends a remediation that can go no further. The runner uses it
+// before every step it starts, the worker on the remediation of a drive that
+// failed, and the sweeper on the remediations nobody drives.
 type stuckEnder struct {
 	newUoW func() uow.UnitOfWork
 	clock  ports.Clock
@@ -76,6 +76,20 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 	}
 	e.logger.Error("remediation ended as a system failure", "remediation", id, "release", rem.ReleaseID, "reason", reason)
 	return true, nil
+}
+
+// endIfStuck applies the stuck rules to run, which the runner read holding the
+// lease, before it starts a step on the remediation or moves its try on. When
+// one holds at the runner's clock, the remediation is ended through the path
+// the worker and the sweeper use: one transaction that holds the lease, reads
+// the remediation again and, when it is still stuck, records the system
+// failure, fails the try and fails the attempt's row. ended reports whether it
+// was ended. A lost lease is repository.ErrLeaseLost, with nothing written.
+func (r *Runner) endIfStuck(ctx context.Context, run tryRun) (ended bool, err error) {
+	if stuckReason(run.snap, r.clock.Now()) == "" {
+		return false, nil
+	}
+	return stuckEnder{newUoW: r.d.NewUoW, clock: r.clock, logger: r.logger}.endIfStuck(ctx, run.snap.Remediation.ID, r.d.Owner)
 }
 
 // failAttemptRow fails the proposal row of the current try's attempt with

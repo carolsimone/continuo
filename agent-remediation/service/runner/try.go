@@ -21,7 +21,8 @@ import (
 )
 
 // How long a try may stay in each open status: its deadline is set when it
-// enters the status, and the sweeper ends a drafting or checking try past it.
+// enters the status, and a drafting or checking try past it is ended, by the
+// runner before the try's next step or by the sweeper when nobody drives it.
 // A verifying try's deadline is informational: it records when the gate's
 // runs should have answered, an hour past the verification timeout, and
 // nothing acts on it, since the gate's own timeouts end a verification that
@@ -59,7 +60,9 @@ const (
 // also does when it finds the remediation with no try or with a failed one; a
 // try therefore opens even when the process stopped between failing a try and
 // calling NextTry. It opens one only while the remediation runs and has no try
-// or its try failed, so calling it again after it succeeded opens nothing. The
+// or its try failed, so calling it again after it succeeded opens nothing. As
+// before every step of a drive, the stuck rules are applied first, and a
+// remediation that can go no further is ended instead of opening a try. The
 // caller holds the lease; a lost lease returns nil with nothing written. A try
 // that cannot open has the error counted on the remediation's own row.
 func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
@@ -70,9 +73,12 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 	if run.snap.Try != nil && run.snap.Try.Status != remediation.TryFailed {
 		return nil
 	}
-	err = r.openTry(ctx, run)
-	if err != nil {
-		err = r.countRemediationFailure(ctx, id, err)
+	ended, err := r.endIfStuck(ctx, run)
+	if err == nil && !ended {
+		err = r.openTry(ctx, run)
+		if err != nil {
+			err = r.countRemediationFailure(ctx, id, err)
+		}
 	}
 	if errors.Is(err, repository.ErrLeaseLost) {
 		r.logger.Info("remediation lease lost; no try opened", "remediation", id, "owner", r.d.Owner)

@@ -29,8 +29,9 @@ const (
 // five times in a row before a step could run, and one whose try is still
 // drafting or checking past its deadline. It acts on a remediation only after
 // it claimed it, so one that a worker or the gate poller is on is left to
-// them. A worker ends the remediation of a drive that failed itself, by the
-// same rules.
+// them. The same rules end a remediation that is being driven or polled: the
+// runner applies them before every step it starts and before every poll of a
+// gate, and the worker after a drive that failed.
 type Sweeper struct {
 	newUoW   func() uow.UnitOfWork
 	repo     func() repository.RemediationRepository

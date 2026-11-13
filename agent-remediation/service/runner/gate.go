@@ -110,7 +110,11 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 // read again, since a snapshot listed without the lease may be torn. PollGate
 // holds the lease, then polls the gate once with the drafts it was submitted,
 // rebuilt from the journal, counting unreadable runs from the start of the
-// gate step's run.
+// gate step's run. Before it polls, the stuck rules are applied as before
+// every step of a drive: a verifying try has no deadline that ends it, but a
+// gate row that failed five times in a row, or a remediation that did, ends
+// the remediation as a system failure, with the attempt's row failed and the
+// gate not read.
 //
 // While the gate waits, each run whose phase changed is written to the
 // attempt's proposal row, and nothing else. A passed gate runs the flow's pass
@@ -140,6 +144,9 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 	}
 	if run.snap.Try == nil || run.snap.Try.Status != remediation.TryVerifying {
 		return nil
+	}
+	if ended, err := r.endIfStuck(ctx, run); err != nil || ended {
+		return err
 	}
 	name, gate, err := r.gateStep(run.flow)
 	if err != nil {

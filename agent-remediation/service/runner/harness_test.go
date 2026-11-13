@@ -233,6 +233,13 @@ func (p *fakePipeline) answer(phase proposal.Phase, nodeErrors map[string]string
 	}
 }
 
+// statusReads is how many status reads the pipeline answered.
+func (p *fakePipeline) statusReads() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reads
+}
+
 func (p *fakePipeline) runs() []ports.VerificationRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
