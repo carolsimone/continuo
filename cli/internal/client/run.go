@@ -49,7 +49,8 @@ type RunClient interface {
 	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	// ListNodes lists the nodes of the live release. With dormantOnly it keeps
-	// only the dormant ones, the nodes no schedule puts on a cron.
+	// only the dormant ones, the nodes continuo builds that belong to no
+	// schedule.
 	ListNodes(ctx context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error)
 
 	// Schedule crons. An edit takes no request id, so the server cannot answer

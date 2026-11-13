@@ -1911,8 +1911,8 @@ a.release-author:hover { text-decoration: underline; }
    chip on its top border, right-aligned, where a run graph puts its "waiting
    for node" pill; it has that pill's size and ring, and a modifier gives it its
    colours. The chip of an unknown-external node (a table another system loads)
-   is --external; that of a dormant node (one continuo builds that has no
-   schedule tag) is --dormant. */
+   is --external; that of a dormant node (one continuo builds that belongs to no
+   schedule) is --dormant. */
 .dag-node-chip {
   position: absolute;
   top: 0;

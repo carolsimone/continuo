@@ -17,7 +17,7 @@ type nodeEntry struct {
 	SchemaName  string `json:"schema_name"`
 	ServiceName string `json:"service_name"`
 	NodeType    string `json:"node_type"`
-	// Dormant is true for a node continuo builds that has no schedule tag,
+	// Dormant is true for a node continuo builds that belongs to no schedule,
 	// and false for every other node, an unknown-external one included. It is
 	// always present.
 	Dormant bool `json:"dormant"`
@@ -51,8 +51,8 @@ func NewGraphCommand(factory RunClientFactory, cfg *config.Config, stdout, stder
 
 Use when the user wants the topology (nodes and edges) of a schedule: the nodes
 of the live release that belong to it, the nodes of other schedules and the
-dormant nodes (those of no schedule) that feed them one hop upstream, and the
-edges among them.
+dormant nodes (nodes continuo builds that belong to no schedule) that feed them
+one hop upstream, and the edges among them.
 
 Arguments:
   <schedule-name>  The schedule whose graph to fetch.
@@ -68,8 +68,9 @@ Output (stdout, JSON):
   its "service_name" is empty, so its node id starts with a dot
   (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
   address it.
-  "dormant" is true for a node that has no schedule: it is in this graph as an
-  upstream of a node that reads it, and a run started by hand executes it
+  "dormant" is true for a node continuo builds that belongs to no schedule: it
+  is in this graph as an upstream of a node that reads it, and a run started by
+  hand executes it
   ("continuo node trigger <service> <schema> <table>"). No cron or schedule run
   includes it, except to rebuild a dormant view or materialized view below a
   seed: a run whose load of that seed drops the seed's table rebuilds it, and a

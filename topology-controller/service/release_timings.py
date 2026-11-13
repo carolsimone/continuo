@@ -105,8 +105,8 @@ class ReleaseTimings:
     declare; `skipped` holds the nodes the parses left out, per reason.
     `nodes`, `columns` and `skipped` name every runtime or reason from
     construction. `dormant` holds, per service, the dormant nodes the release
-    holds (the nodes a release builds that no schedule tag puts on a cron); a
-    service with none has no entry.
+    holds (the nodes a release builds that belong to no schedule); a service
+    with none has no entry.
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 

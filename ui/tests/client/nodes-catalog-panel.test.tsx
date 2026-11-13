@@ -153,7 +153,7 @@ describe('NodesCatalogPanel', () => {
     const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent?.trim());
     expect(cells.slice(1)).toEqual(['never', '—', '—', '—']);
     expect(row.textContent).not.toMatch(/NaN|Invalid Date|undefined|null/);
-    // The node has no schedule tag: a dormant chip says so beside its name.
+    // The node belongs to no schedule: a dormant chip says so beside its name.
     const chip = row.querySelector('.nodes-node-name .pill-sm') as HTMLElement;
     expect(chip.textContent).toBe('dormant');
     expect(chip.getAttribute('title')).toBe('No schedule tag: you run it by hand. Last run: never.');

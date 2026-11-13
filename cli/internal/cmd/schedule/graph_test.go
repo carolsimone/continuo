@@ -172,11 +172,11 @@ func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
 	assert.Contains(t, cmd.Long, "its node id starts with a dot", "the help says what the empty service does to the node id")
 }
 
-// A dormant node is one no schedule tags: the graph carries it as an upstream
-// of the nodes that read it, with "dormant": true. Every other node says
-// "dormant": false, never leaves the key out. The help says what dormant means,
-// how a dormant node runs and that every node carries the field, so a caller
-// that reads the graph needs nothing else to tell the two apart.
+// A dormant node is one that belongs to no schedule: the graph carries it as an
+// upstream of the nodes that read it, with "dormant": true. Every other node
+// says "dormant": false, never leaves the key out. The help says what dormant
+// means, how a dormant node runs and that every node carries the field, so a
+// caller that reads the graph needs nothing else to tell the two apart.
 func TestGraph_DormantNodeIsMarked(t *testing.T) {
 	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{
 		Nodes: []*runv1.ScheduleGraphNode{
@@ -216,7 +216,8 @@ func TestGraph_DormantNodeIsMarked(t *testing.T) {
 	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
 	long := strings.Join(strings.Fields(cmd.Long), " ")
 	assert.Contains(t, long, `"dormant":boolean`, "the help shows the field in the output shape")
-	assert.Contains(t, long, `"dormant" is true for a node that has no schedule`, "the help says what dormant means")
+	assert.Contains(t, long, `"dormant" is true for a node continuo builds that belongs to no schedule`, "the help says what dormant means")
+	assert.NotContains(t, long, "schedule tag", "an untagged seed takes the seed schedule and is not dormant, so the help never defines dormant by a missing tag")
 	assert.Contains(t, long, "No cron or schedule run includes it, except to rebuild a dormant view or materialized view below a seed",
 		"the help says a run includes a dormant node only to rebuild a view below a seed whose load drops the seed's table")
 	assert.Contains(t, long, "a rerun or rebase of that run rebuilds it again if the rebuild did not finish", "the help says a rerun or rebase finishes the rebuild")

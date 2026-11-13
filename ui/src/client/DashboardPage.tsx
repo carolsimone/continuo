@@ -17,7 +17,8 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
-  // Dormant nodes of the live release (no schedule tag).
+  // Dormant nodes of the live release: nodes continuo builds that belong to no
+  // schedule.
   const [dormantNodeCount, setDormantNodeCount] = useState(0);
   const [nodeTotal, setNodeTotal] = useState(0);
   const [openPrCount, setOpenPrCount] = useState(0);

@@ -79,8 +79,8 @@ export interface GraphNode {
   node_id: string;     // "{service}.{schema}.{table}"
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
-  // True for a node continuo builds that has no schedule tag: a run started by
-  // hand executes it, and any run whose load of a seed drops the seed's table
+  // True for a node continuo builds that belongs to no schedule: a run started
+  // by hand executes it, and any run whose load of a seed drops the seed's table
   // includes it only to rebuild it, as a view or materialized view below that
   // seed. A rerun or rebase of that run rebuilds it again if the rebuild did not
   // finish. False on a run graph.
@@ -399,7 +399,8 @@ export interface NodeSummary {
   timeout_declared: boolean;
   // The node's type in the live release, such as dbt-model.
   node_type: string;
-  // True for a node continuo builds that has no schedule tag (a dormant node).
+  // True for a node continuo builds that belongs to no schedule (a dormant
+  // node).
   dormant: boolean;
 }
 

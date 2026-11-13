@@ -81,8 +81,8 @@ const UNKNOWN_EXTERNAL_BG = '#e2e8f0';
 const UNKNOWN_EXTERNAL_LOOK: FixedLook = { background: UNKNOWN_EXTERNAL_BG, borderColor: '#94a3b8' };
 const UNKNOWN_EXTERNAL_TITLE = 'A table continuo reads and does not build. continuo does not know who builds it.';
 
-// A dormant node (one continuo builds that has no schedule tag): light grey,
-// with muted text.
+// A dormant node (one continuo builds that belongs to no schedule): light
+// grey, with muted text.
 const DORMANT_BG = '#f1f5f9';
 const DORMANT_LOOK: FixedLook = { background: DORMANT_BG, borderColor: '#94a3b8', color: '#475569' };
 

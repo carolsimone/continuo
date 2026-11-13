@@ -21,7 +21,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
   };
 });
 
-// A dormant node is a model continuo builds that has no schedule tag: the
+// A dormant node is a node continuo builds that belongs to no schedule: the
 // schedule graph shows it as the upstream of a node it feeds.
 const DORMANT_ID = 's.a.dormant_m';
 const READER_ID = 's.a.reader';

@@ -20,7 +20,7 @@ type NodeSummary struct {
 	TableName   string
 	// NodeType is the node's type in the live release, such as dbt-model.
 	NodeType string
-	// Dormant is true when no schedule puts the node on a cron
+	// Dormant is true for a node continuo builds that belongs to no schedule
 	// (model.IsDormant).
 	Dormant        bool
 	RunCount       int

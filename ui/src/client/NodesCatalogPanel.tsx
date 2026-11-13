@@ -17,7 +17,7 @@ function durPair(avg: number | null, p95: number | null): string {
 }
 
 // The URL parameter of the "Dormant only" filter: dormant=1 lists only the
-// nodes with no schedule tag, which run by hand.
+// dormant nodes, the ones that belong to no schedule and run by hand.
 const DORMANT_PARAM = 'dormant';
 
 const dash = <span className="nodes-dash">—</span>;

@@ -160,6 +160,8 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 	assert.Contains(t, long, `"node_type":string,"dormant":bool`, "the help shows both fields in the output shape")
 	assert.Contains(t, long, "any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed",
 		"the help says what a dormant node is, and which run includes one only to rebuild it")
+	assert.Contains(t, long, "dormant is true for a node continuo builds that belongs to no schedule", "the help says what dormant means")
+	assert.NotContains(t, long, "schedule tag", "an untagged seed takes the seed schedule and is not dormant, so the help never defines dormant by a missing tag")
 	assert.Contains(t, long, `"continuo node trigger <service> <schema> <table>"`, "the help names the command that runs a dormant node")
 	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
 }
@@ -172,7 +174,8 @@ func TestList_DormantFlagIsADocumentedSwitchOffByDefault(t *testing.T) {
 	assert.Equal(t, "bool", flag.Value.Type())
 	assert.Equal(t, "false", flag.DefValue)
 	assert.Contains(t, flag.Usage, "dormant")
-	assert.Contains(t, flag.Usage, "no schedule")
+	assert.Contains(t, flag.Usage, "belong to no schedule")
+	assert.NotContains(t, flag.Usage, "schedule tag", "an untagged seed takes the seed schedule and is not dormant")
 }
 
 // The output_schema annotation declares every field a node of the list can
