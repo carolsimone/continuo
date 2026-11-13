@@ -51,7 +51,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
   - An unknown-external node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an unknown-external node.
   - No values change is needed.
-- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it, except to rebuild a dormant view or materialized view below a seed whose load drops the seed's table. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
+- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it, except to rebuild it: any run whose load of a seed drops the seed's table rebuilds the dormant views and materialized views below that seed. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
   - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run.
   - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
   - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.

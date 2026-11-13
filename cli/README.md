@@ -81,7 +81,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 | Command | What it does | Changes state |
 |---|---|:--:|
 | `schedule list` | Lists every schedule with its cron, whether it is paused, its model count, whether a run is active, and its last run. | |
-| `schedule graph <name>` | Shows the nodes of a schedule and the dependencies between them. Each node says whether it is `dormant`: it has no schedule, so a run started by hand runs it, and a schedule's run includes it only to rebuild it as a view below a seed whose load drops the seed's table. An unknown name gives an empty graph. | |
+| `schedule graph <name>` | Shows the nodes of a schedule and the dependencies between them. Each node says whether it is `dormant`: it has no schedule, so a run started by hand runs it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. An unknown name gives an empty graph. | |
 | `schedule runs <name>` | Lists the schedule's finished runs, newest first. | |
 | `schedule status <name>` | Shows the schedule's latest run and the status of each of its tasks. Prints `{"run":null,"tasks":[]}` if it never ran. | |
 | `schedule trigger <name>` | Starts a run of the whole schedule and prints its `run_id`. Exits 4 if the schedule already has an active run, and 3 if no model carries the name. | yes |

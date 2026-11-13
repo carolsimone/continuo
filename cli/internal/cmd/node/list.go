@@ -102,9 +102,9 @@ Output (stdout, JSON):
    "timeout_declared":bool}]}
   node_type is the node's type in the live release, such as dbt-model. dormant
   is true for a node with no schedule: a run started by hand executes it, and
-  no cron or schedule run includes it, except to rebuild a dormant view or
-  materialized view below a seed whose load in that run drops the seed's table.
-  It is false for every other node, and is always present.
+  any run whose load of a seed drops the seed's table includes it only to
+  rebuild it, as a view or materialized view below that seed. It is false for
+  every other node, and is always present.
   task_count is the number of the node's tasks in the statistics window (at
   most 50). A node that never ran has task_count 0 and no last_run_at, and
   last_status is "" for it; it is listed after the nodes that ran. total_count

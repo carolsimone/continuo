@@ -188,7 +188,7 @@ topology-controller resolves the graph.
 
 ### Model metadata
 
-Every service's `dbt_project.yml` declares the required `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. A model's schedule name is its tag: a `+tags` entry in `dbt_project.yml`, or `config.tags` in the service's `models/schema.yml`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser. A model with an owner and no tag is a dormant node: it is in the topology with no schedule, and a run started by hand builds it. No cron or schedule's run builds it, except to rebuild a dormant view or materialized view below a seed whose load in that run drops the seed's table. service-1's `dormant_probe`, a table below no seed, is one.
+Every service's `dbt_project.yml` declares the required `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. A model's schedule name is its tag: a `+tags` entry in `dbt_project.yml`, or `config.tags` in the service's `models/schema.yml`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser. A model with an owner and no tag is a dormant node: it is in the topology with no schedule, and a run started by hand builds it. Any other run builds it only to rebuild it, as a view or materialized view below a seed whose load in that run drops the seed's table. service-1's `dormant_probe`, a table below no seed, is one.
 
 ## Building
 

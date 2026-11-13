@@ -285,7 +285,8 @@ type RunServiceClient interface {
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
-	// default) includes full refreshes.
+	// default) includes full refreshes. The node list of test keeps only the
+	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,
@@ -851,7 +852,8 @@ type RunServiceServer interface {
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
-	// default) includes full refreshes.
+	// default) includes full refreshes. The node list of test keeps only the
+	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of nodes that have run,

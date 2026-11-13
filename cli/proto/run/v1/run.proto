@@ -261,7 +261,8 @@ service RunService {
   // filter, and limit/offset paging. total_count reports the full
   // match count (before paging). A limit of 0 or less means 50 and a limit
   // above 200 is 200; a negative offset is 0. The node list of run (the empty
-  // default) includes full refreshes.
+  // default) includes full refreshes. The node list of test keeps only the
+  // nodes that have data tests (test_count above 0).
   // Errors: INVALID_ARGUMENT (operation is not an operation value).
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
@@ -800,7 +801,7 @@ message NodeSummary {
   int32 timeout_seconds = 12;   // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
   bool timeout_declared = 13;   // true when the live release declares the timeout of the node; false when its tasks get the install default
   string node_type = 14;        // the type of the node in the live release, such as dbt-model
-  bool dormant = 15;            // true when the node has no schedule: a run started by hand executes it, and a schedule's run includes it only to rebuild it as a view or materialized view below a seed whose load drops the seed's table
+  bool dormant = 15;            // true when the node has no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
 }
 
 message ListNodeNamesRequest {
@@ -890,7 +891,7 @@ message ScheduleGraphNode {
   string table_name = 3;
   string node_type = 4;
   string schedule_name = 5;  // the schedule the node belongs to, which differs from the requested one for an upstream node
-  bool dormant = 6;          // true when the node has no schedule: a run started by hand executes it, and a schedule's run includes it only to rebuild it as a view or materialized view below a seed whose load drops the seed's table
+  bool dormant = 6;          // true when the node has no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
   string last_run_at = 7;    // RFC3339, when the latest run with a task of the node was created; empty when the node never ran or is not dormant
 }
 

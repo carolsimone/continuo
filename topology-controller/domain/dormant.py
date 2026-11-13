@@ -8,8 +8,8 @@ _BUILT_RUNTIMES = frozenset({NodeRuntime.DBT, NodeRuntime.PYTHON})
 def is_dormant(node_type: NodeType, schedule: str) -> bool:
     """Whether a node of this type and schedule is dormant: a release builds it
     and no schedule tag puts it on a cron. A run started by hand executes it,
-    and a schedule's run includes it only to rebuild it as a view or
-    materialized view below a seed whose load drops the seed's table.
+    and any run whose load of a seed drops the seed's table includes it only
+    to rebuild it, as a view or materialized view below that seed.
 
     A dbt test only validates, a table no node builds is not built, and a type
     the contract does not declare has no runtime, so none of them is dormant.

@@ -2,8 +2,9 @@ import { useNavigate } from 'react-router';
 
 interface Props {
   // Dormant nodes of the live release: nodes continuo builds that have no
-  // schedule tag. A run started by hand executes them, and a schedule's run
-  // only rebuilds a dormant view below a seed whose load drops its table.
+  // schedule tag. A run started by hand executes them, and any run whose load
+  // of a seed drops the seed's table only rebuilds a dormant view or
+  // materialized view below that seed.
   count: number;
 }
 

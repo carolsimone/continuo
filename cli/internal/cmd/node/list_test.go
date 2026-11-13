@@ -158,8 +158,8 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 	long := strings.Join(strings.Fields(NewListCommand(nil, nil, nil, nil).Long), " ")
 	assert.Contains(t, long, `--dormant`, "the help names the flag")
 	assert.Contains(t, long, `"node_type":string,"dormant":bool`, "the help shows both fields in the output shape")
-	assert.Contains(t, long, "no cron or schedule run includes it, except to rebuild a dormant view or materialized view below a seed",
-		"the help says what a dormant node is, and when a schedule's run includes one")
+	assert.Contains(t, long, "any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed",
+		"the help says what a dormant node is, and which run includes one only to rebuild it")
 	assert.Contains(t, long, `"continuo node trigger <service> <schema> <table>"`, "the help names the command that runs a dormant node")
 	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
 }

@@ -80,8 +80,9 @@ export interface GraphNode {
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
   // True for a node continuo builds that has no schedule tag: a run started by
-  // hand executes it, and a schedule's run includes it only to rebuild it as a
-  // view below a seed whose load drops the seed's table. False on a run graph.
+  // hand executes it, and any run whose load of a seed drops the seed's table
+  // includes it only to rebuild it, as a view or materialized view below that
+  // seed. False on a run graph.
   dormant: boolean;
   // When the latest run with a task of a dormant node was created; null when
   // it never ran, and on every node that is not dormant.
