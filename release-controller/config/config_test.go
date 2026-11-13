@@ -61,6 +61,26 @@ func TestLoad_AgentRemediationGRPCAddrOverride(t *testing.T) {
 	}
 }
 
+func TestLoad_GRPCPort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "")
+	v := &pkgconfig.Validator{}
+	assert.Equal(t, 50056, Load(v).GRPCPort)
+	assert.Empty(t, v.Missing())
+
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "50999")
+	assert.Equal(t, 50999, Load(&pkgconfig.Validator{}).GRPCPort)
+}
+
+func TestLoad_RefusesAnInvalidGRPCPort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "not-a-port")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	require.Len(t, v.Missing(), 1)
+	assert.Contains(t, v.Missing()[0], "RELEASE_CONTROLLER_GRPC_PORT")
+}
+
 func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("POSTGRES_DB", "continuo_x")

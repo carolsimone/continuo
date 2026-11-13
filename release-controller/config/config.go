@@ -29,6 +29,10 @@ type Config struct {
 	// Maintenance is MAINTENANCE_ENABLED (see handlers.Deps.Maintenance).
 	Maintenance bool
 
+	// GRPCPort is the port the release.v1.ReleaseQuery gRPC server binds
+	// (RELEASE_CONTROLLER_GRPC_PORT).
+	GRPCPort int
+
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 
@@ -63,6 +67,8 @@ func Load(v *pkgconfig.Validator) Config {
 			"AGENT_REMEDIATION_GRPC_ADDR", "agent-remediation:50054"),
 
 		Maintenance: pkgconfig.LoadMaintenance(v),
+
+		GRPCPort: v.PortOrDefault("RELEASE_CONTROLLER_GRPC_PORT", 50056),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 
