@@ -143,4 +143,30 @@ describe('RunSwimlane', () => {
     const text = legend.textContent ?? '';
     expect(text.indexOf('queued')).toBeLessThan(text.indexOf('running'));
   });
+
+  it('ends a node title with its plan reason when it has one', () => {
+    const g = {
+      nodes: [
+        { ...node('core.a.seed'), plan_reason: 'columns changed' },
+        node('core.a.plain'),
+      ],
+      edges: [] as GraphEdge[],
+    };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    const titles = Array.from(container.querySelectorAll('.swim-node'), (el) => el.getAttribute('title'));
+    expect(titles).toContain('core.a.seed — columns changed');
+    expect(titles).toContain('core.a.plain');
+  });
+
+  it('reads the plan reason from the task when the graph node has none', () => {
+    const t = { ...task('core.a.seed', 'succeeded'), plan_reason: 'rebuild: dropped by the load of core.a.x' };
+    const { container } = render(
+      <RunSwimlane graph={{ nodes: [node('core.a.seed')], edges: [] }} tasks={[t]} serviceOrder={['core']}
+        collapsed={new Set(['core'])} onLaneToggle={vi.fn()} />,
+    );
+    expect(container.querySelector('.swim-cell')!.getAttribute('title'))
+      .toBe('core.a.seed — rebuild: dropped by the load of core.a.x');
+  });
 });

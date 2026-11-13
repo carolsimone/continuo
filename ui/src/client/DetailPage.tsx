@@ -111,6 +111,10 @@ function ScheduleDetail({ name, mode, requestId }: {
   const snapshotRun = selectedRunId
     ? selectedRun ?? { completed_at: null, created_at: null, status: null }
     : null;
+  // The release of the run the page shows: a selected past run's own, which
+  // is unknown (no link) rather than the latest run's when its summary names
+  // none, else the latest run's.
+  const shownReleaseId = selectedRunId ? selectedRun?.release_id : scheduler?.release_id;
   const shouldRenderGraph = !!activeGraph && activeGraph.nodes.length > 0;
   const graphBadge = graphBadgeLabelOf({ mode, selectedRun, liveRunExists, activeGraph });
   const driftLabel = driftLabelOf(liveRunGraph);
@@ -196,6 +200,7 @@ function ScheduleDetail({ name, mode, requestId }: {
               lastRunId, runsCount, taskCount: tasks.length, tasksRead, selectedRunId, runGraph, readFailed,
             })}
             selectedRunId={selectedRunId}
+            releaseId={shownReleaseId}
             tasks={tasks}
             attemptsByTask={attemptsByTask}
             activeGraph={activeGraph}

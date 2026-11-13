@@ -12,12 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
 	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/carolsimone/continuo/run-controller/service/ports"
+	"github.com/carolsimone/continuo/run-controller/service/runstart"
 	"github.com/carolsimone/continuo/run-controller/service/seedreconcile"
 	"github.com/carolsimone/continuo/run-controller/service/uow"
 	"github.com/google/uuid"
@@ -31,11 +34,12 @@ type fixedClock struct{}
 
 func (fixedClock) Now() time.Time { return testNow }
 
-// fakeTopology serves each tenant's live pointer and the releases' nodes, and
-// records the calls it receives.
+// fakeTopology serves each tenant's live pointer and the releases' nodes and
+// edges, and records the calls it receives.
 type fakeTopology struct {
 	live  map[string]topology.Pointer // by tenant
 	nodes map[string][]topology.Node  // by release id
+	edges map[string][]topology.Edge  // by release id
 	calls []string
 }
 
@@ -96,15 +100,33 @@ func (f *fakeTopology) Graph(_ context.Context, _ string, releaseID string, keys
 	for _, k := range keys {
 		want[k] = true
 	}
-	var nodes []topology.Node
-	for _, n := range f.nodes[releaseID] {
-		if want[n.Key] {
-			nodes = append(nodes, n)
-		}
-	}
-	return topology.NewGraph(nodes, nil), nil
+	return f.release(releaseID).Restrict(keys), nil
 }
 
+// release is the graph of releaseID's nodes and edges.
+func (f *fakeTopology) release(releaseID string) topology.Graph {
+	return topology.NewGraph(f.nodes[releaseID], f.edges[releaseID])
+}
+
+// ViewClosure walks down from seeds through the nodes materialized as a view,
+// a materialized view or ephemeral.
+func (f *fakeTopology) ViewClosure(_ context.Context, _, releaseID string, seeds []topology.NodeKey) (topology.Graph, error) {
+	g := f.release(releaseID)
+	keys := slices.Clone(seeds)
+	for i := 0; i < len(keys); i++ {
+		for _, d := range g.Downstreams(keys[i]) {
+			if n, _ := g.Node(d); slices.Contains([]string{"view", "materialized_view", "ephemeral"}, n.Materialized) && !slices.Contains(keys, d) {
+				keys = append(keys, d)
+			}
+		}
+	}
+	return g.Restrict(keys), nil
+}
+
+// IsBootstrapRelease reports no release as bootstrap.
+func (f *fakeTopology) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the seed reconcile")
 }
@@ -167,6 +189,15 @@ func (f *fakeMaterializations) RecordBuilt(_ context.Context, tenantID string, b
 	return nil
 }
 
+func (f *fakeMaterializations) LoadedSeedColumns(_ context.Context, tenantID string, keys []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	out := map[topology.NodeKey]string{}
+	for _, k := range keys {
+		if m, ok := f.of(tenantID)[k]; ok {
+			out[k] = m.SeedColumnsHash
+		}
+	}
+	return out, nil
+}
 func (f *fakeMaterializations) DeleteAbsentFrom(context.Context, string, string) (int64, error) {
 	return 0, nil
 }
@@ -299,7 +330,7 @@ type world struct {
 // zero live leaves no release live.
 func newWorld(live topology.Pointer, nodes ...topology.Node) *world {
 	w := &world{
-		topo:   &fakeTopology{live: map[string]topology.Pointer{}, nodes: map[string][]topology.Node{}},
+		topo:   &fakeTopology{live: map[string]topology.Pointer{}, nodes: map[string][]topology.Node{}, edges: map[string][]topology.Edge{}},
 		mats:   &fakeMaterializations{rows: map[string]map[topology.NodeKey]seeds.Materialization{}},
 		runs:   &fakeRuns{taken: map[uuid.UUID]bool{}, counts: map[string]int{}},
 		tasks:  &fakeTasks{},
@@ -328,8 +359,11 @@ func (w *world) newUoW() *uow.FakeUnitOfWork {
 	return u
 }
 
+// planner plans the promote-seed runs on a Postgres warehouse.
+var planner = runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, Family: warehouse.SchemaBound, Engine: "postgres"}
+
 func (w *world) reconciler(maintenance bool) *seedreconcile.Reconciler {
-	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour},
+	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, planner,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
@@ -608,7 +642,7 @@ func TestSeedReconcile_PassesOncePerLiveRelease(t *testing.T) {
 		assert.Equal(t, 1, u.CommitCalled, tenant)
 		assert.Equal(t, []string{tenant}, u.TaskCollectionTenants, "the pass of %s starts its run under its tenant", tenant)
 	}
-	assert.Equal(t, []string{"pointers", "lock", "live", "nodes:rel-acme", "graph:rel-acme", "lock", "live", "nodes:rel-2", "graph:rel-2"},
+	assert.Equal(t, []string{"pointers", "lock", "live", "nodes:rel-acme", "graph:rel-acme", "graph:rel-acme", "lock", "live", "nodes:rel-2", "graph:rel-2", "graph:rel-2"},
 		w.topo.calls, "each pass takes the lock and reads its tenant's live release under it")
 }
 
@@ -723,7 +757,7 @@ func TestAfterPromotion_RebaselineOnTheFirstPromotionWarnsThatSeedsWereAdoptedUn
 	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"))
 	var buf bytes.Buffer
 	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
-		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+		planner, slog.New(slog.NewJSONHandler(&buf, nil)))
 	trigger := moved("rel-2", 7)
 	trigger.FirstPromotion, trigger.Bootstrap, trigger.Rebaseline = true, true, true
 
@@ -740,11 +774,39 @@ func TestAfterPromotion_RebaselineAfterTheFirstPromotionDoesNotWarn(t *testing.T
 	w := newWorld(live7, seedNode("orders", "h-orders-2"))
 	var buf bytes.Buffer
 	r := seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, false,
-		run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, slog.New(slog.NewJSONHandler(&buf, nil)))
+		planner, slog.New(slog.NewJSONHandler(&buf, nil)))
 	trigger := moved("rel-2", 7)
 	trigger.Bootstrap, trigger.Rebaseline = true, true
 
 	require.NoError(t, r.AfterPromotion(context.Background(), w.newUoW(), trigger))
 
 	assert.Empty(t, warnings(t, &buf))
+}
+
+// A promote-seed run of a seed whose columns changed rebuilds the views below
+// it, after the seed: the reconcile plans its runs with the planner it is
+// given, which applies the seed reload rules of the install's warehouse.
+func TestAfterPromotion_APromoteSeedRunRebuildsTheViewsBelowASeedWhoseColumnsChanged(t *testing.T) {
+	orders := seedNode("orders", "h-orders-2")
+	orders.SeedColumnsHash = "sha256:new"
+	view := modelNode("orders_view")
+	view.Materialized = "view"
+	w := newWorld(live7, orders, view)
+	w.topo.edges["rel-2"] = []topology.Edge{{Upstream: orders.Key, Downstream: view.Key}}
+	w.mats.of(pkgevents.DefaultTenantID)[orders.Key] = seeds.Materialization{Key: orders.Key, ContentHash: "h-orders-1", SeedColumnsHash: "sha256:old"}
+
+	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
+
+	require.Len(t, w.runs.saved, 1)
+	byKey := map[topology.NodeKey]run.Task{}
+	for _, task := range w.tasks.created {
+		byKey[task.NodeKey] = task
+	}
+	require.Len(t, byKey, 2)
+	assert.Equal(t, model.OperationFullRefresh, byKey[orders.Key].Operation)
+	assert.Equal(t, orders.Key, byKey[view.Key].RebuildOf)
+	assert.Equal(t, run.TaskStatusPending, byKey[view.Key].Status)
+	assert.Equal(t, []topology.NodeKey{orders.Key}, dispatchedKeys(w.outbox.appended), "the view waits for the seed")
+	assert.Equal(t, []attempt{{tenant: "default", key: orders.Key, hash: "h-orders-2", runID: w.runs.saved[0].RunID()}}, w.mats.attempts,
+		"only the seed records a build request")
 }

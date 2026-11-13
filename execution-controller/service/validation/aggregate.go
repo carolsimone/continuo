@@ -17,6 +17,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -217,6 +218,9 @@ func emitAggregateIfComplete(
 		}
 		if fc := r.FailedContainer(); fc != "" { // omitempty: only the compile leg ever sets this
 			node["failed_container"] = fc
+		}
+		if f := pkgevents.SeedPreflightFindingsOf(r.Facts().SeedPreflight); f != nil { // omitempty: only a seed whose pod ran a preflight
+			node["seed_preflight"] = f
 		}
 		if took, ok := r.RunDuration(); ok { // omitempty: absent for a node whose Job never started
 			node["duration_ms"] = took.Milliseconds()

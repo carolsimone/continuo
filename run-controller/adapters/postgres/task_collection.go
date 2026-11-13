@@ -124,7 +124,8 @@ const taskReadQuery = `
 	SELECT t.tenant_id, t.task_id, t.run_id, t.created_at, t.service_name, t.schema_name,
 	       t.table_name, t.job_name, t.status, t.attempt, t.max_retries, t.cancelled_at, t.cancelled_by,
 	       t.image_tag, t.inherited_from_task_id, t.operation, t.node_key, t.dispatched_at,
-	       t.wait_reason, t.lease_wait_since, l.run_id AS waiting_on_run_id
+	       t.wait_reason, t.lease_wait_since, t.plan_reason, t.seed_preflight, t.rebuild_seed_key,
+	       l.run_id AS waiting_on_run_id
 	FROM tasks t
 	LEFT JOIN node_leases l
 	  ON t.wait_reason = 'node_lease' AND l.tenant_id = t.tenant_id
@@ -168,7 +169,8 @@ func (r *TaskCollection) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]r
 	err := r.tx.SelectContext(ctx, &rows, `
 		SELECT tenant_id, task_id, run_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
+		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at,
+		       plan_reason, seed_preflight, rebuild_seed_key
 		FROM tasks
 		WHERE tenant_id = $1 AND run_id = $2
 		ORDER BY node_key COLLATE "C", task_id`, r.tenantID, runID)
@@ -177,7 +179,11 @@ func (r *TaskCollection) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]r
 	}
 	out := make([]run.Task, 0, len(rows))
 	for _, t := range rows {
-		out = append(out, taskFromRow(t))
+		task, err := taskFromRow(t)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, task)
 	}
 	return out, nil
 }
@@ -289,7 +295,7 @@ func (r *TaskCollection) ListByRunID(ctx context.Context, runID uuid.UUID, statu
 }
 
 // copyTasks streams a run's tasks with COPY … FROM STDIN.
-const copyTasks = `COPY tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, inherited_from_task_id, operation, node_key, dispatched_at) FROM STDIN`
+const copyTasks = `COPY tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, inherited_from_task_id, operation, node_key, dispatched_at, plan_reason, seed_preflight, rebuild_seed_key) FROM STDIN`
 
 // BulkCreateTx inserts every task of a run inside tx with one COPY, each under
 // its row's tenant, so a run of any size is written in one round trip, binds
@@ -306,6 +312,7 @@ func (r *TaskCollection) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []
 			t.TenantID, t.TaskID, t.ScheduleID, t.CreatedAt, t.ServiceName, t.SchemaName, t.TableName, t.JobName,
 			string(t.Status), t.Attempt, t.MaxRetries, t.ImageTag, t.InheritedFromTaskID,
 			operationWithDefault(t.Operation), t.NodeKey, t.DispatchedAt,
+			t.PlanReason, t.SeedPreflight, t.RebuildSeedKey,
 		})
 	}
 	if err := copyRows(ctx, tx, copyTasks, rows); err != nil {
@@ -351,11 +358,13 @@ type taskStateRow struct {
 	TableName    string     `db:"table_name"`
 	DispatchedAt *time.Time `db:"dispatched_at"`
 	WaitReason   string     `db:"wait_reason"`
+	dispatchSpecColumns
 }
 
 // LoadAttemptState reads the run_id, status, attempt, max_retries,
 // node_key (empty when NULL), job_name, service_name, schema_name, table_name,
-// dispatched_at and wait_reason (empty when NULL) of the tenant's task row of
+// dispatched_at, wait_reason (empty when NULL), operation, plan_reason and
+// seed_preflight of the tenant's task row of
 // taskID with FOR UPDATE through the bound transaction, so concurrent writers
 // of the same task (attempt reports, the cancel) serialize. attempt is what the
 // Run aggregate compares a report's attempt with. A row the tenant does not
@@ -365,7 +374,7 @@ func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID)
 	err := r.tx.GetContext(ctx, &row,
 		`SELECT run_id, status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
 		        job_name, service_name, schema_name, table_name, dispatched_at,
-		        COALESCE(wait_reason, '') AS wait_reason
+		        COALESCE(wait_reason, '') AS wait_reason, operation, plan_reason, seed_preflight
 		 FROM tasks WHERE tenant_id = $1 AND task_id = $2 FOR UPDATE`,
 		r.tenantID, taskID,
 	)
@@ -379,6 +388,10 @@ func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID)
 	if err != nil {
 		return run.TaskAttemptState{}, true, err
 	}
+	spec, err := row.spec()
+	if err != nil {
+		return run.TaskAttemptState{}, true, fmt.Errorf("task %s: %w", taskID, err)
+	}
 	return run.TaskAttemptState{
 		RunID:        row.RunID,
 		Status:       status,
@@ -391,6 +404,7 @@ func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID)
 		TableName:    row.TableName,
 		DispatchedAt: row.DispatchedAt,
 		WaitReason:   run.WaitReason(row.WaitReason),
+		Spec:         spec,
 	}, true, nil
 }
 
@@ -625,7 +639,7 @@ func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node ru
 		}
 		return run.Task{}, err
 	}
-	return taskFromRow(t), nil
+	return taskFromRow(t)
 }
 
 // GetByID reads one task by id, in the bound transaction when there is one,
@@ -638,11 +652,16 @@ func (r *TaskCollection) GetByID(ctx context.Context, taskID uuid.UUID) (run.Tas
 		}
 		return run.Task{}, err
 	}
-	return taskFromRow(t), nil
+	return taskFromRow(t)
 }
 
-// taskFromRow maps a task row onto the domain task.
-func taskFromRow(t *TaskRow) run.Task {
+// taskFromRow maps a task row onto the domain task; it fails on a stored seed
+// preflight it cannot decode.
+func taskFromRow(t *TaskRow) (run.Task, error) {
+	pf, err := seedPreflightFromColumn(t.SeedPreflight)
+	if err != nil {
+		return run.Task{}, fmt.Errorf("task %s: %w", t.TaskID, err)
+	}
 	return run.Task{
 		TaskID:              t.TaskID,
 		ScheduleID:          t.ScheduleID,
@@ -661,7 +680,10 @@ func taskFromRow(t *TaskRow) run.Task {
 		Operation:           operationFromColumn(t.Operation),
 		NodeKey:             topology.NodeKey(stringOrEmpty(t.NodeKey)),
 		DispatchedAt:        t.DispatchedAt,
-	}
+		PlanReason:          t.PlanReason,
+		SeedPreflight:       pf,
+		RebuildOf:           topology.NodeKey(t.RebuildSeedKey),
+	}, nil
 }
 
 // BulkCreate stores tasks under the collection's tenant through the bound
@@ -669,6 +691,10 @@ func taskFromRow(t *TaskRow) run.Task {
 func (r *TaskCollection) BulkCreate(ctx context.Context, tasks []run.Task) error {
 	rows := make([]*TaskRow, 0, len(tasks))
 	for _, t := range tasks {
+		pf, err := seedPreflightColumn(t.SeedPreflight)
+		if err != nil {
+			return fmt.Errorf("store task %s: %w", t.TaskID, err)
+		}
 		rows = append(rows, &TaskRow{
 			TenantID:            r.tenantID,
 			TaskID:              t.TaskID,
@@ -688,6 +714,9 @@ func (r *TaskCollection) BulkCreate(ctx context.Context, tasks []run.Task) error
 			Operation:           operationWithDefault(string(t.Operation)),
 			NodeKey:             optionalString(string(t.NodeKey)),
 			DispatchedAt:        t.DispatchedAt,
+			PlanReason:          t.PlanReason,
+			SeedPreflight:       pf,
+			RebuildSeedKey:      string(t.RebuildOf),
 		})
 	}
 	return r.BulkCreateTx(ctx, r.tx, rows)

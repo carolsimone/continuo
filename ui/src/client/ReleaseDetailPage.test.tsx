@@ -277,12 +277,15 @@ describe('ReleaseDetailPage — live polling while non-terminal', () => {
       // This tick returns a terminal status; polling must stop.
       await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       expect(screen.getByText('promoted')).toBeInTheDocument();
-      const callsAtTerminal = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      // Only the release reads count: a promoted release also reads its seed reload runs once.
+      const releaseReads = () => (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .filter(c => !String(c[0]).startsWith('/api/runs')).length;
+      const callsAtTerminal = releaseReads();
       expect(callsAtTerminal).toBe(3);
 
       // No further fetches are scheduled once terminal.
       await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
-      expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAtTerminal);
+      expect(releaseReads()).toBe(callsAtTerminal);
     } finally {
       vi.useRealTimers();
     }

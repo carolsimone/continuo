@@ -64,10 +64,10 @@ func TestCatalog_UnknownToolDoesNotExist(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// A bracketed positional in the CLI's Use string ("[source-run-id]") is the
-// only way an optional value reaches the chat: the catalog exposes no flags.
-// This pins that node trigger's fourth positional is offered to the model as
-// an optional parameter, ordered after the identity triple.
+// A bracketed positional in the CLI's Use string ("[source-run-id]") is
+// offered to the chat as an optional parameter. This pins that node trigger's
+// fourth positional is offered to the model as an optional parameter, ordered
+// after the identity triple.
 func TestCatalog_BracketedPositionalIsOptional(t *testing.T) {
 	c := loadCatalog(t)
 
@@ -167,5 +167,47 @@ func TestCatalog_RunMutatingCommandsNeedApproval(t *testing.T) {
 		tool, ok := c.Lookup(name)
 		require.True(t, ok, "tool %q must be in the catalog", name)
 		assert.False(t, tool.Mutating, "tool %q is a read", name)
+	}
+}
+
+// release notices only reads what release-controller stored, so the chat runs
+// it without asking the user to approve it.
+func TestCatalog_ReleaseNoticesIsAReadWithOneRequiredPositional(t *testing.T) {
+	c := loadCatalog(t)
+
+	tool, ok := c.Lookup("release_notices")
+	require.True(t, ok, "tool release_notices must be in the catalog")
+	assert.Equal(t, []string{"release", "notices"}, tool.CLIPath)
+	assert.Equal(t, []string{"release-id"}, tool.ParamOrder)
+	assert.False(t, tool.Mutating, "release_notices is a read")
+}
+
+// node full-refresh marks --acknowledge as a chat flag, so the chat can name
+// the objects a seed's full refresh may drop: the tool offers it as an optional
+// list parameter, after the positionals and outside their order. No other tool
+// gains a flag parameter.
+func TestCatalog_OnlyChatMarkedFlagsBecomeParameters(t *testing.T) {
+	c := loadCatalog(t)
+
+	refresh, ok := c.Lookup("node_full-refresh")
+	require.True(t, ok)
+	assert.True(t, refresh.Mutating)
+	assert.Equal(t, []string{"service", "schema", "table", "source-run-id"}, refresh.ParamOrder)
+	require.Len(t, refresh.Params, 5)
+	ack := refresh.Params[4]
+	assert.Equal(t, "acknowledge", ack.Name)
+	assert.True(t, ack.Flag)
+	assert.True(t, ack.Repeated)
+	assert.False(t, ack.Required)
+	assert.Contains(t, ack.Description, "<schema>.<name>", "the flag's usage describes the parameter")
+
+	for _, tool := range c.Tools() {
+		for _, p := range tool.Params {
+			if tool.Name == "node_full-refresh" && p.Name == "acknowledge" {
+				continue
+			}
+			assert.False(t, p.Flag, "tool %q must not offer flag %q to the chat", tool.Name, p.Name)
+			assert.False(t, p.Repeated, "tool %q param %q is a single value", tool.Name, p.Name)
+		}
 	}
 }

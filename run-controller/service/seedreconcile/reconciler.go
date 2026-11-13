@@ -38,7 +38,7 @@ const maxRunIDProbes = 8
 type Reconciler struct {
 	uowFactory  func() uow.UnitOfWork
 	maintenance bool
-	tasks       run.TaskDefaults
+	planner     runstart.Planner
 	logger      *slog.Logger
 }
 
@@ -49,9 +49,10 @@ var _ handlers.SeedReconciler = (*Reconciler)(nil)
 // New builds the reconciler. RunOnce and Loop reconcile every tenant with a
 // live release; AfterPromotion reconciles the promotion's tenant. While
 // maintenance is true no pass runs, so no run is created; the first
-// promotion's adoption is still recorded, since it starts no work.
-func New(uowFactory func() uow.UnitOfWork, maintenance bool, tasks run.TaskDefaults, logger *slog.Logger) *Reconciler {
-	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, tasks: tasks, logger: logger}
+// promotion's adoption is still recorded, since it starts no work. planner
+// plans and starts each promote-seed run.
+func New(uowFactory func() uow.UnitOfWork, maintenance bool, planner runstart.Planner, logger *slog.Logger) *Reconciler {
+	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, planner: planner, logger: logger}
 }
 
 // AfterPromotion runs in the release.promoted:v2 transaction, after the
@@ -252,8 +253,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	for _, d := range toBuild {
 		keys = append(keys, d.Key)
 	}
-	planner := runstart.Planner{Tasks: r.tasks}
-	sel, err := planner.Seeds(ctx, u, tenantID, live, keys)
+	sel, err := r.planner.Seeds(ctx, u, tenantID, live, keys)
 	if err != nil {
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
 	}
@@ -268,7 +268,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 			return fmt.Errorf("record the build request of %s: %w", d.Key, err)
 		}
 	}
-	if err := planner.Start(ctx, u, seedRun, sel, msgProcID); err != nil {
+	if err := r.planner.Start(ctx, u, seedRun, sel, msgProcID); err != nil {
 		return err
 	}
 	r.logger.Info("seed reconcile: promote-seed run created",

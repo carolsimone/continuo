@@ -38,9 +38,9 @@ type wireTool struct {
 
 // wireToolDetails holds the function metadata and parameter schema.
 type wireToolDetails struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  wireToolParams  `json:"parameters"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  wireToolParams `json:"parameters"`
 }
 
 // wireToolParams is the JSON Schema object describing a tool's parameters.
@@ -52,8 +52,14 @@ type wireToolParams struct {
 
 // wireParamProperty is a single parameter definition within the parameter schema.
 type wireParamProperty struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
+	Type        string         `json:"type"`
+	Description string         `json:"description,omitempty"`
+	Items       *wireParamItem `json:"items,omitempty"`
+}
+
+// wireParamItem is the schema of each item of an array parameter.
+type wireParamItem struct {
+	Type string `json:"type"`
 }
 
 // toWireMessages converts the domain message history to OpenAI wire messages.
@@ -138,10 +144,7 @@ func toWireTools(tools []ports.ToolDef) []wireTool {
 		props := make(map[string]wireParamProperty, len(t.Params))
 		required := make([]string, 0)
 		for _, p := range t.Params {
-			props[p.Name] = wireParamProperty{
-				Type:        "string",
-				Description: p.Description,
-			}
+			props[p.Name] = wireParam(p)
 			if p.Required {
 				required = append(required, p.Name)
 			}
@@ -160,4 +163,13 @@ func toWireTools(tools []ports.ToolDef) []wireTool {
 		})
 	}
 	return result
+}
+
+// wireParam is the schema of one parameter: a list of strings for a repeated
+// chat flag, a string for every other parameter.
+func wireParam(p ports.ToolParam) wireParamProperty {
+	if p.Repeated {
+		return wireParamProperty{Type: "array", Description: p.Description, Items: &wireParamItem{Type: "string"}}
+	}
+	return wireParamProperty{Type: "string", Description: p.Description}
 }

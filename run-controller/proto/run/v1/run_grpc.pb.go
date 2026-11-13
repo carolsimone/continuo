@@ -136,8 +136,13 @@ type RunServiceClient interface {
 	//	                      an empty or unknown metadata_source,
 	//	                      "snapshot_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
-	//	                      unknown operation, or a full_refresh of a node
-	//	                      type that cannot be rebuilt from scratch.
+	//	                      unknown operation, a full_refresh of a node
+	//	                      type that cannot be rebuilt from scratch, a run
+	//	                      of a seed that sets +full_refresh: false and
+	//	                      needs its table rebuilt (a full_refresh, or a
+	//	                      load of changed columns), or acknowledged_dependents
+	//	                      on a run that is not a full_refresh of a dbt
+	//	                      seed.
 	//	NOT_FOUND           - the source run, or its task for the identity,
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of
@@ -694,8 +699,13 @@ type RunServiceServer interface {
 	//	                      an empty or unknown metadata_source,
 	//	                      "snapshot_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
-	//	                      unknown operation, or a full_refresh of a node
-	//	                      type that cannot be rebuilt from scratch.
+	//	                      unknown operation, a full_refresh of a node
+	//	                      type that cannot be rebuilt from scratch, a run
+	//	                      of a seed that sets +full_refresh: false and
+	//	                      needs its table rebuilt (a full_refresh, or a
+	//	                      load of changed columns), or acknowledged_dependents
+	//	                      on a run that is not a full_refresh of a dbt
+	//	                      seed.
 	//	NOT_FOUND           - the source run, or its task for the identity,
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of

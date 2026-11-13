@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -113,6 +114,44 @@ func TestTaskAttempts_SaveThenLoadRoundTripsEveryField(t *testing.T) {
 		assert.Equal(t, want.RunResultsURI, got.RunResultsURI)
 		assert.Equal(t, want.ParseCache, got.ParseCache)
 		assert.Equal(t, want.ParseCacheReason, got.ParseCacheReason)
+	})
+}
+
+// The seed preflight findings an attempt reported survive a save and a load,
+// as JSON whose absent dependents read []; an attempt without findings stores
+// NULL.
+func TestAttemptRepository_StoresTheSeedPreflightFindings(t *testing.T) {
+	db := newTestDB(t)
+	_, ids := newRunWithTasks(t, db, 2)
+	findings := &seedreload.Findings{
+		DropSemantics: "cascade", Completeness: "complete", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "stg", Name: "v", Kind: "view", Owner: "svc", Depth: 1, Allowed: true}},
+		Probes:     []seedreload.Probe{{Schema: "stg", Name: "v", OK: true}},
+	}
+	none := &seedreload.Findings{DropSemantics: "restrict", Completeness: "partial"}
+
+	attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
+		require.NoError(t, tasks.SaveAttempt(ctx, run.Attempt{TaskID: ids[0], Number: 0, JobName: "job-0", Status: run.AttemptSucceeded, SeedPreflight: findings}))
+		require.NoError(t, tasks.SaveAttempt(ctx, run.Attempt{TaskID: ids[0], Number: 1, JobName: "job-1", Status: run.AttemptFailed, SeedPreflight: none}))
+		require.NoError(t, tasks.SaveAttempt(ctx, run.Attempt{TaskID: ids[1], Number: 0, JobName: "job-0", Status: run.AttemptRunning}))
+
+		got, found, err := tasks.LoadAttempt(ctx, ids[0], 0)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, findings, got.SeedPreflight)
+
+		var dependents string
+		require.NoError(t, tx.Get(&dependents,
+			`SELECT seed_preflight_findings->>'dependents' FROM task_attempts WHERE task_id = $1 AND attempt = 1`, ids[0]))
+		assert.Equal(t, "[]", dependents)
+
+		got, found, err = tasks.LoadAttempt(ctx, ids[1], 0)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Nil(t, got.SeedPreflight)
+		var stored *string
+		require.NoError(t, tx.Get(&stored, `SELECT seed_preflight_findings::text FROM task_attempts WHERE task_id = $1`, ids[1]))
+		assert.Nil(t, stored)
 	})
 }
 

@@ -20,6 +20,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	rcredis "github.com/carolsimone/continuo/run-controller/adapters/redis"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
@@ -27,6 +28,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	svchandlers "github.com/carolsimone/continuo/run-controller/service/handlers"
 	svcports "github.com/carolsimone/continuo/run-controller/service/ports"
+	"github.com/carolsimone/continuo/run-controller/service/runstart"
 	"github.com/carolsimone/continuo/run-controller/service/seedreconcile"
 	"github.com/carolsimone/continuo/run-controller/service/uow"
 )
@@ -55,7 +57,8 @@ func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 		return postgres.NewPostgresUnitOfWork(db, svcports.SystemClock{}, logger, nil)
 	}
 	tenant := "t-" + uuid.NewString()
-	reconciler := seedreconcile.New(factory, false, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
+	planner := runstart.Planner{Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, Family: warehouse.SchemaBound, Engine: "postgres"}
+	reconciler := seedreconcile.New(factory, false, planner, logger)
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{

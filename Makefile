@@ -87,7 +87,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 162m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -138,7 +138,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
 	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 162m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
@@ -361,7 +361,8 @@ test-topology:
 # on the wire instead of failing any build; cli generates its catalog
 # stubs from its own copy, so drift there ships a client built from another
 # contract. cli generates its run stubs from its own copy of run.proto, so
-# drift there ships a client built from another contract.
+# drift there ships a client built from another contract. cli's release.proto
+# differs from release-controller's only in its go_package line.
 .PHONY: guards
 guards:
 	bash scripts/check-service-names.sh
@@ -405,6 +406,7 @@ guards:
 	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
 	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
 	cmp run-controller/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
+	test "$$(grep -v '^option go_package' release-controller/proto/release/v1/release.proto)" = "$$(grep -v '^option go_package' cli/proto/release/v1/release.proto)"
 
 .PHONY: stack-up
 stack-up:
@@ -416,7 +418,7 @@ e2e:
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-execution-controller.sh
-	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 145m /app/tests/e2e/...
+	docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 162m /app/tests/e2e/...
 	bash tests/e2e/cleanup-execution-controller.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).

@@ -55,7 +55,7 @@ bash tests/e2e/deploy-execution-controller.sh
 
 # 7. Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 145m /app/tests/e2e/...
+  go test -v -count=1 -timeout 162m /app/tests/e2e/...
 
 # 8. Clean up k8s resources
 bash tests/e2e/cleanup-execution-controller.sh
@@ -98,7 +98,7 @@ bash tests/e2e/provision-k8s-test-env.sh
 
 # Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 145m /app/tests/e2e/...
+  go test -v -count=1 -timeout 162m /app/tests/e2e/...
 
 # Clean up k8s resources
 bash tests/e2e/cleanup-execution-controller.sh
@@ -156,7 +156,7 @@ CI mirrors the blank-state flow above:
 5. Build + start `topology-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-execution-controller.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 145m /app/tests/e2e/...`
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 162m /app/tests/e2e/...`
 9. `bash tests/e2e/cleanup-execution-controller.sh`
 
 CI uses `deploy-execution-controller.sh` (not `provision-k8s-test-env.sh`) because
@@ -226,6 +226,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `seed_topology_test.go` | `seedTopology` helper — announces the e2e DAG through release-controller's `announce-topology` (artifact in MinIO, next promotion seq, `release.promoted:v2`), which catalog applies to Neo4j and run-controller stores as its live release on the promotion path. It returns once both have applied it (`waitForAnnouncedTopology` in `announce_topology_test.go`): catalog's `:Meta` and run-controller's `live_release` name the announced release, and the release's `topology_nodes` in run-controller carry every schedule the DAG declares, which is what `StartRun` needs to know a schedule |
 | `topology_by_reference_test.go` | `TestTopologyByReference_LatePromotionMovesNothing` — announces A, with a model of schedule `e2e-stale-probe`, then B without it, and replays A's `release.promoted:v2` entry under a fresh event id: both catalog's and run-controller's groups acknowledge it without a dead letter, catalog's live pointer and run-controller's live release stay at B, and for 10 s no node of run-controller's live release carries `e2e-stale-probe` and `ListSchedules` does not list it. `TestTopologyByReference_CorruptArtifactIsDeadLettered` — a promotion whose artifact does not match its checksum is dead-lettered as permanent by catalog's and run-controller's groups, and catalog's live pointer does not move |
 | `seed_reconcile_test.go` | `TestSeedReconcile_LoadsAChangedSeedOnce` — announces the e2e DAG with `seed_table_1` carrying a new `content_hash`: run-controller plans one `promote_seed` run and dispatches the seed in the promotion's transaction, the seed loads with service-1's image and run-controller records the hash in `node_materializations`; announcing the same content again under a new release loads nothing. Restores the default DAG (no seed hashes) at the end |
+| `seed_reload_test.go` | `TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn` — service-1's `seed_table_1_view` (a dbt view over `seed_table_1`, schedule `seed-view`) is rebuilt by a seed reload, on Postgres. `current_prod` holds `seed_table_1` with the declared columns `id` and `legacy` and no view, and run-controller's `node_materializations` records the seed loaded at that version; a release of service-1 is posted and release-controller's notice (`GET /releases/{id}` and `continuo release notices`) says the load is a `full_refresh` that drops the table, removes `legacy`, rebuilds the view and `reloads`. Its promote-seed run full-refreshes the seed (`plan_reason` `columns changed`) and runs the view (`rebuild: dropped by the load of e2e_schema.seed_table_1`), as `continuo run show` prints, and the view exists. The test then creates `e2e_bi.seed_reader_base`, a view over the seed, and `e2e_bi.seed_reader`, a materialized view over that view, and moves the recorded version back: the seed reconcile's next promote-seed run stops the seed before dbt (`invalid`/`unowned_dependents`, its `seed_preflight` listing both objects not allowed at depths 1 and 2 with completeness `exact`), skips the view and drops nothing. `continuo node full-refresh … --acknowledge` naming both objects reloads the seed and rebuilds the view, and the cascade drops the two objects. `t.Cleanup` drops `e2e_bi` and the view and restores the default DAG whatever the outcome |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIHTTPAPI`) |
 | `public_api_test.go`, `ci_token.go` | `TestPublicAPI_Authorization` — the public `/api/v1` release API's refusals (unbound repository, bootstrap without `allowBootstrap`, body/token repository mismatch, garbage token) and a CI token reading `current-prod`. `ci_token.go` mints GitHub Actions-shaped tokens from `stub-github`, which the ui trusts as its CI issuer through `tests/e2e/ci-auth.json`; every release the suite submits goes through `/api/v1/releases` with such a token |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile), plus Dex password-grant bearers against `/api/v1`; skipped unless `UI_AUTH_HTTP_BASE` is set |
@@ -262,7 +263,7 @@ Run only the blue/green tests:
 
 ```bash
 docker exec -e UI_HTTP_BASE=http://ui:8090 catalog \
-  go test -v -count=1 -timeout 145m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
+  go test -v -count=1 -timeout 162m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
 ```
 
 ## Failure Path Test
@@ -311,14 +312,16 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 attempts, each retry dispatched at once)
-- Whole suite: about 60 minutes in the CI e2e job, which starts the stack cold and measures the
-  whole suite on every run.
-- Timeout: 145 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
-  Derived, not measured: the two longest per-test context ceilings (35m each)
-  wedging in one run, plus 75m for the rest of the suite. Every per-test
-  context has to be able to fire before the package timeout, or a wedge
-  prints a goroutine dump instead of a named assertion. `.github/workflows/ci.yml`
-  uses the same value and allows 160 `timeout-minutes` around it.
+- Whole suite: about 60 minutes in the CI e2e job for every test but the seed reload test, which
+  adds an estimated 20 to 30 minutes (a release, a 60 s seed reconcile pass and three seed loads).
+  The job starts the stack cold and measures the whole suite on every run.
+- Timeout: 162 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
+  Derived, not measured: the two longest per-test context ceilings (47m for
+  the seed reload test, 40m for the remediation parse test) wedging in one
+  run, plus 75m for the rest of the suite. Every per-test context has to be
+  able to fire before the package timeout, or a wedge prints a goroutine dump
+  instead of a named assertion. `.github/workflows/ci.yml` uses the same value
+  and allows 177 `timeout-minutes` around it.
 
 ## Troubleshooting
 

@@ -503,4 +503,53 @@ describe('nodes router', () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/request_id reused/);
   });
+
+  it('POST /run forwards the acknowledged objects of a full refresh', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
+    );
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({
+      request_id: REQUEST_ID, operation: 'full_refresh', acknowledged_dependents: ['e2e_bi.seed_reader'],
+    });
+    expect(res.status).toBe(200);
+    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'full_refresh', acknowledged_dependents: ['e2e_bi.seed_reader'] }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it.each([
+    ['a string', 'e2e_bi.seed_reader'],
+    ['an object', { a: 1 }],
+    ['an array holding a non-string', ['e2e_bi.seed_reader', 3]],
+  ])('POST /run rejects acknowledged_dependents that is %s with 400', async (_label, value) => {
+    const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({
+      request_id: REQUEST_ID, operation: 'full_refresh', acknowledged_dependents: value,
+    });
+    expect(res.status).toBe(400);
+    expect(mockTriggerSingleNodeRun).not.toHaveBeenCalled();
+  });
+
+  it('GET /:svc/:schema/:table/runs returns the node outage and each run blocking objects', async () => {
+    mockListNodeTasks.mockImplementation((_req, cb) => cb(null, {
+      tasks: [
+        { run_id: 'r1', schedule_name: 'x', kind: 'promote_seed', blocking_objects: ['e2e_bi.seed_reader'] },
+        { run_id: 'r2', schedule_name: 'x', kind: 'cron', blocking_objects: [] },
+        { run_id: 'r3', schedule_name: 'x', kind: 'cron' },
+      ],
+      outage: { state: 'missing', since: '2026-11-24T09:16:02Z', seed_node_id: 'analytics.seed_users', run_id: 'r1' },
+    }));
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
+    expect(res.body.outage).toEqual({
+      state: 'missing', since: '2026-11-24T09:16:02Z', seed_node_id: 'analytics.seed_users', run_id: 'r1',
+    });
+    expect(res.body.tasks.map((t: any) => t.blocking_objects)).toEqual([['e2e_bi.seed_reader'], [], []]);
+  });
+
+  it('GET /:svc/:schema/:table/runs gives outage null when the node has none', async () => {
+    mockListNodeTasks.mockImplementation((_req, cb) => cb(null, { tasks: [], outage: null }));
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
+    expect(res.body.outage).toBeNull();
+  });
 });

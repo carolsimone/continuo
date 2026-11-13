@@ -27,6 +27,7 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
 		"remediation_round":   rel.RemediationRound(),
+		"notices":             serialization.NoticesFromDomain(rel.Notices()),
 	}
 }
 

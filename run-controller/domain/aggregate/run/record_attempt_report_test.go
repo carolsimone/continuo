@@ -67,11 +67,11 @@ func TestRecordAttemptReport_AnEqualRankReportMovesNoStatus(t *testing.T) {
 func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady(t *testing.T) {
 	r, tc, g := startedFailureRun(t)
 
-	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
 		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
 	require.NoError(t, err)
 
-	assert.True(t, succeeded)
+	assert.Equal(t, run.TaskStatusSucceeded, ended)
 	require.Len(t, events, 1)
 	created := createdByKey(tc)[fkey("ftable_g")]
 	node, _ := failureSchedule().Node(fkey("ftable_g"))
@@ -151,6 +151,19 @@ func TestRecordAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testin
 	assert.Zero(t, r.TerminalTaskCount())
 }
 
+// A failure the task retries does not end it, so the report returns no
+// status.
+func TestRecordAttemptReport_ARetriedFailureEndsNothing(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+
+	_, ended, err := r.RecordAttemptReport(context.Background(), tc, g, run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0,
+		Status: run.AttemptFailed, FailureReason: model.FailureReasonOOMKilled}, taskDefaults, reportAt)
+
+	require.NoError(t, err)
+	assert.Empty(t, ended)
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[taskOf(r, "ftable_a")])
+}
+
 // The design's trace: attempts 0 and 1 fail and are retried, attempt 2 fails
 // on the task's last allowed attempt, so the task fails and every pending task
 // below it is skipped.
@@ -204,11 +217,12 @@ func TestRecordAttemptReport_ABudgetOfZeroFailsOnTheFirstFailure(t *testing.T) {
 	require.NoError(t, err)
 	mg := &memTaskGraph{g: g, tc: tc}
 
-	events, _, err := r.RecordAttemptReport(context.Background(), tc, mg,
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, mg,
 		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptFailed, FailureReason: model.FailureReasonExitCode},
 		run.TaskDefaults{MaxRetries: 0, Timeout: time.Hour}, reportAt)
 	require.NoError(t, err)
 
+	assert.Equal(t, run.TaskStatusFailed, ended, "the report ended the task failed")
 	assert.Empty(t, events)
 	assert.Equal(t, run.TaskStatusFailed, tc.statuses[taskOf(r, "ftable_a")])
 	_, retried := attemptOf(t, tc, r, "ftable_a", 1)
@@ -263,12 +277,12 @@ func TestRecordAttemptReport_ATaskOfAnotherRunIsNotHeld(t *testing.T) {
 	tc.lockOrder, tc.saves, tc.added = nil, nil, nil
 	heartbeat := *r.LastProgressAt()
 
-	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
 		run.AttemptReport{TaskID: id, Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
 
 	require.ErrorIs(t, err, run.ErrTaskNotHeld)
 	assert.Empty(t, events)
-	assert.False(t, succeeded)
+	assert.Empty(t, ended)
 	assert.Equal(t, []string{"task " + id.String()}, tc.lockOrder, "the attempt is not read")
 	assert.Empty(t, tc.saves, "no attempt is saved")
 	assert.Empty(t, tc.added, "no attempt is added")
@@ -333,10 +347,10 @@ func TestRecordAttemptReport_TheLastSuccessFinalizesTheRunSucceeded(t *testing.T
 	r, tc, g := startedFailureRun(t)
 	tables := []string{"ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"}
 	for i, table := range tables {
-		events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+		events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
 			run.AttemptReport{TaskID: taskOf(r, table), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
 		require.NoError(t, err, table)
-		assert.True(t, succeeded, "%s: the report made the task succeeded", table)
+		assert.Equal(t, run.TaskStatusSucceeded, ended, "%s: the report made the task succeeded", table)
 		if i < len(tables)-1 {
 			assert.False(t, r.IsTerminal(), "%s: tasks are left", table)
 			continue
@@ -466,11 +480,11 @@ func TestRecordAttemptReport_AStoppingTaskThatSucceedsEndsSucceeded(t *testing.T
 	r, tc, g := cancellingFailureRun(t)
 	added, reads := len(tc.added), g.reads
 
-	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
 		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
 
 	require.NoError(t, err)
-	assert.True(t, succeeded, "the report made the task succeeded")
+	assert.Equal(t, run.TaskStatusSucceeded, ended, "the report made the task succeeded")
 	assert.Empty(t, events)
 	assert.Equal(t, run.TaskStatusSucceeded, tc.statuses[taskOf(r, "ftable_a")])
 	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_g")], "ftable_g stays cancelled")
@@ -553,12 +567,12 @@ func TestRecordAttemptReport_AStoppedReportForATaskNotStoppingIsRefused(t *testi
 	r, tc, g := startedFailureRun(t)
 	saves := len(tc.saves)
 
-	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
 		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptStopped}, taskDefaults, reportAt)
 
 	require.ErrorIs(t, err, run.ErrStopNotRequested)
 	assert.Empty(t, events)
-	assert.False(t, succeeded)
+	assert.Empty(t, ended)
 	assert.Len(t, tc.saves, saves, "nothing is saved")
 	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
 	assert.Equal(t, run.AttemptDispatched, a.Status)
@@ -615,4 +629,67 @@ func removeID(ids []uuid.UUID, id uuid.UUID) []uuid.UUID {
 		}
 	}
 	return out
+}
+
+// runningSeedTask starts a promote-seed run whose one task loads the seed with
+// spec, holding its retry budget of 2: the seed is dispatched at attempt 0.
+func runningSeedTask(t *testing.T, spec run.DispatchSpec) (*run.Run, *fakeTaskCollection, *memTaskGraph) {
+	t.Helper()
+	r, tc := promotedSeedsRun(t)
+	g := fxGraph()
+	op := spec.Operation
+	plan := runplan.Plan{Tasks: []runplan.PlannedTask{
+		{Key: "analytics.seed_fx_rates_eur", Operation: &op, Reason: spec.Reason, Preflight: spec.Preflight},
+	}, Ready: []topology.NodeKey{"analytics.seed_fx_rates_eur"}}
+	_, err := r.Start(context.Background(), tc, plan, g, taskDefaults, startNow)
+	require.NoError(t, err)
+	return r, tc, &memTaskGraph{g: g, tc: tc}
+}
+
+// seedTaskOf is the task of r that loads the fx seed.
+func seedTaskOf(r *run.Run) uuid.UUID {
+	return run.TaskIDFor(r.TenantID(), r.RunID(), "analytics.seed_fx_rates_eur")
+}
+
+// The retry of a seed's load carries the task's own operation, plan reason
+// and preflight, not the run's operation.
+func TestRecordAttemptReport_ARetryKeepsTheTasksDispatchSpec(t *testing.T) {
+	spec := run.DispatchSpec{Operation: model.OperationFullRefresh, Reason: "columns changed", Preflight: checkPreflight()}
+	r, tc, g := runningSeedTask(t, spec)
+
+	events, _, err := r.RecordAttemptReport(context.Background(), tc, g, run.AttemptReport{TaskID: seedTaskOf(r), Attempt: 0,
+		Status: run.AttemptFailed, FailureReason: model.FailureReasonWarehouseUnreachable}, taskDefaults, reportAt)
+	require.NoError(t, err)
+
+	d := onlyDispatch(t, events)
+	assert.Equal(t, int32(1), d.Attempt)
+	assert.Equal(t, spec.Operation, d.Operation)
+	assert.Equal(t, spec.Reason, d.Reason)
+	assert.Equal(t, spec.Preflight, d.Preflight)
+}
+
+// The success of the seed dispatches the view it rebuilds with the view's own
+// spec: the run's operation, its rebuild reason and no preflight.
+func TestRecordAttemptReport_DispatchesEachReadyCandidateWithItsSpec(t *testing.T) {
+	r, tc := promotedSeedsRun(t)
+	g := &memTaskGraph{g: fxGraph(), tc: tc}
+	_, err := r.Start(context.Background(), tc, fxReloadPlan(checkPreflight()), g.g, taskDefaults, startNow)
+	require.NoError(t, err)
+	view := createdByKey(tc)["analytics.fx_rates_current"]
+	candidates, err := g.ReadyCandidates(context.Background(), r.RunID(), r.ReleaseID(), "analytics.seed_fx_rates_eur")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, run.DispatchSpec{Operation: model.OperationRun, Reason: "rebuild: dropped by the load of analytics.seed_fx_rates_eur"},
+		candidates[0].Spec)
+
+	events, ended, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: seedTaskOf(r), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+	require.NoError(t, err)
+
+	assert.Equal(t, run.TaskStatusSucceeded, ended)
+	d := onlyDispatch(t, events)
+	assert.Equal(t, view.TaskID, d.TaskID)
+	assert.Equal(t, model.OperationRun, d.Operation)
+	assert.Equal(t, "rebuild: dropped by the load of analytics.seed_fx_rates_eur", d.Reason)
+	assert.Nil(t, d.Preflight)
 }

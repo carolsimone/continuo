@@ -1441,3 +1441,42 @@ def test_the_reader_of_an_ephemeral_model_depends_on_it_and_on_the_tables_it_inl
     build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
     nodes = {n["unique_id"]: n for n in writer.nodes}
     assert set(nodes["test_schema.reader"]["upstream_unique_ids"]) == {"test_schema.eph", "test_schema.orders"}
+
+
+def test_topology_carries_materialized_full_refresh_and_seed_columns(tmp_path):
+    seed = dbt_node("seed_fx_rates_eur") | {
+        "unique_id": "seed.service-1.seed_fx_rates_eur", "resource_type": "seed", "compiled_code": "",
+        "config": {"meta": {"owner": "team-a"}, "materialized": "seed", "full_refresh": True}}
+    plain_seed = dbt_node("plain_seed") | {
+        "unique_id": "seed.service-1.plain_seed", "resource_type": "seed", "compiled_code": "",
+        "config": {"meta": {"owner": "team-a"}, "materialized": "seed"}}
+    view = dbt_node("fx_rates_current") | {
+        "config": {"meta": {"owner": "team-a"}, "materialized": "view"},
+        "compiled_code": "select * from test_schema.seed_fx_rates_eur"}
+    source = source_with_nodes(tmp_path, seed, plain_seed, view)
+    _write_compile_extras(tmp_path, {"seed.service-1.seed_fx_rates_eur": {
+        "sha256": "4a" * 32, "header": ["currency", "rate_to_eur"], "column_types": {"rate_to_eur": "numeric"}}})
+    writer = RecordingArtifactWriter()
+    build_handler(source, MagicMock(), make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+    nodes = {n["unique_id"]: n for n in writer.nodes}
+    assert nodes["test_schema.seed_fx_rates_eur"]["materialized"] == "seed"
+    assert nodes["test_schema.seed_fx_rates_eur"]["full_refresh"] is True
+    assert nodes["test_schema.seed_fx_rates_eur"]["seed_columns"] == [
+        {"name": "currency", "type": ""}, {"name": "rate_to_eur", "type": "numeric"}]
+    assert "full_refresh" not in nodes["test_schema.plain_seed"]
+    assert "seed_columns" not in nodes["test_schema.plain_seed"]  # the extras do not list it
+    assert nodes["test_schema.fx_rates_current"]["materialized"] == "view"
+
+
+def test_python_and_test_nodes_carry_no_seed_reload_field(tmp_path):
+    writer = RecordingArtifactWriter()
+    source = source_of(
+        ManifestFile(path=str(FIXTURES / "manifest_with_test.json"), declared_service="service-1"),
+        ManifestFile(path=python_contract(tmp_path, python_entry()), declared_service="service-py",
+                     kind=ManifestKind.PYTHON),
+    )
+    python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
+    carriers = [n for n in writer.nodes if n["node_type"] in ("python-node", "dbt-test")]
+    assert {n["node_type"] for n in carriers} == {"python-node", "dbt-test"}
+    for n in carriers:
+        assert not {"materialized", "full_refresh", "seed_columns"} & n.keys(), n["unique_id"]

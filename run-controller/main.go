@@ -348,16 +348,26 @@ func main() {
 		logger.Error("Failed to build the object-storage client", "error", err)
 		os.Exit(1)
 	}
+	// Every task run-controller plans gets the install's retry budget, and each
+	// dispatch its node's timeout, else the install's.
+	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
+	runMetrics := rcmetrics.NewRunMetrics(metricsReg)
+	// continuo_views_missing reads the open view outages of every tenant at
+	// each scrape.
+	rcmetrics.NewViewsMissingCollector(metricsReg, postgres.NewViewOutageRepository(db, nil), logger)
+	// Every run, the seed reconcile's promote-seed runs included, is planned
+	// by one planner for the tenant its entry point chose. It applies the seed
+	// reload rules of the install's warehouse family, and counts and logs each
+	// seed load it refuses once the run commits.
+	planner := runstart.Planner{
+		Tasks: taskDefaults, Family: cfg.WarehouseFamily, Engine: cfg.WarehouseEngine, Metrics: runMetrics, Logger: logger,
+	}
 	// The seed reconcile loads the dbt seeds whose live content the warehouse
 	// does not hold. It runs inside every release.promoted:v2 transaction that
 	// moves a tenant's live release, for that tenant, and every
 	// seedReconcileInterval from the loop started below, once per tenant with
 	// a live release; maintenance mode stops it creating runs.
-	// Every task run-controller plans gets the install's retry budget, and each
-	// dispatch its node's timeout, else the install's.
-	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
-	runMetrics := rcmetrics.NewRunMetrics(metricsReg)
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, taskDefaults, logger)
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, planner, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every run-controller consumer is the same shape: a domain handler wrapped by a
@@ -378,7 +388,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.RunControllerTaskStatusUpdated,
-			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(taskDefaults, runMetrics, runMetrics, cfg.WarehouseFamily, logger), logger),
 		},
 		{
 			name:    "release_promoted",
@@ -433,11 +443,6 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
 	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
-	// The cron loop and the gRPC entry points plan each run for the tenant its
-	// entry point chose; the seed reconcile builds its own planner for each
-	// pass.
-	planner := runstart.Planner{Tasks: taskDefaults}
-
 	// The cron loop fires the due schedules of every tenant, each under the
 	// tenant of its row: in one transaction per schedule it starts the run of
 	// the latest due slot and moves the schedule's next fire on. It passes at
@@ -480,7 +485,7 @@ func main() {
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
 		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
-		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
+		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), postgres.NewViewOutageRepository(db, nil), taskDefaults.Timeout),
 		Graphs:         runreads.New(runReadRepo),
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),

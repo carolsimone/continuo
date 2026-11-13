@@ -275,3 +275,22 @@ func TestArtifactOf_MapsSeedColumnsHash(t *testing.T) {
 	assert.Equal(t, "sha256:e5a0", a.Nodes[0].SeedColumnsHash)
 	assert.Empty(t, a.Nodes[1].SeedColumnsHash)
 }
+
+func TestArtifactOf_MapsMaterializedFullRefreshAndRelation(t *testing.T) {
+	yes := true
+	doc := artifactDoc("rel-1")
+	doc.Nodes[0].Materialized, doc.Nodes[0].FullRefresh = "seed", &yes
+	doc.Nodes[1].Materialized, doc.Nodes[1].ResolvedRelationID = "view", "stg.orders_alias"
+	mem, objects := newObjects()
+	uri, sum := storeArtifact(t, mem, doc)
+
+	art, err := newTopologyArtifactReader(objects, 8).Load(context.Background(), uri, sum)
+	require.NoError(t, err)
+
+	require.Len(t, art.Nodes, 2)
+	assert.Equal(t, "seed", art.Nodes[0].Materialized)
+	assert.Equal(t, &yes, art.Nodes[0].FullRefresh)
+	assert.Equal(t, "view", art.Nodes[1].Materialized)
+	assert.Nil(t, art.Nodes[1].FullRefresh, "a node that leaves full_refresh unset has none")
+	assert.Equal(t, "stg.orders_alias", art.Nodes[1].ResolvedRelationID)
+}

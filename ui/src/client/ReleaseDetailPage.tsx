@@ -12,6 +12,8 @@ import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
 import ServiceTiles from './ServiceTiles';
 import PipelineTimeline from './PipelineTimeline';
+import SeedReloadNotices from './SeedReloadNotices';
+import ReleaseRunsPanel from './ReleaseRunsPanel';
 
 // A remediation round is capped at this many attempts; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
@@ -476,6 +478,9 @@ export default function ReleaseDetailPage() {
   if (!rel) return <div className="page"><p className="empty">Loading…</p></div>;
 
   const perNode: NodeValidationResult[] = rel.per_node_results ?? [];
+  // The seed-build stage has finished once the release entered it and has
+  // since moved on (or been rejected from it).
+  const seedBuildRan = rel.status !== 'seed_building' && rel.transitions.some(t => t.to === 'seed_building');
 
   return (
     <div className="page">
@@ -508,6 +513,8 @@ export default function ReleaseDetailPage() {
           {rel.reject_detail ? ` — ${rel.reject_detail}` : ''}
         </div>
       )}
+
+      <SeedReloadNotices notices={rel.notices} seedBuildRan={seedBuildRan} />
 
       {rel.status === 'rejected' && deadEnd && rel.remediation_round < MAX_REMEDIATION_ROUNDS && (
         <div className="action-banner">
@@ -548,6 +555,7 @@ export default function ReleaseDetailPage() {
       <main className="page-content page-content--readable">
         <ServiceTiles imageTags={rel.image_tags || {}} changedService={rel.changed_service} />
         <PipelineTimeline transitions={rel.transitions} run={{ manifestKind: rel.manifest_kind, bootstrap: rel.bootstrap }} />
+        {rel.status === 'promoted' && <ReleaseRunsPanel releaseId={rel.release_id} />}
 
         <NodeResultsTable
           perNode={perNode}

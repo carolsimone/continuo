@@ -149,3 +149,67 @@ func TestRunMetrics_CronFiresHelpStatesTheTuningConstants(t *testing.T) {
 		}
 	}
 }
+
+// Every action and outcome of a seed load, and every reason that stops one,
+// is exported at 0 from boot; a seed load that ends raises its own sample.
+func TestRunMetrics_SeedReloadSeriesStartAtZero(t *testing.T) {
+	reg := pkgmetrics.New("run-controller")
+	m := NewRunMetrics(reg)
+
+	body := scrape(reg)
+	for _, action := range []string{"load", "full_refresh"} {
+		for _, outcome := range []string{"loaded", "stopped", "refused", "failed"} {
+			want := fmt.Sprintf(`continuo_seed_reloads_total{action=%q,outcome=%q,service="run-controller"} 0`, action, outcome)
+			if !strings.Contains(body, want) {
+				t.Errorf("metrics output lacks %q", want)
+			}
+		}
+	}
+	for _, reason := range []string{"unowned_dependents", "engine_mismatch", "seed_full_refresh_disabled", "seed_full_refresh_undefined", "full_refresh_undefined"} {
+		want := fmt.Sprintf(`continuo_seed_reload_stops_total{reason=%q,service="run-controller"} 0`, reason)
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+
+	m.SeedReloadEnded("load", "loaded")
+	m.SeedReloadStopped("unowned_dependents")
+	body = scrape(reg)
+	for _, want := range []string{
+		`continuo_seed_reloads_total{action="load",outcome="loaded",service="run-controller"} 1`,
+		`continuo_seed_reloads_total{action="full_refresh",outcome="loaded",service="run-controller"} 0`,
+		`continuo_seed_reload_stops_total{reason="unowned_dependents",service="run-controller"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}
+
+// The outage histogram observes the seconds a view was missing or stale until
+// its rebuild succeeded, in the buckets from 5 s to a day.
+func TestRunMetrics_ViewRebuiltObservesTheOutage(t *testing.T) {
+	reg := pkgmetrics.New("run-controller")
+	m := NewRunMetrics(reg)
+	m.ViewRebuilt(90 * time.Second)
+
+	body := scrape(reg)
+	for _, want := range []string{
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="60"} 0`,
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="120"} 1`,
+		`continuo_view_outage_seconds_bucket{service="run-controller",le="86400"} 1`,
+		`continuo_view_outage_seconds_count{service="run-controller"} 1`,
+		`continuo_view_outage_seconds_sum{service="run-controller"} 90`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q", want)
+		}
+	}
+}
+
+// scrape returns what reg's /metrics handler serves.
+func scrape(reg *pkgmetrics.Registry) string {
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	return rec.Body.String()
+}

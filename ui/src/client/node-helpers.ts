@@ -7,6 +7,7 @@ export function kindLabel(kind: string): string {
     case 'rerun':           return 'Manual rerun';
     case 'rebase':          return 'Manual rebase';
     case 'single_node_run': return 'Manual node run';
+    case 'promote_seed':    return 'Seed reload';
     default:                return kind;
   }
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -60,4 +61,16 @@ func TestReportOf_AStoppedAttemptCarriesItsFactsButNoFailure(t *testing.T) {
 	secs := 27.0
 	assert.Equal(t, Report{Status: pkgmodel.AttemptStatusStopped, QueuedAt: &accepted, StartedAt: &started, FinishedAt: &finished,
 		ExecutionSeconds: &secs, ExitCode: &code, LogKey: "logs/k"}, r)
+}
+
+// A report carries the findings of the attempt's seed preflight.
+func TestReportOf_CarriesTheSeedPreflightFindings(t *testing.T) {
+	accepted := time.Date(2026, 10, 20, 23, 1, 20, 0, time.UTC)
+	findings := &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true}
+	d := NewDeployment(command.DeployTask{TaskID: uuid.NewString()}, nil, accepted)
+	d.Observe(AttemptFacts{SeedPreflight: findings})
+
+	r := d.ReportOf(pkgmodel.AttemptStatusSucceeded, "")
+
+	assert.Same(t, findings, r.SeedPreflight)
 }

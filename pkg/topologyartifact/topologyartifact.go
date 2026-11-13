@@ -60,6 +60,22 @@ type Node struct {
 	SeedColumnsHash string `json:"seed_columns_hash,omitempty"`
 	// TimeoutSeconds is the node's declared task timeout; 0 when it declares none.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// Materialized is the dbt materialization of a dbt node (`seed`, `view`,
+	// `table`, ...); empty for a node that declares none.
+	Materialized string `json:"materialized,omitempty"`
+	// FullRefresh is a dbt node's declared `full_refresh` config; nil when it
+	// declares none.
+	FullRefresh *bool `json:"full_refresh,omitempty"`
+	// SeedColumns are a seed's declared columns in declaration order; empty
+	// for every other node and for a seed that declares none.
+	SeedColumns []SeedColumn `json:"seed_columns,omitempty"`
+}
+
+// SeedColumn is one declared column of a seed; Type is empty when the seed
+// declares the column without a type.
+type SeedColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 // Document is the whole artifact of one release.
@@ -89,8 +105,9 @@ func Key(tenantID, releaseID string) string {
 // ordered by unique_id (a stable sort, so equal ids keep their input order),
 // each node's upstream ids sorted, object keys sorted, compact separators,
 // UTF-8 text without HTML escaping, secret_ref, relation_name and
-// seed_columns_hash omitted when empty, timeout_seconds omitted when not above
-// 0, schema_version set to SchemaVersion, no trailing newline.
+// seed_columns_hash and materialized omitted when empty, seed_columns omitted
+// when it holds no column, full_refresh omitted when nil, timeout_seconds
+// omitted when not above 0, schema_version set to SchemaVersion, no trailing newline.
 // encoding/json writes the line and paragraph separators U+2028 and U+2029 as
 // six-character escape sequences, so a writer in another language must too.
 func CanonicalJSON(d Document) ([]byte, error) {
@@ -126,6 +143,19 @@ func CanonicalJSON(d Document) ([]byte, error) {
 		}
 		if n.TimeoutSeconds > 0 {
 			node["timeout_seconds"] = n.TimeoutSeconds
+		}
+		if n.Materialized != "" {
+			node["materialized"] = n.Materialized
+		}
+		if n.FullRefresh != nil {
+			node["full_refresh"] = *n.FullRefresh
+		}
+		if len(n.SeedColumns) > 0 {
+			columns := make([]map[string]any, len(n.SeedColumns))
+			for i, c := range n.SeedColumns {
+				columns[i] = map[string]any{"name": c.Name, "type": c.Type}
+			}
+			node["seed_columns"] = columns
 		}
 		nodes = append(nodes, node)
 	}

@@ -16,6 +16,7 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/parsecache"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -193,6 +194,11 @@ type ValidationJobParams struct {
 	// only for mode=compile and mode=seed_build dispatches of a verification
 	// run.
 	SourceOverlayURI string
+
+	// SeedPreflight is the check a seed-build pod runs against the seed's
+	// production table in an init container after every other one; the pod
+	// always runs it in report mode. Populated only for mode=seed_build.
+	SeedPreflight *seedreload.Preflight
 
 	// ActiveDeadlineSeconds is how long Kubernetes lets the leg's Job run,
 	// counted from the Job's start.
@@ -459,6 +465,10 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // parseCacheInitContainer); partialParsePath is the service's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
 // directory.
+// When p.SeedPreflight is set, the "seed-preflight" initContainer runs last,
+// against the seed's production relation, in report mode whatever mode the
+// request names: the leg's result never depends on it, so the container runs
+// through a shell that always exits 0.
 func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
@@ -535,6 +545,16 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		spec.InitContainers = append(spec.InitContainers, init)
 		spec.Volumes = append(spec.Volumes, vol)
 		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, teamMount)
+	}
+
+	if p.SeedPreflight != nil {
+		report := *p.SeedPreflight
+		report.Mode = seedreload.PreflightReport
+		preflight, err := seedPreflightInitContainer(report, p.NodeID)
+		if err != nil {
+			return corev1.PodSpec{}, err
+		}
+		spec.InitContainers = append(spec.InitContainers, preflight)
 	}
 
 	return spec, nil
@@ -900,7 +920,8 @@ func extrasProjectDirWord(compileArgv []string) string {
 // that pre-seeds the prod-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
-// directory.
+// directory. When params carries a SeedPreflight, its init container (see
+// seedPreflightInitContainer) runs last, after the hydrate.
 func buildPodSpec(params JobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
@@ -949,6 +970,16 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		spec.InitContainers = []corev1.Container{init}
 		spec.Volumes = []corev1.Volume{vol}
 		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+	}
+
+	// The seed preflight runs after every other init container, so the gap
+	// between the check and dbt's drop of the seed's table stays short.
+	if params.SeedPreflight != nil {
+		preflight, err := seedPreflightInitContainer(*params.SeedPreflight, strings.ToLower(params.SchemaName+"."+params.TableName))
+		if err != nil {
+			return corev1.PodSpec{}, err
+		}
+		spec.InitContainers = append(spec.InitContainers, preflight)
 	}
 
 	return spec, nil

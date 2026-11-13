@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import RunProgressHeader from '../../src/client/RunProgressHeader';
 import type { Task } from '../../src/client/types';
 
@@ -77,5 +78,16 @@ describe('RunProgressHeader', () => {
     const tasks = [...Array.from({ length: 23 }, () => t('succeeded')), ...Array.from({ length: 17 }, () => t('pending'))];
     render(<RunProgressHeader tasks={tasks} />);
     expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('58%');
+  });
+
+  it('links a run to its release', () => {
+    render(<MemoryRouter><RunProgressHeader tasks={[]} releaseId="rel-a1b2c3d-201" /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'rel-a1b2c3d-201' })).toHaveAttribute('href', '/releases/rel-a1b2c3d-201');
+  });
+
+  it('shows no release link when the run has no release', () => {
+    render(<MemoryRouter><RunProgressHeader tasks={[]} releaseId={null} /></MemoryRouter>);
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryByText(/Release/)).toBeNull();
   });
 });

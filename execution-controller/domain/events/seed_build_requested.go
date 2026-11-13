@@ -3,6 +3,7 @@ package events
 
 import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/google/uuid"
 )
 
@@ -16,6 +17,10 @@ type SeedBuildNode struct {
 	TableName   string
 	NodeType    pkg_model.NodeType // always NodeTypeDbtSeed
 	ImageTag    string
+	// SeedPreflight is the report-mode check the seed's pod runs against the
+	// production table it stands for, whose findings the leg's result
+	// returns; nil when the request asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 // SeedBuildRequested is the parsed seed.build.requested:v1 stream payload — a

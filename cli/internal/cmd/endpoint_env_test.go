@@ -27,3 +27,22 @@ func TestRunControllerAddrEnv_IsTheAddressRunCommandsDial(t *testing.T) {
 	assert.Equal(t, 5, exit, "stdout: %s", out.String())
 	assert.Contains(t, out.String(), addr)
 }
+
+// CONTINUO_RELEASE_CONTROLLER_ADDR is the address release commands dial: with
+// no --release-endpoint, a command pointed at an address nothing listens on
+// fails with the dial error naming that address.
+func TestReleaseControllerAddrEnv_IsTheAddressReleaseCommandsDial(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+
+	t.Setenv("CONTINUO_RELEASE_CONTROLLER_ADDR", addr)
+	t.Setenv("CONTINUO_TIMEOUT", "1s")
+
+	var out, errBuf bytes.Buffer
+	exit := executeWith([]string{"release", "notices", "rel-a1b2c3d-201"}, &out, &errBuf)
+
+	assert.Equal(t, 5, exit, "stdout: %s", out.String())
+	assert.Contains(t, out.String(), addr)
+}

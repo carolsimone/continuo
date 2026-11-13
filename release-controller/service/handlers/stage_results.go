@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
@@ -28,6 +29,10 @@ type NodeResult struct {
 	// that failed (compile | parse-prod | parse-candidate | upload). Empty
 	// for successes and for non-compile legs.
 	FailedContainer string
+
+	// SeedPreflight is what the seed's report preflight found in the warehouse.
+	// Nil for any node whose result carries no findings.
+	SeedPreflight *seedreload.Findings
 }
 
 // stageResults converts the inbound per-node wire results of a compile or

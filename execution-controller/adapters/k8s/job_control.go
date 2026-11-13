@@ -41,3 +41,8 @@ func (j *JobControl) DeleteJob(ctx context.Context, jobName string) error {
 func (j *JobControl) GetPodLogs(ctx context.Context, jobName string, tailLines int64) (string, string, error) {
 	return j.client.GetPodLogs(ctx, j.namespace, jobName, tailLines)
 }
+
+// GetContainerLog returns the full log of the named container of jobName's pod.
+func (j *JobControl) GetContainerLog(ctx context.Context, jobName, container string) (string, error) {
+	return j.client.GetContainerLog(ctx, j.namespace, jobName, container)
+}

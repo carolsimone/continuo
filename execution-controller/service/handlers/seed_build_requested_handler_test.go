@@ -9,6 +9,8 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,4 +148,27 @@ func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	for _, dep := range depl.added {
 		assert.Equal(t, evt.SourceOverlayURI, dep.ValidationCommand().SourceOverlayURI)
 	}
+}
+
+// Each seed's preflight is stored on its deployment's command, so the Job
+// created for it runs the check.
+func TestSeedBuildRequestedHandler_StoresEachSeedsPreflight(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
+	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "public.country_codes"}
+	evt := events.SeedBuildRequested{
+		ReleaseID: "rel-seed-2026", Mode: "seed_build", CandidateSchema: "_candidate_rel_seed_2026",
+		Seeds: []events.SeedBuildNode{
+			{NodeID: "seed.shop.country_codes", ServiceName: "shop", SchemaName: "public", TableName: "country_codes",
+				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1", SeedPreflight: pf},
+			{NodeID: "seed.shop.currencies", ServiceName: "shop", SchemaName: "public", TableName: "currencies",
+				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed2"},
+		},
+	}
+
+	require.NoError(t, handlers.NewSeedBuildRequestedHandler(discardLogger()).Handle(context.Background(), u, evt, uuid.New()))
+
+	require.Len(t, depl.added, 2)
+	assert.Same(t, pf, depl.added[0].ValidationCommand().SeedPreflight)
+	assert.Nil(t, depl.added[1].ValidationCommand().SeedPreflight)
 }

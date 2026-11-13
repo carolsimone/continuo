@@ -19,6 +19,7 @@ import (
 type fakeReads struct {
 	tenants       []string
 	limit, offset int
+	kind          string
 }
 
 var _ repository.RunReadRepository = (*fakeReads)(nil)
@@ -31,6 +32,12 @@ func (f *fakeReads) GetRunGraph(_ context.Context, tenantID string, _ uuid.UUID)
 func (f *fakeReads) ListCompletedRuns(_ context.Context, tenantID, _ string, limit, offset int) ([]projection.RunSummary, int, error) {
 	f.tenants = append(f.tenants, tenantID)
 	f.limit, f.offset = limit, offset
+	return nil, 0, nil
+}
+
+func (f *fakeReads) ListReleaseRuns(_ context.Context, tenantID, _, kind string, limit, offset int) ([]projection.RunSummary, int, error) {
+	f.tenants = append(f.tenants, tenantID)
+	f.limit, f.offset, f.kind = limit, offset, kind
 	return nil, 0, nil
 }
 
@@ -76,6 +83,30 @@ func TestService_ClampsThePage(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantLimit, f.limit)
 			assert.Equal(t, tc.wantOffset, f.offset)
+		})
+	}
+}
+
+// A release's runs are paged as a schedule's are, of the tenant and kind given.
+func TestService_ListReleaseRunsClampsPagingAndKeepsTheKind(t *testing.T) {
+	cases := []struct {
+		name                  string
+		size, offset          int
+		wantLimit, wantOffset int
+	}{
+		{"defaults", 0, 0, runreads.DefaultPageSize, 0},
+		{"negative offset", 10, -4, 10, 0},
+		{"above the cap", 5000, 3, runreads.MaxPageSize, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeReads{}
+			_, _, err := runreads.New(f).ListReleaseRuns(context.Background(), "acme", "rel-1", "promote_seed", c.size, c.offset)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"acme"}, f.tenants)
+			assert.Equal(t, "promote_seed", f.kind)
+			assert.Equal(t, c.wantLimit, f.limit)
+			assert.Equal(t, c.wantOffset, f.offset)
 		})
 	}
 }

@@ -98,6 +98,13 @@ def _node(**over):
     return ManifestNode(**fields)
 
 
+def test_seed_columns_pairs_each_header_column_with_its_declared_type():
+    seed = _node(node_type=NodeType.DBT_SEED, seed_header=("currency", "rate_to_eur"),
+                 seed_column_types={"rate_to_eur": "numeric"})
+    assert seed.seed_columns == [{"name": "currency", "type": ""}, {"name": "rate_to_eur", "type": "numeric"}]
+    assert _node().seed_columns == []
+
+
 def test_resolved_relation_id_falls_back_to_table_name_when_unset():
     # No resolved_relation set (e.g. a hand-built node, or one this parser
     # never touched) — falls back to table_name, exactly like a node with no

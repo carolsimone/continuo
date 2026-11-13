@@ -48,6 +48,8 @@ export interface Scheduler {
   // Why the run failed when no task of it failed (stalled, empty_selection,
   // invalid_node_type); null otherwise.
   failure_reason?: string | null;
+  // The release the run executes on; null when run-controller recorded none.
+  release_id?: string | null;
 }
 
 export interface Task {
@@ -67,6 +69,10 @@ export interface Task {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  // What the task does to its node, and why the run planned it that way
+  // (null when the plan gave no reason).
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 export interface GraphNode {
@@ -79,6 +85,10 @@ export interface GraphNode {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  // The node's operation and plan reason in a run graph, as on Task; absent on
+  // a schedule's topology graph.
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 // A dependency edge in execution order: `from` runs first, `to` reads its
@@ -104,6 +114,8 @@ export interface RunSummary {
   completed_at: string | null;
   // Why the run failed when no task of it failed; null otherwise.
   failure_reason?: string | null;
+  // The release the run executed on; null when run-controller recorded none.
+  release_id?: string | null;
 }
 
 export interface RunGraphNode {
@@ -115,6 +127,8 @@ export interface RunGraphNode {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 export interface RunGraph {
@@ -143,6 +157,36 @@ export interface TaskAttempt {
   error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
+  // What a seed's preflight found before its load; null on an attempt that ran
+  // none.
+  seed_preflight?: SeedPreflight | null;
+}
+
+// A seed preflight's findings: the objects that depend on the seed (allowed
+// marks the ones the load may drop) and the probe of each view outside the
+// allowed set that the preflight found.
+export interface SeedPreflight {
+  drop_semantics: string;
+  completeness: string;
+  checked: boolean;
+  dependents: SeedPreflightDependent[];
+  probes: SeedPreflightProbe[];
+}
+
+export interface SeedPreflightDependent {
+  schema: string;
+  name: string;
+  kind: string;
+  owner: string;
+  depth: number;
+  allowed: boolean;
+}
+
+export interface SeedPreflightProbe {
+  schema: string;
+  name: string;
+  ok: boolean;
+  error: string;
 }
 
 export interface NodeRun {
@@ -163,11 +207,26 @@ export interface NodeRun {
   error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
+  // The objects (lowercased schema.name) a seed load stopped on because they
+  // read the seed and no run rebuilds them; empty on every other task.
+  blocking_objects?: string[];
 }
 
-// A node's history: one row per task that ran the node, with its run.
+// A view the load of a seed took out of production: missing (dropped) or stale
+// (still readable, built on the seed's earlier content). `since` is when the
+// outage began, null when the server does not know.
+export interface NodeOutage {
+  state: 'missing' | 'stale';
+  since: string | null;
+  seed_node_id: string;
+  run_id: string;
+}
+
+// A node's history: one row per task that ran the node, with its run, and the
+// outage of the node's production object when it has one.
 export interface NodeRunsResponse {
   tasks: NodeRun[];
+  outage?: NodeOutage | null;
 }
 
 export interface ScheduleTopologySummary {
@@ -238,6 +297,45 @@ export interface ReleaseTransition {
   at: string;
 }
 
+// What a release's seed change does to the seed's table and the views read
+// from it, as release-controller predicts it from the release's topology and,
+// once the seed-build leg has probed the warehouse, from what it found there.
+export interface ReleaseNotice {
+  kind: string; // 'seed_reload'
+  node_id: string;
+  service: string;
+  engine_family: 'schema_bound' | 'late_binding';
+  change: 'rows' | 'columns';
+  columns: { added: string[]; removed: string[]; retyped: string[] };
+  load: { operation: string; drops_table: boolean; reason: string };
+  // Views the seed's reload rebuilds in the same run.
+  rebuilds: { node_id: string; materialized: string; operation: string; schedule: string }[];
+  // Downstream nodes that pick the new table up on their own schedule.
+  refresh_on_schedule: { node_id: string; materialized: string; schedule: string }[];
+  warehouse: {
+    // False until the seed-build leg's preflight ran to the end.
+    checked: boolean;
+    completeness: string;
+    // Warehouse objects outside continuo that read the seed's table.
+    outside_continuo: { object: string; kind: string; owner: string }[];
+  };
+  prediction: 'reloads' | 'stops' | 'refused';
+  stop_reason: string;
+  // The release skipped validation.
+  unvalidated: boolean;
+}
+
+// A promote-seed run as GET /api/runs?release_id=&kind= lists it.
+export interface ReleaseRun {
+  run_id: string;
+  schedule_name: string;
+  status: RunStatus;
+  kind: string;
+  release_id: string | null;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
 export interface ReleaseDetail {
   release_id: string;
   status: string;
@@ -264,6 +362,9 @@ export interface ReleaseDetail {
   // How the release's artifact is parsed: 'dbt' or 'python'. Decides the
   // pipeline path — a python release has no compile leg.
   manifest_kind?: string;
+  // The seed reloads the release's seed changes cause. Absent on a release
+  // recorded before notices existed.
+  notices?: ReleaseNotice[];
 }
 
 export interface NodeSummary {

@@ -50,36 +50,6 @@ func (t *fakeTerminator) DeleteJob(_ context.Context, jobName string) error {
 	return nil
 }
 
-// fakeLogs returns a fixed log and counts reads.
-type fakeLogs struct {
-	full, tail string
-	err        error
-	reads      int
-}
-
-func (l *fakeLogs) GetPodLogs(_ context.Context, _ string, _ int64) (string, string, error) {
-	l.reads++
-	if l.err != nil {
-		return "", "", l.err
-	}
-	tail := l.tail
-	if tail == "" {
-		tail = l.full
-	}
-	return l.full, tail, nil
-}
-
-// fakeUploader keeps every upload.
-type fakeUploader struct{ uploaded map[string]string }
-
-func (u *fakeUploader) UploadLog(_ context.Context, key, content string) error {
-	if u.uploaded == nil {
-		u.uploaded = map[string]string{}
-	}
-	u.uploaded[key] = content
-	return nil
-}
-
 // fakeStopMetrics counts the attempts reported stopped and the Jobs reaped,
 // by reason.
 type fakeStopMetrics struct {

@@ -29,6 +29,7 @@ func newTopoTenant(t *testing.T, db *sqlx.DB) string {
 		_, _ = db.ExecContext(ctx, `DELETE FROM live_release WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(ctx, `DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(ctx, `DELETE FROM node_materializations WHERE tenant_id = $1`, tenant)
+		_, _ = db.ExecContext(ctx, `DELETE FROM view_outages WHERE tenant_id = $1`, tenant)
 	})
 	return tenant
 }
@@ -622,4 +623,52 @@ func TestTopologyRepository_SaveReleaseAnalyzesAsTheServiceLogin(t *testing.T) {
 
 	assert.Eventually(t, func() bool { return analyzeCount(t, owner) > before }, 10*time.Second, 200*time.Millisecond,
 		"saving a release as continuo_run_controller must analyze topology_nodes")
+}
+
+func TestSaveRelease_StoresMaterializedFullRefreshRelationAndBootstrap(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	yes := true
+	specs := []topology.NodeSpec{
+		graphSpec("seed_a", "dbt-seed", "seed"), graphSpec("v_a", "dbt-model", "hourly", "seed_a"), graphSpec("py_a", "python-node", "daily"),
+	}
+	specs[0].Materialized, specs[0].FullRefresh = "seed", &yes
+	specs[1].Materialized, specs[1].ResolvedRelationID = "view", "stg.v_alias"
+	rel := topoRelease(t, tenant, "rel-sr-1", 1, "abc", specs...)
+	rel.Bootstrap = true
+	_, err := saveTopoRelease(t, db, rel)
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+
+	stored, err := repo.ReleaseNodes(ctx, tenant, "rel-sr-1", "")
+	require.NoError(t, err)
+	nodes := make(map[topology.NodeKey]topology.Node, len(stored))
+	for _, n := range stored {
+		nodes[n.Key] = n
+	}
+	assert.Equal(t, &yes, nodes["stg.seed_a"].FullRefresh)
+	assert.Equal(t, "seed", nodes["stg.seed_a"].Materialized)
+	assert.Equal(t, "view", nodes["stg.v_a"].Materialized)
+	assert.Equal(t, "stg.v_alias", nodes["stg.v_a"].Relation())
+	assert.Nil(t, nodes["stg.py_a"].FullRefresh)
+	assert.Equal(t, "stg.py_a", nodes["stg.py_a"].Relation())
+
+	boot, err := repo.IsBootstrapRelease(ctx, tenant, "rel-sr-1")
+	require.NoError(t, err)
+	assert.True(t, boot)
+	unknown, err := repo.IsBootstrapRelease(ctx, tenant, "rel-none")
+	require.NoError(t, err)
+	assert.False(t, unknown)
+}
+
+func TestIsBootstrapRelease_IsFalseForARegularRelease(t *testing.T) {
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "abc", topoSpec("raw", "orders", "dbt-seed", "h1")))
+	require.NoError(t, err)
+
+	boot, err := postgres.NewTopologyRepository(db, nil).IsBootstrapRelease(context.Background(), tenant, "rel-1")
+	require.NoError(t, err)
+	assert.False(t, boot)
 }

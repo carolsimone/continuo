@@ -63,20 +63,21 @@ func (d *Deployer) deadline(timeout time.Duration) int64 {
 // jobParamsFromSpec maps the domain JobSpec onto the K8s query-job params.
 func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespace string) JobParams {
 	return JobParams{
-		JobName:      spec.JobName,
-		TaskID:       spec.TaskID,
-		RunID:        spec.RunID,
-		ScheduleName: spec.ScheduleName,
-		ServiceName:  spec.ServiceName,
-		SchemaName:   spec.SchemaName,
-		TableName:    spec.TableName,
-		Namespace:    namespace,
-		NodeType:     nodeType,
-		ImageTag:     spec.ImageTag,
-		SecretRef:    spec.SecretRef,
-		Operation:    pkg_model.Operation(spec.Operation),
-		Attempt:      spec.Attempt,
-		ContentHash:  spec.ContentHash,
+		JobName:       spec.JobName,
+		TaskID:        spec.TaskID,
+		RunID:         spec.RunID,
+		ScheduleName:  spec.ScheduleName,
+		ServiceName:   spec.ServiceName,
+		SchemaName:    spec.SchemaName,
+		TableName:     spec.TableName,
+		Namespace:     namespace,
+		NodeType:      nodeType,
+		ImageTag:      spec.ImageTag,
+		SecretRef:     spec.SecretRef,
+		Operation:     pkg_model.Operation(spec.Operation),
+		Attempt:       spec.Attempt,
+		ContentHash:   spec.ContentHash,
+		SeedPreflight: spec.SeedPreflight,
 	}
 }
 
@@ -128,6 +129,7 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 		ImageTag:              spec.ImageTag,
 		CandidateSchema:       spec.CandidateSchema,
 		SourceOverlayURI:      spec.SourceOverlayURI,
+		SeedPreflight:         spec.SeedPreflight,
 		ActiveDeadlineSeconds: d.deadline(d.legTimeout),
 		Namespace:             d.namespace,
 	})

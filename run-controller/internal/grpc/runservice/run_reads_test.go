@@ -10,11 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/projection"
+	"github.com/carolsimone/continuo/run-controller/domain/seeds"
+	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/carolsimone/continuo/run-controller/service/schedules"
 )
@@ -177,6 +181,99 @@ func TestListRunAttempts_MapsEveryField(t *testing.T) {
 	assert.Equal(t, "oom", a.GetErrorMessage())
 	assert.Equal(t, "logs/1", a.GetLogS3Key())
 	assert.Equal(t, "results/1", a.GetRunResultsUri())
+}
+
+func TestListTasks_CarriesEachTasksOperationAndPlanReason(t *testing.T) {
+	store := newStore()
+	runID := uuid.New()
+	store.putTasks(tenantA, runID,
+		projection.TaskDetail{TaskID: uuid.New(), RunID: runID, Operation: model.OperationFullRefresh, PlanReason: "columns changed"},
+		projection.TaskDetail{TaskID: uuid.New(), RunID: runID, Operation: model.OperationRun},
+	)
+
+	resp, err := newServer(store).ListTasks(ctxOf(tenantA), &runv1.ListTasksRequest{RunId: runID.String()})
+
+	require.NoError(t, err)
+	require.Len(t, resp.GetTasks(), 2)
+	assert.Equal(t, "full_refresh", resp.GetTasks()[0].GetOperation())
+	assert.Equal(t, "columns changed", resp.GetTasks()[0].GetPlanReason())
+	assert.Equal(t, "run", resp.GetTasks()[1].GetOperation())
+	assert.Empty(t, resp.GetTasks()[1].GetPlanReason())
+}
+
+func TestListRunAttempts_CarriesTheSeedPreflightFindings(t *testing.T) {
+	store := newStore()
+	runID := uuid.New()
+	store.putAttempts(tenantA, runID,
+		projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, DispatchedAt: base, SeedPreflight: &seedreload.Findings{
+			DropSemantics: "cascade", Completeness: "complete", Checked: true,
+			Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 2, Allowed: true}},
+			Probes:     []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: "no such relation"}},
+		}},
+		projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, DispatchedAt: base},
+	)
+
+	resp, err := newServer(store).ListRunAttempts(ctxOf(tenantA), &runv1.ListRunAttemptsRequest{RunId: runID.String()})
+
+	require.NoError(t, err)
+	require.Len(t, resp.GetAttempts(), 2)
+	assert.True(t, proto.Equal(&runv1.SeedPreflightFindings{
+		DropSemantics: "cascade", Completeness: "complete", Checked: true,
+		Dependents: []*runv1.PreflightDependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi_owner", Depth: 2, Allowed: true}},
+		Probes:     []*runv1.ViewProbe{{Schema: "bi", Name: "fx_rates_report", Ok: false, Error: "no such relation"}},
+	}, resp.GetAttempts()[0].GetSeedPreflight()))
+	assert.Nil(t, resp.GetAttempts()[1].GetSeedPreflight(), "an attempt that ran no preflight has none")
+}
+
+func TestGetRunGraph_CarriesEachNodesOperationAndPlanReason(t *testing.T) {
+	store := newStore()
+	runID := uuid.New()
+	store.putGraph(tenantA, runID, projection.RunGraph{Nodes: []projection.RunGraphNode{
+		{TableName: "fx_rates_latest_eur", Operation: model.OperationRun, PlanReason: "rebuilds after analytics.seed_fx_rates_eur"},
+		{TableName: "seed_fx_rates_eur", Operation: model.OperationFullRefresh, PlanReason: "columns changed"},
+		{TableName: "orders", Operation: model.OperationRun},
+	}})
+
+	resp, err := newServer(store).GetRunGraph(ctxOf(tenantA), &runv1.GetRunGraphRequest{RunId: runID.String()})
+
+	require.NoError(t, err)
+	require.Len(t, resp.GetNodes(), 3)
+	assert.Equal(t, "run", resp.GetNodes()[0].GetOperation())
+	assert.Equal(t, "rebuilds after analytics.seed_fx_rates_eur", resp.GetNodes()[0].GetPlanReason())
+	assert.Equal(t, "full_refresh", resp.GetNodes()[1].GetOperation())
+	assert.Equal(t, "columns changed", resp.GetNodes()[1].GetPlanReason())
+	assert.Equal(t, "run", resp.GetNodes()[2].GetOperation())
+	assert.Empty(t, resp.GetNodes()[2].GetPlanReason())
+}
+
+func TestListNodeTasks_CarriesTheOutageAndTheBlockingObjects(t *testing.T) {
+	store := newStore()
+	runID := uuid.New()
+	since := base.Add(16*time.Minute + 2*time.Second)
+	store.outages[tenantA] = map[topology.NodeKey]seeds.ViewOutage{
+		"analytics.fx_rates_latest_eur": {
+			Key: "analytics.fx_rates_latest_eur", State: seeds.OutageMissing, Since: since,
+			SeedKey: "analytics.seed_fx_rates_eur", RunID: runID,
+		},
+	}
+	store.nodeTasks = []*projection.NodeRun{{
+		ScheduleID: runID, TaskID: uuid.New(), TaskStatus: run.TaskStatusFailed, CreatedAt: base,
+		BlockingObjects: []string{"bi.fx_rates_report"},
+	}}
+	srv := newServer(store)
+
+	resp, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
+	require.NoError(t, err)
+	assert.Equal(t, &runv1.ViewOutage{State: "missing", Since: "2026-10-27T08:16:02Z", SeedNodeId: "analytics.seed_fx_rates_eur", RunId: runID.String()}, resp.Outage)
+	assert.Equal(t, []string{"bi.fx_rates_report"}, resp.GetTasks()[0].GetBlockingObjects())
+
+	other, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "orders"})
+	require.NoError(t, err)
+	assert.Nil(t, other.Outage, "a node with no open outage has none")
+
+	foreign, err := srv.ListNodeTasks(ctxOf(tenantB), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
+	require.NoError(t, err)
+	assert.Nil(t, foreign.Outage, "another tenant's outage is not read")
 }
 
 func TestListNodeTasks_MapsRunStatus(t *testing.T) {
@@ -393,12 +490,54 @@ func TestListRuns_ClampsPaging(t *testing.T) {
 	}
 }
 
+func TestListRuns_ListsTheRunsOfARelease(t *testing.T) {
+	store := newStore()
+	active, done, other := uuid.New(), uuid.New(), uuid.New()
+	store.releaseRuns[tenantA] = []projection.RunSummary{
+		{RunID: active, ScheduleName: "promote-seed-1", Kind: run.KindPromoteSeed, Status: run.RunStatusRunning, ReleaseID: "rel-a1b2c3d-201", CreatedAt: base},
+		{RunID: done, ScheduleName: "daily", Kind: run.KindCron, Status: run.RunStatusSucceeded, ReleaseID: "rel-a1b2c3d-201", CreatedAt: base, CompletedAt: ptr(base.Add(time.Minute))},
+		{RunID: other, ScheduleName: "daily", Kind: run.KindCron, Status: run.RunStatusRunning, ReleaseID: "rel-other", CreatedAt: base},
+	}
+	srv := newServer(store)
+	ctx := ctxOf(tenantA)
+
+	resp, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ReleaseId: "rel-a1b2c3d-201", Kind: "promote_seed"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetRuns(), 1)
+	assert.Equal(t, "promote_seed", store.releaseRunsKind)
+	assert.Equal(t, active.String(), resp.GetRuns()[0].GetRunId())
+	assert.Equal(t, "running", resp.GetRuns()[0].GetStatus())
+	assert.Equal(t, "promote_seed", resp.GetRuns()[0].GetKind())
+	assert.Equal(t, "rel-a1b2c3d-201", resp.GetRuns()[0].GetReleaseId())
+	assert.Empty(t, resp.GetRuns()[0].GetCompletedAt(), "an active run has no completion time")
+
+	all, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ReleaseId: "rel-a1b2c3d-201"})
+	require.NoError(t, err)
+	require.Len(t, all.GetRuns(), 2, "every status and kind of the release")
+	assert.Equal(t, int32(2), all.GetTotalCount())
+	assert.Equal(t, "2026-10-27T08:01:00Z", all.GetRuns()[1].GetCompletedAt())
+}
+
+func TestListRuns_RefusesAnAmbiguousOrUnknownList(t *testing.T) {
+	srv := newServer(newStore())
+	ctx := ctxOf(tenantA)
+	for name, req := range map[string]*runv1.ListRunsRequest{
+		"both a schedule and a release":   {ScheduleName: "daily", ReleaseId: "rel-1"},
+		"neither":                         {},
+		"an unknown kind":                 {ReleaseId: "rel-1", Kind: "nightly"},
+		"an unknown kind with a schedule": {ScheduleName: "daily", Kind: "nightly"},
+	} {
+		_, err := srv.ListRuns(ctx, req)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
+	}
+}
+
 func TestListRuns_MapsEveryField(t *testing.T) {
 	store := newStore()
 	id := uuid.New()
 	store.completed[tenantA] = []projection.RunSummary{{
-		RunID: id, ScheduleName: "daily", TerminalStatus: run.RunStatusFailed, FailureReason: "stalled",
-		CreatedAt: base, CompletedAt: base.Add(time.Hour),
+		RunID: id, ScheduleName: "daily", Kind: run.KindCron, Status: run.RunStatusFailed, FailureReason: "stalled",
+		ReleaseID: "rel-1", CreatedAt: base, CompletedAt: ptr(base.Add(time.Hour)),
 	}}
 
 	resp, err := newServer(store).ListRuns(ctxOf(tenantA), &runv1.ListRunsRequest{ScheduleName: "daily"})
@@ -413,6 +552,8 @@ func TestListRuns_MapsEveryField(t *testing.T) {
 	assert.Equal(t, "stalled", r.GetFailureReason())
 	assert.Equal(t, "2026-10-27T08:00:00Z", r.GetCreatedAt())
 	assert.Equal(t, "2026-10-27T09:00:00Z", r.GetCompletedAt())
+	assert.Equal(t, "cron", r.GetKind())
+	assert.Equal(t, "rel-1", r.GetReleaseId())
 }
 
 func TestListActiveRunDrifts_MapsEveryRun(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/events"
@@ -174,7 +175,7 @@ func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.
 // reports is the handler of task.status.updated:v2 the harness reports
 // through.
 func (h *builtHarness) reports() *svchandlers.AttemptReportHandler {
-	return svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, h.logger)
+	return svchandlers.NewAttemptReportHandler(defaultPlanner.Tasks, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, h.logger)
 }
 
 // finished is the report that attempt 0 of taskID ended with status; a
@@ -325,16 +326,20 @@ func TestBuiltVersions(t *testing.T) {
 	})
 }
 
-// noRunMetrics counts nothing.
+// noRunMetrics counts nothing: neither the run series nor the seed reload
+// series.
 type noRunMetrics struct{}
 
-func (noRunMetrics) RunStalled()                   {}
-func (noRunMetrics) RunsCancelling(_, _ int)       {}
-func (noRunMetrics) RunCancelled(time.Duration)    {}
-func (noRunMetrics) LeaseWaiters(int)              {}
-func (noRunMetrics) LeaseGranted(time.Duration)    {}
-func (noRunMetrics) LeaseRepaired()                {}
-func (noRunMetrics) CommandRequest(string, string) {}
-func (noRunMetrics) CronFire(string)               {}
-func (noRunMetrics) CronFires(string, int)         {}
-func (noRunMetrics) Schedules(int, int, int)       {}
+func (noRunMetrics) RunStalled()                    {}
+func (noRunMetrics) RunsCancelling(_, _ int)        {}
+func (noRunMetrics) RunCancelled(time.Duration)     {}
+func (noRunMetrics) LeaseWaiters(int)               {}
+func (noRunMetrics) LeaseGranted(time.Duration)     {}
+func (noRunMetrics) LeaseRepaired()                 {}
+func (noRunMetrics) CommandRequest(string, string)  {}
+func (noRunMetrics) CronFire(string)                {}
+func (noRunMetrics) CronFires(string, int)          {}
+func (noRunMetrics) Schedules(int, int, int)        {}
+func (noRunMetrics) SeedReloadEnded(string, string) {}
+func (noRunMetrics) SeedReloadStopped(string)       {}
+func (noRunMetrics) ViewRebuilt(time.Duration)      {}

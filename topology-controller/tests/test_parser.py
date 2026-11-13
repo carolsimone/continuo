@@ -639,3 +639,19 @@ def test_a_model_counts_its_declared_columns(tmp_path):
 def test_a_model_with_no_columns_block_declares_none(tmp_path):
     nodes = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare")})).nodes
     assert nodes[0].declared_columns == 0
+
+
+@pytest.mark.parametrize("resource_type, value, expected", [
+    ("seed", True, True),
+    ("seed", False, False),
+    ("seed", "true", None),
+    ("seed", None, None),
+    ("model", True, None),
+])
+def test_full_refresh_is_a_seeds_boolean_setting(tmp_path, resource_type, value, expected):
+    config = {"meta": {"owner": "team-a"}, "materialized": resource_type}
+    if value is not None:
+        config["full_refresh"] = value
+    path = _manifest_path(tmp_path, {f"{resource_type}.svc.revenue": _node(resource_type=resource_type, config=config)})
+    (parsed,) = parse_manifest(path, "v1").nodes
+    assert parsed.full_refresh is expected

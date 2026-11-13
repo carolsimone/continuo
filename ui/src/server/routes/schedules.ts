@@ -168,6 +168,7 @@ export function createSchedulesRouter(client: GrpcClient) {
         created_at: r.created_at || null,
         completed_at: r.completed_at || null,
         failure_reason: r.failure_reason || null,
+        release_id: r.release_id || null,
       }));
       res.json({ runs, total_count: Number(resp.total_count ?? 0) });
     });

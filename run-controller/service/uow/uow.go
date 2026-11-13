@@ -37,6 +37,9 @@ type UnitOfWork interface {
 	Clock() ports.Clock
 	Topology() repository.TopologyRepository
 	Materializations() repository.MaterializationRepository
+	// ViewOutages serves the views a seed load left missing or stale, inside
+	// the transaction.
+	ViewOutages() repository.ViewOutageRepository
 	// TaskGraph reads how the tasks of a run of tenantID connect over the
 	// edges of the run's release, inside the transaction.
 	TaskGraph(tenantID string) run.TaskGraph

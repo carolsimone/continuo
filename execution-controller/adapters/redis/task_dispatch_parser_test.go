@@ -8,6 +8,8 @@ import (
 
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +20,14 @@ import (
 // returns it: every field a string, the payload as JSON text.
 func fixtureDispatch(t *testing.T) goredis.XMessage {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_dispatch_v1.json"))
+	return goldenDispatch(t, "task_dispatch_v1.json")
+}
+
+// goldenDispatch reads the golden task.dispatch:v1 entry of pkg/events'
+// testdata file name as XREADGROUP returns it.
+func goldenDispatch(t *testing.T, name string) goredis.XMessage {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", name)) //nolint:gosec // G304: name is one of the fixed golden file names
 	require.NoError(t, err)
 	var fx struct {
 		Fields map[string]json.RawMessage `json:"fields"`
@@ -82,4 +91,18 @@ func TestParseTaskDispatch_ReadsContentHash(t *testing.T) {
 	evt, err := ParseTaskDispatch(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "sha256:91d4c0", evt.ContentHash)
+}
+
+func TestParseTaskDispatch_ReadsTheSeedPreflight(t *testing.T) {
+	evt, err := ParseTaskDispatch(goldenDispatch(t, "task_dispatch_v1_seed_preflight.json"))
+	require.NoError(t, err)
+	assert.Equal(t, &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current", "analytics.fx_rates_latest_eur"},
+		Acknowledged: []string{}}, evt.SeedPreflight)
+	assert.Equal(t, "dbt-seed", evt.NodeType)
+	assert.Equal(t, uuid.MustParse("a1c3e5f7-2b4d-4f60-8a1c-3e5f7b9d1a2c"), evt.TaskID)
+
+	plain, err := ParseTaskDispatch(fixtureDispatch(t))
+	require.NoError(t, err)
+	assert.Nil(t, plain.SeedPreflight)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 )
 
@@ -27,6 +28,11 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
 	rows, err := s.reads.Nodes.ListNodeTasks(ctx, tenantID, req.GetServiceName(), req.GetSchemaName(), req.GetTableName(), operation, int(req.GetLimit()))
+	if err != nil {
+		return nil, s.internalError("ListNodeTasks", err,
+			"service", req.GetServiceName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
+	}
+	outage, found, err := s.reads.Nodes.ViewOutage(ctx, tenantID, req.GetSchemaName(), req.GetTableName())
 	if err != nil {
 		return nil, s.internalError("ListNodeTasks", err,
 			"service", req.GetServiceName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
@@ -55,9 +61,24 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 			WaitReason:     string(r.WaitReason),
 			WaitingOnRunId: uuidOrEmpty(r.WaitingOnRunID),
 			WaitingSince:   rfc3339OrEmpty(r.WaitingSince),
+
+			BlockingObjects: r.BlockingObjects,
 		})
 	}
-	return &runv1.ListNodeTasksResponse{Tasks: out}, nil
+	resp := &runv1.ListNodeTasksResponse{Tasks: out}
+	if found {
+		resp.Outage = toProtoOutage(outage)
+	}
+	return resp, nil
+}
+
+func toProtoOutage(o seeds.ViewOutage) *runv1.ViewOutage {
+	return &runv1.ViewOutage{
+		State:      string(o.State),
+		Since:      o.Since.UTC().Format(time.RFC3339),
+		SeedNodeId: string(o.SeedKey),
+		RunId:      o.RunID.String(),
+	}
 }
 
 // ListNodes returns one page of the node list. An operation the operation

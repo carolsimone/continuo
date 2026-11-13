@@ -330,8 +330,59 @@ func TestBuiltinDefault_FullRefreshAndSeed(t *testing.T) {
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
-		"an ordinary seed run stays plain, non-destructive")
+		"an ordinary seed run is the plain seed command")
 	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "fx"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
 		"an explicit seed full refresh resolves to seed_full_refresh")
+}
+
+// financeYAML overrides finance with a block that defines full_refresh but no
+// seed_full_refresh, under a default that defines both.
+const financeYAML = `
+default:
+  run:               ["dbt", "run", "--select", "{{ node }}"]
+  seed:              ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:          ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:              ["dbt", "test", "--select", "{{ node }}"]
+  build:             ["dbt", "build", "--select", "{{ node }}"]
+  seed_build:        ["dbt", "seed", "--select", "{{ node }}"]
+  full_refresh:      ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+  seed_full_refresh: ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+  parse:             ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile"]
+    manifest_path: "/project/target/manifest.json"
+services:
+  finance:
+    run:          ["finance-dbt", "run", "{{ node }}"]
+    seed:         ["finance-dbt", "seed", "{{ node }}"]
+    snapshot:     ["finance-dbt", "snapshot", "{{ node }}"]
+    test:         ["finance-dbt", "test", "{{ node }}"]
+    build:        ["finance-dbt", "build", "{{ node }}"]
+    seed_build:   ["finance-dbt", "seed", "{{ node }}"]
+    full_refresh: ["finance-dbt", "run", "--full-refresh", "{{ node }}"]
+    parse:        ["finance-dbt", "parse"]
+    compile:
+      command:       ["finance-dbt", "compile"]
+      manifest_path: "/project/target/manifest.json"
+`
+
+// FullRefreshBlock names the block that governs a service, its override when
+// it has one, else the default, and whether that block defines the full
+// refresh command of the node type; an override never borrows the default's.
+func TestResolver_FullRefreshBlock(t *testing.T) {
+	r := loadYAML(t, financeYAML)
+	for _, nt := range []pkg_model.NodeType{pkg_model.NodeTypeDbtSeed, pkg_model.NodeTypeDbtModel} {
+		block, defined := r.FullRefreshBlock("payments", nt)
+		assert.Equal(t, "default", block, "%s", nt)
+		assert.True(t, defined, "%s", nt)
+	}
+	block, defined := r.FullRefreshBlock("finance", pkg_model.NodeTypeDbtSeed)
+	assert.Equal(t, "services.finance", block)
+	assert.False(t, defined, "the override defines no seed_full_refresh")
+	block, defined = r.FullRefreshBlock("finance", pkg_model.NodeTypeDbtModel)
+	assert.Equal(t, "services.finance", block)
+	assert.True(t, defined)
+	_, defined = r.FullRefreshBlock("payments", pkg_model.NodeTypeDbtSnapshot)
+	assert.False(t, defined, "a node type that cannot be full-refreshed has no full refresh command")
 }

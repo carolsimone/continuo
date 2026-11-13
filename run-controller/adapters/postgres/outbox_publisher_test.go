@@ -6,9 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -318,4 +321,38 @@ func TestTranslateRunEvent_DispatchCarriesTheNodesContentHash(t *testing.T) {
 	var dispatch pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(wire, &dispatch))
 	assert.Equal(t, "sha256:91d4c0", dispatch.ContentHash)
+}
+
+// A dispatch carries the task's plan reason and seed preflight on the wire, in
+// the shape execution-controller reads; a refused task maps to no row.
+func TestOutboxPublisher_RendersPlanReasonAndSeedPreflight(t *testing.T) {
+	pf := &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
+	entry, skip, err := postgres.TranslateRunEventForTest(run.TaskDispatched{ID: uuid.New(), TenantID: "default",
+		ScheduleName: "promote-seed-ab12cd34", TaskID: uuid.New(), Operation: model.OperationFullRefresh,
+		Node:   topology.Node{Key: "analytics.seed_fx_rates_eur", NodeType: "dbt-seed"},
+		Reason: "columns changed", Preflight: pf}, uuid.Nil)
+	require.NoError(t, err)
+	require.False(t, skip)
+	_, wire, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	require.NoError(t, err)
+	assert.Contains(t, string(wire), `"plan_reason":"columns changed"`)
+	assert.Contains(t, string(wire), `"seed_preflight":{"mode":"check","engine_family":"schema_bound",`+
+		`"relation":"analytics.seed_fx_rates_eur","allowed":["analytics.fx_rates_current"],"acknowledged":[]}`)
+
+	entry, skip, err = postgres.TranslateRunEventForTest(run.TaskDispatched{ID: uuid.New(), TenantID: "default",
+		TaskID: uuid.New(), Node: topology.Node{Key: "analytics.fx_rates_current"}}, uuid.Nil)
+	require.NoError(t, err)
+	require.False(t, skip)
+	_, wire, err = pkgoutbox.UnwrapTenant(entry.Payload)
+	require.NoError(t, err)
+	assert.NotContains(t, string(wire), "plan_reason", "a task with no reason sends none")
+	assert.NotContains(t, string(wire), "seed_preflight", "a task with no preflight sends none")
+
+	entry, skip, err = postgres.TranslateRunEventForTest(run.TaskRefused{ID: uuid.New(), TenantID: "default", TaskID: uuid.New(),
+		Key: "analytics.seed_fx_rates_eur", Operation: model.OperationFullRefresh,
+		Reason: model.FailureReasonSeedFullRefreshDisabled, Detail: "columns changed"}, uuid.Nil)
+	require.NoError(t, err)
+	assert.True(t, skip)
+	assert.Nil(t, entry)
 }

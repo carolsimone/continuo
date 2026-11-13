@@ -74,8 +74,9 @@ func (r *Run) takeLeases(ctx context.Context, tasks TaskCollection, ready []read
 // node's lease. It takes the lease for the task as the waiter being served
 // (TakeLeaseForWaiter); once the task holds it, the task is made dispatched at
 // now, which ends its wait, its attempt 0 is stored dispatched and due for its
-// first check, a TaskDispatched of attempt 0 is recorded with the timeout r's
-// release gives its node, and r's progress clock is stamped.
+// first check, a TaskDispatched of attempt 0 is recorded with the task's
+// stored spec and the timeout r's release gives its node, and r's progress
+// clock is stamped.
 //
 // The boolean result reports whether it dispatched the task. A run that is
 // not running is left before the task is read, and a task that no longer
@@ -121,7 +122,7 @@ func (r *Run) GrantLease(
 	if !found {
 		return nil, false, fmt.Errorf("grant task %s: release %s holds no node %s", taskID, r.release.ReleaseID, task.NodeKey)
 	}
-	events, err := r.dispatchAttemptZero(ctx, tasks, []readyTask{{taskID: taskID, node: node, jobName: task.JobName}}, d, now)
+	events, err := r.dispatchAttemptZero(ctx, tasks, []readyTask{{taskID: taskID, node: node, jobName: task.JobName, spec: task.Spec}}, d, now)
 	if err != nil {
 		return nil, false, fmt.Errorf("dispatch task %s: %w", taskID, err)
 	}

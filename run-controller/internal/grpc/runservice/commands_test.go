@@ -355,6 +355,55 @@ func TestCommandError_IngestedNodeIsInvalidArgument(t *testing.T) {
 	assert.Equal(t, refusal.Error(), status.Convert(err).Message())
 }
 
+// The acknowledged dependents of a seed's full refresh reach the command
+// normalized: trimmed, lowercased, de-duplicated and sorted, with the empty
+// names dropped.
+func TestTriggerSingleNodeRun_NormalizesTheAcknowledgedObjects(t *testing.T) {
+	cmds := &fakeCommands{runOf: map[string]uuid.UUID{tenantA: uuid.New()}}
+	srv := newCommandServer(newStore(), cmds)
+
+	_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
+		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+		Operation: "full_refresh", AcknowledgedDependents: []string{" BI.fx_rates_report ", "bi.fx_rates_report", "", "bi.a"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bi.a", "bi.fx_rates_report"}, cmds.single.AcknowledgedDependents)
+
+	_, err = srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
+		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, cmds.single.AcknowledgedDependents, "a call naming none carries none")
+}
+
+// A full refresh of a seed that sets +full_refresh: false, and acknowledged
+// dependents on a run that is not a full refresh of a seed, are refusals of the
+// request itself, so they are invalid arguments that name their reason.
+func TestTriggerSingleNodeRun_TheSeedRefusalsAreInvalidArgument(t *testing.T) {
+	for name, c := range map[string]struct {
+		refusal error
+		reason  string
+	}{
+		"a seed that cannot be rebuilt":                  {runplan.ErrSeedFullRefreshDisabled, "seed_full_refresh_disabled"},
+		"an acknowledgement outside a seed full refresh": {runplan.ErrAcknowledgementNotAllowed, "acknowledged_dependents"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refusal := fmt.Errorf("select: %w: raw.fx_rates", c.refusal)
+			srv := newCommandServer(newStore(), &fakeCommands{err: refusal})
+
+			_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
+				RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+				Operation: "full_refresh",
+			})
+
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Contains(t, status.Convert(err).Message(), c.reason)
+		})
+	}
+}
+
 // A request id reused for another command is AlreadyExists with the contract's
 // message; a claim that acted on another run is Internal; a claim that keeps
 // losing to calls that roll back is Aborted, which the caller may retry with

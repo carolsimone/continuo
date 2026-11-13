@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // goldenAttemptFacts is the exact JSON every fact of an attempt is stored as
@@ -52,5 +53,28 @@ func TestAttemptFactsDTO_NoFactsEncodesEmpty(t *testing.T) {
 	}
 	if string(out) != `{}` {
 		t.Fatalf("empty facts = %s, want {}", out)
+	}
+}
+
+// The seed preflight's findings are stored in the facts as seed_preflight,
+// and the dependents of a preflight that listed none stay absent.
+func TestAttemptFactsDTO_StoresTheSeedPreflightFindings(t *testing.T) {
+	want := model.AttemptFacts{SeedPreflight: &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}}
+
+	out, err := json.Marshal(AttemptFactsFromDomain(want))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const golden = `{"seed_preflight":{"drop_semantics":"cascade","completeness":"exact","checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}}`
+	if string(out) != golden {
+		t.Fatalf("bytes changed:\n got %s\nwant %s", out, golden)
+	}
+	var dto AttemptFactsDTO
+	if err := json.Unmarshal(out, &dto); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := dto.ToDomain(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
 	}
 }

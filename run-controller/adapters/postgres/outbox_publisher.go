@@ -25,7 +25,8 @@ const OutboxTable = "run_controller_outbox"
 
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
 // and writes them inside the bound transaction.
-// RunDispatchTerminal events are informational and produce no outbox row.
+// RunFinalized, RunDispatchTerminal and TaskRefused events produce no outbox
+// row: the rows of the run and its tasks hold them.
 type OutboxPublisher struct {
 	tx     *sqlx.Tx
 	logger *slog.Logger
@@ -118,6 +119,8 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			SecretRef:      e.Node.SecretRef,
 			JobName:        e.JobName,
 			TimeoutSeconds: int64(e.Timeout / time.Second),
+			PlanReason:     e.Reason,
+			SeedPreflight:  pkgevents.SeedPreflightOf(e.Preflight),
 		})
 		if err != nil {
 			return nil, false, err
@@ -130,6 +133,10 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
 		// The activation handler logs its reason.
+		return nil, true, nil
+	case run.TaskRefused:
+		// A refused task's row and its attempt 0 hold the refusal; no stream
+		// carries it.
 		return nil, true, nil
 
 	default:

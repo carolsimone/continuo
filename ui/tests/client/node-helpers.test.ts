@@ -15,6 +15,10 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
 });
 
 describe('kindLabel', () => {
+  it('labels a promote-seed run Seed reload', () => {
+    expect(kindLabel('promote_seed')).toBe('Seed reload');
+  });
+
   it.each([
     ['cron', 'Scheduled'],
     ['trigger', 'Manual trigger'],

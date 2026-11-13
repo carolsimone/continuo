@@ -18,6 +18,6 @@ func VocabularyValuesForTest() map[string][]string {
 		"Operation": {"run", "test", "build", "full_refresh"},
 		"AttemptStatus": {"dispatched", "queued", "running", "succeeded", "failed", "stopped"},
 		"FailureClass": {"task", "resource", "infra", "start", "timeout", "invalid"},
-		"FailureReason": {"exit_code", "oom_killed", "evicted", "node_lost", "job_missing", "attempt_lost", "create_failed", "image_pull", "invalid_image", "missing_config", "create_container", "start_timeout", "deadline_exceeded", "dbt_nothing_to_do", "invalid_node_type", "malformed_dispatch", "job_name_collision", "image_contract_mismatch"},
+		"FailureReason": {"exit_code", "oom_killed", "evicted", "node_lost", "job_missing", "attempt_lost", "create_failed", "image_pull", "invalid_image", "missing_config", "create_container", "start_timeout", "deadline_exceeded", "dbt_nothing_to_do", "invalid_node_type", "malformed_dispatch", "job_name_collision", "image_contract_mismatch", "seed_full_refresh_disabled", "unowned_dependents", "engine_mismatch", "seed_full_refresh_undefined", "full_refresh_undefined", "warehouse_unreachable"},
 	}
 }

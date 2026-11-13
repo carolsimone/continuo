@@ -11,7 +11,9 @@ import (
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -255,6 +257,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	if err != nil {
 		return err
 	}
+	notices, preflights := releaseNotices(d, r, topo, prod)
+	r.SetNotices(notices)
 
 	// Derive the validation build sets: candidate nodes rebuilt from their own
 	// SQL rather than cloned from production, split into the fix's own delta
@@ -334,7 +338,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// leg; validation.requested is emitted later, on seed.build.completed.
 	seedIDs := newChangedSeedIDs(topo, validationIDs, rebuiltFromCandidate)
 	if len(seedIDs) > 0 {
-		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, now)
+		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, preflights, now)
 	}
 
 	// No new/changed seeds: Part A path (validate directly).
@@ -495,7 +499,9 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFro
 // carrying the fields execution-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
 // seeds are built, not checked by the adapter; no upstreams: seeds are roots.
-func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
+// A seed with an entry in preflights also carries it as seed_preflight, the
+// check execution-controller runs against the warehouse before the seed loads.
+func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights map[string]*seedreload.Preflight) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -506,14 +512,18 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 		if !ok {
 			continue
 		}
-		out = append(out, map[string]any{
+		seed := map[string]any{
 			"unique_id":    n.UniqueID,
 			"service_name": n.ServiceName,
 			"node_type":    n.NodeType,
 			"schema_name":  n.SchemaName,
 			"table_name":   n.TableName,
 			"image_tag":    n.ImageTag,
-		})
+		}
+		if p := preflights[id]; p != nil {
+			seed["seed_preflight"] = events.SeedPreflightOf(p)
+		}
+		out = append(out, seed)
 	}
 	return out
 }
@@ -521,8 +531,10 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
 // reference to the candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
+// preflights holds the report preflight of each noticed seed.
 func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
-	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
+	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string,
+	preflights map[string]*seedreload.Preflight, now time.Time) error {
 
 	if err := r.TransitionToSeedBuilding(ref, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
@@ -537,7 +549,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		"mode":              "seed_build",
 		"candidate_schema":  candidateSchema,
 		"image_tags":        r.ImageTags(),
-		"seeds":             seedBuildNodesInOrder(topo, seedIDs),
+		"seeds":             seedBuildNodesInOrder(topo, seedIDs, preflights),
 		"seed_ids_in_order": seedIDs,
 	}
 	// A verification run carries the overlay of proposed source files; the
@@ -576,6 +588,19 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // and the promotion, as any other promotion does (the adapter observes no
 // validating sample for a zero-node validation).
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {
+	// A bootstrap reloads every changed seed on promotion, so it gets notices
+	// against the production it replaces. A rebaseline reloads none, so it
+	// needs no production topology for them.
+	var prod release.Topology
+	if !r.IsRebaseline() {
+		var err error
+		if prod, err = currentProdTopology(ctx, d, u); err != nil {
+			return err
+		}
+	}
+	notices, _ := releaseNotices(d, r, topo, prod)
+	r.SetNotices(notices)
+
 	// TransitionToValidating records the reference to the candidate topology
 	// artifact and satisfies promoteToProduction's Validating precondition; no
 	// nodes are submitted to validation.
@@ -598,6 +623,27 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, r.StageDuration(pipeline.StatusValidating))
 	recordTerminalTelemetry(ctx, d, r, len(topo))
 	return nil
+}
+
+// releaseNotices returns the seed reload notices of r against the production
+// topology prod, and the report-mode preflight of each noticed seed whose load
+// goes ahead. A verification run gets an empty list and an empty map, since it
+// never promotes. So does a rebaseline release: its promotion records every
+// seed as loaded at its new fingerprint and reloads none.
+func releaseNotices(d *Deps, r *pipeline.Run, candidate, prod release.Topology) ([]release.Notice, map[string]*seedreload.Preflight) {
+	if r.Kind() == pipeline.KindVerification {
+		d.Logger.Info("verification run: no seed reload notices", "release_id", r.ID())
+		return []release.Notice{}, map[string]*seedreload.Preflight{}
+	}
+	if r.IsRebaseline() {
+		d.Logger.Info("rebaseline release: no seed reload notices", "release_id", r.ID())
+		return []release.Notice{}, map[string]*seedreload.Preflight{}
+	}
+	notices, preflights := release.BuildNotices(candidate, prod, d.Family, d.Engine, r.IsBootstrap())
+	for _, n := range notices {
+		d.Logger.Info("seed reload notice", "release_id", r.ID(), "node_id", n.NodeID, "prediction", n.Prediction)
+	}
+	return notices, preflights
 }
 
 // validationNodesInOrder returns one map per validation node in lexical

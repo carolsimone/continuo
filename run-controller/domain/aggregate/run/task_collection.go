@@ -20,7 +20,7 @@ type TaskCollection interface {
 	// LoadAttemptState returns what an attempt report or a lease grant needs
 	// of one task: the run that holds it, its status, the attempt it is at,
 	// its retry budget, its node key, its identity (job name and node), its
-	// first dispatch time and its wait reason, locking the row FOR UPDATE so
+	// first dispatch time, its wait reason and its dispatch spec, locking the row FOR UPDATE so
 	// concurrent writers of the task serialize. The attempt is what the
 	// aggregate compares a report's attempt with: a report for the task's
 	// current attempt moves the task, one for an older attempt moves only
@@ -164,8 +164,8 @@ type TaskCollection interface {
 // TaskAttemptState is one task as an attempt report or a lease grant reads it:
 // the run that holds it, its status, the attempt it is at, its retry budget,
 // its node in the run's release, its identity (the job name and node it was
-// planned with), when it was first dispatched and what it waits for besides
-// its upstream tasks. NodeKey is empty on a task whose run names no release;
+// planned with), when it was first dispatched, what it waits for besides its
+// upstream tasks, and the spec every dispatch of it carries. NodeKey is empty on a task whose run names no release;
 // DispatchedAt is nil on a task that was never dispatched; WaitReason is empty
 // on a task that waits for nothing else.
 type TaskAttemptState struct {
@@ -180,6 +180,7 @@ type TaskAttemptState struct {
 	TableName    string
 	DispatchedAt *time.Time
 	WaitReason   WaitReason
+	Spec         DispatchSpec
 }
 
 // StopCounts is what BeginStop changed: the pending tasks it cancelled and the

@@ -149,6 +149,11 @@ func (u *PostgresUnitOfWork) Materializations() repository.MaterializationReposi
 	return NewMaterializationRepository(u.db, u.tx)
 }
 
+// ViewOutages returns a ViewOutageRepository bound to the current transaction.
+func (u *PostgresUnitOfWork) ViewOutages() repository.ViewOutageRepository {
+	return NewViewOutageRepository(u.db, u.tx)
+}
+
 // TaskGraph returns a TaskGraph of tenantID bound to the current transaction.
 func (u *PostgresUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 	return NewTaskGraph(u.tx, tenantID)

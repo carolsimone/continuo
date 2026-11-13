@@ -47,13 +47,18 @@ export default function RunSwimlane({
   // tasks, the service order and the collapse state; they are memoised so a
   // large DAG is laid out once per poll rather than on every render. Each
   // node's status and wait are read through one index of the tasks by node.
-  const { statusById, waitById, rollups, layout, pos } = useMemo(() => {
+  const { statusById, waitById, reasonById, rollups, layout, pos } = useMemo(() => {
     const taskByNode = tasksByNodeId(tasks);
     const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, taskByNode)]));
     const waitById = new Map<string, LeaseWait>();
+    // Each node's plan reason, from its task when the run's tasks hold it,
+    // else from the graph.
+    const reasonById = new Map<string, string>();
     for (const n of graph.nodes) {
       const wait = resolveNodeWait(n, taskByNode);
       if (wait) waitById.set(n.node_id, wait);
+      const reason = taskByNode.get(n.node_id)?.plan_reason ?? n.plan_reason;
+      if (reason) reasonById.set(n.node_id, reason);
     }
     const laneRollup = (service: string) => {
       const statuses = graph.nodes
@@ -71,7 +76,7 @@ export default function RunSwimlane({
     const nodeIds = graph.nodes.map((n) => n.node_id);
     const layout = buildSwimlaneLayout(nodeIds, graph.edges, serviceOrder, collapsed, { laneLeft });
     const pos = new Map(layout.nodes.map((n) => [n.nodeId, n]));
-    return { statusById, waitById, rollups, layout, pos };
+    return { statusById, waitById, reasonById, rollups, layout, pos };
   }, [graph, tasks, serviceOrder, collapsed]);
 
   return (
@@ -134,12 +139,14 @@ export default function RunSwimlane({
         {layout.nodes.map((n) => {
           const status = clsOf(statusById.get(n.nodeId)!);
           const wait = waitById.get(n.nodeId);
+          const reason = reasonById.get(n.nodeId);
+          const nodeTitle = reason ? `${n.nodeId} — ${reason}` : n.nodeId;
           if (collapsed.has(n.service)) {
             return (
               <div
                 key={n.nodeId}
                 className={`swim-cell ${status}`}
-                title={wait ? `${n.nodeId} — ${leaseWaitTitle(wait)}` : n.nodeId}
+                title={wait ? `${nodeTitle} — ${leaseWaitTitle(wait)}` : nodeTitle}
                 style={{ position: 'absolute', left: n.x, top: n.y }}
               />
             );
@@ -148,7 +155,7 @@ export default function RunSwimlane({
             <Fragment key={n.nodeId}>
               <div
                 className={`swim-node ${status}`}
-                title={n.nodeId}
+                title={nodeTitle}
                 style={{ position: 'absolute', left: n.x, top: n.y, width: NODE_W }}
               >
                 <span className={`swim-sd ${status}`} />

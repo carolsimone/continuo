@@ -46,6 +46,7 @@ global:
   agentRemediationGrpcAddr: agent-remediation:50054  # in-cluster gRPC address release-controller uses to read remediation attempts before starting a retry round
   agentChatGrpcAddr: agent-chat:50053
   deadLetterControllerGrpcAddr: dead-letter-controller:50055  # in-cluster gRPC address of dead-letter-controller's DeadLetterService (`continuo dlq`)
+  releaseControllerGrpcAddr: release-controller:50056  # in-cluster gRPC address of release-controller's ReleaseQuery (`continuo release notices`)
 
   # Pod-level shutdown budget (kubectl/kubelet SIGTERM-to-SIGKILL window) for
   # every Deployment. Each service also bounds its own graceful-shutdown
@@ -453,8 +454,8 @@ validation:
   # connection. See the fail message in _helpers.tpl `continuo.validation.image`.
   #
   # `engine` also reaches the control plane: it is published to every service as
-  # WAREHOUSE_ENGINE on the shared ConfigMap, and topology-controller uses it
-  # for two things. It picks the SQL dialect it parses dbt's compiled SQL with
+  # WAREHOUSE_ENGINE on the shared ConfigMap. topology-controller uses it for
+  # two things. It picks the SQL dialect it parses dbt's compiled SQL with
   # and re-renders the candidate SQL in. It also picks which relations are the
   # warehouse's own system relations: `information_schema` and the `pg_*`
   # schemas on postgres, `information_schema` and the `system` catalog on trino.
@@ -463,6 +464,15 @@ validation:
   # the validation runner executes, so the engine here must be the engine your
   # warehouse actually is — topology-controller refuses to start on an engine it
   # has no dialect or system relations for.
+  #
+  # Three more services read it. agent-remediation picks the SQL dialect it
+  # packages a proposed python-node fix under. run-controller and
+  # release-controller pick the engine family, which decides how a seed load
+  # that drops its table treats the views that read the table: on postgres
+  # (schema bound) the load stops before it drops an object continuo does not
+  # own, and on trino (late binding) it goes ahead and the views are checked
+  # afterwards. Each of the three refuses to start on an engine it has no rule
+  # for.
   engine: postgres
   # Tag of the continuo-python-runtime-<engine> image. That image ships from its
   # own repository (github.com/carolsimone/continuo-python-runtime) on its own
@@ -884,6 +894,7 @@ services:
       CONTINUO_RUN_CONTROLLER_ADDR: run-controller:50051
       CONTINUO_CATALOG_ADDR: catalog:50052
       CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__  # rendered from global.deadLetterControllerGrpcAddr
+      CONTINUO_RELEASE_CONTROLLER_ADDR: __RELEASE_CONTROLLER_ADDR__  # rendered from global.releaseControllerGrpcAddr
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
       CHAT_MAX_CONCURRENT_SESSIONS: "100"
@@ -1015,6 +1026,7 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8088
+    grpcPort: 50056
     # readiness → /healthz (workers + heartbeats + dependency probes; a Redis/
     # Postgres outage stops traffic); liveness → /livez (workers + heartbeats
     # ONLY; a dependency outage must not restart a pod whose consumers are
@@ -1029,6 +1041,7 @@ services:
     env:
       POSTGRES_DB: continuo_release
       RELEASE_CONTROLLER_HTTP_PORT: "8088"
+      RELEASE_CONTROLLER_GRPC_PORT: "50056"
 
   - name: remediation
     enabled: true

@@ -11,6 +11,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/events"
@@ -310,7 +311,7 @@ func (f statusFlow) reportTo(t *testing.T, rep run.AttemptReport, beforeCommit f
 	u := newPlanningUoW(f.db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
+	require.NoError(t, handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, discardLogger()).Handle(ctx, u,
 		events.AttemptReported{TenantID: f.tenant, RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	beforeCommit()
 	require.NoError(t, u.Commit())
@@ -421,7 +422,7 @@ func reportThrough(ctx context.Context, db *sqlx.DB, gate *leaseWriteGate, tenan
 		return err
 	}
 	defer func() { _ = u.Rollback() }()
-	if err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
+	if err := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, discardLogger()).Handle(ctx,
 		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{TenantID: tenant, RunID: runID, Report: rep}, uuid.Nil); err != nil {
 		return err
 	}
