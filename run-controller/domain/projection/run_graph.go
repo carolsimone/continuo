@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 )
 
@@ -28,6 +29,12 @@ type RunGraphNode struct {
 	// write, read from the node's lease when the graph is read; nil when the
 	// task waits for no lease or no task holds its node.
 	WaitingOnRunID *uuid.UUID
+	// Operation is what the task does; model.OperationRun, the empty
+	// operation, for a task that runs its node. PlanReason is why the planner
+	// gave the task its operation or added it to the run; empty for an
+	// ordinary task.
+	Operation  model.Operation
+	PlanReason string
 }
 
 // RunGraphEdge is one dependency between two tasks of a run, read from the
@@ -48,16 +55,21 @@ type RunGraph struct {
 	LatestPromotionSeq int64
 }
 
-// RunSummary is one completed run of a schedule.
+// RunSummary is one run in a run list: a completed run of a schedule, or any
+// run of a release.
 type RunSummary struct {
-	RunID          uuid.UUID
-	ScheduleName   string
-	TerminalStatus run.RunStatus
+	RunID        uuid.UUID
+	ScheduleName string
+	Kind         run.Kind
+	Status       run.RunStatus
+	// ReleaseID is the release the run executes on; empty when it names none.
+	ReleaseID string
 	// FailureReason is why the run failed when no task of it failed; empty
 	// otherwise.
 	FailureReason run.RunFailureReason
 	CreatedAt     time.Time
-	CompletedAt   time.Time
+	// CompletedAt is nil while the run is active.
+	CompletedAt *time.Time
 }
 
 // ActiveRunDrift is the newest active run of a schedule and the promotion seq

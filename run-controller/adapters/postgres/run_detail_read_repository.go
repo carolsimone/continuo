@@ -103,6 +103,8 @@ func taskDetailOf(row *TaskRow) projection.TaskDetail {
 		CancelledAt:    row.CancelledAt,
 		WaitingSince:   row.LeaseWaitSince,
 		WaitingOnRunID: row.WaitingOnRunID,
+		Operation:      operationFromColumn(row.Operation),
+		PlanReason:     row.PlanReason,
 	}
 	if row.CancelledBy != nil {
 		d.CancelledBy = *row.CancelledBy

@@ -97,7 +97,7 @@ func (r *nodeRunRepository) List(
 			SELECT DISTINCT ON (a.task_id)
 			       a.task_id, a.started_at, a.finished_at AS completed_at,
 			       a.error_message, a.log_s3_key, a.run_results_uri,
-			       a.failure_class, a.failure_reason
+			       a.failure_class, a.failure_reason, a.seed_preflight_findings
 			FROM task_attempts a
 			JOIN target_tasks tt ON a.tenant_id = $6 AND tt.task_id = a.task_id
 			ORDER BY a.task_id, a.attempt DESC
@@ -118,6 +118,7 @@ func (r *nodeRunRepository) List(
 		       le.run_results_uri   AS run_results_uri,
 		       le.failure_class     AS failure_class,
 		       le.failure_reason    AS failure_reason,
+		       le.seed_preflight_findings AS seed_preflight_findings,
 		       tt.operation         AS operation,
 		       COALESCE(n.content_hash, '') AS content_hash,
 		       COALESCE(tt.wait_reason, '') AS wait_reason,
@@ -147,7 +148,11 @@ func (r *nodeRunRepository) List(
 	}
 	out := make([]*projection.NodeRun, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toNodeRun(row))
+		nr, err := toNodeRun(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list node runs: %w", err)
+		}
+		out = append(out, nr)
 	}
 	return out, nil
 }
@@ -172,6 +177,7 @@ type nodeRunRow struct {
 	RunResultsURI  *string        `db:"run_results_uri"`
 	FailureClass   *string        `db:"failure_class"`
 	FailureReason  *string        `db:"failure_reason"`
+	SeedFindings   *string        `db:"seed_preflight_findings"`
 	Operation      string         `db:"operation"`
 	ContentHash    string         `db:"content_hash"`
 	WaitReason     string         `db:"wait_reason"`
@@ -179,30 +185,46 @@ type nodeRunRow struct {
 	WaitingOnRunID *uuid.UUID     `db:"waiting_on_run_id"`
 }
 
-func toNodeRun(row nodeRunRow) *projection.NodeRun {
-	return &projection.NodeRun{
-		ScheduleID:     row.ScheduleID,
-		ScheduleName:   row.ScheduleName,
-		Kind:           row.Kind,
-		TerminalStatus: row.TerminalStatus,
-		TaskID:         row.TaskID,
-		TaskStatus:     row.TaskStatus,
-		Attempt:        row.Attempt,
-		ImageTag:       row.ImageTag,
-		CreatedAt:      row.CreatedAt,
-		StartedAt:      row.StartedAt,
-		CompletedAt:    row.CompletedAt,
-		ErrorMessage:   row.ErrorMessage,
-		LogS3Key:       row.LogS3Key,
-		RunResultsURI:  row.RunResultsURI,
-		FailureClass:   row.FailureClass,
-		FailureReason:  row.FailureReason,
-		Operation:      row.Operation,
-		ContentHash:    row.ContentHash,
-		WaitReason:     run.WaitReason(row.WaitReason),
-		WaitingSince:   row.WaitingSince,
-		WaitingOnRunID: row.WaitingOnRunID,
+// toNodeRun maps a scanned row. A seed task whose latest attempt failed
+// unowned_dependents lists the dependents the attempt's preflight found and did
+// not allow as its blocking objects.
+func toNodeRun(row nodeRunRow) (*projection.NodeRun, error) {
+	var blocking []string
+	if row.FailureReason != nil && *row.FailureReason == string(model.FailureReasonUnownedDependents) {
+		findings, err := seedPreflightFindingsFromColumn(row.SeedFindings)
+		if err != nil {
+			return nil, fmt.Errorf("task %s: %w", row.TaskID, err)
+		}
+		if findings != nil {
+			for _, d := range findings.Outside() {
+				blocking = append(blocking, d.Object())
+			}
+		}
 	}
+	return &projection.NodeRun{
+		ScheduleID:      row.ScheduleID,
+		ScheduleName:    row.ScheduleName,
+		Kind:            row.Kind,
+		TerminalStatus:  row.TerminalStatus,
+		TaskID:          row.TaskID,
+		TaskStatus:      row.TaskStatus,
+		Attempt:         row.Attempt,
+		ImageTag:        row.ImageTag,
+		CreatedAt:       row.CreatedAt,
+		StartedAt:       row.StartedAt,
+		CompletedAt:     row.CompletedAt,
+		ErrorMessage:    row.ErrorMessage,
+		LogS3Key:        row.LogS3Key,
+		RunResultsURI:   row.RunResultsURI,
+		FailureClass:    row.FailureClass,
+		FailureReason:   row.FailureReason,
+		Operation:       row.Operation,
+		ContentHash:     row.ContentHash,
+		WaitReason:      run.WaitReason(row.WaitReason),
+		WaitingSince:    row.WaitingSince,
+		WaitingOnRunID:  row.WaitingOnRunID,
+		BlockingObjects: blocking,
+	}, nil
 }
 
 type nodeSummaryRow struct {

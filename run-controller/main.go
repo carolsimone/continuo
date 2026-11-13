@@ -485,7 +485,7 @@ func main() {
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:           runreads.NewRunDetails(runRepo, postgres.NewTaskReadRepository(taskCollection)),
 		Attempts:       runreads.NewAttempts(taskAttemptReadRepo),
-		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
+		Nodes:          runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), postgres.NewViewOutageRepository(db, nil), taskDefaults.Timeout),
 		Graphs:         runreads.New(runReadRepo),
 		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 		Rebases:        runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo),

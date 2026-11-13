@@ -9,6 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// ViewOutageReader reads the open outage of a tenant's node.
+type ViewOutageReader interface {
+	// Get returns the node's open outage; found is false when it has none.
+	Get(ctx context.Context, tenantID string, key topology.NodeKey) (seeds.ViewOutage, bool, error)
+}
+
 // ViewOutageRepository records, per tenant and node, the views a seed load
 // left missing or stale, from the commit of that load until a task of the view
 // succeeds.
@@ -24,8 +30,7 @@ type ViewOutageRepository interface {
 	// when the node has none.
 	Close(ctx context.Context, tenantID string, key topology.NodeKey) (since time.Time, found bool, err error)
 
-	// Get returns the node's open outage; found is false when it has none.
-	Get(ctx context.Context, tenantID string, key topology.NodeKey) (seeds.ViewOutage, bool, error)
+	ViewOutageReader
 
 	// CountByState counts the open outages of every tenant by state; a state
 	// with none is absent.

@@ -410,6 +410,13 @@ message Task {
   string wait_reason = 13;                      // node_lease while the task waits for another run to release its node; empty otherwise
   string waiting_on_run_id = 14;                // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
   google.protobuf.Timestamp waiting_since = 15; // when the task began waiting for wait_reason; unset when it has none
+  // operation is what the task does: run | test | build | full_refresh. A seed
+  // reload can give a task an operation other than its run's.
+  string operation = 16;
+  // plan_reason is why the planner gave the task its operation or added it to the
+  // run, for example a seed's load reason or the seed a view rebuilds after. It
+  // is empty for an ordinary task.
+  string plan_reason = 17;
 }
 
 // TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
@@ -432,6 +439,43 @@ message TaskAttempt {
   string error_message = 13;                      // empty when none
   string log_s3_key = 14;                         // S3 object key of the pod log; empty when none
   string run_results_uri = 15;                    // S3 object key of the structured result block; empty when none
+  // seed_preflight is what the attempt's seed preflight found in the warehouse;
+  // unset when the attempt ran no preflight.
+  SeedPreflightFindings seed_preflight = 16;
+}
+
+// SeedPreflightFindings is what a seed's preflight found in the warehouse before
+// the seed's load.
+message SeedPreflightFindings {
+  // drop_semantics is how the engine treats a drop of a table that views read.
+  string drop_semantics = 1;
+  // completeness says whether the dependents listed are all there are.
+  string completeness = 2;
+  // checked is true when the preflight ran to the end.
+  bool checked = 3;
+  // dependents are the objects that depend on the seed's table.
+  repeated PreflightDependent dependents = 4;
+  // probes are the answers of the probe of each view the run rebuilt; empty when
+  // no probe ran.
+  repeated ViewProbe probes = 5;
+}
+
+// PreflightDependent is one object in the warehouse that depends on a seed's table.
+message PreflightDependent {
+  string schema = 1;
+  string name = 2;
+  string kind = 3;    // the kind of object, as the warehouse names it
+  string owner = 4;   // the warehouse role that owns the object
+  int32 depth = 5;    // the number of objects between the seed's table and this one
+  bool allowed = 6;   // true when the run rebuilds the object or an operator named it
+}
+
+// ViewProbe is the answer of one view's probe after a rebuild.
+message ViewProbe {
+  string schema = 1;
+  string name = 2;
+  bool ok = 3;        // true when the view answered
+  string error = 4;   // the warehouse's error when it did not; empty otherwise
 }
 
 // Schedule is the cron of one schedule, as stored.
@@ -484,6 +528,10 @@ message TriggerSingleNodeRunRequest {
   // operation is "" | "run" | "test" | "build" | "full_refresh"; empty means
   // run. full_refresh rebuilds a dbt model or seed from scratch.
   string operation = 7;
+  // acknowledged_dependents are the "<schema>.<name>" of the warehouse objects an
+  // operator accepts the seed's load dropping or leaving stale. Only a seed's
+  // full_refresh reads it.
+  repeated string acknowledged_dependents = 8;
 }
 
 message TriggerSingleNodeRunResponse {
@@ -560,18 +608,29 @@ message RunResponse {
 }
 
 message ListRunsRequest {
-  string schedule_name = 1;  // Required
+  // schedule_name lists the completed runs of the schedule. Exactly one of
+  // schedule_name and release_id is required.
+  string schedule_name = 1;
   int32 page_size = 2;
   int32 page_offset = 3;
+  // release_id lists every run of the release, of any status. Exactly one of
+  // schedule_name and release_id is required.
+  string release_id = 4;
+  // kind, read with release_id, keeps only the runs of that kind: cron | trigger |
+  // rerun | rebase | single_node_run | promote_seed. Empty keeps every kind. A
+  // value that is not a run kind is refused whichever list is asked for.
+  string kind = 5;
 }
 
 message RunSummary {
   string run_id = 1;
   string schedule_name = 2;
-  string status = 3;          // succeeded | failed | cancelled | skipped
+  string status = 3;          // a run_status value; a schedule's list holds only completed runs
   string created_at = 4;      // RFC3339, UTC, seconds
-  string completed_at = 5;    // RFC3339, UTC, seconds
+  string completed_at = 5;    // RFC3339, UTC, seconds; empty while the run is active
   string failure_reason = 6;  // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
+  string kind = 7;            // cron | trigger | rerun | rebase | single_node_run | promote_seed
+  string release_id = 8;      // the release the run executes on; empty when it names none
 }
 
 message ListRunsResponse {
@@ -627,6 +686,8 @@ message RunGraphNode {
   string wait_reason = 8;        // node_lease while the task waits for another run to release its node; empty otherwise
   string waiting_on_run_id = 9;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
   string waiting_since = 10;     // RFC3339, when the task began waiting for wait_reason; empty when it has none
+  string operation = 11;         // what the task does: run | test | build | full_refresh
+  string plan_reason = 12;       // why the planner gave the task its operation or added it; empty for an ordinary task
 }
 
 message RunGraphEdge {
@@ -659,6 +720,18 @@ message ListNodeTasksRequest {
 
 message ListNodeTasksResponse {
   repeated NodeTask tasks = 1;
+  // outage is the open outage of the node, a view a seed load left missing or
+  // stale; unset when the node has none.
+  ViewOutage outage = 2;
+}
+
+// ViewOutage is a view a seed load left missing or stale, until a task of the
+// view succeeds.
+message ViewOutage {
+  string state = 1;         // missing | stale
+  string since = 2;         // RFC3339, when the load left the view so
+  string seed_node_id = 3;  // the seed whose load did it, "schema.table"
+  string run_id = 4;        // the run of that load
 }
 
 // NodeTask is one task of a node, with the run it belongs to.
@@ -684,6 +757,10 @@ message NodeTask {
   string wait_reason = 19;        // node_lease while the task waits for another run to release its node; empty otherwise
   string waiting_on_run_id = 20;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
   string waiting_since = 21;      // RFC3339, when the task began waiting for wait_reason; empty when it has none
+  // blocking_objects are the "schema.name" of each dependent of the seed that its
+  // preflight did not allow, on a seed task whose latest attempt failed
+  // unowned_dependents; empty otherwise.
+  repeated string blocking_objects = 22;
 }
 
 message ListNodesRequest {

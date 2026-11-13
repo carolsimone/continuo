@@ -159,7 +159,7 @@ func runTests(m *testing.M) int {
 	runService := runservice.NewServer(runservice.Reads{
 		Runs:     runreads.NewRunDetails(schedulerRepo, postgres.NewTaskReadRepository(taskRepo)),
 		Attempts: runreads.NewAttempts(attemptRepo),
-		Nodes:    runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), 24*time.Hour),
+		Nodes:    runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), postgres.NewViewOutageRepository(db, nil), 24*time.Hour),
 		Graphs:   runreads.New(runReadRepo),
 		Rebases:  runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo),
 	}, runCommands, scheduleService, logger)
