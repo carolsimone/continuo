@@ -17,10 +17,10 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
-// stepTimeout bounds one step of a drive: what runs between two commits, such
-// as a model call, a pre-flight pass or a gate submission. A step that runs
-// longer is stopped and counted as a failure.
-const stepTimeout = 10 * time.Minute
+// DefaultStepTimeout bounds one step of a drive: what runs between two commits,
+// such as a model call, a pre-flight pass or a gate submission. A step that
+// runs longer is stopped and counted as a failure.
+const DefaultStepTimeout = 10 * time.Minute
 
 // errStepTimeout is the cause of the context a step runs in once it ran past
 // its limit, which tells that end of the context from the end of the drive.
@@ -115,7 +115,13 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		if run.snap.Try == nil || run.snap.Try.Status == remediation.TryFailed {
-			if err := r.openTry(ctx, run); err != nil {
+			sctx, cancel := r.stepContext(ctx)
+			err := r.openTry(sctx, run)
+			if stepTimedOut(sctx) && err != nil {
+				err = fmt.Errorf("the step ran longer than %s and was stopped: %w", r.stepLimit(), err)
+			}
+			cancel()
+			if err != nil {
 				return err
 			}
 			continue
@@ -149,7 +155,7 @@ func (r *Runner) stepLimit() time.Duration {
 	if r.d.StepTimeout > 0 {
 		return r.d.StepTimeout
 	}
-	return stepTimeout
+	return DefaultStepTimeout
 }
 
 // stepContext is the context one step runs in: ctx, ended after the step's

@@ -230,7 +230,7 @@ func TestWorker_EndsARemediationWhoseDriveFailedAndCanGoNoFurther(t *testing.T) 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	for _, d := range repo.holds {
-		assert.NotEqual(t, parkDuration, d, "an ended remediation is not parked")
+		assert.NotEqual(t, ParkDuration, d, "an ended remediation is not parked")
 	}
 }
 
@@ -243,12 +243,12 @@ func TestWorker_ParksARemediationWhoseDriveFailed(t *testing.T) {
 	runUntil(t, w, func() bool {
 		repo.mu.Lock()
 		defer repo.mu.Unlock()
-		return slices.Contains(repo.holds, parkDuration)
+		return slices.Contains(repo.holds, ParkDuration)
 	})
 
 	_, released := repo.snapshot()
 	assert.Zero(t, released, "a parked remediation keeps its lease")
-	assert.Equal(t, 2*time.Minute, parkDuration)
+	assert.Equal(t, 2*time.Minute, ParkDuration)
 }
 
 // A failed drive is parked as well when the check itself failed.
@@ -259,7 +259,7 @@ func TestWorker_ParksARemediationWhenTheStuckCheckFails(t *testing.T) {
 	runUntil(t, w, func() bool {
 		repo.mu.Lock()
 		defer repo.mu.Unlock()
-		return slices.Contains(repo.holds, parkDuration)
+		return slices.Contains(repo.holds, ParkDuration)
 	})
 }
 

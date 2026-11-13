@@ -164,7 +164,14 @@ func TestWorker_EndsARemediationWhoseStepKeepsFailing(t *testing.T) {
 		w.Wake()
 		require.Eventually(t, func() bool { return h.promptFailures(id) == failures }, 10*time.Second, 5*time.Millisecond, "failure %d", failures)
 		if failures < failureLimit {
-			require.Eventually(t, func() bool { return h.remediation(id).LeaseOwner == "worker-a" }, 5*time.Second, 5*time.Millisecond)
+			// The worker owns the lease from its claim on, so the park is what
+			// is waited for: the lease ends two minutes from now. The clock moves
+			// only after that, or the park would be measured from the new time.
+			parkedUntil := h.clock.Now().Add(2 * time.Minute)
+			require.Eventually(t, func() bool {
+				rem := h.remediation(id)
+				return rem.LeaseUntil != nil && rem.LeaseUntil.Equal(parkedUntil)
+			}, 5*time.Second, 5*time.Millisecond, "failure %d is parked", failures)
 			assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "failure %d is not the last", failures)
 			// The parked lease ends two minutes on.
 			h.clock.set(h.clock.Now().Add(3 * time.Minute))
@@ -317,4 +324,21 @@ func TestRunner_ALegacyRowLeftGeneratingIsSettledWhenTheAttemptFails(t *testing.
 	require.Len(t, h.proposals(), 1)
 	assert.Equal(t, proposal.StatusFailed, h.proposals()[0].Proposal.Status)
 	assert.Equal(t, id.String(), h.proposals()[0].Proposal.RemediationID)
+}
+
+// The step that opens a try, and the hand-over that ends the remediation when
+// its tries are spent, run under the step limit too.
+func TestRunner_OpeningATryRunsUnderTheStepLimit(t *testing.T) {
+	h := newHarness(t, withStepTimeout(50*time.Millisecond))
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	h.blockBeginUnderADeadline.Store(true)
+
+	start := time.Now()
+	err := h.runner.Drive(ctx, id)
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.Contains(t, err.Error(), "ran longer than 50ms")
+	assert.Empty(t, h.store.Tries(id), "nothing was written")
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 }

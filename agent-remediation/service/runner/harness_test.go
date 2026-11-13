@@ -415,6 +415,9 @@ type harness struct {
 
 	// afterCommit runs after every unit of work of the runner commits.
 	afterCommit func()
+	// blockBeginUnderADeadline makes a transaction that begins in a context with
+	// a deadline wait until the context ends, as a database that hangs does.
+	blockBeginUnderADeadline atomic.Bool
 	// phaseWrites counts the runner's UpdateVerificationPhase calls.
 	phaseWrites atomic.Int64
 }
@@ -427,6 +430,14 @@ const verificationTimeout = 20 * time.Minute
 type hookedUoW struct {
 	uow.UnitOfWork
 	h *harness
+}
+
+func (u hookedUoW) Begin(ctx context.Context) error {
+	if _, ok := ctx.Deadline(); ok && u.h.blockBeginUnderADeadline.Load() {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return u.UnitOfWork.Begin(ctx)
 }
 
 func (u hookedUoW) Commit() error {

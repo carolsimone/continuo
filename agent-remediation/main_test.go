@@ -139,30 +139,25 @@ func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID
 	return nil, nil
 }
 
-// TestMain_RunnerLoopsStartInLegacyMode: the loops buildRunner returns, the
-// worker, the gate poller and the sweeper, each do their work with either
-// engine, so a remediation the runner started finishes whichever engine runs
+// TestMain_RunnerLoopsStartInLegacyMode: startRunner, which main calls with its
+// lifecycle's Go, starts the worker, the gate poller and the sweeper, and each
+// does its work with either engine, so a remediation the runner started finishes whichever engine runs
 // now.
 func TestMain_RunnerLoopsStartInLegacyMode(t *testing.T) {
 	for _, engine := range []string{config.EngineLegacy, config.EngineRunner} {
 		t.Run(engine, func(t *testing.T) {
 			repo := &spyRepo{}
 			cfg := config.Config{Engine: engine, VerificationPollInterval: time.Hour}
-			loops, accept := buildRunner(cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+			ctx, cancel := context.WithCancel(context.Background())
+			var wg sync.WaitGroup
+			accept := startRunner(ctx, cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
 				newUoW: func() uow.UnitOfWork { return nil },
 				repo:   func() repository.RemediationRepository { return repo },
 				owner:  "host:1",
 				live:   liveness.NewRegistry(),
 				logger: discardLogger(),
-			})
+			}, func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() })
 			require.NotNil(t, accept)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			var wg sync.WaitGroup
-			for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
-				wg.Add(1)
-				go func() { defer wg.Done(); l.Run(ctx) }()
-			}
 			defer func() { cancel(); wg.Wait() }()
 
 			assert.Eventually(t, func() bool { return repo.claims.Load() > 0 }, 5*time.Second, time.Millisecond, "worker")
@@ -299,4 +294,26 @@ func TestMain_RunnerCollaboratorsAreTheFixerServicesWithoutTheModel(t *testing.T
 	}, nil)
 	assert.Same(t, logger, collab.Logger)
 	assert.Equal(t, paths, collab.ServiceRepoPaths, "the install's configuration wins")
+}
+
+// The liveness budgets cover what each loop does between two beats: a worker
+// one step and a park, a poller one poll and the wait between two passes. A
+// poll interval of any length keeps the probe healthy between passes.
+func TestMain_LoopBudgetsCoverTheLongestSilence(t *testing.T) {
+	for _, interval := range []time.Duration{15 * time.Second, 5 * time.Minute, time.Hour} {
+		worker, poller := loopBudgets(config.Config{VerificationPollInterval: interval})
+		assert.GreaterOrEqual(t, worker, runner.DefaultStepTimeout+runner.ParkDuration, "worker, interval %s", interval)
+		assert.GreaterOrEqual(t, poller, interval+runner.DefaultStepTimeout, "poller, interval %s", interval)
+	}
+}
+
+// A poller registered for a one hour poll interval is not reported wedged
+// after the five minutes a fixed budget would have allowed.
+func TestMain_APollerWithALongIntervalStaysHealthyBetweenPasses(t *testing.T) {
+	_, budget := loopBudgets(config.Config{VerificationPollInterval: time.Hour})
+	h := &loopHealth{}
+	h.last.Store(time.Now().Add(-time.Hour).UnixNano())
+	assert.NoError(t, h.healthy(budget))
+	h.last.Store(time.Now().Add(-budget - time.Minute).UnixNano())
+	assert.Error(t, h.healthy(budget))
 }

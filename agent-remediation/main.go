@@ -350,17 +350,14 @@ func main() {
 		os.Exit(1)
 	}
 	remediationRepo := postgres.NewRemediationRepository(db)
-	loops, accept := buildRunner(cfg, collab, files, runnerWiring{
+	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
 		llm:    cachedLLM,
 		newUoW: newUoW,
 		repo:   func() repository.RemediationRepository { return remediationRepo },
 		owner:  leaseOwner(hostName(), os.Getpid()),
 		live:   liveReg,
 		logger: logger,
-	})
-	lifecycleManager.Go(func() { loops.worker.Run(ctx) })
-	lifecycleManager.Go(func() { loops.poller.Run(ctx) })
-	lifecycleManager.Go(func() { loops.sweeper.Run(ctx) })
+	}, lifecycleManager.Go)
 
 	// The outbox relay wakes on the notification a committed insert into its
 	// table sends.
@@ -528,14 +525,37 @@ type runnerWiring struct {
 	logger *slog.Logger
 }
 
-// loopLivenessBudget is how long the worker or the poller may go without
-// beating before it is reported wedged. A worker beats at every claim and every
-// third of a lease while it drives, and a poller at every pass and every
-// remediation it polls.
-const loopLivenessBudget = 5 * time.Minute
+// loopLivenessSlack is added to the longest a loop can go between two beats
+// before it is reported wedged.
+const loopLivenessSlack = time.Minute
+
+// loopBudgets are how long the worker and the poller may go without beating
+// before they are reported wedged. A worker beats at every claim and every
+// third of a lease while it drives, so it can be silent for one step and the
+// park of a remediation whose drive failed. A poller beats at every pass and
+// every remediation it polls, so it can be silent for one poll of a gate and
+// the wait between two passes, which VERIFICATION_POLL_INTERVAL sets.
+func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
+	worker = runner.DefaultStepTimeout + runner.ParkDuration + loopLivenessSlack
+	poller = cfg.VerificationPollInterval + runner.DefaultStepTimeout + loopLivenessSlack
+	return worker, poller
+}
+
+// startRunner builds the runner, starts its three loops with spawn and returns
+// the function that accepts a heal trigger as a remediation. The loops start
+// with either engine: the engine only decides what the consumer does with a new
+// trigger, and a remediation the runner started finishes whichever engine runs
+// now.
+func startRunner(ctx context.Context, cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring, spawn func(func())) func(context.Context, runner.Accepted) error {
+	loops, accept := buildRunner(cfg, collab, files, w)
+	for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
+		spawn(func() { l.Run(ctx) })
+	}
+	return accept
+}
 
 // buildRunner builds the runner, its three loops and the function that accepts a
-// heal trigger as a remediation. The loops are the same for both engines. The
+// heal trigger as a remediation. The
 // worker and the poller are registered with the liveness registry: each beats
 // as it works, and a loop that stops, or stops beating, fails the pod's
 // probes. The sweeper takes its own lease name, so a worker and the sweeper of
@@ -545,8 +565,9 @@ func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.
 	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
 	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.VerificationPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
 	sweeper := runner.NewSweeper(w.newUoW, w.repo, w.owner+"/sweeper", ports.SystemClock{}, w.logger)
-	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker"))
-	poller.SetHeartbeat(registerLoop(w.live, "remediation_gate_poller"))
+	workerBudget, pollerBudget := loopBudgets(cfg)
+	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker", workerBudget))
+	poller.SetHeartbeat(registerLoop(w.live, "remediation_gate_poller", pollerBudget))
 	w.logger.Info("remediation runner built", "engine", cfg.Engine, "owner", w.owner)
 	// A trigger the runner accepts wakes the worker, which would otherwise find
 	// it at its next look.
@@ -563,14 +584,14 @@ func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.
 }
 
 // registerLoop registers a background loop with the liveness registry, as a
-// stream consumer is, and returns the function the loop calls to show it is
+// stream consumer is, with the longest it may go without beating, and returns the function the loop calls to show it is
 // working.
-func registerLoop(live *liveness.Registry, name string) func() {
+func registerLoop(live *liveness.Registry, name string, budget time.Duration) func() {
 	h := &loopHealth{}
 	h.beat()
 	live.RegisterWorker(name)
 	live.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-		return h.healthy(loopLivenessBudget)
+		return h.healthy(budget)
 	})
 	return h.beat
 }

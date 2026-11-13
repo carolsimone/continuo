@@ -17,12 +17,12 @@ const (
 	// workerIdleWait is how long a worker with nothing to claim waits before it
 	// looks again, unless it is woken.
 	workerIdleWait = 2 * time.Second
-	// parkDuration is how long a remediation whose drive ended in an error is
+	// ParkDuration is how long a remediation whose drive ended in an error is
 	// kept from every worker: the worker holds its lease that long instead of
 	// letting it go. The failures a step counts are what end a remediation, so
 	// a failing step must not use them up in a burst, and the oldest
 	// remediation must not be claimed again at once.
-	parkDuration = 2 * time.Minute
+	ParkDuration = 2 * time.Minute
 	// releaseTimeout bounds the call that lets go of a lease, which runs even
 	// when the worker is shutting down.
 	releaseTimeout = 5 * time.Second
@@ -158,7 +158,7 @@ func (w *Worker) driveClaimed(ctx context.Context, id uuid.UUID) error {
 		w.release(rctx, id)
 		return err
 	}
-	if perr := w.repo().Hold(rctx, id, w.owner, w.clock.Now(), parkDuration); perr != nil {
+	if perr := w.repo().Hold(rctx, id, w.owner, w.clock.Now(), ParkDuration); perr != nil {
 		w.logger.Warn("could not park a failed remediation", "remediation", id, "error", perr)
 	}
 	return err
