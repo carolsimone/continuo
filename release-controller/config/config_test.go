@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,4 +126,26 @@ func TestLoad_ReadsTheRedisPasswordFile(t *testing.T) {
 	v = &pkgconfig.Validator{}
 	Load(v)
 	assert.Contains(t, v.Missing(), "REDIS_PASSWORD")
+}
+
+// release-controller predicts seed reloads by the warehouse family of
+// WAREHOUSE_ENGINE, and refuses to start on an engine it has no family for.
+func TestLoad_WarehouseFamily(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "trino")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Equal(t, "trino", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.LateBinding, cfg.WarehouseFamily)
+	assert.NotContains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE")
+
+	t.Setenv("WAREHOUSE_ENGINE", "")
+	cfg = Load(&pkgconfig.Validator{})
+	assert.Equal(t, "postgres", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.SchemaBound, cfg.WarehouseFamily)
+
+	t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+	v = &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE (unsupported")
 }

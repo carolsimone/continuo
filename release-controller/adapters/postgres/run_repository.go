@@ -51,7 +51,7 @@ const runColumns = `run_id, run_kind, status, image_tags, changed_service,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
 	verifies_release_id, attempt, source_overlay_uri,
 	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
-	rebaseline`
+	rebaseline, notices`
 
 const activeStatuses = `('compiling','parsing','seed_building','validating')`
 
@@ -83,6 +83,7 @@ type runRow struct {
 	CandidateTopologySHA256 sql.NullString `db:"candidate_topology_sha256"`
 	CandidateNodeCount      sql.NullInt32  `db:"candidate_node_count"`
 	Rebaseline              bool           `db:"rebaseline"`
+	Notices                 []byte         `db:"notices"`
 }
 
 func (r *RunRepository) getOne(ctx context.Context, where string, args ...any) (*pipeline.Run, error) {
@@ -159,7 +160,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	// beforehand.
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		 ON CONFLICT (run_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -174,7 +175,8 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		   rejection_payload = EXCLUDED.rejection_payload,
 		   candidate_topology_uri = EXCLUDED.candidate_topology_uri,
 		   candidate_topology_sha256 = EXCLUDED.candidate_topology_sha256,
-		   candidate_node_count = EXCLUDED.candidate_node_count
+		   candidate_node_count = EXCLUDED.candidate_node_count,
+		   notices = EXCLUDED.notices
 		 WHERE release_pipeline_runs.run_kind = EXCLUDED.run_kind`,
 		args...)
 	if err != nil {
@@ -198,7 +200,7 @@ func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, er
 	}
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		 ON CONFLICT (run_id) DO NOTHING`,
 		args...)
 	if err != nil {
@@ -225,6 +227,10 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal per_node_results: %w", err)
 	}
+	noticesJSON, err := json.Marshal(serialization.NoticesFromDomain(run.Notices()))
+	if err != nil {
+		return nil, fmt.Errorf("marshal notices: %w", err)
+	}
 	failReason := sql.NullString{String: run.FailReason(), Valid: run.FailReason() != ""}
 	// A nil payload must round-trip as SQL NULL, not an empty jsonb value.
 	var rejectionPayload []byte
@@ -246,7 +252,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
 		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
-		topologyURI, topologySHA256, nodeCount, run.IsRebaseline(),
+		topologyURI, topologySHA256, nodeCount, run.IsRebaseline(), noticesJSON,
 	}, nil
 }
 
@@ -273,6 +279,14 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		}
 		transitions = serialization.TransitionsToDomain(transitionsDTO)
 	}
+	var notices []release.Notice
+	if len(row.Notices) > 0 {
+		var noticesDTO []serialization.NoticeDTO
+		if err := json.Unmarshal(row.Notices, &noticesDTO); err != nil {
+			return nil, fmt.Errorf("unmarshal notices: %w", err)
+		}
+		notices = serialization.NoticesToDomain(noticesDTO)
+	}
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:             row.RunID,
 		Kind:           pipeline.Kind(row.RunKind),
@@ -293,6 +307,7 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		CodeBundleURI:     row.CodeBundleURI,
 		CreatedAt:         row.CreatedAt.Time,
 		Transitions:       transitions,
+		Notices:           notices,
 		Bootstrap:         row.Bootstrap,
 		Rebaseline:        row.Rebaseline,
 		Repo:              row.Repo,

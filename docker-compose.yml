@@ -318,6 +318,9 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AGENT_REMEDIATION_GRPC_ADDR=agent-remediation:50054
       - MAINTENANCE_ENABLED=false
+      # The warehouse engine each release's seed reload notices predict for;
+      # mirrors the chart's validation.engine.
+      - WAREHOUSE_ENGINE=postgres
     ports:
       - "8088:8088"
     networks:

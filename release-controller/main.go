@@ -205,6 +205,9 @@ func main() {
 		Maintenance: cfg.Maintenance,
 
 		Rejections: serialization.ReleaseRejectedJSON{},
+
+		Family: cfg.WarehouseFamily,
+		Engine: cfg.WarehouseEngine,
 	}
 
 	// The API needs only Postgres and S3: a request accepted before Redis answers

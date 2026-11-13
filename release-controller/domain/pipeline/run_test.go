@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
@@ -217,4 +219,27 @@ func TestMatchesSubmission_ComparesRebaseline(t *testing.T) {
 	other := same
 	other.Rebaseline = false
 	assert.False(t, r.MatchesSubmission(other))
+}
+
+func TestRun_NoticesRoundTripAndTakeTheWarehouseFindings(t *testing.T) {
+	r := pipeline.NewCandidate("rel-n", "finance", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
+	assert.Empty(t, r.Notices())
+	r.SetNotices([]release.Notice{
+		{Kind: "seed_reload", NodeID: "analytics.seed_a", EngineFamily: warehouse.SchemaBound, Prediction: "reloads"},
+		{Kind: "seed_reload", NodeID: "analytics.seed_b", EngineFamily: warehouse.SchemaBound, Prediction: "reloads"},
+	})
+
+	outside := seedreload.Findings{Checked: true, Completeness: "exact",
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "report", Kind: "view", Owner: "bi", Depth: 1}}}
+	assert.True(t, r.ApplyWarehouseFindings("analytics.seed_b", outside))
+	assert.False(t, r.ApplyWarehouseFindings("analytics.seed_none", outside))
+
+	got := r.Notices()
+	require.Len(t, got, 2)
+	assert.Equal(t, "reloads", got[0].Prediction)
+	assert.Equal(t, "stops", got[1].Prediction)
+	assert.Equal(t, []release.OutsideObject{{Object: "bi.report", Kind: "view", Owner: "bi"}}, got[1].Warehouse.OutsideContinuo)
+
+	rehydrated := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "rel-n", Kind: pipeline.KindCandidate, Notices: got})
+	assert.Equal(t, got, rehydrated.Notices())
 }

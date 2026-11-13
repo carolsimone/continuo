@@ -2,6 +2,7 @@ package config
 
 import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
 // ServiceName names this service as the producer of the dead letters its
@@ -30,11 +31,22 @@ type Config struct {
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
+
+	// WarehouseEngine is WAREHOUSE_ENGINE, the install's warehouse engine
+	// (postgres when unset), named in the reasons of seed reload notices.
+	WarehouseEngine string
+
+	// WarehouseFamily is the family of WarehouseEngine: what a seed's load
+	// drops, and so what each release's seed reload notices predict, depends
+	// on it. An engine without a family is recorded on the validator, so
+	// release-controller refuses to start.
+	WarehouseFamily warehouse.Family
 }
 
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
+	engine, family := pkgconfig.LoadWarehouse(v)
 	return Config{
 		Postgres:              pkgconfig.LoadPostgresWithDefaultDB(v, "continuo_release"),
 		Redis:                 pkgconfig.LoadRedis(v),
@@ -53,5 +65,8 @@ func Load(v *pkgconfig.Validator) Config {
 		Maintenance: pkgconfig.LoadMaintenance(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
+
+		WarehouseEngine: engine,
+		WarehouseFamily: family,
 	}
 }
