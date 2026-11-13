@@ -25,11 +25,11 @@ var (
 // a remediation through a lease, which only the lease methods change.
 //
 // An implementation bound to a unit of work's transaction is what a step's
-// commit uses (Hold and the Save methods). One bound to the database serves the
-// worker, the verification poller and the retention sweeper, which call
-// ClaimNext, Claim, ReleaseLease, the list methods and DeleteFinishedOlderThan
-// outside any transaction. In both places two claimers never get one
-// remediation.
+// commit uses (Hold, Load and the Save methods). One bound to the database
+// serves the worker, the verification poller and the retention sweeper, which
+// call ClaimNext, Claim, ReleaseLease, Get, the list methods and
+// DeleteFinishedOlderThan outside any transaction. In both places two claimers
+// never get one remediation.
 type RemediationRepository interface {
 	// Create inserts r. created is false when a remediation already exists for
 	// the same (tenant, release, round); that row is left as it was.
@@ -38,10 +38,21 @@ type RemediationRepository interface {
 	// FindByRelease returns the remediation of one tenant, release and round.
 	FindByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Remediation, bool, error)
 
-	// Load returns the remediation with its current try, and that try's
-	// clusters (ordered by cluster) and steps (ordered by id). Try is nil while
-	// the remediation has made no try. It returns ErrRemediationNotFound for an
-	// unknown id.
+	// Get returns a read-only snapshot of the remediation: the remediation
+	// with its current try, and that try's clusters (ordered by cluster) and
+	// steps (ordered by id). Try is nil while the remediation has made no try.
+	// It returns ErrRemediationNotFound for an unknown id, and an error when
+	// the current try has no row. It takes no lock and needs no transaction:
+	// its reads are separate, so the snapshot is consistent only while nobody
+	// else writes the remediation. The holder of the remediation's lease can
+	// rely on it; any other caller may read a torn state, and acts on the
+	// remediation only after it claims it and gets it again.
+	Get(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error)
+
+	// Load returns the remediation as Get does, for a write. It is called in a
+	// unit of work after Hold, whose row lock the transaction holds, so the
+	// snapshot is the state the transaction's writes change and no other
+	// writer changes it before the transaction ends.
 	Load(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error)
 
 	// ClaimNext leases the oldest running remediation whose lease is free or
@@ -94,7 +105,7 @@ type RemediationRepository interface {
 	SaveStep(ctx context.Context, s remediation.StepRun) error
 
 	// ListVerifying returns up to limit running remediations whose current try
-	// is 'verifying', each as Load returns it, oldest first.
+	// is 'verifying', each as Get returns it, oldest first.
 	ListVerifying(ctx context.Context, limit int) ([]remediation.Snapshot, error)
 
 	// ListPastDeadline returns the ids of up to limit running remediations whose

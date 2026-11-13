@@ -124,7 +124,7 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 
 	for failures := 1; failures <= remediationFailureLimit; failures++ {
 		h.reclaim(id)
-		snap, err := h.store.RemediationRepository().Load(ctx, id)
+		snap, err := h.store.RemediationRepository().Get(ctx, id)
 		require.NoError(t, err)
 		require.Error(t, poller.PollGate(ctx, snap))
 		require.Equal(t, failures, h.remediation(id).Failures)
@@ -164,7 +164,7 @@ func TestSweeper_OnlyFailedPollLoadsInARowEndAVerifyingRemediation(t *testing.T)
 		t.Helper()
 		for range n {
 			h.reclaim(id)
-			snap, err := h.store.RemediationRepository().Load(ctx, id)
+			snap, err := h.store.RemediationRepository().Get(ctx, id)
 			require.NoError(t, err)
 			require.Error(t, broken.PollGate(ctx, snap))
 		}

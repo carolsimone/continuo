@@ -186,12 +186,14 @@ func (r *Runner) load(ctx context.Context, id uuid.UUID) (run tryRun, running bo
 }
 
 // readRun reads the remediation as committed and what it runs on: its flow,
-// its trigger and the journal of its current try.
+// its trigger and the journal of its current try. The remediation is a Get
+// snapshot: the caller holds the lease, so no other worker writes it, and the
+// commit that acts on what the step does holds the lease again first.
 func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running bool, err error) {
 	var snap remediation.Snapshot
 	if err := r.read(ctx, func(u uow.UnitOfWork) error {
 		var err error
-		snap, err = u.RemediationRepo().Load(ctx, id)
+		snap, err = u.RemediationRepo().Get(ctx, id)
 		return err
 	}); err != nil {
 		return tryRun{}, false, fmt.Errorf("load remediation %s: %w", id, err)

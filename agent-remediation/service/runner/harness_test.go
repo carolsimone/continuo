@@ -736,7 +736,7 @@ func (h *harness) drive(id uuid.UUID) error {
 func (h *harness) poll(id uuid.UUID) error {
 	h.t.Helper()
 	h.reclaim(id)
-	snap, err := h.store.RemediationRepository().Load(ctx, id)
+	snap, err := h.store.RemediationRepository().Get(ctx, id)
 	require.NoError(h.t, err)
 	return h.runner.PollGate(ctx, snap)
 }

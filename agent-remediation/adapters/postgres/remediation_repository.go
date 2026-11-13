@@ -340,13 +340,26 @@ func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, rel
 	return rem, true, nil
 }
 
-// Load returns the remediation with its current try, and that try's clusters
-// and steps. It errors when current_try names a try that has no row. The reads
-// are separate statements, so a Load is consistent only while no one else
-// writes the remediation: the holder of its lease can rely on it, a caller
-// without the lease (ListVerifying's snapshots) may read a torn state and acts
-// only after it Claims the remediation and Loads again.
+// Get returns a read-only snapshot of the remediation with its current try,
+// and that try's clusters and steps. The reads are separate statements that
+// take no lock, so a Get is consistent only while no one else writes the
+// remediation: the holder of its lease can rely on it, a caller without the
+// lease (ListVerifying's snapshots) may read a torn state and acts only after
+// it Claims the remediation and Gets it again.
+func (r *RemediationRepository) Get(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error) {
+	return r.snapshot(ctx, id)
+}
+
+// Load returns the remediation as Get does, for a write: it runs on the unit of
+// work's transaction after Hold, whose UPDATE holds the remediation's row lock
+// until the transaction ends.
 func (r *RemediationRepository) Load(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error) {
+	return r.snapshot(ctx, id)
+}
+
+// snapshot reads the remediation with its current try, and that try's clusters
+// and steps. It errors when current_try names a try that has no row.
+func (r *RemediationRepository) snapshot(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error) {
 	var row remediationRow
 	err := r.q.GetContext(ctx, &row, `SELECT `+remediationColumns+` FROM remediation WHERE id=$1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -675,7 +688,7 @@ func (r *RemediationRepository) ListVerifying(ctx context.Context, limit int) ([
 	}
 	snaps := make([]remediation.Snapshot, 0, len(ids))
 	for _, id := range ids {
-		snap, err := r.Load(ctx, id)
+		snap, err := r.Get(ctx, id)
 		if errors.Is(err, repository.ErrRemediationNotFound) {
 			continue
 		}

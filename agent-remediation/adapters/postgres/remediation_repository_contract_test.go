@@ -345,7 +345,7 @@ func TestRemediationRepository_LeaseRules(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, r.ID, id)
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, "owner", snap.Remediation.LeaseOwner)
 		require.NotNil(t, snap.Remediation.LeaseUntil)
@@ -359,17 +359,17 @@ func TestRemediationRepository_LeaseRules(t *testing.T) {
 		require.ErrorIs(t, err, repository.ErrLeaseLost, "a non-owner cannot hold the lease")
 
 		require.NoError(t, env.remediations.Hold(ctx, r.ID, "owner", contractBase.Add(30*time.Second), time.Minute))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		sameInstant(t, contractBase.Add(90*time.Second), *snap.Remediation.LeaseUntil, "extended lease_until")
 
 		// Release by someone else changes nothing; release by the owner frees it.
 		require.NoError(t, env.remediations.ReleaseLease(ctx, r.ID, "intruder"))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, "owner", snap.Remediation.LeaseOwner)
 		require.NoError(t, env.remediations.ReleaseLease(ctx, r.ID, "owner"))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Empty(t, snap.Remediation.LeaseOwner)
 		require.Nil(t, snap.Remediation.LeaseUntil)
@@ -401,7 +401,7 @@ func TestRemediationRepository_AnExpiredLeaseCanBeClaimedAgain(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, r.ID, id)
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, "second", snap.Remediation.LeaseOwner)
 
@@ -499,7 +499,7 @@ func TestRemediationRepository_SaveStepTwiceOnOneKeyUpdatesTheRow(t *testing.T) 
 		step.FinishedAt = &finished
 		require.NoError(t, env.remediations.SaveStep(ctx, step))
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Len(t, snap.Steps, 2, "the second save of one key is an update, not a new row")
 		require.Equal(t, "draft", snap.Steps[0].Step, "steps are ordered by id, and an update keeps the id")
@@ -524,18 +524,18 @@ func TestRemediationRepository_SaveStepTwiceOnOneKeyUpdatesTheRow(t *testing.T) 
 
 		step.Round = 2
 		require.NoError(t, env.remediations.SaveStep(ctx, step))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Len(t, snap.Steps, 3, "another round is another row")
 	})
 }
 
-func TestRemediationRepository_LoadReturnsTheCurrentTryWithOrderedChildren(t *testing.T) {
+func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-load", 1, contractBase))
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Nil(t, snap.Try, "a remediation with no try has no current try")
 		require.Empty(t, snap.Clusters)
@@ -561,7 +561,7 @@ func TestRemediationRepository_LoadReturnsTheCurrentTryWithOrderedChildren(t *te
 		r.CurrentTry = 2
 		require.NoError(t, env.remediations.SaveRemediation(ctx, r))
 
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, 2, snap.Remediation.CurrentTry)
 		require.NotNil(t, snap.Try)
@@ -581,11 +581,11 @@ func TestRemediationRepository_LoadReturnsTheCurrentTryWithOrderedChildren(t *te
 		// Saving a try and a cluster again updates them.
 		second.Status = remediation.TryChecking
 		require.NoError(t, env.remediations.SaveTry(ctx, second))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, remediation.TryChecking, snap.Try.Status)
 
-		_, err = env.remediations.Load(ctx, uuid.New())
+		_, err = env.remediations.Get(ctx, uuid.New())
 		require.ErrorIs(t, err, repository.ErrRemediationNotFound)
 	})
 }
@@ -603,13 +603,13 @@ func TestRemediationRepository_CreateRefusesAnUnsetID(t *testing.T) {
 	})
 }
 
-func TestRemediationRepository_LoadErrorsWhenTheCurrentTryHasNoRow(t *testing.T) {
+func TestRemediationRepository_GetErrorsWhenTheCurrentTryHasNoRow(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		r := mustCreate(t, env, newRemediation("rel-notry-row", 1, contractBase))
 		r.CurrentTry = 2
 		require.NoError(t, env.remediations.SaveRemediation(ctx, r))
-		_, err := env.remediations.Load(ctx, r.ID)
+		_, err := env.remediations.Get(ctx, r.ID)
 		require.Error(t, err)
 		require.NotErrorIs(t, err, repository.ErrRemediationNotFound)
 	})
@@ -643,7 +643,7 @@ func TestRemediationRepository_SaveRemediationWritesTheRunAndLeavesTheLeaseAlone
 		r.UpdatedAt = contractBase.Add(time.Hour)
 		require.NoError(t, env.remediations.SaveRemediation(ctx, r))
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Equal(t, remediation.StatusSystemFailure, snap.Remediation.Status)
 		require.Equal(t, "step failed 5 times", snap.Remediation.Failure)
@@ -674,7 +674,7 @@ func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *t
 		require.NoError(t, u.RemediationRepo().CountFailure(ctx, r.ID, "flow still missing"))
 		require.NoError(t, u.Commit())
 
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		assert.Equal(t, 2, snap.Remediation.Failures)
 		assert.Equal(t, "flow still missing", snap.Remediation.LastError)
@@ -687,7 +687,7 @@ func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *t
 		rem := snap.Remediation
 		rem.Failures, rem.LastError, rem.Failure = 0, "", "kept"
 		require.NoError(t, env.remediations.SaveRemediation(ctx, rem))
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		assert.Equal(t, 2, snap.Remediation.Failures)
 		assert.Equal(t, "flow still missing", snap.Remediation.LastError)
@@ -699,7 +699,7 @@ func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *t
 		require.NoError(t, u.Begin(ctx))
 		require.NoError(t, u.RemediationRepo().ClearFailures(ctx, r.ID))
 		require.NoError(t, u.Commit())
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		assert.Zero(t, snap.Remediation.Failures)
 		assert.Empty(t, snap.Remediation.LastError)
@@ -844,9 +844,9 @@ func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals
 		n, err := env.remediations.DeleteFinishedOlderThan(ctx, retention, 1)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, n, "at most limit, the oldest first")
-		_, err = env.remediations.Load(ctx, oldDone.ID)
+		_, err = env.remediations.Get(ctx, oldDone.ID)
 		require.ErrorIs(t, err, repository.ErrRemediationNotFound)
-		_, err = env.remediations.Load(ctx, oldFailed.ID)
+		_, err = env.remediations.Get(ctx, oldFailed.ID)
 		require.NoError(t, err)
 
 		n, err = env.remediations.DeleteFinishedOlderThan(ctx, retention, 10)
@@ -854,12 +854,12 @@ func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals
 		require.EqualValues(t, 1, n, "the done and the system_failure remediation older than the retention, one each call")
 
 		for _, gone := range []uuid.UUID{oldDone.ID, oldFailed.ID} {
-			_, err := env.remediations.Load(ctx, gone)
+			_, err := env.remediations.Get(ctx, gone)
 			require.ErrorIs(t, err, repository.ErrRemediationNotFound)
 			require.Zero(t, env.childRows(t, gone), "tries, clusters and steps go with their remediation")
 		}
 		for _, kept := range []uuid.UUID{recentDone.ID, running.ID} {
-			_, err := env.remediations.Load(ctx, kept)
+			_, err := env.remediations.Get(ctx, kept)
 			require.NoError(t, err)
 		}
 		require.NotZero(t, env.childRows(t, recentDone.ID))
@@ -899,7 +899,7 @@ func TestRemediationRepository_InsideAUnitOfWorkHoldAndSavesCommitTogether(t *te
 		r.CurrentTry = 1
 		require.NoError(t, repo.SaveRemediation(ctx, r))
 		require.NoError(t, u.Rollback())
-		snap, err := env.remediations.Load(ctx, r.ID)
+		snap, err := env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.Nil(t, snap.Try)
 		require.Zero(t, snap.Remediation.CurrentTry)
@@ -912,10 +912,44 @@ func TestRemediationRepository_InsideAUnitOfWorkHoldAndSavesCommitTogether(t *te
 		require.NoError(t, repo.SaveTry(ctx, newTry(r.ID, 1, remediation.TryDrafting, contractBase.Add(time.Hour))))
 		require.NoError(t, repo.SaveRemediation(ctx, r))
 		require.NoError(t, u.Commit())
-		snap, err = env.remediations.Load(ctx, r.ID)
+		snap, err = env.remediations.Get(ctx, r.ID)
 		require.NoError(t, err)
 		require.NotNil(t, snap.Try)
 		require.Equal(t, 1, snap.Remediation.CurrentTry)
+	})
+}
+
+// Load is the read of a write: inside a unit of work, after Hold, it returns
+// the remediation as the transaction's own writes left it, before they commit.
+func TestRemediationRepository_LoadInsideAUnitOfWorkReadsItsOwnWrites(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-load-uow", 1, contractBase))
+		_, found, err := env.remediations.ClaimNext(ctx, "owner", contractBase, time.Minute)
+		require.NoError(t, err)
+		require.True(t, found)
+
+		u := env.newUoW()
+		require.NoError(t, u.Begin(ctx))
+		repo := u.RemediationRepo()
+		require.NoError(t, repo.Hold(ctx, r.ID, "owner", contractBase, time.Minute))
+		require.NoError(t, repo.SaveTry(ctx, newTry(r.ID, 1, remediation.TryDrafting, contractBase.Add(time.Hour))))
+		r.CurrentTry = 1
+		require.NoError(t, repo.SaveRemediation(ctx, r))
+
+		snap, err := repo.Load(ctx, r.ID)
+		require.NoError(t, err)
+		require.Equal(t, 1, snap.Remediation.CurrentTry, "the transaction's own write")
+		require.NotNil(t, snap.Try)
+		require.Equal(t, remediation.TryDrafting, snap.Try.Status)
+		_, err = repo.Load(ctx, uuid.New())
+		require.ErrorIs(t, err, repository.ErrRemediationNotFound)
+		require.NoError(t, u.Commit())
+
+		got, err := env.remediations.Get(ctx, r.ID)
+		require.NoError(t, err)
+		require.Equal(t, snap.Remediation.CurrentTry, got.Remediation.CurrentTry)
+		require.Equal(t, snap.Try.Try, got.Try.Try)
 	})
 }
 
@@ -1059,7 +1093,7 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 	}
 	require.NoError(t, env.remediations.SaveStep(ctx, step), "JSONB refuses \\u0000, so the adapter replaces it")
 
-	snap, err := env.remediations.Load(ctx, r.ID)
+	snap, err := env.remediations.Get(ctx, r.ID)
 	require.NoError(t, err)
 	require.Len(t, snap.Steps, 1)
 	var got map[string]string

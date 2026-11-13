@@ -320,7 +320,7 @@ func runRunner(t *testing.T, files workflow.Set, f conformance.Fixture, script c
 	repo := w.Repository()
 	ended := false
 	for range equivalencePasses {
-		snap, err := repo.Load(ctx, id)
+		snap, err := repo.Get(ctx, id)
 		require.NoError(t, err)
 		if snap.Remediation.Status != remediation.StatusRunning {
 			ended = true

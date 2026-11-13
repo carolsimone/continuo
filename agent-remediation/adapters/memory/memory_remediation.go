@@ -134,7 +134,21 @@ func (d *data) snapshot(rem *remediation.Remediation) (remediation.Snapshot, err
 	return snap, nil
 }
 
+// Get reads the remediation's snapshot under the store's lock, from the data
+// the repository's gate holds: the committed data outside a unit of work.
+func (r *remediationRepository) Get(_ context.Context, id uuid.UUID) (remediation.Snapshot, error) {
+	return r.load(id)
+}
+
+// Load reads the remediation's snapshot as Get does. Inside a unit of work,
+// after Hold, it reads the unit of work's copy, which holds the store's lock
+// until Commit or Rollback.
 func (r *remediationRepository) Load(_ context.Context, id uuid.UUID) (remediation.Snapshot, error) {
+	return r.load(id)
+}
+
+// load reads one remediation's snapshot through the repository's gate.
+func (r *remediationRepository) load(id uuid.UUID) (remediation.Snapshot, error) {
 	var snap remediation.Snapshot
 	err := r.gate(func(d *data) error {
 		rem, ok := d.remediations[id]

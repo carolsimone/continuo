@@ -107,7 +107,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 
 // PollGate reads the gate's verdict on the remediation's verifying try and
 // acts on it. The caller has claimed the remediation, which snap names; it is
-// loaded again, since a snapshot listed without the lease may be torn. PollGate
+// read again, since a snapshot listed without the lease may be torn. PollGate
 // holds the lease, then polls the gate once with the drafts it was submitted,
 // rebuilt from the journal, counting unreadable runs from the start of the
 // gate step's run.

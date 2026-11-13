@@ -101,7 +101,7 @@ func (sr *scenarioRun) accept(ctx context.Context, t remediation.Trigger) error 
 func (sr *scenarioRun) finish(ctx context.Context) error {
 	repo := sr.w.Repository()
 	for range maxPasses {
-		snap, err := repo.Load(ctx, sr.id)
+		snap, err := repo.Get(ctx, sr.id)
 		if err != nil {
 			return fmt.Errorf("load the remediation: %w", err)
 		}
