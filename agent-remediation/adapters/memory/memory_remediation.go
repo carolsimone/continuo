@@ -359,7 +359,7 @@ func (r *remediationRepository) ListPastDeadline(_ context.Context, now time.Tim
 				continue
 			}
 			switch t.Status {
-			case remediation.TryDrafting, remediation.TryChecking, remediation.TryVerifying:
+			case remediation.TryDrafting, remediation.TryChecking:
 				rows = append(rows, late{rem.ID, t.DeadlineAt})
 			}
 		}
@@ -378,6 +378,29 @@ func (r *remediationRepository) ListPastDeadline(_ context.Context, now time.Tim
 	for _, row := range rows {
 		ids = append(ids, row.id)
 	}
+	return ids, err
+}
+
+func (r *remediationRepository) ListFailingSteps(_ context.Context, minFailures, limit int) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.gate(func(d *data) error {
+		for _, rem := range d.sortedRemediations() {
+			if limit > 0 && len(ids) == limit {
+				break
+			}
+			t := d.currentTry(rem)
+			if rem.Status != remediation.StatusRunning || t == nil {
+				continue
+			}
+			for _, s := range d.steps {
+				if s.RemediationID == rem.ID && s.Try == t.Try && s.Status != remediation.StepDone && s.Failures >= minFailures {
+					ids = append(ids, rem.ID)
+					break
+				}
+			}
+		}
+		return nil
+	})
 	return ids, err
 }
 

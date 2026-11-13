@@ -664,7 +664,8 @@ func TestRemediationRepository_ListPastDeadline(t *testing.T) {
 			return r.ID
 		}
 		late := mk("rel-late", remediation.TryDrafting, now.Add(-2*time.Hour))
-		later := mk("rel-later", remediation.TryVerifying, now.Add(-time.Hour))
+		later := mk("rel-later", remediation.TryChecking, now.Add(-time.Hour))
+		mk("rel-verifying", remediation.TryVerifying, now.Add(-90*time.Minute))
 		mk("rel-ontime", remediation.TryChecking, now.Add(time.Hour))
 		mk("rel-passed", remediation.TryPassed, now.Add(-3*time.Hour))
 		finished := newRemediation("rel-done", 1, contractBase)
@@ -675,11 +676,64 @@ func TestRemediationRepository_ListPastDeadline(t *testing.T) {
 
 		ids, err := env.remediations.ListPastDeadline(ctx, now, 10)
 		require.NoError(t, err)
-		require.Equal(t, []uuid.UUID{late, later}, ids, "open tries of running remediations past their deadline, oldest first")
+		require.Equal(t, []uuid.UUID{late, later}, ids,
+			"drafting and checking tries of running remediations past their deadline, oldest first: a verifying try is the gate poller's")
 
 		ids, err = env.remediations.ListPastDeadline(ctx, now, 1)
 		require.NoError(t, err)
 		require.Equal(t, []uuid.UUID{late}, ids)
+	})
+}
+
+func TestRemediationRepository_ListFailingSteps(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		step := func(r remediation.Remediation, try int, name string, status remediation.StepStatus, failures int) {
+			require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+				RemediationID: r.ID, Try: try, Cluster: 1, Step: name, Kind: "check", Round: 1,
+				Status: status, Failures: failures, LastError: "boom", StartedAt: contractBase,
+			}))
+		}
+		mk := func(release string, created time.Time) remediation.Remediation {
+			r := mustCreate(t, env, newRemediation(release, 1, created))
+			startTry(t, env, r, remediation.TryDrafting, contractBase.Add(time.Hour))
+			return r
+		}
+		failed := mk("rel-failed", contractBase.Add(time.Minute))
+		step(failed, 1, "draft", remediation.StepFailed, 5)
+		waiting := mk("rel-waiting", contractBase)
+		step(waiting, 1, "verification_run", remediation.StepWaiting, 7)
+		few := mk("rel-few", contractBase)
+		step(few, 1, "draft", remediation.StepFailed, 4)
+		done := mk("rel-done-step", contractBase)
+		step(done, 1, "draft", remediation.StepDone, 9)
+		clean := mk("rel-clean", contractBase)
+		step(clean, 1, "draft", remediation.StepDone, 0)
+		// A step of a try the remediation has moved past does not count.
+		past := mustCreate(t, env, newRemediation("rel-past", 1, contractBase))
+		startTry(t, env, past, remediation.TryFailed, contractBase.Add(time.Hour))
+		step(past, 1, "draft", remediation.StepFailed, 6)
+		require.NoError(t, env.remediations.SaveTry(ctx, newTry(past.ID, 2, remediation.TryDrafting, contractBase.Add(time.Hour))))
+		past.CurrentTry = 2
+		require.NoError(t, env.remediations.SaveRemediation(ctx, past))
+		// A finished remediation is never listed.
+		ended := mk("rel-ended", contractBase)
+		step(ended, 1, "draft", remediation.StepFailed, 5)
+		ended.Status = remediation.StatusSystemFailure
+		require.NoError(t, env.remediations.SaveRemediation(ctx, ended))
+
+		ids, err := env.remediations.ListFailingSteps(ctx, 5, 10)
+		require.NoError(t, err)
+		require.Equal(t, []uuid.UUID{waiting.ID, failed.ID}, ids,
+			"running remediations whose current try has a step that did not finish and failed at least 5 times, oldest first")
+
+		ids, err = env.remediations.ListFailingSteps(ctx, 5, 1)
+		require.NoError(t, err)
+		require.Equal(t, []uuid.UUID{waiting.ID}, ids)
+
+		ids, err = env.remediations.ListFailingSteps(ctx, 10, 10)
+		require.NoError(t, err)
+		require.Empty(t, ids)
 	})
 }
 

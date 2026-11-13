@@ -17,8 +17,21 @@ import (
 // stream consumers write.
 const ServiceName = "agent-remediation"
 
+// The fix-proposing engines AGENT_REMEDIATION_ENGINE accepts: the handler that
+// proposes one attempt per heal trigger, or the runner that works each trigger
+// as a remediation of committed steps. Both engines run the worker, the gate
+// poller and the sweeper, so a remediation the runner started always finishes.
+const (
+	EngineLegacy = "legacy"
+	EngineRunner = "runner"
+)
+
 // Config is the full agent-remediation runtime configuration, read once at boot.
 type Config struct {
+	// Engine is AGENT_REMEDIATION_ENGINE: EngineLegacy or EngineRunner. It
+	// decides what the remediation.requested consumer does with a heal trigger.
+	Engine string
+
 	Postgres pkgconfig.PostgresConfig
 	Redis    pkgconfig.RedisConfig
 	S3       pkgconfig.S3Config
@@ -158,6 +171,22 @@ var engineDialects = map[string]string{
 	"trino":    "trino",
 }
 
+// resolveEngine reads AGENT_REMEDIATION_ENGINE, defaulting an unset value to
+// the legacy engine. It records a validation failure on v and returns "" for a
+// value that is neither engine, so startup stops rather than running an engine
+// the operator did not choose.
+func resolveEngine(v *pkgconfig.Validator) string {
+	engine := pkgconfig.EnvOrDefault("AGENT_REMEDIATION_ENGINE", "")
+	switch engine {
+	case "":
+		return EngineLegacy
+	case EngineLegacy, EngineRunner:
+		return engine
+	}
+	v.Add(fmt.Sprintf("AGENT_REMEDIATION_ENGINE (unsupported %q: expected one of %s, %s)", engine, EngineLegacy, EngineRunner))
+	return ""
+}
+
 // resolveSQLDialect reads WAREHOUSE_ENGINE and returns the sqlglot dialect
 // name for it, defaulting an unset value to postgres (the engine an install
 // that never chose one runs). Records a validation failure on v and returns
@@ -225,6 +254,7 @@ func Load(v *pkgconfig.Validator) Config {
 		Maintenance: pkgconfig.LoadMaintenance(v),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
+	cfg.Engine = resolveEngine(v)
 	// A non-positive TTL would either disable expiry (Redis treats a zero SET
 	// expiration as "never expire") or make every write error; either defeats the
 	// cache's memory self-bounding, so clamp it back to the default.

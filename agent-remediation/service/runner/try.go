@@ -34,6 +34,9 @@ const (
 const (
 	flowCluster = 0
 	flowRound   = 1
+	// flowGateRowName is the step name of the gate's row for a flow that names
+	// no gate step.
+	flowGateRowName = "gate"
 )
 
 // The reasons a node is recorded with when no fix is attempted for it.

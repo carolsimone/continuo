@@ -607,6 +607,21 @@ catalog:
 maintenance:
   enabled: false
 
+# agent-remediation's fix proposer. Read by agent-remediation at startup (the
+# shared ConfigMap's AGENT_REMEDIATION_ENGINE), so changing it restarts every
+# continuo service, and agent-remediation refuses to start on any value other
+# than the two below.
+agentRemediation:
+  # legacy: each heal trigger of a rejected release is handled by the proposer
+  #   that has run so far, one attempt after another in one handler.
+  # runner: each heal trigger becomes a remediation that agent-remediation works
+  #   as a sequence of committed steps, so a restart continues from the last
+  #   step and two replicas never work one remediation.
+  # Both engines run the remediation worker, the verification poller and the
+  # sweeper, so a remediation started by the runner always finishes after the
+  # value is set back to legacy.
+  engine: legacy
+
 databaseInit:
   # Idempotently creates the 7 service databases, and with the bundled Postgres
   # the warehouse (validation.warehouseDatabase), before the Flyway migrations

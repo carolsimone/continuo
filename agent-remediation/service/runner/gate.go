@@ -141,11 +141,11 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 	}
 	name, gate, err := r.gateStep(run.flow)
 	if err != nil {
-		return err
+		return r.countGateFailure(ctx, run, name, err)
 	}
 	row, ok := run.journal.row(flowCluster, string(name), flowRound)
 	if !ok {
-		return fmt.Errorf("remediation %s: try %d is verifying with no %s row", id, run.snap.Try.Try, name)
+		return r.countGateFailure(ctx, run, name, fmt.Errorf("remediation %s: try %d is verifying with no %s row", id, run.snap.Try.Try, name))
 	}
 	var attempt proposal.View
 	if err := r.commit(ctx, id, func(u uow.UnitOfWork) error {
@@ -175,6 +175,22 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	return r.NextTry(ctx, id)
+}
+
+// countGateFailure counts an error that stopped a poll before the gate was
+// polled on the gate step's row, which the failures sweep reads. A gate with
+// no row yet gets a failed one, and a gate with a row keeps its status. A flow
+// with no gate step has no name to count on, so the row is the flow's
+// "gate". The error is returned.
+func (r *Runner) countGateFailure(ctx context.Context, run tryRun, name workflow.StepName, cause error) error {
+	if name == "" {
+		name = flowGateRowName
+	}
+	if row, ok := run.journal.row(flowCluster, string(name), flowRound); ok {
+		return r.countFailure(ctx, row, cause)
+	}
+	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowRound, run.flow.Revision)
+	return r.recordFailure(ctx, row, cause)
 }
 
 // attemptRow returns the proposal row of the try's attempt.

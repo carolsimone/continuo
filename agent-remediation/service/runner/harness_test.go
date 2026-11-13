@@ -511,6 +511,12 @@ func newHarness(t *testing.T, opts ...option) *harness {
 
 // runnerOver is a runner over the harness's store and fakes that runs files.
 func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
+	return h.runnerOwnedBy(files, workerOwner)
+}
+
+// runnerOwnedBy is a runner over the harness's store and fakes that runs files
+// and holds its leases as owner.
+func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner {
 	return runner.New(runner.Deps{
 		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: memory.NewUnitOfWork(h.store), h: h} },
 		Registry:            runner.NewRegistry(h.collab),
@@ -520,7 +526,7 @@ func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 		Clock:               h.clock,
 		Logger:              discard,
 		Maintenance:         h.maintenance,
-		Owner:               workerOwner,
+		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
 	})
 }

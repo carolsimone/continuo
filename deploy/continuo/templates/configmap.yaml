@@ -56,3 +56,4 @@ data:
   CATALOG_BACKUP_SCHEDULE: {{ include "continuo.catalog.backup.schedule" . | quote }}
   CATALOG_BACKUP_KEEP: {{ include "continuo.catalog.backup.keep" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}
+  AGENT_REMEDIATION_ENGINE: {{ dig "engine" "legacy" (default (dict) .Values.agentRemediation) | quote }}

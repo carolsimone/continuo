@@ -648,17 +648,35 @@ func (r *RemediationRepository) ListVerifying(ctx context.Context, limit int) ([
 }
 
 // ListPastDeadline returns the running remediations whose current try is still
-// open past its deadline, oldest deadline first.
+// drafting or checking past its deadline, oldest deadline first.
 func (r *RemediationRepository) ListPastDeadline(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.q.SelectContext(ctx, &ids, `
 		SELECT r.id FROM remediation r
 		  JOIN remediation_try t ON t.remediation_id = r.id AND t.try = r.current_try
-		 WHERE r.status = 'running' AND t.status IN ('drafting','checking','verifying')
+		 WHERE r.status = 'running' AND t.status IN ('drafting','checking')
 		   AND t.deadline_at < $1
 		 ORDER BY t.deadline_at, r.id
 		 LIMIT $2`, now, limitArg(limit)); err != nil {
 		return nil, fmt.Errorf("list remediations past their deadline: %w", err)
+	}
+	return ids, nil
+}
+
+// ListFailingSteps returns the running remediations whose current try has a step
+// that has not finished and has failed at least minFailures times, oldest
+// first.
+func (r *RemediationRepository) ListFailingSteps(ctx context.Context, minFailures, limit int) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := r.q.SelectContext(ctx, &ids, `
+		SELECT r.id FROM remediation r
+		 WHERE r.status = 'running'
+		   AND EXISTS (SELECT 1 FROM remediation_step s
+		                WHERE s.remediation_id = r.id AND s.try = r.current_try
+		                  AND s.status <> 'done' AND s.failures >= $1)
+		 ORDER BY r.created_at, r.id
+		 LIMIT $2`, minFailures, limitArg(limit)); err != nil {
+		return nil, fmt.Errorf("list remediations with failing steps: %w", err)
 	}
 	return ids, nil
 }

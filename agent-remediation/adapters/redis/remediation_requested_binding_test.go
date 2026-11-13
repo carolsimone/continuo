@@ -1,14 +1,20 @@
 package redis
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/config"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
 func TestTriggerFromPayload_DecodesBatch(t *testing.T) {
@@ -162,4 +168,64 @@ func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
 	require.Equal(t, raw, trigger.RawPayload)
 	require.Empty(t, trigger.MessageID)
 	require.Nil(t, trigger.OutboxEntryID)
+}
+
+// TestBinding_RunnerEngineAcceptsTheTrigger verifies that with the runner
+// engine a message is decoded into the trigger it carries and handed to accept
+// with its tenant, its message id, the producer's outbox entry id, the payload
+// bytes and the stream's fields, and that today's proposer is never called.
+func TestBinding_RunnerEngineAcceptsTheTrigger(t *testing.T) {
+	raw, err := json.Marshal(requestedPayloadFixture)
+	require.NoError(t, err)
+	entryID := uuid.New()
+	msg := goredis.XMessage{ID: "7-0", Values: map[string]any{
+		"payload":         string(raw),
+		"tenant_id":       "acme",
+		"outbox_entry_id": entryID.String(),
+	}}
+
+	var got []runner.Accepted
+	h := newRemediationRequestedHandler(handlers.Deps{}, func(_ context.Context, a runner.Accepted) error {
+		got = append(got, a)
+		return nil
+	}, config.EngineRunner)
+	require.NoError(t, h(context.Background(), msg))
+
+	require.Len(t, got, 1)
+	a := got[0]
+	assert.Equal(t, "acme", a.Trigger.TenantID)
+	assert.Equal(t, "rel-456", a.Trigger.ReleaseID)
+	assert.Equal(t, 2, a.Trigger.Round)
+	require.Len(t, a.Trigger.Nodes, 1)
+	assert.Equal(t, "orders.model.orders_daily", a.Trigger.Nodes[0].NodeID)
+	assert.Equal(t, raw, a.Payload)
+	assert.Equal(t, "7-0", a.MessageID)
+	require.NotNil(t, a.OutboxEntryID)
+	assert.Equal(t, entryID, *a.OutboxEntryID)
+	assert.Equal(t, map[string]string{"tenant_id": "acme", "outbox_entry_id": entryID.String()}, a.Fields,
+		"the stream's fields travel with the trigger, without the payload it already carries")
+}
+
+func TestBinding_RunnerEngineDefaultsTheTenant(t *testing.T) {
+	raw, err := json.Marshal(requestedPayloadFixture)
+	require.NoError(t, err)
+	var got runner.Accepted
+	h := newRemediationRequestedHandler(handlers.Deps{}, func(_ context.Context, a runner.Accepted) error {
+		got = a
+		return nil
+	}, config.EngineRunner)
+	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "8-0", Values: map[string]any{"payload": string(raw)}}))
+	assert.Equal(t, pkgevents.DefaultTenantID, got.Trigger.TenantID)
+}
+
+// TestBinding_RunnerEngineRedeliversAnAcceptError verifies that an error from
+// accept reaches the consumer as it is, so the message is delivered again.
+func TestBinding_RunnerEngineRedeliversAnAcceptError(t *testing.T) {
+	raw, err := json.Marshal(requestedPayloadFixture)
+	require.NoError(t, err)
+	boom := errors.New("database down")
+	h := newRemediationRequestedHandler(handlers.Deps{}, func(context.Context, runner.Accepted) error { return boom }, config.EngineRunner)
+	err = h(context.Background(), goredis.XMessage{ID: "9-0", Values: map[string]any{"payload": string(raw)}})
+	require.ErrorIs(t, err, boom)
+	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
 }

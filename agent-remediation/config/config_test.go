@@ -455,3 +455,38 @@ func TestGitHubTokenGivenTwiceIsRefused(t *testing.T) {
 	Load(v)
 	assert.Contains(t, v.Missing(), "GITHUB_TOKEN: set GITHUB_TOKEN or GITHUB_TOKEN_FILE, not both")
 }
+
+// TestLoad_EngineDefaultsToLegacy verifies that an install which never set
+// AGENT_REMEDIATION_ENGINE keeps running today's fix proposer.
+func TestLoad_EngineDefaultsToLegacy(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("AGENT_REMEDIATION_ENGINE", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, EngineLegacy, cfg.Engine)
+}
+
+func TestLoad_EngineAcceptsBothEngines(t *testing.T) {
+	for _, engine := range []string{EngineLegacy, EngineRunner} {
+		t.Run(engine, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("AGENT_REMEDIATION_ENGINE", engine)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, engine, cfg.Engine)
+		})
+	}
+}
+
+// TestLoad_UnknownEngineFailsStartup verifies that an engine the service
+// cannot run stops startup, naming the key and the accepted values, instead of
+// falling back to another engine.
+func TestLoad_UnknownEngineFailsStartup(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("AGENT_REMEDIATION_ENGINE", "x")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Equal(t, []string{`AGENT_REMEDIATION_ENGINE (unsupported "x": expected one of legacy, runner)`}, v.Missing())
+}

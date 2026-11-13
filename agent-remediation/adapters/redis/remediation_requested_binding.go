@@ -9,7 +9,10 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -53,31 +56,60 @@ func triggerFromRequested(messageID string, msg goredis.XMessage, raw []byte) (h
 }
 
 // NewRemediationRequestedConsumer constructs a StreamConsumer that reads
-// remediation.requested:v2 and proposes one fix attempt per rejected release
-// via handlers.ProposeFix. The consumer group is created idempotently by
-// StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
-func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
+// remediation.requested:v2. With the runner engine each message is handed to
+// accept, which records it as a remediation the worker drives. With the legacy
+// engine each message proposes one fix attempt per rejected release via
+// handlers.ProposeFix, and a message dead-lettered after its last delivery
+// fails the in-flight attempt row it left behind. The consumer group is
+// created idempotently by StreamConsumer.Start; call Start(ctx) in a goroutine
+// to begin consuming.
+func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, accept func(context.Context, runner.Accepted) error, engine string, logger *slog.Logger) *pkgredis.StreamConsumer {
+	var opts []pkgredis.ConsumerOption
+	if engine != config.EngineRunner {
+		opts = append(opts, pkgredis.WithOnDrop(failInFlightOnDrop(logger, func(ctx context.Context, releaseID, reason string) (int, error) {
+			ctx, cancel := context.WithTimeout(ctx, failInFlightTimeout)
+			defer cancel()
+			return handlers.FailInFlight(ctx, deps, releaseID, reason)
+		})))
+	}
 	return pkgredis.NewStreamConsumer(
 		rc,
 		streams.RemediationRequestedV2,
 		streams.AgentRemediationRemediationRequested,
-		newRemediationRequestedHandler(deps),
+		newRemediationRequestedHandler(deps, accept, engine),
 		logger,
-		pkgredis.WithOnDrop(failInFlightOnDrop(logger, func(ctx context.Context, releaseID, reason string) (int, error) {
-			ctx, cancel := context.WithTimeout(ctx, failInFlightTimeout)
-			defer cancel()
-			return handlers.FailInFlight(ctx, deps, releaseID, reason)
-		})),
+		opts...,
 	)
 }
 
-// newRemediationRequestedHandler returns the MessageHandler that proposes one
-// fix attempt for each remediation.requested:v2 message. A message with no
-// payload field, or one whose payload cannot be decoded, is a permanent
-// failure: the handler returns events.ErrPermanent, so the consumer
-// dead-letters it. Any error from handlers.ProposeFix is returned as is, so
-// the consumer redelivers it.
-func newRemediationRequestedHandler(deps handlers.Deps) pkgredis.MessageHandler {
+// newRemediationRequestedHandler returns the MessageHandler for each
+// remediation.requested:v2 message: with the runner engine it accepts the
+// decoded trigger as a remediation, otherwise it proposes one fix attempt for
+// the release. A message with no payload field, or one whose payload cannot be
+// decoded, is a permanent failure: the handler returns events.ErrPermanent, so
+// the consumer dead-letters it. Any other error is returned as is, so the
+// consumer redelivers it.
+func newRemediationRequestedHandler(deps handlers.Deps, accept func(context.Context, runner.Accepted) error, engine string) pkgredis.MessageHandler {
+	if engine == config.EngineRunner {
+		return func(ctx context.Context, msg goredis.XMessage) error {
+			raw, ok := msg.Values["payload"].(string)
+			if !ok {
+				return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, streams.RemediationRequestedV2)
+			}
+			trigger, err := serialization.DecodeRemediationRequestedV2([]byte(raw))
+			if err != nil {
+				return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV2, err)
+			}
+			trigger.TenantID = tenantOf(msg)
+			return accept(ctx, runner.Accepted{
+				Trigger:       trigger,
+				Payload:       []byte(raw),
+				MessageID:     pkgredis.DedupMessageID(ctx, msg),
+				OutboxEntryID: messageprocessing.ExtractOutboxEntryID(msg.Values),
+				Fields:        streamFields(msg),
+			})
+		}
+	}
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
@@ -89,6 +121,31 @@ func newRemediationRequestedHandler(deps handlers.Deps) pkgredis.MessageHandler 
 		}
 		return handlers.ProposeFix(ctx, deps, trigger)
 	}
+}
+
+// tenantOf returns the tenant_id the message carries, or the default tenant.
+func tenantOf(msg goredis.XMessage) string {
+	if t, ok := msg.Values["tenant_id"].(string); ok && t != "" {
+		return t
+	}
+	return pkgevents.DefaultTenantID
+}
+
+// streamFields copies the message's fields as strings, without the payload,
+// which a remediation stores on its own.
+func streamFields(msg goredis.XMessage) map[string]string {
+	out := make(map[string]string, len(msg.Values))
+	for k, v := range msg.Values {
+		if k == "payload" {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[k] = s
+			continue
+		}
+		out[k] = fmt.Sprint(v)
+	}
+	return out
 }
 
 // failInFlightOnDrop builds the drop handler that closes out a remediation

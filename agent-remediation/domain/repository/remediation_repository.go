@@ -86,9 +86,17 @@ type RemediationRepository interface {
 	ListVerifying(ctx context.Context, limit int) ([]remediation.Snapshot, error)
 
 	// ListPastDeadline returns the ids of up to limit running remediations whose
-	// current try is still open (drafting, checking or verifying) and whose
-	// deadline ended before now, oldest deadline first.
+	// current try is still drafting or checking and whose deadline ended before
+	// now, oldest deadline first. A verifying try is not listed: the gate's
+	// poller owns it, and what ends it is a step that keeps failing.
 	ListPastDeadline(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error)
+
+	// ListFailingSteps returns the ids of up to limit running remediations
+	// whose current try has a step row that has not finished (its status is not
+	// done) and whose failures reached minFailures, oldest remediation first. A
+	// done row keeps the failures it counted before it succeeded, and does not
+	// count.
+	ListFailingSteps(ctx context.Context, minFailures, limit int) ([]uuid.UUID, error)
 
 	// DeleteFinishedBefore deletes the done and system_failure remediations
 	// last updated before cutoff, with their tries, clusters and steps, and
