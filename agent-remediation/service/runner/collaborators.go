@@ -5,6 +5,7 @@ package runner
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -51,4 +52,8 @@ type Collaborators struct {
 	Pipeline ports.VerificationPipeline
 	// Clock tells the time.
 	Clock ports.Clock
+	// VerificationTimeout is how long a verification run may be running, or
+	// its status unreadable since the try started, before the gate fails the
+	// try as timed out.
+	VerificationTimeout time.Duration
 }
