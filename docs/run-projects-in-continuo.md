@@ -106,11 +106,13 @@ in it, deliberately:
    }}`. continuo reads the **first tag as the schedule the node belongs to**.
    A model or snapshot with an owner and no tag is a *dormant* node: a release
    checks it like any other model, so a broken one rejects the release, but no
-   cron ever runs it. You run it by hand from its node page (or with
-   `continuo node trigger`). Run it once before you release a change to a model
-   that reads it: validation copies its production table, and a table that
-   does not exist yet rejects that release with `upstream_clone_failed`. Seeds
-   are exempt and default to build-on-release.
+   cron runs it. You run it by hand from its node page (or with
+   `continuo node trigger`). The one exception is a dormant view below a seed:
+   a run whose load of the seed drops the seed's table rebuilds it (see
+   [Seeds that change](#seeds-that-change)). Run a dormant node once before you
+   release a change to a model that reads it: validation copies its production
+   table, and a table that does not exist yet rejects that release with
+   `upstream_clone_failed`. Seeds are exempt and default to build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
    `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
@@ -241,8 +243,9 @@ After a load that drops the table, continuo rebuilds what the drop took away.
 It does this in the same run, after the seed loads and in the order the views
 read each other.
 
-- continuo rebuilds the views and materialized views below the seed. It
-  follows the chain through `ephemeral` models.
+- continuo rebuilds the views and materialized views below the seed, dormant
+  ones included. It follows the chain through `ephemeral` models. A rerun or
+  rebase of the run rebuilds again a view whose rebuild did not finish.
 - continuo does not rebuild tables, incremental models, snapshots or Python
   nodes. They keep their data until their own schedules run them. A dormant
   one has no schedule, so it keeps its data until you run it by hand.

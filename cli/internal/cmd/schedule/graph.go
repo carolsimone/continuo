@@ -67,9 +67,12 @@ Output (stdout, JSON):
   (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
   address it.
   "dormant" is true for a node that has no schedule: it is in this graph as an
-  upstream of a node that reads it, no cron or schedule run includes it, and it
-  runs only by hand ("continuo node trigger <service> <schema> <table>"). It is
-  false for every other node, an "unknown-external" one included.
+  upstream of a node that reads it, and a run started by hand executes it
+  ("continuo node trigger <service> <schema> <table>"). No cron or schedule run
+  includes it, except to rebuild a dormant view or materialized view below a
+  seed: a run whose load of that seed drops the seed's table rebuilds it, and a
+  rerun or rebase of that run rebuilds it again if the rebuild did not finish.
+  It is false for every other node, an "unknown-external" one included.
 
 A schedule the live release does not hold returns {"nodes":[],"edges":[]}, not
 an error.

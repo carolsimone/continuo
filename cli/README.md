@@ -81,7 +81,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 | Command | What it does | Changes state |
 |---|---|:--:|
 | `schedule list` | Lists every schedule with its cron, whether it is paused, its model count, whether a run is active, and its last run. | |
-| `schedule graph <name>` | Shows the nodes of a schedule and the dependencies between them. Each node says whether it is `dormant` (it has no schedule, so only a manual run starts it). An unknown name gives an empty graph. | |
+| `schedule graph <name>` | Shows the nodes of a schedule and the dependencies between them. Each node says whether it is `dormant`: it has no schedule, so a run started by hand runs it, and a schedule's run includes it only to rebuild it as a view below a seed whose load drops the seed's table. An unknown name gives an empty graph. | |
 | `schedule runs <name>` | Lists the schedule's finished runs, newest first. | |
 | `schedule status <name>` | Shows the schedule's latest run and the status of each of its tasks. Prints `{"run":null,"tasks":[]}` if it never ran. | |
 | `schedule trigger <name>` | Starts a run of the whole schedule and prints its `run_id`. Exits 4 if the schedule already has an active run, and 3 if no model carries the name. | yes |
@@ -113,7 +113,7 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Every node of the live release is listed, one that never ran included (`task_count` 0, no `last_run_at`), and each says its `node_type` and whether it is `dormant`. Filter with `--search` (an exact table name), `--service`, `--dormant` (only the nodes with no schedule, which only a manual `node trigger` starts) and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
+| `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Every node the live release builds is listed (never an `unknown-external` node or a dbt test), one that never ran included (`task_count` 0, no `last_run_at`), and each says its `node_type` and whether it is `dormant`. Filter with `--search` (an exact table name), `--service`, `--dormant` (only the nodes with no schedule, which `node trigger` runs by hand) and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
 | `node history <service> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash, and on a seed task whose load stopped with `unowned_dependents` the `blocking_objects` to name with `node full-refresh --acknowledge`. `--operation` picks `run`, `test` or `build` (default `run`). | |
 | `node trigger <service> <schema> <table> [source-run-id]` | Starts a run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
 | `node test <service> <schema> <table> [source-run-id]` | The same, with `dbt test`. | yes |
@@ -128,7 +128,7 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds, what refreshes on its schedule, what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's preflight decides. | |
+| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds (a dormant one included), what refreshes on its schedule (a dormant node, whose `schedule` is empty, only when run by hand), what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's preflight decides. | |
 
 ### Failures and dead letters
 

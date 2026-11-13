@@ -518,7 +518,7 @@ describe('NodeDetailPage — dormant node', () => {
     renderPage();
     const chip = await screen.findByText('dormant');
     expect(chip.className).toBe('info-strip info-strip--neutral info-strip--inline');
-    expect(chip.getAttribute('title')).toBe('No schedule tag: runs only by hand. Last run: never.');
+    expect(chip.getAttribute('title')).toBe('No schedule tag: you run it by hand. Last run: never.');
     // It follows the node type chip.
     expect(chip.previousElementSibling?.textContent).toBe('dbt-model');
     // A dormant node offers the run the page offers any node.

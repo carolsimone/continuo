@@ -16,7 +16,7 @@ function durPair(avg: number | null, p95: number | null): string {
 }
 
 // The URL parameter of the "Dormant only" filter: dormant=1 lists only the
-// nodes with no schedule tag, which run only by hand.
+// nodes with no schedule tag, which run by hand.
 const DORMANT_PARAM = 'dormant';
 
 const dash = <span className="nodes-dash">—</span>;
@@ -135,7 +135,7 @@ export default function NodesCatalogPanel() {
           <option value="">all</option>
           {services.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <label htmlFor="node-dormant" title="Nodes with no schedule tag, which run only by hand">Dormant only</label>
+        <label htmlFor="node-dormant" title="Nodes with no schedule tag, which run by hand">Dormant only</label>
         <input id="node-dormant" type="checkbox" checked={dormantOnly}
                onChange={e => setDormantOnly(e.target.checked)} />
       </div>

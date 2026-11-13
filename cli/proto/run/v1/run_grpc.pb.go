@@ -275,8 +275,11 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node list: one summary row per node that has run,
-	// with stats aggregated over the most recent 50 tasks of each node. Supports a
+	// ListNodes returns the node list: one summary row per node the live release
+	// builds (never an unknown-external node or a dbt test), with its node_type
+	// and dormant, and stats aggregated over the most recent 50 tasks of each
+	// node. A node that never ran has no stats and is listed after the nodes that
+	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
@@ -838,8 +841,11 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node list: one summary row per node that has run,
-	// with stats aggregated over the most recent 50 tasks of each node. Supports a
+	// ListNodes returns the node list: one summary row per node the live release
+	// builds (never an unknown-external node or a dbt test), with its node_type
+	// and dormant, and stats aggregated over the most recent 50 tasks of each
+	// node. A node that never ran has no stats and is listed after the nodes that
+	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full

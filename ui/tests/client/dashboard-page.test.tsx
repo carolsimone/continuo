@@ -197,7 +197,7 @@ describe('DashboardPage — tabs', () => {
 
     serveTopology('3');
     renderAt(['/?tab=topology']);
-    const tile = (await screen.findByText('3 dormant nodes · run only by hand')).closest('button') as HTMLElement;
+    const tile = (await screen.findByText('3 dormant nodes · run by hand')).closest('button') as HTMLElement;
     // The Dormant tile comes after the schedule tiles.
     const tiles = Array.from(document.querySelectorAll('.snapshot-tile'));
     expect(tiles.map(t => t.querySelector('.snapshot-tile__name')?.textContent)).toEqual(['a', 'Dormant']);
@@ -221,7 +221,7 @@ describe('DashboardPage — tabs', () => {
       return Promise.resolve({ ok: true, json: async () => ({ schedules: [], total_count: 0 }) });
     });
     renderAt(['/?tab=topology']);
-    expect(await screen.findByText('2 dormant nodes · run only by hand')).toBeInTheDocument();
+    expect(await screen.findByText('2 dormant nodes · run by hand')).toBeInTheDocument();
     expect(screen.queryByText(/No topology loaded yet/)).toBeNull();
   });
 

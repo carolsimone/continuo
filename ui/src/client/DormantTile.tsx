@@ -2,7 +2,8 @@ import { useNavigate } from 'react-router';
 
 interface Props {
   // Dormant nodes of the live release: nodes continuo builds that have no
-  // schedule tag, so no cron or schedule run includes them.
+  // schedule tag. A run started by hand executes them, and a schedule's run
+  // only rebuilds a dormant view below a seed whose load drops its table.
   count: number;
 }
 
@@ -14,7 +15,7 @@ export default function DormantTile({ count }: Props) {
     <button type="button" className="snapshot-tile" onClick={() => navigate('/?tab=nodes&dormant=1')}>
       <div className="snapshot-tile__name">Dormant</div>
       <div className="snapshot-tile__meta">
-        {count} dormant {count === 1 ? 'node' : 'nodes'} · run only by hand
+        {count} dormant {count === 1 ? 'node' : 'nodes'} · run by hand
       </div>
     </button>
   );

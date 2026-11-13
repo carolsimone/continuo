@@ -62,8 +62,7 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
 }
 
 # The schedule each resource type takes when it carries no tag. A seed loads on
-# the "seed" schedule; a model or snapshot has none, so it is a dormant node that
-# only a manual run executes.
+# the "seed" schedule; a model or snapshot has none, so it is a dormant node.
 _RESOURCE_TYPE_UNTAGGED_SCHEDULE: dict[str, str] = {
     "model":    "",
     "seed":     "seed",

@@ -45,8 +45,8 @@ models:
       +tags: ["ingest-probe"]
     # The execution-protocol fixtures. Each scenario gets a schedule of its
     # own, so a run of that schedule builds it and no run of a shared schedule
-    # does; with no tag it would be a dormant node, which only a run started by
-    # hand builds. ftable_retry fails its first attempt (TASK_ATTEMPT 0) and
+    # does; with no tag it would be a dormant table, which only a run started
+    # by hand builds. ftable_retry fails its first attempt (TASK_ATTEMPT 0) and
     # succeeds on its second.
     ftable_retry:
       +tags: ["e2e-retry"]
@@ -64,5 +64,6 @@ models:
       +tags: ["seed-view"]
     # dormant_probe has no entry here: it carries the project's owner and no
     # tag, so topology-controller keeps it as a dormant node, with no schedule.
-    # No cron and no schedule's run builds it; the dormant-node e2e test runs
+    # It is a table below no seed, so no cron and no schedule's run builds it,
+    # not even to rebuild it after a seed load; the dormant-node e2e test runs
     # it by hand.

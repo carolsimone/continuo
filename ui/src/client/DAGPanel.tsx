@@ -63,10 +63,12 @@ const STATUS_BORDER: Record<string, string> = {
   external: '#9ca3af',
 };
 
-// A node no schedule runs carries one fixed look of its own in place of a run
-// status, with a solid border: the dashed border means "a node of the graph
-// that is not in the run on screen", and such a node is in no schedule's run
-// by nature.
+// An unknown-external node and a dormant node belong to no schedule, and each
+// carries one fixed look of its own in place of a run status, with a solid
+// border: the dashed border means "a node of the graph that is not in the run
+// on screen". The schedule's latest view draws this panel with no run status.
+// In a run's own view (RunSwimlane, RunNodeTable), a dormant view that the run
+// rebuilds below a seed is painted by its task's status.
 interface FixedLook {
   background: string;
   borderColor: string;
@@ -79,8 +81,8 @@ const UNKNOWN_EXTERNAL_BG = '#e2e8f0';
 const UNKNOWN_EXTERNAL_LOOK: FixedLook = { background: UNKNOWN_EXTERNAL_BG, borderColor: '#94a3b8' };
 const UNKNOWN_EXTERNAL_TITLE = 'A table continuo reads and does not build. continuo does not know who builds it.';
 
-// A dormant node (one continuo builds that has no schedule tag, so it runs
-// only by hand): light grey, with muted text.
+// A dormant node (one continuo builds that has no schedule tag): light grey,
+// with muted text.
 const DORMANT_BG = '#f1f5f9';
 const DORMANT_LOOK: FixedLook = { background: DORMANT_BG, borderColor: '#94a3b8', color: '#475569' };
 

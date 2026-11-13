@@ -102,11 +102,11 @@ describe('DAGPanel dormant nodes', () => {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const { container, rerender } = render(panel([dormantNode(fiveMinutesAgo), READER]));
     expect(nodeIn(container, DORMANT_ID).getAttribute('title'))
-      .toBe('No schedule tag: runs only by hand. Last run 5m ago.');
+      .toBe('No schedule tag: you run it by hand. Last run 5m ago.');
 
     rerender(panel([dormantNode(null), READER]));
     expect(nodeIn(container, DORMANT_ID).getAttribute('title'))
-      .toBe('No schedule tag: runs only by hand. Last run: never.');
+      .toBe('No schedule tag: you run it by hand. Last run: never.');
   });
 
   it('starts a single-node run with one request id when ▶ is clicked, and reuses it on retry', async () => {

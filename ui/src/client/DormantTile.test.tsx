@@ -23,15 +23,15 @@ function renderAt(count: number) {
 }
 
 describe('DormantTile', () => {
-  it('names the dormant nodes and says they run only by hand', () => {
+  it('names the dormant nodes and says they run by hand', () => {
     renderAt(4);
     expect(screen.getByText('Dormant')).toBeInTheDocument();
-    expect(screen.getByText('4 dormant nodes · run only by hand')).toBeInTheDocument();
+    expect(screen.getByText('4 dormant nodes · run by hand')).toBeInTheDocument();
   });
 
   it('counts a single dormant node in the singular', () => {
     renderAt(1);
-    expect(screen.getByText('1 dormant node · run only by hand')).toBeInTheDocument();
+    expect(screen.getByText('1 dormant node · run by hand')).toBeInTheDocument();
   });
 
   it('opens the Nodes tab filtered to dormant nodes on click', () => {

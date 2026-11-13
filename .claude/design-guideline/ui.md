@@ -164,7 +164,7 @@ Variant rules:
   If a new use case appears, add it to this file first.
 - **`btn--icon`** is a square, icon-only `.btn` for an action on an element
   too small for a labelled button: the `▶` that runs a dormant node on the
-  graph (see "Nodes that no schedule runs"). It holds one glyph, its `aria-label`
+  graph (see "Nodes of no schedule"). It holds one glyph, its `aria-label`
   and `title` name the action (`Run orders`, `Run orders by hand`), and it
   takes the same `.is-loading` / `.is-success` states, with the glyph
   unchanged since there is no room for words.
@@ -870,7 +870,7 @@ Rules:
   status pill) and `.nodes-dash` for Success, Runs and Avg / p95, never `0`
   or an empty pill. A dormant node carries a `dormant` `.pill-sm--muted`
   after its name in the Node cell, titled with the dormant tooltip (see
-  "Nodes that no schedule runs"). With no row, the empty strip reads `No node in
+  "Nodes of no schedule"). With no row, the empty strip reads `No node in
   the live release matches this filter.` while a filter narrows the list (a
   search, a service, `Dormant only`, or the Test operation, which lists only
   nodes with tests), and `No release has been promoted yet.` otherwise.
@@ -988,20 +988,25 @@ Rules:
   neutral inline chip (`.info-strip--neutral .info-strip--inline`); the
   graph shows family only. A dormant node adds a `dormant` chip right after
   it, the same neutral inline chip, titled with the dormant tooltip (see
-  "Nodes that no schedule runs"); the page offers it the run it offers any node.
+  "Nodes of no schedule"); the page offers it the run it offers any node.
 - A python-csv node's detail header also carries a `source: <uri>` line
   under the title (`.detail-node-source`, the `.nodes-node-subpath`
   monospace treatment). It renders only when the URI is known — no empty
   `source:` label, and no such line on any other node type.
 
-### Nodes that no schedule runs
+### Nodes of no schedule
 
-Two kinds of node on a schedule's graph are in no schedule's run, so they
-have no run status to paint: an **unknown-external** node (a table continuo
-reads and does not build) and a **dormant** node (a node continuo builds that
-has no schedule tag, which runs only by hand). Each carries one fixed look
-in place of the status fill, a chip on its top border that names it, and a
-hover title on the whole node.
+Two kinds of node on a schedule's graph belong to no schedule: an
+**unknown-external** node (a table continuo reads and does not build) and a
+**dormant** node (a node continuo builds that has no schedule tag). A run
+started by hand executes a dormant node, and a schedule's run includes one
+only to rebuild it as a view or materialized view below a seed whose load
+drops the seed's table. The schedule's latest view paints no run status, so
+each carries one fixed look in place of the status fill, a chip on its top
+border that names it, and a hover title on the whole node. A run's own view
+(`RunSwimlane`, `RunNodeTable`) never takes this look: a dormant view that
+the run rebuilds is one of its tasks, painted by the task's status like any
+other.
 
 ```jsx
 {/* React Flow's node wrapper, which takes the title through the node's domAttributes */}
@@ -1034,8 +1039,8 @@ hover title on the whole node.
 Rules:
 
 - **Never a dashed border**, whatever the graph colours by: the dashed border
-  means "a node of the graph that is not in the run on screen", and these
-  nodes are in no schedule's run by nature.
+  means "a node of the graph that is not in the run on screen", and the fixed
+  look stands in for any run status.
 - A focus role (selected, depends on, required by, unrelated) overrides the
   fill and border as on any node; the chip stays.
 - An unknown-external node has no service, so it never takes a service
@@ -1567,8 +1572,8 @@ Rules:
 
 Used inside the homepage `Topology` tab. One tile per schedule
 with at least one active topology node, then one **Dormant** tile when the
-live release has dormant nodes (nodes with no schedule tag, which run only
-by hand). Clicking the tile navigates; the whole tile IS the click target.
+live release has dormant nodes (nodes with no schedule tag). Clicking the
+tile navigates; the whole tile IS the click target.
 
 ```css
 .snapshot-tile-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }

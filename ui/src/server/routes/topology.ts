@@ -6,7 +6,7 @@ export function createTopologyRouter(client: Pick<GrpcClient, 'listScheduleTopol
   const router = Router();
 
   // GET /api/topology/schedules — one tile per schedule of the live release,
-  // and how many of its nodes are dormant (no schedule tag, run only by hand).
+  // and how many of its nodes are dormant (no schedule tag).
   // dormant_node_count is int64, a string on the wire; an answer without it
   // counts none.
   router.get('/schedules', (_req, res) => {

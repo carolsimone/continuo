@@ -29,7 +29,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
   // GET /api/nodes?search=&service=&operation=&dormant=&limit=&offset= — every
   // node of the live release, paged, with the stats of its recent runs; a node
   // that never ran has none. dormant=1 lists only dormant nodes (no schedule
-  // tag, run only by hand).
+  // tag).
   router.get('/', (req, res) => {
     const nullIfNeg = (n: any): number | null => {
       const v = Number(n ?? -1);

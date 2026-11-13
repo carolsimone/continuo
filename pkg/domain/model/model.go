@@ -51,9 +51,11 @@ func BuiltNodeTypes() []NodeType {
 }
 
 // IsDormant reports whether a node of type t with this schedule is dormant: a
-// release builds it and no schedule tag puts it on a cron, so only a manual run
-// executes it. A dbt test, a table no node builds and an undeclared type are
-// never dormant. Go services ask this function rather than restate the rule;
+// release builds it and no schedule tag puts it on a cron. A run started by
+// hand executes it, and a schedule's run includes it only to rebuild it as a
+// view or materialized view below a seed whose load drops the seed's table. A
+// dbt test, a table no node builds and an undeclared type are never dormant.
+// Go services ask this function rather than restate the rule;
 // topology-controller's is_dormant is its Python twin, and
 // testdata/dormant_cases.json pins the two to each other.
 func IsDormant(t NodeType, schedule string) bool {

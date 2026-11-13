@@ -125,9 +125,9 @@ export default function NodeDetailPage() {
   // declares it (else it is the install default); null while unknown or when
   // the node has no node-list row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
-  // Whether the node has no schedule tag in the live release, so it runs only
-  // by hand, and when it last ran; null while unknown or when the node has no
-  // node-list row.
+  // Whether the node has no schedule tag in the live release (a dormant node),
+  // and when it last ran; null while unknown or when the node has no node-list
+  // row.
   const [dormant, setDormant] = useState<{ lastRunAt: string | null } | null>(null);
   const genRef = useRef(0);
 

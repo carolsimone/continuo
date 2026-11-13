@@ -82,8 +82,9 @@ func (n Node) Relation() string {
 }
 
 // IsDormant reports whether the node is dormant: a node continuo builds that
-// belongs to no schedule, so no cron or schedule run executes it and only a
-// run started by hand does (model.IsDormant).
+// belongs to no schedule (model.IsDormant). A run started by hand executes it,
+// and a schedule's run only rebuilds it, as a view or materialized view below
+// a seed whose load drops the seed's table.
 func (n Node) IsDormant() bool {
 	return model.IsDormant(model.NodeType(n.NodeType), n.ScheduleName)
 }

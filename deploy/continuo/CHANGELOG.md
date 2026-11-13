@@ -14,9 +14,9 @@ shipped in those.
 
 **TL;DR**
 
-- New: a dbt model or snapshot with an owner and no tag is a dormant node. Releases validate it, and no cron runs it, so run it once by hand. A table no node builds is a grey `unknown-external` node. A seed load that drops its table rebuilds the continuo views that read it.
-- You must act: hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards. Then release each service once with `"rebaseline": true`: every node's code fingerprint (`content_hash`) is computed anew.
 - First, check that every dbt team image has `python3` with PyYAML and dbt (step 0), and that each model or snapshot with an owner and no tag builds.
+- You must act: hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards. Then release each service once with `"rebaseline": true`, since every code fingerprint (`content_hash`) is computed anew.
+- New: a dbt model or snapshot with an owner and no tag is a dormant node, which releases validate and you run by hand. A table no node builds is a grey `unknown-external` node, and a seed load that drops its table rebuilds the views below it, a dormant one included.
 - No values change is needed, unless you pin `validation.imageTag` below `v0.12.0`, the new default: that now fails the render.
 
 ### Upgrade steps
@@ -51,11 +51,10 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
   - An unknown-external node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an unknown-external node.
   - No values change is needed.
-- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
+- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it, except to rebuild a dormant view or materialized view below a seed whose load drops the seed's table. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
   - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run.
   - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
   - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
-  - A dormant view or materialized view below a seed is still rebuilt in a run whose load of that seed drops the seed's table, like any view.
   - No values change is needed.
 - **The Dormant tile.** TL;DR: when the live release has dormant nodes, the Topology tab shows a Dormant tile with their number. It opens the Nodes tab filtered to them.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.

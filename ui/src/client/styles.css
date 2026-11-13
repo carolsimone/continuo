@@ -1907,12 +1907,12 @@ a.release-author:hover { text-decoration: underline; }
   box-shadow: 0 0 0 2px #fff;
 }
 
-/* A node of the schedule graph that no schedule runs carries a small chip on
-   its top border, right-aligned, where a run graph puts its "waiting for node"
-   pill; it has that pill's size and ring, and a modifier gives it its colours.
-   The chip of an unknown-external node (a table another system loads) is
-   --external; that of a dormant node (one continuo builds that has no schedule
-   tag, so it runs only by hand) is --dormant. */
+/* A node of the schedule graph that belongs to no schedule carries a small
+   chip on its top border, right-aligned, where a run graph puts its "waiting
+   for node" pill; it has that pill's size and ring, and a modifier gives it its
+   colours. The chip of an unknown-external node (a table another system loads)
+   is --external; that of a dormant node (one continuo builds that has no
+   schedule tag) is --dormant. */
 .dag-node-chip {
   position: absolute;
   top: 0;

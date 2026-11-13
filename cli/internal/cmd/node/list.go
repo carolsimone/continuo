@@ -17,7 +17,7 @@ import (
 // to measure (no terminal task, no timed task) are pointers so that sentinel
 // is omitted rather than emitted as a misleading negative number. NodeType is
 // the node's type in the live release, such as dbt-model; Dormant is true for a
-// node of no schedule, which only a manual run starts. Both are always present.
+// node of no schedule. Both are always present.
 type nodeSummary struct {
 	ServiceName    string `json:"service_name"`
 	SchemaName     string `json:"schema_name"`
@@ -82,8 +82,8 @@ Flags:
                table name, not a substring: "orders" matches "orders" and
                "Orders", never "orders_daily". Default "" (no filter).
   --service    Exact service name. Default "" (all services).
-  --dormant    List only dormant nodes: those with no schedule, which no cron
-               or schedule run includes and only a manual run starts
+  --dormant    List only dormant nodes: those with no schedule, which a run
+               started by hand executes
                ("continuo node trigger <service> <schema> <table>"). Default
                false (every node of the live release).
   --operation  Which operation's tasks feed the statistics: run | test |
@@ -101,9 +101,10 @@ Output (stdout, JSON):
    "last_run_at":string,"operation":string,"timeout_seconds":number,
    "timeout_declared":bool}]}
   node_type is the node's type in the live release, such as dbt-model. dormant
-  is true for a node with no schedule: no cron or schedule run includes it, and
-  only a manual run starts it. It is false for every other node, and is always
-  present.
+  is true for a node with no schedule: a run started by hand executes it, and
+  no cron or schedule run includes it, except to rebuild a dormant view or
+  materialized view below a seed whose load in that run drops the seed's table.
+  It is false for every other node, and is always present.
   task_count is the number of the node's tasks in the statistics window (at
   most 50). A node that never ran has task_count 0 and no last_run_at, and
   last_status is "" for it; it is listed after the nodes that ran. total_count
@@ -179,7 +180,7 @@ Errors:
 	}
 	cmd.Flags().String("search", "", "Table name to look up (case-insensitive exact match; default \"\" = all)")
 	cmd.Flags().String("service", "", "Exact service name filter (default \"\" = all services)")
-	cmd.Flags().Bool("dormant", false, "List only dormant nodes: those with no schedule, which only a manual run starts (default false = every node)")
+	cmd.Flags().Bool("dormant", false, "List only dormant nodes: those with no schedule, which a run started by hand executes (default false = every node)")
 	cmd.Flags().String("operation", "run", "Operation whose tasks feed the statistics: run | test | build (default \"run\")")
 	cmd.Flags().Int32("limit", defaultListLimit, "Page size, 1..200 (default 50)")
 	cmd.Flags().Int32("offset", 0, "Number of matching rows to skip (default 0)")

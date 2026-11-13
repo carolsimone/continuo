@@ -135,7 +135,7 @@ export function createSchedulesRouter(client: GrpcClient) {
 
   // GET /api/schedules/:name/graph — the live release's nodes of the schedule,
   // their one-hop upstreams in other schedules and the edges among them. A
-  // dormant upstream (no schedule tag, run only by hand) carries dormant true
+  // dormant upstream (no schedule tag) carries dormant true
   // and when its latest run was created, null when it never ran; an answer
   // without those fields reads as no dormant node.
   router.get('/:name/graph', (req, res) => {

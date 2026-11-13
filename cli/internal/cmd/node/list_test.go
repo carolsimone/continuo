@@ -115,7 +115,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 // type and whether it is dormant. A node that never ran is listed like any
 // other: task_count 0, no last_run_at, none of the statistics the server cannot
 // measure. The help names the flag, both new fields and the never-run case, so
-// a caller learns from it alone how to list the nodes only a manual run starts.
+// a caller learns from it alone how to list the nodes of no schedule.
 func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 2,
@@ -158,7 +158,8 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 	long := strings.Join(strings.Fields(NewListCommand(nil, nil, nil, nil).Long), " ")
 	assert.Contains(t, long, `--dormant`, "the help names the flag")
 	assert.Contains(t, long, `"node_type":string,"dormant":bool`, "the help shows both fields in the output shape")
-	assert.Contains(t, long, "no cron or schedule run includes it", "the help says what a dormant node is")
+	assert.Contains(t, long, "no cron or schedule run includes it, except to rebuild a dormant view or materialized view below a seed",
+		"the help says what a dormant node is, and when a schedule's run includes one")
 	assert.Contains(t, long, `"continuo node trigger <service> <schema> <table>"`, "the help names the command that runs a dormant node")
 	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
 }

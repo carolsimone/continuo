@@ -146,7 +146,7 @@ describe('NodesCatalogPanel', () => {
     // The node has no schedule tag: a dormant chip says so beside its name.
     const chip = row.querySelector('.nodes-node-name .pill-sm') as HTMLElement;
     expect(chip.textContent).toBe('dormant');
-    expect(chip.getAttribute('title')).toBe('No schedule tag: runs only by hand. Last run: never.');
+    expect(chip.getAttribute('title')).toBe('No schedule tag: you run it by hand. Last run: never.');
 
     // A node that ran keeps its pill, its time and its stats, with no chip.
     const ran = (screen.getByText('fct_orders')).closest('tr') as HTMLElement;
