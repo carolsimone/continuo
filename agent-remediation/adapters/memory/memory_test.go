@@ -1,4 +1,4 @@
-package conformance_test
+package memory_test
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
@@ -20,16 +20,16 @@ import (
 var ctx = context.Background()
 
 func TestMemoryUnitOfWork_CommitPublishesAndRollbackDiscards(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	p := proposal.Proposal{ReleaseID: "rel", Attempt: 1, NodeID: "n", Status: proposal.StatusFailed}
 
-	u := conformance.NewMemoryUnitOfWork(store)
+	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.ProposalRepo().Upsert(ctx, p))
 	require.NoError(t, u.Rollback())
 	require.Empty(t, store.Proposals(), "a rolled back write leaves no trace")
 
-	u = conformance.NewMemoryUnitOfWork(store)
+	u = memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.ProposalRepo().Upsert(ctx, p))
 	require.NoError(t, u.Commit())
@@ -38,9 +38,9 @@ func TestMemoryUnitOfWork_CommitPublishesAndRollbackDiscards(t *testing.T) {
 }
 
 func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	write := func() error {
-		u := conformance.NewMemoryUnitOfWork(store)
+		u := memory.NewUnitOfWork(store)
 		if err := u.Begin(ctx); err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ func TestMemoryUnitOfWork_FailNextCommitFailsOnceAndDiscardsTheWrites(t *testing
 }
 
 func TestMemoryProposalRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	repo := store.ProposalRepository()
 	gen := proposal.Proposal{
 		ReleaseID: "rel", Attempt: 1, NodeID: "n", ResolvedNodeIDs: []string{"n"}, Source: "validation",
@@ -100,7 +100,7 @@ func TestMemoryProposalRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *t
 }
 
 func TestMemoryProposalRepository_FailGeneratingFailsOnlyInFlightRows(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	repo := store.ProposalRepository()
 	require.NoError(t, repo.InsertGenerating(ctx, proposal.Proposal{
 		ReleaseID: "rel", Attempt: 1, NodeOutcomes: map[string]proposal.NodeOutcome{"a": {Status: proposal.StatusGenerating}},
@@ -116,8 +116,8 @@ func TestMemoryProposalRepository_FailGeneratingFailsOnlyInFlightRows(t *testing
 }
 
 func TestMemoryMessageProcessing_DedupsOnBothAxes(t *testing.T) {
-	store := conformance.NewMemoryStore()
-	u := conformance.NewMemoryUnitOfWork(store)
+	store := memory.NewStore()
+	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	repo := u.MessageProcessingRepo()
 	log := slog.New(slog.DiscardHandler)
@@ -155,8 +155,8 @@ func TestMemoryMessageProcessing_DedupsOnBothAxes(t *testing.T) {
 }
 
 func TestMemoryOutbox_CreateStampsTheEntryAndRequiresItsMessage(t *testing.T) {
-	store := conformance.NewMemoryStore()
-	u := conformance.NewMemoryUnitOfWork(store)
+	store := memory.NewStore()
+	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
 
@@ -174,13 +174,13 @@ func TestMemoryOutbox_CreateStampsTheEntryAndRequiresItsMessage(t *testing.T) {
 }
 
 func TestMemoryStore_ARepositoryUsedBeforeBeginIsAnError(t *testing.T) {
-	u := conformance.NewMemoryUnitOfWork(conformance.NewMemoryStore())
+	u := memory.NewUnitOfWork(memory.NewStore())
 	_, err := u.ProposalRepo().CountAttempts(ctx, "rel", 1)
 	require.Error(t, err)
 }
 
 func TestMemoryRemediationRepository_AProposalNeedsItsRemediationAndMarkFixVerifiedRefusesAZero(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	repo := store.ProposalRepository()
 	err := repo.InsertGenerating(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 1, RemediationID: uuid.NewString()})
 	require.Error(t, err)
@@ -191,7 +191,7 @@ func TestMemoryRemediationRepository_AProposalNeedsItsRemediationAndMarkFixVerif
 }
 
 func TestMemoryRemediationRepository_TriesNeedTheirRemediation(t *testing.T) {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	repo := store.RemediationRepository()
 	err := repo.SaveTry(ctx, remediation.Try{RemediationID: uuid.New(), Try: 1, Status: remediation.TryDrafting, DeadlineAt: time.Now()})
 	require.Error(t, err)

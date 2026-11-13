@@ -1,11 +1,11 @@
-// Package conformance holds an in-memory implementation of the unit of work and
-// of every repository the runner, the proposal driver and the verification
+// Package memory is the in-memory implementation of the unit of work and of
+// every repository the runner, the proposal driver and the verification
 // reconciler use. It keeps the semantics of the Postgres adapters that the code
 // above them relies on: compare-and-set updates, the (release_id, attempt)
 // uniqueness of proposals, message-processing dedup on both axes, foreign keys
 // and cascades, and leases. The runner's tests and the repository contract test
 // run against it.
-package conformance
+package memory
 
 import (
 	"context"
@@ -28,43 +28,43 @@ import (
 // errCommitFailed is what a commit armed by FailNextCommit returns.
 var errCommitFailed = errors.New("memory store: commit failed")
 
-// MemoryStore is the in-memory database. A unit of work holds the store's lock
+// Store is the in-memory database. A unit of work holds the store's lock
 // from Begin to Commit or Rollback and works on a copy, so its writes are
 // invisible to others until Commit and a Rollback leaves no trace. A repository
 // used outside a unit of work takes the lock for each call. Two units of work
 // opened one after the other by one goroutine are fine; opening a second before
 // the first ends blocks.
-type MemoryStore struct {
+type Store struct {
 	mu             sync.Mutex
 	data           *data
 	failNextCommit atomic.Bool
 }
 
-// NewMemoryStore returns an empty store.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{data: newData()}
+// NewStore returns an empty store.
+func NewStore() *Store {
+	return &Store{data: newData()}
 }
 
 // FailNextCommit makes the next Commit of any unit of work discard its writes
 // and return an error, once.
-func (s *MemoryStore) FailNextCommit() {
+func (s *Store) FailNextCommit() {
 	s.failNextCommit.Store(true)
 }
 
 // RemediationRepository returns the remediation repository for use outside a
 // unit of work, as the worker, the poller and the sweeper use it.
-func (s *MemoryStore) RemediationRepository() repository.RemediationRepository {
+func (s *Store) RemediationRepository() repository.RemediationRepository {
 	return &remediationRepository{gate: s.autocommit}
 }
 
 // ProposalRepository returns the proposal repository for use outside a unit of
 // work, as the verification reconciler's lister uses it.
-func (s *MemoryStore) ProposalRepository() repository.ProposalRepository {
+func (s *Store) ProposalRepository() repository.ProposalRepository {
 	return &proposalRepository{gate: s.autocommit}
 }
 
 // autocommit runs fn on the committed data under the store's lock.
-func (s *MemoryStore) autocommit(fn func(*data) error) error {
+func (s *Store) autocommit(fn func(*data) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return fn(s.data)
@@ -79,14 +79,14 @@ type StoredProposal struct {
 }
 
 // read runs fn on the committed data under the store's lock.
-func read[T any](s *MemoryStore, fn func(*data) T) T {
+func read[T any](s *Store, fn func(*data) T) T {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return fn(s.data)
 }
 
 // Proposals returns copies of the committed proposal rows, in insertion order.
-func (s *MemoryStore) Proposals() []StoredProposal {
+func (s *Store) Proposals() []StoredProposal {
 	return read(s, func(d *data) []StoredProposal {
 		out := make([]StoredProposal, 0, len(d.proposals))
 		for _, row := range d.proposals {
@@ -97,7 +97,7 @@ func (s *MemoryStore) Proposals() []StoredProposal {
 }
 
 // OutboxEntries returns copies of the committed outbox rows, in insertion order.
-func (s *MemoryStore) OutboxEntries() []outbox.Entry {
+func (s *Store) OutboxEntries() []outbox.Entry {
 	return read(s, func(d *data) []outbox.Entry {
 		out := make([]outbox.Entry, 0, len(d.outbox))
 		for _, e := range d.outbox {
@@ -109,7 +109,7 @@ func (s *MemoryStore) OutboxEntries() []outbox.Entry {
 
 // ProcessedMessages returns copies of the committed message-processing rows, in
 // insertion order.
-func (s *MemoryStore) ProcessedMessages() []messageprocessing.MessageProcessing {
+func (s *Store) ProcessedMessages() []messageprocessing.MessageProcessing {
 	return read(s, func(d *data) []messageprocessing.MessageProcessing {
 		out := make([]messageprocessing.MessageProcessing, 0, len(d.messages))
 		for _, m := range d.messages {
@@ -120,7 +120,7 @@ func (s *MemoryStore) ProcessedMessages() []messageprocessing.MessageProcessing 
 }
 
 // Remediations returns copies of the committed remediation rows, oldest first.
-func (s *MemoryStore) Remediations() []remediation.Remediation {
+func (s *Store) Remediations() []remediation.Remediation {
 	return read(s, func(d *data) []remediation.Remediation {
 		out := make([]remediation.Remediation, 0, len(d.remediations))
 		for _, r := range d.sortedRemediations() {
@@ -131,7 +131,7 @@ func (s *MemoryStore) Remediations() []remediation.Remediation {
 }
 
 // Tries returns copies of the committed tries of one remediation, by try.
-func (s *MemoryStore) Tries(id uuid.UUID) []remediation.Try {
+func (s *Store) Tries(id uuid.UUID) []remediation.Try {
 	return read(s, func(d *data) []remediation.Try {
 		var out []remediation.Try
 		for key, t := range d.tries {
@@ -146,7 +146,7 @@ func (s *MemoryStore) Tries(id uuid.UUID) []remediation.Try {
 
 // Clusters returns copies of the committed clusters of one remediation, by try
 // then cluster.
-func (s *MemoryStore) Clusters(id uuid.UUID) []remediation.Cluster {
+func (s *Store) Clusters(id uuid.UUID) []remediation.Cluster {
 	return read(s, func(d *data) []remediation.Cluster {
 		var out []remediation.Cluster
 		for key, c := range d.clusters {
@@ -166,7 +166,7 @@ func (s *MemoryStore) Clusters(id uuid.UUID) []remediation.Cluster {
 
 // Steps returns copies of the committed steps of one remediation across all its
 // tries, in id order.
-func (s *MemoryStore) Steps(id uuid.UUID) []remediation.StepRun {
+func (s *Store) Steps(id uuid.UUID) []remediation.StepRun {
 	return read(s, func(d *data) []remediation.StepRun {
 		var out []remediation.StepRun
 		for _, st := range d.steps {
@@ -180,14 +180,14 @@ func (s *MemoryStore) Steps(id uuid.UUID) []remediation.StepRun {
 
 // UnitOfWork is the in-memory uow.UnitOfWork.
 type UnitOfWork struct {
-	store *MemoryStore
+	store *Store
 	work  *data
 }
 
 var _ uow.UnitOfWork = (*UnitOfWork)(nil)
 
-// NewMemoryUnitOfWork returns a unit of work over store.
-func NewMemoryUnitOfWork(store *MemoryStore) uow.UnitOfWork {
+// NewUnitOfWork returns a unit of work over store.
+func NewUnitOfWork(store *Store) uow.UnitOfWork {
 	return &UnitOfWork{store: store}
 }
 

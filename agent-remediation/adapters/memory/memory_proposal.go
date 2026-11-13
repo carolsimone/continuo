@@ -1,4 +1,4 @@
-package conformance
+package memory
 
 import (
 	"context"
@@ -168,8 +168,9 @@ func (r *proposalRepository) Upsert(_ context.Context, p proposal.Proposal) erro
 	})
 }
 
-// view projects a stored row as the read model, deriving the single-file edit
-// and the resolved nodes of a row that predates the batched columns.
+// view projects a stored row as the read model. A row with no resolved nodes
+// reads as the one node in NodeID, and a row with no edits but a file path
+// reads as one edit of that file.
 func (row *proposalRow) view() proposal.View {
 	p := cloneProposal(row.p)
 	resolved := p.ResolvedNodeIDs

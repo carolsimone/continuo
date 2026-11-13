@@ -1,7 +1,8 @@
-package conformance
+package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 )
 
 // remediationRepository is the in-memory repository.RemediationRepository. It
@@ -50,6 +52,9 @@ func (d *data) currentTry(r *remediation.Remediation) *remediation.Try {
 	return d.tries[tryKey{r.ID, r.CurrentTry}]
 }
 
+// stepKinds is the set the remediation_step.kind check allows.
+var stepKinds = []string{"context", "prompt", "check", "approver", "output", "runner"}
+
 func (r *remediationRepository) Create(_ context.Context, rem remediation.Remediation) (bool, error) {
 	var created bool
 	err := r.gate(func(d *data) error {
@@ -60,7 +65,7 @@ func (r *remediationRepository) Create(_ context.Context, rem remediation.Remedi
 			return fmt.Errorf("remediation round %d violates its check constraint", rem.Round)
 		}
 		if rem.ID == uuid.Nil {
-			rem.ID = uuid.New()
+			return errors.New("create remediation: the id is unset")
 		}
 		if _, ok := d.remediations[rem.ID]; ok {
 			return nil
@@ -102,12 +107,16 @@ func (r *remediationRepository) FindByRelease(_ context.Context, tenantID, relea
 	return out, found, err
 }
 
-// snapshot loads one remediation with its current try, clusters and steps.
-func (d *data) snapshot(rem *remediation.Remediation) remediation.Snapshot {
+// snapshot loads one remediation with its current try, clusters and steps. It
+// errors when current_try names a try that does not exist.
+func (d *data) snapshot(rem *remediation.Remediation) (remediation.Snapshot, error) {
 	snap := remediation.Snapshot{Remediation: cloneRemediation(*rem)}
+	if rem.CurrentTry == 0 {
+		return snap, nil
+	}
 	try := d.currentTry(rem)
 	if try == nil {
-		return snap
+		return remediation.Snapshot{}, fmt.Errorf("load remediation %s: current try %d has no row", rem.ID, rem.CurrentTry)
 	}
 	t := cloneTry(*try)
 	snap.Try = &t
@@ -122,7 +131,7 @@ func (d *data) snapshot(rem *remediation.Remediation) remediation.Snapshot {
 			snap.Steps = append(snap.Steps, cloneStep(*s))
 		}
 	}
-	return snap
+	return snap, nil
 }
 
 func (r *remediationRepository) Load(_ context.Context, id uuid.UUID) (remediation.Snapshot, error) {
@@ -132,8 +141,9 @@ func (r *remediationRepository) Load(_ context.Context, id uuid.UUID) (remediati
 		if !ok {
 			return repository.ErrRemediationNotFound
 		}
-		snap = d.snapshot(rem)
-		return nil
+		var err error
+		snap, err = d.snapshot(rem)
+		return err
 	})
 	return snap, err
 }
@@ -263,6 +273,9 @@ func (r *remediationRepository) SaveCluster(_ context.Context, c remediation.Clu
 		if _, ok := d.tries[tryKey{c.RemediationID, c.Try}]; !ok {
 			return fmt.Errorf("save cluster: try %d of remediation %s does not exist", c.Try, c.RemediationID)
 		}
+		if !slices.Contains([]workflow.ClusterKind{workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossService}, c.Kind) {
+			return fmt.Errorf("cluster kind %q violates its check constraint", c.Kind)
+		}
 		if c.Cluster < 1 {
 			return fmt.Errorf("cluster %d violates its check constraint", c.Cluster)
 		}
@@ -283,6 +296,9 @@ func (r *remediationRepository) SaveStep(_ context.Context, s remediation.StepRu
 		}
 		if _, ok := d.tries[tryKey{s.RemediationID, s.Try}]; !ok {
 			return fmt.Errorf("save step: try %d of remediation %s does not exist", s.Try, s.RemediationID)
+		}
+		if !slices.Contains(stepKinds, s.Kind) {
+			return fmt.Errorf("step kind %q violates its check constraint", s.Kind)
 		}
 		stored := cloneStep(s)
 		if len(stored.Output) == 0 {
@@ -318,7 +334,11 @@ func (r *remediationRepository) ListVerifying(_ context.Context, limit int) ([]r
 				break
 			}
 			if rem.Status == remediation.StatusRunning && d.verifying(rem) {
-				out = append(out, d.snapshot(rem))
+				snap, err := d.snapshot(rem)
+				if err != nil {
+					return err
+				}
+				out = append(out, snap)
 			}
 		}
 		return nil

@@ -28,8 +28,8 @@ var (
 // commit uses (Hold and the Save methods). One bound to the database serves the
 // worker, the verification poller and the retention sweeper, which call
 // ClaimNext, Claim, ReleaseLease, the list methods and DeleteFinishedBefore
-// outside any transaction; ClaimNext and Claim are each one atomic statement,
-// so they are safe in both places.
+// outside any transaction. In both places two claimers never get one
+// remediation.
 type RemediationRepository interface {
 	// Create inserts r. created is false when a remediation already exists for
 	// the same (tenant, release, round); that row is left as it was.

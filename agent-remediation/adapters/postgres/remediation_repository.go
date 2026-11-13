@@ -281,7 +281,7 @@ func jsonOr(raw []byte, empty string) []byte {
 // that exists for the key is left untouched and created is false.
 func (r *RemediationRepository) Create(ctx context.Context, rem remediation.Remediation) (bool, error) {
 	if rem.ID == uuid.Nil {
-		rem.ID = uuid.New()
+		return false, errors.New("create remediation: the id is unset")
 	}
 	fields, err := encodeStringMap(rem.TriggerFields)
 	if err != nil {
@@ -336,8 +336,11 @@ func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, rel
 }
 
 // Load returns the remediation with its current try, and that try's clusters
-// and steps. The reads are separate statements; the lease keeps any other
-// worker from writing the remediation while its owner loads it.
+// and steps. It errors when current_try names a try that has no row. The reads
+// are separate statements, so a Load is consistent only while no one else
+// writes the remediation: the holder of its lease can rely on it, a caller
+// without the lease (ListVerifying's snapshots) may read a torn state and acts
+// only after it Claims the remediation and Loads again.
 func (r *RemediationRepository) Load(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error) {
 	var row remediationRow
 	err := r.q.GetContext(ctx, &row, `SELECT `+remediationColumns+` FROM remediation WHERE id=$1`, id)
@@ -360,7 +363,7 @@ func (r *RemediationRepository) Load(ctx context.Context, id uuid.UUID) (remedia
 	err = r.q.GetContext(ctx, &try, `SELECT `+tryColumns+` FROM remediation_try WHERE remediation_id=$1 AND try=$2`,
 		id, rem.CurrentTry)
 	if errors.Is(err, sql.ErrNoRows) {
-		return snap, nil
+		return remediation.Snapshot{}, fmt.Errorf("load remediation %s: current try %d has no row", id, rem.CurrentTry)
 	}
 	if err != nil {
 		return remediation.Snapshot{}, fmt.Errorf("load remediation try: %w", err)
@@ -549,7 +552,7 @@ func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.C
 			round          = EXCLUDED.round,
 			outcome        = EXCLUDED.outcome,
 			updated_at     = EXCLUDED.updated_at`,
-		c.RemediationID, c.Try, c.Cluster, c.Kind, c.TargetNodeID, servicesArray(c.Members), c.TypeName,
+		c.RemediationID, c.Try, c.Cluster, c.Kind, c.TargetNodeID, textArray(c.Members), c.TypeName,
 		c.Status, c.Round, outcome, timeArg(c.UpdatedAt)); err != nil {
 		return fmt.Errorf("save remediation cluster: %w", err)
 	}

@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -15,11 +16,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
@@ -110,11 +111,11 @@ func proposalRemediationOf(t *testing.T, db *sqlx.DB, proposalID string) string 
 }
 
 func memoryEnv(t *testing.T) contractEnv {
-	store := conformance.NewMemoryStore()
+	store := memory.NewStore()
 	return contractEnv{
 		remediations: store.RemediationRepository(),
 		proposals:    store.ProposalRepository(),
-		newUoW:       func() uow.UnitOfWork { return conformance.NewMemoryUnitOfWork(store) },
+		newUoW:       func() uow.UnitOfWork { return memory.NewUnitOfWork(store) },
 		childRows: func(t *testing.T, id uuid.UUID) int {
 			return len(store.Tries(id)) + len(store.Clusters(id)) + len(store.Steps(id))
 		},
@@ -587,6 +588,46 @@ func TestRemediationRepository_LoadReturnsTheCurrentTryWithOrderedChildren(t *te
 	})
 }
 
+func TestRemediationRepository_CreateRefusesAnUnsetID(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		r := newRemediation("rel-noid", 1, contractBase)
+		r.ID = uuid.Nil
+		created, err := env.remediations.Create(context.Background(), r)
+		require.Error(t, err)
+		require.False(t, created)
+		_, found, err := env.remediations.FindByRelease(context.Background(), "default", "rel-noid", 1)
+		require.NoError(t, err)
+		require.False(t, found, "nothing is written")
+	})
+}
+
+func TestRemediationRepository_LoadErrorsWhenTheCurrentTryHasNoRow(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-notry-row", 1, contractBase))
+		r.CurrentTry = 2
+		require.NoError(t, env.remediations.SaveRemediation(ctx, r))
+		_, err := env.remediations.Load(ctx, r.ID)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, repository.ErrRemediationNotFound)
+	})
+}
+
+func TestRemediationRepository_ClusterAndStepKindsAreChecked(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-kinds", 1, contractBase))
+		startTry(t, env, r, remediation.TryDrafting, contractBase.Add(time.Hour))
+		require.Error(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
+			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: "bogus", TargetNodeID: "n", Members: []string{"n"},
+			Status: remediation.ClusterGathering, Round: 1,
+		}))
+		require.Error(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+			RemediationID: r.ID, Try: 1, Step: "s", Kind: "bogus", Round: 1, Status: remediation.StepRunning, StartedAt: contractBase,
+		}))
+	})
+}
+
 func TestRemediationRepository_SaveRemediationWritesTheRunAndLeavesTheLeaseAlone(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -749,7 +790,7 @@ func TestRemediationRepository_InsideAUnitOfWorkHoldAndSavesCommitTogether(t *te
 // remediation and returns its id.
 func insertRunnerProposal(t *testing.T, env contractEnv, release string, attempt int, remediationID uuid.UUID) string {
 	t.Helper()
-	before := len(env.proposalIDs(t))
+	before := env.proposalIDs(t)
 	require.NoError(t, env.proposals.InsertGenerating(context.Background(), proposal.Proposal{
 		Source:        "validation",
 		ReleaseID:     release,
@@ -759,9 +800,14 @@ func insertRunnerProposal(t *testing.T, env contractEnv, release string, attempt
 		Status:        proposal.StatusGenerating,
 		CreatedAt:     contractBase,
 	}))
-	ids := env.proposalIDs(t)
-	require.Len(t, ids, before+1)
-	return ids[len(ids)-1]
+	var added []string
+	for _, id := range env.proposalIDs(t) {
+		if !slices.Contains(before, id) {
+			added = append(added, id)
+		}
+	}
+	require.Len(t, added, 1, "the insert adds exactly one proposal")
+	return added[0]
 }
 
 func TestProposalRepository_ListVerifyingSkipsRunnerRows(t *testing.T) {
@@ -833,10 +879,9 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 			Verifications: []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1"}},
 			CreatedAt:     contractBase,
 		}))
-		var id string
-		for _, got := range env.proposalIDs(t) {
-			id = got
-		}
+		ids := env.proposalIDs(t)
+		require.Len(t, ids, 1)
+		id := ids[0]
 
 		hit, err := env.proposals.MarkFixVerified(ctx, remediation.Verified{})
 		require.Error(t, err)

@@ -231,14 +231,14 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	return true, nil
 }
 
-// UpdateVerificationPhase records the call and, when the row still exists,
-// writes the phase (and activation) onto the matching verification in place —
-// the same effect the real UPDATE statement has — so a later pass in the same
-// test sees the phase it just recorded.
 func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
 	return false, nil
 }
 
+// UpdateVerificationPhase records the call and, when the row still exists,
+// writes the phase (and activation) onto the matching verification in place —
+// the same effect the real UPDATE statement has — so a later pass in the same
+// test sees the phase it just recorded.
 func (r *fakeProposalRepo) UpdateVerificationPhase(_ context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
 	r.phaseWrites = append(r.phaseWrites, struct {
 		id, runID string
