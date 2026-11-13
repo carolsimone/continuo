@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/upstream"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/validation"
 )
 
@@ -56,6 +57,7 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyContractEntry:        func() any { return remediation.Text("") },
 			remediation.KeyPriorAttempts:        func() any { return []prompt.PriorAttempt{} },
 			remediation.KeyPackagedContract:     func() any { return remediation.Bytes{} },
+			remediation.KeyUpstreamTarget:       func() any { return remediation.UpstreamTarget{} },
 		},
 	}
 	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
@@ -89,6 +91,8 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(contract.NewNoNewSecretRef(c.ContractInspector))
 	r.register(contract.NewDeclaredOnce(c.ContractLocator))
 	r.register(contract.NewContractPackages(c.Packager, c.SQLDialect))
+	r.register(upstream.NewTarget(c.CandidateSource, c.Locator, c.Versions, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
+	r.register(upstream.NewPrompt(c.Sanitizer, c.ServiceRepoPaths))
 	return r
 }
 
