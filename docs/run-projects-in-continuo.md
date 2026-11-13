@@ -121,10 +121,12 @@ in it, deliberately:
 
    A model, seed or snapshot of an installed dbt package (one your
    `packages.yml` names) is never a node of your service. dbt gives it the
-   top-level `+meta` of your `dbt_project.yml`, owner included, so continuo
-   looks at its tag. With no tag, continuo leaves it out. With a tag, continuo
-   rejects the release as `invalid_artifact`, because a service's release may
-   hold only the nodes of its own project.
+   top-level `+meta` of your `dbt_project.yml`, so it has an owner when you set
+   the owner there. continuo leaves out a package node that has no owner or is
+   tagged `local_stub`. For any other package node, continuo looks at its tag.
+   With no tag, continuo leaves it out. With a tag, continuo rejects the
+   release as `invalid_artifact`, because a service's release may hold only the
+   nodes of its own project.
 
    A model that stands in for a table it does not really build (a stub with
    the same schema and name as another service's table, or as a table another

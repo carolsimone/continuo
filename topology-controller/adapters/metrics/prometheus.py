@@ -71,7 +71,7 @@ class TopologyMetrics:
         )
         self._release_dormant_nodes = Gauge(
             "continuo_topology_release_dormant_nodes",
-            "Dormant nodes (an owner and no schedule tag) the last release that ended held.",
+            "Dormant nodes (a model or snapshot with an owner and no schedule tag) the last release that ended held.",
             ["service"],
             registry=self.registry,
         )

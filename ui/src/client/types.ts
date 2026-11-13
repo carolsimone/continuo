@@ -82,8 +82,8 @@ export interface GraphNode {
   // True for a node continuo builds that has no schedule tag: a run started by
   // hand executes it, and any run whose load of a seed drops the seed's table
   // includes it only to rebuild it, as a view or materialized view below that
-  // seed, which a rerun or rebase of that run rebuilds again if the rebuild did
-  // not finish. False on a run graph.
+  // seed. A rerun or rebase of that run rebuilds it again if the rebuild did not
+  // finish. False on a run graph.
   dormant: boolean;
   // When the latest run with a run or full_refresh task of a dormant node was
   // created (a test of the node is not a run of it); null when it has no such

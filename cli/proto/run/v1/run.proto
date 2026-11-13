@@ -804,7 +804,7 @@ message NodeSummary {
   int32 timeout_seconds = 12;   // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
   bool timeout_declared = 13;   // true when the live release declares the timeout of the node; false when its tasks get the install default
   string node_type = 14;        // the type of the node in the live release, such as dbt-model
-  bool dormant = 15;            // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed, which a rerun or rebase of that run rebuilds again if the rebuild did not finish
+  bool dormant = 15;            // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. A rerun or rebase of that run rebuilds it again if the rebuild did not finish
 }
 
 message ListNodeNamesRequest {
@@ -894,7 +894,7 @@ message ScheduleGraphNode {
   string table_name = 3;
   string node_type = 4;
   string schedule_name = 5;  // the schedule the node belongs to, which differs from the requested one for an upstream node
-  bool dormant = 6;          // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed, which a rerun or rebase of that run rebuilds again if the rebuild did not finish
+  bool dormant = 6;          // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. A rerun or rebase of that run rebuilds it again if the rebuild did not finish
   string last_run_at = 7;    // RFC3339, when the latest run with a run or full_refresh task of the node was created, the last run ListNodes reports for operation run; empty when the node has no such task or is not dormant
 }
 

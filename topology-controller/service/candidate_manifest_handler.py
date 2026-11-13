@@ -155,10 +155,12 @@ class CandidateManifestHandler:
     A dbt node a parse leaves out (no owner, a local stub, an untagged node of
     an installed dbt package) is never a failure: it is logged at INFO as it is
     skipped and counted on the release's line, and release-controller is told
-    nothing of it. A node of the service's own project with an owner and no
-    schedule tag is not left out: it is a dormant node with an empty schedule,
-    in the topology, the code bundle and the candidate schema like any node, and
-    the release's line counts the dormant nodes per service.
+    nothing of it. A model or snapshot of the service's own project with an
+    owner and no schedule tag is not left out: it is a dormant node with an
+    empty schedule, in the topology, the code bundle and the candidate schema
+    like any node, and the release's line counts the dormant nodes per service.
+    An untagged seed of the project with an owner is not left out either: it
+    takes the schedule `seed`, so it is not dormant.
 
     A dbt seed whose source part is still dbt's `path` checksum (a seed over
     1 MiB that its service's compile extras do not name) is logged at WARNING,

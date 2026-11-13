@@ -757,8 +757,9 @@ def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
 ])
 def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, top_level):
     """Without the manifest's project name or a declared service the parse cannot
-    tell the project from a package: it keeps the node, and the handler's service
-    check stays the guard."""
+    tell the project from a package, so it keeps the node and no service check
+    follows. A release never parses this way: its manifest_keys entry requires a
+    service for every manifest, so the project is always known there."""
     manifest = {"macros": {}, "nodes": {"model.evalpkg.pkg_model": _package_node("pkg_model")}, **top_level}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
