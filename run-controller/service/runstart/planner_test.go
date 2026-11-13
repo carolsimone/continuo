@@ -1021,6 +1021,36 @@ func TestPlanner_ARebaseExecutesTheRebuildsItsSourceOwes(t *testing.T) {
 	assert.Equal(t, 2, pv.Inherited)
 }
 
+// A rebase of a single-node load of a seed whose rebuilds did not finish
+// executes them again, as the source planned them, though the source's
+// schedule name is no schedule of the release and so holds no node.
+func TestPlanner_ARebaseOfASingleNodeSeedLoadExecutesTheRebuildsItOwes(t *testing.T) {
+	reason := "rebuild: dropped by the load of analytics.seed_fx_rates_eur"
+	owed := func(key topology.NodeKey, status run.TaskStatus) run.Task {
+		t := task(key, status)
+		t.PlanReason, t.RebuildOf = reason, seed
+		return t
+	}
+	u, topo := fxUoW([]run.Task{
+		task(seed, run.TaskStatusSucceeded), owed(current, run.TaskStatusFailed), owed(latest, run.TaskStatusSkipped),
+	})
+	topo.schedules = map[string][]topology.NodeKey{"single-node-run-1": {}}
+	source, err := run.NewSingleNodeRun(tenant, uuid.New(), "single-node-run-1", model.OperationRun, nil, identity.SystemUserID,
+		run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}, planNow)
+	require.NoError(t, err)
+
+	sel, pv, err := fxPlanner.Rebase(context.Background(), u, source, runstart.RebaseOptions{})
+
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{current, latest, seed}, keysOf(sel.Plan.Tasks))
+	assert.Equal(t, runplan.PlannedTask{Key: current, Reason: reason, RebuildOf: seed}, taskOf(sel.Plan, current))
+	assert.Equal(t, runplan.PlannedTask{Key: latest, Reason: reason, RebuildOf: seed}, taskOf(sel.Plan, latest))
+	assert.True(t, taskOf(sel.Plan, seed).Inherited)
+	assert.Equal(t, []topology.NodeKey{current}, sel.Plan.Ready)
+	assert.Equal(t, 2, pv.FailedOrSkipped)
+	assert.Equal(t, 1, pv.Inherited)
+}
+
 // A rebase preview counts the rebuilds of the seeds it loads among what it
 // executes.
 func TestPlanner_ARebasePreviewCountsTheRebuilds(t *testing.T) {
