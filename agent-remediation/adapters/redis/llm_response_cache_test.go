@@ -31,6 +31,7 @@ func TestLLMResponseCache_PutGetRoundTrip(t *testing.T) {
 		Confidence:             "high",
 		SuspectedRootCauseNode: "model.svc.upstream",
 		Model:                  "claude-x",
+		Usage:                  ports.TokenUsage{Input: 120, Output: 45},
 		// A multi-file answer (a python node's contract fix) must survive the
 		// round-trip too: a redelivered trigger reuses the cached result
 		// instead of re-paying the model call, so a dropped file list would

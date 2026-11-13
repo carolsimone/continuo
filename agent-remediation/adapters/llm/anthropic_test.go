@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/llm"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,6 +152,26 @@ func TestAnthropic_ParseResponse(t *testing.T) {
 	assert.Equal(t, "high", result.Confidence)
 	assert.Equal(t, "model.service_1.users", result.SuspectedRootCauseNode)
 	assert.Equal(t, "claude-3-5-sonnet-20241022", result.Model)
+}
+
+// TestAnthropic_ReadsTokenUsage verifies the adapter reports the response's
+// usage.input_tokens and usage.output_tokens.
+func TestAnthropic_ReadsTokenUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(anthropicRecordedResponse))
+	}))
+	defer srv.Close()
+
+	provider, err := llm.NewProvider("anthropic", "test-key", "claude-3-5-sonnet-20241022", srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	result, err := provider.Propose(context.Background(), buildTestProposeRequest())
+	require.NoError(t, err)
+
+	assert.Equal(t, ports.TokenUsage{Input: 100, Output: 50}, result.Usage)
+	assert.False(t, result.Cached)
 }
 
 // anthropicRecordedResponseWithTargetFile is a recorded /v1/messages response whose

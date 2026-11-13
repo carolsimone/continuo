@@ -78,6 +78,13 @@ type openaiToolChoiceFunction struct {
 // openaiResponse is the top-level response from POST /v1/chat/completions.
 type openaiResponse struct {
 	Choices []openaiChoice `json:"choices"`
+	Usage   openaiUsage    `json:"usage"`
+}
+
+// openaiUsage is the response's token accounting.
+type openaiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 // openaiChoice is one element of the choices array.
@@ -211,6 +218,7 @@ func (p *openaiProvider) parseResponse(r io.Reader) (ports.ProposeResult, error)
 		Confidence:             args.Confidence,
 		SuspectedRootCauseNode: args.SuspectedRootCauseNode,
 		Model:                  p.model,
+		Usage:                  ports.TokenUsage{Input: resp.Usage.PromptTokens, Output: resp.Usage.CompletionTokens},
 	}, nil
 }
 
