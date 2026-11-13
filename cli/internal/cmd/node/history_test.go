@@ -62,17 +62,18 @@ type fakeNodeRunController struct {
 	gotFullRefreshTable     string
 	gotFullRefreshSourceRun string
 
-	listResp         *runv1.ListNodesResponse
-	listErr          error
-	gotListSearch    string
-	gotListService   string
-	gotListOperation string
-	gotListLimit     int32
-	gotListOffset    int32
+	listResp           *runv1.ListNodesResponse
+	listErr            error
+	gotListSearch      string
+	gotListService     string
+	gotListOperation   string
+	gotListDormantOnly bool
+	gotListLimit       int32
+	gotListOffset      int32
 }
 
-func (f *fakeNodeRunController) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error) {
-	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListLimit, f.gotListOffset = search, service, operation, limit, offset
+func (f *fakeNodeRunController) ListNodes(_ context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
+	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListDormantOnly, f.gotListLimit, f.gotListOffset = search, service, operation, dormantOnly, limit, offset
 	return f.listResp, f.listErr
 }
 

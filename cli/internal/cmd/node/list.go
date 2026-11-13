@@ -15,11 +15,15 @@ import (
 // nodeSummary is the JSON-serialisable representation of one row of the node list.
 // The three statistics the run-controller service reports as -1 when it has nothing
 // to measure (no terminal task, no timed task) are pointers so that sentinel
-// is omitted rather than emitted as a misleading negative number.
+// is omitted rather than emitted as a misleading negative number. NodeType is
+// the node's type in the live release, such as dbt-model; Dormant is true for a
+// node of no schedule, which only a manual run starts. Both are always present.
 type nodeSummary struct {
 	ServiceName    string `json:"service_name"`
 	SchemaName     string `json:"schema_name"`
 	TableName      string `json:"table_name"`
+	NodeType       string `json:"node_type"`
+	Dormant        bool   `json:"dormant"`
 	TaskCount      int32  `json:"task_count"`
 	SuccessRatePct *int32 `json:"success_rate_pct,omitempty"`
 	AvgDurationSec *int32 `json:"avg_duration_sec,omitempty"`
@@ -67,6 +71,9 @@ subcommand takes as arguments, so this is the command that resolves a bare
 table name into an addressable node.
 
 Statistics cover each node's most recent 50 tasks of the selected operation.
+Every node the live release builds is listed, one that never ran included. A
+table continuo reads and does not build (type "unknown-external") is never
+listed.
 
 Arguments: none. Every filter is a flag.
 
@@ -75,6 +82,10 @@ Flags:
                table name, not a substring: "orders" matches "orders" and
                "Orders", never "orders_daily". Default "" (no filter).
   --service    Exact service name. Default "" (all services).
+  --dormant    List only dormant nodes: those with no schedule, which no cron
+               or schedule run includes and only a manual run starts
+               ("continuo node trigger <service> <schema> <table>"). Default
+               false (every node of the live release).
   --operation  Which operation's tasks feed the statistics: run | test |
                build. Default "run". An unrecognized value is a usage error.
   --limit      Page size, 1..200. Default 50. A value outside that range is
@@ -84,14 +95,21 @@ Flags:
 Output (stdout, JSON):
   {"total_count":number,
    "nodes":[{"service_name":string,"schema_name":string,"table_name":string,
+   "node_type":string,"dormant":bool,
    "task_count":number,"success_rate_pct":number,"avg_duration_sec":number,
    "p95_duration_sec":number,"flaky_rate_pct":number,"last_status":string,
    "last_run_at":string,"operation":string,"timeout_seconds":number,
    "timeout_declared":bool}]}
+  node_type is the node's type in the live release, such as dbt-model. dormant
+  is true for a node with no schedule: no cron or schedule run includes it, and
+  only a manual run starts it. It is false for every other node, and is always
+  present.
   task_count is the number of the node's tasks in the statistics window (at
-  most 50). total_count is the number of nodes matching the filters regardless of
-  paging; when it exceeds offset + len(nodes), request the next page with a
-  larger --offset. success_rate_pct is omitted when the node has no terminal
+  most 50). A node that never ran has task_count 0 and no last_run_at, and
+  last_status is "" for it; it is listed after the nodes that ran. total_count
+  is the number of nodes matching the filters regardless of paging; when it
+  exceeds offset + len(nodes), request the next page with a larger --offset.
+  success_rate_pct is omitted when the node has no terminal
   task in the window; avg_duration_sec and p95_duration_sec are omitted when
   no task in the window was timed; last_run_at is omitted when the node has
   never run. last_status is one of succeeded, failed, running, stopping, queued,
@@ -107,9 +125,10 @@ Errors:
   unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node list --search orders
-  continuo node list --service finance --operation test --limit 20 --offset 20`,
+  continuo node list --service finance --operation test --limit 20 --offset 20
+  continuo node list --dormant`,
 		Annotations: map[string]string{
-			"output_schema": `{"total_count":"number","nodes":"array"}`,
+			"output_schema": `{"total_count":"number","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","node_type":"string","dormant":"boolean","task_count":"number","success_rate_pct":"number","avg_duration_sec":"number","p95_duration_sec":"number","flaky_rate_pct":"number","last_status":"string","last_run_at":"string","operation":"string","timeout_seconds":"number","timeout_declared":"boolean"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -134,6 +153,7 @@ Errors:
 			search, _ := cmd.Flags().GetString("search")
 			service, _ := cmd.Flags().GetString("service")
 			operation, _ := cmd.Flags().GetString("operation")
+			dormantOnly, _ := cmd.Flags().GetBool("dormant")
 			limit, _ := cmd.Flags().GetInt32("limit")
 			offset, _ := cmd.Flags().GetInt32("offset")
 
@@ -146,7 +166,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.ListNodes(ctx, search, service, operation, limit, offset)
+			resp, err := c.ListNodes(ctx, search, service, operation, dormantOnly, limit, offset)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -159,6 +179,7 @@ Errors:
 	}
 	cmd.Flags().String("search", "", "Table name to look up (case-insensitive exact match; default \"\" = all)")
 	cmd.Flags().String("service", "", "Exact service name filter (default \"\" = all services)")
+	cmd.Flags().Bool("dormant", false, "List only dormant nodes: those with no schedule, which only a manual run starts (default false = every node)")
 	cmd.Flags().String("operation", "run", "Operation whose tasks feed the statistics: run | test | build (default \"run\")")
 	cmd.Flags().Int32("limit", defaultListLimit, "Page size, 1..200 (default 50)")
 	cmd.Flags().Int32("offset", 0, "Number of matching rows to skip (default 0)")
@@ -183,6 +204,8 @@ func toListPayload(resp *runv1.ListNodesResponse) listPayload {
 			ServiceName:     n.GetServiceName(),
 			SchemaName:      n.GetSchemaName(),
 			TableName:       n.GetTableName(),
+			NodeType:        n.GetNodeType(),
+			Dormant:         n.GetDormant(),
 			TaskCount:       n.GetTaskCount(),
 			SuccessRatePct:  optionalStat(n.GetSuccessRatePct()),
 			AvgDurationSec:  optionalStat(n.GetAvgDurationSec()),
@@ -200,23 +223,24 @@ func toListPayload(resp *runv1.ListNodesResponse) listPayload {
 
 // humanList writes a header, one line per node, and a page summary to stderr:
 //
-//	NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT
-//	<service.schema.table>  <operation>  <tasks>  <pct>  <avg>  <p95>  <status>  <at>
+//	NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT  DORMANT
+//	<service.schema.table>  <operation>  <tasks>  <pct>  <avg>  <p95>  <status>  <at>  <yes|->
 //	showing <first>-<last> of <total>
 //
-// A statistic the server could not measure, and a last_run_at for a node
-// that never ran, render as "-". The summary line makes truncation visible:
+// A statistic the server could not measure, a last_status and last_run_at for
+// a node that never ran, and the DORMANT cell of a node with a schedule render
+// as "-"; a dormant node reads "yes". The summary line makes truncation visible:
 // first and last are 1-based positions within the full match set, and an
 // empty page renders as "showing 0 of <total>".
 func humanList(stderr io.Writer, resp *runv1.ListNodesResponse, offset int32) error {
-	if _, err := fmt.Fprintf(stderr, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT\n"); err != nil {
+	if _, err := fmt.Fprintf(stderr, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT  DORMANT\n"); err != nil {
 		return err
 	}
 	for _, n := range resp.GetNodes() {
-		if _, err := fmt.Fprintf(stderr, "%s.%s.%s  %s  %d  %s  %s  %s  %s  %s\n",
+		if _, err := fmt.Fprintf(stderr, "%s.%s.%s  %s  %d  %s  %s  %s  %s  %s  %s\n",
 			n.GetServiceName(), n.GetSchemaName(), n.GetTableName(), n.GetOperation(), n.GetTaskCount(),
 			dashIfNegative(n.GetSuccessRatePct()), dashIfNegative(n.GetAvgDurationSec()), dashIfNegative(n.GetP95DurationSec()),
-			n.GetLastStatus(), dashIfEmpty(n.GetLastRunAt())); err != nil {
+			dashIfEmpty(n.GetLastStatus()), dashIfEmpty(n.GetLastRunAt()), yesOrDash(n.GetDormant())); err != nil {
 			return err
 		}
 	}
@@ -235,6 +259,13 @@ func dashIfNegative(v int32) string {
 		return "-"
 	}
 	return strconv.Itoa(int(v))
+}
+
+func yesOrDash(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "-"
 }
 
 func dashIfEmpty(s string) string {
