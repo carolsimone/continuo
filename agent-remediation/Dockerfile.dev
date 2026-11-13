@@ -61,6 +61,9 @@ WORKDIR /app/agent-remediation
 # Pre-compile the binary for faster startup in docker-compose.
 RUN go build -o /app/agent-remediation/bin/agent-remediation main.go
 
+# remediation-check, the command that checks the workflow files.
+RUN go build -o /usr/local/bin/remediation-check ./cmd/remediation-check
+
 EXPOSE 8092
 
 CMD ["tail", "-f", "/dev/null"]
