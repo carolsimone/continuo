@@ -233,7 +233,21 @@ func (r *remediationRepository) SaveRemediation(_ context.Context, rem remediati
 		}
 		stored.CurrentTry = rem.CurrentTry
 		stored.Failure = rem.Failure
+		stored.Failures = rem.Failures
+		stored.LastError = rem.LastError
 		stored.UpdatedAt = orNow(rem.UpdatedAt)
+		return nil
+	})
+}
+
+func (r *remediationRepository) CountFailure(_ context.Context, id uuid.UUID, lastError string) error {
+	return r.gate(func(d *data) error {
+		stored, ok := d.remediations[id]
+		if !ok {
+			return fmt.Errorf("count remediation failure %s: %w", id, repository.ErrRemediationNotFound)
+		}
+		stored.Failures++
+		stored.LastError = lastError
 		return nil
 	})
 }
@@ -388,8 +402,15 @@ func (r *remediationRepository) ListFailingSteps(_ context.Context, minFailures,
 			if limit > 0 && len(ids) == limit {
 				break
 			}
+			if rem.Status != remediation.StatusRunning {
+				continue
+			}
+			if rem.Failures >= minFailures {
+				ids = append(ids, rem.ID)
+				continue
+			}
 			t := d.currentTry(rem)
-			if rem.Status != remediation.StatusRunning || t == nil {
+			if t == nil {
 				continue
 			}
 			for _, s := range d.steps {

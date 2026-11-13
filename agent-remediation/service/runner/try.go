@@ -57,7 +57,8 @@ const (
 // try therefore opens even when the process stopped between failing a try and
 // calling NextTry. It opens one only while the remediation runs and has no try
 // or its try failed, so calling it again after it succeeded opens nothing. The
-// caller holds the lease; a lost lease returns nil with nothing written.
+// caller holds the lease; a lost lease returns nil with nothing written. A try
+// that cannot open has the error counted on the remediation's own row.
 func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 	run, running, err := r.load(ctx, id)
 	if err != nil || !running {
@@ -67,6 +68,9 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 		return nil
 	}
 	err = r.openTry(ctx, run)
+	if err != nil {
+		err = r.countRemediationFailure(ctx, id, err)
+	}
 	if errors.Is(err, repository.ErrLeaseLost) {
 		r.logger.Info("remediation lease lost; no try opened", "remediation", id, "owner", r.d.Owner)
 		return nil
@@ -121,7 +125,8 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 }
 
 // startTry writes the remediation's next try, its clusters and the attempt's
-// in-flight proposal row in u's transaction, and makes it the current try.
+// in-flight proposal row in u's transaction, and makes it the current try. The
+// failures counted on the remediation's own row are cleared: the try opened.
 func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int) error {
 	t := run.trigger
 	rem := run.snap.Remediation
@@ -151,6 +156,7 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 		return fmt.Errorf("mark generating: %w", err)
 	}
 	rem.CurrentTry = try.Try
+	rem.Failures, rem.LastError = 0, ""
 	rem.UpdatedAt = now
 	if err := repo.SaveRemediation(ctx, rem); err != nil {
 		return fmt.Errorf("save remediation: %w", err)

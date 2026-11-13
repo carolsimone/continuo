@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,6 +97,8 @@ type tryRun struct {
 // waits on the gate's poller. A lost lease stops the drive quietly with nil,
 // since another worker holds the remediation. A step that errors is recorded
 // on its journal row, and its error is returned; the next drive runs it again.
+// A remediation that cannot be loaded, or whose next try cannot open, has the
+// error counted on its own row, and the error is returned.
 func (r *Runner) Drive(ctx context.Context, id uuid.UUID) error {
 	err := r.drive(ctx, id)
 	if errors.Is(err, repository.ErrLeaseLost) {
@@ -117,8 +120,8 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 		if run.snap.Try == nil || run.snap.Try.Status == remediation.TryFailed {
 			sctx, cancel := r.stepContext(ctx)
 			err := r.openTry(sctx, run)
-			if stepTimedOut(sctx) && err != nil {
-				err = fmt.Errorf("the step ran longer than %s and was stopped: %w", r.stepLimit(), err)
+			if err != nil {
+				err = r.countRemediationFailure(sctx, id, err)
 			}
 			cancel()
 			if err != nil {
@@ -171,8 +174,19 @@ func stepTimedOut(ctx context.Context) bool {
 }
 
 // load reads the remediation as committed. running is false when it has ended,
-// and the run is then empty.
+// and the run is then empty. An error, such as a flow the loaded files do not
+// define, is counted on the remediation's own row and returned.
 func (r *Runner) load(ctx context.Context, id uuid.UUID) (run tryRun, running bool, err error) {
+	run, running, err = r.readRun(ctx, id)
+	if err != nil {
+		return tryRun{}, false, r.countRemediationFailure(ctx, id, err)
+	}
+	return run, running, nil
+}
+
+// readRun reads the remediation as committed and what it runs on: its flow,
+// its trigger and the journal of its current try.
+func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running bool, err error) {
 	var snap remediation.Snapshot
 	if err := r.read(ctx, func(u uow.UnitOfWork) error {
 		var err error
@@ -209,6 +223,40 @@ func nextOpenCluster(clusters []remediation.Cluster) (remediation.Cluster, bool)
 		return c, true
 	}
 	return remediation.Cluster{}, false
+}
+
+// countRemediationFailure counts cause on the remediation's own row, for a
+// drive that failed before a step's row could hold the error: the remediation
+// could not be loaded, or its next try could not open. In a transaction of its
+// own after holding the lease, the remediation's failures go up by one and
+// cause, without NUL characters, becomes its last error. It returns cause. A
+// lost lease is returned as it is, and nothing is recorded for a drive whose
+// context ended. A step that ran past its limit is recorded, with a cause that
+// says so, in a context that is not ended.
+func (r *Runner) countRemediationFailure(ctx context.Context, id uuid.UUID, cause error) error {
+	if errors.Is(cause, repository.ErrLeaseLost) {
+		return cause
+	}
+	if ctx.Err() != nil {
+		if !stepTimedOut(ctx) {
+			return cause
+		}
+		cause = fmt.Errorf("the step ran longer than %s and was stopped: %w", r.stepLimit(), cause)
+		ctx = context.WithoutCancel(ctx)
+	}
+	lastError := strings.ReplaceAll(cause.Error(), "\x00", "")
+	err := r.commit(ctx, id, func(u uow.UnitOfWork) error {
+		return u.RemediationRepo().CountFailure(ctx, id, lastError)
+	})
+	switch {
+	case errors.Is(err, repository.ErrLeaseLost):
+		return err
+	case err != nil:
+		return errors.Join(cause, fmt.Errorf("record the failure of remediation %s: %w", id, err))
+	}
+	r.logger.Warn("remediation failed before a step could run; the next drive tries again",
+		"remediation", id, "error", cause)
+	return cause
 }
 
 // read runs fn in a transaction it rolls back.

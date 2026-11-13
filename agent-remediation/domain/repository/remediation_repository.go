@@ -64,10 +64,16 @@ type RemediationRepository interface {
 	// otherwise.
 	ReleaseLease(ctx context.Context, id uuid.UUID, owner string) error
 
-	// SaveRemediation writes r's status, flow, trigger, current try, failure and
-	// UpdatedAt. It never touches the lease. It returns ErrRemediationNotFound
-	// for an unknown id.
+	// SaveRemediation writes r's status, flow, trigger, current try, failure,
+	// failures, last error and UpdatedAt. It never touches the lease. It returns
+	// ErrRemediationNotFound for an unknown id.
 	SaveRemediation(ctx context.Context, r remediation.Remediation) error
+
+	// CountFailure raises the remediation's failures by one and records
+	// lastError as its last error, leaving the rest of the row as it is. It
+	// needs no snapshot, so it records a remediation that cannot be loaded. It
+	// returns ErrRemediationNotFound for an unknown id.
+	CountFailure(ctx context.Context, id uuid.UUID, lastError string) error
 
 	// SaveTry inserts the try or updates it on (remediation, try).
 	SaveTry(ctx context.Context, t remediation.Try) error
@@ -92,10 +98,10 @@ type RemediationRepository interface {
 	ListPastDeadline(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error)
 
 	// ListFailingSteps returns the ids of up to limit running remediations
-	// whose current try has a step row that has not finished (its status is not
-	// done) and whose failures reached minFailures, oldest remediation first. A
-	// done row keeps the failures it counted before it succeeded, and does not
-	// count.
+	// whose own failures reached minFailures, or whose current try has a step
+	// row that has not finished (its status is not done) and whose failures
+	// reached minFailures, oldest remediation first. A done row keeps the
+	// failures it counted before it succeeded, and does not count.
 	ListFailingSteps(ctx context.Context, minFailures, limit int) ([]uuid.UUID, error)
 
 	// DeleteFinishedOlderThan deletes at most limit done and system_failure

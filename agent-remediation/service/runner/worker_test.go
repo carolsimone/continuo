@@ -339,6 +339,9 @@ func TestRunner_OpeningATryRunsUnderTheStepLimit(t *testing.T) {
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 5*time.Second)
 	assert.Contains(t, err.Error(), "ran longer than 50ms")
-	assert.Empty(t, h.store.Tries(id), "nothing was written")
-	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
+	assert.Empty(t, h.store.Tries(id), "no try was written")
+	rem := h.remediation(id)
+	assert.Equal(t, remediation.StatusRunning, rem.Status)
+	assert.Equal(t, 1, rem.Failures, "the stop is counted on the remediation's own row")
+	assert.Contains(t, rem.LastError, "ran longer than 50ms")
 }

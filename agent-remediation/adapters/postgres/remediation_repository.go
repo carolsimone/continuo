@@ -48,12 +48,15 @@ type remediationRow struct {
 	LeaseOwner       sql.NullString `db:"lease_owner"`
 	LeaseUntil       *time.Time     `db:"lease_until"`
 	Failure          string         `db:"failure"`
+	Failures         int            `db:"failures"`
+	LastError        string         `db:"last_error"`
 	CreatedAt        time.Time      `db:"created_at"`
 	UpdatedAt        time.Time      `db:"updated_at"`
 }
 
 const remediationColumns = `id, tenant_id, release_id, remediation_round, flow, status, trigger_payload,
-	trigger_message_id, trigger_fields, current_try, lease_owner, lease_until, failure, created_at, updated_at`
+	trigger_message_id, trigger_fields, current_try, lease_owner, lease_until, failure, failures, last_error,
+	created_at, updated_at`
 
 func (row remediationRow) toDomain() (remediation.Remediation, error) {
 	var fields map[string]string
@@ -77,6 +80,8 @@ func (row remediationRow) toDomain() (remediation.Remediation, error) {
 		LeaseOwner:       row.LeaseOwner.String,
 		LeaseUntil:       row.LeaseUntil,
 		Failure:          row.Failure,
+		Failures:         row.Failures,
+		LastError:        row.LastError,
 		CreatedAt:        row.CreatedAt,
 		UpdatedAt:        row.UpdatedAt,
 	}, nil
@@ -299,13 +304,13 @@ func (r *RemediationRepository) Create(ctx context.Context, rem remediation.Reme
 		INSERT INTO remediation
 			(id, tenant_id, release_id, remediation_round, flow, status, trigger_payload,
 			 trigger_message_id, trigger_fields, current_try, lease_owner, lease_until, failure,
-			 created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-		        COALESCE($14::timestamptz, now()), COALESCE($15::timestamptz, now()))
+			 failures, last_error, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+		        COALESCE($16::timestamptz, now()), COALESCE($17::timestamptz, now()))
 		ON CONFLICT (tenant_id, release_id, remediation_round) DO NOTHING`,
 		rem.ID, rem.TenantID, rem.ReleaseID, rem.Round, rem.Flow, rem.Status, jsonOr(rem.TriggerPayload, "{}"),
 		rem.TriggerMessageID, jsonOr(fields, "{}"), rem.CurrentTry, leaseOwner, leaseUntil, rem.Failure,
-		timeArg(rem.CreatedAt), timeArg(rem.UpdatedAt))
+		rem.Failures, rem.LastError, timeArg(rem.CreatedAt), timeArg(rem.UpdatedAt))
 	if err != nil {
 		return false, fmt.Errorf("create remediation: %w", err)
 	}
@@ -489,11 +494,11 @@ func (r *RemediationRepository) SaveRemediation(ctx context.Context, rem remedia
 	res, err := r.q.ExecContext(ctx, `
 		UPDATE remediation
 		   SET flow = $2, status = $3, trigger_payload = $4, trigger_message_id = $5,
-		       trigger_fields = $6, current_try = $7, failure = $8,
-		       updated_at = COALESCE($9::timestamptz, now())
+		       trigger_fields = $6, current_try = $7, failure = $8, failures = $9, last_error = $10,
+		       updated_at = COALESCE($11::timestamptz, now())
 		 WHERE id = $1`,
 		rem.ID, rem.Flow, rem.Status, jsonOr(rem.TriggerPayload, "{}"), rem.TriggerMessageID,
-		jsonOr(fields, "{}"), rem.CurrentTry, rem.Failure, timeArg(rem.UpdatedAt))
+		jsonOr(fields, "{}"), rem.CurrentTry, rem.Failure, rem.Failures, rem.LastError, timeArg(rem.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("save remediation: %w", err)
 	}
@@ -503,6 +508,25 @@ func (r *RemediationRepository) SaveRemediation(ctx context.Context, rem remedia
 	}
 	if n == 0 {
 		return fmt.Errorf("save remediation %s: %w", rem.ID, repository.ErrRemediationNotFound)
+	}
+	return nil
+}
+
+// CountFailure raises the remediation's failures by one and records lastError
+// as its last error.
+func (r *RemediationRepository) CountFailure(ctx context.Context, id uuid.UUID, lastError string) error {
+	res, err := r.q.ExecContext(ctx, `
+		UPDATE remediation SET failures = failures + 1, last_error = $2
+		 WHERE id = $1`, id, lastError)
+	if err != nil {
+		return fmt.Errorf("count remediation failure: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count remediation failure: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("count remediation failure %s: %w", id, repository.ErrRemediationNotFound)
 	}
 	return nil
 }
@@ -663,17 +687,18 @@ func (r *RemediationRepository) ListPastDeadline(ctx context.Context, now time.T
 	return ids, nil
 }
 
-// ListFailingSteps returns the running remediations whose current try has a step
-// that has not finished and has failed at least minFailures times, oldest
-// first.
+// ListFailingSteps returns the running remediations that failed at least
+// minFailures times themselves, or whose current try has a step that has not
+// finished and has failed at least minFailures times, oldest first.
 func (r *RemediationRepository) ListFailingSteps(ctx context.Context, minFailures, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.q.SelectContext(ctx, &ids, `
 		SELECT r.id FROM remediation r
 		 WHERE r.status = 'running'
-		   AND EXISTS (SELECT 1 FROM remediation_step s
-		                WHERE s.remediation_id = r.id AND s.try = r.current_try
-		                  AND s.status <> 'done' AND s.failures >= $1)
+		   AND (r.failures >= $1
+		        OR EXISTS (SELECT 1 FROM remediation_step s
+		                    WHERE s.remediation_id = r.id AND s.try = r.current_try
+		                      AND s.status <> 'done' AND s.failures >= $1))
 		 ORDER BY r.created_at, r.id
 		 LIMIT $2`, minFailures, limitArg(limit)); err != nil {
 		return nil, fmt.Errorf("list remediations with failing steps: %w", err)

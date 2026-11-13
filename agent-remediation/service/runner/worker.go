@@ -123,7 +123,8 @@ func (w *Worker) Run(ctx context.Context) {
 //
 // After a drive that ended in an error the worker still holds the lease, and
 // checks whether the remediation can go no further: a step that failed five
-// times, or a try past its deadline. If so it is ended and the lease is let go.
+// times, a remediation that failed five times before a step could run, or a
+// try past its deadline. If so it is ended and the lease is let go.
 // If not, the remediation is parked: the worker holds the lease for two more
 // minutes, so no worker claims it before then and a failing step is run again
 // at that pace.

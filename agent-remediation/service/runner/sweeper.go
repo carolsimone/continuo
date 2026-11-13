@@ -19,14 +19,15 @@ const (
 	sweepInterval = time.Minute
 	// sweepBatch is how many remediations one list of a pass reads.
 	sweepBatch = 50
-	// stepFailureLimit is how many times a step may fail before the sweeper ends
-	// its remediation.
+	// stepFailureLimit is how many times a step, or a remediation before any
+	// step could run, may fail before the remediation is ended.
 	stepFailureLimit = 5
 )
 
 // Sweeper ends the remediations that can make no more progress and that no
-// worker is driving: one with a step that failed five times, and one whose try
-// is still drafting or checking past its deadline. It acts on a remediation
+// worker is driving: one with a step that failed five times, one that failed
+// five times before a step could run, and one whose try is still drafting or
+// checking past its deadline. It acts on a remediation
 // only after it claimed it, so one that a worker or the gate poller is on is
 // left to them. A worker ends the remediation of a drive that failed itself, by
 // the same rules.
@@ -68,8 +69,9 @@ func (s *Sweeper) Run(ctx context.Context) {
 	}
 }
 
-// Sweep makes one pass over the remediations that have a step past its failure
-// limit and those whose try is past its deadline. It tries each of them even
+// Sweep makes one pass over the remediations that have a step, or whose own
+// row has failures, past the failure limit and those whose try is past its
+// deadline. It tries each of them even
 // when one fails, and returns every error joined.
 func (s *Sweeper) Sweep(ctx context.Context) error {
 	now := s.clock.Now()

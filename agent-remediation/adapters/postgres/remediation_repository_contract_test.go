@@ -654,6 +654,38 @@ func TestRemediationRepository_SaveRemediationWritesTheRunAndLeavesTheLeaseAlone
 	})
 }
 
+func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-count", 1, contractBase))
+
+		require.NoError(t, env.remediations.CountFailure(ctx, r.ID, "flow missing"))
+		u := env.newUoW()
+		require.NoError(t, u.Begin(ctx))
+		require.NoError(t, u.RemediationRepo().CountFailure(ctx, r.ID, "flow still missing"))
+		require.NoError(t, u.Commit())
+
+		snap, err := env.remediations.Load(ctx, r.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, snap.Remediation.Failures)
+		assert.Equal(t, "flow still missing", snap.Remediation.LastError)
+		assert.Equal(t, remediation.StatusRunning, snap.Remediation.Status, "the rest of the row is left as it is")
+		assert.Empty(t, snap.Remediation.Failure)
+		assert.Zero(t, snap.Remediation.CurrentTry)
+
+		// SaveRemediation writes both, which is how a try that opens clears them.
+		rem := snap.Remediation
+		rem.Failures, rem.LastError = 0, ""
+		require.NoError(t, env.remediations.SaveRemediation(ctx, rem))
+		snap, err = env.remediations.Load(ctx, r.ID)
+		require.NoError(t, err)
+		assert.Zero(t, snap.Remediation.Failures)
+		assert.Empty(t, snap.Remediation.LastError)
+
+		require.ErrorIs(t, env.remediations.CountFailure(ctx, uuid.New(), "boom"), repository.ErrRemediationNotFound)
+	})
+}
+
 func TestRemediationRepository_ListPastDeadline(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -721,11 +753,22 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 		step(ended, 1, "draft", remediation.StepFailed, 5)
 		ended.Status = remediation.StatusSystemFailure
 		require.NoError(t, env.remediations.SaveRemediation(ctx, ended))
+		// A remediation that failed itself is listed by its own failures, with
+		// or without a try.
+		own := mustCreate(t, env, newRemediation("rel-own", 1, contractBase.Add(2*time.Minute)))
+		own.Failures, own.LastError = 5, "flow missing"
+		require.NoError(t, env.remediations.SaveRemediation(ctx, own))
+		ownFew := mk("rel-own-few", contractBase)
+		ownFew.CurrentTry, ownFew.Failures = 1, 4
+		require.NoError(t, env.remediations.SaveRemediation(ctx, ownFew))
+		ownEnded := mustCreate(t, env, newRemediation("rel-own-ended", 1, contractBase))
+		ownEnded.Failures, ownEnded.Status = 5, remediation.StatusSystemFailure
+		require.NoError(t, env.remediations.SaveRemediation(ctx, ownEnded))
 
 		ids, err := env.remediations.ListFailingSteps(ctx, 5, 10)
 		require.NoError(t, err)
-		require.Equal(t, []uuid.UUID{waiting.ID, failed.ID}, ids,
-			"running remediations whose current try has a step that did not finish and failed at least 5 times, oldest first")
+		require.Equal(t, []uuid.UUID{waiting.ID, failed.ID, own.ID}, ids,
+			"running remediations that failed at least 5 times themselves, or whose current try has a step that did not finish and failed at least 5 times, oldest first")
 
 		ids, err = env.remediations.ListFailingSteps(ctx, 5, 1)
 		require.NoError(t, err)

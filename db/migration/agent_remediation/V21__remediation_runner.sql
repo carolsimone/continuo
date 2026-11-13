@@ -1,6 +1,9 @@
 -- The runner's state: one remediation per (tenant, release, round), the tries it
 -- makes, the clusters of failing nodes in each try, and the steps that work on a
--- cluster. A worker claims a remediation with a lease.
+-- cluster. A worker claims a remediation with a lease. A remediation's failures
+-- and last_error count the drives that failed before a step's row could record
+-- the error: the remediation could not be loaded, or its next try could not
+-- open.
 CREATE TABLE remediation (
     id                 UUID PRIMARY KEY,
     tenant_id          TEXT        NOT NULL,
@@ -15,6 +18,8 @@ CREATE TABLE remediation (
     lease_owner        TEXT,
     lease_until        TIMESTAMPTZ,
     failure            TEXT        NOT NULL DEFAULT '',
+    failures           INT         NOT NULL DEFAULT 0,
+    last_error         TEXT        NOT NULL DEFAULT '',
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, release_id, remediation_round)
