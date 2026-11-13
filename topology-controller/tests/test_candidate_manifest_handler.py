@@ -1269,7 +1269,8 @@ def test_a_release_logs_one_release_line(caplog):
     (line,) = _release_lines(caplog)
     assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
         logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
-    assert line.skipped == {"no_owner": 0, "no_tag": 0, "local_stub": 0}
+    assert line.skipped == {"no_owner": 0, "local_stub": 0}
+    assert line.dormant == {}
     assert list(line.stages_ms) == [stage.value for stage in Stage]
     assert not hasattr(line, "failure_kind")
     assert not any(r.getMessage() == "candidate: parse complete" for r in caplog.records)
@@ -1303,20 +1304,43 @@ def _model(name, *, owner="team-a", tags=("daily",)):
 
 def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason(tmp_path, caplog):
     path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
-                              _model("stub", tags=("local_stub",)), _model("untagged", tags=()))
+                              _model("stub", tags=("local_stub",)), _model("no_owner_no_tag", owner=None, tags=()))
     with caplog.at_level(logging.INFO):
         timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
     skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
     assert [(r.levelno, r.release_id, r.service, r.node_id, r.reason) for r in skips] == [
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
-        (logging.INFO, "rel-1", "svc-a", "model.svc_a.untagged", "no_tag")]
-    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.NO_TAG: 1, SkipReason.LOCAL_STUB: 1}
+        (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner_no_tag", "no_owner")]
+    assert timings.skipped == {SkipReason.NO_OWNER: 2, SkipReason.LOCAL_STUB: 1}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
+def test_a_model_with_an_owner_and_no_tag_is_kept_not_skipped_and_counted_dormant(tmp_path, caplog):
+    path = _skipping_manifest(tmp_path, _model("kept"), _model("untagged", tags=()))
+    with caplog.at_level(logging.INFO):
+        timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    assert not [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert timings.nodes == {"dbt": 2, "python": 0, "external": 0}
+    assert timings.dormant == {"svc-a": 1}
+    (line,) = _release_lines(caplog)
+    assert (line.skipped, line.dormant) == ({"no_owner": 0, "local_stub": 0}, {"svc-a": 1})
+
+
+def test_a_dormant_node_enters_the_topology_the_code_bundle_and_the_candidate_schema(tmp_path):
+    uploader, bundle_uploader, writer = make_uploader(), FakeBundleUploader(), RecordingArtifactWriter()
+    path = _skipping_manifest(tmp_path, _model("untagged", tags=()))
+    build_handler(source_of(ManifestFile(path=path)), MagicMock(), uploader, bundle_uploader=bundle_uploader,
+                  artifact_writer=writer).handle(release_id="rel-1")
+    (node,) = writer.nodes
+    assert (node["unique_id"], node["node_type"], node["schedule"]) == ("analytics.untagged", "dbt-model", "")
+    ((_, bundle),) = bundle_uploader.uploads
+    assert sorted(bundle["nodes"]) == ["analytics.untagged"]
+    assert [c.kwargs["unique_id"] for c in uploader.upload.call_args_list] == ["analytics.untagged"]
+
+
 def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(tmp_path, caplog):
-    path = _skipping_manifest(tmp_path, _model("a", tags=()), _model("b", tags=()))
+    path = _skipping_manifest(tmp_path, _model("a", owner=None), _model("b", owner=None))
     publisher = MagicMock()
     with caplog.at_level(logging.INFO):
         build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
@@ -1324,7 +1348,7 @@ def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(t
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
     (line,) = _release_lines(caplog)
-    assert (line.outcome, line.failure_kind, line.skipped["no_tag"]) == ("failed", "invalid_artifact", 2)
+    assert (line.outcome, line.failure_kind, line.skipped["no_owner"]) == ("failed", "invalid_artifact", 2)
 
 
 class _RecordingReleaseObserver:
@@ -1344,7 +1368,7 @@ def test_the_observer_gets_each_published_release_once():
 
 def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
     observer = _RecordingReleaseObserver()
-    path = _skipping_manifest(tmp_path, _model("a", tags=()))
+    path = _skipping_manifest(tmp_path, _model("a", owner=None))
     timings = build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
                        make_uploader(), observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings]

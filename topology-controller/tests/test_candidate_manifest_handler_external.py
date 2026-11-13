@@ -107,6 +107,28 @@ def test_a_table_a_node_builds_is_no_unknown_external_node(tmp_path):
     assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["test_schema.built"]
 
 
+def test_a_reader_of_a_dormant_models_table_keeps_its_edge_to_the_dormant_node(tmp_path):
+    """A model with an owner and no tag is a node of the release, so the table it
+    writes is no unknown-external node and its reader's edge names the model."""
+    reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.dormant"}
+    dormant = dbt_node("dormant") | {"tags": []}
+    by_id = _topology(source_with_nodes(tmp_path, reader, dormant))
+    assert sorted(by_id) == ["test_schema.dormant", "test_schema.reader"]
+    assert (by_id["test_schema.dormant"]["node_type"], by_id["test_schema.dormant"]["schedule"]) == ("dbt-model", "")
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["test_schema.dormant"]
+
+
+def test_a_table_a_no_owner_model_writes_is_unknown_external(tmp_path):
+    """A model with no owner is left out of the release whatever its tags, so
+    nothing builds its table: its reader keeps the edge to an unknown-external node."""
+    ownerless = dbt_node("ownerless") | {"config": {"meta": {}}}
+    reader = dbt_node("reader") | {"compiled_code": "SELECT * FROM test_schema.ownerless"}
+    by_id = _topology(source_with_nodes(tmp_path, ownerless, reader))
+    assert sorted(by_id) == ["test_schema.ownerless", "test_schema.reader"]
+    assert by_id["test_schema.ownerless"]["node_type"] == "unknown-external"
+    assert by_id["test_schema.reader"]["upstream_unique_ids"] == ["test_schema.ownerless"]
+
+
 def test_a_table_written_under_an_alias_is_no_unknown_external_node(tmp_path):
     """dbt writes test_schema.orders for the model named orders_v2 whose alias is
     orders: a read of that table is a read of a table a node builds."""

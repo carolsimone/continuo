@@ -10,12 +10,13 @@ PG = _SYSTEM_RELATIONS["postgres"]
 TRINO = _SYSTEM_RELATIONS["trino"]
 
 
-def _model(table, schema="analytics", *, alias="", node_type=NodeType.DBT_MODEL, service="service-1", sql=""):
+def _model(table, schema="analytics", *, alias="", node_type=NodeType.DBT_MODEL, service="service-1", sql="",
+           schedule="daily"):
     """A node that builds schema.table (under alias when it has one), and when
     sql is given, one that reads what the sql names."""
     return ManifestNode(
         table_name=table, schema_name=schema, service_name=service, owner="team-a",
-        schedule_name="daily", criticality="CORE", node_type=node_type,
+        schedule_name=schedule, criticality="CORE", node_type=node_type,
         resolved_relation=alias, dependency_sqls=[sql] if sql else [],
     )
 
@@ -71,6 +72,15 @@ def test_a_table_no_node_builds_becomes_one_unknown_external_node_with_an_edge_p
     ) == (NodeType.UNKNOWN_EXTERNAL, NodeRuntime.EXTERNAL, "", "", "", "", "", 0, [])
     assert n.resolved_relation_id == "raw.ingest_probe"
     assert [d.unique_id for d in a.upstream_deps] == ["raw.ingest_probe"] == [d.unique_id for d in b.upstream_deps]
+
+
+def test_a_table_a_dormant_model_writes_is_not_unknown_external():
+    """A model with no schedule tag is built by the release, so a table it
+    writes is a table a node builds: its reader gets no unknown-external node."""
+    dormant = _model("dormant", schedule="")
+    reader = _model("reader")
+    assert unknown_external_nodes([dormant, reader], {reader.unique_id: [_ref("analytics.dormant")]}, system=PG) == []
+    assert reader.upstream_deps == []
 
 
 def test_an_unknown_external_node_carries_no_owner_criticality_or_sql():

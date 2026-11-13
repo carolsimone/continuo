@@ -7,8 +7,10 @@ holds the parts and their fold). A seed the compile extras name also carries its
 column fingerprint, CSV header and column types, and the parse reports the
 service's provenance: the manifest's dbt version, the extras' package versions
 and the seeds whose source part is still dbt's `path` checksum. A model, seed or
-snapshot a gate leaves out (no owner, no tag to take a schedule from, a local
-stub) is reported through the caller's `skipped` list, never raised.
+snapshot a gate leaves out (no owner, a local stub) is reported through the
+caller's `skipped` list, never raised. A model or snapshot with an owner and no
+tag is kept with an empty schedule (a dormant node); a seed with no tag takes
+the `seed` schedule.
 """
 import json
 import logging
@@ -59,12 +61,13 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
     "snapshot": NodeType.DBT_SNAPSHOT,
 }
 
-# Resource types that have a default schedule when no tags are present.
-# Types absent from this map require explicit tags or the node is dropped.
-_RESOURCE_TYPE_DEFAULT_SCHEDULE: dict[str, str | None] = {
-    "model":    None,
+# The schedule each resource type takes when it carries no tag. A seed loads on
+# the "seed" schedule; a model or snapshot has none, so it is a dormant node that
+# only a manual run executes.
+_RESOURCE_TYPE_UNTAGGED_SCHEDULE: dict[str, str] = {
+    "model":    "",
     "seed":     "seed",
-    "snapshot": None,
+    "snapshot": "",
 }
 
 
@@ -100,10 +103,11 @@ def parse_manifest(
     seed the extras name also carries seed_columns_hash, seed_header and
     seed_column_types from its entry, which stay empty otherwise.
 
-    A model, seed or snapshot that a gate leaves out (no owner, no tag to take
-    a schedule from, a local stub) is never an error: when `skipped` is given,
-    the node is appended to it with its reason, and nothing is logged here, so
-    the caller reports every skip in one place.
+    A model, seed or snapshot that a gate leaves out (no owner, a local stub)
+    is never an error: when `skipped` is given, the node is appended to it with
+    its reason, and nothing is logged here, so the caller reports every skip in
+    one place. The gates run in that order, so a node with neither owner nor tag
+    is reported as having no owner.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -134,13 +138,8 @@ def parse_manifest(
             if skipped is not None:
                 skipped.append(_skipped(node_id, node, SkipReason.LOCAL_STUB))
             continue
-        default_schedule = _RESOURCE_TYPE_DEFAULT_SCHEDULE.get(resource_type)
-        if not tags and default_schedule is None:
-            if skipped is not None:
-                skipped.append(_skipped(node_id, node, SkipReason.NO_TAG))
-            continue
 
-        schedule_name = tags[0] if tags else default_schedule
+        schedule_name = tags[0] if tags else _RESOURCE_TYPE_UNTAGGED_SCHEDULE[resource_type]
 
         meta = node.get("config", {}).get("meta") or {}
         criticality = meta.get("criticality", "SECONDARY")

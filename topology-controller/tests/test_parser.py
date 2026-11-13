@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 import pytest
 from continuo_contracts.hashing import shared_fold
+from domain.contract_vocabulary import NodeType
+from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import SkippedNode, SkipReason
 from service.parser import parse_manifest
@@ -63,9 +65,60 @@ def test_parse_skips_node_missing_owner():
     assert nodes == []
 
 
-def test_parse_skips_node_missing_tags():
-    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json")).nodes
-    assert nodes == []
+def test_a_model_with_an_owner_and_no_tag_is_kept_dormant():
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), skipped=skipped).nodes
+    (orders,) = nodes
+    assert (orders.table_name, orders.schedule_name, orders.node_type) == ("orders", "", NodeType.DBT_MODEL)
+    assert is_dormant(orders.node_type, orders.schedule_name)
+    assert skipped == []
+
+
+def test_a_snapshot_with_an_owner_and_no_tag_is_kept_dormant(tmp_path):
+    path = _write_nodes(tmp_path, **{
+        "snapshot.svc_a.history": _svc_a_model("history", tags=[], resource_type="snapshot"),
+    })
+    skipped: list[SkippedNode] = []
+    (history,) = parse_manifest(path, skipped=skipped).nodes
+    assert (history.table_name, history.schedule_name, history.node_type) == ("history", "", NodeType.DBT_SNAPSHOT)
+    assert is_dormant(history.node_type, history.schedule_name)
+    assert skipped == []
+
+
+def test_a_model_with_no_owner_and_no_tag_is_skipped_as_no_owner(tmp_path):
+    path = _write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare", owner=None, tags=[])})
+    skipped: list[SkippedNode] = []
+    assert parse_manifest(path, skipped=skipped).nodes == []
+    assert skipped == [SkippedNode("model.svc_a.bare", "svc-a", SkipReason.NO_OWNER)]
+
+
+def test_an_untagged_seed_still_gets_the_seed_schedule_beside_a_dormant_model(tmp_path):
+    path = _write_nodes(tmp_path, **{
+        "model.svc_a.dormant": _svc_a_model("dormant", tags=[]),
+        "seed.svc_a.countries": _svc_a_model("countries", tags=[], resource_type="seed"),
+    })
+    nodes = {n.table_name: n for n in parse_manifest(path).nodes}
+    assert (nodes["countries"].schedule_name, nodes["dormant"].schedule_name) == ("seed", "")
+    assert not is_dormant(nodes["countries"].node_type, nodes["countries"].schedule_name)
+
+
+def test_a_dormant_models_tests_are_kept(tmp_path):
+    """A test is kept when its target is tracked, and a dormant model is tracked:
+    the test becomes a test node and counts against the model."""
+    path = _write_nodes(tmp_path, **{
+        "model.svc_a.dormant": _svc_a_model("dormant", tags=[]),
+        "test.svc_a.not_null_dormant_id": {
+            "resource_type": "test", "name": "not_null_dormant_id", "schema": "analytics",
+            "fqn": ["svc_a", "not_null_dormant_id"], "attached_node": "model.svc_a.dormant",
+            "compiled_code": "select id from analytics.dormant where id is null",
+        },
+    })
+    nodes = {n.table_name: n for n in parse_manifest(path).nodes}
+    assert sorted(nodes) == ["dormant", "not_null_dormant_id"]
+    assert nodes["dormant"].test_count == 1
+    test_node = nodes["not_null_dormant_id"]
+    assert (test_node.node_type, test_node.schedule_name) == (NodeType.DBT_TEST, "")
+    assert not is_dormant(test_node.node_type, test_node.schedule_name)
 
 
 def test_parse_seed_without_tags_defaults_schedule_to_seed():
@@ -612,11 +665,10 @@ def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp
     skipped: list[SkippedNode] = []
     with caplog.at_level(logging.DEBUG, logger="service.parser"):
         nodes = parse_manifest(path, skipped=skipped).nodes
-    assert [n.table_name for n in nodes] == ["kept"]
+    assert [n.table_name for n in nodes] == ["kept", "untagged"]
     assert skipped == [
         SkippedNode("model.svc_a.no_owner", "svc-a", SkipReason.NO_OWNER),
         SkippedNode("model.svc_a.stub", "svc-a", SkipReason.LOCAL_STUB),
-        SkippedNode("model.svc_a.untagged", "svc-a", SkipReason.NO_TAG),
     ]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
