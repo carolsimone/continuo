@@ -12,7 +12,8 @@ type Findings struct {
 	Checked bool
 	// Dependents are the objects that depend on the seed's table.
 	Dependents []Dependent
-	// Probes are the answers of the probe of each view the run rebuilds.
+	// Probes are the answers of the probe of each view outside the allowed
+	// set that the preflight found.
 	Probes []Probe
 }
 
@@ -30,7 +31,7 @@ func (d Dependent) Object() string {
 	return strings.ToLower(d.Schema + "." + d.Name)
 }
 
-// Probe is the answer of one view's probe after a rebuild.
+// Probe is the answer of one view's probe after the seed's load.
 type Probe struct {
 	Schema, Name string
 	OK           bool

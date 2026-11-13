@@ -552,8 +552,8 @@ type SeedPreflightFindings struct {
 	Checked bool `protobuf:"varint,3,opt,name=checked,proto3" json:"checked,omitempty"`
 	// dependents are the objects that depend on the seed's table.
 	Dependents []*PreflightDependent `protobuf:"bytes,4,rep,name=dependents,proto3" json:"dependents,omitempty"`
-	// probes are the answers of the probe of each view the run rebuilt; empty when
-	// no probe ran.
+	// probes are the answers of the probe of each view outside the allowed set
+	// that the preflight found; empty when no probe ran.
 	Probes        []*ViewProbe `protobuf:"bytes,5,rep,name=probes,proto3" json:"probes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -709,7 +709,7 @@ func (x *PreflightDependent) GetAllowed() bool {
 	return false
 }
 
-// ViewProbe is the answer of one view's probe after a rebuild.
+// ViewProbe is the answer of one view's probe after the seed's load.
 type ViewProbe struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Schema        string                 `protobuf:"bytes,1,opt,name=schema,proto3" json:"schema,omitempty"`

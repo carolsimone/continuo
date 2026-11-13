@@ -388,14 +388,15 @@ jobs:
         # must be able to fire first, or an operator gets a goroutine dump
         # instead of a named assertion. It is the sum of:
         #   - 87m, the two longest per-test ceilings wedging in one run: the
-        #     seed reload test (47m) and the remediation parse test (40m). Eight
-        #     more tests carry a 35m ceiling — the compile, agent and retry
-        #     tests and the five batched remediation tests — and the remediation
-        #     tests all wait on the same globally serialized
-        #     verification/candidate run queue, so a wedged queue stalls several
-        #     of them one after another. Covering two is the minimum that still
-        #     buys a named assertion; covering all ten would put the ceiling
-        #     past 7 hours.
+        #     seed reload test (47m) and the remediation parse test (40m).
+        #     Eleven more tests carry a 35m ceiling — the compile, agent and
+        #     retry tests, the five batched remediation tests, the two release
+        #     validation tests-bind tests and the verification test — and they
+        #     all wait on the same globally serialized verification/candidate
+        #     run queue, so a wedged queue stalls several of them one after
+        #     another. Covering two is the minimum that still buys a named
+        #     assertion; covering all thirteen would put the ceiling past 9
+        #     hours.
         #   - 75m for the rest of the suite. A healthy run of every test but
         #     those two in this job, which starts the stack cold, takes at most
         #     about 60m; 75m leaves about 15m for a slower run.

@@ -91,7 +91,7 @@ Every series also carries a `service` label.
 | `continuo_command_requests_total` | counter | `command`, `outcome` | `run-controller` |
 | `continuo_cron_fires_total` | counter | `outcome` | `run-controller` |
 | `continuo_schedules` | gauge | `state` | `run-controller` |
-| `continuo_seed_reloads_total` | counter | `action`, `outcome` | `run-controller` |
+| `continuo_seed_reloads_total` | counter | `action` (`load`, `full_refresh`), `outcome` (`loaded`, `stopped`, `refused`, `failed`) | `run-controller` |
 | `continuo_seed_reload_stops_total` | counter | `reason` | `run-controller` |
 | `continuo_views_missing` | gauge | `state` (`missing`, `stale`) | `run-controller` |
 | `continuo_view_outage_seconds` | histogram | none beyond `service` | `run-controller` |
@@ -110,6 +110,8 @@ Every series also carries a `service` label.
 | `continuo_release_stage_duration_seconds` | histogram | `stage` (`compiling`, `parsing`, `seed_building`, `validating`), `outcome` (`ok`, `failed`) | `release-controller` |
 | `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every service that keeps a Postgres database (not `catalog` or `egress-proxy`) |
 | `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every Go service |
+
+`continuo_seed_reloads_total` counts the seed loads that drop the seed's table, when they end, and the seed loads the planner refused before they started. A seed load that drops nothing is not counted.
 
 ## Job labels
 

@@ -89,7 +89,8 @@ const (
 	// OpSeedPreflight is the block of the check that lists what depends on a
 	// seed's table before the seed loads.
 	OpSeedPreflight = "seed_preflight"
-	// OpProbeViews is the block of the probe that queries each rebuilt view.
+	// OpProbeViews is the block of the probe that queries each view outside
+	// the allowed set that a seed's preflight found.
 	OpProbeViews = "probe_views"
 )
 

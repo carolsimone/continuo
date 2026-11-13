@@ -63,7 +63,8 @@ func (p *SeedPreflight) ToDomain() *seedreload.Preflight {
 
 // SeedPreflightFindings is what a seed's preflight found in the warehouse, as
 // the seed task's final report carries it. Probes are the answers of the probe
-// of each rebuilt view, left out when no probe ran.
+// of each view outside the allowed set that the preflight found, left out
+// when no probe ran.
 type SeedPreflightFindings struct {
 	DropSemantics string               `json:"drop_semantics"`
 	Completeness  string               `json:"completeness"`
@@ -82,7 +83,7 @@ type PreflightDependent struct {
 	Allowed bool   `json:"allowed"`
 }
 
-// ViewProbe is the answer of one view's probe after a rebuild.
+// ViewProbe is the answer of one view's probe after the seed's load.
 type ViewProbe struct {
 	Schema string `json:"schema"`
 	Name   string `json:"name"`

@@ -1,10 +1,11 @@
 // Package warehouse maps each supported warehouse engine to its drop family.
 //
 // The family says what dropping a table does to the objects that read it. A
-// schema_bound engine (postgres) binds a view to its base table, so a DROP of
-// that table fails while a dependent view exists. A late_binding engine
-// (trino) resolves a view's table names at query time, so a DROP succeeds and
-// the view turns stale until its table is created again.
+// schema_bound engine (postgres) binds a view to its base table, so dropping
+// that table with CASCADE, as a dbt seed load does, drops every view and
+// other object that depends on it. A late_binding engine (trino) resolves a
+// view's table names at query time, so a DROP succeeds and the view turns
+// stale until its table is created again.
 package warehouse
 
 import (
@@ -19,7 +20,7 @@ type Family string
 
 const (
 	// SchemaBound is an engine whose views hold a dependency on their base
-	// tables, so a table with dependents cannot be dropped.
+	// tables, so dropping a table with CASCADE drops its dependants with it.
 	SchemaBound Family = "schema_bound"
 	// LateBinding is an engine whose views resolve their tables when queried,
 	// so a table can be dropped while views still name it.

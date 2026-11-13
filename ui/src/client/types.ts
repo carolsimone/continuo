@@ -161,8 +161,8 @@ export interface TaskAttempt {
 }
 
 // A seed preflight's findings: the objects that depend on the seed (allowed
-// marks the ones the load may drop) and the probe of each view the run
-// rebuilds.
+// marks the ones the load may drop) and the probe of each view outside the
+// allowed set that the preflight found.
 export interface SeedPreflight {
   drop_semantics: string;
   completeness: string;

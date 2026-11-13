@@ -16,9 +16,10 @@ import (
 // granted task waited, the leases the lease waker repaired, and how each call
 // of a command that creates or cancels a run ended. It counts the outcomes of
 // the cron loop's fires and gauges the schedules scheduled, paused and unparsable.
-// It counts the seed loads that ended, by action and outcome, and the tasks of
-// a seed reload a seed rule stopped, by reason, and times how long each view a
-// seed load left missing or stale waited for its rebuild.
+// It counts the seed loads that drop their table and ended, and the seed loads
+// the planner refused, by action and outcome, and the tasks of a seed reload a
+// seed rule stopped, by reason, and times how long each view a seed load left
+// missing or stale waited for its rebuild.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -105,7 +106,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}, []string{"state"}),
 		seedReloads: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_seed_reloads_total",
-			Help: "Seed loads that ended, by action (load, or full_refresh when the seed's task fully refreshed it) and outcome: loaded, stopped (its preflight found an object the load would destroy, so nothing was dropped), refused (no command can apply the load, so it never started a container) or failed.",
+			Help: "Seed loads that drop the seed's table (a seed task with a preflight) that ended, and seed loads the planner refused, by action (load, or full_refresh when the seed's task fully refreshed it) and outcome: loaded, stopped (its preflight found an object the load would destroy, so nothing was dropped), refused (no command can apply the load, so it never started a container) or failed. A seed load that drops nothing is not counted.",
 		}, []string{"action", "outcome"}),
 		seedReloadStops: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_seed_reload_stops_total",
