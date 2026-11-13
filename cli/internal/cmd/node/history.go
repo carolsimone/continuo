@@ -44,6 +44,10 @@ type nodeRun struct {
 	WaitReason     string `json:"wait_reason,omitempty"`
 	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
 	WaitingSince   string `json:"waiting_since,omitempty"`
+	// BlockingObjects are the objects outside continuo, as <schema>.<name>,
+	// that stopped a seed task's load with unowned_dependents; an empty list
+	// on every other run.
+	BlockingObjects []string `json:"blocking_objects"`
 }
 
 type historyPayload struct {
@@ -88,7 +92,8 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "error_message":string,"failure_class":string,"failure_reason":string,
    "log_s3_key":string,"run_results_uri":string,"operation":string,
    "content_hash":string,
-   "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}]}
+   "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string,
+   "blocking_objects":[string]}]}
   attempt is the zero-based number of the task's current attempt (0 on the
   first try). run_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.
   task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
@@ -109,6 +114,13 @@ for a moment when the node has just been freed and the task is about to be
 granted it); waiting_since is when the wait began (RFC3339). The three are
 omitted when the task waits for nothing besides its upstreams.
 
+blocking_objects lists, as <schema>.<name>, the objects outside continuo that
+read a seed and stopped its load before the drop: it is set on a seed task
+whose latest attempt failed with failure_reason unowned_dependents, and is []
+on every other run. To let the load drop them, name each one with
+"continuo node full-refresh <service> <schema> <table> --acknowledge
+<schema>.<name>".
+
 In --human mode, content_hash is rendered too: each line ends with an
 EXECUTED_HASH column (the first 12 characters of content_hash, or "-" when
 it is unavailable).
@@ -119,7 +131,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node history finance analytics orders --operation test",
 		Annotations: map[string]string{
-			"output_schema": `{"runs":[{"run_id":"string","schedule_name":"string","kind":"string","run_status":"string","task_id":"string","task_status":"string","attempt":"number","image_tag":"string","created_at":"string","started_at":"string","completed_at":"string","error_message":"string","failure_class":"string","failure_reason":"string","log_s3_key":"string","run_results_uri":"string","operation":"string","content_hash":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
+			"output_schema": `{"runs":[{"run_id":"string","schedule_name":"string","kind":"string","run_status":"string","task_id":"string","task_status":"string","attempt":"number","image_tag":"string","created_at":"string","started_at":"string","completed_at":"string","error_message":"string","failure_class":"string","failure_reason":"string","log_s3_key":"string","run_results_uri":"string","operation":"string","content_hash":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string","blocking_objects":["string"]}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -186,6 +198,8 @@ func toHistoryPayload(runs []*runv1.NodeTask) historyPayload {
 			WaitReason:     r.GetWaitReason(),
 			WaitingOnRunID: r.GetWaitingOnRunId(),
 			WaitingSince:   r.GetWaitingSince(),
+			// A run with none carries [], not null.
+			BlockingObjects: append([]string{}, r.GetBlockingObjects()...),
 		})
 	}
 	return historyPayload{Runs: out}

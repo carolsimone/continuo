@@ -114,7 +114,7 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 | Command | What it does | Changes state |
 |---|---|:--:|
 | `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Filter with `--search` (an exact table name), `--service` and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
-| `node history <service> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash. `--operation` picks `run`, `test` or `build` (default `run`). | |
+| `node history <service> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash, and on a seed task whose load stopped with `unowned_dependents` the `blocking_objects` to name with `node full-refresh --acknowledge`. `--operation` picks `run`, `test` or `build` (default `run`). | |
 | `node trigger <service> <schema> <table> [source-run-id]` | Starts a run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
 | `node test <service> <schema> <table> [source-run-id]` | The same, with `dbt test`. | yes |
 | `node build <service> <schema> <table> [source-run-id]` | The same, with `dbt build`. | yes |

@@ -372,3 +372,17 @@ func TestExecutor_RejectsAFlagTheCommandDoesNotMarkForTheChat(t *testing.T) {
 	assert.True(t, res.IsError)
 	assert.Contains(t, res.Output, `unknown parameter \"endpoint\"`)
 }
+
+// A chat-flag item is one object name: whitespace or a control character in it
+// would make the confirm prompt show more objects than the argv sends, or break
+// the prompt's rendering, so the call is refused.
+func TestExecutor_RejectsAnAcknowledgedObjectWithWhitespaceOrAControlCharacter(t *testing.T) {
+	for _, item := range []string{"bi.a --acknowledge bi.b", "bi.a\tbi.b", "bi.a\nbi.b", "bi.a\x1b[2J", "bi.a bi.b"} {
+		raw, err := json.Marshal([]string{item})
+		require.NoError(t, err)
+		res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+			fullRefreshCall(map[string]string{"acknowledge": string(raw)}))
+		assert.True(t, res.IsError, "%q must be refused", item)
+		assert.Contains(t, res.Output, "whitespace or control characters", item)
+	}
+}

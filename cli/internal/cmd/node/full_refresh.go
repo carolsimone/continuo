@@ -45,7 +45,8 @@ On Postgres the seed's table is dropped, so the refresh stops before the drop
 (the seed's task fails with failure_reason unowned_dependents and lists the
 objects) when an object continuo does not own reads the seed, unless each such
 object is named with --acknowledge <schema>.<name>; repeat the flag for every
-object the stopped load listed. A seed set to +full_refresh: false on Postgres
+object the stopped load listed. "node history" lists them in blocking_objects
+on the seed task that stopped. A seed set to +full_refresh: false on Postgres
 is refused (usage, exit 2) and no run is created. A service whose governing
 command block has no seed_full_refresh (seed) or full_refresh (model) makes the
 task fail with failure_reason seed_full_refresh_undefined or

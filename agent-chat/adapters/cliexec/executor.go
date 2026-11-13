@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 	"github.com/google/uuid"
@@ -102,16 +103,22 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 		}
 	}
 	// Check 3: every value is well formed (a list parameter is a JSON array of
-	// strings), and no value may smuggle a flag into the argv.
+	// strings), no value may smuggle a flag into the argv, and a chat flag's
+	// value is one token: whitespace or a control character in it would make
+	// the confirm prompt show other values than the argv sends.
 	values := make(map[string][]string, len(call.Args))
 	for name, raw := range call.Args {
-		vals, err := known[name].Values(raw)
+		p := known[name]
+		vals, err := p.Values(raw)
 		if err != nil {
 			return reject("%s", err.Error())
 		}
 		for _, v := range vals {
 			if strings.HasPrefix(v, "-") {
 				return reject("parameter %q must not start with '-'", name)
+			}
+			if p.Flag && strings.IndexFunc(v, isSpaceOrControl) >= 0 {
+				return reject("parameter %q must not contain whitespace or control characters", name)
 			}
 		}
 		values[name] = vals
@@ -219,6 +226,11 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 		"duration_ms", elapsed.Milliseconds(),
 	)
 	return ports.ToolResult{Output: string(out), IsError: isError}
+}
+
+// isSpaceOrControl reports whether r is whitespace or a control character.
+func isSpaceOrControl(r rune) bool {
+	return unicode.IsSpace(r) || unicode.IsControl(r)
 }
 
 // requestID is the stable request id of one tool call: a UUIDv5 of the thread

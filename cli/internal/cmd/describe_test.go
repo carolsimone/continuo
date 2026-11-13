@@ -313,20 +313,22 @@ func TestDescribe_MarksTheFlagsTheChatMaySetAndTheOnesThatRepeat(t *testing.T) {
 	assert.False(t, byName["endpoint"].Chat)
 }
 
-// Every name a command lists in chat_flags is one of its own flags, and holds
-// a string or a list of strings, since the chat renders it as --<name> <value>.
+// Every name a command lists in chat_flags is one of its own flags, and is a
+// string or a string array, since the chat renders it as --<name> <value>
+// once per item: a string slice would split one item on its commas.
 func TestChatFlags_NameRealStringFlagsOfTheirCommand(t *testing.T) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		if raw, ok := c.Annotations[chatFlagsAnnotation]; ok {
-			names := strings.Split(raw, ",")
-			require.NotEmpty(t, names, "%s has an empty chat_flags annotation", c.CommandPath())
-			for _, name := range names {
+			for _, name := range strings.Split(raw, ",") {
 				name = strings.TrimSpace(name)
+				if !assert.NotEmpty(t, name, "%s lists a blank chat flag in %q", c.CommandPath(), raw) {
+					continue
+				}
 				f := c.LocalFlags().Lookup(name)
 				if assert.NotNil(t, f, "%s lists chat flag %q, which it does not define", c.CommandPath(), name) {
-					assert.Contains(t, []string{"string", "stringArray", "stringSlice"}, f.Value.Type(),
-						"%s chat flag --%s must hold a string or a list of strings", c.CommandPath(), name)
+					assert.Contains(t, []string{"string", "stringArray"}, f.Value.Type(),
+						"%s chat flag --%s must be a string or a string array", c.CommandPath(), name)
 				}
 			}
 		}
