@@ -143,6 +143,14 @@ func TestWorker_RenewsAtAThirdOfTheLease(t *testing.T) {
 	assert.Equal(t, 2*time.Second, w.idleWait)
 }
 
+// The gate poller holds the lease of the remediation it polls at the worker's
+// pace.
+func TestGatePoller_RenewsAtAThirdOfTheLease(t *testing.T) {
+	p := NewGatePoller(&Runner{}, nil, "o", time.Second, nil, fixedClock{}, slog.Default())
+	assert.Equal(t, leaseDuration/3, p.heartbeat)
+	assert.Equal(t, leaseDuration/3, p.lease().heartbeat)
+}
+
 // A lease another worker took stops the drive at once: its context is
 // cancelled, and the worker does not renew again.
 func TestWorker_StopsTheDriveWhenTheLeaseIsLost(t *testing.T) {

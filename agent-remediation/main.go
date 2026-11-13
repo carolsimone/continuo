@@ -530,9 +530,10 @@ const loopLivenessSlack = time.Minute
 // loopBudgets are how long the worker and the poller may go without beating
 // before they are reported wedged. A worker beats at every claim and every
 // third of a lease while it drives, so it can be silent for one step and the
-// park of a remediation whose drive failed. A poller beats at every pass and
-// every remediation it polls, so it can be silent for one poll of a gate and
-// the wait between two passes, which VERIFICATION_POLL_INTERVAL sets.
+// park of a remediation whose drive failed. A poller beats at every pass,
+// every remediation it polls and every third of a lease while a poll runs, so
+// it can be silent for at most one poll of a gate and the wait between two
+// passes, which VERIFICATION_POLL_INTERVAL sets.
 func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 	worker = runner.DefaultStepTimeout + runner.ParkDuration + loopLivenessSlack
 	poller = cfg.VerificationPollInterval + runner.DefaultStepTimeout + loopLivenessSlack

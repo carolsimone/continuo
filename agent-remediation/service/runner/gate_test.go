@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -403,7 +404,7 @@ func TestRunner_ACommitFailureAfterThePassEmitsOneProposedEvent(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.pipeline.answer(proposal.PhasePassed, nil)
 	var armed atomic.Bool
-	h.pipeline.onStatus = func() {
+	h.pipeline.onStatus = func(context.Context) {
 		if armed.CompareAndSwap(false, true) {
 			h.store.FailNextCommit()
 		}

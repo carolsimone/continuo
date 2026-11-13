@@ -2,9 +2,7 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -129,21 +127,13 @@ func (w *Worker) Run(ctx context.Context) {
 // minutes, so no worker claims it before then and a failing step is run again
 // at that pace.
 func (w *Worker) driveClaimed(ctx context.Context, id uuid.UUID) error {
-	dctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var lost atomic.Bool
-	renewed := make(chan struct{})
-	go func() {
-		defer close(renewed)
-		w.renew(dctx, cancel, id, &lost)
-	}()
-	err := w.drive(dctx, id)
-	cancel()
-	<-renewed
+	lost, err := w.lease().holdWhile(ctx, id, func(dctx context.Context) error {
+		return w.drive(dctx, id)
+	})
 
 	rctx, done := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 	defer done()
-	if lost.Load() || ctx.Err() != nil {
+	if lost || ctx.Err() != nil {
 		w.release(rctx, id)
 		return nil
 	}
@@ -172,30 +162,10 @@ func (w *Worker) release(ctx context.Context, id uuid.UUID) {
 	}
 }
 
-// renew holds the lease every third of its duration, until ctx ends. A lease
-// another worker took stops the drive: cancel ends its context, so a step that
-// is calling the model returns at once, and the worker never renews again.
-func (w *Worker) renew(ctx context.Context, cancel context.CancelFunc, id uuid.UUID, lost *atomic.Bool) {
-	ticker := time.NewTicker(w.heartbeat)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		w.beat()
-		err := w.repo().Hold(ctx, id, w.owner, w.clock.Now(), leaseDuration)
-		switch {
-		case errors.Is(err, repository.ErrLeaseLost):
-			w.logger.Warn("remediation lease lost while a drive runs; stopping the drive", "remediation", id, "owner", w.owner)
-			lost.Store(true)
-			cancel()
-			return
-		case err != nil && ctx.Err() == nil:
-			w.logger.Warn("could not renew a remediation's lease; trying again at the next beat", "remediation", id, "error", err)
-		}
-	}
+// lease is what keeps the lease of the remediation the worker drives: held
+// again every heartbeat, with a beat each time.
+func (w *Worker) lease() leaseKeeper {
+	return leaseKeeper{repo: w.repo, owner: w.owner, clock: w.clock, heartbeat: w.heartbeat, beat: w.beat, logger: w.logger}
 }
 
 // idle waits until Wake, the idle time or ctx ends.

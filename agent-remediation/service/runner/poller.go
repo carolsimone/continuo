@@ -20,7 +20,9 @@ const (
 
 // GatePoller reads the gate's verdict on every remediation whose try is
 // verifying. It takes a remediation's lease before it polls, so it never
-// polls one a worker is on, and lets the lease go afterwards.
+// polls one a worker is on, holds it again every third of its duration while
+// the poll runs, as the worker does while it drives, and lets the lease go
+// afterwards.
 type GatePoller struct {
 	r        *Runner
 	repo     func() repository.RemediationRepository
@@ -30,6 +32,9 @@ type GatePoller struct {
 	clock    ports.Clock
 	logger   *slog.Logger
 	beat     func()
+	// heartbeat is how often the lease of the remediation being polled is
+	// held again.
+	heartbeat time.Duration
 }
 
 // NewGatePoller builds a poller over r. repo returns the remediation
@@ -49,11 +54,12 @@ func NewGatePoller(r *Runner, repo func() repository.RemediationRepository, owne
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &GatePoller{r: r, repo: repo, owner: owner, interval: interval, wake: wake, clock: clock, logger: logger, beat: func() {}}
+	return &GatePoller{r: r, repo: repo, owner: owner, interval: interval, wake: wake, clock: clock, logger: logger, beat: func() {}, heartbeat: leaseDuration / 3}
 }
 
-// SetHeartbeat sets the function the poller calls at every pass and for every
-// remediation it polls, for a liveness probe to read.
+// SetHeartbeat sets the function the poller calls at every pass, for every
+// remediation it polls and every time it renews a lease, for a liveness probe
+// to read.
 func (p *GatePoller) SetHeartbeat(beat func()) { p.beat = beat }
 
 // Run polls at once and then every interval, until ctx ends.
@@ -73,10 +79,11 @@ func (p *GatePoller) Run(ctx context.Context) {
 }
 
 // Poll makes one pass: it lists the oldest verifying remediations, and for each
-// one it can claim it polls the gate, lets go of the lease and wakes the
-// worker. A remediation another process holds is left to it. An error from one
-// remediation is logged, and the pass goes on to the next; the returned error
-// is the listing's.
+// one it can claim it polls the gate while it keeps the lease, lets go of the
+// lease and wakes the worker. A remediation another process holds is left to
+// it, and a poll whose lease another process takes is stopped at once with
+// nothing written. An error from one remediation is logged, and the pass goes
+// on to the next; the returned error is the listing's.
 func (p *GatePoller) Poll(ctx context.Context) error {
 	p.beat()
 	snaps, err := p.repo().ListVerifying(ctx, pollBatch)
@@ -97,7 +104,10 @@ func (p *GatePoller) Poll(ctx context.Context) error {
 		if !claimed {
 			continue
 		}
-		if err := p.r.PollGate(ctx, snap); err != nil {
+		lost, err := p.lease().holdWhile(ctx, id, func(pctx context.Context) error {
+			return p.r.PollGate(pctx, snap)
+		})
+		if err != nil && !lost {
 			p.logger.Error("poll a remediation's gate", "remediation", id, "error", err)
 		}
 		rctx, release := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
@@ -108,4 +118,10 @@ func (p *GatePoller) Poll(ctx context.Context) error {
 		p.wake()
 	}
 	return nil
+}
+
+// lease is what keeps the lease of the remediation the poller polls: held
+// again every heartbeat, with a beat each time.
+func (p *GatePoller) lease() leaseKeeper {
+	return leaseKeeper{repo: p.repo, owner: p.owner, clock: p.clock, heartbeat: p.heartbeat, beat: p.beat, logger: p.logger}
 }

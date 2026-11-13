@@ -1,6 +1,8 @@
 package runner_test
 
 import (
+	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,6 +48,85 @@ func TestGatePoller_AFailedGateOpensTheNextTryForTheWorker(t *testing.T) {
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 2).Status)
 	assert.Empty(t, h.remediation(id).LeaseOwner)
+}
+
+// A poll that takes longer than the lease keeps it: the poller holds the
+// lease again every third of its duration while it polls, so the verdict it
+// reads is committed and no other process can claim the remediation meanwhile.
+func TestGatePoller_KeepsTheLeaseThroughAPollThatOutlastsIt(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	require.NoError(t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
+	h.pipeline.answer(proposal.PhasePassed, nil)
+	// The status read takes eight minutes of the clock, past the five-minute
+	// lease the poller claimed at t0. The clock moves four minutes at a time,
+	// and each time the poller holds the lease again from then.
+	var once sync.Once
+	h.pipeline.onStatus = func(context.Context) {
+		once.Do(func() {
+			for _, at := range []time.Duration{4 * time.Minute, 8 * time.Minute} {
+				h.clock.set(t0.Add(at))
+				until := t0.Add(at + lease)
+				require.Eventually(t, func() bool {
+					rem := h.remediation(id)
+					return rem.LeaseUntil != nil && rem.LeaseUntil.Equal(until)
+				}, 5*time.Second, time.Millisecond, "the lease is held again at %s", at)
+			}
+		})
+	}
+	p := h.poller(func() {})
+	p.SetLeaseHeartbeat(time.Millisecond)
+
+	require.NoError(t, p.Poll(ctx))
+
+	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the verdict read after the first lease ended is committed")
+	assert.Equal(t, remediation.TryPassed, h.try(id, 1).Status)
+	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Len(t, h.proposedEvents(), 1)
+	assert.Empty(t, h.remediation(id).LeaseOwner, "the poller lets go of the lease")
+}
+
+// A lease another process took while the poller polls stops the poll at once:
+// its context ends, so the status read returns, and nothing is written.
+func TestGatePoller_StopsAPollWhoseLeaseAnotherProcessTook(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	repo := h.store.RemediationRepository()
+	require.NoError(t, repo.ReleaseLease(ctx, id, workerOwner))
+	h.pipeline.answer(proposal.PhasePassed, nil)
+	gate := h.flowRows(id, 1)["verification_run"][0]
+	stopped := make(chan bool, 1)
+	var once sync.Once
+	h.pipeline.onStatus = func(readCtx context.Context) {
+		once.Do(func() {
+			// The poller's lease ends and another process claims the
+			// remediation while the status read runs.
+			h.clock.set(t0.Add(lease + time.Second))
+			claimed, err := repo.Claim(ctx, id, "somebody-else", h.clock.Now(), lease)
+			require.NoError(t, err)
+			require.True(t, claimed)
+			select {
+			case <-readCtx.Done():
+				stopped <- true
+			case <-time.After(5 * time.Second):
+				stopped <- false
+			}
+		})
+	}
+	p := h.poller(func() {})
+	p.SetLeaseHeartbeat(time.Millisecond)
+
+	require.NoError(t, p.Poll(ctx))
+
+	assert.True(t, <-stopped, "the status read is stopped once the lease is lost")
+	assert.Equal(t, "somebody-else", h.remediation(id).LeaseOwner, "the other process keeps its lease")
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
+	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
+	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Empty(t, h.proposedEvents())
+	assert.Equal(t, gate, h.flowRows(id, 1)["verification_run"][0], "the gate's row is as it was")
 }
 
 func TestGatePoller_LeavesARemediationAnotherWorkerHolds(t *testing.T) {

@@ -173,14 +173,15 @@ func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, er
 // fakePipeline records every verification run submitted. submitErr is
 // returned by the next Submit, once. onSubmit runs after each run it records.
 // status answers every status read, queued when it is nil, and onStatus runs
-// before each read.
+// before each read with the read's context. A read whose context ended by
+// then returns the context's error, as a call to release-controller does.
 type fakePipeline struct {
 	mu        sync.Mutex
 	submitted []ports.VerificationRequest
 	submitErr error
 	onSubmit  func()
 	status    func(runID string) (ports.VerificationStatus, error)
-	onStatus  func()
+	onStatus  func(ctx context.Context)
 	reads     int
 }
 
@@ -201,13 +202,16 @@ func (p *fakePipeline) Submit(_ context.Context, r ports.VerificationRequest) er
 	return nil
 }
 
-func (p *fakePipeline) Status(_ context.Context, runID string) (ports.VerificationStatus, error) {
+func (p *fakePipeline) Status(ctx context.Context, runID string) (ports.VerificationStatus, error) {
 	p.mu.Lock()
 	status, onStatus := p.status, p.onStatus
 	p.reads++
 	p.mu.Unlock()
 	if onStatus != nil {
-		onStatus()
+		onStatus(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return ports.VerificationStatus{}, err
 	}
 	if status == nil {
 		return ports.VerificationStatus{Phase: proposal.PhaseQueued}, nil
