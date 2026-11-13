@@ -17,13 +17,6 @@ const (
 	nameOneManifestKind    workflow.StepName = "one_manifest_kind"
 )
 
-// The finding codes of the checks.
-const (
-	codeEditOutsideServices = "edit_outside_services"
-	codePathEditedTwice     = "path_edited_twice"
-	codeMixedManifestKinds  = "mixed_manifest_kinds"
-)
-
 var crossStage = []workflow.Stage{workflow.StageCrossCluster}
 
 // finish wraps at most one finding as the result of the check called name. Each
@@ -66,14 +59,14 @@ func (*EditsMapToAService) Meta() step.Meta {
 // CheckAll finds one edit_outside_services finding for the first edit, in
 // cluster order, that no configured service owns.
 func (c *EditsMapToAService) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	e, ok := firstUnmapped(c.serviceRepoPaths, EditsOf(in.Drafts))
+	e, ok := shared.FirstUnmapped(c.serviceRepoPaths, shared.EditsOf(in.Drafts))
 	if !ok {
 		return finish(nameEditsMapToAService, nil), nil
 	}
 	c.logger.Error("an edit belongs to no configured service; the attempt cannot be verified",
 		"release", in.Trigger.ReleaseID, "path", e.Path, "target", e.TargetNodeID)
 	return finish(nameEditsMapToAService, &remediation.Finding{
-		Code: codeEditOutsideServices, Message: unmappedError(e).Error(), File: e.Path,
+		Code: shared.CodeEditOutsideServices, Message: shared.UnmappedError(e).Error(), File: e.Path,
 	}), nil
 }
 
@@ -107,14 +100,14 @@ func (*NoPathEditedTwice) Meta() step.Meta {
 // earlier edit of the try changed. An edit no service owns is left to
 // edits_map_to_a_service.
 func (c *NoPathEditedTwice) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	e, ok := firstDuplicate(c.serviceRepoPaths, EditsOf(in.Drafts))
+	e, ok := shared.FirstDuplicate(c.serviceRepoPaths, shared.EditsOf(in.Drafts))
 	if !ok {
 		return finish(nameNoPathEditedTwice, nil), nil
 	}
 	c.logger.Error("two of the attempt's edits change the same file; the attempt cannot be verified",
 		"release", in.Trigger.ReleaseID, "path", e.Path, "target", e.TargetNodeID)
 	return finish(nameNoPathEditedTwice, &remediation.Finding{
-		Code: codePathEditedTwice, Message: duplicateError(e).Error(), File: e.Path,
+		Code: shared.CodePathEditedTwice, Message: shared.DuplicateError(e).Error(), File: e.Path,
 	}), nil
 }
 
@@ -151,13 +144,13 @@ func (*OneManifestKind) Meta() step.Meta {
 // name order, whose packaged contract comes with an edit that is not the
 // contract of a failing python node.
 func (c *OneManifestKind) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	service, e, ok := firstMixed(c.serviceRepoPaths, in.Trigger, in.Drafts)
+	service, e, ok := shared.FirstMixed(c.serviceRepoPaths, in.Trigger, in.Drafts)
 	if !ok {
 		return finish(nameOneManifestKind, nil), nil
 	}
 	c.logger.Error("a service's edits span two manifest kinds; the attempt cannot be verified",
 		"release", in.Trigger.ReleaseID, "service", service, "edit", e.Path, "target", e.TargetNodeID)
 	return finish(nameOneManifestKind, &remediation.Finding{
-		Code: codeMixedManifestKinds, Message: mixedError(service).Error(), File: e.Path,
+		Code: shared.CodeMixedManifestKinds, Message: shared.MixedError(service).Error(), File: e.Path,
 	}), nil
 }

@@ -22,14 +22,14 @@ const (
 // reached a verdict inside the budget.
 const timedOutError = "verification timed out"
 
-// read is what one poll learned about the runs: the runs in submission order
-// with the phase and error each last reported, and the per-node errors of the
-// failed ones. Unread is set when a run's status could not be read, which ends
-// the poll there.
+// read is what one poll learned about the runs: every run of the try in
+// submission order, of which the first read have the phase and error each last
+// reported (the poll stops at the first status it cannot read), and the
+// per-node errors of the failed ones.
 type read struct {
 	runs       []proposal.Verification
+	read       int
 	nodeErrors map[string]string
-	unread     bool
 }
 
 // decide turns what a poll read into the gate's verdict.
@@ -46,7 +46,7 @@ type read struct {
 // one outage burn the try budget on fixes that were never judged. The read is
 // retried at the next poll, and the wait is still bounded because the same
 // timeout that ends a run which never reaches a verdict also ends one whose
-// status never becomes readable, counted from when the try started.
+// status never becomes readable, counted from when the try was submitted.
 //
 // The budget of a running run counts from when that run itself left the
 // pipeline's queue. Runs share one global queue and go one after another, so
@@ -56,18 +56,26 @@ type read struct {
 func (g *VerificationRun) decide(in step.GateInput, got read) step.GateVerdict {
 	name := string(nameVerificationRun)
 	now := g.clock.Now()
-	phases := observedPhases(got.runs)
+	seen := got.runs[:got.read]
+	phases := observedPhases(seen)
+	ids := runIDs(got.runs)
 
-	if got.unread {
-		if now.Sub(in.Try.CreatedAt) >= g.timeout {
-			return g.timedOut(got.runs, phases)
+	if got.read < len(got.runs) {
+		// The budget of an unreadable run runs from when the try was submitted:
+		// with no status to read, nothing else measures it.
+		since := in.SubmittedAt
+		if since.IsZero() {
+			since = in.Try.CreatedAt
 		}
-		return waiting(name, got.runs, phases)
+		if now.Sub(since) >= g.timeout {
+			return timedOut(ids, seen, phases)
+		}
+		return waiting(name, ids, seen, phases)
 	}
 
 	anyFailed, allTerminal := false, true
 	var runningSince []time.Time
-	for _, r := range got.runs {
+	for _, r := range seen {
 		switch r.Phase {
 		case proposal.PhaseFailed:
 			anyFailed = true
@@ -81,49 +89,49 @@ func (g *VerificationRun) decide(in step.GateInput, got read) step.GateVerdict {
 	}
 	switch {
 	case anyFailed:
-		verifyErr := verifyError(resolvedNodes(in.Drafts), got.nodeErrors, got.runs)
+		verifyErr := verifyError(in.Trigger.NodeIDs(), got.nodeErrors, got.runs)
 		return step.GateVerdict{
 			Result: remediation.CheckResult{
 				Check:    name,
 				Findings: failureFindings(got.nodeErrors, verifyErr),
-				RunIDs:   runIDs(got.runs),
+				RunIDs:   ids,
 			},
-			Verifications: got.runs,
+			Verifications: seen,
 			VerifyError:   verifyErr,
 			Phases:        phases,
 		}
 	case allTerminal:
 		return step.GateVerdict{
-			Result:        remediation.CheckResult{Check: name, RunIDs: runIDs(got.runs)},
-			Verifications: got.runs,
+			Result:        remediation.CheckResult{Check: name, RunIDs: ids},
+			Verifications: seen,
 			Phases:        phases,
 		}
 	}
 	for _, since := range runningSince {
 		if now.Sub(since) >= g.timeout {
-			return g.timedOut(got.runs, phases)
+			return timedOut(ids, seen, phases)
 		}
 	}
-	return waiting(name, got.runs, phases)
+	return waiting(name, ids, seen, phases)
 }
 
-func (g *VerificationRun) timedOut(runs, phases []proposal.Verification) step.GateVerdict {
+func timedOut(ids []string, seen, phases []proposal.Verification) step.GateVerdict {
 	return step.GateVerdict{
 		Result: remediation.CheckResult{
 			Check:    string(nameVerificationRun),
 			Findings: []remediation.Finding{{Code: codeVerificationTimedOut, Message: timedOutError}},
-			RunIDs:   runIDs(runs),
+			RunIDs:   ids,
 		},
-		Verifications: runs,
+		Verifications: seen,
 		VerifyError:   timedOutError,
 		Phases:        phases,
 	}
 }
 
-func waiting(name string, runs, phases []proposal.Verification) step.GateVerdict {
+func waiting(name string, ids []string, seen, phases []proposal.Verification) step.GateVerdict {
 	return step.GateVerdict{
-		Result:        remediation.CheckResult{Check: name, Waiting: true, RunIDs: runIDs(runs)},
-		Verifications: runs,
+		Result:        remediation.CheckResult{Check: name, Waiting: true, RunIDs: ids},
+		Verifications: seen,
 		Phases:        phases,
 	}
 }
@@ -161,22 +169,6 @@ func failureFindings(nodeErrors map[string]string, verifyErr string) []remediati
 		findings[i] = remediation.Finding{Code: codeVerificationFailed, Message: n + ": " + nodeErrors[n]}
 	}
 	return findings
-}
-
-// resolvedNodes are the failing nodes the try's clusters fix, sorted.
-func resolvedNodes(drafts []step.ClusterDraft) []string {
-	seen := map[string]bool{}
-	var nodes []string
-	for _, d := range drafts {
-		for _, m := range d.Cluster.Members {
-			if !seen[m] {
-				seen[m] = true
-				nodes = append(nodes, m)
-			}
-		}
-	}
-	sort.Strings(nodes)
-	return nodes
 }
 
 // verifyError is the text recorded on a rejected try, and the evidence the next

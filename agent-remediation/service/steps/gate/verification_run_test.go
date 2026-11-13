@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,9 +171,10 @@ func pythonCluster() step.ClusterDraft {
 
 func gateInput(drafts ...step.ClusterDraft) step.GateInput {
 	return step.GateInput{
-		Try:     remediation.Try{Try: 1, Attempt: 2, CreatedAt: t0},
-		Trigger: triggerOf(),
-		Drafts:  drafts,
+		Try:         remediation.Try{Try: 1, Attempt: 2, CreatedAt: t0},
+		Trigger:     triggerOf(),
+		Drafts:      drafts,
+		SubmittedAt: t0,
 	}
 }
 
@@ -207,7 +210,10 @@ func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster()))
 	require.NoError(t, err)
 
-	assert.Equal(t, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: []string{"verify-rel-1-sales-a2"}}, res)
+	assert.Equal(t, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: []string{"verify-rel-1-sales-a2"}}, res.Result)
+	assert.Equal(t, []proposal.Verification{
+		{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
+	}, res.Verifications, "the runner records the runs with the proposal as submitVerifications returned them")
 	require.Len(t, r.pipeline.submitted, 1)
 	assert.Equal(t, ports.VerificationRequest{
 		RunID:             "verify-rel-1-sales-a2",
@@ -242,8 +248,11 @@ func TestSubmit_PythonServiceSubmitsThePackagedContractAndNoOverlay(t *testing.T
 	res, err := r.step.Submit(context.Background(), gateInput(pythonCluster()))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.RunIDs)
-	assert.True(t, res.Waiting)
+	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.RunIDs)
+	assert.True(t, res.Result.Waiting)
+	assert.Equal(t, []proposal.Verification{
+		{Service: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+	}, res.Verifications)
 	assert.Equal(t, []ports.VerificationRequest{{
 		RunID:             "verify-rel-1-ledger-a2",
 		Service:           "ledger",
@@ -261,7 +270,11 @@ func TestSubmit_TwoServicesSubmitOneRunEachInServiceOrder(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster(), pythonCluster()))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.RunIDs)
+	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.RunIDs)
+	assert.Equal(t, []proposal.Verification{
+		{Service: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
+	}, res.Verifications)
 	require.Len(t, r.pipeline.submitted, 2)
 	assert.Equal(t, "python", r.pipeline.submitted[0].Kind)
 	assert.Equal(t, "dbt", r.pipeline.submitted[1].Kind)
@@ -271,16 +284,34 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 	r := newRig()
 	mixed := pythonCluster()
 	mixed.Draft.Edits = append(mixed.Draft.Edits, remediation.Edit{Path: "python/ledger/models/x.sql", TargetNodeID: "model.sales.orders"})
-	for name, in := range map[string]step.GateInput{
-		"unmapped": gateInput(dbtCluster(), step.ClusterDraft{Draft: remediation.Draft{Edits: []remediation.Edit{{Path: "docs/x.md"}}}, Evidence: remediation.NewEvidence()}),
-		"mixed":    gateInput(dbtCluster(), mixed),
-		"no edits": gateInput(),
-	} {
-		_, err := r.step.Submit(context.Background(), in)
-		require.Error(t, err, name)
+	twice := dbtCluster()
+	twice.Draft.Edits = append(twice.Draft.Edits, twice.Draft.Edits[0])
+	outside := step.ClusterDraft{Draft: remediation.Draft{Edits: []remediation.Edit{{Path: "docs/x.md"}}}, Evidence: remediation.NewEvidence()}
+	cases := map[string]struct {
+		in   step.GateInput
+		code string
+		msg  string
+	}{
+		"unmapped":  {gateInput(dbtCluster(), outside), "edit_outside_services", "edit belongs to no configured service: docs/x.md"},
+		"duplicate": {gateInput(twice), "path_edited_twice", "two edits change the same file: dbt/services/sales/models/orders.sql"},
+		"mixed": {gateInput(dbtCluster(), mixed), "mixed_manifest_kinds",
+			"service ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind"},
+	}
+	for name, c := range cases {
+		v, err := r.step.Submit(context.Background(), c.in)
+		require.NoError(t, err, name)
+		assert.False(t, v.Result.Waiting, name)
+		assert.False(t, v.Result.Passed(), name)
+		assert.Equal(t, "verification_run", v.Result.Check, name)
+		assert.Equal(t, []remediation.Finding{{Code: c.code, Message: c.msg}}, v.Result.Findings, name)
+		assert.Equal(t, c.msg, v.VerifyError, name)
+		assert.Empty(t, v.Verifications, name)
 	}
 	assert.Empty(t, r.artifacts.writes, "a try one service cannot verify spends no run on the others")
 	assert.Empty(t, r.pipeline.submitted)
+
+	_, err := r.step.Submit(context.Background(), gateInput())
+	assert.Error(t, err, "a try with no edit at all is a defect of the caller, not a refusal")
 }
 
 func TestSubmit_ReturnsTheErrorOfEachCollaborator(t *testing.T) {
@@ -305,9 +336,26 @@ func status(phase proposal.Phase, activated time.Time, nodeErrors map[string]str
 	return ports.VerificationStatus{Phase: phase, ActivatedAt: activated, NodeErrors: nodeErrors}
 }
 
+// idsOf are the run ids Submit would have named for the input's drafts: a
+// python run for the ledger service and a dbt run for sales, in service order.
+func idsOf(in step.GateInput) []string {
+	var ids []string
+	for _, d := range in.Drafts {
+		switch {
+		case len(d.Draft.Edits) == 0:
+		case strings.HasPrefix(d.Draft.Edits[0].Path, "python/ledger"):
+			ids = append(ids, ledgerRun)
+		default:
+			ids = append(ids, salesRun)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 func poll(t *testing.T, r *rig, in step.GateInput) step.GateVerdict {
 	t.Helper()
-	v, err := r.step.Poll(context.Background(), in, remediation.CheckResult{Check: "verification_run", Waiting: true})
+	v, err := r.step.Poll(context.Background(), in, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: idsOf(in)})
 	require.NoError(t, err)
 	return v
 }
@@ -459,6 +507,7 @@ func TestPoll_AnUnreadableRunIsRetriedInsideTheBudget(t *testing.T) {
 	r.clock.now = t0.Add(timeout - time.Second)
 	v := poll(t, r, gateInput(dbtCluster()))
 	assert.True(t, v.Result.Waiting)
+	assert.Equal(t, []string{salesRun}, v.Result.RunIDs)
 	assert.Empty(t, v.VerifyError)
 }
 
@@ -470,6 +519,35 @@ func TestPoll_AnUnreadableRunTimesOutOnceTheTryIsOlderThanTheBudget(t *testing.T
 	assert.False(t, v.Result.Waiting)
 	assert.Equal(t, "verification timed out", v.VerifyError)
 	assert.Equal(t, "verification_timed_out", v.Result.Findings[0].Code)
+	assert.Equal(t, []string{salesRun}, v.Result.RunIDs)
+	assert.Empty(t, v.Verifications, "an unread run keeps the values recorded for it")
+	assert.Empty(t, v.Phases)
+}
+
+// TestPoll_TheUnreadableBudgetCountsFromTheSubmit pins that a try drafted long
+// ago and submitted just now is not timed out by one unreadable status.
+func TestPoll_TheUnreadableBudgetCountsFromTheSubmit(t *testing.T) {
+	r := newRig()
+	r.pipeline.statusErrs[salesRun] = errBoom
+	in := gateInput(dbtCluster())
+	in.Try.CreatedAt = t0.Add(-3 * timeout)
+	in.SubmittedAt = t0
+	r.clock.now = t0.Add(time.Minute)
+	assert.True(t, poll(t, r, in).Result.Waiting, "drafting time is not charged to the gate")
+
+	r.clock.now = t0.Add(timeout)
+	assert.False(t, poll(t, r, in).Result.Waiting, "the submit's own age is")
+}
+
+func TestPoll_WithNoSubmitTimeTheUnreadableBudgetCountsFromTheTry(t *testing.T) {
+	r := newRig()
+	r.pipeline.statusErrs[salesRun] = errBoom
+	in := gateInput(dbtCluster())
+	in.SubmittedAt = time.Time{}
+	r.clock.now = t0.Add(timeout - time.Second)
+	assert.True(t, poll(t, r, in).Result.Waiting)
+	r.clock.now = t0.Add(timeout)
+	assert.False(t, poll(t, r, in).Result.Waiting)
 }
 
 func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
@@ -478,9 +556,46 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	r.pipeline.statusErrs[salesRun] = errBoom
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 	assert.True(t, v.Result.Waiting)
-	require.Len(t, v.Verifications, 2)
-	assert.Equal(t, proposal.PhaseRunning, v.Verifications[0].Phase)
-	assert.Equal(t, proposal.PhaseQueued, v.Verifications[1].Phase)
+	assert.Equal(t, []string{ledgerRun, salesRun}, v.Result.RunIDs)
+	// Only the run that was read is reported: writing the unread one as queued
+	// would reset the phase and activation time recorded for it.
+	act := t0
+	want := []proposal.Verification{{Service: "ledger", Kind: "python", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
+	assert.Equal(t, want, v.Verifications)
+	assert.Equal(t, want, v.Phases)
+}
+
+func TestPoll_WhenTheFirstRunIsUnreadableNothingIsReportedForAnyRun(t *testing.T) {
+	r := newRig()
+	r.pipeline.statusErrs[ledgerRun] = errBoom
+	r.pipeline.statuses[salesRun] = status(proposal.PhaseRunning, t0, nil)
+	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
+	assert.True(t, v.Result.Waiting)
+	assert.Empty(t, v.Verifications)
+	assert.Empty(t, v.Phases)
+	assert.Equal(t, []string{ledgerRun}, r.pipeline.statusReads, "the read stops at the first unreadable run")
+}
+
+func TestPoll_TheReasonNamesOnlyTheNodesTheTriggerCarries(t *testing.T) {
+	r := newRig()
+	// The cluster covers one trigger node. The failure names another trigger
+	// node no draft covers, and a node the trigger never carried.
+	narrow := dbtCluster()
+	narrow.Cluster.Members = []string{"model.sales.orders"}
+	r.pipeline.statuses[salesRun] = status(proposal.PhaseFailed, t0, map[string]string{
+		"model.sales.margins": "margins broke",
+		"model.zeta.other":    "other broke",
+	})
+	v := poll(t, r, gateInput(narrow))
+	assert.Equal(t, "model.sales.margins: margins broke", v.VerifyError)
+}
+
+func TestPoll_RefusesRunsThatAreNotTheOnesTheWaitingResultNames(t *testing.T) {
+	r := newRig()
+	in := gateInput(dbtCluster())
+	_, err := r.step.Poll(context.Background(), in, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: []string{"verify-other-a1"}})
+	assert.Error(t, err)
+	assert.Empty(t, r.pipeline.statusReads)
 }
 
 func TestPoll_ReadsEachRunOncePerPoll(t *testing.T) {

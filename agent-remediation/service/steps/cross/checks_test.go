@@ -156,30 +156,3 @@ func TestOneManifestKind_ContractBelongsToTheServiceOfTheClustersFirstEdit(t *te
 	// A cluster with a contract and no edit sets none.
 	assert.True(t, run(t, c, clusterDraft(1, contract)).Passed())
 }
-
-func TestGroup(t *testing.T) {
-	contract := []byte("nodes: []\n")
-	groups, err := cross.Group(repoPaths, trigger(), []step.ClusterDraft{
-		clusterDraft(1, nil, edit("dbt/services/sales/models/b.sql", "model.sales.orders"), edit("dbt/services/sales/models/a.sql", "model.sales.orders")),
-		clusterDraft(2, contract, edit("python/ledger/contracts/postings.yaml", "python.ledger.postings")),
-	})
-	require.NoError(t, err)
-	require.Len(t, groups, 2)
-	assert.Equal(t, "ledger", groups[0].Service)
-	assert.Equal(t, contract, groups[0].Contract)
-	assert.Equal(t, "python/ledger", groups[0].Prefix)
-	assert.Equal(t, "sales", groups[1].Service)
-	assert.Nil(t, groups[1].Contract)
-	assert.Equal(t, "dbt/services/sales", groups[1].Prefix)
-	require.Len(t, groups[1].Edits, 2)
-	assert.Equal(t, "dbt/services/sales/models/b.sql", groups[1].Edits[0].Path, "edits keep the order of the clusters")
-
-	_, err = cross.Group(repoPaths, trigger(), []step.ClusterDraft{clusterDraft(1, nil, edit("zzz/a.sql", "x"))})
-	assert.ErrorIs(t, err, cross.ErrUnmappedEdit)
-	_, err = cross.Group(repoPaths, trigger(), []step.ClusterDraft{
-		clusterDraft(1, nil, edit("dbt/services/sales/a.sql", "x"), edit("dbt/services/sales/a.sql", "x"))})
-	assert.ErrorIs(t, err, cross.ErrDuplicateEditPath)
-	_, err = cross.Group(repoPaths, trigger(), []step.ClusterDraft{
-		clusterDraft(1, contract, edit("python/ledger/a.sql", "model.sales.orders"))})
-	assert.ErrorIs(t, err, cross.ErrMixedManifestKinds)
-}

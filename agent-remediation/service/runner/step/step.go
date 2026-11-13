@@ -8,6 +8,7 @@ package step
 
 import (
 	"context"
+	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -146,26 +147,35 @@ type ClusterDraft struct {
 
 // LongCheck is a check that starts work and answers later, such as the gate
 // that submits verification runs and polls them. Submit starts the work and
-// returns a waiting result. Poll reads the answer of a waiting result.
+// returns a verdict whose result is waiting and whose Verifications are the
+// runs it started, so the runner can record them with the proposal. A Submit
+// that refuses the try returns a verdict whose result is not waiting and holds
+// the findings, with no run started. Poll reads the answer of a waiting result.
 type LongCheck interface {
 	Meta() Meta
-	Submit(ctx context.Context, in GateInput) (remediation.CheckResult, error)
+	Submit(ctx context.Context, in GateInput) (GateVerdict, error)
 	Poll(ctx context.Context, in GateInput, waiting remediation.CheckResult) (GateVerdict, error)
 }
 
 // GateInput is what a gate reads: the try's checked drafts and the proposal
-// they belong to.
+// they belong to. SubmittedAt is when the gate's Submit committed, which the
+// runner fills from the start of the gate step's run; it is zero before that.
+// A poll counts how long runs have been unreadable from it.
 type GateInput struct {
 	Remediation remediation.Remediation
 	Try         remediation.Try
 	Trigger     remediation.Trigger
 	Drafts      []ClusterDraft
 	ProposalID  string
+	SubmittedAt time.Time
 }
 
-// GateVerdict is the answer of a poll. Verifications are the runs that judged
-// the drafts, VerifyError is why they could not be judged, and Phases are the
-// runs each phase of the gate started.
+// GateVerdict is the answer of a submit or a poll. Verifications are the runs
+// that judged the drafts, as far as this call read them: a submit lists every
+// run it started as queued, and a poll lists the runs whose status it read, so
+// a run it could not read keeps the values already recorded. VerifyError is why
+// the runs could not be judged, and Phases are the runs seen queued or running
+// in this call, for the proposal row.
 type GateVerdict struct {
 	Result        remediation.CheckResult
 	Verifications []proposal.Verification
