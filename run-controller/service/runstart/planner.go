@@ -114,8 +114,12 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 // SingleNode selects a run of tenantID's node target names, with operation
 // op: on source's release when source is not nil, else on the tenant's live
 // release. A source is a run of tenantID. A full refresh of a seed is an
-// operator's request for it, and so is a rerun or a rebase of one; acknowledged are the objects reading the seed
-// that an operator named, which its preflight lets the load drop.
+// operator's request for it, and so is a rerun or a rebase of one; acknowledged
+// are the objects reading the seed that an operator named, which its preflight
+// lets the load drop. Naming any for a run that is not a full refresh of a dbt
+// seed is runplan.ErrAcknowledgementNotAllowed, and a full refresh of a seed
+// whose +full_refresh: false keeps its table is
+// runplan.ErrSeedFullRefreshDisabled.
 func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID string, target run.NodeID, op model.Operation, source *run.Run, acknowledged []string) (Selection, error) {
 	var stamp run.ReleaseStamp
 	if source != nil {
@@ -139,12 +143,32 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID stri
 	if err != nil {
 		return Selection{}, fmt.Errorf("read node %s in release %s: %w", key, stamp.ReleaseID, err)
 	}
+	if n, ok := g.Node(key); ok && len(acknowledged) > 0 && (op != model.OperationFullRefresh || n.NodeType != string(model.NodeTypeDbtSeed)) {
+		return Selection{Stamp: stamp, Graph: g}, runplan.ErrAcknowledgementNotAllowed
+	}
 	plan, err := selector.Select(g)
 	sel := Selection{Stamp: stamp, Graph: g, Plan: plan}
 	if err != nil {
 		return sel, err
 	}
-	return p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), acknowledged, sel)
+	sel, err = p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), acknowledged, sel)
+	if err != nil {
+		return sel, err
+	}
+	if op == model.OperationFullRefresh && plannedTask(sel.Plan, key).Refusal == model.FailureReasonSeedFullRefreshDisabled {
+		return sel, fmt.Errorf("%w: %s", runplan.ErrSeedFullRefreshDisabled, key)
+	}
+	return sel, nil
+}
+
+// plannedTask returns the task of p at key, the zero task when p has none.
+func plannedTask(p runplan.Plan, key topology.NodeKey) runplan.PlannedTask {
+	for _, t := range p.Tasks {
+		if t.Key == key {
+			return t
+		}
+	}
+	return runplan.PlannedTask{}
 }
 
 // Seeds selects a promote-seed run of keys on live, tenantID's live release,

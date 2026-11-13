@@ -861,8 +861,7 @@ func TestPlanner_AScheduleNodeThatReadsOnlyARebuiltViewWaitsForTheRebuild(t *tes
 }
 
 // An operator's full refresh of a seed with unchanged columns fully refreshes
-// it for that reason; with +full_refresh: false on a schema_bound warehouse no
-// command can rebuild it, so its task is refused.
+// it for that reason.
 func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T) {
 	ctx := context.Background()
 	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
@@ -875,14 +874,75 @@ func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T)
 	assert.Nil(t, taskOf(sel.Plan, seed).Operation, "the run's full_refresh")
 	assert.Equal(t, "full refresh requested by an operator", taskOf(sel.Plan, seed).Reason)
 	assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
+}
+
+// A full refresh of a seed with +full_refresh: false on a schema_bound
+// warehouse cannot be rebuilt by any command, so the request is refused and
+// plans no run. On a late_binding warehouse every load re-creates the table,
+// so the same seed is planned and its preflight only reports.
+func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.T) {
+	ctx := context.Background()
+	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	keep := false
+	falseSeed := withSeed(fxTopology(), func(n *topology.Node) { n.FullRefresh = &keep })
 
 	u, topo := fxUoW(nil)
-	keep := false
-	topo.graph = withSeed(fxTopology(), func(n *topology.Node) { n.FullRefresh = &keep })
-	sel, err = fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
+	topo.graph = falseSeed
+	_, err := fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
+	assert.ErrorIs(t, err, runplan.ErrSeedFullRefreshDisabled)
+
+	u, topo = fxUoW(nil)
+	topo.graph = falseSeed
+	lateBinding := fxPlanner
+	lateBinding.Family, lateBinding.Engine = warehouse.LateBinding, "trino"
+	sel, err := lateBinding.SingleNode(ctx, u, tenant, target, model.OperationFullRefresh, nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, model.FailureReasonSeedFullRefreshDisabled, taskOf(sel.Plan, seed).Refusal)
+	assert.Empty(t, taskOf(sel.Plan, seed).Refusal)
+	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
+	assert.Equal(t, seedreload.PreflightReport, taskOf(sel.Plan, seed).Preflight.Mode)
+	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
+
+	u, topo = fxUoW(nil)
+	topo.graph = falseSeed
+	sel, err = fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationRun, nil, nil)
+	require.NoError(t, err, "a load, unlike an operator's full refresh, is not refused here")
 	assert.Empty(t, sel.Plan.Ready)
+}
+
+// The objects an operator names reach the seed's preflight, and the run is the
+// same DAG as a reload of the seed.
+func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
+	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	u, _ := fxUoW(nil)
+
+	sel, err := fxPlanner.SingleNode(context.Background(), u, tenant, target, model.OperationFullRefresh, nil, []string{"bi.fx_rates_report"})
+
+	require.NoError(t, err)
+	require.NotNil(t, taskOf(sel.Plan, seed).Preflight)
+	assert.Equal(t, []string{"bi.fx_rates_report"}, taskOf(sel.Plan, seed).Preflight.Acknowledged)
+	assert.Equal(t, []topology.NodeKey{current, latest, seed}, keysOf(sel.Plan.Tasks))
+}
+
+// Acknowledged dependents are valid for a full refresh of a dbt seed only.
+func TestPlanner_SingleNodeRefusesAnAcknowledgementOutsideASeedFullRefresh(t *testing.T) {
+	ctx := context.Background()
+	seedTarget := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	viewTarget := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "fx_rates_current"}
+	for name, c := range map[string]struct {
+		target run.NodeID
+		op     model.Operation
+	}{
+		"a load of a seed":         {seedTarget, model.OperationRun},
+		"a full refresh of a view": {viewTarget, model.OperationFullRefresh},
+		"a run of a view":          {viewTarget, model.OperationRun},
+		"a build of a seed":        {seedTarget, model.OperationBuild},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u, _ := fxUoW(nil)
+			_, err := fxPlanner.SingleNode(ctx, u, tenant, c.target, c.op, nil, []string{"bi.x"})
+			assert.ErrorIs(t, err, runplan.ErrAcknowledgementNotAllowed)
+		})
+	}
 }
 
 // A rerun of a failed single-node full refresh of a seed is still the

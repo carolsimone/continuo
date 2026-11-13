@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
@@ -166,16 +167,11 @@ func (c *RunCommands) TriggerRebase(ctx context.Context, cmd TriggerRebaseComman
 
 // TriggerSingleNodeRun runs one node once per request id. The fingerprint is
 // the node as service.schema.table, the metadata source, the source run (empty
-// when none) and the operation, an empty operation read as run.
+// when none), the operation, an empty operation read as run, and, only when
+// the call names any, the acknowledged dependents.
 func (c *RunCommands) TriggerSingleNodeRun(ctx context.Context, cmd TriggerSingleNodeRunCommand) (CommandResult, error) {
 	runID := uuid.New()
-	source := ""
-	if cmd.SourceRunID != nil {
-		source = cmd.SourceRunID.String()
-	}
-	t := cmd.Target
-	rec := c.record(cmd.TenantID, cmd.RequestID, commandTriggerSingleNodeRun, runID,
-		t.ServiceName+"."+t.SchemaName+"."+t.TableName, string(cmd.MetadataSource), source, operationPart(cmd.Operation))
+	rec := c.record(cmd.TenantID, cmd.RequestID, commandTriggerSingleNodeRun, runID, singleNodeFingerprintParts(cmd.TriggerSingleNodeRunInput)...)
 	return c.create(ctx, cmd.TenantID, rec, func(u uow.UnitOfWork) (string, error) {
 		return c.single.HandleInTransaction(ctx, u, runID, cmd.TriggerSingleNodeRunInput)
 	})
@@ -277,6 +273,23 @@ func (c *RunCommands) record(tenantID string, requestID uuid.UUID, command strin
 		Fingerprint: commandrequest.Fingerprint(command, parts...),
 		RunID:       runID,
 	}
+}
+
+// singleNodeFingerprintParts are the parts of the fingerprint of in. The
+// acknowledged dependents are one part, ack=<names joined by ",">, that a call
+// naming none leaves out, so a request id sent before a call could name them
+// keeps its fingerprint.
+func singleNodeFingerprintParts(in TriggerSingleNodeRunInput) []string {
+	source := ""
+	if in.SourceRunID != nil {
+		source = in.SourceRunID.String()
+	}
+	t := in.Target
+	parts := []string{t.ServiceName + "." + t.SchemaName + "." + t.TableName, string(in.MetadataSource), source, operationPart(in.Operation)}
+	if len(in.AcknowledgedDependents) > 0 {
+		parts = append(parts, "ack="+strings.Join(in.AcknowledgedDependents, ","))
+	}
+	return parts
 }
 
 // operationPart is an operation as a fingerprint part: the empty operation is
