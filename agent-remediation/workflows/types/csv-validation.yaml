@@ -1,0 +1,24 @@
+# A python-csv node that failed the release's validation: the model corrects
+# the contract yaml that declares it. Its single "csv" read may be corrected
+# but never removed.
+kind: type
+version: 1
+name: csv-validation
+match: { cluster: single, source: validation, node_types: [python-csv] }
+context:
+  - contract_file
+  - failing_siblings
+  - dbt_log
+  - contract_entry
+  - upstream_changes
+  - failure_precedents
+  - prior_attempts
+agent: { prompt: csv-contract, tools: [], rounds: 1 }
+preflight:
+  - contract_paths_inside_folder
+  - yaml_reads
+  - node_identity_unchanged
+  - csv_read_kept
+  - no_new_secret_ref
+  - declared_once
+  - contract_packages

@@ -1,0 +1,56 @@
+# Two services build analytics.orders: the release's marketing model is
+# renamed. Built from the duplicate-table lane's tests
+# (service/fixer/duplicate_table_test.go).
+kind: fixture
+version: 1
+type: duplicate-table
+trigger:
+  source: duplicate_table
+  release_id: rel-dup-1
+  repo: owner/repo
+  commit_sha: abc123
+  code_bundle_uri: s3://continuo/code-bundles/rel-dup-1/bundle.json
+  nodes:
+    - node_id: analytics.orders_v2
+      relation_id: analytics.orders
+      category: duplicate_table
+      error_signature: sig-duplicate-orders
+      reason: duplicate_relation
+      error_excerpt: "relation analytics.orders is produced by finance and marketing"
+      file_path: models/orders.sql
+      service: marketing
+      node_type: dbt-model
+      other_service: finance
+      other_file_path: services/finance/models/orders.sql
+service_repo_paths:
+  marketing: services/marketing
+  finance: services/finance
+repo_files:
+  services/marketing/models/orders.sql: "select 1 as id\n"
+  services/finance/models/orders.sql: "select 1 as id\n"
+release:
+  image_tag: sha-dup
+answers:
+  pass:
+    - target_file: services/marketing/models/orders.sql
+      proposed_content: "{{ config(alias='marketing_orders') }}\nselect 1 as id\n"
+      rationale: renamed to avoid the collision with finance
+      confidence: high
+      model: claude-test
+  fail:
+    # The other producer's file, which the model was not shown.
+    - target_file: services/finance/models/orders.sql
+      proposed_content: "{{ config(alias='finance_orders') }}\nselect 1 as id\n"
+      rationale: renamed the finance model instead
+      confidence: high
+      model: claude-test
+  decline:
+    - target_file: services/marketing/models/orders.sql
+      proposed_content: "{{ config(alias='marketing_orders') }}\nselect 1 as id\n"
+      rationale: either model could keep the name
+      confidence: low
+      model: claude-test
+decline_before_model:
+  node: { file_path: "" }
+gate_errors:
+  analytics.orders_v2: "relation analytics.orders is produced by finance and marketing"

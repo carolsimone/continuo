@@ -33,8 +33,9 @@ var lineInMessage = regexp.MustCompile(`line (\d+)`)
 
 // Load reads every *.yaml file under the root of fsys, recursively, in path
 // order. A file may hold several documents separated by `---`. A document with
-// `kind: fixture` is skipped without decoding its body. Load returns every
-// problem it finds, joined, and an empty Set when there is one.
+// `kind: fixture` is skipped without decoding its body; LoadFixtures reads
+// those. Load returns every problem it finds, joined, and an empty Set when
+// there is one.
 func Load(fsys fs.FS) (workflow.Set, error) {
 	l := loader{
 		set:      workflow.Set{Flows: map[string]workflow.Flow{}, Types: map[string]workflow.Type{}},

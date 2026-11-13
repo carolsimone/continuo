@@ -88,6 +88,53 @@ func (d RemediationRequestedV2DTO) ToDomain() remediation.Trigger {
 	return t
 }
 
+// RemediationRequestedV2FromDomain is the payload of a trigger. The tenant is
+// not part of the payload: it travels on the message.
+func RemediationRequestedV2FromDomain(t remediation.Trigger) RemediationRequestedV2DTO {
+	d := RemediationRequestedV2DTO{
+		Source:           t.Source,
+		ReleaseID:        t.ReleaseID,
+		RemediationRound: t.Round,
+		Repo:             t.Repo,
+		CommitSHA:        t.CommitSHA,
+		CodeBundleURI:    t.CodeBundleURI,
+		Nodes:            make([]RequestedNodeDTO, 0, len(t.Nodes)),
+	}
+	for _, n := range t.Nodes {
+		node := RequestedNodeDTO{
+			NodeID:               n.NodeID,
+			RelationID:           n.RelationID,
+			Category:             n.Category,
+			ErrorSignature:       n.ErrorSignature,
+			Reason:               n.Reason,
+			ErrorExcerpt:         n.ErrorExcerpt,
+			DBTLogURI:            n.DBTLogURI,
+			CandidateArtifactURI: n.CandidateArtifactURI,
+			FilePath:             n.FilePath,
+			Service:              n.Service,
+			NodeType:             n.NodeType,
+			OtherService:         n.OtherService,
+			OtherFilePath:        n.OtherFilePath,
+		}
+		for _, a := range n.ChangedAncestors {
+			node.ChangedAncestors = append(node.ChangedAncestors, ChangedAncestorDTO(a))
+		}
+		d.Nodes = append(d.Nodes, node)
+	}
+	return d
+}
+
+// EncodeRemediationRequestedV2 is the remediation.requested:v2 payload of a
+// trigger, which DecodeRemediationRequestedV2 reads back as the same trigger
+// without its tenant.
+func EncodeRemediationRequestedV2(t remediation.Trigger) ([]byte, error) {
+	raw, err := json.Marshal(RemediationRequestedV2FromDomain(t))
+	if err != nil {
+		return nil, fmt.Errorf("marshal remediation.requested payload: %w", err)
+	}
+	return raw, nil
+}
+
 // DecodeRemediationRequestedV2 decodes a remediation.requested:v2 payload into
 // the trigger it carries, as ToDomain maps it. It errors on a payload that is
 // not JSON.

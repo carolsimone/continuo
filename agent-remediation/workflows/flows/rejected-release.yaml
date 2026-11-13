@@ -1,0 +1,26 @@
+# The flow a rejected release runs: every fixable failure of the release is
+# grouped into clusters, each cluster is fixed by the first type below that
+# matches it, and the try's edits are checked together and verified by one
+# verification run per edited service before a pull request is proposed.
+kind: flow
+version: 1
+name: rejected-release
+trigger: remediation.requested
+types:
+  - dbt-compile
+  - dbt-parse
+  - seed-build
+  - duplicate-table
+  - dbt-validation
+  - python-validation
+  - python-parse
+  - csv-validation
+  - shared-upstream
+  - cross-service-upstream
+context: []
+across_clusters: [edits_map_to_a_service, no_path_edited_twice, one_manifest_kind]
+gate: [verification_run]
+tries: 3
+output:
+  on_pass: { action: pull_request, emits: remediation.proposed }
+  on_give_up: { action: hand_over }

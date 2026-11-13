@@ -1,0 +1,50 @@
+# A dbt seed whose csv row has one field too many. Built from the seed lane's
+# tests (service/fixer/seed_test.go).
+kind: fixture
+version: 1
+type: seed-build
+trigger:
+  source: seed_build
+  release_id: rel-seed-1
+  repo: o/repo
+  commit_sha: sha-seed
+  code_bundle_uri: s3://continuo/code-bundles/rel-seed-1/bundle.json
+  nodes:
+    - node_id: analytics.ref
+      category: seed_build
+      error_signature: sig-seed-extra-field
+      reason: csv_parse
+      error_excerpt: "Error parsing seeds/ref.csv: expected 2 fields in line 2, saw 3"
+      dbt_log_uri: s3://logs/rel-seed-1/analytics.ref.log
+      file_path: seeds/ref.csv
+      service: svc
+      node_type: dbt-seed
+service_repo_paths:
+  svc: services/svc
+repo_files:
+  services/svc/seeds/ref.csv: "id,name\n1,a,b\n"
+objects:
+  s3://logs/rel-seed-1/analytics.ref.log: "Runtime Error in seed ref (seeds/ref.csv)\n  expected 2 fields in line 2, saw 3\n"
+release:
+  image_tag: sha-seed
+answers:
+  pass:
+    - proposed_content: "id,name\n1,\"a,b\"\n"
+      rationale: quoted the field holding a comma
+      confidence: high
+      model: claude-test
+  fail:
+    - proposed_content: "id,name\n1,a,b\n"
+      rationale: the csv looks right
+      confidence: high
+      model: claude-test
+  decline:
+    - proposed_content: "id,name\n1,a\n"
+      rationale: cannot tell which field is extra
+      confidence: low
+      model: claude-test
+# Neither the trigger nor the graph names the seed's csv file.
+decline_before_model:
+  node: { file_path: "", service: "" }
+gate_errors:
+  analytics.ref: "expected 2 fields in line 2, saw 3"

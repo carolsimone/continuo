@@ -1,0 +1,16 @@
+# A dbt node that failed the release's validation: the model diagnoses the
+# candidate SQL, then applies the diagnosis to the node's real source.
+kind: type
+version: 1
+name: dbt-validation
+match: { cluster: single, source: validation, node_types: [dbt-model, dbt-seed, dbt-snapshot, none] }
+context:
+  - candidate_sql
+  - dbt_log
+  - code_bundle_source
+  - own_change_diff
+  - upstream_changes
+  - changed_ancestor_diffs
+  - failure_precedents
+agent: { prompt: dbt-validation, tools: [], rounds: 1 }
+preflight: [content_changed]

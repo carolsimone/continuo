@@ -1,0 +1,10 @@
+# A node whose SQL the release's parser rejected: the model rewrites the
+# node's source file. A python-csv or python-api node is declined by
+# failing_node_source, since its contract has no SQL to rewrite.
+kind: type
+version: 1
+name: dbt-parse
+match: { cluster: single, source: parse, node_types: [dbt-model, dbt-seed, dbt-snapshot, python-csv, python-api, none] }
+context: [failing_node_source, failure_precedents]
+agent: { prompt: dbt-parse, tools: [], rounds: 1 }
+preflight: [target_file_was_shown, content_changed, confidence_not_low]

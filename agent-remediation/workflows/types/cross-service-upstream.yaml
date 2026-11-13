@@ -1,0 +1,10 @@
+# Nodes broken by a change in another service: the model fixes the changed
+# ancestor in that service. When it cannot, the members are handed over,
+# since a fix in their own service cannot ship before the ancestor's.
+kind: type
+version: 1
+name: cross-service-upstream
+match: { cluster: cross_service }
+context: [upstream_target, failure_precedents]
+agent: { prompt: upstream, tools: [], rounds: 1 }
+preflight: [content_changed, confidence_not_low]

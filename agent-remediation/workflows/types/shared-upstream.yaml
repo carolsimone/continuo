@@ -1,0 +1,10 @@
+# Nodes that fail the same way below one ancestor their own service changed:
+# the model fixes the ancestor once. When it cannot, each member falls back to
+# the type of its own failure.
+kind: type
+version: 1
+name: shared-upstream
+match: { cluster: shared_upstream }
+context: [upstream_target, failure_precedents]
+agent: { prompt: upstream, tools: [], rounds: 1 }
+preflight: [content_changed, confidence_not_low]

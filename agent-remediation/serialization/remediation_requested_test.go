@@ -66,3 +66,32 @@ func TestDecodeRemediationRequestedV2_RefusesAPayloadThatIsNotJSON(t *testing.T)
 		t.Fatal("want an error for a payload that is not JSON")
 	}
 }
+
+func TestEncodeRemediationRequestedV2_DecodesToTheSameTrigger(t *testing.T) {
+	want, err := DecodeRemediationRequestedV2([]byte(goldenRemediationRequestedV2))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	raw, err := EncodeRemediationRequestedV2(want)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := DecodeRemediationRequestedV2(raw)
+	if err != nil {
+		t.Fatalf("decode the encoded payload: %v", err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("round trip differs:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestEncodeRemediationRequestedV2_LeavesTheTenantOut(t *testing.T) {
+	raw, err := EncodeRemediationRequestedV2(remediation.Trigger{TenantID: "acme", ReleaseID: "rel-1", Round: 1})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	const want = `{"source":"","release_id":"rel-1","remediation_round":1,"repo":"","commit_sha":"","nodes":[]}`
+	if string(raw) != want {
+		t.Fatalf("payload = %s, want %s", raw, want)
+	}
+}

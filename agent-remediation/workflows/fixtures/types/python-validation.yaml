@@ -1,0 +1,110 @@
+# A python node whose declared read names a relation that does not exist.
+# The fix corrects the read in the contract yaml that declares the node.
+# Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
+# (services/svc-py-e2e) and the python lane's tests
+# (service/fixer/python_validation_test.go).
+kind: fixture
+version: 1
+type: python-validation
+trigger:
+  source: validation
+  release_id: rel-python-1
+  repo: o/demo
+  commit_sha: deadbeef
+  code_bundle_uri: s3://continuo/code-bundles/rel-python-1/bundle.json
+  nodes:
+    - node_id: e2e_schema.py_bad_read
+      category: validation
+      error_signature: sig-unbound-read
+      reason: relation_not_found
+      error_excerpt: 'relation "public.wrong_name" does not exist'
+      dbt_log_uri: s3://logs/rel-python-1/e2e_schema.py_bad_read.log
+      service: svc-py-e2e
+      node_type: python-node
+service_repo_paths:
+  svc-py-e2e: services/svc-py-e2e
+repo_files:
+  services/svc-py-e2e/contracts/py_bad_read.yml: |
+    nodes:
+      - schema: e2e_schema
+        table: py_bad_read
+        owner: e2e
+        schedule: daily
+        criticality: SECONDARY
+        script: scripts/py_bad_read.py
+        description: "python node whose declared read cannot bind"
+        reads:
+          missing: select id from public.wrong_name
+        output_columns:
+          - {name: id, type: INTEGER, nullable: false}
+  services/svc-py-e2e/scripts/py_bad_read.py: |
+    import pyarrow as pa
+
+
+    def run(ctx):
+        ctx.read("missing")
+        return pa.table({"id": pa.array([1], type=pa.int32())})
+objects:
+  s3://logs/rel-python-1/e2e_schema.py_bad_read.log: "check_binds: relation \"public.wrong_name\" does not exist\n"
+bundle:
+  e2e_schema.py_bad_read: { runtime: python, raw_code: '{"schema":"e2e_schema","table":"py_bad_read","reads":{"missing":"select id from public.wrong_name"}}' }
+release:
+  image_tag: sha-python
+  failing_nodes:
+    e2e_schema.py_bad_read: 'relation "public.wrong_name" does not exist'
+packager:
+  merged: |
+    nodes:
+      - schema: e2e_schema
+        table: py_bad_read
+        reads:
+          missing: select id from public.right_name
+answers:
+  pass:
+    - files:
+        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+          content: |
+            nodes:
+              - schema: e2e_schema
+                table: py_bad_read
+                owner: e2e
+                schedule: daily
+                criticality: SECONDARY
+                script: scripts/py_bad_read.py
+                description: "python node whose declared read cannot bind"
+                reads:
+                  missing: select id from public.right_name
+                output_columns:
+                  - {name: id, type: INTEGER, nullable: false}
+      rationale: the read names public.right_name, which exists
+      confidence: high
+      model: claude-test
+  fail:
+    # The read deleted rather than corrected: pre-flight fails the node.
+    - files:
+        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+          content: |
+            nodes:
+              - schema: e2e_schema
+                table: py_bad_read
+                owner: e2e
+                schedule: daily
+                criticality: SECONDARY
+                script: scripts/py_bad_read.py
+                description: "python node whose declared read cannot bind"
+                reads: {}
+                output_columns:
+                  - {name: id, type: INTEGER, nullable: false}
+      rationale: removed the read that cannot bind
+      confidence: high
+      model: claude-test
+  decline:
+    - files: []
+      rationale: cannot tell which relation the read should name
+      confidence: low
+      model: claude-test
+# A trigger that names no service has no release to verify the fix under.
+decline_before_model:
+  node: { service: "" }
+gate_errors:
+  e2e_schema.py_bad_read: 'relation "public.right_name" does not exist'

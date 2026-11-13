@@ -1,0 +1,23 @@
+# A python node whose declared reads the release's parser rejected: the model
+# corrects the contract yaml that declares it.
+kind: type
+version: 1
+name: python-parse
+match: { cluster: single, source: parse, node_types: [python-node] }
+context:
+  - contract_file
+  - failing_siblings
+  - dbt_log
+  - contract_entry
+  - upstream_changes
+  - failure_precedents
+  - prior_attempts
+agent: { prompt: python-parse, tools: [], rounds: 1 }
+preflight:
+  - contract_paths_inside_folder
+  - yaml_reads
+  - node_identity_unchanged
+  - reads_kept
+  - no_new_secret_ref
+  - declared_once
+  - contract_packages

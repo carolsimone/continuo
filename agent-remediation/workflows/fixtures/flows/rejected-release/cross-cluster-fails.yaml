@@ -1,0 +1,56 @@
+# Two clusters edit one file: svc-a is fixed at base, the core ancestor it
+# reads, and core's own compile failure is fixed in that same file. No
+# verification run could judge both edits, so the attempt fails before the
+# gate. Built from the runner's cross-cluster test
+# (service/runner/gate_test.go).
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: cross_cluster_fails
+trigger:
+  source: compile
+  release_id: rel-flow-cross-cluster
+  repo: o/repo
+  commit_sha: sha-cross-cluster
+  nodes:
+    - node_id: svc-a
+      category: compile
+      error_signature: sig-svc-a
+      reason: syntax
+      error_excerpt: "Compilation Error in model orders (models/orders.sql)"
+      file_path: models/orders.sql
+      service: svc-a
+      changed_ancestors:
+        - { node_id: model.core.base, file_path: models/base.sql, service: core, depth: 1 }
+    - node_id: core
+      category: compile
+      error_signature: sig-core
+      reason: syntax
+      error_excerpt: "Compilation Error in model base (models/base.sql)"
+      file_path: models/base.sql
+      service: core
+service_repo_paths:
+  svc-a: services/svc-a
+  core: services/core
+repo_files:
+  services/core/models/base.sql: "select 1 from\n"
+  services/svc-a/models/orders.sql: "select * from base\n"
+bundle:
+  model.core.base: { runtime: dbt, raw_code: "select 1 from\n" }
+release:
+  image_tag: sha-cross-cluster
+answers:
+  pass:
+    # The fix of base for svc-a's cross-service cluster.
+    - proposed_sql: "select 1 as id\n"
+      rationale: completed the select
+      confidence: high
+      model: claude-test
+member_answers:
+  core:
+    pass:
+      - target_file: services/core/models/base.sql
+        proposed_content: "select 1 as id from dual\n"
+        rationale: completed the from clause
+        confidence: high
+        model: claude-test

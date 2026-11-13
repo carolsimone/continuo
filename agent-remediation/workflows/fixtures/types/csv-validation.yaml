@@ -1,0 +1,100 @@
+# A python-csv node whose declared columns do not match the csv's header. The
+# fix renames the column in the contract yaml. Built from the csv lane's tests
+# (service/fixer/csv_validation_test.go).
+kind: fixture
+version: 1
+type: csv-validation
+trigger:
+  source: validation
+  release_id: rel-csv-1
+  repo: o/demo
+  commit_sha: deadbeef
+  code_bundle_uri: s3://continuo/code-bundles/rel-csv-1/bundle.json
+  nodes:
+    - node_id: analytics.py_csv_orders
+      category: validation
+      error_signature: sig-csv-header
+      reason: csv_header_mismatch
+      error_excerpt: "csv header missing declared column(s): ['customer_id']"
+      dbt_log_uri: s3://logs/rel-csv-1/analytics.py_csv_orders.log
+      service: svc-csv
+      node_type: python-csv
+service_repo_paths:
+  svc-csv: services/service-csv
+repo_files:
+  services/service-csv/contracts/py_csv_orders.yml: |
+    nodes:
+      - schema: analytics
+        table: py_csv_orders
+        kind: python-csv
+        reads:
+          csv: s3://exports/orders/orders.csv
+        output_columns:
+          - name: order_id
+          - name: customer_id
+  services/service-csv/contracts/other.yml: |
+    nodes:
+      - schema: analytics
+        table: other
+        kind: python-node
+        script: scripts/other.py
+        reads:
+          customers: select id from analytics.customers
+  services/service-csv/scripts/other.py: "print('other')\n"
+objects:
+  s3://logs/rel-csv-1/analytics.py_csv_orders.log: "header check: csv header is order_id,cust_id\n"
+bundle:
+  analytics.py_csv_orders: { runtime: python, raw_code: '{"output_columns":[{"name":"order_id"},{"name":"customer_id"}]}' }
+release:
+  image_tag: sha-csv
+  failing_nodes:
+    analytics.py_csv_orders: "csv header missing declared column(s): ['customer_id']"
+packager:
+  merged: |
+    nodes:
+      - schema: analytics
+        table: py_csv_orders
+        kind: python-csv
+answers:
+  pass:
+    - files:
+        - path: services/service-csv/contracts/py_csv_orders.yml
+          content: |
+            nodes:
+              - schema: analytics
+                table: py_csv_orders
+                kind: python-csv
+                reads:
+                  csv: s3://exports/orders/orders.csv
+                output_columns:
+                  - name: order_id
+                  - name: cust_id
+      rationale: renamed the column to match the file's real header
+      confidence: high
+      model: claude-test
+  fail:
+    # The csv read renamed: its key may never change.
+    - files:
+        - path: services/service-csv/contracts/py_csv_orders.yml
+          content: |
+            nodes:
+              - schema: analytics
+                table: py_csv_orders
+                kind: python-csv
+                reads:
+                  file: s3://exports/orders/orders.csv
+                output_columns:
+                  - name: order_id
+                  - name: cust_id
+      rationale: renamed the read and the column
+      confidence: high
+      model: claude-test
+  decline:
+    - files: []
+      rationale: cannot tell which header the file will have
+      confidence: low
+      model: claude-test
+decline_before_model:
+  node: { service: "" }
+gate_errors:
+  analytics.py_csv_orders: "csv header missing declared column(s): ['cust_id']"
