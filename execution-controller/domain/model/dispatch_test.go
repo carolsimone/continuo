@@ -34,7 +34,7 @@ func TestDecideDispatch(t *testing.T) {
 		{"a question about a running attempt it lost", false, false, false, "", pkgmodel.AttemptStatusRunning, ReportLost},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, c.job, false, c.known), c.name)
+		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, "", c.job, false, c.known), c.name)
 	}
 }
 
@@ -45,12 +45,42 @@ func TestDecideDispatch(t *testing.T) {
 // before.
 func TestDecideDispatch_AnOrphanPodIsAwaitedNotReportedLost(t *testing.T) {
 	for _, known := range []pkgmodel.AttemptStatus{pkgmodel.AttemptStatusQueued, pkgmodel.AttemptStatusRunning} {
-		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", false, true, known), known)
-		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", false, false, known), known)
+		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", "", false, true, known), known)
+		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", "", false, false, known), known)
 	}
-	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", false, true, pkgmodel.AttemptStatusRunning))
-	assert.Equal(t, AdoptJob, DecideDispatch(false, false, "", true, true, pkgmodel.AttemptStatusRunning))
-	assert.Equal(t, CreateAttempt, DecideDispatch(false, false, "", false, true, pkgmodel.AttemptStatusDispatched))
+	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", "", false, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, AdoptJob, DecideDispatch(false, false, "", "", true, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, CreateAttempt, DecideDispatch(false, false, "", "", false, true, pkgmodel.AttemptStatusDispatched))
+}
+
+// A refusal that depends on the dbt-commands configuration (a full refresh
+// command the block no longer defines) only stops a Job from being created:
+// a Job of the attempt, or a pod of it that has not finished, may have been
+// made under a configuration that defined the command, so it is adopted or
+// awaited first. A problem of the command itself still wins over a Job, since
+// that command could never have made one.
+func TestDecideDispatch_AConfigRefusalNeverPreemptsAJobOrAPod(t *testing.T) {
+	refusal := pkgmodel.FailureReasonFullRefreshUndefined
+	cases := []struct {
+		name     string
+		problem  pkgmodel.FailureReason
+		job, pod bool
+		known    pkgmodel.AttemptStatus
+		want     DispatchAction
+	}{
+		{"its Job exists", "", true, false, pkgmodel.AttemptStatusDispatched, AdoptJob},
+		{"its Job exists, acknowledged", "", true, false, pkgmodel.AttemptStatusRunning, AdoptJob},
+		{"a pod of it has not finished", "", false, true, pkgmodel.AttemptStatusDispatched, AwaitOrphanPod},
+		{"a pod of it has not finished, acknowledged", "", false, true, pkgmodel.AttemptStatusRunning, AwaitOrphanPod},
+		{"nothing of it runs", "", false, false, pkgmodel.AttemptStatusDispatched, RefuseInvalid},
+		{"nothing of an acknowledged attempt runs", "", false, false, pkgmodel.AttemptStatusRunning, ReportLost},
+		{"the command cannot run and its Job exists", pkgmodel.FailureReasonMalformedDispatch, true, true, pkgmodel.AttemptStatusDispatched, RefuseInvalid},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, DecideDispatch(false, false, c.problem, refusal, c.job, c.pod, c.known), c.name)
+	}
+	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", refusal, false, false, pkgmodel.AttemptStatusDispatched))
+	assert.Equal(t, IgnoreOlder, DecideDispatch(false, true, "", refusal, false, false, pkgmodel.AttemptStatusDispatched))
 }
 
 // An attempt of a fenced run with no record never starts: its Job, when one

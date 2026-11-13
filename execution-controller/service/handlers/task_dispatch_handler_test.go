@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -32,6 +33,21 @@ func (noJobs) ObserveLive(context.Context, string) (model.JobObservation, error)
 func (noJobs) ObserveRun(context.Context, string) (model.RunObservation, error) {
 	return model.RunObservation{}, nil
 }
+
+// cachedJob is a JobCache that holds one Job, job, under name.
+type cachedJob struct {
+	name string
+	job  model.JobObservation
+}
+
+func (cachedJob) Synced() bool { return true }
+func (c cachedJob) Observe(name string) model.JobObservation {
+	if name != c.name {
+		return model.JobObservation{}
+	}
+	return c.job
+}
+func (c cachedJob) JobNames() []string { return []string{c.name} }
 
 // noStops is a ports.StopMetrics that counts nothing.
 type noStops struct{}
@@ -346,6 +362,107 @@ func TestTaskDispatchHandler_QueuesAFullRefreshWhoseBlockDefinesTheCommand(t *te
 
 			require.Len(t, out.created, 1)
 			assert.Equal(t, "queued", decodeReport(t, out.created[0])["status"])
+		})
+	}
+}
+
+// A full refresh whose block no longer defines the command, with a Job of the
+// attempt that survives its lost record (made while the block defined the
+// command), adopts the Job rather than refusing the attempt: refusing it would
+// end the task while its pod may still write the table. The cache can trail
+// the API, so a Job only a live read shows is adopted too.
+func TestTaskDispatchHandler_AFullRefreshTheBlockNoLongerDefinesAdoptsItsSurvivingJob(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	undefined := fakeResolver{blocks: map[string]bool{"finance/dbt-model": false}}
+	for _, known := range []pkgmodel.AttemptStatus{pkgmodel.AttemptStatusDispatched, pkgmodel.AttemptStatusRunning} {
+		for _, where := range []string{"in the cache", "only in a live read"} {
+			t.Run(string(known)+" "+where, func(t *testing.T) {
+				evt := fullRefreshDispatch(pkgmodel.NodeTypeDbtModel)
+				evt.KnownStatus = known
+				job := model.JobObservation{JobPresent: true, JobTaskID: evt.TaskID.String(), JobAttempt: "1"}
+				var cache ports.JobCache = noJobs{}
+				live := &liveJobs{}
+				if where == "in the cache" {
+					cache = cachedJob{name: evt.JobName, job: job}
+				} else {
+					live.job = job
+				}
+				repo := &stubDeploymentsRepo{}
+				out := &recordingOutbox{}
+				u := newFakeUoW(repo, &recordingCancelledRepo{})
+				u.Outbox = out
+
+				require.NoError(t, handlers.NewTaskDispatchHandler(cache, live, undefined, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+				stored := repo.stored[attemptKey(evt.TaskID.String(), evt.Attempt)]
+				require.NotNil(t, stored)
+				assert.Equal(t, model.StatusStarting, stored.Status(), "the record is rebuilt and follows the Job")
+				require.Len(t, out.created, 1)
+				assert.Equal(t, "queued", decodeReport(t, out.created[0])["status"])
+			})
+		}
+	}
+}
+
+// A full refresh whose block no longer defines the command, with no Job of
+// the attempt but a pod of it a live read still shows running, is left
+// unanswered while the pod can write: nothing is stored or reported.
+func TestTaskDispatchHandler_AFullRefreshTheBlockNoLongerDefinesAwaitsAnOrphanPod(t *testing.T) {
+	evt := fullRefreshDispatch(pkgmodel.NodeTypeDbtModel)
+	started := time.Now()
+	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}
+	repo := &stubDeploymentsRepo{}
+	out := &recordingOutbox{}
+	u := newFakeUoW(repo, &recordingCancelledRepo{})
+	u.Outbox = out
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+	undefined := fakeResolver{blocks: map[string]bool{"finance/dbt-model": false}}
+
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, undefined, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+	assert.Equal(t, 1, live.reads)
+	assert.Zero(t, repo.addAttempts, "nothing is stored")
+	assert.Empty(t, out.created, "nothing is reported")
+}
+
+// A full refresh whose block lacks the command is refused only once a live
+// read finds neither a Job nor an unfinished pod of the attempt; a read that
+// fails leaves the dispatch unanswered, and its message is delivered again.
+func TestTaskDispatchHandler_AFullRefreshIsRefusedOnlyOnceALiveReadFindsNothingOfIt(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	undefined := fakeResolver{blocks: map[string]bool{"finance/dbt-model": false}}
+	for name, c := range map[string]struct {
+		live    *liveJobs
+		wantErr bool
+	}{
+		"nothing of it runs": {&liveJobs{}, false},
+		"the read fails":     {&liveJobs{err: errors.New("the server was unable to return a response in the time allotted")}, true},
+		"another task's Job": {&liveJobs{job: model.JobObservation{JobPresent: true, JobTaskID: uuid.NewString(), JobAttempt: "1"}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			evt := fullRefreshDispatch(pkgmodel.NodeTypeDbtModel)
+			repo := &stubDeploymentsRepo{}
+			out := &recordingOutbox{}
+			u := newFakeUoW(repo, &recordingCancelledRepo{})
+			u.Outbox = out
+
+			err := handlers.NewTaskDispatchHandler(noJobs{}, c.live, undefined, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New())
+
+			assert.Equal(t, 1, c.live.reads, "a live read confirms nothing of the attempt runs")
+			if c.wantErr {
+				require.Error(t, err)
+				assert.Zero(t, repo.addAttempts, "nothing is stored")
+				assert.Empty(t, out.created, "nothing is reported")
+				return
+			}
+			require.NoError(t, err)
+			d := repo.stored[attemptKey(evt.TaskID.String(), evt.Attempt)]
+			require.NotNil(t, d)
+			assert.Equal(t, model.StatusFailed, d.Status())
+			assert.Equal(t, pkgmodel.FailureReasonFullRefreshUndefined, d.Facts().Reason)
+			require.Len(t, out.created, 1)
+			assert.Equal(t, "full_refresh_undefined", decodeReport(t, out.created[0])["failure_reason"])
 		})
 	}
 }
