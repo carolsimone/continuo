@@ -143,3 +143,32 @@ func TestGetReleaseNotices_Refusals(t *testing.T) {
 	_, err = c.GetReleaseNotices(ctx, &releasev1.GetReleaseNoticesRequest{ReleaseId: "rel-broken"})
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
+
+// Start returns nil once Shutdown stops a serving server, and an error
+// wrapping grpc.ErrServerStopped when Shutdown came first; main exits on any
+// other error of Start.
+func TestReleaseQueryServer_StartAfterShutdownReturnsErrServerStopped(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	newUoW := func() uow.UnitOfWork { return fakeUoW{} }
+
+	serving, err := NewReleaseQueryServer(0, newUoW, logger)
+	require.NoError(t, err)
+	served := make(chan error, 1)
+	go func() { served <- serving.Start() }()
+	require.Eventually(t, func() bool {
+		conn, err := grpc.NewClient(serving.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return false
+		}
+		defer conn.Close()
+		_, err = releasev1.NewReleaseQueryClient(conn).GetReleaseNotices(context.Background(), &releasev1.GetReleaseNoticesRequest{})
+		return status.Code(err) != codes.Unavailable
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, serving.Shutdown(context.Background()))
+	assert.NoError(t, <-served)
+
+	stopped, err := NewReleaseQueryServer(0, newUoW, logger)
+	require.NoError(t, err)
+	require.NoError(t, stopped.Shutdown(context.Background()))
+	assert.ErrorIs(t, stopped.Start(), grpc.ErrServerStopped)
+}

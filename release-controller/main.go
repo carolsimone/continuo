@@ -313,15 +313,18 @@ func main() {
 	}()
 
 	// The gRPC server reads through the same database and needs nothing else.
-	// Serve runs in a plain goroutine; it is stopped when ctx ends.
+	// Serve runs in a plain goroutine; it is stopped when ctx ends. Serve
+	// failing for any other reason exits the process, as the HTTP server's
+	// failure does, so the pod restarts instead of staying ready without it.
 	grpcServer, err := rcgrpc.NewReleaseQueryServer(cfg.GRPCPort, deps.NewUoW, logger)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "port", cfg.GRPCPort, "error", err)
 		os.Exit(1)
 	}
 	go func() {
-		if err := grpcServer.Start(); err != nil {
+		if err := grpcServer.Start(); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			logger.Error("gRPC server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 	go func() {

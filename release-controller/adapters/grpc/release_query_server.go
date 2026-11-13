@@ -51,7 +51,8 @@ func NewReleaseQueryServer(port int, newUoW func() uow.UnitOfWork, logger *slog.
 // Addr returns the address the server is listening on.
 func (s *ReleaseQueryServer) Addr() string { return s.listener.Addr().String() }
 
-// Start serves requests until Shutdown is called, then returns nil.
+// Start serves requests until Shutdown is called, then returns nil. Called
+// after Shutdown, it returns an error wrapping grpc.ErrServerStopped.
 func (s *ReleaseQueryServer) Start() error {
 	s.logger.Info("Starting gRPC server", "addr", s.Addr())
 	if err := s.grpcServer.Serve(s.listener); err != nil {
