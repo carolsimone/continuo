@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,6 +84,19 @@ func preflightBlock(status, reason, extra string) string {
 	}
 	body := fmt.Sprintf(`{"schema_version":1,"status":%q,"message":%q,"failures":%d,"unique_id":"analytics.seed_fx_rates_eur",%s"op":"seed_preflight","drop_semantics":"cascade","completeness":"exact",%s}`,
 		status, message, failures, reasonField, extra)
+	return validationresult.SentinelBegin + "\n" + body + "\n" + validationresult.SentinelEnd
+}
+
+// probeBlock frames, with the sentinels, the result block of the view probe:
+// views is the JSON array of its answers. A block that is not checked says the
+// warehouse was unreachable.
+func probeBlock(checked bool, views string) string {
+	message, reason := "", ""
+	if !checked {
+		message, reason = "warehouse_unreachable: connection refused", `,"reason":"warehouse_unreachable"`
+	}
+	body := fmt.Sprintf(`{"schema_version":1,"status":"success","message":%q,"failures":0,"unique_id":"analytics.seed_fx_rates_eur","op":"probe_views","checked":%t,"views":%s%s}`,
+		message, checked, views, reason)
 	return validationresult.SentinelBegin + "\n" + body + "\n" + validationresult.SentinelEnd
 }
 
@@ -223,4 +237,112 @@ func TestReadLogs_AnAttemptWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
 
 	assert.Empty(t, f.Reason)
 	assert.Nil(t, f.SeedPreflight)
+}
+
+// reportFindings are the findings of a report-mode preflight: one view
+// outside the allowed set, one inside it.
+func reportFindings() *seedreload.Findings {
+	return &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true, Dependents: []seedreload.Dependent{
+		{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "analytics", Depth: 1, Allowed: true},
+		{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}
+}
+
+func succeededFacts(findings *seedreload.Findings) model.AttemptFacts {
+	code := int32(0)
+	return model.AttemptFacts{ExitCode: &code, JobSucceeded: true, SeedPreflight: findings}
+}
+
+func observerWithProber(p *fakeProber) *Observer {
+	o := unitObserver(&fakeQueue{}, &fakeObserved{})
+	o.deps.Prober = p
+	return o
+}
+
+func TestProbeViews_ProbesTheViewsOutsideTheAllowedSetOfASucceededLoad(t *testing.T) {
+	prober := &fakeProber{log: probeBlock(true, `[{"schema":"bi","name":"fx_rates_report","ok":false,"error":"VIEW_IS_STALE"}]`)}
+
+	got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+
+	require.Len(t, prober.requests, 1)
+	assert.Equal(t, "analytics-seed-1", prober.requests[0].JobName)
+	assert.Equal(t, "analytics.seed_fx_rates_eur", prober.requests[0].NodeID)
+	assert.Equal(t, []string{"bi.fx_rates_report"}, prober.requests[0].Views)
+	require.NotNil(t, got)
+	assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}}, got.Probes)
+	assert.Len(t, got.Dependents, 2, "the findings are kept")
+	assert.Empty(t, reportFindings().Probes)
+}
+
+func TestProbeViews_SpellsEachViewAsThePreflightReportedIt(t *testing.T) {
+	prober := &fakeProber{log: probeBlock(true, `[]`)}
+	findings := reportFindings()
+	findings.Dependents[1].Schema, findings.Dependents[1].Name = "BI", "Fx_Rates_Report"
+
+	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(findings))
+
+	assert.Equal(t, []string{"BI.Fx_Rates_Report"}, prober.requests[0].Views)
+}
+
+func TestProbeViews_DoesNotProbeWithoutAReasonTo(t *testing.T) {
+	failed := succeededFacts(reportFindings())
+	code := int32(1)
+	failed.JobSucceeded, failed.ExitCode = false, &code
+	allAllowed := reportFindings()
+	allAllowed.Dependents[1].Allowed = true
+	probed := reportFindings()
+	probed.Probes = []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: true}}
+
+	for name, tc := range map[string]struct {
+		dep   *model.Deployment
+		facts model.AttemptFacts
+	}{
+		"the load failed":                    {seedDeployment(seedreload.PreflightReport), failed},
+		"nothing is outside the allowed set": {seedDeployment(seedreload.PreflightReport), succeededFacts(allAllowed)},
+		"the preflight ran in check mode":    {seedDeployment(seedreload.PreflightCheck), succeededFacts(reportFindings())},
+		"the findings hold probes already":   {seedDeployment(seedreload.PreflightReport), succeededFacts(probed)},
+		"the preflight printed no findings":  {seedDeployment(seedreload.PreflightReport), succeededFacts(nil)},
+		"the command carries no preflight":   {model.NewDeployment(command.DeployTask{TaskID: "t"}, nil, time.Now()), succeededFacts(reportFindings())},
+		"the attempt is a release leg":       {model.NewSeedBuildDeployment(command.ValidationDeployTask{NodeID: "a.b"}, nil, time.Now()), succeededFacts(reportFindings())},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prober := &fakeProber{log: probeBlock(true, `[]`)}
+
+			got := observerWithProber(prober).probeViews(context.Background(), tc.dep, tc.facts)
+
+			assert.Nil(t, got)
+			assert.Empty(t, prober.requests)
+		})
+	}
+}
+
+func TestProbeViews_AProbeThatCannotRunMarksEachViewNotProbed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		log  string
+		err  error
+		want string
+	}{
+		"the probe fails":              {err: errors.New("deadline exceeded"), want: "not probed: deadline exceeded"},
+		"the warehouse is unreachable": {log: probeBlock(false, `[]`), want: "not probed: warehouse_unreachable: connection refused"},
+		"the probe prints nothing":     {want: "not probed: the probe printed no result"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prober := &fakeProber{log: tc.log, err: tc.err}
+
+			got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+
+			require.NotNil(t, got)
+			assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: tc.want}}, got.Probes)
+		})
+	}
+}
+
+// The probe is bounded by probeTimeout, whatever the prober does with its context.
+func TestProbeViews_BoundsTheProbeByItsTimeout(t *testing.T) {
+	var deadline time.Time
+	prober := &fakeProber{onProbe: func(ctx context.Context) { deadline, _ = ctx.Deadline() }, log: probeBlock(true, `[]`)}
+	before := time.Now()
+
+	observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
+
+	assert.WithinDuration(t, before.Add(probeTimeout), deadline, 2*time.Second)
 }

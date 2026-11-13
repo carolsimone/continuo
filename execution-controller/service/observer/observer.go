@@ -38,8 +38,12 @@ const (
 	defaultLogIOTimeout   = 20 * time.Second
 
 	// processTimeout bounds the processing of one name: a log read and its
-	// uploads, one transaction and a few Kubernetes calls.
-	processTimeout = time.Minute
+	// uploads, a view probe, one transaction and a few Kubernetes calls.
+	processTimeout = 2 * time.Minute
+
+	// probeTimeout bounds the probe of the views a seed's load may have left
+	// stale.
+	probeTimeout = 40 * time.Second
 
 	// liveRecheck is when an attempt the cache shows ended, but a live read
 	// does not, is checked again; the watch event that catches the cache up
@@ -82,6 +86,7 @@ type Deps struct {
 	Lookup      ports.JobLookup
 	Terminator  ports.JobTerminator
 	Logs        ports.PodLogReader
+	Prober      ports.ViewProber
 	Uploader    ports.LogUploader
 	Queue       ports.ObservationQueue
 	Outcomes    *outcomes.Recorder
@@ -418,23 +423,27 @@ func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.
 }
 
 // settleEnded settles an attempt a live read shows ended: it reads the log if
-// none is kept yet and, in one transaction, records what the cache and the
-// live read show, then unexplained when nothing recorded of the attempt shows
-// an exit code or the Job's success, classifies the attempt and writes its
-// result. The row is locked by then, so what every replica recorded counts.
+// none is kept yet, probes the views a late-binding seed load may have left
+// stale, and, in one transaction, records what the cache and the live read
+// show, then unexplained when nothing recorded of the attempt shows an exit
+// code or the Job's success, classifies the attempt and writes its result. The
+// row is locked by then, so what every replica recorded counts.
 func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, live model.JobObservation,
 	unexplained model.AttemptFacts, now time.Time) error {
 	var logs model.AttemptFacts
 	if dep.Facts().LogKey == "" && (obs.Started() || live.Started()) {
 		logs = o.readLogs(ctx, dep)
 	}
+	// The facts the transaction will settle on, as far as they can be known
+	// before it: the probe waits on a Job, which no transaction may do.
+	facts := dep.Facts()
+	endedFacts(func(f model.AttemptFacts) { facts, _ = facts.Merge(f) }, func() model.AttemptFacts { return facts },
+		obs, live, logs, unexplained, now)
+	if probed := o.probeViews(ctx, dep, facts); probed != nil {
+		logs.SeedPreflight = probed
+	}
 	_, err := o.inTx(ctx, dep.JobName(), func(u uow.UnitOfWork, d *model.Deployment) error {
-		d.Observe(obs.Facts(now))
-		d.Observe(live.Facts(now))
-		d.Observe(logs)
-		if f := d.Facts(); f.ExitCode == nil && !f.JobSucceeded {
-			d.Observe(unexplained)
-		}
+		endedFacts(func(f model.AttemptFacts) { d.Observe(f) }, d.Facts, obs, live, logs, unexplained, now)
 		verdict := model.Classify(d.Facts())
 		if !verdict.Succeeded && !verdict.Stopped {
 			d.Observe(model.AttemptFacts{Reason: verdict.Reason, Message: fallbackMessage(verdict.Reason)})
@@ -443,6 +452,18 @@ func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, 
 	})
 	o.deps.Metrics.AwaitingPodStop(dep.JobName(), false)
 	return err
+}
+
+// endedFacts hands observe, in the order they count, the facts settleEnded
+// settles an ended attempt on; current returns the facts observed so far.
+func endedFacts(observe func(model.AttemptFacts), current func() model.AttemptFacts,
+	obs, live model.JobObservation, logs, unexplained model.AttemptFacts, now time.Time) {
+	observe(obs.Facts(now))
+	observe(live.Facts(now))
+	observe(logs)
+	if f := current(); f.ExitCode == nil && !f.JobSucceeded {
+		observe(unexplained)
+	}
 }
 
 // fallbackMessage is the message of a failure no container or pod explained.

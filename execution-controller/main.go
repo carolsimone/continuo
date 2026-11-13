@@ -366,6 +366,7 @@ func main() {
 		Lookup:      jobWatch,
 		Terminator:  jobControl,
 		Logs:        jobControl,
+		Prober:      k8s.NewViewProber(k8sClient, cfg.K8sNamespace, logger),
 		Uploader:    logUploader,
 		Queue:       observations,
 		Outcomes:    outcomes.NewRecorder(logger),

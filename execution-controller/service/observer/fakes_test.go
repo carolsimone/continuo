@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/google/uuid"
 )
 
@@ -157,4 +158,24 @@ func (u *fakeUploader) UploadLog(_ context.Context, key, content string) error {
 	}
 	u.uploaded[key] = content
 	return nil
+}
+
+// fakeProber answers every probe with a fixed log or error and keeps the
+// requests it got.
+type fakeProber struct {
+	mu       sync.Mutex
+	log      string
+	err      error
+	onProbe  func(context.Context)
+	requests []ports.ProbeRequest
+}
+
+func (p *fakeProber) ProbeViews(ctx context.Context, req ports.ProbeRequest) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.onProbe != nil {
+		p.onProbe(ctx)
+	}
+	p.requests = append(p.requests, req)
+	return p.log, p.err
 }
