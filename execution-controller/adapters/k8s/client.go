@@ -39,7 +39,9 @@ type JobParams struct {
 	SecretRef string
 	// Operation selects the dbt verb execution-controller runs for this node.
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
-	// NodeType — a seed load is plain, non-destructive `dbt seed`.
+	// NodeType — a seed load is plain `dbt seed`, whose effect on the table
+	// depends on the warehouse and the seed's +full_refresh (see
+	// dbt-commands.yaml).
 	// pkg_model.OperationTest runs `dbt test --select <node>`.
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.

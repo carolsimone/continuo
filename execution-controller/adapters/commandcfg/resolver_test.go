@@ -330,7 +330,7 @@ func TestBuiltinDefault_FullRefreshAndSeed(t *testing.T) {
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
-		"an ordinary seed run stays plain, non-destructive")
+		"an ordinary seed run is the plain seed command")
 	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "fx"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
 		"an explicit seed full refresh resolves to seed_full_refresh")

@@ -42,8 +42,10 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 }
 
 // NodeCommand resolves the argv for op against node. OperationRun dispatches on
-// nt (model/seed/snapshot) — a seed resolves to the block's plain,
-// non-destructive Seed template, never SeedFullRefresh; OperationTest and
+// nt (model/seed/snapshot) — a seed resolves to the block's plain Seed
+// template, the one every automatic seed load runs, never SeedFullRefresh (what
+// it does to the table depends on the warehouse and the seed's +full_refresh,
+// see deploy/continuo/files/dbt-commands.yaml); OperationTest and
 // OperationBuild resolve a fixed key regardless of nt; OperationFullRefresh is
 // resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
 // seed to SeedFullRefresh. The default block is always complete (built-in when
@@ -81,7 +83,7 @@ func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pk
 // fullRefreshCommand resolves a full refresh of a node type the contract marks
 // as supporting one: a model to its FullRefresh template, a seed to its
 // SeedFullRefresh template — never to the plain Run/Seed template, which is the
-// non-destructive command an automatic load uses. Either template is resolved
+// command an automatic load runs. Either template is resolved
 // from the block that governs the service — its override when it has one, else
 // the default — and this never falls through from an override to the default,
 // whose binary the team's image may not carry. Every failure wraps

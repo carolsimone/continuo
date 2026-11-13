@@ -12,7 +12,9 @@ import (
 type CommandResolver interface {
 	// NodeCommand returns the argv for op against node, for the given
 	// service. For OperationRun, nt (model, seed, or snapshot) selects the
-	// verb — a seed resolves to its plain, non-destructive seed command;
+	// verb — a seed resolves to its plain seed command, the one every
+	// automatic seed load runs (what it does to the table depends on the
+	// warehouse and the seed's +full_refresh, see dbt-commands.yaml);
 	// OperationTest and OperationBuild resolve to a fixed dbt verb regardless
 	// of nt. OperationFullRefresh resolves a model to the service's
 	// full_refresh command and a seed to its seed_full_refresh command. The
