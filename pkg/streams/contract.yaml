@@ -373,6 +373,10 @@ vocabularies:
         const: UpgradeInterrupted
         healable: false
         description: the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
+      - value: upstream_clone_failed
+        const: UpstreamCloneFailed
+        healable: false
+        description: validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
 
   - name: dead_letter_kind
     const: DeadLetterKind

@@ -35,6 +35,7 @@ class RejectReason(StrEnum):
     SEED_BUILD_FAILED = "seed_build_failed"
     VALIDATION_FAILED = "validation_failed"
     UPGRADE_INTERRUPTED = "upgrade_interrupted"
+    UPSTREAM_CLONE_FAILED = "upstream_clone_failed"
 
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})

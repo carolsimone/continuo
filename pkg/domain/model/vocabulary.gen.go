@@ -93,6 +93,8 @@ const (
 	RejectReasonValidationFailed RejectReason = "validation_failed"
 	// RejectReasonUpgradeInterrupted — the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
 	RejectReasonUpgradeInterrupted RejectReason = "upgrade_interrupted"
+	// RejectReasonUpstreamCloneFailed — validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
+	RejectReasonUpstreamCloneFailed RejectReason = "upstream_clone_failed"
 )
 
 // RejectReasons returns every value in contract.yaml declaration order.
@@ -111,6 +113,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonSeedBuildFailed,
 		RejectReasonValidationFailed,
 		RejectReasonUpgradeInterrupted,
+		RejectReasonUpstreamCloneFailed,
 	}
 }
 
@@ -142,6 +145,8 @@ func (v RejectReason) IsValid() bool {
 	case RejectReasonValidationFailed:
 		return true
 	case RejectReasonUpgradeInterrupted:
+		return true
+	case RejectReasonUpstreamCloneFailed:
 		return true
 	}
 	return false

@@ -19,6 +19,7 @@ var sharedFixtures = []struct{ goPath, pyPath string }{
 	{"pkg/events/testdata/manifest_loaded_candidate_v2_failed.json", "topology-controller/tests/fixtures/manifest_loaded_candidate_v2_failed.json"},
 	{"pkg/events/testdata/release_requested_v1.json", "topology-controller/tests/fixtures/release_requested_v1.json"},
 	{"pkg/events/testdata/release_requested_v1_empty.json", "topology-controller/tests/fixtures/release_requested_v1_empty.json"},
+	{"pkg/domain/model/testdata/dormant_cases.json", "topology-controller/tests/fixtures/dormant_cases.json"},
 }
 
 // The test reads both copies from the repository checkout, so it runs where

@@ -250,3 +250,14 @@ func TestRejectReasonUpgradeInterrupted_IsDeclaredAndNotHealable(t *testing.T) {
 			r, r.IsValid(), r.Healable())
 	}
 }
+
+// Validation could not copy the production table of an unchanged upstream. No
+// change to the release's source fixes it (a run of that node does), so the
+// remediation classifier must drop it.
+func TestRejectReasonUpstreamCloneFailed_IsDeclaredAndNotHealable(t *testing.T) {
+	r := model.RejectReasonUpstreamCloneFailed
+	if r != "upstream_clone_failed" || !r.IsValid() || r.Healable() {
+		t.Fatalf("RejectReasonUpstreamCloneFailed = %q (valid %v, healable %v), want upstream_clone_failed, valid, not healable",
+			r, r.IsValid(), r.Healable())
+	}
+}
