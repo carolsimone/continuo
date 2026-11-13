@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -123,7 +124,7 @@ func validType() workflow.Type {
 		Name:      "t",
 		Match:     workflow.Match{Cluster: workflow.ClusterSingle, Source: "compile", Pos: pos(typeFile, 4)},
 		Context:   []workflow.StepRef{ref(typeFile, 5, "dbt_log")},
-		Agent:     workflow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Rounds: 2, Pos: pos(typeFile, 6)},
+		Agent:     workflow.Agent{Prompt: ref(typeFile, 6, "dbt-compile"), Rounds: 1, Pos: pos(typeFile, 6)},
 		Preflight: []workflow.StepRef{ref(typeFile, 7, "target_file_was_shown")},
 		File:      typeFile,
 		Pos:       pos(typeFile, 1),
@@ -274,13 +275,26 @@ func TestValidate_RefusesAnUnprovidedNeed(t *testing.T) {
 	})
 }
 
-func TestValidate_RefusesRoundsOrTriesBelowOne(t *testing.T) {
-	t.Run("rounds", func(t *testing.T) {
-		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Rounds = 0 }, `types/t.yaml:6`, `rounds`)
-	})
-	t.Run("tries", func(t *testing.T) {
-		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Tries = 0 }, `flows/f.yaml:1`, `tries`)
-	})
+// The runner runs one pre-flight round per try, so a type that asks for any
+// other number of rounds is refused at its agent line rather than run as one.
+func TestValidate_RefusesRoundsOtherThanOne(t *testing.T) {
+	for _, rounds := range []int{0, 2, 3} {
+		t.Run(fmt.Sprintf("rounds %d", rounds), func(t *testing.T) {
+			refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Rounds = rounds },
+				fmt.Sprintf(`types/t.yaml:6: type "t" has rounds %d, and the runner runs one pre-flight round per try, so rounds must be 1`, rounds))
+		})
+	}
+}
+
+func TestValidate_AcceptsOneRound(t *testing.T) {
+	f, ty := validFlow(), validType()
+	ty.Agent.Rounds = 1
+	_, err := Validate(setOf(f, ty), stubRegistry())
+	require.NoError(t, err)
+}
+
+func TestValidate_RefusesTriesBelowOne(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Tries = 0 }, `flows/f.yaml:1`, `tries`)
 }
 
 func TestValidate_RefusesAnUnknownOutputAction(t *testing.T) {

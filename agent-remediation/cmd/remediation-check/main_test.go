@@ -169,6 +169,14 @@ func TestFiles_OutputIsDeterministic(t *testing.T) {
 // file's text changed by edit, and returns the directory.
 func copyBuiltin(t *testing.T, edit func(flow string) string) string {
 	t.Helper()
+	return copyBuiltinEditing(t, filepath.Join("flows", "rejected-release.yaml"), edit)
+}
+
+// copyBuiltinEditing copies the built-in files into a new directory, with the
+// text of the file at rel, relative to the built-in directory, changed by
+// edit, and returns the directory.
+func copyBuiltinEditing(t *testing.T, file string, edit func(text string) string) string {
+	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, filepath.WalkDir(builtinDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -182,9 +190,9 @@ func copyBuiltin(t *testing.T, edit func(flow string) string) string {
 		if err != nil {
 			return err
 		}
-		if rel == filepath.Join("flows", "rejected-release.yaml") {
+		if rel == file {
 			edited := edit(string(data))
-			require.NotEqual(t, string(data), edited, "the edit changes the flow file")
+			require.NotEqual(t, string(data), edited, "the edit changes %s", file)
 			data = []byte(edited)
 		}
 		dst := filepath.Join(dir, rel)
@@ -233,4 +241,20 @@ func TestFiles_FilesWithoutTheTriggerFlowExitOne(t *testing.T) {
 	require.Len(t, r.Errors, 1, "%v", r.Errors)
 	assert.Contains(t, r.Errors[0], `"rejected-release"`)
 	assert.Empty(t, r.Scenarios)
+}
+
+// The runner runs one pre-flight round per try, so a type that asks for two is
+// refused at its agent line, as the service refuses it at startup.
+func TestFiles_ATypeWithTwoRoundsExitsOne(t *testing.T) {
+	dir := copyBuiltinEditing(t, filepath.Join("types", "dbt-compile.yaml"), func(typ string) string {
+		return strings.Replace(typ, "rounds: 1", "rounds: 2", 1)
+	})
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	require.Len(t, r.Errors, 1, "%v", r.Errors)
+	assert.Equal(t, `types/dbt-compile.yaml:8: type "dbt-compile" has rounds 2, and the runner runs one pre-flight round per try, so rounds must be 1`, r.Errors[0])
+	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 }

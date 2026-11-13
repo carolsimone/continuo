@@ -26,10 +26,11 @@ const (
 // that cannot run is an error: an unknown step, a step at a stage it may not
 // stand in, a missing stage, a flow that lists no loaded type, a gate that is
 // not exactly one step that runs the verification, a step that reads evidence
-// no earlier step of its chain provides, `rounds` or `tries` below 1, an output
-// that is not a pull request or a hand-over or that publishes an event outside
-// the stream contract, an unsupported version or trigger, and two listed types
-// that can select the same failure. A type no flow lists is only a warning.
+// no earlier step of its chain provides, `rounds` other than 1 (the runner
+// runs one pre-flight round per try), `tries` below 1, an output that is not
+// a pull request or a hand-over or that publishes an event outside the stream
+// contract, an unsupported version or trigger, and two listed types that can
+// select the same failure. A type no flow lists is only a warning.
 func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
 	v := &validator{set: set, reg: reg, seen: map[string]bool{}}
 	for _, name := range sortedKeys(set.Flows) {
@@ -152,8 +153,8 @@ func (v *validator) typ(t workflow.Type) {
 	if t.Match.NodeTypes != nil && len(t.Match.NodeTypes) == 0 {
 		v.refuse(t.Match.Pos, "type %q has an empty match.node_types, so it matches no node type", t.Name)
 	}
-	if t.Agent.Rounds < 1 {
-		v.refuse(t.Agent.Pos, "type %q has rounds %d, and rounds must be at least 1", t.Name, t.Agent.Rounds)
+	if t.Agent.Rounds != 1 {
+		v.refuse(t.Agent.Pos, "type %q has rounds %d, and the runner runs one pre-flight round per try, so rounds must be 1", t.Name, t.Agent.Rounds)
 	}
 	for _, tool := range t.Agent.Tools {
 		v.refuse(tool.Pos, "type %q lists agent.tools, which is reserved and must be empty", t.Name)
