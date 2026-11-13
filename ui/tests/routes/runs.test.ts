@@ -15,6 +15,7 @@ const mockTriggerRerun = vi.fn();
 const mockTriggerRebase = vi.fn();
 const mockPreviewRebase = vi.fn();
 const mockCancelRun = vi.fn();
+const mockListRuns = vi.fn();
 
 const mockClient = {
   getRun: mockGetRun,
@@ -25,6 +26,7 @@ const mockClient = {
   triggerRebase: mockTriggerRebase,
   previewRebase: mockPreviewRebase,
   cancelRun: mockCancelRun,
+  listRuns: mockListRuns,
 };
 
 const app = express();
@@ -304,6 +306,7 @@ describe('routes/runs: GET /:id/attempts', () => {
         execution_seconds: 19.5, error_message: 'boom',
         log_s3_key: 'logs/task-attempts/svc/sc/tbl/task-1-1.log',
         run_results_uri: 'run-results/task-attempts/svc/sc/tbl/task-1-1.json',
+        seed_preflight: null,
       },
       {
         // Empty strings and a zero run time are run-controller's "not set": they cross
@@ -312,6 +315,7 @@ describe('routes/runs: GET /:id/attempts', () => {
         failure_class: null, failure_reason: null,
         dispatched_at: '2026-01-01T10:00:00.000Z', queued_at: null, started_at: null, finished_at: null,
         execution_seconds: null, error_message: null, log_s3_key: null, run_results_uri: null,
+        seed_preflight: null,
       },
     ]);
   });
@@ -847,5 +851,102 @@ describe('routes/runs: GET /:id/rebase-preview', () => {
     const res = await request(app).get(`/api/runs/${VALID_ID}/rebase-preview`);
 
     expect(res.status).toBe(500);
+  });
+});
+
+describe('routes/runs: GET /api/runs?release_id=', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('lists the runs a release started', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, {
+      runs: [{
+        run_id: 'r1', schedule_name: 'promote-seed-5b2e0a1c', status: 'running', kind: 'promote_seed',
+        release_id: 'rel-a1b2c3d-201', created_at: '2026-11-24T09:15:58Z', completed_at: '',
+      }],
+      total_count: 1,
+    }));
+    const res = await request(app).get('/api/runs?release_id=rel-a1b2c3d-201&kind=promote_seed');
+    expect(res.status).toBe(200);
+    expect(mockListRuns.mock.calls[0][0]).toMatchObject({ release_id: 'rel-a1b2c3d-201', kind: 'promote_seed' });
+    expect(res.body.total_count).toBe(1);
+    expect(res.body.runs[0]).toEqual({
+      run_id: 'r1', schedule_name: 'promote-seed-5b2e0a1c', status: 'running', kind: 'promote_seed',
+      release_id: 'rel-a1b2c3d-201', created_at: '2026-11-24T09:15:58Z', completed_at: null,
+    });
+  });
+
+  it('asks for every kind when kind is absent, and sends no schedule_name', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(null, { runs: [], total_count: 0 }));
+    const res = await request(app).get('/api/runs?release_id=rel-1');
+    expect(res.status).toBe(200);
+    expect(mockListRuns.mock.calls[0][0]).toMatchObject({ release_id: 'rel-1', kind: '' });
+    expect(mockListRuns.mock.calls[0][0]).not.toHaveProperty('schedule_name');
+    expect(res.body).toEqual({ total_count: 0, runs: [] });
+  });
+
+  it('answers 400 without a release_id, calling nothing', async () => {
+    const res = await request(app).get('/api/runs?kind=promote_seed');
+    expect(res.status).toBe(400);
+    expect(mockListRuns).not.toHaveBeenCalled();
+  });
+
+  it('maps a gRPC status to its HTTP status', async () => {
+    mockListRuns.mockImplementation((_req: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'unknown kind')));
+    const res = await request(app).get('/api/runs?release_id=rel-1&kind=nope');
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('routes/runs: task operations, plan reasons and seed preflight findings', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('carries each task operation and plan reason, null for an empty reason', async () => {
+    mockListTasks.mockImplementation((_req: any, cb: any) => cb(null, {
+      tasks: [
+        { task_id: 't1', run_id: 'r', operation: 'full_refresh', plan_reason: 'columns changed' },
+        { task_id: 't2', run_id: 'r', operation: 'run', plan_reason: '' },
+      ],
+      total_count: 2,
+    }));
+    const res = await request(app).get('/api/runs/r/tasks');
+    expect(res.body.tasks[0]).toMatchObject({ operation: 'full_refresh', plan_reason: 'columns changed' });
+    expect(res.body.tasks[1]).toMatchObject({ operation: 'run', plan_reason: null });
+  });
+
+  it('carries each graph node operation and plan reason', async () => {
+    mockGetRunGraph.mockImplementation((_req: any, cb: any) => cb(null, {
+      nodes: [
+        { service_name: 's', schema_name: 'a', table_name: 'v', node_type: 'dbt-model', operation: 'full_refresh', plan_reason: 'rebuilt after seed' },
+        { service_name: 's', schema_name: 'a', table_name: 'w', node_type: 'dbt-model', operation: 'run', plan_reason: '' },
+      ],
+      edges: [],
+    }));
+    const res = await request(app).get('/api/runs/r/graph');
+    expect(res.body.nodes[0]).toMatchObject({ operation: 'full_refresh', plan_reason: 'rebuilt after seed' });
+    expect(res.body.nodes[1]).toMatchObject({ operation: 'run', plan_reason: null });
+  });
+
+  it("carries an attempt's seed preflight findings field by field, null when it ran none", async () => {
+    mockListRunAttempts.mockImplementation((_req: any, cb: any) => cb(null, {
+      attempts: [
+        {
+          task_id: 't1', attempt: 0, status: 'failed',
+          seed_preflight: {
+            drop_semantics: 'blocks', completeness: 'complete', checked: true, extra: 'x',
+            dependents: [{ schema: 'e2e_bi', name: 'seed_reader', kind: 'view', owner: 'bi', depth: 1, allowed: false, extra: 1 }],
+            probes: [{ schema: 'analytics', name: 'v_users', ok: false, error: 'relation does not exist' }],
+          },
+        },
+        { task_id: 't2', attempt: 0, status: 'succeeded', seed_preflight: null },
+      ],
+      total_count: 2,
+    }));
+    const res = await request(app).get('/api/runs/r/attempts');
+    expect(res.body.attempts[0].seed_preflight).toEqual({
+      drop_semantics: 'blocks', completeness: 'complete', checked: true,
+      dependents: [{ schema: 'e2e_bi', name: 'seed_reader', kind: 'view', owner: 'bi', depth: 1, allowed: false }],
+      probes: [{ schema: 'analytics', name: 'v_users', ok: false, error: 'relation does not exist' }],
+    });
+    expect(res.body.attempts[1].seed_preflight).toBeNull();
   });
 });
