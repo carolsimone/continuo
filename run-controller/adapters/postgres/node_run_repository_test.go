@@ -1163,10 +1163,11 @@ func nodeListTenant(t *testing.T, db *sqlx.DB, nodes ...liveNode) string {
 }
 
 // nodeListTask stores, for tenant, a run of operation op created ageMin
-// minutes ago holding one task of op on the node svc.an.table, in status.
-func nodeListTask(t *testing.T, db *sqlx.DB, tenant, table, op string, status run.TaskStatus, ageMin int) {
+// minutes ago holding one task of op on the node svc.an.table, in status, and
+// returns when the run was created, at the precision Postgres stores.
+func nodeListTask(t *testing.T, db *sqlx.DB, tenant, table, op string, status run.TaskStatus, ageMin int) time.Time {
 	t.Helper()
-	at := time.Now().Add(-time.Duration(ageMin) * time.Minute)
+	at := time.Now().Add(-time.Duration(ageMin) * time.Minute).Truncate(time.Microsecond)
 	runID := uuid.New()
 	_, err := db.Exec(`INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, operation)
 		VALUES ($1, $2, 'nodes', 'succeeded', $3, $4)`, tenant, runID, at, op)
@@ -1176,6 +1177,7 @@ func nodeListTask(t *testing.T, db *sqlx.DB, tenant, table, op string, status ru
 		VALUES ($1, $2, $3, $4, 'svc', 'an', $5, 'j', $6, 3, $7, $8)`,
 		tenant, uuid.New(), runID, at, table, string(status), op, "an."+table)
 	require.NoError(t, err)
+	return at
 }
 
 // intPtr returns a pointer to v.
@@ -1451,4 +1453,84 @@ func TestListNodes_ATenantWithNoLiveReleaseListsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, total)
 	assert.Empty(t, rows)
+}
+
+// lastRunsOf lists tenant's nodes of operation, all of them when search is
+// empty and the nodes of table search otherwise, and returns each listed
+// node's row by table.
+func lastRunsOf(t *testing.T, db *sqlx.DB, tenant, search string, operation model.Operation) map[string]*projection.NodeSummary {
+	t.Helper()
+	rows, _, err := postgres.NewNodeRunRepository(db, tenant, discardLogger()).
+		ListNodes(context.Background(), search, "", operation, false, 50, 0)
+	require.NoError(t, err)
+	byTable := map[string]*projection.NodeSummary{}
+	for _, r := range rows {
+		byTable[r.TableName] = r
+	}
+	return byTable
+}
+
+// A node's last run is the creation of the run of its newest task of the
+// listed operation, the same whether the list is searched or not: a newer
+// task of another operation does not move it, and the run dimension counts a
+// node's full refreshes as its runs.
+func TestListNodes_ASearchReadsTheSameLastRun(t *testing.T) {
+	db := newTestDB(t)
+	tenant := nodeListTenant(t, db,
+		liveNode{table: "mixed", nodeType: "dbt-model", schedule: "daily", testCount: intPtr(1)},
+		liveNode{table: "refreshed", nodeType: "dbt-model", schedule: "daily"},
+	)
+	ranAt := nodeListTask(t, db, tenant, "mixed", "run", run.TaskStatusSucceeded, 10)
+	testedAt := nodeListTask(t, db, tenant, "mixed", "test", run.TaskStatusFailed, 5)
+	nodeListTask(t, db, tenant, "refreshed", "full_refresh", run.TaskStatusSucceeded, 20)
+	refreshedAt := nodeListTask(t, db, tenant, "refreshed", "full_refresh", run.TaskStatusFailed, 15)
+
+	for _, c := range []struct {
+		name, table string
+		operation   model.Operation
+		want        time.Time
+		status      string
+		runCount    int
+	}{
+		{"a newer test does not move the last run", "mixed", model.OperationRun, ranAt, "succeeded", 1},
+		{"a newer test is the last test", "mixed", model.OperationTest, testedAt, "failed", 1},
+		{"full refreshes are the runs of a node that only had them", "refreshed", model.OperationRun, refreshedAt, "failed", 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			searched := lastRunsOf(t, db, tenant, c.table, c.operation)[c.table]
+			listed := lastRunsOf(t, db, tenant, "", c.operation)[c.table]
+			for read, n := range map[string]*projection.NodeSummary{"searched": searched, "listed": listed} {
+				require.NotNil(t, n, "the %s list holds %s", read, c.table)
+				require.NotNil(t, n.LastRunAt, "the %s list's last run of %s", read, c.table)
+				assert.True(t, c.want.Equal(*n.LastRunAt), "the %s list's last run of %s is %v, want %v", read, c.table, *n.LastRunAt, c.want)
+				assert.Equal(t, c.status, n.LastStatus, "the %s list", read)
+				assert.Equal(t, c.runCount, n.RunCount, "the %s list", read)
+			}
+		})
+	}
+}
+
+// The stats window holds a node's newest 50 tasks of the operation: a node
+// with more counts 50, and its last run is the newest task's run, searched or
+// not.
+func TestListNodes_StatsCoverTheNewestFiftyTasks(t *testing.T) {
+	db := newTestDB(t)
+	tenant := nodeListTenant(t, db, liveNode{table: "busy", nodeType: "dbt-model", schedule: "daily"})
+	var newest time.Time
+	for age := 55; age >= 1; age-- {
+		status := run.TaskStatusSucceeded
+		if age > 50 {
+			status = run.TaskStatusFailed // outside the window: no failure counts
+		}
+		newest = nodeListTask(t, db, tenant, "busy", "run", status, age)
+	}
+
+	for _, search := range []string{"", "busy"} {
+		n := lastRunsOf(t, db, tenant, search, model.OperationRun)["busy"]
+		require.NotNil(t, n, "search %q", search)
+		assert.Equal(t, 50, n.RunCount, "search %q", search)
+		assert.Equal(t, 100, n.SuccessRatePct, "the five older failures fall outside the window (search %q)", search)
+		require.NotNil(t, n.LastRunAt, "search %q", search)
+		assert.True(t, newest.Equal(*n.LastRunAt), "search %q: last run %v, want %v", search, *n.LastRunAt, newest)
+	}
 }

@@ -265,6 +265,8 @@ type nodeSummaryRow struct {
 // The count of nodes is joined to the page, so the statement returns one row
 // even when the page is empty (offset past the end, or no node matches):
 // that row has no node (listed is false) and still carries the total.
+// Every read of tasks keeps the dimension through listedOperation, so the
+// last run, the page order and the stats count the same tasks.
 const listNodesQuery = `
 	WITH nodes AS (
 		SELECT n.service_name, n.schema_name, n.table_name,
@@ -290,7 +292,7 @@ const listNodesQuery = `
 		 AND t.schema_name = n.schema_name AND t.table_name = n.table_name
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE $1 <> ''
-		  AND (t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))
+		  AND ` + listedOperation + `
 		GROUP BY t.service_name, t.schema_name, t.table_name
 		UNION ALL
 		SELECT t.service_name, t.schema_name, t.table_name, MAX(s.created_at) AS last_run_at
@@ -298,7 +300,7 @@ const listNodesQuery = `
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE $1 = '' AND t.tenant_id = $4
 		  AND ($2 = '' OR t.service_name = $2)
-		  AND (t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))
+		  AND ` + listedOperation + `
 		GROUP BY t.service_name, t.schema_name, t.table_name
 	),
 	page AS (
@@ -324,7 +326,7 @@ const listNodesQuery = `
 		  ON t.tenant_id = $4 AND t.service_name = p.service_name
 		 AND t.schema_name = p.schema_name AND t.table_name = p.table_name
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
-		WHERE t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh')
+		WHERE ` + listedOperation + `
 	),
 	windowed AS ( SELECT * FROM ranked WHERE rn <= 50 ),
 	agg AS (
@@ -376,6 +378,10 @@ const listNodesQuery = `
 	  ON a.service_name = p.service_name AND a.schema_name = p.schema_name
 	 AND a.table_name = p.table_name
 	ORDER BY p.last_run_at DESC NULLS LAST, p.service_name, p.schema_name, p.table_name`
+
+// listedOperation keeps the tasks t of listNodesQuery's dimension $3, as
+// stored: the run dimension includes full_refresh tasks.
+const listedOperation = `(t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))`
 
 // ListNodes returns one page of the node list and how many nodes match before
 // paging. The list holds every node of the tenant's live release whose type a

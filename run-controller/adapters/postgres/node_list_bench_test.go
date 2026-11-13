@@ -15,12 +15,13 @@ import (
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 )
 
-// nodeListShape is the history of a tenant whose live release holds nodes
-// dbt models, spread over nodeListServices services and nodeListSchedules
-// schedules, and one dormant dbt model per nodeListDormantEvery nodes, which
-// never ran. Every schedule ran runsPerNode times, and each run holds one run
-// task per node of its schedule: one in twenty tasks failed, one in twenty
-// needed a second attempt, and every task records its attempts.
+// nodeListShape is the history of a tenant whose live release holds a number
+// of scheduled dbt models given by nodes, spread over nodeListServices
+// services and nodeListSchedules schedules, plus one dormant dbt model per
+// nodeListDormantEvery of them, which never ran. Every schedule ran
+// runsPerNode times, and each run holds one run task per node of its
+// schedule: one in twenty tasks failed, one in twenty needed a second
+// attempt, and every task records its attempts.
 type nodeListShape struct {
 	name        string
 	nodes       int
@@ -33,8 +34,9 @@ const (
 	nodeListDormantEvery = 50
 )
 
-// The shapes BenchmarkListNodes reads, from a few thousand tasks to half a
-// million: C and D hold the same tasks, D in four times as many nodes.
+// The shapes BenchmarkListNodes reads, from 27,500 tasks (A) to half a
+// million (C and D): C and D hold the same tasks, D in four times as many
+// nodes.
 var nodeListShapes = []nodeListShape{
 	{name: "A-2500x11", nodes: 2500, runsPerNode: 11},
 	{name: "B-2500x50", nodes: 2500, runsPerNode: 50},
