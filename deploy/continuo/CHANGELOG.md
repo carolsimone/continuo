@@ -14,7 +14,8 @@ shipped in those.
 
 **TL;DR**
 
-- A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
+- A table that a node reads and no node builds now shows in the DAG as a grey `unknown-external` node.
+- A dbt model with an owner and no tag is now a dormant node: you run it by hand, and a broken one rejects the release.
 - Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
 - Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
 - The default validation image is `v0.12.0`.
@@ -24,15 +25,15 @@ shipped in those.
 
 0. **Check every dbt team image for `python3` with PyYAML and dbt.** The compile Job runs `compile_extras.py` with the image's `python3`, so run `docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` for each one. An image where it fails fails its compile after the upgrade.
 1. **Freeze producer merges.** Keep them frozen until step 6, so no service releases a change between the upgrade and its re-baseline release.
-2. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with ingested nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
+2. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with `unknown-external` nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
    2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
-   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values.
+   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values. Its migration Job builds the index `idx_tasks_node_key_created` on run-controller's `tasks` table before the pods roll, and run-controller cannot write a task until the index is built, so the runs in progress pause for that time.
    4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
 
    Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
-3. **Do not roll release-controller back below this version** after a release with ingested nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
-4. **Re-baseline the fingerprints.** After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`.
+3. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
+4. **Re-baseline the fingerprints.** After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`. A model with an owner and no tag enters production in this release as a dormant node, without validation. If its table does not exist yet, run it once before you release a change to a model that reads it, or that release is rejected `upstream_clone_failed`.
 5. Release one service with no change: nothing validates.
 6. Unfreeze producer merges.
 
@@ -42,10 +43,16 @@ This release changes no values key, and it ships as a `MINOR`.
 
 ### Added
 
-- **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
-  - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
-  - A system relation never becomes an ingested node.
+- **Tables no node builds show as `unknown-external` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey node with an `external` chip (node type `unknown-external`) and an edge to each node that reads it.
+  - An unknown-external node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
+  - A system relation never becomes an unknown-external node.
   - No values change is needed.
+- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
+  - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run.
+  - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
+  - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
+  - No values change is needed.
+- **The Dormant tile.** TL;DR: when the live release has dormant nodes, the Topology tab shows a Dormant tile with their number. It opens the Nodes tab filtered to them.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
   - Its pod gets the `metrics` container port, the `prometheus.io/*` annotations and a place in the scrape NetworkPolicy. `deploy/OBSERVABILITY.md` lists the new series and an example rule for a stage near the liveness budget.
   - No values change is needed.
@@ -68,11 +75,22 @@ This release changes no values key, and it ships as a `MINOR`.
   - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
 - **The default validation image is `v0.12.0`** (`validation.imageTag`).
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
-  - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
+  - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an unknown-external node, never resolves to a node and is never redirected to the candidate schema.
   - The key and its default are unchanged, and no values change is needed.
 - **topology-controller logs JSON lines.** TL;DR: topology-controller writes one JSON object per line on stderr, with every field, as the Go services do. A log agent that read its old text lines needs its JSON parser instead.
   - Each release logs one `release parsed` line with its stage times and counts. A skipped dbt node logs at INFO instead of WARNING, and a dbt test node no longer logs an ERROR on every release.
 - **The release page shows how long each node took.** TL;DR: the duration column of a release's node results shows each compile, seed-build and validation Job's run time instead of a dash.
+- **A model with an owner and no tag is validated.** TL;DR: continuo used to skip such a model. It is now a dormant node, and a release checks it like any model, so a broken one rejects the release.
+  - To keep a model out of continuo, leave out its `meta.owner` or tag it `local_stub`.
+- **The Nodes tab lists every node of the live release.** TL;DR: a node that never ran is listed too, after the nodes that ran, with `never` and dashes. A node the live release does not hold is not listed, whatever runs it had.
+  - A `Dormant only` filter lists only the dormant nodes.
+  - `continuo node list` lists the same nodes. A node that never ran has `task_count` 0 and no `last_run_at`.
+- **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes: run them, then release again.
+  - When a changed node fails too, the reason stays `validation_failed`, and the message also names the copies.
+  - It is not healable: remediation proposes no fix, and "Try again" is refused.
+  - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
+- **remediation drops a rejection that is not healable.** TL;DR: remediation drops a rejection whose reason is not healable before it reads its nodes, so such a rejection leaves no `classification_decision` row. It never tries to fix a node that validation copied from production.
+- **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner` and `local_stub`.
 
 ### Security
 - Service and CLI images are built with Go 1.27.4, and every Go module requires Go 1.26.11: both fix GO-2026-6859 in `net/http` (an HTTP/1 server that uses `MaxBytesReader` or `MaxBytesHandler` could crash when its handler read the request body while it wrote the response header). No values change. PATCH.

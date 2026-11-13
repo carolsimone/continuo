@@ -102,9 +102,15 @@ in it, deliberately:
 3. **Every node needs `meta.owner`** (set once in `dbt_project.yml`). Nodes
    without it are skipped. `meta` also carries an optional per-node task
    timeout; see [Declare the task timeout of a node](#declare-the-task-timeout-of-a-node).
-4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
-   }}`. continuo reads the **first tag as the schedule the node belongs to**; an
-   untagged model is skipped. Seeds are exempt and default to build-on-release.
+4. **A model's tag names its schedule** — `{{ config(tags=['daily'])
+   }}`. continuo reads the **first tag as the schedule the node belongs to**.
+   A model with an owner and no tag is a *dormant* node: a release checks it
+   like any other model, so a broken one rejects the release, but no cron ever
+   runs it. You run it by hand from its node page (or with
+   `continuo node trigger`). Run it once before you release a change to a model
+   that reads it: validation copies its production table, and a table that
+   does not exist yet rejects that release with `upstream_clone_failed`. Seeds
+   are exempt and default to build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
    `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
