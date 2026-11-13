@@ -188,7 +188,7 @@ topology-controller resolves the graph.
 
 ### Model metadata
 
-Every service's `dbt_project.yml` declares the required `+tags` (schedule name) and `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser.
+Every service's `dbt_project.yml` declares the required `+meta` (`owner`, `criticality`) under the `models:` key, and a model's schedule name as its tag (`+tags` there, or `config.tags` in `models/schema.yml`); `profiles.yml` sets `schema: e2e_schema`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser. A model with an owner and no tag is a dormant node: it is in the topology with no schedule, no cron or schedule's run builds it, and only a run started by hand does. service-1's `dormant_probe` is one.
 
 ## Building
 
