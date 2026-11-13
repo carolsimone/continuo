@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -37,9 +40,11 @@ import (
 // The equivalence tests run each built-in type fixture through today's driver
 // and verification reconciler, and through the runner, each engine on a memory
 // store of its own with fakes built from the same fixture. Both engines must
-// send the same model requests, submit the same verification runs over the
-// same artifact bytes, and leave proposal rows with the same statuses, node
-// outcomes, verification runs and edits. Reason texts are not compared.
+// send the same model requests, hand the contract packaging tool the same
+// contract files, submit the same verification runs over the same artifact
+// bytes, and leave proposal rows with the same statuses, node outcomes,
+// verification runs, edits, confidence and model. Reason texts are not
+// compared.
 
 const (
 	// equivalenceFlow is the built-in flow whose types the tests run.
@@ -55,6 +60,9 @@ const (
 	// equivalencePasses bounds how often a test drives, polls or reconciles
 	// before it gives up on the attempts ending.
 	equivalencePasses = 25
+	// equivalenceDialect is the warehouse's SQL dialect both engines are
+	// configured with, which the contract packaging tool is handed.
+	equivalenceDialect = "trino"
 )
 
 // equivalenceScenarios are the scenarios both engines run, in run order, each
@@ -88,8 +96,17 @@ func TestEquivalence(t *testing.T) {
 				require.Equal(t, sc.attempts, statusesOf(legacy.attempts), "today's attempts end as the scenario plays")
 				require.NotEmpty(t, legacy.requests, "today's driver sent no model request")
 				assertSameModelRequests(t, legacy.requests, next.requests)
+				if f.Packager.Merged != "" {
+					require.NotEmpty(t, legacy.merges, "today's driver never ran the contract packaging tool")
+				}
+				assertSameMerges(t, legacy.merges, next.merges)
 				require.NotEmpty(t, legacy.runs, "today's driver submitted no verification run")
 				assertSameVerificationRuns(t, legacy.runs, next.runs)
+				for _, a := range legacy.attempts {
+					require.NotEmpty(t, a.Nodes, "today's attempt %d has no node outcome", a.Attempt)
+					require.NotEmpty(t, a.RunIDs, "today's attempt %d names no verification run", a.Attempt)
+					require.NotEmpty(t, a.Edits, "today's attempt %d has no edit", a.Attempt)
+				}
 				assertSameAttempts(t, legacy.attempts, next.attempts)
 			})
 		}
@@ -133,13 +150,27 @@ func equivalenceScript(t *testing.T, f conformance.Fixture, sc conformance.Scena
 	return script
 }
 
-// observed is what one engine did: every model request it sent, every
-// verification run it submitted with the artifacts written for it, and every
-// proposal row it left.
+// observed is what one engine did: every model request it sent, every call of
+// the contract packaging tool, every verification run it submitted with the
+// artifacts written for it, and every proposal row it left.
 type observed struct {
 	requests []string
+	merges   []observedMerge
 	runs     []observedRun
 	attempts []observedAttempt
+}
+
+// observedMerge is one call of the contract packaging tool: the service and
+// the dialect it was given, the contract directory relative to the repository
+// root, and the bytes of every file under the contract directory, by its path
+// relative to that directory. Error is why the files could not be read, empty
+// when they were.
+type observedMerge struct {
+	Service     string
+	Dialect     string
+	ContractDir string
+	Files       map[string]string
+	Error       string
 }
 
 // observedRun is one submitted verification run and the bytes of every
@@ -151,17 +182,20 @@ type observedRun struct {
 
 // observedAttempt is the compared part of one proposal row.
 type observedAttempt struct {
-	Attempt int
-	Status  proposal.Status
-	Nodes   map[string]proposal.Status
-	RunIDs  []string
-	Edits   []observedEdit
+	Attempt    int
+	Status     proposal.Status
+	Nodes      map[string]proposal.Status
+	RunIDs     []string
+	Edits      []observedEdit
+	Confidence proposal.Confidence
+	Model      string
 }
 
 // observedEdit is the compared part of one edit.
 type observedEdit struct {
-	Path         string
-	TargetNodeID string
+	Path          string
+	TargetNodeID  string
+	MemberNodeIDs []string
 }
 
 // runLegacy runs the fixture through today's driver and verification
@@ -173,8 +207,10 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 	w, err := scripted.NewWorld(store, f, script)
 	require.NoError(t, err)
 	collab := w.Collaborators()
+	collab.SQLDialect = equivalenceDialect
 	llm := &recordingLLM{next: w.LLM()}
 	arts := &recordingArtifacts{next: collab.Artifacts}
+	pack := &recordingPackager{next: collab.Packager}
 	logger := testLogger(t, "today's driver")
 	locator := repofs.NewLocator(logger)
 	newUoW := func() uow.UnitOfWork { return memory.NewUnitOfWork(store) }
@@ -198,7 +234,7 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 		RepoArchive:       collab.Archive,
 		ContractLocator:   locator,
 		ContractInspector: locator,
-		Packager:          collab.Packager,
+		Packager:          pack,
 		Pipeline:          collab.Pipeline,
 		Releases:          collab.Releases,
 		PriorAttempts:     store.ProposalRepository(),
@@ -232,6 +268,7 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 
 	return observed{
 		requests: llm.marshalled(t),
+		merges:   pack.observed(),
 		runs:     observeRuns(w.Runs(), arts),
 		attempts: observeAttempts(store),
 	}
@@ -247,8 +284,11 @@ func runRunner(t *testing.T, files workflow.Set, f conformance.Fixture, script c
 	w, err := scripted.NewWorld(store, f, script)
 	require.NoError(t, err)
 	collab := w.Collaborators()
+	collab.SQLDialect = equivalenceDialect
 	arts := &recordingArtifacts{next: collab.Artifacts}
 	collab.Artifacts = arts
+	pack := &recordingPackager{next: collab.Packager}
+	collab.Packager = pack
 	logger := testLogger(t, "the runner")
 	locator := repofs.NewLocator(logger)
 	collab.ContractLocator = locator
@@ -301,6 +341,7 @@ func runRunner(t *testing.T, files workflow.Set, f conformance.Fixture, script c
 
 	return observed{
 		requests: llm.marshalled(t),
+		merges:   pack.observed(),
 		runs:     observeRuns(w.Runs(), arts),
 		attempts: observeAttempts(store),
 	}
@@ -343,7 +384,8 @@ func observeAttempts(store *memory.Store) []observedAttempt {
 	out := make([]observedAttempt, 0, len(rows))
 	for _, row := range rows {
 		p := row.Proposal
-		a := observedAttempt{Attempt: p.Attempt, Status: p.Status, Nodes: map[string]proposal.Status{}}
+		a := observedAttempt{Attempt: p.Attempt, Status: p.Status, Nodes: map[string]proposal.Status{},
+			Confidence: p.Confidence, Model: p.Model}
 		for node, o := range p.NodeOutcomes {
 			a.Nodes[node] = o.Status
 		}
@@ -351,7 +393,7 @@ func observeAttempts(store *memory.Store) []observedAttempt {
 			a.RunIDs = append(a.RunIDs, v.RunID)
 		}
 		for _, e := range p.Edits {
-			a.Edits = append(a.Edits, observedEdit{Path: e.Path, TargetNodeID: e.TargetNodeID})
+			a.Edits = append(a.Edits, observedEdit{Path: e.Path, TargetNodeID: e.TargetNodeID, MemberNodeIDs: e.MemberNodeIDs})
 		}
 		out = append(out, a)
 	}
@@ -398,10 +440,17 @@ func assertSameVerificationRuns(t *testing.T, legacy, next []observedRun) {
 	}
 }
 
+// assertSameMerges compares the calls of the contract packaging tool, in call
+// order.
+func assertSameMerges(t *testing.T, legacy, next []observedMerge) {
+	t.Helper()
+	assert.Equal(t, legacy, next, "the contract packaging calls: service, dialect, contract directory and its files")
+}
+
 // assertSameAttempts compares the proposal rows, in attempt order.
 func assertSameAttempts(t *testing.T, legacy, next []observedAttempt) {
 	t.Helper()
-	assert.Equal(t, legacy, next, "the proposal rows: attempt, status, node outcomes, verification runs and edits")
+	assert.Equal(t, legacy, next, "the proposal rows: attempt, status, node outcomes, verification runs, edits, confidence and model")
 }
 
 // recordingLLM records every request an engine sends, before the response
@@ -462,6 +511,61 @@ func (a *recordingArtifacts) under(prefix string) map[string]string {
 		}
 	}
 	return out
+}
+
+// recordingPackager records what every call of the contract packaging tool is
+// given, the files under the contract directory as the call finds them, and
+// passes the call on.
+type recordingPackager struct {
+	mu     sync.Mutex
+	next   ports.ContractPackager
+	merges []observedMerge
+}
+
+func (p *recordingPackager) Merge(ctx context.Context, contractDir, repoRoot, service, dialect string) ([]byte, error) {
+	m := observedMerge{Service: service, Dialect: dialect}
+	if rel, err := filepath.Rel(repoRoot, contractDir); err != nil {
+		m.Error = err.Error()
+	} else {
+		m.ContractDir = filepath.ToSlash(rel)
+		m.Files, err = filesUnder(contractDir)
+		if err != nil {
+			m.Error = err.Error()
+		}
+	}
+	p.mu.Lock()
+	p.merges = append(p.merges, m)
+	p.mu.Unlock()
+	return p.next.Merge(ctx, contractDir, repoRoot, service, dialect)
+}
+
+// observed is every recorded call, in call order.
+func (p *recordingPackager) observed() []observedMerge {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]observedMerge(nil), p.merges...)
+}
+
+// filesUnder is the bytes of every file under dir, by its slash-separated
+// path relative to dir.
+func filesUnder(dir string) (map[string]string, error) {
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(filepath.Clean(p)) //nolint:gosec // G304: a file of the checkout the engine under test patched.
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = string(body)
+		return nil
+	})
+	return out, err
 }
 
 // testLogger is a logger that keeps every warning and error, and prints them
