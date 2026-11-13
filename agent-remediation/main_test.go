@@ -8,20 +8,26 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/fixer"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
@@ -107,36 +113,100 @@ func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
 	}
 }
 
-// fakeLoop is a background loop that records that it ran.
-type fakeLoop struct{ ran chan struct{} }
-
-func newFakeLoop() *fakeLoop { return &fakeLoop{ran: make(chan struct{})} }
-
-func (l *fakeLoop) Run(context.Context) { close(l.ran) }
-
-func (l *fakeLoop) hasRun() bool {
-	select {
-	case <-l.ran:
-		return true
-	case <-time.After(5 * time.Second):
-		return false
-	}
+// spyRepo is a remediation repository that finds nothing and counts the calls
+// each of the three loops makes.
+type spyRepo struct {
+	repository.RemediationRepository
+	claims, verifying, failing atomic.Int64
 }
 
-// TestMain_RunnerLoopsStartInLegacyMode: the worker, the gate poller and the
-// sweeper run with either engine, so a remediation the runner started always
-// finishes, whichever engine the install runs now.
+func (s *spyRepo) ClaimNext(context.Context, string, time.Time, time.Duration) (uuid.UUID, bool, error) {
+	s.claims.Add(1)
+	return uuid.Nil, false, nil
+}
+
+func (s *spyRepo) ListVerifying(context.Context, int) ([]remediation.Snapshot, error) {
+	s.verifying.Add(1)
+	return nil, nil
+}
+
+func (s *spyRepo) ListFailingSteps(context.Context, int, int) ([]uuid.UUID, error) {
+	s.failing.Add(1)
+	return nil, nil
+}
+
+func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+// TestMain_RunnerLoopsStartInLegacyMode: the loops buildRunner returns, the
+// worker, the gate poller and the sweeper, each do their work with either
+// engine, so a remediation the runner started finishes whichever engine runs
+// now.
 func TestMain_RunnerLoopsStartInLegacyMode(t *testing.T) {
 	for _, engine := range []string{config.EngineLegacy, config.EngineRunner} {
 		t.Run(engine, func(t *testing.T) {
-			worker, poller, sweeper := newFakeLoop(), newFakeLoop(), newFakeLoop()
-			startRunnerLoops(context.Background(), engine, func(f func()) { go f() },
-				runnerLoops{worker: worker, poller: poller, sweeper: sweeper}, discardLogger())
-			assert.True(t, worker.hasRun(), "worker")
-			assert.True(t, poller.hasRun(), "gate poller")
-			assert.True(t, sweeper.hasRun(), "sweeper")
+			repo := &spyRepo{}
+			cfg := config.Config{Engine: engine, VerificationPollInterval: time.Hour}
+			loops, accept := buildRunner(cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+				newUoW: func() uow.UnitOfWork { return nil },
+				repo:   func() repository.RemediationRepository { return repo },
+				owner:  "host:1",
+				live:   liveness.NewRegistry(),
+				logger: discardLogger(),
+			})
+			require.NotNil(t, accept)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			var wg sync.WaitGroup
+			for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
+				wg.Add(1)
+				go func() { defer wg.Done(); l.Run(ctx) }()
+			}
+			defer func() { cancel(); wg.Wait() }()
+
+			assert.Eventually(t, func() bool { return repo.claims.Load() > 0 }, 5*time.Second, time.Millisecond, "worker")
+			assert.Eventually(t, func() bool { return repo.verifying.Load() > 0 }, 5*time.Second, time.Millisecond, "gate poller")
+			assert.Eventually(t, func() bool { return repo.failing.Load() > 0 }, 5*time.Second, time.Millisecond, "sweeper")
 		})
 	}
+}
+
+// TestMain_RunnerLoopsAreRegisteredWithLiveness: the worker and the poller are
+// workers of the liveness registry, as a stream consumer is. One that returns
+// before shutdown fails the probes.
+func TestMain_RunnerLoopsAreRegisteredWithLiveness(t *testing.T) {
+	live := liveness.NewRegistry()
+	_, _ = buildRunner(config.Config{Engine: config.EngineLegacy}, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+		newUoW: func() uow.UnitOfWork { return nil },
+		repo:   func() repository.RemediationRepository { return &spyRepo{} },
+		owner:  "host:1",
+		live:   live,
+		logger: discardLogger(),
+	})
+	var names []string
+	for _, f := range live.LivenessCheck(context.Background()) {
+		names = append(names, f.Name)
+	}
+	assert.Empty(t, names, "both loops start healthy")
+
+	exited := trackedLoop{name: "remediation_worker", inner: returningLoop{}, live: live}
+	exited.Run(context.Background())
+	assert.NotEmpty(t, live.LivenessCheck(context.Background()), "a worker that returned while running fails liveness")
+}
+
+type returningLoop struct{}
+
+func (returningLoop) Run(context.Context) {}
+
+func TestMain_LoopHealthFailsWhenTheLoopStopsBeating(t *testing.T) {
+	h := &loopHealth{}
+	h.beat()
+	assert.NoError(t, h.healthy(time.Minute))
+	time.Sleep(20 * time.Millisecond)
+	assert.Error(t, h.healthy(time.Millisecond))
+	h.beat()
+	assert.NoError(t, h.healthy(time.Minute))
 }
 
 // TestMain_RunnerGetsTheConfiguredVerificationTimeout: both the gate's budget
@@ -149,7 +219,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 		SQLDialect:          "trino",
 		ServiceRepoPaths:    map[string]string{"svc": "path"},
 	}
-	collab := runnerCollaborators(cfg, runner.Collaborators{})
+	collab := runnerCollaborators(cfg, fixer.Services{}, nil)
 	deps := newRunnerDeps(cfg, collab, workflow.Set{}, nil, nil, "host:7", discardLogger())
 
 	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)
@@ -206,30 +276,27 @@ output:
 	assert.GreaterOrEqual(t, refusals, 2, "each refusal is logged on its own line, with its file and line:\n%s", buf.String())
 }
 
-type pruneRecorder struct {
-	repository.RemediationRepository
-	cutoff time.Time
-}
+// TestMain_RunnerCollaboratorsAreTheFixerServicesWithoutTheModel: every field
+// of fixer.Services but the model is a field of runner.Collaborators of the
+// same type, and a service the fixer is given reaches the runner.
+func TestMain_RunnerCollaboratorsAreTheFixerServicesWithoutTheModel(t *testing.T) {
+	svcType, collabType := reflect.TypeOf(fixer.Services{}), reflect.TypeOf(runner.Collaborators{})
+	for i := range svcType.NumField() {
+		f := svcType.Field(i)
+		if f.Name == "LLM" {
+			continue
+		}
+		c, ok := collabType.FieldByName(f.Name)
+		if assert.True(t, ok, "runner.Collaborators has no field %s", f.Name) {
+			assert.Equal(t, f.Type, c.Type, f.Name)
+		}
+	}
 
-func (p *pruneRecorder) DeleteFinishedBefore(_ context.Context, cutoff time.Time) (int64, error) {
-	p.cutoff = cutoff
-	return 3, nil
-}
-
-type fixedNow struct{ t time.Time }
-
-func (c fixedNow) Now() time.Time { return c.t }
-
-func TestMain_RemediationRetentionPrunesFinishedRemediationsBeforeTheCutoff(t *testing.T) {
-	now := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
-	repo := &pruneRecorder{}
-	target := remediationRetentionTarget(repo, fixedNow{now})
-
-	n, err := target.Prune(context.Background(), 7*24*time.Hour, 1000)
-
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), n)
-	assert.Equal(t, now.Add(-7*24*time.Hour), repo.cutoff)
-	assert.Equal(t, "remediation", target.Name)
-	assert.Equal(t, model.ReplayHorizon, target.MinRetention, "a remediation is kept for the replay horizon at least")
+	logger := discardLogger()
+	paths := map[string]string{"svc": "cfg-path"}
+	collab := runnerCollaborators(config.Config{ServiceRepoPaths: paths}, fixer.Services{
+		Logger: logger, ServiceRepoPaths: map[string]string{"svc": "other"}, SQLDialect: "postgres",
+	}, nil)
+	assert.Same(t, logger, collab.Logger)
+	assert.Equal(t, paths, collab.ServiceRepoPaths, "the install's configuration wins")
 }

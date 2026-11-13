@@ -70,9 +70,15 @@ type fakeSource struct {
 	files  map[string]string
 	fail   error
 	onRead func()
+	// block makes every read wait until its context ends, as a hung call does.
+	block atomic.Bool
 }
 
-func (s *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
+func (s *fakeSource) ReadFile(ctx context.Context, _, _, path string) (string, error) {
+	if s.block.Load() {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.onRead != nil {
@@ -255,16 +261,21 @@ type scriptedLLM struct {
 	requests []prompt.ProposeRequest
 	answer   func(req prompt.ProposeRequest) ports.ProposeResult
 	onCall   func(n int)
+	// err, when set, is returned by every call.
+	err error
 }
 
 func (l *scriptedLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.ProposeResult, error) {
 	l.mu.Lock()
 	l.requests = append(l.requests, req)
 	n := len(l.requests)
-	answer, onCall := l.answer, l.onCall
+	answer, onCall, err := l.answer, l.onCall, l.err
 	l.mu.Unlock()
 	if onCall != nil {
 		onCall(n)
+	}
+	if err != nil {
+		return ports.ProposeResult{}, err
 	}
 	return answer(req), nil
 }
@@ -398,6 +409,7 @@ type harness struct {
 	cache       *memCache
 	files       workflow.Set
 	maintenance bool
+	stepTimeout time.Duration
 	collab      runner.Collaborators
 	runner      *runner.Runner
 
@@ -444,6 +456,8 @@ func (p phaseCounter) UpdateVerificationPhase(ctx context.Context, id, runID str
 type option func(*harness)
 
 func withMaintenance() option { return func(h *harness) { h.maintenance = true } }
+
+func withStepTimeout(d time.Duration) option { return func(h *harness) { h.stepTimeout = d } }
 
 func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
@@ -528,6 +542,7 @@ func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner
 		Maintenance:         h.maintenance,
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
+		StepTimeout:         h.stepTimeout,
 	})
 }
 

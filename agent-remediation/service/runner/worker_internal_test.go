@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,9 +80,9 @@ func testWorker(repo *leaseLog, drive func(context.Context, uuid.UUID) error) *W
 	w := NewWorker(&Runner{}, func() repository.RemediationRepository { return repo }, "owner-1", fixedClock{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.drive = drive
+	w.stuck = func(context.Context, uuid.UUID) (bool, error) { return false, nil }
 	w.heartbeat = 5 * time.Millisecond
 	w.idleWait = 5 * time.Millisecond
-	w.retryDelay = 5 * time.Millisecond
 	return w
 }
 
@@ -206,19 +208,83 @@ func TestWorker_KeepsDrivingThroughAFailedRenewal(t *testing.T) {
 	})
 }
 
-// After a drive that errors, the worker waits before it claims again, so a step
-// that fails does not use up its failures in a burst.
-func TestWorker_WaitsAfterADriveThatErrors(t *testing.T) {
-	repo := &leaseLog{id: uuid.New(), pending: 2}
+// After a drive that errors, the worker still holds the lease and checks
+// whether the remediation can go no further. If it can, the remediation is
+// ended and the lease let go.
+func TestWorker_EndsARemediationWhoseDriveFailedAndCanGoNoFurther(t *testing.T) {
+	repo := &leaseLog{id: uuid.New(), pending: 1}
 	w := testWorker(repo, func(context.Context, uuid.UUID) error { return errors.New("s3 is down") })
-	w.retryDelay = 80 * time.Millisecond
-	w.idleWait = time.Millisecond
-	runUntil(t, w, func() bool { repo.mu.Lock(); defer repo.mu.Unlock(); return repo.pending == 0 })
+	var checked []uuid.UUID
+	var mu sync.Mutex
+	w.stuck = func(_ context.Context, id uuid.UUID) (bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		checked = append(checked, id)
+		return true, nil
+	}
+	runUntil(t, w, func() bool { _, released := repo.snapshot(); return released == 1 })
 
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []uuid.UUID{repo.id}, checked)
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
-	require.GreaterOrEqual(t, len(repo.claims), 2)
-	assert.GreaterOrEqual(t, repo.claims[1].Sub(repo.claims[0]), 70*time.Millisecond)
+	for _, d := range repo.holds {
+		assert.NotEqual(t, parkDuration, d, "an ended remediation is not parked")
+	}
+}
+
+// A remediation whose drive failed and that can still go on is parked: the
+// worker holds its lease for two more minutes instead of letting it go, so no
+// worker claims it before then.
+func TestWorker_ParksARemediationWhoseDriveFailed(t *testing.T) {
+	repo := &leaseLog{id: uuid.New(), pending: 1}
+	w := testWorker(repo, func(context.Context, uuid.UUID) error { return errors.New("s3 is down") })
+	runUntil(t, w, func() bool {
+		repo.mu.Lock()
+		defer repo.mu.Unlock()
+		return slices.Contains(repo.holds, parkDuration)
+	})
+
+	_, released := repo.snapshot()
+	assert.Zero(t, released, "a parked remediation keeps its lease")
+	assert.Equal(t, 2*time.Minute, parkDuration)
+}
+
+// A failed drive is parked as well when the check itself failed.
+func TestWorker_ParksARemediationWhenTheStuckCheckFails(t *testing.T) {
+	repo := &leaseLog{id: uuid.New(), pending: 1}
+	w := testWorker(repo, func(context.Context, uuid.UUID) error { return errors.New("s3 is down") })
+	w.stuck = func(context.Context, uuid.UUID) (bool, error) { return false, errors.New("database down") }
+	runUntil(t, w, func() bool {
+		repo.mu.Lock()
+		defer repo.mu.Unlock()
+		return slices.Contains(repo.holds, parkDuration)
+	})
+}
+
+// A drive that ends because the lease was lost says nothing about the
+// remediation: it is neither checked nor parked.
+func TestWorker_DoesNotCheckADriveStoppedByALostLease(t *testing.T) {
+	repo := &leaseLog{id: uuid.New(), pending: 1}
+	repo.holdErr = func(int) error { return repository.ErrLeaseLost }
+	checked := make(chan struct{}, 1)
+	w := testWorker(repo, func(ctx context.Context, _ uuid.UUID) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	w.stuck = func(context.Context, uuid.UUID) (bool, error) { checked <- struct{}{}; return false, nil }
+	runUntil(t, w, func() bool { _, released := repo.snapshot(); return released == 1 })
+	assert.Empty(t, checked)
+}
+
+// The worker beats at every iteration and every renewal.
+func TestWorker_Beats(t *testing.T) {
+	repo := &leaseLog{id: uuid.New()}
+	w := testWorker(repo, func(context.Context, uuid.UUID) error { return nil })
+	var beats atomic.Int64
+	w.SetHeartbeat(func() { beats.Add(1) })
+	runUntil(t, w, func() bool { return beats.Load() >= 3 })
 }
 
 // An idle worker claims again after Wake, without waiting out its idle time.

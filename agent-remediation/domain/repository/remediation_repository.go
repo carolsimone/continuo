@@ -27,7 +27,7 @@ var (
 // An implementation bound to a unit of work's transaction is what a step's
 // commit uses (Hold and the Save methods). One bound to the database serves the
 // worker, the verification poller and the retention sweeper, which call
-// ClaimNext, Claim, ReleaseLease, the list methods and DeleteFinishedBefore
+// ClaimNext, Claim, ReleaseLease, the list methods and DeleteFinishedOlderThan
 // outside any transaction. In both places two claimers never get one
 // remediation.
 type RemediationRepository interface {
@@ -98,9 +98,10 @@ type RemediationRepository interface {
 	// count.
 	ListFailingSteps(ctx context.Context, minFailures, limit int) ([]uuid.UUID, error)
 
-	// DeleteFinishedBefore deletes the done and system_failure remediations
-	// last updated before cutoff, with their tries, clusters and steps, and
-	// returns how many it deleted. The proposals of a deleted remediation stay,
-	// with no remediation.
-	DeleteFinishedBefore(ctx context.Context, cutoff time.Time) (int64, error)
+	// DeleteFinishedOlderThan deletes at most limit done and system_failure
+	// remediations last updated more than retention ago by the store's own
+	// clock, oldest first, with their tries, clusters and steps, and returns how
+	// many it deleted. The proposals of a deleted remediation stay, with no
+	// remediation. It has the shape of retention.PruneFunc.
+	DeleteFinishedOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error)
 }

@@ -136,9 +136,10 @@ func (r *Runner) finish(row *remediation.StepRun) {
 // only a done row is ever read back, and whatever made its commit fail is not
 // written again. It returns cause, so the drive stops with it and the next
 // drive runs the step again. A lost lease is returned as it is, and nothing is
-// recorded for a drive whose context ended.
+// recorded for a drive whose context ended. A step that ran past its limit is
+// recorded, with a cause that says so.
 func (r *Runner) recordFailure(ctx context.Context, row remediation.StepRun, cause error) error {
-	if ctx.Err() != nil || errors.Is(cause, repository.ErrLeaseLost) {
+	if (ctx.Err() != nil && !stepTimedOut(ctx)) || errors.Is(cause, repository.ErrLeaseLost) {
 		return cause
 	}
 	now := r.clock.Now()
@@ -153,10 +154,18 @@ func (r *Runner) recordFailure(ctx context.Context, row remediation.StepRun, cau
 // error, without NUL characters, leaving the rest of the row as it is, in a
 // transaction of its own after holding the lease. It returns cause. A lost
 // lease is returned as it is, and nothing is recorded for a drive whose context
-// ended.
+// ended. A step that ran past its limit is recorded, with a cause that says so,
+// in a context that is not ended.
 func (r *Runner) countFailure(ctx context.Context, row remediation.StepRun, cause error) error {
-	if ctx.Err() != nil || errors.Is(cause, repository.ErrLeaseLost) {
+	if errors.Is(cause, repository.ErrLeaseLost) {
 		return cause
+	}
+	if ctx.Err() != nil {
+		if !stepTimedOut(ctx) {
+			return cause
+		}
+		cause = fmt.Errorf("the step ran longer than %s and was stopped: %w", r.stepLimit(), cause)
+		ctx = context.WithoutCancel(ctx)
 	}
 	row.Failures++
 	row.LastError = strings.ReplaceAll(cause.Error(), "\x00", "")

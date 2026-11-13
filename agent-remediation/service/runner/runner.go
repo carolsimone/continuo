@@ -17,6 +17,15 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
+// stepTimeout bounds one step of a drive: what runs between two commits, such
+// as a model call, a pre-flight pass or a gate submission. A step that runs
+// longer is stopped and counted as a failure.
+const stepTimeout = 10 * time.Minute
+
+// errStepTimeout is the cause of the context a step runs in once it ran past
+// its limit, which tells that end of the context from the end of the drive.
+var errStepTimeout = errors.New("step timed out")
+
 // leaseDuration is how long a worker's lease on a remediation lasts after the
 // runner last held it. Every step commit holds it again.
 const leaseDuration = 5 * time.Minute
@@ -41,6 +50,8 @@ type Deps struct {
 	// verifying try's deadline falls this long, plus an hour, after the gate
 	// started its runs.
 	VerificationTimeout time.Duration
+	// StepTimeout bounds each step of a drive. Zero is ten minutes.
+	StepTimeout time.Duration
 }
 
 // Runner runs each remediation as a sequence of committed steps. Every step's
@@ -111,13 +122,17 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 		}
 		switch run.snap.Try.Status {
 		case remediation.TryDrafting:
+			sctx, cancel := r.stepContext(ctx)
 			if c, open := nextOpenCluster(run.snap.Clusters); open {
-				err = r.runClusterStep(ctx, run, c)
+				err = r.runClusterStep(sctx, run, c)
 			} else {
-				err = r.finishTry(ctx, run)
+				err = r.finishTry(sctx, run)
 			}
+			cancel()
 		case remediation.TryChecking:
-			err = r.finishTry(ctx, run)
+			sctx, cancel := r.stepContext(ctx)
+			err = r.finishTry(sctx, run)
+			cancel()
 		default:
 			// A verifying try waits on the gate's poller, and a passed try
 			// ends with its remediation.
@@ -127,6 +142,26 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 	}
+}
+
+// stepLimit is how long one step may run.
+func (r *Runner) stepLimit() time.Duration {
+	if r.d.StepTimeout > 0 {
+		return r.d.StepTimeout
+	}
+	return stepTimeout
+}
+
+// stepContext is the context one step runs in: ctx, ended after the step's
+// limit. Its end is told from the end of ctx by errStepTimeout being its cause.
+func (r *Runner) stepContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, r.stepLimit(), errStepTimeout)
+}
+
+// stepTimedOut reports whether ctx, a step's context, ended because the step ran
+// past its limit rather than because the drive ended.
+func stepTimedOut(ctx context.Context) bool {
+	return ctx.Err() != nil && errors.Is(context.Cause(ctx), errStepTimeout)
 }
 
 // load reads the remediation as committed. running is false when it has ended,

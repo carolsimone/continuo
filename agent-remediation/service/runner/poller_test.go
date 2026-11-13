@@ -123,3 +123,42 @@ func TestRunner_APollThatCannotReachTheGateCountsOnTheGateRow(t *testing.T) {
 		assert.Equal(t, 2, h.flowRows(id, 1)["verification_run"][0].Failures)
 	})
 }
+
+// A poll that got through resets the gate row's failures, so only consecutive
+// failed polls add up: errors spread over a verification that waits for hours
+// never end a healthy try.
+func TestRunner_AGoodPollResetsTheGateRowsFailures(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	gate := h.flowRows(id, 1)["verification_run"][0]
+	gate.Failures = 4
+	gate.LastError = "database blip"
+	h.saveStep(gate)
+
+	require.NoError(t, h.poll(id), "the runs are still waiting")
+
+	row := h.flowRows(id, 1)["verification_run"][0]
+	assert.Zero(t, row.Failures)
+	assert.Empty(t, row.LastError)
+	assert.Equal(t, remediation.StepWaiting, row.Status)
+	assert.Equal(t, gate.WaitingOn, row.WaitingOn, "the rest of the row is as it was")
+
+	// Four more failures do not end it either.
+	row.Failures = 4
+	h.saveStep(row)
+	require.NoError(t, h.sweeperAs("host:1/sweeper").Sweep(ctx))
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
+}
+
+// A poll that finds nothing new writes nothing when the row has no failures.
+func TestRunner_APollOfACleanGateRowWritesNothing(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	before := h.flowRows(id, 1)["verification_run"][0]
+
+	require.NoError(t, h.poll(id))
+
+	assert.Equal(t, before, h.flowRows(id, 1)["verification_run"][0])
+}

@@ -15,10 +15,12 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
-func (h *harness) sweeper() *runner.Sweeper {
+func (h *harness) sweeper() *runner.Sweeper { return h.sweeperAs("host:1/sweeper") }
+
+func (h *harness) sweeperAs(owner string) *runner.Sweeper {
 	return runner.NewSweeper(
 		func() uow.UnitOfWork { return memory.NewUnitOfWork(h.store) },
-		h.store.RemediationRepository, workerOwner, h.clock, discard)
+		h.store.RemediationRepository, owner, h.clock, discard)
 }
 
 // drafting accepts the trigger and opens its first try, leaving the
@@ -176,6 +178,15 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	assert.Contains(t, h.remediation(id).Failure, "verification_run")
+	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+
+	// The attempt row does not stay verifying: it is failed with the runs it
+	// had recorded, and a later attempt of the release counts it.
+	p := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusFailed, p.Status)
+	assert.Equal(t, []proposal.Verification{{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}}, p.Verifications)
+	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
+	assert.Equal(t, h.remediation(id).Failure, h.attempt(1).VerifyError, "the row carries the reason")
 }
 
 // The remediation ends and the attempt row fails together: a commit that does

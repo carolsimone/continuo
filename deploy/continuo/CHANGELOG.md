@@ -45,7 +45,7 @@ This release adds one values key, `agentRemediation.engine`, with a default that
 - **`agentRemediation.engine` picks agent-remediation's fix proposer.** TL;DR: `legacy` (the default) keeps today's proposer, and `runner` works each heal trigger as a remediation of committed steps that a restart continues. No values change is needed.
   - The value reaches agent-remediation as `AGENT_REMEDIATION_ENGINE` on the shared ConfigMap, so it restarts every continuo service when it changes. agent-remediation refuses to start on any other value.
   - Both engines run the remediation worker, the verification poller and the sweeper, so a remediation the runner started finishes after the value is set back to `legacy`.
-  - A remediation the runner cannot move on is ended as a system failure, and its attempt row is failed with the reason: a step that failed five times, and a try still drafting or checking past its deadline.
+  - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
 - **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
   - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an ingested node.

@@ -123,7 +123,9 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 // and a lost lease returns nil with nothing written.
 func (r *Runner) PollGate(ctx context.Context, snap remediation.Snapshot) error {
 	id := snap.Remediation.ID
-	err := r.pollGate(ctx, id)
+	sctx, cancel := r.stepContext(ctx)
+	defer cancel()
+	err := r.pollGate(sctx, id)
 	if errors.Is(err, repository.ErrLeaseLost) {
 		r.logger.Info("remediation lease lost; the gate is polled later", "remediation", id, "owner", r.d.Owner)
 		return nil
@@ -207,15 +209,25 @@ func attemptRow(ctx context.Context, repo repository.ProposalRepository, run try
 	return proposal.View{}, fmt.Errorf("release %s has no proposal row for attempt %d", run.trigger.ReleaseID, run.snap.Try.Attempt)
 }
 
-// writePhases writes each run's phase that differs from what the attempt's
-// proposal row records, in one transaction, and writes nothing when none
-// differs.
+// writePhases records what a poll that read the gate's runs found: each run's
+// phase that differs from what the attempt's proposal row records, and the gate
+// row's failures, which a poll that got through resets to zero so that only
+// consecutive failed polls add up. It writes in one transaction, and writes
+// nothing when no phase differs and the row has no failures.
 func (r *Runner) writePhases(ctx context.Context, row remediation.StepRun, attempt proposal.View, phases []proposal.Verification) error {
 	changed := changedPhases(attempt.Verifications, phases)
-	if len(changed) == 0 {
+	reset := row.Failures > 0
+	if len(changed) == 0 && !reset {
 		return nil
 	}
+	cleared := row
+	cleared.Failures, cleared.LastError = 0, ""
 	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+		if reset {
+			if err := u.RemediationRepo().SaveStep(ctx, cleared); err != nil {
+				return fmt.Errorf("save step %s: %w", cleared.Step, err)
+			}
+		}
 		for _, p := range changed {
 			if err := u.ProposalRepo().UpdateVerificationPhase(ctx, attempt.ID, p.RunID, p.Phase, p.ActivatedAt); err != nil {
 				return fmt.Errorf("record the phase of run %s: %w", p.RunID, err)

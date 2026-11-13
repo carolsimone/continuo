@@ -737,10 +737,14 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 	})
 }
 
-func TestRemediationRepository_DeleteFinishedBeforeCascadesAndClearsProposals(t *testing.T) {
+func TestRemediationRepository_DeleteFinishedOlderThanCascadesAndClearsProposals(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
-		cutoff := contractBase.Add(24 * time.Hour)
+		// The store's own clock decides what is old, so the cases are placed
+		// relative to now.
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		const retention = 24 * time.Hour
+		cutoff := now.Add(-retention)
 
 		finish := func(release string, status remediation.RemediationStatus, updatedAt time.Time) remediation.Remediation {
 			r := mustCreate(t, env, newRemediation(release, 1, contractBase))
@@ -759,7 +763,7 @@ func TestRemediationRepository_DeleteFinishedBeforeCascadesAndClearsProposals(t 
 			require.NoError(t, env.remediations.SaveRemediation(ctx, r))
 			return r
 		}
-		oldDone := finish("rel-old-done", remediation.StatusDone, cutoff.Add(-time.Hour))
+		oldDone := finish("rel-old-done", remediation.StatusDone, cutoff.Add(-2*time.Hour))
 		oldFailed := finish("rel-old-failed", remediation.StatusSystemFailure, cutoff.Add(-time.Hour))
 		recentDone := finish("rel-recent-done", remediation.StatusDone, cutoff.Add(time.Hour))
 		running := mustCreate(t, env, newRemediation("rel-running", 1, contractBase))
@@ -771,9 +775,17 @@ func TestRemediationRepository_DeleteFinishedBeforeCascadesAndClearsProposals(t 
 		keptProposal := insertRunnerProposal(t, env, "rel-recent-done", 1, recentDone.ID)
 		require.NotZero(t, env.childRows(t, oldDone.ID))
 
-		n, err := env.remediations.DeleteFinishedBefore(ctx, cutoff)
+		n, err := env.remediations.DeleteFinishedOlderThan(ctx, retention, 1)
 		require.NoError(t, err)
-		require.EqualValues(t, 2, n, "the done and the system_failure remediation older than the cutoff")
+		require.EqualValues(t, 1, n, "at most limit, the oldest first")
+		_, err = env.remediations.Load(ctx, oldDone.ID)
+		require.ErrorIs(t, err, repository.ErrRemediationNotFound)
+		_, err = env.remediations.Load(ctx, oldFailed.ID)
+		require.NoError(t, err)
+
+		n, err = env.remediations.DeleteFinishedOlderThan(ctx, retention, 10)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, n, "the done and the system_failure remediation older than the retention, one each call")
 
 		for _, gone := range []uuid.UUID{oldDone.ID, oldFailed.ID} {
 			_, err := env.remediations.Load(ctx, gone)

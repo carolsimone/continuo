@@ -404,13 +404,27 @@ func (r *remediationRepository) ListFailingSteps(_ context.Context, minFailures,
 	return ids, err
 }
 
-func (r *remediationRepository) DeleteFinishedBefore(_ context.Context, cutoff time.Time) (int64, error) {
+func (r *remediationRepository) DeleteFinishedOlderThan(_ context.Context, retention time.Duration, limit int) (int64, error) {
+	cutoff := time.Now().Add(-retention)
 	var n int64
 	err := r.gate(func(d *data) error {
-		for id, rem := range d.remediations {
-			if (rem.Status != remediation.StatusDone && rem.Status != remediation.StatusSystemFailure) || !rem.UpdatedAt.Before(cutoff) {
-				continue
+		var old []*remediation.Remediation
+		for _, rem := range d.remediations {
+			if (rem.Status == remediation.StatusDone || rem.Status == remediation.StatusSystemFailure) && rem.UpdatedAt.Before(cutoff) {
+				old = append(old, rem)
 			}
+		}
+		sort.Slice(old, func(i, j int) bool {
+			if !old[i].UpdatedAt.Equal(old[j].UpdatedAt) {
+				return old[i].UpdatedAt.Before(old[j].UpdatedAt)
+			}
+			return old[i].ID.String() < old[j].ID.String()
+		})
+		if limit > 0 && len(old) > limit {
+			old = old[:limit]
+		}
+		for _, rem := range old {
+			id := rem.ID
 			delete(d.remediations, id)
 			for key := range d.tries {
 				if key.remediationID == id {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -25,12 +24,12 @@ const (
 	stepFailureLimit = 5
 )
 
-// Sweeper ends the remediations that can make no more progress: one with a step
-// that failed five times, and one whose try is still drafting or checking past
-// its deadline. It acts on a remediation only after it claimed it, so one that
-// a worker or the gate poller is on is left to them. A remediation it ends is
-// recorded as a system failure with the reason, and the in-flight attempt row
-// of its release is failed with the same reason, in one transaction.
+// Sweeper ends the remediations that can make no more progress and that no
+// worker is driving: one with a step that failed five times, and one whose try
+// is still drafting or checking past its deadline. It acts on a remediation
+// only after it claimed it, so one that a worker or the gate poller is on is
+// left to them. A worker ends the remediation of a drive that failed itself, by
+// the same rules.
 type Sweeper struct {
 	newUoW   func() uow.UnitOfWork
 	repo     func() repository.RemediationRepository
@@ -117,83 +116,6 @@ func (s *Sweeper) sweep(ctx context.Context, id uuid.UUID) error {
 			s.logger.Warn("could not let go of a remediation's lease; it ends by itself", "remediation", id, "error", err)
 		}
 	}()
-	return s.endIfStuck(ctx, id)
-}
-
-// endIfStuck, in one transaction after holding the lease, reads the remediation
-// and, when it is running and stuck, records it as a system failure, fails its
-// current try and fails the in-flight attempt row of its release.
-func (s *Sweeper) endIfStuck(ctx context.Context, id uuid.UUID) error {
-	u := s.newUoW()
-	if err := u.Begin(ctx); err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = u.Rollback() }()
-	now := s.clock.Now()
-	repo := u.RemediationRepo()
-	if err := repo.Hold(ctx, id, s.owner, now, leaseDuration); err != nil {
-		return err
-	}
-	snap, err := repo.Load(ctx, id)
-	if err != nil {
-		return fmt.Errorf("load: %w", err)
-	}
-	rem := snap.Remediation
-	if rem.Status != remediation.StatusRunning {
-		return nil
-	}
-	reason := stuckReason(snap, now)
-	if reason == "" {
-		return nil
-	}
-	if !rem.Status.CanMoveTo(remediation.StatusSystemFailure) {
-		return fmt.Errorf("remediation cannot move from %s to %s", rem.Status, remediation.StatusSystemFailure)
-	}
-	rem.Status = remediation.StatusSystemFailure
-	rem.Failure = reason
-	rem.UpdatedAt = now
-	if err := repo.SaveRemediation(ctx, rem); err != nil {
-		return fmt.Errorf("save remediation: %w", err)
-	}
-	if t := snap.Try; t != nil && t.Status.CanMoveTo(remediation.TryFailed) {
-		failed := *t
-		failed.Status = remediation.TryFailed
-		failed.UpdatedAt = now
-		if err := repo.SaveTry(ctx, failed); err != nil {
-			return fmt.Errorf("save try: %w", err)
-		}
-	}
-	if _, err := u.ProposalRepo().FailGenerating(ctx, rem.ReleaseID, reason); err != nil {
-		return fmt.Errorf("fail the in-flight attempt row: %w", err)
-	}
-	if err := u.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	s.logger.Error("remediation ended as a system failure", "remediation", id, "release", rem.ReleaseID, "reason", reason)
-	return nil
-}
-
-// stuckReason says why the remediation can make no more progress, or "" when it
-// can: a step of its current try that has not finished and failed at least
-// stepFailureLimit times, or a drafting or checking try past its deadline.
-func stuckReason(snap remediation.Snapshot, now time.Time) string {
-	for _, st := range snap.Steps {
-		if st.Status == remediation.StepDone || st.Failures < stepFailureLimit {
-			continue
-		}
-		reason := fmt.Sprintf("step %q failed %d times", st.Step, st.Failures)
-		if st.LastError != "" {
-			reason += ", the last time with: " + st.LastError
-		}
-		return reason
-	}
-	t := snap.Try
-	if t == nil || !t.DeadlineAt.Before(now) {
-		return ""
-	}
-	switch t.Status {
-	case remediation.TryDrafting, remediation.TryChecking:
-		return fmt.Sprintf("try %d was still %s at its deadline, %s", t.Try, t.Status, t.DeadlineAt.UTC().Format(time.RFC3339))
-	}
-	return ""
+	_, err = stuckEnder{newUoW: s.newUoW, clock: s.clock, logger: s.logger}.endIfStuck(ctx, id, s.owner)
+	return err
 }

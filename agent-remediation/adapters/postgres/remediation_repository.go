@@ -681,12 +681,18 @@ func (r *RemediationRepository) ListFailingSteps(ctx context.Context, minFailure
 	return ids, nil
 }
 
-// DeleteFinishedBefore deletes the finished remediations last updated before
-// cutoff. The foreign keys delete their tries, clusters and steps and clear the
+// DeleteFinishedOlderThan deletes at most limit finished remediations last
+// updated more than retention ago, oldest first, with the database's clock. The
+// foreign keys delete their tries, clusters and steps and clear the
 // remediation_id of their proposals.
-func (r *RemediationRepository) DeleteFinishedBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+func (r *RemediationRepository) DeleteFinishedOlderThan(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	res, err := r.q.ExecContext(ctx, `
-		DELETE FROM remediation WHERE status IN ('done','system_failure') AND updated_at < $1`, cutoff)
+		DELETE FROM remediation WHERE id IN (
+			SELECT id FROM remediation
+			 WHERE status IN ('done','system_failure')
+			   AND updated_at < now() - make_interval(secs => $1)
+			 ORDER BY updated_at, id
+			 LIMIT $2)`, retention.Seconds(), limitArg(limit))
 	if err != nil {
 		return 0, fmt.Errorf("delete finished remediations: %w", err)
 	}

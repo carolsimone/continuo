@@ -29,6 +29,7 @@ type GatePoller struct {
 	wake     func()
 	clock    ports.Clock
 	logger   *slog.Logger
+	beat     func()
 }
 
 // NewGatePoller builds a poller over r. repo returns the remediation
@@ -48,8 +49,12 @@ func NewGatePoller(r *Runner, repo func() repository.RemediationRepository, owne
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &GatePoller{r: r, repo: repo, owner: owner, interval: interval, wake: wake, clock: clock, logger: logger}
+	return &GatePoller{r: r, repo: repo, owner: owner, interval: interval, wake: wake, clock: clock, logger: logger, beat: func() {}}
 }
+
+// SetHeartbeat sets the function the poller calls at every pass and for every
+// remediation it polls, for a liveness probe to read.
+func (p *GatePoller) SetHeartbeat(beat func()) { p.beat = beat }
 
 // Run polls at once and then every interval, until ctx ends.
 func (p *GatePoller) Run(ctx context.Context) {
@@ -73,6 +78,7 @@ func (p *GatePoller) Run(ctx context.Context) {
 // remediation is logged, and the pass goes on to the next; the returned error
 // is the listing's.
 func (p *GatePoller) Poll(ctx context.Context) error {
+	p.beat()
 	snaps, err := p.repo().ListVerifying(ctx, pollBatch)
 	if err != nil {
 		return fmt.Errorf("list the verifying remediations: %w", err)
@@ -81,6 +87,7 @@ func (p *GatePoller) Poll(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		p.beat()
 		id := snap.Remediation.ID
 		claimed, err := p.repo().Claim(ctx, id, p.owner, p.clock.Now(), leaseDuration)
 		if err != nil {
