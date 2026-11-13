@@ -149,3 +149,26 @@ func TestRegistry_EvidenceTypeKnowsTheSharedStepKeys(t *testing.T) {
 		assert.IsType(t, want, f(), key)
 	}
 }
+
+func TestRegistry_HoldsTheSourceFileSteps(t *testing.T) {
+	r := NewRegistry(Collaborators{})
+	for name, kind := range map[workflow.StepName]step.Kind{
+		"failing_node_source":   step.KindContext,
+		"dbt-compile":           step.KindPrompt,
+		"dbt-parse":             step.KindPrompt,
+		"seed":                  step.KindPrompt,
+		"duplicate-table":       step.KindPrompt,
+		"target_file_was_shown": step.KindCheck,
+	} {
+		_, m, ok := r.Lookup(name)
+		assert.True(t, ok, name)
+		assert.Equal(t, kind, m.Kind, name)
+	}
+}
+
+func TestRegistry_EvidenceTypeKnowsSourceFiles(t *testing.T) {
+	r := NewRegistry(Collaborators{})
+	f, ok := r.EvidenceType(remediation.KeySourceFiles)
+	assert.True(t, ok)
+	assert.Equal(t, remediation.SourceFiles{}, f())
+}

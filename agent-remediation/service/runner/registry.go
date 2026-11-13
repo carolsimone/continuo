@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 )
 
 // described is what every step implements, whatever its Kind.
@@ -44,6 +45,7 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyDBTLog:            func() any { return remediation.Text("") },
 			remediation.KeyFailurePrecedents: func() any { return []prompt.Precedent{} },
 			remediation.KeyUpstreamChanges:   func() any { return []prompt.UpstreamChange{} },
+			remediation.KeySourceFiles:       func() any { return remediation.SourceFiles{} },
 		},
 	}
 	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
@@ -51,6 +53,12 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(shared.NewUpstreamChanges(c.Upstream, c.Sanitizer, c.Logger))
 	r.register(shared.NewContentChanged())
 	r.register(shared.NewConfidenceNotLow())
+	r.register(source.NewFailingNodeSource(c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
+	r.register(source.NewDBTCompile(c.Sanitizer))
+	r.register(source.NewDBTParse(c.Sanitizer))
+	r.register(source.NewSeed(c.Sanitizer))
+	r.register(source.NewDuplicateTable(c.Sanitizer))
+	r.register(source.NewTargetFileWasShown())
 	return r
 }
 
