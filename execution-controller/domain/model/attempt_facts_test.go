@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -57,4 +58,18 @@ func TestAttemptFacts_AStopRequestIsKeptOnceMade(t *testing.T) {
 	merged, changed = merged.Merge(model.AttemptFacts{StopRequestedAt: at(9)})
 	assert.False(t, changed)
 	assert.Equal(t, at(5), merged.StopRequestedAt, "the first stop request stands")
+}
+
+func TestAttemptFacts_MergeKeepsTheFirstFindings(t *testing.T) {
+	first := &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}
+	second := &seedreload.Findings{DropSemantics: "restrict", Completeness: "best_effort"}
+
+	merged, changed := model.AttemptFacts{}.Merge(model.AttemptFacts{SeedPreflight: first})
+	assert.True(t, changed)
+	assert.Same(t, first, merged.SeedPreflight)
+
+	merged, changed = merged.Merge(model.AttemptFacts{SeedPreflight: second})
+	assert.False(t, changed)
+	assert.Same(t, first, merged.SeedPreflight, "the first findings stand")
 }

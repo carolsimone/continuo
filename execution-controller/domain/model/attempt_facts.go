@@ -4,6 +4,7 @@ import (
 	"time"
 
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // AttemptFacts is what execution-controller has observed of one attempt of a
@@ -46,6 +47,9 @@ type AttemptFacts struct {
 	// reported.
 	ParseCache       string
 	ParseCacheReason string
+	// SeedPreflight is what the seed-preflight init container found in the
+	// warehouse; nil when the attempt ran no preflight or it printed no result.
+	SeedPreflight *seedreload.Findings
 	// AwaitingStopSince is when a pod of the attempt was first seen
 	// terminating, or on a node that stopped reporting.
 	AwaitingStopSince *time.Time
@@ -89,6 +93,9 @@ func (f AttemptFacts) Merge(next AttemptFacts) (AttemptFacts, bool) {
 		if *s.dst == "" && s.src != "" {
 			*s.dst, changed = s.src, true
 		}
+	}
+	if f.SeedPreflight == nil && next.SeedPreflight != nil {
+		f.SeedPreflight, changed = next.SeedPreflight, true
 	}
 	if f.Reason == "" && next.Reason != "" {
 		f.Reason, changed = next.Reason, true

@@ -119,3 +119,42 @@ func (f *fakeObserved) NameEndedUndeployed(context.Context, string) (bool, error
 }
 func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)     { return f.names, f.err }
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }
+
+// fakeLogs returns a fixed pod log, and a fixed log per named container, and
+// counts the pod-log reads.
+type fakeLogs struct {
+	full, tail string
+	containers map[string]string
+	err        error
+	reads      int
+}
+
+func (l *fakeLogs) GetContainerLog(_ context.Context, _, container string) (string, error) {
+	if l.err != nil {
+		return "", l.err
+	}
+	return l.containers[container], nil
+}
+
+func (l *fakeLogs) GetPodLogs(_ context.Context, _ string, _ int64) (string, string, error) {
+	l.reads++
+	if l.err != nil {
+		return "", "", l.err
+	}
+	tail := l.tail
+	if tail == "" {
+		tail = l.full
+	}
+	return l.full, tail, nil
+}
+
+// fakeUploader keeps every upload.
+type fakeUploader struct{ uploaded map[string]string }
+
+func (u *fakeUploader) UploadLog(_ context.Context, key, content string) error {
+	if u.uploaded == nil {
+		u.uploaded = map[string]string{}
+	}
+	u.uploaded[key] = content
+	return nil
+}

@@ -26,8 +26,10 @@ import (
 	ectest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -83,10 +85,26 @@ func newHarness(t testing.TB) *harness {
 // whose Job was created at deployedAt.
 func (h *harness) started(t testing.TB, attempt int, deployedAt time.Time) *model.Deployment {
 	t.Helper()
+	return h.startedWith(t, attempt, deployedAt, func(*command.DeployTask) {})
+}
+
+// startedSeed is started for a seed whose pod runs a preflight in mode.
+func (h *harness) startedSeed(t testing.TB, deployedAt time.Time, mode seedreload.PreflightMode) *model.Deployment {
+	t.Helper()
+	return h.startedWith(t, 0, deployedAt, func(cmd *command.DeployTask) {
+		cmd.NodeType = string(pkgmodel.NodeTypeDbtSeed)
+		cmd.SeedPreflight = &seedreload.Preflight{Mode: mode, Relation: cmd.SchemaName + "." + cmd.TableName}
+	})
+}
+
+// startedWith is started with edit applied to the command first.
+func (h *harness) startedWith(t testing.TB, attempt int, deployedAt time.Time, edit func(*command.DeployTask)) *model.Deployment {
+	t.Helper()
 	runID := uuid.New().String()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.New().String(), RunID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: attempt}
+	edit(&cmd)
 	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, attempt)
 	require.NoError(t, err)
 	cmd.JobName = name
@@ -1125,4 +1143,47 @@ func TestProcess_AnImageContractMismatchBlockFailsTheAttemptInvalid(t *testing.T
 	assert.Equal(t, "invalid", status[0]["failure_class"])
 	assert.Equal(t, "image_contract_mismatch", status[0]["failure_reason"], "the block's reason, not exit_code")
 	assert.Equal(t, "image does not match", status[0]["error_message"])
+}
+
+// A seed attempt that succeeded reports what its preflight found.
+func TestSettle_TheFinalReportCarriesThePreflightFindings(t *testing.T) {
+	h := newHarness(t)
+	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.PreflightReport)
+	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "unowned_dependents",
+		`"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)}
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Second), h.now.Add(-20*time.Second), 0, "Completed")}})
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	reports := h.reports(t)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "succeeded", reports[0]["status"])
+	want, err := json.Marshal(pkgevents.SeedPreflightFindingsOf(&seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}))
+	require.NoError(t, err)
+	got, err := json.Marshal(reports[0]["seed_preflight"])
+	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(got))
+	require.NotNil(t, h.reload(t, dep.JobName()).Facts().SeedPreflight, "the findings are kept with the attempt's facts")
+}
+
+// A check that stopped the load fails the attempt with the preflight's reason,
+// whatever exit code the container left.
+func TestSettle_ACheckThatStoppedTheLoadFailsTheAttemptWithItsReason(t *testing.T) {
+	h := newHarness(t)
+	dep := h.startedSeed(t, h.now.Add(-time.Minute), seedreload.PreflightCheck)
+	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("error", "unowned_dependents",
+		`"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`)}
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	reports := h.reports(t)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "failed", reports[0]["status"])
+	assert.Equal(t, "unowned_dependents", reports[0]["failure_reason"])
+	assert.Equal(t, "invalid", reports[0]["failure_class"])
+	assert.NotNil(t, reports[0]["seed_preflight"])
 }

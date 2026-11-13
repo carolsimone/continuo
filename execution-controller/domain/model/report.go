@@ -4,6 +4,7 @@ import (
 	"time"
 
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // Report is what execution-controller reported of one production attempt:
@@ -27,12 +28,15 @@ type Report struct {
 	RunResultsKey    string
 	ParseCache       string
 	ParseCacheReason string
+	// SeedPreflight is what the seed's preflight found in the warehouse; nil
+	// when the attempt ran none.
+	SeedPreflight *seedreload.Findings
 }
 
 // ReportOf builds the report of d's attempt with status from everything
 // observed of it: queued when the deployment was accepted, the main
 // container's start and end and the time between them, its exit code, the
-// log and result keys and the parse cache, and, for a failure, its reason
+// log and result keys, the parse cache and the seed preflight's findings, and, for a failure, its reason
 // and errorMessage.
 func (d *Deployment) ReportOf(status pkgmodel.AttemptStatus, errorMessage string) Report {
 	f := d.facts
@@ -40,6 +44,7 @@ func (d *Deployment) ReportOf(status pkgmodel.AttemptStatus, errorMessage string
 	r := Report{
 		Status: status, QueuedAt: &queued, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt, ExitCode: f.ExitCode,
 		LogKey: f.LogKey, RunResultsKey: f.RunResultsKey, ParseCache: f.ParseCache, ParseCacheReason: f.ParseCacheReason,
+		SeedPreflight: f.SeedPreflight,
 	}
 	if f.StartedAt != nil && f.FinishedAt != nil {
 		secs := f.FinishedAt.Sub(*f.StartedAt).Seconds()
