@@ -88,10 +88,10 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 
 	// additive polls: the wait for earlier promote-seed runs (5m) + the
 	// default topology (1m) + the notice (10m) + the promotion (10m) + the
-	// promote-seed run (2m + 5m) + the reconcile's second run (3m) and its
-	// seed (5m) + the acknowledged full refresh (5m). The cleanup has a context
-	// of its own.
-	ctx, cancel := context.WithTimeout(context.Background(), 46*time.Minute)
+	// promote-seed run (2m + 5m) + the reconcile's second run (3m), its seed
+	// (5m) and its skipped view (1m) + the acknowledged full refresh (5m) =
+	// 47m. The cleanup has a context of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), 47*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -182,7 +182,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	}, fmt.Sprintf("timeout waiting for the promote-seed run of release %s", releaseID))
 	require.Len(t, runs, 1, "the promotion plans one promote-seed run")
 	promoteRun := runs[0]
-	waitForAllTasksSucceeded(t, ctx, clients, promoteRun, []string{"seed_table_1", "seed_table_1_view"})
+	waitForTasksToSucceed(t, ctx, clients, promoteRun, []string{"seed_table_1", "seed_table_1_view"}, 5*time.Minute)
 
 	shown := showRun(t, ctx, bin, env, promoteRun)
 	seedTask := shown.task(t, seedReloadService+"."+seedReconcileNodeKey)
@@ -220,11 +220,13 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	}, fmt.Sprintf("timeout waiting for the seed task of run %s to end", stoppedRun))
 	require.Equal(t, "failed", seedStatus, "the preflight stops the seed of run %s", stoppedRun)
 
-	attempt := latestSeedAttempt(t, ctx, clients, stoppedRun)
+	attempt := latestTaskAttempt(t, ctx, clients, stoppedRun, "seed_table_1")
 	assert.Equal(t, "invalid", attempt.GetFailureClass())
 	assert.Equal(t, "unowned_dependents", attempt.GetFailureReason())
-	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideView)
-	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideMatView)
+	// The preflight names each object as "<schema>.<name> (<kind>, owner <owner>)",
+	// so the " (" keeps seed_reader from matching seed_reader_base.
+	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideView+" (")
+	assert.Contains(t, attempt.GetErrorMessage(), seedReloadOutsideMatView+" (")
 	preflight := attempt.GetSeedPreflight()
 	require.NotNil(t, preflight, "the seed's attempt carries its preflight's findings")
 	assert.Equal(t, "exact", preflight.GetCompleteness())
@@ -255,21 +257,24 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 		"--acknowledge", seedReloadOutsideView, "--acknowledge", seedReloadOutsideMatView)
 	refreshRun, err := uuid.Parse(triggered.RunID)
 	require.NoError(t, err, "continuo node full-refresh prints the run id: %q", triggered.RunID)
-	waitForAllTasksSucceeded(t, ctx, clients, refreshRun, []string{"seed_table_1", "seed_table_1_view"})
+	waitForTasksToSucceed(t, ctx, clients, refreshRun, []string{"seed_table_1", "seed_table_1_view"}, 5*time.Minute)
 	assert.False(t, relationExists(t, ctx, clients, seedReloadOutsideMatView), "the cascade dropped %s, as named", seedReloadOutsideMatView)
 	assert.False(t, relationExists(t, ctx, clients, seedReloadOutsideView), "the cascade dropped %s, as named", seedReloadOutsideView)
 	assert.True(t, relationExists(t, ctx, clients, seedReloadViewKey), "the run rebuilt %s", seedReloadViewKey)
 	t.Logf("✅ acknowledged full refresh %s dropped the named objects and rebuilt %s", refreshRun, seedReloadViewKey)
 }
 
-// cleanupSeedReload waits for the runs of releaseID to end, drops the objects
-// the test made in the warehouse and restores the default topology. It runs
-// on a context of its own, because the test's is cancelled by the time a
-// cleanup runs.
+// cleanupSeedReload waits for releaseID to end its pipeline and for its runs
+// to end, drops the objects the test made in the warehouse and restores the
+// default topology. It runs on a context of its own, because the test's is
+// cancelled by the time a cleanup runs.
 func cleanupSeedReload(t *testing.T, clients *testClients, releaseID string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	// A release that promotes after the restore would be the live release of
+	// the tests that follow.
+	waitForReleaseToEnd(t, ctx, clients, releaseID, 10*time.Minute)
 	// A run still in flight would build the view again after the drop.
 	waitForReleaseRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
 	if _, err := clients.dbtDB.ExecContext(ctx, `
@@ -278,6 +283,61 @@ func cleanupSeedReload(t *testing.T, clients *testClients, releaseID string) {
 		t.Errorf("cleanup: drop %s and %s: %v", seedReloadOutsideSchema, seedReloadViewKey, err)
 	}
 	restoreDefaultTopology(t, ctx, clients)
+}
+
+// releaseInFlight holds the statuses of a release whose pipeline has not ended.
+var releaseInFlight = map[string]bool{
+	"received": true, "compiling": true, "parsing": true, "seed_building": true, "validating": true,
+}
+
+// waitForReleaseToEnd waits until releaseID is no longer in its pipeline:
+// promoted, rejected, superseded, or never recorded. It returns without
+// failing when it still is after timeout.
+func waitForReleaseToEnd(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		status, found, err := readReleaseStatus(ctx, clients, releaseID)
+		if err == nil && (!found || !releaseInFlight[status]) {
+			return
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			t.Logf("release %s still %q after %s (last read error: %v)", releaseID, status, timeout, err)
+			return
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// readReleaseStatus reads releaseID's status from release-controller's
+// GET /releases/{id}; found is false when release-controller has no such release.
+func readReleaseStatus(ctx context.Context, clients *testClients, releaseID string) (status string, found bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID), nil)
+	if err != nil {
+		return "", false, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return "", false, nil
+	case http.StatusOK:
+	default:
+		return "", false, fmt.Errorf("GET /releases/%s answered %d", releaseID, resp.StatusCode)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", true, fmt.Errorf("decode GET /releases/%s: %w", releaseID, err)
+	}
+	return body.Status, true, nil
 }
 
 // waitForReleaseRunsToEnd waits until no run of releaseID is active. It
@@ -324,7 +384,8 @@ func setLoadedSeedVersion(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // waitForReleaseNotices polls release-controller's GET /releases/{id} until
-// the release has a notice and returns them. A rejected release fails at once.
+// the release has a notice and returns them. A release that is promoted or
+// rejected with no notice fails at once.
 func waitForReleaseNotices(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) []seedReloadNotice {
 	t.Helper()
 	var body struct {
@@ -349,10 +410,18 @@ func waitForReleaseNotices(t *testing.T, ctx context.Context, clients *testClien
 		if err != nil || json.Unmarshal(raw, &body) != nil {
 			return false, nil
 		}
-		if body.Status == "rejected" {
-			t.Fatalf("release %s rejected: reason=%q", releaseID, body.RejectReason)
+		if len(body.Notices) > 0 {
+			return true, nil
 		}
-		return len(body.Notices) > 0, nil
+		// release-controller writes a release's notices before it promotes or
+		// rejects it, so an ended release with none never gets one.
+		switch body.Status {
+		case "rejected":
+			t.Fatalf("release %s rejected with no notice: reason=%q", releaseID, body.RejectReason)
+		case "promoted":
+			t.Fatalf("release %s promoted with no notice", releaseID)
+		}
+		return false, nil
 	}, func() string {
 		return fmt.Sprintf("timeout waiting for release %s to carry a notice (status %q)", releaseID, body.Status)
 	})
@@ -409,6 +478,38 @@ func showRun(t *testing.T, ctx context.Context, bin string, env []string, runID 
 	return shown
 }
 
+// waitForTasksToSucceed waits until runID's task of each of tables has
+// succeeded. A task that fails, is skipped or is cancelled fails the test at
+// once, naming its latest attempt's failure class, reason and message.
+func waitForTasksToSucceed(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID, tables []string, timeout time.Duration) {
+	t.Helper()
+	statuses := map[string]string{}
+	pollUntilDescribed(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+		done := true
+		for _, table := range tables {
+			status := runTaskStatus(ctx, clients, runID, table)
+			statuses[table] = status
+			switch status {
+			case "succeeded":
+			case "failed", "skipped", "cancelled":
+				var class, reason, message string
+				if status == "failed" {
+					a := latestTaskAttempt(t, ctx, clients, runID, table)
+					class, reason, message = a.GetFailureClass(), a.GetFailureReason(), a.GetErrorMessage()
+				}
+				t.Fatalf("task %s of run %s ended %s (failure_class=%q failure_reason=%q error_message=%q); task statuses: %v",
+					table, runID, status, class, reason, message, statuses)
+			default:
+				done = false
+			}
+		}
+		return done, nil
+	}, func() string {
+		return fmt.Sprintf("timeout waiting for the tasks %v of run %s to succeed: %v", tables, runID, statuses)
+	})
+	t.Logf("✅ tasks %v of run %s succeeded", tables, runID)
+}
+
 // runTaskStatus reads the status of runID's task of table, "" when it has none.
 func runTaskStatus(ctx context.Context, clients *testClients, runID uuid.UUID, table string) string {
 	var status string
@@ -419,13 +520,13 @@ func runTaskStatus(ctx context.Context, clients *testClients, runID uuid.UUID, t
 	return status
 }
 
-// latestSeedAttempt returns the latest attempt of seed_table_1's task in
-// runID, as ListRunAttempts serves it.
-func latestSeedAttempt(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) *runv1.TaskAttempt {
+// latestTaskAttempt returns the latest attempt of runID's task of table, as
+// ListRunAttempts serves it.
+func latestTaskAttempt(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID, table string) *runv1.TaskAttempt {
 	t.Helper()
 	var taskID uuid.UUID
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &taskID,
-		`SELECT task_id FROM tasks WHERE run_id = $1 AND table_name = 'seed_table_1'`, runID))
+		`SELECT task_id FROM tasks WHERE run_id = $1 AND table_name = $2`, runID, table))
 	resp, err := clients.runClient.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{
 		RunId: runID.String(), TaskId: taskID.String(), PageSize: 200,
 	})
@@ -436,7 +537,7 @@ func latestSeedAttempt(t *testing.T, ctx context.Context, clients *testClients, 
 			latest = a
 		}
 	}
-	require.NotNil(t, latest, "the seed's task of run %s has an attempt", runID)
+	require.NotNil(t, latest, "the task of %s in run %s has an attempt", table, runID)
 	return latest
 }
 
