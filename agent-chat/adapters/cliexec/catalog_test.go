@@ -169,3 +169,15 @@ func TestCatalog_RunMutatingCommandsNeedApproval(t *testing.T) {
 		assert.False(t, tool.Mutating, "tool %q is a read", name)
 	}
 }
+
+// release notices only reads what release-controller stored, so the chat runs
+// it without asking the user to approve it.
+func TestCatalog_ReleaseNoticesIsAReadWithOneRequiredPositional(t *testing.T) {
+	c := loadCatalog(t)
+
+	tool, ok := c.Lookup("release_notices")
+	require.True(t, ok, "tool release_notices must be in the catalog")
+	assert.Equal(t, []string{"release", "notices"}, tool.CLIPath)
+	assert.Equal(t, []string{"release-id"}, tool.ParamOrder)
+	assert.False(t, tool.Mutating, "release_notices is a read")
+}

@@ -43,6 +43,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -98,6 +104,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -160,6 +172,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -225,6 +243,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -288,6 +312,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -378,6 +408,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -452,6 +488,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -520,6 +562,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -592,6 +640,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -704,6 +758,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -765,6 +825,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -832,6 +898,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -912,6 +984,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -983,6 +1061,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1074,6 +1158,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1091,6 +1181,73 @@
       "exit_codes": [
         0,
         2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "release notices",
+      "short": "Show what a candidate release changes in its seeds' loads",
+      "long": "Show the seed reload notices of one candidate release: for each seed whose load the\nrelease changes, what the load does, which views and materialized views it\nrebuilds, which refresh on their schedule, what the warehouse holds that\ncontinuo does not own, and whether the load is predicted to go ahead or stop.\n\nUse when the user asks what a release does to a seed table, whether a release\nwill reload a seed, which views a seed reload rebuilds, or why a release's seed\nstopped. A notice predicts and the run's preflight decides: the prediction is\nmade when the release is built, and the preflight of the run that loads the\nseed settles what actually happens.\n\nArguments:\n  <release-id>  The candidate release id, e.g. rel-a1b2c3d-201.\n\nOutput (stdout, JSON):\n  {\"release_id\":string,\"status\":string,\"notices\":[{\"kind\":string,\"node_id\":string,\n   \"service\":string,\"engine_family\":string,\"change\":string,\n   \"columns\":{\"added\":[string],\"removed\":[string],\"retyped\":[string]},\n   \"load\":{\"operation\":string,\"drops_table\":boolean,\"reason\":string},\n   \"rebuilds\":[{\"node_id\":string,\"materialized\":string,\"operation\":string,\"schedule\":string}],\n   \"refresh_on_schedule\":[{\"node_id\":string,\"materialized\":string,\"schedule\":string}],\n   \"warehouse\":{\"checked\":boolean,\"completeness\":string,\n    \"outside_continuo\":[{\"object\":string,\"kind\":string,\"owner\":string}]},\n   \"prediction\":string,\"stop_reason\":string,\"unvalidated\":boolean}]}\n  notices is [] for a release that changes no seed's load, in node id order.\n\nErrors:\n  usage      (exit 2)  missing, blank or extra release id\n  not_found  (exit 3)  no candidate release has this id (a verification run's id is not one)\n  unavailable(exit 5)  release-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<release-id>"
+      ],
+      "flags": [
+        {
+          "name": "catalog-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the run-controller service (env: CONTINUO_RUN_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo release notices rel-a1b2c3d-201"
+      ],
+      "output_schema": {
+        "release_id": "string",
+        "status": "string",
+        "notices": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
         5,
         6
       ]
@@ -1133,6 +1290,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1214,6 +1377,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1290,6 +1459,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1373,6 +1548,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1435,6 +1616,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1514,6 +1701,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1575,6 +1768,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1664,6 +1863,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1729,6 +1934,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -1755,7 +1966,7 @@
     {
       "path": "schedule graph",
       "short": "Show the dependency graph for the named schedule",
-      "long": "Show the dependency graph for the named schedule.\n\nUse when the user wants the topology (nodes and edges) of a schedule: the nodes\nof the live release that belong to it, the nodes of other schedules that feed\nthem one hop upstream, and the edges among them.\n\nArguments:\n  <schedule-name>  The schedule whose graph to fetch.\n\nOutput (stdout, JSON):\n  {\"schedule_name\":string,\n   \"nodes\":[{\"table_name\":string,\"schema_name\":string,\"service_name\":string,\n             \"node_type\":string}],\n   \"edges\":[{\"from_node_id\":string,\"to_node_id\":string}]}\n  A node id is \"service.schema.table\"; an edge runs from the dependent node to\n  its dependency.\n\nA schedule the live release does not hold returns {\"nodes\":[],\"edges\":[]}, not\nan error.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  unavailable(exit 5)  the run-controller service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Show the dependency graph for the named schedule.\n\nUse when the user wants the topology (nodes and edges) of a schedule: the nodes\nof the live release that belong to it, the nodes of other schedules that feed\nthem one hop upstream, and the edges among them.\n\nArguments:\n  <schedule-name>  The schedule whose graph to fetch.\n\nOutput (stdout, JSON):\n  {\"schedule_name\":string,\n   \"nodes\":[{\"table_name\":string,\"schema_name\":string,\"service_name\":string,\n             \"node_type\":string}],\n   \"edges\":[{\"from_node_id\":string,\"to_node_id\":string}]}\n  A node id is \"service.schema.table\"; an edge runs from the dependent node to\n  its dependency. A node of type \"ingested\" is a table no node builds: its\n  \"service_name\" is empty, so its node id starts with a dot\n  (\".raw.ingest_probe\"), nothing runs it, and \"continuo node\" commands cannot\n  address it.\n\nA schedule the live release does not hold returns {\"nodes\":[],\"edges\":[]}, not\nan error.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  unavailable(exit 5)  the run-controller service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>"
       ],
@@ -1789,6 +2000,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1859,6 +2076,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -1938,6 +2161,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -2005,6 +2234,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -2064,6 +2299,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -2132,6 +2373,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -2205,6 +2452,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -2276,6 +2529,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",
@@ -2365,6 +2624,12 @@
           "default": "true"
         },
         {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "timeout",
           "shorthand": "",
           "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
@@ -2427,6 +2692,12 @@
           "shorthand": "",
           "usage": "forward-compat no-op; JSON is the default",
           "default": "true"
+        },
+        {
+          "name": "release-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)",
+          "default": ""
         },
         {
           "name": "timeout",

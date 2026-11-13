@@ -361,7 +361,8 @@ test-topology:
 # on the wire instead of failing any build; cli generates its catalog
 # stubs from its own copy, so drift there ships a client built from another
 # contract. cli generates its run stubs from its own copy of run.proto, so
-# drift there ships a client built from another contract.
+# drift there ships a client built from another contract. cli's release.proto
+# differs from release-controller's only in its go_package line.
 .PHONY: guards
 guards:
 	bash scripts/check-service-names.sh
@@ -405,6 +406,7 @@ guards:
 	diff run-controller/proto/run/v1/run.proto cli/proto/run/v1/run.proto
 	cmp run-controller/proto/run/v1/run.pb.go cli/proto/run/v1/run.pb.go
 	cmp run-controller/proto/run/v1/run_grpc.pb.go cli/proto/run/v1/run_grpc.pb.go
+	test "$$(grep -v '^option go_package' release-controller/proto/release/v1/release.proto)" = "$$(grep -v '^option go_package' cli/proto/release/v1/release.proto)"
 
 .PHONY: stack-up
 stack-up:

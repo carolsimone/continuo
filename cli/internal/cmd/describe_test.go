@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -101,6 +101,32 @@ func TestDescribe_CommandContentIsAccurate(t *testing.T) {
 	for _, want := range []string{"human", "endpoint", "timeout"} {
 		assert.True(t, flagNames[want], "expected global flag --%s in the catalog flag list", want)
 	}
+}
+
+func TestDescribe_ReleaseNoticesIsADocumentedReadOnlyCommand(t *testing.T) {
+	c := findCmd(t, runDescribe(t), "release notices")
+	assert.Equal(t, []string{"<release-id>"}, c.Args)
+	assert.False(t, c.Mutating, "release notices only reads")
+	require.NotEmpty(t, c.Examples)
+	assert.Equal(t, "continuo release notices rel-a1b2c3d-201", c.Examples[0])
+	assert.Contains(t, c.Long, "predicts")
+	assert.Contains(t, c.Long, "preflight")
+
+	var schema map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(c.OutputSchema, &schema))
+	for _, k := range []string{"release_id", "status", "notices"} {
+		_, ok := schema[k]
+		assert.True(t, ok, "release notices output_schema missing key %q", k)
+	}
+	var exits []int
+	require.NoError(t, json.Unmarshal(c.ExitCodes, &exits))
+	assert.Equal(t, []int{0, 2, 3, 5, 6}, exits)
+
+	flagNames := map[string]bool{}
+	for _, f := range c.Flags {
+		flagNames[f.Name] = true
+	}
+	assert.True(t, flagNames["release-endpoint"], "expected global flag --release-endpoint in the catalog flag list")
 }
 
 func TestDescribe_HumanModeWritesSummaryToStderr(t *testing.T) {

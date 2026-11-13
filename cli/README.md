@@ -17,12 +17,13 @@ The `Dockerfile` builds a small image with the binary at `/usr/local/bin/continu
 
 ## Connect
 
-The CLI calls three services over gRPC. On a local install, forward them to the default ports:
+The CLI calls four services over gRPC. On a local install, forward them to the default ports:
 
 ```bash
 kubectl -n continuo port-forward svc/run-controller 50051:50051 &
 kubectl -n continuo port-forward svc/catalog 50052:50052 &
 kubectl -n continuo port-forward svc/dead-letter-controller 50055:50055 &
+kubectl -n continuo port-forward svc/release-controller 50056:50056 &
 ```
 
 | Flag | Environment variable | Default | What it sets |
@@ -30,6 +31,7 @@ kubectl -n continuo port-forward svc/dead-letter-controller 50055:50055 &
 | `--endpoint` | `CONTINUO_RUN_CONTROLLER_ADDR` | `localhost:50051` | run-controller: schedules, runs and nodes |
 | `--catalog-endpoint` | `CONTINUO_CATALOG_ADDR` | `localhost:50052` | catalog: code versions and failure precedents |
 | `--dead-letter-endpoint` | `CONTINUO_DEAD_LETTER_ADDR` | `localhost:50055` | dead-letter-controller: dead letters |
+| `--release-endpoint` | `CONTINUO_RELEASE_CONTROLLER_ADDR` | `localhost:50056` | release-controller: seed reload notices of a candidate release |
 | `--timeout` | `CONTINUO_TIMEOUT` | `10s` | Time limit for each call. A value that does not parse is ignored |
 | `--human` | | off | Prints one short line on stderr instead of JSON on stdout |
 
@@ -121,6 +123,12 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 | `node diff <service> <schema> <table> --from N --to M` | Shows the SQL diff between two recorded versions, given by the `version_seq` numbers of `node versions`. Both flags are required. | |
 | `node upstream-changes <service> <schema> <table>` | Lists the latest code change of each ancestor of the node, with its distance (`depth`) and diff. `--depth` sets how far up to look (default 3, at most 10), and `--since` (a timestamp) hides older changes. | |
 | `node code-units [<unit-id>]` | Lists the version history of shared-code units, by unit id or for one node with `--service`, `--schema` and `--table`. Empty for a node without shared code. Exits 3 for an unknown unit id. | |
+
+### Releases
+
+| Command | What it does | Changes state |
+|---|---|:--:|
+| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds, what refreshes on its schedule, what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's preflight decides. | |
 
 ### Failures and dead letters
 

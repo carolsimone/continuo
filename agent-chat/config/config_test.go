@@ -149,6 +149,22 @@ func TestLoad_DeadLetterAddrDefaultsEmpty(t *testing.T) {
 	assert.Equal(t, "", cfg.DeadLetterAddr)
 }
 
+func TestLoad_ReleaseAddr(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CONTINUO_RELEASE_CONTROLLER_ADDR", "release-controller:50056")
+	cfg := Load(&pkgconfig.Validator{})
+	assert.Equal(t, "release-controller:50056", cfg.ReleaseAddr)
+}
+
+// An unset release-controller address stays empty so the CLI keeps its own
+// default instead of receiving a blank override.
+func TestLoad_ReleaseAddrDefaultsEmpty(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CONTINUO_RELEASE_CONTROLLER_ADDR", "")
+	cfg := Load(&pkgconfig.Validator{})
+	assert.Equal(t, "", cfg.ReleaseAddr)
+}
+
 func TestLoad_BaseURLForEveryProvider(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("LLM_PROVIDER", "anthropic")
