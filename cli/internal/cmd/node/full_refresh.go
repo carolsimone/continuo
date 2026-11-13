@@ -103,6 +103,8 @@ Errors:
 			"output_schema": `{"run_id":"string","schedule_name":"string"}`,
 			"exit_codes":    nodeRunExitCodes,
 			"mutating":      "true",
+			// The chat may name the objects a seed's full refresh may drop.
+			"chat_flags": "acknowledge",
 		},
 		Args: nodeTargetArgs("full-refresh", stdout, stderr),
 		RunE: func(cmd *cobra.Command, args []string) error {

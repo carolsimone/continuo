@@ -3,16 +3,21 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type describeFlagJSON struct {
-	Name    string `json:"name"`
-	Usage   string `json:"usage"`
-	Default string `json:"default"`
+	Name     string `json:"name"`
+	Usage    string `json:"usage"`
+	Default  string `json:"default"`
+	Chat     bool   `json:"chat"`
+	Repeated bool   `json:"repeated"`
 }
 type describeCommandJSON struct {
 	Path         string             `json:"path"`
@@ -279,4 +284,55 @@ func TestDescribe_RunWriteCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {
 		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &got))
 		assert.Equal(t, want, got, path)
 	}
+}
+
+// The chat sets only the flags a command marks in its chat_flags annotation.
+// node full-refresh marks --acknowledge, which repeats; every other flag of
+// every command, the global flags included, stays out of the chat's reach.
+func TestDescribe_MarksTheFlagsTheChatMaySetAndTheOnesThatRepeat(t *testing.T) {
+	p := runDescribe(t)
+
+	chatFlags := map[string][]string{}
+	for _, c := range p.Commands {
+		for _, f := range c.Flags {
+			if f.Chat {
+				chatFlags[c.Path] = append(chatFlags[c.Path], f.Name)
+			}
+		}
+	}
+	assert.Equal(t, map[string][]string{"node full-refresh": {"acknowledge"}}, chatFlags)
+
+	byName := map[string]describeFlagJSON{}
+	for _, f := range findCmd(t, p, "node full-refresh").Flags {
+		byName[f.Name] = f
+	}
+	require.Contains(t, byName, "acknowledge")
+	assert.True(t, byName["acknowledge"].Repeated, "--acknowledge is a string array, so describe marks it repeated")
+	require.Contains(t, byName, "endpoint")
+	assert.False(t, byName["endpoint"].Repeated)
+	assert.False(t, byName["endpoint"].Chat)
+}
+
+// Every name a command lists in chat_flags is one of its own flags, and holds
+// a string or a list of strings, since the chat renders it as --<name> <value>.
+func TestChatFlags_NameRealStringFlagsOfTheirCommand(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if raw, ok := c.Annotations[chatFlagsAnnotation]; ok {
+			names := strings.Split(raw, ",")
+			require.NotEmpty(t, names, "%s has an empty chat_flags annotation", c.CommandPath())
+			for _, name := range names {
+				name = strings.TrimSpace(name)
+				f := c.LocalFlags().Lookup(name)
+				if assert.NotNil(t, f, "%s lists chat flag %q, which it does not define", c.CommandPath(), name) {
+					assert.Contains(t, []string{"string", "stringArray", "stringSlice"}, f.Value.Type(),
+						"%s chat flag --%s must hold a string or a list of strings", c.CommandPath(), name)
+				}
+			}
+		}
+		for _, child := range c.Commands() {
+			walk(child)
+		}
+	}
+	walk(newRootCommand(io.Discard, io.Discard))
 }

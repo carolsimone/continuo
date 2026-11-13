@@ -145,4 +145,4 @@ A dead letter is a message a service gave up on.
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `describe` | Prints the catalog of every command with its arguments, flags, exit codes and output shape. | |
+| `describe` | Prints the catalog of every command with its arguments, flags (marking the ones the in-UI assistant may set and the ones that repeat), exit codes and output shape. | |

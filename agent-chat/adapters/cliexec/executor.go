@@ -78,18 +78,6 @@ func reject(format string, a ...any) ports.ToolResult {
 	}
 }
 
-// orderedArgValues returns the positional argv values for def in ParamOrder
-// sequence, skipping absent or whitespace-only entries.
-func orderedArgValues(def ports.ToolDef, args map[string]string) []string {
-	var out []string
-	for _, name := range def.ParamOrder {
-		if v, ok := args[name]; ok && strings.TrimSpace(v) != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
 // Execute applies the four checks, then execs. Tool-level failures are
 // returned to the model in the result, never as Go errors.
 func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUID, call ports.ToolCall) ports.ToolResult {
@@ -113,23 +101,45 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 			return reject("missing required parameter %q for tool %q", p.Name, call.Name)
 		}
 	}
-	// Check 3: no value may smuggle a flag into the argv.
-	for name, val := range call.Args {
-		if strings.HasPrefix(val, "-") {
-			return reject("parameter %q must not start with '-'", name)
+	// Check 3: every value is well formed (a list parameter is a JSON array of
+	// strings), and no value may smuggle a flag into the argv.
+	values := make(map[string][]string, len(call.Args))
+	for name, raw := range call.Args {
+		vals, err := known[name].Values(raw)
+		if err != nil {
+			return reject("%s", err.Error())
+		}
+		for _, v := range vals {
+			if strings.HasPrefix(v, "-") {
+				return reject("parameter %q must not start with '-'", name)
+			}
+		}
+		values[name] = vals
+	}
+	// Check 4 (assembly): argv is the catalog's CLIPath, then the positional
+	// values in ParamOrder, then --<flag> <value> once per value of each flag
+	// the command marks for the chat. Blank values are skipped so they don't
+	// appear as blank tokens.
+	argv := append([]string{}, def.CLIPath...)
+	for _, name := range def.ParamOrder {
+		argv = append(argv, values[name]...)
+	}
+	for _, p := range def.Params {
+		if !p.Flag {
+			continue
+		}
+		for _, v := range values[p.Name] {
+			argv = append(argv, "--"+p.Name, v)
 		}
 	}
-	// Check 4 (assembly): argv is the catalog's CLIPath + ordered positional values.
-	// Whitespace-only optional values are skipped so they don't appear as blank tokens.
-	argv := append([]string{}, def.CLIPath...)
-	argv = append(argv, orderedArgValues(def, call.Args)...)
 
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	// G204: argv is not an arbitrary tainted string. Checks 1-3 above already
 	// enforced that call.Name resolves to a catalogued tool, that call.Args
-	// contains only known/required parameters, and that no value can start
-	// with '-' (so it can never be smuggled in as a flag). e.cliPath is our
+	// contains only known/required parameters, that the only flags are the
+	// ones the catalog marked for the chat, and that no value can start with
+	// '-' (so it can never be smuggled in as a flag). e.cliPath is our
 	// own trusted continuo binary, and there is no shell in this call chain.
 	cmd := exec.CommandContext(cctx, e.cliPath, argv...) //nolint:gosec // G204: validated argv, direct execve, no shell.
 	// A nil e.env intentionally inherits the parent process environment; the

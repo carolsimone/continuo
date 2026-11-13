@@ -13,11 +13,18 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// chatFlagsAnnotation names the cobra annotation in which a command lists, comma
+// separated, the flags the chat may set on it. Every other flag stays out of
+// the chat's reach.
+const chatFlagsAnnotation = "chat_flags"
+
 type describeFlag struct {
 	Name      string `json:"name"`
 	Shorthand string `json:"shorthand"`
 	Usage     string `json:"usage"`
 	Default   string `json:"default"`
+	Chat      bool   `json:"chat,omitempty"`
+	Repeated  bool   `json:"repeated,omitempty"`
 }
 
 type describeCmd struct {
@@ -45,13 +52,16 @@ func NewDescribeCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Com
 		Long: `Emit a machine-readable catalog of every command.
 
 Use to discover the entire CLI surface in one call: command paths, purpose,
-arguments, flags, examples, output schema, and exit codes.
+arguments, flags, examples, output schema, and exit codes. A flag marked
+"chat" is one the chat may set on that command; a flag marked "repeated" may
+be given more than once. Both are left out when false.
 
 Arguments: none.
 
 Output (stdout, JSON):
   {"commands":[{"path":string,"short":string,"long":string,"args":[string],
-   "flags":[{"name":string,"shorthand":string,"usage":string,"default":string}],
+   "flags":[{"name":string,"shorthand":string,"usage":string,"default":string,
+             "chat":bool,"repeated":bool}],
    "examples":[string],"output_schema":object,"exit_codes":[number]}]}
 
 Errors:
@@ -132,21 +142,29 @@ func toDescribeCmd(root, c *cobra.Command) describeCmd {
 	// Surface the command's full flag surface: local flags plus persistent
 	// flags inherited from ancestors (e.g. the global --endpoint/--timeout/--human
 	// on the root). c.Flags() alone omits inherited flags on an unexecuted command.
+	// Only the command's own flags can be chat flags; the inherited global
+	// flags never are.
+	chat := chatFlags(c)
 	seen := map[string]bool{}
-	addFlag := func(f *pflag.Flag) {
-		if seen[f.Name] {
-			return
+	addFlag := func(local bool) func(*pflag.Flag) {
+		return func(f *pflag.Flag) {
+			if seen[f.Name] {
+				return
+			}
+			seen[f.Name] = true
+			_, repeated := f.Value.(pflag.SliceValue)
+			dc.Flags = append(dc.Flags, describeFlag{
+				Name:      f.Name,
+				Shorthand: f.Shorthand,
+				Usage:     f.Usage,
+				Default:   f.DefValue,
+				Chat:      local && chat[f.Name],
+				Repeated:  repeated,
+			})
 		}
-		seen[f.Name] = true
-		dc.Flags = append(dc.Flags, describeFlag{
-			Name:      f.Name,
-			Shorthand: f.Shorthand,
-			Usage:     f.Usage,
-			Default:   f.DefValue,
-		})
 	}
-	c.LocalFlags().VisitAll(addFlag)
-	c.InheritedFlags().VisitAll(addFlag)
+	c.LocalFlags().VisitAll(addFlag(true))
+	c.InheritedFlags().VisitAll(addFlag(false))
 	if v, ok := c.Annotations["output_schema"]; ok && json.Valid([]byte(v)) {
 		dc.OutputSchema = json.RawMessage(v)
 	}
@@ -157,6 +175,21 @@ func toDescribeCmd(root, c *cobra.Command) describeCmd {
 		dc.Mutating = true
 	}
 	return dc
+}
+
+// chatFlags returns the flag names a command lists in its chat_flags annotation.
+func chatFlags(c *cobra.Command) map[string]bool {
+	out := map[string]bool{}
+	raw, ok := c.Annotations[chatFlagsAnnotation]
+	if !ok {
+		return out
+	}
+	for _, name := range strings.Split(raw, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 // parseArgs returns the positional-arg spec from a Use string ("status <name>" -> ["<name>"]).

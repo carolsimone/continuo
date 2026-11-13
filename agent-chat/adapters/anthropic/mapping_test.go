@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
 // msg builds a domain.Message pairing a role with its typed content.
@@ -102,4 +103,36 @@ func mustMarshal(t *testing.T, v any) string {
 		t.Fatalf("marshal wire messages: %v", err)
 	}
 	return string(b)
+}
+
+// A repeated chat flag is offered to the model as an array of strings; every
+// other parameter stays a string.
+func TestToWireTools_ARepeatedParamIsAnArrayOfStrings(t *testing.T) {
+	tools := toWireTools([]ports.ToolDef{{
+		Name: "node_full-refresh",
+		Params: []ports.ToolParam{
+			{Name: "service", Required: true},
+			{Name: "acknowledge", Description: "an object", Flag: true, Repeated: true},
+		},
+	}})
+	raw, err := json.Marshal(tools[0].InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"object","properties":{"acknowledge":{"type":"array","description":"an object","items":{"type":"string"}},"service":{"type":"string"}},"required":["service"]}`
+	if string(raw) != want {
+		t.Fatalf("input schema\n got %s\nwant %s", raw, want)
+	}
+}
+
+// A list the model sends for a repeated parameter reaches ToolCall.Args as its
+// JSON array, which the executor decodes into one value per item.
+func TestParseToolArgs_KeepsAListAsItsJSONArray(t *testing.T) {
+	args, err := parseToolArgs(`{"service":"finance","acknowledge":["bi.customer_report","bi.churn"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args["acknowledge"] != `["bi.customer_report","bi.churn"]` || args["service"] != "finance" {
+		t.Fatalf("args = %v", args)
+	}
 }

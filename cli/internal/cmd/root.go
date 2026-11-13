@@ -23,6 +23,34 @@ func Execute() int {
 }
 
 func executeWith(args []string, stdout, stderr io.Writer) int {
+	root := newRootCommand(stdout, stderr)
+	root.SetArgs(args)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	err := root.Execute()
+	if err == nil {
+		return 0
+	}
+	var cliErr output.CLIError
+	if errors.As(err, &cliErr) {
+		return cliErr.ExitCode()
+	}
+	// Every command and the flag-error handler return a CLIError, so anything
+	// else comes from cobra's own dispatch: a command name it cannot resolve.
+	// That is rejected before any flag is parsed, so --human is read from the
+	// raw arguments rather than from the flag set.
+	e := output.NewUsageError(err.Error())
+	if rawHumanFlag(args) {
+		_ = output.HumanError(stderr, e)
+	} else {
+		_ = output.EmitError(stdout, e)
+	}
+	return e.ExitCode()
+}
+
+// newRootCommand builds the whole command tree: the root's global flags and
+// every command group, writing to stdout and stderr.
+func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	in := config.Inputs{
 		EnvRunControllerAddr:     os.Getenv("CONTINUO_RUN_CONTROLLER_ADDR"),
 		EnvCatalogAddr:           os.Getenv("CONTINUO_CATALOG_ADDR"),
@@ -93,29 +121,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(release.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
-
-	root.SetArgs(args)
-	root.SetOut(stdout)
-	root.SetErr(stderr)
-	err := root.Execute()
-	if err == nil {
-		return 0
-	}
-	var cliErr output.CLIError
-	if errors.As(err, &cliErr) {
-		return cliErr.ExitCode()
-	}
-	// Every command and the flag-error handler return a CLIError, so anything
-	// else comes from cobra's own dispatch: a command name it cannot resolve.
-	// That is rejected before any flag is parsed, so --human is read from the
-	// raw arguments rather than from the flag set.
-	e := output.NewUsageError(err.Error())
-	if rawHumanFlag(args) {
-		_ = output.HumanError(stderr, e)
-	} else {
-		_ = output.EmitError(stdout, e)
-	}
-	return e.ExitCode()
+	return root
 }
 
 // rawHumanFlag reports whether --human appears among the unparsed arguments.

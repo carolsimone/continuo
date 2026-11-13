@@ -3,7 +3,7 @@
     {
       "path": "describe",
       "short": "Emit a machine-readable catalog of every command",
-      "long": "Emit a machine-readable catalog of every command.\n\nUse to discover the entire CLI surface in one call: command paths, purpose,\narguments, flags, examples, output schema, and exit codes.\n\nArguments: none.\n\nOutput (stdout, JSON):\n  {\"commands\":[{\"path\":string,\"short\":string,\"long\":string,\"args\":[string],\n   \"flags\":[{\"name\":string,\"shorthand\":string,\"usage\":string,\"default\":string}],\n   \"examples\":[string],\"output_schema\":object,\"exit_codes\":[number]}]}\n\nErrors:\n  usage (exit 2)  unexpected arguments",
+      "long": "Emit a machine-readable catalog of every command.\n\nUse to discover the entire CLI surface in one call: command paths, purpose,\narguments, flags, examples, output schema, and exit codes. A flag marked\n\"chat\" is one the chat may set on that command; a flag marked \"repeated\" may\nbe given more than once. Both are left out when false.\n\nArguments: none.\n\nOutput (stdout, JSON):\n  {\"commands\":[{\"path\":string,\"short\":string,\"long\":string,\"args\":[string],\n   \"flags\":[{\"name\":string,\"shorthand\":string,\"usage\":string,\"default\":string,\n             \"chat\":bool,\"repeated\":bool}],\n   \"examples\":[string],\"output_schema\":object,\"exit_codes\":[number]}]}\n\nErrors:\n  usage (exit 2)  unexpected arguments",
       "args": [],
       "flags": [
         {
@@ -537,7 +537,9 @@
           "name": "acknowledge",
           "shorthand": "",
           "usage": "an object outside continuo that the seed's full refresh may drop, as <schema>.<name>; repeat for each object the stopped load listed",
-          "default": "[]"
+          "default": "[]",
+          "chat": true,
+          "repeated": true
         },
         {
           "name": "catalog-endpoint",
