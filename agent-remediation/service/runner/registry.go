@@ -55,6 +55,7 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyContractFile:         func() any { return remediation.ContractFile{} },
 			remediation.KeyContractEntry:        func() any { return remediation.Text("") },
 			remediation.KeyPriorAttempts:        func() any { return []prompt.PriorAttempt{} },
+			remediation.KeyPackagedContract:     func() any { return remediation.Bytes{} },
 		},
 	}
 	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
@@ -80,6 +81,14 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(contract.NewPythonContract(c.Sanitizer))
 	r.register(contract.NewPythonParse(c.Sanitizer))
 	r.register(contract.NewCSVContract(c.Sanitizer))
+	r.register(contract.NewContractPathsInsideFolder())
+	r.register(contract.NewYAMLReads(c.ContractInspector))
+	r.register(contract.NewNodeIdentityUnchanged(c.ContractInspector))
+	r.register(contract.NewReadsKept(c.ContractInspector))
+	r.register(contract.NewCSVReadKept(c.ContractInspector))
+	r.register(contract.NewNoNewSecretRef(c.ContractInspector))
+	r.register(contract.NewDeclaredOnce(c.ContractLocator))
+	r.register(contract.NewContractPackages(c.Packager, c.SQLDialect))
 	return r
 }
 
