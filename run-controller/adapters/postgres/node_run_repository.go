@@ -29,7 +29,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// NodeRunRepository reads per-node run history.
+// NodeRunRepository reads per-node run history and the node list of the
+// tenant's live release.
 type NodeRunRepository interface {
 	List(ctx context.Context, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
 	ListNodes(ctx context.Context, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error)
@@ -265,7 +266,8 @@ type nodeSummaryRow struct {
 // run/test/build dimension as stored (the run dimension includes
 // full_refresh tasks and reports them as 'run'); $5 and $6 the limit and the
 // offset; $7 the node types a release builds (builtNodeTypeNames); $8 true to
-// keep only nodes of no schedule.
+// keep only dormant nodes, those dormantNodeCondition keeps with $9 bound to
+// dormantNodeTypeNames.
 //
 //   - nodes: the live release's nodes of the types in $7 that match $1, $2 and
 //     $8, one row per service, schema and table (two nodes sharing a table
@@ -289,7 +291,7 @@ type nodeSummaryRow struct {
 // that row has no node (listed is false) and still carries the total.
 // Every read of tasks keeps the dimension through listedOperation, so the
 // last run, the page order and the stats count the same tasks.
-const listNodesQuery = `
+var listNodesQuery = `
 	WITH nodes AS (
 		SELECT n.service_name, n.schema_name, n.table_name,
 		       (ARRAY_AGG(n.node_type ORDER BY n.node_key))[1] AS node_type,
@@ -302,7 +304,7 @@ const listNodesQuery = `
 		  AND n.node_type = ANY($7::text[])
 		  AND ($1 = '' OR lower(n.table_name) = lower($1))
 		  AND ($2 = '' OR n.service_name = $2)
-		  AND (NOT $8::boolean OR n.schedule_name = '')
+		  AND (NOT $8::boolean OR ` + dormantNodeCondition("$9") + `)
 		  AND ($3 <> 'test' OR n.test_count > 0)
 		GROUP BY n.service_name, n.schema_name, n.table_name
 	),
@@ -401,8 +403,11 @@ const listNodesQuery = `
 	 AND a.table_name = p.table_name
 	ORDER BY p.last_run_at DESC NULLS LAST, p.service_name, p.schema_name, p.table_name`
 
-// listedOperation keeps the tasks t of listNodesQuery's dimension $3, as
-// stored: the run dimension includes full_refresh tasks.
+// listedOperation keeps the tasks t of the operation dimension bound to $3, as
+// stored: the run dimension includes full_refresh tasks. listNodesQuery and
+// lastRunsQuery both bind the dimension to $3, the schedule graph always to
+// run, so a node's last run means the same on the node list and on the
+// schedule graph.
 const listedOperation = `(t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))`
 
 // ListNodes returns one page of the node list and how many nodes match before
@@ -415,10 +420,10 @@ const listedOperation = `(t.operation = $3 OR ($3 = 'run' AND t.operation = 'ful
 // tasks of the operation; a node that never ran has no task, no last status
 // and no last run. Filters: search, a case-insensitive exact match on the
 // table name (when non-empty); serviceName, exact (when non-empty);
-// dormantOnly, only the nodes of no schedule; and the run/test/build
-// operation (run includes full_refresh; matched as stored, see
-// operationWithDefault), whose test dimension lists only the nodes with
-// data tests. Rows are ordered by last run, newest first and never-run nodes
+// dormantOnly, only the dormant nodes (dormantNodeCondition); and the
+// run/test/build operation (run includes full_refresh; matched as stored, see
+// operationWithDefault), whose test dimension lists only the nodes with data
+// tests. Rows are ordered by last run, newest first and never-run nodes
 // last, with (service, schema, table) tiebreakers for deterministic paging.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
@@ -440,7 +445,7 @@ func (r *nodeRunRepository) ListNodes(
 
 	rows := []nodeSummaryRow{}
 	if err := r.db.SelectContext(ctx, &rows, listNodesQuery, search, serviceName, operation, r.tenantID,
-		limit, offset, pq.Array(builtNodeTypeNames()), dormantOnly); err != nil {
+		limit, offset, pq.Array(builtNodeTypeNames()), dormantOnly, pq.Array(dormantNodeTypeNames())); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -456,35 +461,45 @@ func (r *nodeRunRepository) ListNodes(
 	return out, total, nil
 }
 
-// ListNodeNames returns the distinct table names of the tenant's nodes that
-// have run, filtered by exact service when serviceName is non-empty, sorted
-// ascending. A cheap DISTINCT (no window/aggregation) — it feeds the search
-// autocomplete.
+// ListNodeNames returns the distinct table names of the nodes ListNodes
+// lists: the nodes of the tenant's live release whose type a release builds
+// (builtNodeTypeNames), a node that never ran included, filtered by exact
+// service when serviceName is non-empty. A node the live release does not
+// hold is not named, whatever runs it had. The names are in byte order
+// (COLLATE "C"), the same on every install. A cheap DISTINCT over the
+// release's nodes; it feeds the search autocomplete.
 func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName string) ([]string, error) {
 	const query = `
-		SELECT DISTINCT table_name
-		FROM tasks
-		WHERE tenant_id = $2 AND ($1 = '' OR service_name = $1)
+		SELECT DISTINCT n.table_name COLLATE "C" AS table_name
+		FROM live_release l
+		JOIN topology_nodes n
+		  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
+		WHERE l.tenant_id = $2 AND n.node_type = ANY($3::text[])
+		  AND ($1 = '' OR n.service_name = $1)
 		ORDER BY table_name`
 	names := []string{}
-	if err := r.db.SelectContext(ctx, &names, query, serviceName, r.tenantID); err != nil {
+	if err := r.db.SelectContext(ctx, &names, query, serviceName, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
 		r.logger.Error("Failed to list node names", "service", serviceName, "error", err)
 		return nil, fmt.Errorf("failed to list node names: %w", err)
 	}
 	return names, nil
 }
 
-// ListNodeServices returns every service name of the tenant's tasks in byte
+// ListNodeServices returns the distinct service names of the nodes ListNodes
+// lists: the nodes of the tenant's live release whose type a release builds
+// (builtNodeTypeNames), a service whose nodes never ran included, in byte
 // order. COLLATE "C" keeps the order independent of the database's locale
 // (en_US, for one, ignores '-'), so every install lists services the same way.
 func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
 	const query = `
-		SELECT DISTINCT service_name COLLATE "C" AS service_name
-		FROM tasks
-		WHERE tenant_id = $1
+		SELECT DISTINCT n.service_name COLLATE "C" AS service_name
+		FROM live_release l
+		JOIN topology_nodes n
+		  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
+		WHERE l.tenant_id = $1 AND n.node_type = ANY($2::text[])
 		ORDER BY service_name`
 	services := []string{}
-	if err := r.db.SelectContext(ctx, &services, query, r.tenantID); err != nil {
+	if err := r.db.SelectContext(ctx, &services, query, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
 		r.logger.Error("Failed to list node services", "error", err)
 		return nil, fmt.Errorf("failed to list node services: %w", err)
 	}

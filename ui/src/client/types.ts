@@ -406,8 +406,9 @@ export interface NodesResponse {
   nodes: NodeSummary[];
 }
 
-// The distinct active service names, from GET /api/nodes/services. Feeds the
-// node list and Remediation-tab service filters.
+// The distinct service names of the nodes the node list lists, from GET
+// /api/nodes/services. Feeds the Nodes-tab and Remediation-tab service
+// filters.
 export interface ServicesResponse {
   services: string[];
 }

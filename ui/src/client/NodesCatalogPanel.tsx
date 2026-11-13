@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { NodeSummary, NodesResponse } from './types';
 import { dormantTitle, formatDuration, formatRelative } from './node-helpers';
 import { taskPillClass } from './detail-page-helpers';
+import { fetchNodeServices } from './node-api';
 
 const PAGE = 50;
 
@@ -45,6 +46,7 @@ export default function NodesCatalogPanel() {
   // empty table reads as loading rather than as "no nodes".
   const [loading, setLoading] = useState(true);
   const [nameOptions, setNameOptions] = useState<string[]>([]);
+  const [services, setServices] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const genRef = useRef(0);
 
@@ -95,7 +97,14 @@ export default function NodesCatalogPanel() {
       .catch(() => { /* autocomplete is best-effort */ });
   }, [service]);
 
-  const services = Array.from(new Set(nodes.map(n => n.service_name))).sort();
+  // The Service filter offers every service with a node in the list, a
+  // service whose nodes never ran included, independent of the loaded page
+  // and of the chosen service. Fetched once on mount; a failure leaves only
+  // "all".
+  useEffect(() => {
+    fetchNodeServices().then(setServices).catch(() => setServices([]));
+  }, []);
+
   const canLoadMore = nodes.length < total;
   // The test operation lists only the nodes with tests, so it narrows the list
   // as the other filters do.

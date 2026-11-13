@@ -2,7 +2,6 @@ package runservice
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,9 +42,7 @@ func (s *Server) GetScheduleGraph(ctx context.Context, req *runv1.GetScheduleGra
 			NodeType:     n.NodeType,
 			ScheduleName: n.ScheduleName,
 			Dormant:      n.IsDormant(),
-		}
-		if n.LastRunAt != nil {
-			node.LastRunAt = n.LastRunAt.UTC().Format(time.RFC3339)
+			LastRunAt:    rfc3339OrEmpty(n.LastRunAt),
 		}
 		nodes = append(nodes, node)
 	}

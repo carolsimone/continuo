@@ -264,23 +264,31 @@ func dormantRelease(t *testing.T, db *sqlx.DB, extra ...topology.NodeSpec) strin
 	return tenant
 }
 
-// insertNodeRun stores a run of tenant created at createdAt holding one task,
-// created with the run, of each node key, and deletes the run and its tasks
-// when the test ends.
+// insertNodeRun stores a run of tenant created at createdAt holding one run
+// task, created with the run, of each node key, of service svc, and deletes
+// the run and its tasks when the test ends.
 func insertNodeRun(t *testing.T, db *sqlx.DB, tenant string, createdAt time.Time, nodeKeys ...string) {
+	t.Helper()
+	insertNodeRunOf(t, db, tenant, "svc", "run", createdAt, nodeKeys...)
+}
+
+// insertNodeRunOf stores a run of operation op of tenant created at createdAt
+// holding one task of op, created with the run, of each node key, of service,
+// and deletes the run and its tasks when the test ends.
+func insertNodeRunOf(t *testing.T, db *sqlx.DB, tenant, service, op string, createdAt time.Time, nodeKeys ...string) {
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at)
-		VALUES ($1, $2, $3, 'succeeded', $4)`, tenant, runID, "node-"+runID.String()[:8], createdAt)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, operation)
+		VALUES ($1, $2, $3, 'succeeded', $4, $5)`, tenant, runID, "node-"+runID.String()[:8], createdAt, op)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenant, runID) })
 	for _, k := range nodeKeys {
 		schema, table, _ := strings.Cut(k, ".")
 		_, err := db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
-			VALUES ($1, $2, $3, $4, 'svc', $5, $6, $7, 'succeeded', 2, $8)`,
-			tenant, uuid.New(), runID, createdAt, schema, table, "job-"+uuid.NewString()[:8], k)
+			INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, node_key, operation)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'succeeded', 2, $9, $10)`,
+			tenant, uuid.New(), runID, createdAt, service, schema, table, "job-"+uuid.NewString()[:8], k, op)
 		require.NoError(t, err)
 	}
 }
@@ -314,6 +322,53 @@ func TestGraph_ReturnsADormantUpstreamWithItsLastRun(t *testing.T) {
 	for _, n := range []topology.ScheduleGraphNode{external, a, up} {
 		assert.False(t, n.IsDormant(), "%s", n.Key)
 		assert.Nil(t, n.LastRunAt, "%s is not dormant, so it carries no last run", n.Key)
+	}
+}
+
+// A dormant node's last run is its newest run or full refresh, on the schedule
+// graph and on the node list alike: a test of the node is no run of it. A node
+// whose only task is a test reads as never run on both, and a test newer than
+// a node's run leaves the run its last run.
+func TestLastRunOfADormantNode_IsItsNewestRunOnTheGraphAndTheNodeList(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1",
+		graphSpec("a", "dbt-model", "daily", "test_only", "run_then_test", "refreshed"),
+		graphSpec("test_only", "dbt-model", ""),
+		graphSpec("run_then_test", "dbt-model", ""),
+		graphSpec("refreshed", "dbt-model", "")))
+	require.NoError(t, err)
+	makeTenantLive(t, db, tenant, "rel-1", 1)
+	// graphSpec gives a node of no schedule the service "svc-".
+	ran := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	refreshed := ran.Add(time.Hour)
+	insertNodeRunOf(t, db, tenant, "svc-", "test", ran.Add(-time.Hour), "stg.test_only")
+	insertNodeRunOf(t, db, tenant, "svc-", "run", ran, "stg.run_then_test")
+	insertNodeRunOf(t, db, tenant, "svc-", "test", ran.Add(2*time.Hour), "stg.run_then_test")
+	insertNodeRunOf(t, db, tenant, "svc-", "full_refresh", refreshed, "stg.refreshed")
+
+	g, err := postgres.NewScheduleGraphRepository(db).Graph(ctx, tenant, "daily")
+	require.NoError(t, err)
+	onGraph := map[string]*time.Time{}
+	for _, n := range g.Nodes {
+		onGraph[n.TableName] = n.LastRunAt
+	}
+	listed, _, err := postgres.NewNodeRunRepository(db, tenant, discardLogger()).
+		ListNodes(ctx, "", "", model.OperationRun, true, 50, 0)
+	require.NoError(t, err)
+	onList := map[string]*time.Time{}
+	for _, n := range listed {
+		onList[n.TableName] = n.LastRunAt
+	}
+
+	for name, lastRuns := range map[string]map[string]*time.Time{"graph": onGraph, "node list": onList} {
+		require.Contains(t, lastRuns, "test_only", name)
+		assert.Nil(t, lastRuns["test_only"], "%s: a test is no run of the node", name)
+		require.NotNil(t, lastRuns["run_then_test"], name)
+		assert.True(t, ran.Equal(*lastRuns["run_then_test"]), "%s: the run, not the newer test: got %s", name, lastRuns["run_then_test"])
+		require.NotNil(t, lastRuns["refreshed"], name)
+		assert.True(t, refreshed.Equal(*lastRuns["refreshed"]), "%s: a full refresh is a run: got %s", name, lastRuns["refreshed"])
 	}
 }
 

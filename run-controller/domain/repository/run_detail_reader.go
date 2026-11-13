@@ -48,12 +48,13 @@ type NodeReader interface {
 	// no live release has no node.
 	ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error)
 
-	// ListNodeNames returns the distinct table names of nodes that have run,
-	// sorted, only serviceName's when it is not empty.
+	// ListNodeNames returns the distinct table names of the nodes ListNodes
+	// lists (the live release's nodes that a release builds, a node that
+	// never ran included), sorted, only serviceName's when it is not empty.
 	ListNodeNames(ctx context.Context, tenantID, serviceName string) ([]string, error)
 
-	// ListNodeServices returns the distinct service names of nodes that have
-	// run, sorted.
+	// ListNodeServices returns the distinct service names of the nodes
+	// ListNodes lists, a service whose nodes never ran included, sorted.
 	ListNodeServices(ctx context.Context, tenantID string) ([]string, error)
 }
 

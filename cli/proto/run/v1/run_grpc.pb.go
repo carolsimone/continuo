@@ -289,15 +289,18 @@ type RunServiceClient interface {
 	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
-	// ListNodeNames returns the distinct table names of nodes that have run,
-	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated node list).
+	// ListNodeNames returns the distinct table names of the nodes ListNodes
+	// lists (the live release's nodes that continuo builds, a node that never
+	// ran included), optionally filtered by service. It powers the node search
+	// autocomplete (the complete name list, independent of the paginated node
+	// list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the node list and remediation service filters (the complete service
-	// list, independent of the paginated node list).
+	// ListNodeServices returns the distinct service names of the nodes ListNodes
+	// lists, a service whose nodes never ran included. It powers the node list
+	// and remediation service filters (the complete service list, independent of
+	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
@@ -856,15 +859,18 @@ type RunServiceServer interface {
 	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
-	// ListNodeNames returns the distinct table names of nodes that have run,
-	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated node list).
+	// ListNodeNames returns the distinct table names of the nodes ListNodes
+	// lists (the live release's nodes that continuo builds, a node that never
+	// ran included), optionally filtered by service. It powers the node search
+	// autocomplete (the complete name list, independent of the paginated node
+	// list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the node list and remediation service filters (the complete service
-	// list, independent of the paginated node list).
+	// ListNodeServices returns the distinct service names of the nodes ListNodes
+	// lists, a service whose nodes never ran included. It powers the node list
+	// and remediation service filters (the complete service list, independent of
+	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five

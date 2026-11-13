@@ -174,9 +174,9 @@ func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 		"last success durations: %v", scans)
 }
 
-// The schedule graph's read of the last run of its dormant nodes probes tasks
-// by tenant and node key, newest first, and reads each task's run by its
-// primary key, on an analysed 2,000-task run: no table is read whole, so the
+// The schedule graph's read of the last run of its dormant nodes, in the run
+// dimension, probes tasks by tenant and node key, newest first, and reads each
+// task's run by its primary key, on an analysed 2,000-task run: no table is read whole, so the
 // read follows the number of dormant nodes, not the size of the task history.
 func TestPlanShape_LastRunsProbeTheNodeIndex(t *testing.T) {
 	db := newTestDB(t)
@@ -186,7 +186,7 @@ func TestPlanShape_LastRunsProbeTheNodeIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	scans := planScans(t, postgres.LastRunsQueryForTest, tenant,
-		pq.Array([]string{"bench.n00_0000", "bench.n10_0000", "bench.never"}))
+		pq.Array([]string{"bench.n00_0000", "bench.n10_0000", "bench.never"}), "run")
 	assert.Empty(t, seqScansOf(scans), "last runs: %v", scans)
 	assert.Contains(t, indexesOf(scans), "idx_tasks_node_key_created", "last runs: %v", scans)
 	assert.Contains(t, indexesOf(scans), "runs_pkey", "last runs: %v", scans)

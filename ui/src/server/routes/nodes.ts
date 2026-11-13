@@ -69,7 +69,9 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /api/nodes/names?service= — distinct node table names for search autocomplete
+  // GET /api/nodes/names?service= — the distinct table names of the nodes the
+  // node list lists (the live release's nodes continuo builds), for the search
+  // autocomplete
   router.get('/names', (req, res) => {
     const service = typeof req.query.service === 'string' ? req.query.service : '';
     runClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
@@ -78,9 +80,10 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /api/nodes/services — distinct active service names, for the node list
-  // and Remediation-tab service filters. Backed by the ListNodeServices run-controller
-  // read (a single DISTINCT query), independent of the paginated node list.
+  // GET /api/nodes/services — the distinct service names of the nodes the node
+  // list lists, for the Nodes-tab and Remediation-tab service filters. Backed
+  // by the ListNodeServices run-controller read (a single DISTINCT query),
+  // independent of the paginated node list.
   router.get('/services', (_req, res) => {
     runClient.listNodeServices({}, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });

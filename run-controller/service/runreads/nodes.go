@@ -75,14 +75,14 @@ func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName str
 	return out, total, nil
 }
 
-// ListNodeNames returns the distinct table names of tenantID's nodes that have
-// run, only serviceName's when it is not empty.
+// ListNodeNames returns the distinct table names of the nodes ListNodes lists
+// for tenantID, only serviceName's when it is not empty.
 func (n *Nodes) ListNodeNames(ctx context.Context, tenantID, serviceName string) ([]string, error) {
 	return n.nodes.ListNodeNames(ctx, tenantID, serviceName)
 }
 
-// ListNodeServices returns the distinct service names of tenantID's nodes that
-// have run.
+// ListNodeServices returns the distinct service names of the nodes ListNodes
+// lists for tenantID.
 func (n *Nodes) ListNodeServices(ctx context.Context, tenantID string) ([]string, error) {
 	return n.nodes.ListNodeServices(ctx, tenantID)
 }

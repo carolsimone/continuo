@@ -3222,7 +3222,7 @@ type ListNodesRequest struct {
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                                // page size; 0 means 50, clamped to at most 200
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                              // page offset; default 0
 	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`                         // run | test | build; empty means run
-	DormantOnly   bool                   `protobuf:"varint,6,opt,name=dormant_only,json=dormantOnly,proto3" json:"dormant_only,omitempty"` // true lists only dormant nodes, those with no schedule; false lists every node
+	DormantOnly   bool                   `protobuf:"varint,6,opt,name=dormant_only,json=dormantOnly,proto3" json:"dormant_only,omitempty"` // true lists only dormant nodes, the nodes continuo builds that have no schedule tag; false lists every node
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3362,12 +3362,12 @@ type NodeSummary struct {
 	P95DurationSec  int32                  `protobuf:"varint,7,opt,name=p95_duration_sec,json=p95DurationSec,proto3" json:"p95_duration_sec,omitempty"`   // -1 when no measurable task
 	FlakyRatePct    int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`         // percent of window tasks with attempt > 0; 0 when none
 	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // the latest task status: a task_status value
-	LastRunAt       string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                  // RFC3339 of the most recent task created_at
+	LastRunAt       string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                  // RFC3339, when the latest run with a task of the node in the operation was created (run includes full_refresh); empty when it has none
 	Operation       string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build
 	TimeoutSeconds  int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`    // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
 	TimeoutDeclared bool                   `protobuf:"varint,13,opt,name=timeout_declared,json=timeoutDeclared,proto3" json:"timeout_declared,omitempty"` // true when the live release declares the timeout of the node; false when its tasks get the install default
 	NodeType        string                 `protobuf:"bytes,14,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`                       // the type of the node in the live release, such as dbt-model
-	Dormant         bool                   `protobuf:"varint,15,opt,name=dormant,proto3" json:"dormant,omitempty"`                                        // true when the node has no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
+	Dormant         bool                   `protobuf:"varint,15,opt,name=dormant,proto3" json:"dormant,omitempty"`                                        // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4287,8 +4287,8 @@ type ScheduleGraphNode struct {
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	NodeType      string                 `protobuf:"bytes,4,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
 	ScheduleName  string                 `protobuf:"bytes,5,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the schedule the node belongs to, which differs from the requested one for an upstream node
-	Dormant       bool                   `protobuf:"varint,6,opt,name=dormant,proto3" json:"dormant,omitempty"`                              // true when the node has no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
-	LastRunAt     string                 `protobuf:"bytes,7,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`        // RFC3339, when the latest run with a task of the node was created; empty when the node never ran or is not dormant
+	Dormant       bool                   `protobuf:"varint,6,opt,name=dormant,proto3" json:"dormant,omitempty"`                              // true for a node continuo builds that has no schedule tag: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed
+	LastRunAt     string                 `protobuf:"bytes,7,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`        // RFC3339, when the latest run with a run or full_refresh task of the node was created, the last run ListNodes reports for operation run; empty when the node has no such task or is not dormant
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

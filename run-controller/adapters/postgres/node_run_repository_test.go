@@ -672,141 +672,129 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	assert.Equal(t, "fct_orders", hitCI[0].TableName)
 }
 
-// TestNodeRunRepository_ListNodeNames returns distinct table names (deduped
-// across schemas), service-filtered, sorted ascending.
+// historyTask stores, for tenant, a run holding one succeeded run task on the
+// node service.schema.table, whatever release holds the node. The run goes
+// with the tenant's runs when the test ends.
+func historyTask(t *testing.T, db *sqlx.DB, tenant, service, schema, table string) {
+	t.Helper()
+	runID := uuid.New()
+	_, err := db.Exec(`INSERT INTO runs (tenant_id, run_id, schedule_name, status, operation)
+		VALUES ($1, $2, 'history', 'succeeded', 'run')`, tenant, runID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name,
+	                                    job_name, status, max_retries, operation, node_key)
+		VALUES ($1, $2, $3, $4, $5, $6, 'j', 'succeeded', 3, 'run', $7)`,
+		tenant, uuid.New(), runID, service, schema, table, schema+"."+table)
+	require.NoError(t, err)
+}
+
+// nameSuggestionTenant stores a tenant whose live release holds the built
+// nodes svc-a.an.orders (scheduled, ran), svc-a.an.customers and
+// svc-a.marts.customers (one name in two schemas), the dormant
+// svc-a.an.dormant_never that never ran, and svc-b.an.revenue; besides those
+// it holds a dbt test of svc-a, an unknown-external table and a legacy
+// ingested row. An older release that is not live holds svc-a.an.dropped,
+// which ran, and svc-c.an.gone. It returns the tenant.
+func nameSuggestionTenant(t *testing.T, db *sqlx.DB) string {
+	t.Helper()
+	tenant := liveTenant(t, db,
+		liveNode{service: "svc-a", schema: "an", table: "orders", nodeType: "dbt-model", schedule: "daily"},
+		liveNode{service: "svc-a", schema: "an", table: "customers", nodeType: "dbt-model", schedule: "daily"},
+		liveNode{service: "svc-a", schema: "marts", table: "customers", nodeType: "dbt-snapshot", schedule: "daily"},
+		liveNode{service: "svc-a", schema: "an", table: "dormant_never", nodeType: "python-node"},
+		liveNode{service: "svc-b", schema: "an", table: "revenue", nodeType: "dbt-seed", schedule: "seed"},
+		liveNode{service: "svc-a", schema: "an", table: "not_null_orders_id", nodeType: "dbt-test", testCount: intPtr(1)},
+		liveNode{service: "svc-t", schema: "an", table: "only_a_test", nodeType: "dbt-test", testCount: intPtr(1)},
+		liveNode{schema: "raw", table: "events", nodeType: "unknown-external"},
+		liveNode{schema: "raw", table: "legacy", nodeType: "ingested"},
+	)
+	storeLiveNodes(t, db, tenant, "rel-old", 1,
+		liveNode{service: "svc-a", schema: "an", table: "dropped", nodeType: "dbt-model", schedule: "daily"},
+		liveNode{service: "svc-c", schema: "an", table: "gone", nodeType: "dbt-model", schedule: "daily"},
+	)
+	historyTask(t, db, tenant, "svc-a", "an", "orders")
+	historyTask(t, db, tenant, "svc-a", "an", "dropped")
+	historyTask(t, db, tenant, "svc-c", "an", "gone")
+	return tenant
+}
+
+// The name suggestions are the tables of the nodes the node list lists: every
+// node of the live release that continuo builds, a dormant node that never ran
+// included, one name per table across schemas, in byte order, of one service
+// when one is given. A dbt test, an unknown-external table, a legacy ingested
+// row and a node only an older release holds, whatever runs it had, are never
+// suggested, and neither is another tenant's node.
 func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskCollection(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	tenant := nameSuggestionTenant(t, db)
+	other := liveTenant(t, db, liveNode{service: "svc-a", schema: "an", table: "theirs", nodeType: "dbt-model"})
+	repo := postgres.NewNodeRunRepository(db, tenant, discardLogger())
 
-	svcA := "svc-names-a-" + uuid.New().String()[:8]
-	svcB := "svc-names-b-" + uuid.New().String()[:8]
-	mk := func(svc, schema, table string) {
-		sid := uuid.New()
-		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-			TenantID:   pkgevents.DefaultTenantID,
-			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
-		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TenantID: pkgevents.DefaultTenantID,
-			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-	}
-	// svcA: orders + customers (customers in two schemas -> dedup to one)
-	mk(svcA, "an", "orders")
-	mk(svcA, "an", "customers")
-	mk(svcA, "marts", "customers")
-	// svcB: revenue
-	mk(svcB, "an", "revenue")
-
-	// service filter -> only svcA names, deduped + sorted
-	namesA, err := repo.ListNodeNames(ctx, svcA)
+	names, err := repo.ListNodeNames(ctx, "")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"customers", "orders"}, namesA)
+	assert.Equal(t, []string{"customers", "dormant_never", "orders", "revenue"}, names)
 
-	// filtering by svcB keeps the assertion deterministic in a shared DB
-	namesB, err := repo.ListNodeNames(ctx, svcB)
+	namesA, err := repo.ListNodeNames(ctx, "svc-a")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"customers", "dormant_never", "orders"}, namesA)
+
+	namesB, err := repo.ListNodeNames(ctx, "svc-b")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"revenue"}, namesB)
+
+	gone, err := repo.ListNodeNames(ctx, "svc-c")
+	require.NoError(t, err)
+	assert.Empty(t, gone, "a service only an older release holds has no name")
+
+	theirs, err := postgres.NewNodeRunRepository(db, other, discardLogger()).ListNodeNames(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"theirs"}, theirs, "each tenant reads its own live release")
+
+	none, err := postgres.NewNodeRunRepository(db, "nodes-no-release-"+uuid.NewString()[:8], discardLogger()).ListNodeNames(ctx, "")
+	require.NoError(t, err)
+	assert.Empty(t, none, "a tenant with no live release has no node")
 }
 
-// TestNodeRunRepository_ListNodeServices returns the distinct service names of
-// nodes that have run, deduped and sorted ascending. The query has no service
-// filter, so on a shared DB the seeded services must appear as a deduped,
-// sorted subset rather than the whole result.
+// The services are those of the nodes the node list lists, a service whose
+// only node never ran included, each once. A service with only a dbt test and
+// a service only an older release holds are not listed, and neither is
+// another tenant's service.
 func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskCollection(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	tenant := nameSuggestionTenant(t, db)
+	other := liveTenant(t, db, liveNode{service: "svc-theirs", schema: "an", table: "theirs", nodeType: "dbt-model"})
 
-	svcA := "svc-list-a-" + uuid.New().String()[:8]
-	svcB := "svc-list-b-" + uuid.New().String()[:8]
-	mk := func(svc, schema, table string) {
-		sid := uuid.New()
-		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-			TenantID:   pkgevents.DefaultTenantID,
-			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
-		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TenantID: pkgevents.DefaultTenantID,
-			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-	}
-	// svcA seeded by two nodes (must dedupe to one entry); svcB by one.
-	mk(svcA, "an", "orders")
-	mk(svcA, "an", "customers")
-	mk(svcB, "an", "revenue")
-
-	services, err := repo.ListNodeServices(ctx)
+	services, err := postgres.NewNodeRunRepository(db, tenant, discardLogger()).ListNodeServices(ctx)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"svc-a", "svc-b"}, services)
 
-	// Deduped and sorted ascending across the whole result.
-	assert.IsIncreasing(t, services)
-	seen := map[string]int{}
-	for _, s := range services {
-		seen[s]++
-	}
-	for s, n := range seen {
-		assert.Equalf(t, 1, n, "service %s appears more than once", s)
-	}
-	// The seeded services are present, each exactly once.
-	assert.Equal(t, 1, seen[svcA])
-	assert.Equal(t, 1, seen[svcB])
+	theirs, err := postgres.NewNodeRunRepository(db, other, discardLogger()).ListNodeServices(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"svc-theirs"}, theirs)
 }
 
 // TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale verifies
-// the service list is sorted by byte value, not by the database's collation.
-// A locale collation such as en_US ignores '-', so it would put "svca…" before
-// "svc-z…"; byte order puts '-' (0x2d) before 'a' (0x61).
+// the service and name lists are sorted by byte value, not by the database's
+// collation. A locale collation such as en_US ignores '-', so it would put
+// "svca" before "svc-z"; byte order puts '-' (0x2d) before 'a' (0x61).
 func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewRunRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskCollection(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
-
-	suffix := uuid.New().String()[:8]
-	hyphenated := "svc-z" + suffix
-	plain := "svca" + suffix
-	for _, svc := range []string{plain, hyphenated} {
-		sid := uuid.New()
-		require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-			TenantID:   pkgevents.DefaultTenantID,
-			ScheduleID: sid, ScheduleName: "s", Status: run.RunStatusSucceeded, Kind: "cron",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
-		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
-			TenantID: pkgevents.DefaultTenantID,
-			TaskID:   uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "t",
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
-			CreatedAt: time.Now().Add(-time.Minute),
-		}))
-	}
+	tenant := liveTenant(t, db,
+		liveNode{service: "svca", schema: "an", table: "tablea", nodeType: "dbt-model"},
+		liveNode{service: "svc-z", schema: "an", table: "table-z", nodeType: "dbt-model"},
+	)
+	repo := postgres.NewNodeRunRepository(db, tenant, discardLogger())
 
 	services, err := repo.ListNodeServices(ctx)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"svc-z", "svca"}, services)
 
-	idx := map[string]int{}
-	for i, s := range services {
-		idx[s] = i
-	}
-	require.Contains(t, idx, hyphenated)
-	require.Contains(t, idx, plain)
-	assert.Less(t, idx[hyphenated], idx[plain], "byte order puts %q before %q", hyphenated, plain)
-	assert.IsIncreasing(t, services)
+	names, err := repo.ListNodeNames(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"table-z", "tablea"}, names)
 }
 
 // TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal verifies an empty page
@@ -1146,10 +1134,18 @@ func storeLiveNodes(t *testing.T, db *sqlx.DB, tenant, release string, promotion
 // releases are deleted when the test ends.
 func nodeListTenant(t *testing.T, db *sqlx.DB, nodes ...liveNode) string {
 	t.Helper()
-	tenant := "nodes-" + uuid.NewString()[:8]
 	for i := range nodes {
 		nodes[i].service, nodes[i].schema = "svc", "an"
 	}
+	return liveTenant(t, db, nodes...)
+}
+
+// liveTenant returns a tenant no other test uses whose live release, rel-live
+// at promotion seq 2, holds nodes as given. The tenant's runs and releases
+// are deleted when the test ends.
+func liveTenant(t *testing.T, db *sqlx.DB, nodes ...liveNode) string {
+	t.Helper()
+	tenant := "nodes-" + uuid.NewString()[:8]
 	storeLiveNodes(t, db, tenant, "rel-live", 2, nodes...)
 	// registered after the release's own cleanup, so it runs first and frees
 	// the release the live pointer refers to
@@ -1284,42 +1280,60 @@ func TestListNodes_LeavesOutALegacyIngestedRow(t *testing.T) {
 	assert.Empty(t, dormant)
 }
 
-// dormantOnly keeps the nodes of no schedule whose type a release builds,
-// whether or not they ran; without it, every built node is listed and only
-// those of no schedule are dormant.
+// The dormant filter is model.IsDormant in SQL. The live release holds a
+// scheduled model, one node of no schedule of every declared node type and a
+// legacy ingested row of no schedule: the dormant filter lists exactly the
+// types IsDormant calls dormant, the full list adds the scheduled model, and
+// each row's dormant flag is IsDormant of its type and schedule. The dormant
+// node that ran comes first, with its stats.
 func TestListNodes_DormantOnly(t *testing.T) {
 	db := newTestDB(t)
-	tenant := nodeListTenant(t, db,
-		liveNode{table: "scheduled", nodeType: "dbt-model", schedule: "daily"},
-		liveNode{table: "dormant_ran", nodeType: "dbt-snapshot"},
-		liveNode{table: "dormant_never", nodeType: "python-node"},
-		liveNode{table: "raw_events", nodeType: "unknown-external"},
-		liveNode{table: "not_null_x", nodeType: "dbt-test", testCount: intPtr(1)},
-	)
+	nodes := []liveNode{{table: "scheduled", nodeType: "dbt-model", schedule: "daily"}}
+	var wantDormant []string
+	wantListed := []string{"scheduled"}
+	for _, nt := range model.NodeTypes() {
+		table := "n_" + strings.ReplaceAll(string(nt), "-", "_")
+		nodes = append(nodes, liveNode{table: table, nodeType: string(nt), testCount: intPtr(1)})
+		if model.IsDormant(nt, "") {
+			wantDormant = append(wantDormant, table)
+		}
+		if nt.IsBuilt() {
+			wantListed = append(wantListed, table)
+		}
+	}
+	nodes = append(nodes, liveNode{table: "legacy", nodeType: "ingested"})
+	require.NotEmpty(t, wantDormant)
+	scheduleOf := map[string]string{}
+	for _, n := range nodes {
+		scheduleOf[n.table] = n.schedule
+	}
+	tenant := nodeListTenant(t, db, nodes...)
+	const ran = "n_dbt_snapshot"
+	require.Contains(t, wantDormant, ran)
 	nodeListTask(t, db, tenant, "scheduled", "run", run.TaskStatusSucceeded, 5)
-	nodeListTask(t, db, tenant, "dormant_ran", "run", run.TaskStatusFailed, 10)
+	nodeListTask(t, db, tenant, ran, "run", run.TaskStatusFailed, 10)
 	repo := postgres.NewNodeRunRepository(db, tenant, discardLogger())
 	ctx := context.Background()
 
 	dormant, total, err := repo.ListNodes(ctx, "", "", model.OperationRun, true, 50, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 2, total)
-	require.Equal(t, []string{"dormant_ran", "dormant_never"}, tablesOf(dormant))
-	assert.True(t, dormant[0].Dormant)
-	assert.Equal(t, "dbt-snapshot", dormant[0].NodeType)
+	assert.Equal(t, len(wantDormant), total)
+	require.ElementsMatch(t, wantDormant, tablesOf(dormant))
+	assert.Equal(t, ran, dormant[0].TableName, "the dormant node that ran comes first")
 	assert.Equal(t, 1, dormant[0].RunCount)
 	assert.Equal(t, "failed", dormant[0].LastStatus)
-	assert.True(t, dormant[1].Dormant)
-	assert.Equal(t, "python-node", dormant[1].NodeType)
-	assert.Zero(t, dormant[1].RunCount)
+	for _, n := range dormant {
+		assert.True(t, n.Dormant, n.TableName)
+	}
 
 	all, total, err := repo.ListNodes(ctx, "", "", model.OperationRun, false, 50, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 3, total)
-	require.Equal(t, []string{"scheduled", "dormant_ran", "dormant_never"}, tablesOf(all))
-	assert.False(t, all[0].Dormant, "a node with a schedule is not dormant")
-	assert.True(t, all[1].Dormant)
-	assert.True(t, all[2].Dormant)
+	assert.Equal(t, len(wantListed), total)
+	require.ElementsMatch(t, wantListed, tablesOf(all))
+	for _, n := range all {
+		assert.Equal(t, model.IsDormant(model.NodeType(n.NodeType), scheduleOf[n.TableName]), n.Dormant,
+			"%s: the dormant flag is model.IsDormant", n.TableName)
+	}
 
 	filtered, total, err := repo.ListNodes(ctx, "scheduled", "", model.OperationRun, true, 50, 0)
 	require.NoError(t, err)

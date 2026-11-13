@@ -107,10 +107,11 @@ func (r *ScheduleGraphRepository) Graph(ctx context.Context, tenantID, scheduleN
 }
 
 // lastRunsQuery reads, for each node key in $2, the creation time of the run
-// of the newest task of that node in tenant $1: one probe of
+// of the newest task of that node in tenant $1 of the operation dimension $3
+// (listedOperation, the dimension the node list reads): one probe of
 // idx_tasks_node_key_created per key, then the run by its key. Of two tasks
 // of a node created at the same instant, the one of the higher run id is the
-// newest. A key no task of the tenant names yields no row.
+// newest. A key no task of the tenant and the dimension names yields no row.
 const lastRunsQuery = `
 	SELECT k.node_key, s.created_at
 	FROM unnest($2::text[]) AS k(node_key)
@@ -118,15 +119,17 @@ const lastRunsQuery = `
 	    SELECT t.run_id
 	    FROM tasks t
 	    WHERE t.tenant_id = $1 AND t.node_key = k.node_key
+	      AND ` + listedOperation + `
 	    ORDER BY t.created_at DESC, t.run_id DESC
 	    LIMIT 1
 	) newest
 	JOIN runs s ON s.tenant_id = $1 AND s.run_id = newest.run_id`
 
 // stampLastRuns sets the LastRunAt of each dormant node of nodes from one
-// lastRunsQuery over the dormant nodes' keys; a dormant node that never ran
-// and every other node keep a nil LastRunAt. Nodes with no dormant node among
-// them run no query.
+// lastRunsQuery over the dormant nodes' keys, in the run dimension: a run or a
+// full refresh of the node, the last run the node list reports too. A dormant
+// node with no such task and every other node keep a nil LastRunAt. Nodes
+// with no dormant node among them run no query.
 func (r *ScheduleGraphRepository) stampLastRuns(ctx context.Context, tenantID string, nodes []topology.ScheduleGraphNode) error {
 	var dormant []string
 	for _, n := range nodes {
@@ -141,7 +144,8 @@ func (r *ScheduleGraphRepository) stampLastRuns(ctx context.Context, tenantID st
 		NodeKey   string    `db:"node_key"`
 		CreatedAt time.Time `db:"created_at"`
 	}
-	if err := sqlx.SelectContext(ctx, r.db, &rows, lastRunsQuery, tenantID, pq.Array(dormant)); err != nil {
+	if err := sqlx.SelectContext(ctx, r.db, &rows, lastRunsQuery, tenantID, pq.Array(dormant),
+		operationWithDefault(string(model.OperationRun))); err != nil {
 		return err
 	}
 	lastRun := make(map[topology.NodeKey]time.Time, len(rows))
@@ -157,9 +161,9 @@ func (r *ScheduleGraphRepository) stampLastRuns(ctx context.Context, tenantID st
 }
 
 // builtNodeTypeNames returns, as topology_nodes stores them, the node types
-// model.BuiltNodeTypes names: the only types a dormant node can have. A row
-// of any other type, an unknown-external node under any of its names
-// included, is never dormant.
+// model.BuiltNodeTypes names: the types the node list, its name suggestions
+// and its service list read. A row of any other type, an unknown-external
+// node under any of its names or a dbt test, is never listed.
 func builtNodeTypeNames() []string {
 	types := model.BuiltNodeTypes()
 	names := make([]string, 0, len(types))
@@ -169,22 +173,45 @@ func builtNodeTypeNames() []string {
 	return names
 }
 
+// dormantNodeTypeNames returns, as topology_nodes stores them, the node types
+// t of model.NodeTypes for which model.IsDormant(t, "") holds: the types a
+// node of no schedule is dormant with. A row of any other type, an
+// unknown-external node under any of its names included, is never dormant.
+func dormantNodeTypeNames() []string {
+	var names []string
+	for _, t := range model.NodeTypes() {
+		if model.IsDormant(t, "") {
+			names = append(names, string(t))
+		}
+	}
+	return names
+}
+
+// dormantNodeCondition is model.IsDormant in SQL, over the topology_nodes row
+// n: an empty schedule and a node type among the text array typesParam (the
+// query's parameter bound to dormantNodeTypeNames). summariesQuery and
+// listNodesQuery both use it, so the dormant count, the dormant filter and
+// each row's dormant flag agree.
+func dormantNodeCondition(typesParam string) string {
+	return "(n.schedule_name = '' AND n.node_type = ANY(" + typesParam + "::text[]))"
+}
+
 // summariesQuery reads tenant $1's live release as schedules in one statement,
 // so the schedules and the dormant count are of the same release whatever
 // promotion commits during the read. Each row is one schedule, counted by
 // liveScheduleModelCounts (the count LiveScheduleModelRepository reads), with
 // the time the release was loaded and the release's dormant node count: the
-// nodes of no schedule whose type is among $2 (builtNodeTypeNames), the rule
-// model.IsDormant states. A live release with no schedule yields one row with
-// a NULL schedule name, and no live release yields no row.
-const summariesQuery = `
+// nodes dormantNodeCondition keeps, with $2 bound to dormantNodeTypeNames. A
+// live release with no schedule yields one row with a NULL schedule name, and
+// no live release yields no row.
+var summariesQuery = `
 	WITH counts AS (` + liveScheduleModelCounts + `),
 	dormant AS (
 	    SELECT count(*)::int AS nodes
 	    FROM live_release live
 	    JOIN topology_nodes n
-	      ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id AND n.schedule_name = ''
-	    WHERE live.tenant_id = $1 AND n.node_type = ANY($2::text[])
+	      ON n.tenant_id = live.tenant_id AND n.release_id = live.release_id
+	    WHERE live.tenant_id = $1 AND ` + dormantNodeCondition("$2") + `
 	)
 	SELECT c.schedule_name, c.models AS node_count, rel.loaded_at, d.nodes AS dormant_node_count
 	FROM live_release live
@@ -204,7 +231,7 @@ func (r *ScheduleGraphRepository) Summaries(ctx context.Context, tenantID string
 		LoadedAt         time.Time      `db:"loaded_at"`
 		DormantNodeCount int            `db:"dormant_node_count"`
 	}
-	if err := sqlx.SelectContext(ctx, r.db, &rows, summariesQuery, tenantID, pq.Array(builtNodeTypeNames())); err != nil {
+	if err := sqlx.SelectContext(ctx, r.db, &rows, summariesQuery, tenantID, pq.Array(dormantNodeTypeNames())); err != nil {
 		return topology.ScheduleSummaries{}, fmt.Errorf("count the nodes per schedule of tenant %s: %w", tenantID, err)
 	}
 	var out topology.ScheduleSummaries

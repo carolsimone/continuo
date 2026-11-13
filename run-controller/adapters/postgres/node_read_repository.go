@@ -33,12 +33,13 @@ func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, se
 	return r.nodeRunsOf(tenantID).ListNodes(ctx, search, serviceName, operation, dormantOnly, limit, offset)
 }
 
-// ListNodeNames returns the distinct table names of nodes that have run.
+// ListNodeNames returns the distinct table names of the nodes ListNodes lists.
 func (r *NodeReadRepository) ListNodeNames(ctx context.Context, tenantID, serviceName string) ([]string, error) {
 	return r.nodeRunsOf(tenantID).ListNodeNames(ctx, serviceName)
 }
 
-// ListNodeServices returns the distinct service names of nodes that have run.
+// ListNodeServices returns the distinct service names of the nodes ListNodes
+// lists.
 func (r *NodeReadRepository) ListNodeServices(ctx context.Context, tenantID string) ([]string, error) {
 	return r.nodeRunsOf(tenantID).ListNodeServices(ctx)
 }

@@ -122,7 +122,7 @@ func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*r
 	return &runv1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil
 }
 
-// ListNodeNames returns the distinct table names of nodes that have run.
+// ListNodeNames returns the distinct table names of the nodes ListNodes lists.
 func (s *Server) ListNodeNames(ctx context.Context, req *runv1.ListNodeNamesRequest) (*runv1.ListNodeNamesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -135,7 +135,8 @@ func (s *Server) ListNodeNames(ctx context.Context, req *runv1.ListNodeNamesRequ
 	return &runv1.ListNodeNamesResponse{TableNames: names}, nil
 }
 
-// ListNodeServices returns the distinct service names of nodes that have run.
+// ListNodeServices returns the distinct service names of the nodes ListNodes
+// lists.
 func (s *Server) ListNodeServices(ctx context.Context, _ *runv1.ListNodeServicesRequest) (*runv1.ListNodeServicesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {

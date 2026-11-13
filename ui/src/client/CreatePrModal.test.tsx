@@ -9,6 +9,9 @@ import { ProposalDTO } from './types';
 vi.mock('./remediation-api', () => ({
   fetchProposals: vi.fn(),
   createPullRequest: vi.fn(),
+}));
+
+vi.mock('./node-api', () => ({
   fetchNodeServices: vi.fn(),
 }));
 
@@ -16,7 +19,8 @@ vi.mock('./auth/AuthContext', () => ({
   useCurrentUser: vi.fn(),
 }));
 
-import { fetchProposals, createPullRequest, fetchNodeServices } from './remediation-api';
+import { fetchProposals, createPullRequest } from './remediation-api';
+import { fetchNodeServices } from './node-api';
 import { useCurrentUser } from './auth/AuthContext';
 
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;

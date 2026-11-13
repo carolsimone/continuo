@@ -52,7 +52,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
   - A system relation never becomes an unknown-external node.
   - No values change is needed.
 - **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it, except to rebuild it: any run whose load of a seed drops the seed's table rebuilds the dormant views and materialized views below that seed. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
-  - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run.
+  - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run. The last run is its newest run or full refresh, as on the Nodes tab: a test of the node is not a run of it.
   - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
   - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
   - No values change is needed.
@@ -89,6 +89,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
   - To keep a model out of continuo, leave out its `meta.owner` or tag it `local_stub`.
 - **The Nodes tab lists every node of the live release.** TL;DR: a node that never ran is listed too, after the nodes that ran, with `never` and dashes. A node the live release does not hold is not listed, whatever runs it had.
   - A `Dormant only` filter lists only the dormant nodes.
+  - The Service filter offers every service with a listed node, and the search suggests every listed table, a node that never ran included. A node the live release does not hold is no longer suggested.
   - `continuo node list` lists the same nodes. A node that never ran has `task_count` 0 and no `last_run_at`.
 - **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes (the first five, then how many more): run them, then release again.
   - When a node built from the release's code fails too (a changed node, or a node below one), the reason stays `validation_failed`, and the message also names the copies.

@@ -14,8 +14,9 @@ import (
 )
 
 // RunService serves the reads of a run StartRun created, and treats another
-// tenant's run as one that does not exist. The node list holds the live
-// release's dormant node, which never ran, beside the run's node.
+// tenant's run as one that does not exist. The node list and the name
+// suggestions hold the live release's dormant node, which never ran, beside
+// the run's node.
 func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
@@ -80,6 +81,7 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	names, err := runClient.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{ServiceName: task.GetServiceName()})
 	require.NoError(t, err)
 	assert.Contains(t, names.GetTableNames(), task.GetTableName())
+	assert.Contains(t, names.GetTableNames(), "run_service_reads_dormant", "a dormant node that never ran is suggested")
 	services, err := runClient.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{})
 	require.NoError(t, err)
 	assert.Contains(t, services.GetServiceNames(), task.GetServiceName())
