@@ -38,7 +38,7 @@ type RunClient interface {
 	TriggerNodeRun(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error)
 
 	ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*runv1.GetScheduleGraphResponse, error)
@@ -350,8 +350,10 @@ func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, service
 	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "build"), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "full_refresh"), actor)
+func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	req := singleNodeRequest(requestID, service, schema, table, sourceRunID, "full_refresh")
+	req.AcknowledgedDependents = acknowledged
+	return c.triggerSingleNode(ctx, req, actor)
 }
 
 func (c *runGRPCClient) UpsertSchedule(ctx context.Context, actor string, req *runv1.UpsertScheduleRequest) (*runv1.UpsertScheduleResponse, error) {

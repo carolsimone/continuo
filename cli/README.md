@@ -99,7 +99,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `run show <run-id>` | Shows one run and, for each task, its status, attempt, failure, and the run it waits for if another run holds its node. | |
+| `run show <run-id>` | Shows one run and, for each task, its operation, why the planner chose it, its status, attempt, failure, and the run it waits for if another run holds its node. | |
 | `run graph <run-id>` | Shows the run's nodes with their status, and the dependencies between them. | |
 | `run attempts <run-id> [task-id]` | Lists the attempts of the run's tasks, or of one task: job name, status, exit code, times and log location. | |
 | `run cancel <run-id> <reason>` | Cancels a run. It shows `cancelling` until its Jobs stop, then `cancelled`. Cancelling again changes nothing. | yes |
@@ -118,7 +118,7 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 | `node trigger <service> <schema> <table> [source-run-id]` | Starts a run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
 | `node test <service> <schema> <table> [source-run-id]` | The same, with `dbt test`. | yes |
 | `node build <service> <schema> <table> [source-run-id]` | The same, with `dbt build`. | yes |
-| `node full-refresh <service> <schema> <table> [source-run-id]` | The same, with `dbt --full-refresh`: rebuilds the model or seed from scratch. | yes |
+| `node full-refresh <service> <schema> <table> [source-run-id]` | The same, with `dbt --full-refresh`: rebuilds the model or seed from scratch. A seed's full refresh also rebuilds the continuo views that read it; `--acknowledge <schema>.<name>` (repeatable) names an object outside continuo that the refresh may drop. | yes |
 | `node versions <service> <schema> <table>` | Lists the code versions continuo recorded for the node, newest first, with their hashes. `--include-code` adds the SQL, and `--limit` caps the list (default 20). | |
 | `node diff <service> <schema> <table> --from N --to M` | Shows the SQL diff between two recorded versions, given by the `version_seq` numbers of `node versions`. Both flags are required. | |
 | `node upstream-changes <service> <schema> <table>` | Lists the latest code change of each ancestor of the node, with its distance (`depth`) and diff. `--depth` sets how far up to look (default 3, at most 10), and `--since` (a timestamp) hides older changes. | |

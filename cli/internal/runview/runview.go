@@ -46,12 +46,16 @@ type Run struct {
 	CancellationReason string `json:"cancellation_reason,omitempty"`
 }
 
-// Task is one node of a run. FailureClass and FailureReason are those of the
-// task's latest attempt and are empty when that attempt did not fail or the
+// Task is one node of a run. Operation is what the task executes (run, test,
+// build or full_refresh) and PlanReason is why the planner chose it for the
+// run, empty when it records none. FailureClass and FailureReason are those of
+// the task's latest attempt and are empty when that attempt did not fail or the
 // task has no attempt. WaitReason and WaitingOnRunID are empty when the task
 // waits for nothing besides its upstreams.
 type Task struct {
 	Node           string `json:"node"`
+	Operation      string `json:"operation"`
+	PlanReason     string `json:"plan_reason"`
 	Status         string `json:"status"`
 	Attempt        int32  `json:"attempt"`
 	FailureClass   string `json:"failure_class"`
@@ -94,6 +98,8 @@ func Load(ctx context.Context, r Reader, timeout time.Duration, runID string) (V
 	for _, t := range tasks {
 		task := Task{
 			Node:           Node(t.GetServiceName(), t.GetSchemaName(), t.GetTableName()),
+			Operation:      t.GetOperation(),
+			PlanReason:     t.GetPlanReason(),
 			Status:         t.GetStatus(),
 			Attempt:        t.GetAttempt(),
 			WaitReason:     t.GetWaitReason(),
@@ -186,7 +192,8 @@ func ToRun(r *runv1.Run) *Run {
 }
 
 // WriteHuman writes a text summary of the view: the run on one line, then one
-// line per task.
+// line per task. A task line names the operation when it is not run, and the
+// plan reason when the task has one.
 func (v View) WriteHuman(w io.Writer) error {
 	if v.Run == nil {
 		_, err := fmt.Fprintln(w, "no run")
@@ -197,6 +204,12 @@ func (v View) WriteHuman(w io.Writer) error {
 	}
 	for _, t := range v.Tasks {
 		line := fmt.Sprintf("  %s  %s  attempt %d", t.Node, t.Status, t.Attempt)
+		if t.Operation != "" && t.Operation != "run" {
+			line += "  " + t.Operation
+		}
+		if t.PlanReason != "" {
+			line += "  why: " + t.PlanReason
+		}
 		if t.FailureClass != "" {
 			line += fmt.Sprintf("  %s %s", t.FailureClass, t.FailureReason)
 		}

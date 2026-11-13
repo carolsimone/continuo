@@ -34,7 +34,8 @@ Output (stdout, JSON):
           "promotion_seq":number,"initiated_by":string,"created_at":string,
           "started_at":string,"completed_at":string,"last_progress_at":string,
           "cancelled_at":string,"cancelled_by":string,"cancellation_reason":string},
-   "tasks":[{"node":string,"status":string,"attempt":number,
+   "tasks":[{"node":string,"operation":string,"plan_reason":string,
+             "status":string,"attempt":number,
              "failure_class":string,"failure_reason":string,
              "wait_reason":string,"waiting_on_run_id":string}]}
   Timestamps are RFC3339 in UTC. failure_reason, release_id, initiated_by, the
@@ -46,7 +47,11 @@ Output (stdout, JSON):
   cancelling: a cancel was accepted and the run waits for its Jobs to stop.
   The run's failure_reason (stalled|empty_selection|invalid_node_type) is set only
   when the run failed without a failed task.
-  node is "<service>.<schema>.<table>". attempt is the 0-based number of the task's current attempt.
+  node is "<service>.<schema>.<table>". operation is the task's own operation,
+  one of run|test|build|full_refresh. plan_reason says why the planner chose the
+  task for this run (for example a seed's load reason, or a view rebuilt because
+  a seed's reload drops it) and is an empty string when none was recorded.
+  attempt is the 0-based number of the task's current attempt.
   status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   dispatched: an attempt was sent and not yet accepted; queued: the attempt
   was accepted and waits for a slot to run in; stopping: a stop was requested
@@ -67,7 +72,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"run":{"run_id":"string","schedule_name":"string","kind":"string","operation":"string","status":"string","failure_reason":"string","release_id":"string","promotion_seq":"number","initiated_by":"string","created_at":"string","started_at":"string","completed_at":"string","last_progress_at":"string","cancelled_at":"string","cancelled_by":"string","cancellation_reason":"string"},"tasks":[{"node":"string","status":"string","attempt":"number","failure_class":"string","failure_reason":"string","wait_reason":"string","waiting_on_run_id":"string"}]}`,
+			"output_schema": `{"run":{"run_id":"string","schedule_name":"string","kind":"string","operation":"string","status":"string","failure_reason":"string","release_id":"string","promotion_seq":"number","initiated_by":"string","created_at":"string","started_at":"string","completed_at":"string","last_progress_at":"string","cancelled_at":"string","cancelled_by":"string","cancellation_reason":"string"},"tasks":[{"node":"string","operation":"string","plan_reason":"string","status":"string","attempt":"number","failure_class":"string","failure_reason":"string","wait_reason":"string","waiting_on_run_id":"string"}]}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {

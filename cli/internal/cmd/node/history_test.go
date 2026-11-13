@@ -61,6 +61,7 @@ type fakeNodeRunController struct {
 	gotFullRefreshSchema    string
 	gotFullRefreshTable     string
 	gotFullRefreshSourceRun string
+	gotAcknowledged         []string
 
 	listResp         *runv1.ListNodesResponse
 	listErr          error
@@ -99,9 +100,10 @@ func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, s
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
+	f.gotAcknowledged = acknowledged
 	return f.fullRefreshResp, f.fullRefreshErr
 }
 
