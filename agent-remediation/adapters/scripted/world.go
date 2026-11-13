@@ -7,8 +7,12 @@ package scripted
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,13 +58,17 @@ func Worlds(newStore func() *memory.Store) conformance.NewWorld {
 
 // NewWorld builds the world of fixture f over store, with the model and the
 // verification pipeline answering as script s says. The repository at the
-// trigger's commit holds f's repo files; a path that is not local to a
-// checkout is refused.
+// trigger's commit holds f's repo files; paths that are not local to a
+// checkout are refused, all named, in path order.
 func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) (*World, error) {
-	for p := range f.RepoFiles {
+	var outside []string
+	for _, p := range slices.Sorted(maps.Keys(f.RepoFiles)) {
 		if !filepath.IsLocal(filepath.FromSlash(p)) {
-			return nil, fmt.Errorf("%s: repo file %q is not a path inside the repository", f.File, p)
+			outside = append(outside, strconv.Quote(p))
 		}
+	}
+	if len(outside) > 0 {
+		return nil, fmt.Errorf("%s: repo files %s are not paths inside the repository", f.File, strings.Join(outside, ", "))
 	}
 	logger := slog.New(slog.DiscardHandler)
 	clock := fixedClock{now: startTime}

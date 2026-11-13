@@ -138,6 +138,12 @@ func (s Suite) runType(ctx context.Context, name string, f Fixture, sc Scenario)
 	if err != nil {
 		return err
 	}
+	firstDraftCalls := 0
+	if sc == Redelivery {
+		if firstDraftCalls, err = s.modelCallsOfOneRun(ctx, f, script, trigger); err != nil {
+			return fmt.Errorf("count the model calls of %s: %w", FirstDraftPasses, err)
+		}
+	}
 	sr, err := s.start(f, script, false)
 	if err != nil {
 		return err
@@ -153,7 +159,23 @@ func (s Suite) runType(ctx context.Context, name string, f Fixture, sc Scenario)
 	if err := sr.finish(ctx); err != nil {
 		return err
 	}
-	return sr.expectType(s.Files, trigger, f, typ, sc)
+	return sr.expectType(s.Files, trigger, f, typ, sc, firstDraftCalls)
+}
+
+// modelCallsOfOneRun is how often the model is called when trigger is
+// delivered once and driven to its end in a world of its own, with no restart.
+func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, script Script, trigger remediation.Trigger) (int, error) {
+	sr, err := s.start(f, script, false)
+	if err != nil {
+		return 0, err
+	}
+	if err := sr.accept(ctx, trigger); err != nil {
+		return 0, err
+	}
+	if err := sr.finish(ctx); err != nil {
+		return 0, err
+	}
+	return len(sr.w.ModelRequests()), nil
 }
 
 // typeScript is what the fakes answer in scenario sc of fixture f, and the
@@ -227,8 +249,10 @@ func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, trigger remediat
 // refused, or a step or the model declines, a shared-upstream type's members
 // run their own types with the fixture's passing member answers, a
 // cross-service type's members are handed over, and a single cluster is
-// handed over itself.
-func (sr *scenarioRun) expectType(files workflow.Set, trigger remediation.Trigger, f Fixture, typ workflow.Type, sc Scenario) error {
+// handed over itself. firstDraftCalls is how often the model is called when
+// the trigger is delivered once and nothing restarts, which a redelivery and a
+// restart must not change.
+func (sr *scenarioRun) expectType(files workflow.Set, trigger remediation.Trigger, f Fixture, typ workflow.Type, sc Scenario, firstDraftCalls int) error {
 	e := sr.expect(trigger)
 	e.ended()
 	first := e.firstCluster(typ.Name)
@@ -242,6 +266,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, trigger remediation.Trigge
 		if sc == Redelivery {
 			e.that(len(sr.w.Remediations()) == 1, "the trigger delivered twice made %d remediations", len(sr.w.Remediations()))
 			e.distinctModelRequests()
+			e.modelCalls(firstDraftCalls)
 		}
 	case GateFailsThenPasses:
 		if as := e.attempts(proposal.StatusFailed, proposal.StatusProposed); len(as) == 2 {
@@ -260,12 +285,15 @@ func (sr *scenarioRun) expectType(files workflow.Set, trigger remediation.Trigge
 		switch typ.Match.Cluster {
 		case workflow.ClusterSharedUpstream:
 			e.membersRanTheirTypes(files, first)
-			e.that(e.reachedModel(first, typ) != declinedFirst, "the upstream cluster reached the model: %t, in scenario %s", !declinedFirst, sc)
+			e.upstreamReachedModel(first, typ, !declinedFirst, sc)
 		case workflow.ClusterCrossService:
 			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0])
 			}
-			e.that(e.reachedModel(first, typ) != declinedFirst, "the upstream cluster reached the model: %t, in scenario %s", !declinedFirst, sc)
+			e.upstreamReachedModel(first, typ, !declinedFirst, sc)
+			if declinedFirst {
+				e.modelCalls(0)
+			}
 		default:
 			e.singleHandedOver(first, typ, sc)
 		}

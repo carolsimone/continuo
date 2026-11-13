@@ -144,7 +144,9 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusSkipped)
 		}
-		for _, c := range e.clustersOfTry1() {
+		clusters := e.clustersOfTry1()
+		e.that(len(clusters) > 0, "try 1 has no cluster")
+		for _, c := range clusters {
 			e.that(c.Status == remediation.ClusterHandedOver && c.TypeName == "", "cluster %d is %s with type %q", c.Cluster, c.Status, c.TypeName)
 		}
 		e.that(len(sr.w.Steps(sr.id)) == 0, "a cluster no type handles ran %d steps", len(sr.w.Steps(sr.id)))

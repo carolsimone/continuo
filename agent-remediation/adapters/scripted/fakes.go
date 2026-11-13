@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -63,8 +65,8 @@ func (c checkout) ListDir(_ context.Context, repo, ref, dir string) ([]string, e
 	return out, nil
 }
 
-// Fetch writes every file into a new temporary directory and returns it, with
-// a cleanup that removes it.
+// Fetch writes every file into a new temporary directory, in path order, and
+// returns it, with a cleanup that removes it.
 func (c checkout) Fetch(_ context.Context, repo, ref string) (string, func(), error) {
 	if !c.at(repo, ref) {
 		return "", nil, ports.ErrSourceNotFound
@@ -74,7 +76,8 @@ func (c checkout) Fetch(_ context.Context, repo, ref string) (string, func(), er
 		return "", nil, fmt.Errorf("create checkout directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(root) }
-	for p, content := range c.files {
+	for _, p := range slices.Sorted(maps.Keys(c.files)) {
+		content := c.files[p]
 		full := filepath.Join(root, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			cleanup()

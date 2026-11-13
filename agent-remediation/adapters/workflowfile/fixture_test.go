@@ -1,6 +1,9 @@
 package workflowfile
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -9,6 +12,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
@@ -239,4 +243,71 @@ func TestLoadFixtures_ReportsEveryBadFixture(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "a.yaml:2:")
 	assert.Contains(t, err.Error(), "b.yaml:5:")
+}
+
+// filled sets every field of v to a value no zero value equals: a string to
+// its field's JSON name, an int to 7, a slice to one filled element.
+func filled(v reflect.Value, name string) {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString(name)
+	case reflect.Int:
+		v.SetInt(7)
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		filled(v.Index(0), name)
+	case reflect.Struct:
+		for i := range v.NumField() {
+			tag, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
+			filled(v.Field(i), tag)
+		}
+	default:
+		panic("filled: unhandled kind " + v.Kind().String())
+	}
+}
+
+// A fixture's trigger takes every field of the remediation.requested:v2
+// payload, under its payload name, and keeps each value: a field the payload
+// gains must be added to the fixture format too, or this fails.
+func TestLoadFixtures_TheTriggerTakesEveryFieldOfTheV2Payload(t *testing.T) {
+	var dto serialization.RemediationRequestedV2DTO
+	filled(reflect.ValueOf(&dto).Elem(), "")
+	payload, err := json.Marshal(dto)
+	require.NoError(t, err)
+	doc := "kind: fixture\nversion: 1\ntype: x\ntrigger: " + string(payload) + "\n"
+
+	fixtures, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
+	require.NoError(t, err)
+	require.Len(t, fixtures, 1)
+	encoded, err := serialization.EncodeRemediationRequestedV2(fixtures[0].Trigger)
+	require.NoError(t, err)
+
+	var want, got map[string]any
+	require.NoError(t, json.Unmarshal(payload, &want))
+	require.NoError(t, json.Unmarshal(encoded, &got))
+	assert.Equal(t, want, got)
+}
+
+// Problems are reported in the order the file holds them, never in the order
+// a decoded map would hand them over in.
+func TestLoadFixtures_ReportsProblemsInFileOrder(t *testing.T) {
+	for _, nodes := range [][2]string{{"z.node", "a.node"}, {"a.node", "z.node"}} {
+		doc := "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: n }] }\nbundle:\n" +
+			"  " + nodes[0] + ": { runtime: dbt, code: x }\n" +
+			"  " + nodes[1] + ": { runtime: dbt, source: y }\n" +
+			"member_answers:\n" +
+			"  " + nodes[0] + ": { pass: [{ sql: x }] }\n" +
+			"  " + nodes[1] + ": { passes: [] }\n"
+		for range 20 {
+			_, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
+
+			require.Error(t, err)
+			lines := strings.Split(err.Error(), "\n")
+			require.Len(t, lines, 4)
+			assert.True(t, strings.HasPrefix(lines[0], `f.yaml:6: field "code"`), lines[0])
+			assert.True(t, strings.HasPrefix(lines[1], `f.yaml:7: field "source"`), lines[1])
+			assert.True(t, strings.HasPrefix(lines[2], `f.yaml:9: field "sql"`), lines[2])
+			assert.True(t, strings.HasPrefix(lines[3], `f.yaml:10: field "passes"`), lines[3])
+		}
+	}
 }

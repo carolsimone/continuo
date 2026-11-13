@@ -119,6 +119,44 @@ func TestNewWorld_RefusesARepoFileOutsideTheRepository(t *testing.T) {
 	assert.Contains(t, err.Error(), "../escape.sql")
 }
 
+// Every path outside the repository is named, in path order, whatever order
+// the paths were added to the fixture in.
+func TestNewWorld_NamesEveryPathOutsideTheRepositoryInPathOrder(t *testing.T) {
+	for _, paths := range [][]string{
+		{"/z/abs.sql", "ok.sql", "../b.sql", "../a.sql"},
+		{"../a.sql", "../b.sql", "ok.sql", "/z/abs.sql"},
+	} {
+		files := map[string]string{}
+		for _, p := range paths {
+			files[p] = "x"
+		}
+		for range 20 {
+			_, err := NewWorld(memory.NewStore(), conformance.Fixture{File: "f.yaml", RepoFiles: files}, conformance.Script{})
+
+			require.Error(t, err)
+			assert.Equal(t, `f.yaml: repo files "../a.sql", "../b.sql", "/z/abs.sql" are not paths inside the repository`, err.Error())
+		}
+	}
+}
+
+// Files are written in path order, so a file that is also another file's
+// directory fails on the same path whatever order the files were added in.
+func TestCheckout_FetchWritesTheFilesInPathOrder(t *testing.T) {
+	for _, paths := range [][]string{{"m/a/b.sql", "m/a"}, {"m/a", "m/a/b.sql"}} {
+		files := map[string]string{}
+		for _, p := range paths {
+			files[p] = "content of " + p
+		}
+		c := checkout{repo: "o/r", commit: "sha", files: files}
+		for range 20 {
+			_, _, err := c.Fetch(ctx, "o/r", "sha")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "create directory for m/a/b.sql")
+		}
+	}
+}
+
 func TestObjectStore_ReadsTheFixturesObjectsAndEveryArtifactWritten(t *testing.T) {
 	s := newObjectStore(map[string]string{"s3://logs/a.log": "log"})
 

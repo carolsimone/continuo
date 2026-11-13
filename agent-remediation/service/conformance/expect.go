@@ -3,6 +3,7 @@ package conformance
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -59,11 +60,13 @@ func (e *expectation) ended() {
 func (e *expectation) attempts(want ...proposal.Status) []Attempt {
 	got := e.sr.w.Attempts()
 	statuses := make([]proposal.Status, 0, len(got))
+	numbered := true
 	for i, a := range got {
 		statuses = append(statuses, a.Proposal.Status)
-		e.that(a.Proposal.Attempt == i+1, "the attempts are numbered %v", attemptNumbers(got))
+		numbered = numbered && a.Proposal.Attempt == i+1
 		e.that(a.Proposal.RemediationID == e.sr.id.String(), "attempt %d carries remediation %q", a.Proposal.Attempt, a.Proposal.RemediationID)
 	}
+	e.that(numbered, "the attempts are numbered %v", attemptNumbers(got))
 	e.that(slices.Equal(statuses, want), "the attempts are %v, want %v", statuses, want)
 	return got
 }
@@ -96,11 +99,11 @@ func (e *expectation) runsPerEditedService(a Attempt, serviceRepoPaths map[strin
 	for _, r := range e.sr.w.Runs() {
 		runs[r.Service]++
 	}
-	for service := range edited {
+	for _, service := range sortedKeys(edited) {
 		e.that(runs[service] == 1, "service %s had %d verification runs, want 1", service, runs[service])
 	}
-	for service, n := range runs {
-		e.that(edited[service], "service %s had %d verification runs and no edit", service, n)
+	for _, service := range sortedKeys(runs) {
+		e.that(edited[service], "service %s had %d verification runs and no edit", service, runs[service])
 	}
 }
 
@@ -231,6 +234,13 @@ func (e *expectation) reachedModel(c remediation.Cluster, typ workflow.Type) boo
 	return ok && row.Status == remediation.StepDone
 }
 
+// upstreamReachedModel expects the upstream cluster c's prompt step to have
+// run in scenario sc when want is true, and not to have run otherwise.
+func (e *expectation) upstreamReachedModel(c remediation.Cluster, typ workflow.Type, want bool, sc Scenario) {
+	reached := e.reachedModel(c, typ)
+	e.that(reached == want, "in scenario %s the upstream cluster reached the model: %t, want %t", sc, reached, want)
+}
+
 // firstFinding is the first finding of cluster c's pre-flight checks, in the
 // order typ lists them.
 func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (remediation.Finding, bool) {
@@ -272,10 +282,17 @@ func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type,
 // error the fixture scripts in its verify error.
 func (e *expectation) verifyError(a Attempt, gateErrors map[string]string) {
 	e.that(a.VerifyError != "", "attempt %d carries no verify error", a.Proposal.Attempt)
-	for node, msg := range gateErrors {
+	for _, node := range sortedKeys(gateErrors) {
+		msg := gateErrors[node]
 		e.that(strings.Contains(a.VerifyError, msg), "attempt %d's verify error %q does not name %s's error %q",
 			a.Proposal.Attempt, a.VerifyError, node, msg)
 	}
+}
+
+// sortedKeys is the keys of m, sorted, so every message that names them names
+// them in one order.
+func sortedKeys[V any](m map[string]V) []string {
+	return slices.Sorted(maps.Keys(m))
 }
 
 func attemptNumbers(as []Attempt) []int {

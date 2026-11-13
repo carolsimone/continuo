@@ -3,7 +3,9 @@ package conformance_test
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
@@ -149,15 +152,100 @@ func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAProposal(t *t
 
 	results := s.Run(ctx)
 
-	failed := map[conformance.Scenario]bool{}
+	errs := map[conformance.Scenario]error{}
 	for _, r := range results {
 		if r.Type == "dbt-compile" {
-			failed[r.Scenario] = r.Err != nil
+			errs[r.Scenario] = r.Err
 		}
 	}
-	assert.True(t, failed[conformance.FirstDraftPasses])
-	assert.True(t, failed[conformance.GateFailsThenPasses])
-	assert.True(t, failed[conformance.Redelivery])
-	assert.False(t, failed[conformance.PreflightFails])
-	assert.False(t, failed[conformance.DeclinesBeforeModel])
+	const noEvent = "0 remediation.proposed events were enqueued, want 1"
+	for sc, want := range map[conformance.Scenario][]string{
+		conformance.FirstDraftPasses:    {"the attempts are [skipped], want [proposed]", noEvent},
+		conformance.GateFailsThenPasses: {"the attempts are [skipped], want [failed proposed]", noEvent},
+		conformance.TriesSpent:          {"the attempts are [skipped], want [failed failed failed escalated]", "attempt 1 carries no verify error"},
+		conformance.Redelivery:          {"the attempts are [skipped], want [proposed]", noEvent},
+	} {
+		require.Error(t, errs[sc], "scenario %s", sc)
+		for _, w := range want {
+			assert.Contains(t, errs[sc].Error(), w, "scenario %s", sc)
+		}
+	}
+	assert.NoError(t, errs[conformance.PreflightFails])
+	assert.NoError(t, errs[conformance.DeclinesBeforeModel])
+	assert.NoError(t, errs[conformance.ModelDeclines])
+}
+
+// extraRuns is a world that also reports verification runs of services no
+// edit touches, in the order given.
+type extraRuns struct {
+	conformance.World
+	services []string
+}
+
+func (w extraRuns) Runs() []ports.VerificationRequest {
+	runs := w.World.Runs()
+	for _, s := range w.services {
+		runs = append(runs, ports.VerificationRequest{RunID: "extra-" + s, Service: s})
+	}
+	return runs
+}
+
+// withExtraRuns makes every world of the suite report a run of each service.
+func withExtraRuns(s conformance.Suite, services ...string) conformance.Suite {
+	base := s.NewWorld
+	s.NewWorld = func(f conformance.Fixture, sc conformance.Script) (conformance.World, error) {
+		w, err := base(f, sc)
+		if err != nil {
+			return nil, err
+		}
+		return extraRuns{World: w, services: services}, nil
+	}
+	return s
+}
+
+// A failure names the services and the nodes it is about in sorted order, so
+// remediation-check prints the same text on every run whatever order a map or
+// the world hands them over in.
+func TestSuite_AFailureNamesItsServicesAndNodesInSortedOrder(t *testing.T) {
+	base := onlyTypes(builtinSuite(t), "dbt-compile")
+	const (
+		runsText = "service alpha had 1 verification runs and no edit; service zeta had 1 verification runs and no edit"
+		gateText = `does not name alpha.node's error "alpha broke"; attempt 1's verify error`
+	)
+
+	var texts []string
+	for i := range 10 {
+		// Each pass hands the services and the gate errors over in the other
+		// order: as runs, and as the order the map was filled in.
+		order := []string{"zeta", "alpha"}
+		if i%2 == 1 {
+			order = []string{"alpha", "zeta"}
+		}
+		s := base
+		s.Fixtures = slices.Clone(base.Fixtures)
+		for j, f := range s.Fixtures {
+			if f.Type == "dbt-compile" {
+				s.Fixtures[j].GateErrors = maps.Clone(f.GateErrors)
+				for _, service := range order {
+					s.Fixtures[j].GateErrors[service+".node"] = service + " broke"
+				}
+			}
+		}
+		errs := map[conformance.Scenario]error{}
+		for _, r := range withExtraRuns(s, order...).Run(ctx) {
+			if r.Type == "dbt-compile" {
+				errs[r.Scenario] = r.Err
+			}
+		}
+		require.Error(t, errs[conformance.FirstDraftPasses])
+		assert.Contains(t, errs[conformance.FirstDraftPasses].Error(), runsText)
+		require.Error(t, errs[conformance.GateFailsThenPasses])
+		gate := errs[conformance.GateFailsThenPasses].Error()
+		assert.Contains(t, gate, gateText)
+		assert.Less(t, strings.Index(gate, "alpha.node"), strings.Index(gate, "zeta.node"))
+		texts = append(texts, errs[conformance.FirstDraftPasses].Error()+"\n"+gate)
+	}
+	for _, text := range texts[1:] {
+		assert.Equal(t, texts[0], text)
+	}
 }

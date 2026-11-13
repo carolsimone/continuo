@@ -88,9 +88,9 @@ func (d RemediationRequestedV2DTO) ToDomain() remediation.Trigger {
 	return t
 }
 
-// RemediationRequestedV2FromDomain is the payload of a trigger. The tenant is
+// remediationRequestedV2FromDomain is the payload of a trigger. The tenant is
 // not part of the payload: it travels on the message.
-func RemediationRequestedV2FromDomain(t remediation.Trigger) RemediationRequestedV2DTO {
+func remediationRequestedV2FromDomain(t remediation.Trigger) RemediationRequestedV2DTO {
 	d := RemediationRequestedV2DTO{
 		Source:           t.Source,
 		ReleaseID:        t.ReleaseID,
@@ -128,7 +128,7 @@ func RemediationRequestedV2FromDomain(t remediation.Trigger) RemediationRequeste
 // trigger, which DecodeRemediationRequestedV2 reads back as the same trigger
 // without its tenant.
 func EncodeRemediationRequestedV2(t remediation.Trigger) ([]byte, error) {
-	raw, err := json.Marshal(RemediationRequestedV2FromDomain(t))
+	raw, err := json.Marshal(remediationRequestedV2FromDomain(t))
 	if err != nil {
 		return nil, fmt.Errorf("marshal remediation.requested payload: %w", err)
 	}
