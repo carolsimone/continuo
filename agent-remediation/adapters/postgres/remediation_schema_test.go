@@ -24,12 +24,12 @@ func TestRemediationStatusChecksMatchTheStateTypes(t *testing.T) {
 
 	quoted := regexp.MustCompile(`'([a-z_]+)'`)
 	checkValues := func(table string) []string {
-		var def string
-		require.NoError(t, db.Get(&def, `SELECT pg_get_constraintdef(oid) FROM pg_constraint
-			WHERE conrelid = $1::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%status%'`, table),
-			"%s has one status CHECK", table)
+		var defs []string
+		require.NoError(t, db.Select(&defs, `SELECT pg_get_constraintdef(oid) FROM pg_constraint
+			WHERE conrelid = $1::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%status%'`, table))
+		require.Len(t, defs, 1, "%s has one status CHECK", table)
 		var out []string
-		for _, m := range quoted.FindAllStringSubmatch(def, -1) {
+		for _, m := range quoted.FindAllStringSubmatch(defs[0], -1) {
 			out = append(out, m[1])
 		}
 		return out

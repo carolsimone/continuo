@@ -488,3 +488,98 @@ func TestRunner_ASubmitErrorLeavesTheTryCheckingAndRunsAgain(t *testing.T) {
 	assert.Equal(t, 1, rows["verification_run"][0].Failures)
 	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
 }
+
+// The commit that leaves the try verifying can fail after the gate submitted
+// its runs. The next drive submits them again under the same ids, so each
+// edited service still has one verification run, and the gate waits on the
+// runs it submitted.
+func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
+	h := newHarness(t)
+	var armed atomic.Bool
+	h.pipeline.onSubmit = func() {
+		if armed.CompareAndSwap(false, true) {
+			h.store.FailNextCommit()
+		}
+	}
+	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
+
+	require.Error(t, h.runner.Drive(ctx, id), "the commit after the submit fails")
+	submitted := h.pipeline.runs()
+	require.Len(t, submitted, 2, "the gate submitted a run per service")
+	assert.Equal(t, remediation.TryChecking, h.try(id, 1).Status)
+	assert.Equal(t, proposal.StatusGenerating, h.attempt(1).Proposal.Status, "the attempt row records no run")
+	gate := h.flowRows(id, 1)["verification_run"]
+	require.Len(t, gate, 1)
+	assert.Equal(t, remediation.StepFailed, gate[0].Status)
+	assert.Equal(t, 1, gate[0].Failures)
+
+	require.NoError(t, h.drive(id))
+
+	runs := h.pipeline.runs()
+	require.Len(t, runs, 4)
+	assert.Equal(t, submitted, runs[2:], "the second submit names the same runs over the same artifacts")
+	assert.Equal(t, []string{svcARun1, svcBRun1}, []string{runs[2].RunID, runs[3].RunID})
+	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
+	gate = h.flowRows(id, 1)["verification_run"]
+	require.Len(t, gate, 1)
+	assert.Equal(t, remediation.StepWaiting, gate[0].Status)
+	assert.Equal(t, []string{svcARun1, svcBRun1}, gate[0].WaitingOn)
+	assert.Equal(t, []proposal.Verification{
+		{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued},
+		{Service: "svc-b", Kind: "dbt", RunID: svcBRun1, Phase: proposal.PhaseQueued},
+	}, h.attempt(1).Proposal.Verifications, "one run per service")
+
+	h.pipeline.answer(proposal.PhasePassed, nil)
+	require.NoError(t, h.poll(id))
+	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
+	assert.Len(t, h.proposedEvents(), 1)
+	assert.Len(t, h.pipeline.runs(), 4, "the poll submits nothing")
+}
+
+// A gate that refuses the try's drafts without starting a run fails the
+// attempt with its first finding's message and ends the remediation. With no
+// cross-cluster check in the flow, the gate is the one to find two edits of
+// one file.
+func TestRunner_AGateThatRefusesTheDraftsFailsTheAttempt(t *testing.T) {
+	h := newHarness(t, withoutCrossClusterChecks())
+	h.source.files["services/core/models/base.sql"] = "select 1"
+	h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: ports.RuntimeDbt}}
+	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+		r := fixAnswer(req)
+		r.ProposedSQL = "select 2"
+		return r
+	}
+	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
+	consumer := compileNode("svc-a")
+	consumer.Service = "svc-a"
+	consumer.ChangedAncestors = []remediation.ChangedAncestor{ancestor}
+	producer := compileNode("core")
+	producer.Service = "core"
+	producer.FilePath = "models/base.sql"
+	id := h.accept(trigger("compile", consumer, producer))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	const reason = "two edits change the same file: services/core/models/base.sql"
+	p := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusFailed, p.Status)
+	assert.Equal(t, reason, p.Rationale)
+	assert.Equal(t, map[string]proposal.NodeOutcome{
+		"svc-a": {Status: proposal.StatusFailed, Reason: reason},
+		"core":  {Status: proposal.StatusFailed, Reason: reason},
+	}, p.NodeOutcomes)
+	assert.Empty(t, p.Verifications)
+	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+	assert.Empty(t, h.pipeline.runs(), "no run was started")
+	assert.Empty(t, h.proposedEvents())
+
+	rows := h.flowRows(id, 1)
+	require.Len(t, rows, 1, "the gate is the only flow-level step")
+	require.Len(t, rows["verification_run"], 1)
+	gate := rows["verification_run"][0]
+	assert.Equal(t, remediation.StepDone, gate.Status)
+	assert.NotNil(t, gate.FinishedAt)
+	assert.Empty(t, gate.WaitingOn)
+	assert.Equal(t, []remediation.Finding{{Code: "path_edited_twice", Message: reason}}, gate.Findings)
+}
