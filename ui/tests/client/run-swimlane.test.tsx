@@ -4,7 +4,7 @@ import { render, fireEvent } from '@testing-library/react';
 import RunSwimlane from '../../src/client/RunSwimlane';
 import type { GraphNode, GraphEdge, Task } from '../../src/client/types';
 
-const node = (id: string): GraphNode => ({ node_id: id, node_type: 'dbt-model', schedule_name: 's' });
+const node = (id: string): GraphNode => ({ node_id: id, node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null });
 const task = (id: string, status: string): Task => {
   const [service_name, schema_name, table_name] = id.split('.');
   return { task_id: id, service_name, schema_name, table_name, job_name: id, status, attempt: 0, max_retries: 2, created_at: null };

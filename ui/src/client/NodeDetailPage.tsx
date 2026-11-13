@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
-import { settlesRequest, useActionRequestId } from './request-id';
+import { useSingleNodeRun } from './useSingleNodeRun';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
-import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
+import { kindLabel, computeNodeStats, dormantTitle, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import { isTerminalStatus, taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
@@ -109,8 +109,6 @@ export default function NodeDetailPage() {
   // Whether runs holds the answer of the latest history read: false while a
   // read is in flight and after one failed.
   const [runsKnown, setRunsKnown] = useState(false);
-  const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [operation, setOperation] = useState<NodeOperation>(initialOperation);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -123,14 +121,11 @@ export default function NodeDetailPage() {
   // declares it (else it is the install default); null while unknown or when
   // the node has no node-list row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
+  // Whether the node has no schedule tag in the live release, so it runs only
+  // by hand, and when it last ran; null while unknown or when the node has no
+  // node-list row.
+  const [dormant, setDormant] = useState<{ lastRunAt: string | null } | null>(null);
   const genRef = useRef(0);
-  // The request id of the node run being asked for: a press that gets no
-  // answer and is repeated with the same node, operation and source, while
-  // the history still shows the newest node run the first press saw, sends
-  // the same id, so the run the first press made is returned rather than made
-  // twice. A newer node run in the history makes the next press a new action,
-  // and the id is renewed once the server has given its final answer.
-  const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -196,6 +191,7 @@ export default function NodeDetailPage() {
   // back: the schema is matched client-side.
   useEffect(() => {
     setTaskTimeout(null);
+    setDormant(null);
     if (!service || !schema || !table) return;
     let cancelled = false;
     fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
@@ -206,9 +202,12 @@ export default function NodeDetailPage() {
         setTaskTimeout(row && typeof row.timeout_seconds === 'number' && row.timeout_seconds > 0
           ? { seconds: row.timeout_seconds, declared: !!row.timeout_declared }
           : null);
+        setDormant(row?.dormant ? { lastRunAt: row.last_run_at ?? null } : null);
       })
       .catch(() => {
-        if (!cancelled) setTaskTimeout(null);
+        if (cancelled) return;
+        setTaskTimeout(null);
+        setDormant(null);
       });
     return () => { cancelled = true; };
   }, [service, schema, table]);
@@ -239,34 +238,12 @@ export default function NodeDetailPage() {
   // with no single-node run in its window observes none.
   const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
 
-  // opOverride pins the operation for a caller that must send exactly what it
-  // confirmed, independent of the select's current value.
-  const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
-    setRunState('loading');
-    setRunError(null);
-    try {
-      const op = opOverride ?? operation;
-      const asked = { ...body, operation: op === 'run' ? '' : op };
-      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, newestNodeRunId) };
-      const res = await fetch(
-        `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
-      );
-      if (settlesRequest(res)) renewRunRequestId();
-      if (res.ok) {
-        setRunState('success');
-        fetchRuns();
-        setTimeout(() => setRunState('idle'), 3000);
-      } else {
-        const errBody = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setRunError(errBody.error ?? 'Request failed — please try again');
-        setRunState('error');
-      }
-    } catch {
-      setRunError('Request failed — please try again');
-      setRunState('error');
-    }
-  }, [service, schema, table, fetchRuns, operation, newestNodeRunId, takeRequestId, renewRunRequestId]);
+  // A press is one action while the history shows no node run newer than the
+  // one the press saw; a started run reads the history again.
+  const { runState, runError, postRun } = useSingleNodeRun(
+    { service, schema, table },
+    { operation, observed: newestNodeRunId, onStarted: fetchRuns },
+  );
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {
@@ -339,6 +316,11 @@ export default function NodeDetailPage() {
             {fqn}
             {nodeType && (
               <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
+            )}
+            {dormant !== null && (
+              <span className="info-strip info-strip--neutral info-strip--inline" title={dormantTitle(dormant.lastRunAt)}>
+                dormant
+              </span>
             )}
             {taskTimeout !== null && (
               <span className="info-strip info-strip--neutral info-strip--inline">

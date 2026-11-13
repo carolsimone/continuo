@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import type { NodeSummary, NodesResponse } from './types';
-import { formatDuration, formatRelative } from './node-helpers';
+import { dormantTitle, formatDuration, formatRelative } from './node-helpers';
 import { taskPillClass } from './detail-page-helpers';
 
 const PAGE = 50;
@@ -15,8 +15,26 @@ function durPair(avg: number | null, p95: number | null): string {
   return `${formatDuration(avg)} / ${formatDuration(p95)}`;
 }
 
+// The URL parameter of the "Dormant only" filter: dormant=1 lists only the
+// nodes with no schedule tag, which run only by hand.
+const DORMANT_PARAM = 'dormant';
+
+const dash = <span className="nodes-dash">—</span>;
+
+// Every node of the live release, newest run first; the nodes that never ran
+// come last.
 export default function NodesCatalogPanel() {
   const navigate = useNavigate();
+  // The Dormant only filter lives in the URL, so a link can open the list
+  // filtered and the box keeps its state across the dashboard's tabs.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dormantOnly = searchParams.get(DORMANT_PARAM) === '1';
+  const setDormantOnly = (on: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (on) next.set(DORMANT_PARAM, '1');
+    else next.delete(DORMANT_PARAM);
+    setSearchParams(next, { replace: true });
+  };
   const [operation, setOperation] = useState('run');
   const [search, setSearch] = useState('');
   const [service, setService] = useState('');
@@ -36,6 +54,7 @@ export default function NodesCatalogPanel() {
     params.set('operation', operation);
     if (search) params.set('search', search);
     if (service) params.set('service', service);
+    if (dormantOnly) params.set(DORMANT_PARAM, '1');
     params.set('limit', String(PAGE));
     params.set('offset', String(offset));
     if (!append) setLoading(true);
@@ -55,7 +74,7 @@ export default function NodesCatalogPanel() {
       setError('Failed to load nodes');
       setLoading(false);
     }
-  }, [operation, search, service]);
+  }, [operation, search, service, dormantOnly]);
 
   // Fetch the first page on mount and on filter change (debounced for search
   // typing). The list is not polled: each call aggregates every node's recent
@@ -78,6 +97,9 @@ export default function NodesCatalogPanel() {
 
   const services = Array.from(new Set(nodes.map(n => n.service_name))).sort();
   const canLoadMore = nodes.length < total;
+  // The test operation lists only the nodes with tests, so it narrows the list
+  // as the other filters do.
+  const filtered = search !== '' || service !== '' || dormantOnly || operation === 'test';
 
   return (
     <>
@@ -113,6 +135,9 @@ export default function NodesCatalogPanel() {
           <option value="">all</option>
           {services.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <label htmlFor="node-dormant" title="Nodes with no schedule tag, which run only by hand">Dormant only</label>
+        <input id="node-dormant" type="checkbox" checked={dormantOnly}
+               onChange={e => setDormantOnly(e.target.checked)} />
       </div>
 
       <section className="detail-card">
@@ -129,15 +154,15 @@ export default function NodesCatalogPanel() {
             <div className="info-strip info-strip--neutral">
               <span>Loading nodes…</span>
             </div>
-          ) : search || service ? (
+          ) : filtered ? (
             <div className="info-strip info-strip--neutral">
               <span className="info-strip__icon">ⓘ</span>
-              No node matches this filter.
+              No node in the live release matches this filter.
             </div>
           ) : (
             <div className="info-strip info-strip--neutral">
               <span className="info-strip__icon">ⓘ</span>
-              No node runs yet — trigger a schedule to populate.
+              No release has been promoted yet.
             </div>
           )
         ) : (
@@ -153,20 +178,38 @@ export default function NodesCatalogPanel() {
                 {nodes.map(n => {
                   const go = () => navigate(`/node/${encodeURIComponent(fqnOf(n))}`,
                                             { state: { from: { type: 'nodes' }, operation } });
+                  // A node that never ran has no last run and no stats.
+                  const neverRan = !n.last_run_at;
                   return (
                     <tr key={fqnOf(n)} onClick={go} tabIndex={0} role="button"
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }}>
                       <td>
-                        <div className="nodes-node-name">{n.table_name}</div>
+                        <div className="nodes-node-name">
+                          {n.table_name}
+                          {n.dormant && (
+                            <span className="pill-sm pill-sm--muted" title={dormantTitle(n.last_run_at)}>dormant</span>
+                          )}
+                        </div>
                         <div className="nodes-node-schema">{n.service_name} · {n.schema_name}</div>
                       </td>
-                      <td>
-                        <span className={`pill-sm ${taskPillClass(n.last_status ?? 'pending')}`}>{n.last_status ?? '—'}</span>
-                        {' '}<span className="nodes-ts nodes-ts--dim">{formatRelative(n.last_run_at)}</span>
-                      </td>
-                      <td>{pct(n.success_rate_pct)}</td>
-                      <td>{n.task_count}</td>
-                      <td><code>{durPair(n.avg_duration_sec, n.p95_duration_sec)}</code></td>
+                      {neverRan ? (
+                        <>
+                          <td><span className="nodes-ts">never</span></td>
+                          <td>{dash}</td>
+                          <td>{dash}</td>
+                          <td>{dash}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td>
+                            <span className={`pill-sm ${taskPillClass(n.last_status ?? 'pending')}`}>{n.last_status ?? '—'}</span>
+                            {' '}<span className="nodes-ts nodes-ts--dim">{formatRelative(n.last_run_at)}</span>
+                          </td>
+                          <td>{pct(n.success_rate_pct)}</td>
+                          <td>{n.task_count}</td>
+                          <td><code>{durPair(n.avg_duration_sec, n.p95_duration_sec)}</code></td>
+                        </>
+                      )}
                     </tr>
                   );
                 })}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import DashboardPage from '../../src/client/DashboardPage';
 
@@ -162,6 +162,67 @@ describe('DashboardPage — tabs', () => {
       expect(counts[1].textContent).toBe('3');  // Nodes
       expect(counts[2].textContent).toBe('1');  // Topology
     });
+  });
+
+  it('shows the Dormant tile only when dormant_node_count > 0 and opens the Nodes tab filtered to dormant', async () => {
+    const serveTopology = (dormantNodeCount: string | undefined) => {
+      fetchMock.mockImplementation((url: string) => {
+        if (url === '/api/topology/schedules') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              schedules: [{ schedule_name: 'a', node_count: 5, last_updated_at: new Date().toISOString() }],
+              ...(dormantNodeCount === undefined ? {} : { dormant_node_count: Number(dormantNodeCount) }),
+            }),
+          });
+        }
+        if (url.startsWith('/api/nodes?')) {
+          return Promise.resolve({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ schedules: [], names: [] }) });
+      });
+    };
+
+    serveTopology('0');
+    const none = renderAt(['/?tab=topology']);
+    await screen.findByText('a');
+    expect(screen.queryByText('Dormant')).toBeNull();
+    none.unmount();
+
+    serveTopology(undefined);
+    const absent = renderAt(['/?tab=topology']);
+    await screen.findByText('a');
+    expect(screen.queryByText('Dormant')).toBeNull();
+    absent.unmount();
+
+    serveTopology('3');
+    renderAt(['/?tab=topology']);
+    const tile = (await screen.findByText('3 dormant nodes · run only by hand')).closest('button') as HTMLElement;
+    // The Dormant tile comes after the schedule tiles.
+    const tiles = Array.from(document.querySelectorAll('.snapshot-tile'));
+    expect(tiles.map(t => t.querySelector('.snapshot-tile__name')?.textContent)).toEqual(['a', 'Dormant']);
+
+    fireEvent.click(tile);
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /nodes/i })).toHaveClass('tabs__tab--active');
+    });
+    expect(screen.getByLabelText('Dormant only')).toBeChecked();
+    await waitFor(() => {
+      const listReads = fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/nodes?operation='));
+      expect(listReads.some(u => new URLSearchParams(u.split('?')[1]).get('dormant') === '1')).toBe(true);
+    });
+  });
+
+  it('shows the Dormant tile, and no empty-topology strip, when every node of the live release is dormant', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url === '/api/topology/schedules') {
+        return Promise.resolve({ ok: true, json: async () => ({ schedules: [], dormant_node_count: 2 }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ schedules: [], total_count: 0 }) });
+    });
+    renderAt(['/?tab=topology']);
+    expect(await screen.findByText('2 dormant nodes · run only by hand')).toBeInTheDocument();
+    expect(screen.queryByText(/No topology loaded yet/)).toBeNull();
   });
 
   it('no longer renders the standalone "DAG Latest Snapshot" h2 heading', async () => {

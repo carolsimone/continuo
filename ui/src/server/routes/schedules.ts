@@ -134,7 +134,10 @@ export function createSchedulesRouter(client: GrpcClient) {
   });
 
   // GET /api/schedules/:name/graph — the live release's nodes of the schedule,
-  // their one-hop upstreams in other schedules and the edges among them
+  // their one-hop upstreams in other schedules and the edges among them. A
+  // dormant upstream (no schedule tag, run only by hand) carries dormant true
+  // and when its latest run was created, null when it never ran; an answer
+  // without those fields reads as no dormant node.
   router.get('/:name/graph', (req, res) => {
     client.getScheduleGraph({ schedule_name: req.params.name }, (err: any, graphResp: any) => {
       if (err) return sendGrpcError(res, err, grpcDetails(err));
@@ -142,6 +145,8 @@ export function createSchedulesRouter(client: GrpcClient) {
         node_id: `${n.service_name}.${n.schema_name}.${n.table_name}`,
         node_type: n.node_type,
         schedule_name: n.schedule_name,
+        dormant: Boolean(n.dormant),
+        last_run_at: n.last_run_at || null,
       }));
       res.json({
         nodes,

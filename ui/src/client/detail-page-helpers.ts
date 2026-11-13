@@ -21,6 +21,8 @@ export function toScheduleGraph(runGraph: RunGraph | null): ScheduleGraph | null
       node_id: node.node_id,
       node_type: node.node_type,
       schedule_name: node.schedule_name,
+      dormant: false,
+      last_run_at: null,
       status: node.status,
       wait_reason: node.wait_reason,
       waiting_on_run_id: node.waiting_on_run_id,

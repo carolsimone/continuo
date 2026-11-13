@@ -26,7 +26,10 @@ function csvSourceUri(rawCode: unknown): string {
 export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/nodes?search=&service=&limit=&offset= — node list (paged)
+  // GET /api/nodes?search=&service=&operation=&dormant=&limit=&offset= — every
+  // node of the live release, paged, with the stats of its recent runs; a node
+  // that never ran has none. dormant=1 lists only dormant nodes (no schedule
+  // tag, run only by hand).
   router.get('/', (req, res) => {
     const nullIfNeg = (n: any): number | null => {
       const v = Number(n ?? -1);
@@ -40,6 +43,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
       operation,
       limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
       offset: parseOffset(req.query.offset),
+      dormant_only: req.query.dormant === '1',
     };
     runClient.listNodes(q, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
@@ -58,6 +62,8 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
           operation:        operationFromWire(r.operation),
           timeout_seconds:  Number(r.timeout_seconds ?? 0),
           timeout_declared: Boolean(r.timeout_declared),
+          node_type:        r.node_type || '',
+          dormant:          Boolean(r.dormant),
         })),
       });
     });

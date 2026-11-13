@@ -494,6 +494,51 @@ describe('NodeDetailPage — task timeout', () => {
   });
 });
 
+describe('NodeDetailPage — dormant node', () => {
+  // Serves the node's meta, its row of the node list and an empty history.
+  function serve(row: Record<string, unknown> | null) {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/nodes?')) {
+        const nodes = row ? [{
+          service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+          task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+          last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
+          node_type: 'dbt-model', ...row,
+        }] : [];
+        return jsonResp({ total_count: nodes.length, nodes });
+      }
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ tasks: [] });
+    });
+  }
+
+  it('marks a dormant node dormant beside its type', async () => {
+    serve({ dormant: true });
+    renderPage();
+    const chip = await screen.findByText('dormant');
+    expect(chip.className).toBe('info-strip info-strip--neutral info-strip--inline');
+    expect(chip.getAttribute('title')).toBe('No schedule tag: runs only by hand. Last run: never.');
+    // It follows the node type chip.
+    expect(chip.previousElementSibling?.textContent).toBe('dbt-model');
+    // A dormant node offers the run the page offers any node.
+    expect(screen.getByRole('button', { name: /run this node/i })).toBeEnabled();
+  });
+
+  it('does not mark a node with a schedule, or one the node list does not hold', async () => {
+    serve({ dormant: false });
+    const scheduled = renderPage();
+    await screen.findByText('task timeout 1 h · install default');
+    expect(screen.queryByText('dormant')).toBeNull();
+    scheduled.unmount();
+
+    serve(null);
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText('dormant')).toBeNull();
+  });
+});
+
 describe('NodeDetailPage back link', () => {
   it('returns to the schedule (run mode) when from = schedule/run', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {

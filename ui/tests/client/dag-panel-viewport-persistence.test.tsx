@@ -95,8 +95,8 @@ function userZoomTo(zoom: number): void {
 
 function freshGraphNodes(): GraphNode[] {
   return [
-    { node_id: 'core.sch.a', node_type: 'dbt-model', schedule_name: 's' },
-    { node_id: 'core.sch.b', node_type: 'dbt-model', schedule_name: 's' },
+    { node_id: 'core.sch.a', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+    { node_id: 'core.sch.b', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
   ];
 }
 

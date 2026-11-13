@@ -336,12 +336,31 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     const res = await request(app).get('/api/schedules/daily/graph');
     expect(res.status).toBe(200);
     expect(res.body.nodes).toEqual([
-      { node_id: 'svc.sales.orders', node_type: 'dbt-model', schedule_name: 'daily' },
+      { node_id: 'svc.sales.orders', node_type: 'dbt-model', schedule_name: 'daily', dormant: false, last_run_at: null },
     ]);
     expect(res.body.edges).toEqual([]);
     expect(res.body.promotion_seq).toBe(42);
     expect(typeof res.body.promotion_seq).toBe('number');
     expect(res.body).not.toHaveProperty('topology_generation');
+  });
+
+  it('marks a dormant node and carries its last run', async () => {
+    mockGetScheduleGraph.mockImplementation((_req: any, cb: any) => {
+      cb(null, {
+        nodes: [
+          { service_name: 'svc', schema_name: 'stg', table_name: 'ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '2026-11-12T08:30:00Z' },
+          { service_name: 'svc', schema_name: 'stg', table_name: 'never_ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '' },
+          { service_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily', dormant: false, last_run_at: '' },
+        ],
+        edges: [],
+      });
+    });
+    const res = await request(app).get('/api/schedules/daily/graph');
+    expect(res.body.nodes).toEqual([
+      { node_id: 'svc.stg.ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '2026-11-12T08:30:00Z' },
+      { node_id: 'svc.stg.never_ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: null },
+      { node_id: 'svc.sales.orders', node_type: 'dbt-model', schedule_name: 'daily', dormant: false, last_run_at: null },
+    ]);
   });
 
   it('defaults a missing promotion seq to 0', async () => {

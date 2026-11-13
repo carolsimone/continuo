@@ -1195,6 +1195,19 @@ a.release-author:hover { text-decoration: underline; }
 .btn--cta:hover:not(:disabled) { background: #3730a3; border-color: #3730a3; }
 .btn__ico { flex-shrink: 0; }
 
+/* An icon-only button: a square holding one glyph, for an action on an element
+   too small for a labelled button (the ▶ that runs a dormant node on the
+   graph). Its aria-label and title name the action. */
+.btn--icon {
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+}
+
 .btn.is-loading { opacity: 0.6; cursor: progress; }
 .btn.is-success { color: #16a34a; border-color: #86efac; background: #fff; }
 
@@ -1891,11 +1904,12 @@ a.release-author:hover { text-decoration: underline; }
   box-shadow: 0 0 0 2px #fff;
 }
 
-/* A node of the schedule graph that is no task carries a small chip on its
-   top border, right-aligned, where a run graph puts its "waiting for node"
+/* A node of the schedule graph that no schedule runs carries a small chip on
+   its top border, right-aligned, where a run graph puts its "waiting for node"
    pill; it has that pill's size and ring, and a modifier gives it its colours.
    The chip of an unknown-external node (a table another system loads) is
-   --external. */
+   --external; that of a dormant node (one continuo builds that has no schedule
+   tag, so it runs only by hand) is --dormant. */
 .dag-node-chip {
   position: absolute;
   top: 0;
@@ -1917,6 +1931,15 @@ a.release-author:hover { text-decoration: underline; }
   border-color: #94a3b8;
   color: #475569;
 }
+
+.dag-node-chip--dormant {
+  border-color: #64748b;
+  color: #334155;
+}
+
+/* Why the run a dormant node's ▶ asked for did not start, between the search
+   strip and the canvas. */
+.dag-run-error { margin: 8px 12px 0; flex-shrink: 0; }
 
 /* Status legend under the graph, in the same order and colours as the
    run-progress header counts. */

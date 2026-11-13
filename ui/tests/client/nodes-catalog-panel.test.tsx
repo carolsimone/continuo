@@ -9,10 +9,10 @@ const page = {
   nodes: [
     { service_name: 'service-1', schema_name: 'an', table_name: 'fct_orders',
       task_count: 51, success_rate_pct: 82, avg_duration_sec: 34, p95_duration_sec: 69,
-      last_status: 'failed', last_run_at: '2026-06-08T11:48:00Z' },
+      last_status: 'failed', last_run_at: '2026-06-08T11:48:00Z', node_type: 'dbt-model', dormant: false },
     { service_name: 'service-2', schema_name: 'an', table_name: 'dim_products',
       task_count: 40, success_rate_pct: 91, avg_duration_sec: 11, p95_duration_sec: 28,
-      last_status: 'succeeded', last_run_at: '2026-06-08T09:00:00Z' },
+      last_status: 'succeeded', last_run_at: '2026-06-08T09:00:00Z', node_type: 'dbt-model', dormant: false },
   ],
 };
 
@@ -71,7 +71,7 @@ describe('NodesCatalogPanel', () => {
       return Promise.resolve({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
     });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
-    expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
+    expect(await screen.findByText('No release has been promoted yet.')).toBeInTheDocument();
   });
 
   it('shows a loading strip, not the empty state, until the first page arrives', async () => {
@@ -84,11 +84,11 @@ describe('NodesCatalogPanel', () => {
     });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     expect(screen.getByText(/Loading nodes/i)).toBeInTheDocument();
-    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No release has been promoted yet/i)).not.toBeInTheDocument();
 
     await vi.waitFor(() => expect(resolvePage).toBeDefined());
     await act(async () => { resolvePage({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) }); });
-    expect(await screen.findByText(/No node runs yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No release has been promoted yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Loading nodes/i)).not.toBeInTheDocument();
   });
 
@@ -122,8 +122,69 @@ describe('NodesCatalogPanel', () => {
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     await screen.findByText('fct_orders');
     fireEvent.change(screen.getByPlaceholderText(/table name/i), { target: { value: 'nope' } });
-    expect(await screen.findByText(/No node matches/i)).toBeInTheDocument();
-    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+    expect(await screen.findByText('No node in the live release matches this filter.')).toBeInTheDocument();
+    expect(screen.queryByText(/No release has been promoted yet/i)).not.toBeInTheDocument();
+  });
+
+  it('lists a never-run node with "never" and dashes', async () => {
+    const neverRan = { service_name: 'service-1', schema_name: 'an', table_name: 'stg_backfill',
+      task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+      last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
+      node_type: 'dbt-model', dormant: true };
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ total_count: 3, nodes: [...page.nodes, neverRan] }) });
+    });
+    render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
+
+    const row = (await screen.findByText('stg_backfill')).closest('tr') as HTMLElement;
+    const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent?.trim());
+    expect(cells.slice(1)).toEqual(['never', '—', '—', '—']);
+    expect(row.textContent).not.toMatch(/NaN|Invalid Date|undefined|null/);
+    // The node has no schedule tag: a dormant chip says so beside its name.
+    const chip = row.querySelector('.nodes-node-name .pill-sm') as HTMLElement;
+    expect(chip.textContent).toBe('dormant');
+    expect(chip.getAttribute('title')).toBe('No schedule tag: runs only by hand. Last run: never.');
+
+    // A node that ran keeps its pill, its time and its stats, with no chip.
+    const ran = (screen.getByText('fct_orders')).closest('tr') as HTMLElement;
+    expect(ran.querySelector('.nodes-node-name .pill-sm')).toBeNull();
+    expect(Array.from(ran.querySelectorAll('td')).map(td => td.textContent?.trim())[3]).toBe('51');
+  });
+
+  it('sends dormant_only when the Dormant only box is ticked or the URL has dormant=1', async () => {
+    const listReads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/nodes?'));
+    const dormantOf = (url: string) => new URLSearchParams(url.split('?')[1]).get('dormant');
+
+    const unfiltered = render(<MemoryRouter initialEntries={['/?tab=nodes']}><NodesCatalogPanel /></MemoryRouter>);
+    await screen.findByText('fct_orders');
+    const box = screen.getByLabelText('Dormant only') as HTMLInputElement;
+    expect(box).not.toBeChecked();
+    expect(listReads().map(dormantOf)).toEqual([null]);
+
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    await vi.waitFor(() => expect(listReads().map(dormantOf)).toEqual([null, '1']));
+    unfiltered.unmount();
+
+    fetchMock.mockClear();
+    render(<MemoryRouter initialEntries={['/?tab=nodes&dormant=1']}><NodesCatalogPanel /></MemoryRouter>);
+    await screen.findByText('fct_orders');
+    expect(screen.getByLabelText('Dormant only')).toBeChecked();
+    expect(listReads().map(dormantOf)).toEqual(['1']);
+  });
+
+  it('says no node of the live release matches while Dormant only is ticked and none is dormant', async () => {
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/api/nodes/names')) {
+        return Promise.resolve({ ok: true, json: async () => ({ names: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ total_count: 0, nodes: [] }) });
+    });
+    render(<MemoryRouter initialEntries={['/?tab=nodes&dormant=1']}><NodesCatalogPanel /></MemoryRouter>);
+    expect(await screen.findByText('No node in the live release matches this filter.')).toBeInTheDocument();
   });
 
   it('does not refetch the node list on a timer', async () => {
@@ -148,7 +209,7 @@ describe('NodesCatalogPanel', () => {
     expect(await screen.findByText(/Failed to load nodes/i)).toBeInTheDocument();
     expect(container.querySelector('.info-strip--error')).toBeInTheDocument();
     // empty-state must NOT show alongside an error
-    expect(screen.queryByText(/No node runs yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No release has been promoted yet/i)).not.toBeInTheDocument();
   });
 
   it('hides Load more when all rows are loaded', async () => {

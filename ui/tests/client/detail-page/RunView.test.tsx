@@ -10,7 +10,7 @@ const task = {
   job_name: 'orders', status: 'running', attempt: 0, max_retries: 0, created_at: null,
 } as unknown as Task;
 const graph: ScheduleGraph = {
-  nodes: [{ node_id: 'svc1.public.orders', node_type: 'dbt-model', schedule_name: 's' }],
+  nodes: [{ node_id: 'svc1.public.orders', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null }],
   edges: [],
 };
 

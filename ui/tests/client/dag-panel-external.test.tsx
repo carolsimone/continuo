@@ -27,8 +27,8 @@ const UNKNOWN_EXTERNAL_ID = '.raw.ingest_probe';
 const READER_ID = 's.a.m';
 
 const NODES: GraphNode[] = [
-  { node_id: UNKNOWN_EXTERNAL_ID, node_type: 'unknown-external', schedule_name: 's' },
-  { node_id: READER_ID, node_type: 'dbt-model', schedule_name: 's' },
+  { node_id: UNKNOWN_EXTERNAL_ID, node_type: 'unknown-external', schedule_name: 's', dormant: false, last_run_at: null },
+  { node_id: READER_ID, node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
 ];
 const EDGES: GraphEdge[] = [{ from_node_id: UNKNOWN_EXTERNAL_ID, to_node_id: READER_ID }];
 
@@ -128,6 +128,33 @@ describe('DAGPanel unknown-external nodes', () => {
     expect(node.style.borderTopColor).toBe('rgb(148, 163, 184)');
   });
 
+  it('says what an unknown-external node is when hovered', () => {
+    const { container } = setup();
+    expect(nodeIn(container, UNKNOWN_EXTERNAL_ID).getAttribute('title'))
+      .toBe('A table continuo reads and does not build. continuo does not know who builds it.');
+  });
+
+  it('never draws a dormant or external node with a dashed border, even with colorByStatus', () => {
+    const dormantId = 's.a.dormant_m';
+    const graphNodes: GraphNode[] = [
+      ...NODES,
+      { node_id: dormantId, node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: null },
+    ];
+    const graphEdges: GraphEdge[] = [...EDGES, { from_node_id: dormantId, to_node_id: READER_ID }];
+    const { container } = setup({ colorByStatus: true, graphNodes, graphEdges });
+
+    // The reader has no task in the run on screen, so it is dashed; neither the
+    // external node nor the dormant node is ever in a schedule's run, and both
+    // keep a solid border of their own colour.
+    expect(nodeIn(container, READER_ID).style.borderTopStyle).toBe('dashed');
+    for (const id of [UNKNOWN_EXTERNAL_ID, dormantId]) {
+      const node = nodeIn(container, id);
+      expect(node.style.borderTopStyle).toBe('solid');
+      expect(node.style.borderTopColor).toBe('rgb(148, 163, 184)');
+    }
+    expect(nodeIn(container, dormantId).style.background).toBe('rgb(241, 245, 249)');
+  });
+
   it('draws an unknown-external node grey in the minimap', () => {
     setup();
     // #e2e8f0 is the fill of an unknown-external node; the minimap paints it that grey.
@@ -168,8 +195,8 @@ describe('DAGPanel unknown-external nodes', () => {
   it('shows an unknown-external node as a parent when its reader is selected, and dims an unrelated one', () => {
     const graphNodes: GraphNode[] = [
       ...NODES,
-      { node_id: '.raw.other', node_type: 'unknown-external', schedule_name: 's' },
-      { node_id: 's.b.n', node_type: 'dbt-model', schedule_name: 's' },
+      { node_id: '.raw.other', node_type: 'unknown-external', schedule_name: 's', dormant: false, last_run_at: null },
+      { node_id: 's.b.n', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
     ];
     const graphEdges: GraphEdge[] = [...EDGES, { from_node_id: '.raw.other', to_node_id: 's.b.n' }];
     const { container } = setup({ graphNodes, graphEdges, selectedNodeId: READER_ID });

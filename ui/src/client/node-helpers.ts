@@ -131,6 +131,16 @@ export function formatRelative(iso: string | null, now: Date = new Date()): stri
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
+// dormantTitle is the hover text of a dormant node (one with no schedule tag,
+// which runs only by hand): why it never runs on its own, and how long ago
+// its latest run was created, or that it never ran.
+export function dormantTitle(lastRunAt: string | null, now: Date = new Date()): string {
+  const what = 'No schedule tag: runs only by hand.';
+  if (!lastRunAt) return `${what} Last run: never.`;
+  const ago = formatRelative(lastRunAt, now);
+  return `${what} Last run ${ago === 'now' ? 'just now' : ago}.`;
+}
+
 // A declared task timeout: whole hours when it is a multiple of an hour,
 // otherwise minutes.
 export function formatTimeout(sec: number): string {
