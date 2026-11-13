@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -142,7 +143,7 @@ func (r *Runner) load(ctx context.Context, id uuid.UUID) (run tryRun, running bo
 	if !ok {
 		return tryRun{}, false, fmt.Errorf("remediation %s follows flow %q, which the loaded files do not define", id, rem.Flow)
 	}
-	t, err := DecodeTrigger(rem.TriggerPayload)
+	t, err := serialization.DecodeRemediationRequestedV2(rem.TriggerPayload)
 	if err != nil {
 		return tryRun{}, false, fmt.Errorf("remediation %s: %w", id, err)
 	}

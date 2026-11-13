@@ -58,11 +58,14 @@ func (r *Runner) planFor(run tryRun, c remediation.Cluster) (clusterPlan, error)
 
 // runClusterStep runs the next step of an open cluster and commits it: the
 // first context step with no done row, else the prompt, else the pre-flight
-// pass. The cluster's evidence is rebuilt from the rows of its done steps.
+// pass. The cluster's evidence is rebuilt from the rows of its done steps. A
+// cluster whose type the loaded files do not define fails on the runner's plan
+// row, and a done row that cannot be read back fails on the row of the step
+// about to run, so either failure is counted like a step's own.
 func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.Cluster) error {
 	plan, err := r.planFor(run, c)
 	if err != nil {
-		return err
+		return r.recordFailure(ctx, r.newRow(run, c.Cluster, stepPlan, kindRunner, c.Round, run.flow.Revision), err)
 	}
 	f := failureFor(run.trigger, c, run.snap.Try.Attempt)
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
@@ -72,7 +75,7 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 			return r.runContext(ctx, run, c, f, ev, ps, i == len(plan.context)-1)
 		}
 		if ev, err = r.contextEvidence(ev, row); err != nil {
-			return err
+			return r.recordFailure(ctx, r.pendingRow(run, c, plan), err)
 		}
 	}
 	row, done := run.journal.done(c.Cluster, string(plan.prompt.name), c.Round)
@@ -81,9 +84,23 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 	}
 	draft, err := promptDraft(row)
 	if err != nil {
-		return err
+		return r.recordFailure(ctx, r.pendingRow(run, c, plan), err)
 	}
 	return r.runPreflight(ctx, run, c, plan, f, ev, draft)
+}
+
+// pendingRow starts the row of the step the cluster runs next: its first
+// context step with no done row, else its prompt, else its pre-flight pass.
+func (r *Runner) pendingRow(run tryRun, c remediation.Cluster, plan clusterPlan) remediation.StepRun {
+	for _, ps := range plan.context {
+		if _, done := run.journal.done(c.Cluster, string(ps.name), c.Round); !done {
+			return r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), c.Round, ps.revision)
+		}
+	}
+	if _, done := run.journal.done(c.Cluster, string(plan.prompt.name), c.Round); !done {
+		return r.newRow(run, c.Cluster, string(plan.prompt.name), string(step.KindPrompt), c.Round, plan.prompt.revision)
+	}
+	return r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
 }
 
 // runContext runs one context step. A decline ends the cluster; the last

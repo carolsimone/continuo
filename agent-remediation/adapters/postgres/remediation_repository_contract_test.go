@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"slices"
 	"sync"
@@ -909,4 +910,30 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, hit, "the compare-and-set fires once")
 	})
+}
+
+func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
+	env := postgresEnv(t)
+	ctx := context.Background()
+	r := mustCreate(t, env, newRemediation("rel-nul", 1, contractBase))
+	startTry(t, env, r, remediation.TryDrafting, contractBase.Add(time.Hour))
+
+	output, err := json.Marshal(map[string]string{"source": "select 1\x00", "path": `C:\u0000`})
+	require.NoError(t, err)
+	step := remediation.StepRun{
+		RemediationID: r.ID, Try: 1, Cluster: 1, Step: "failing_node_source", Kind: "context", Round: 1,
+		Status: remediation.StepDone, Output: output, StartedAt: contractBase,
+		Findings: []remediation.Finding{{Code: "c1", Message: "bad\x00byte"}},
+	}
+	require.NoError(t, env.remediations.SaveStep(ctx, step), "JSONB refuses \\u0000, so the adapter replaces it")
+
+	snap, err := env.remediations.Load(ctx, r.ID)
+	require.NoError(t, err)
+	require.Len(t, snap.Steps, 1)
+	var got map[string]string
+	require.NoError(t, json.Unmarshal(snap.Steps[0].Output, &got))
+	assert.Equal(t, "select 1\uFFFD", got["source"])
+	assert.Equal(t, `C:\u0000`, got["path"], "a backslash the text holds is kept")
+	require.Len(t, snap.Steps[0].Findings, 1)
+	assert.Equal(t, "bad\uFFFDbyte", snap.Steps[0].Findings[0].Message)
 }

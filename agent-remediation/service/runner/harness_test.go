@@ -183,6 +183,13 @@ func (c *memCache) Get(_ context.Context, key string) (ports.ProposeResult, bool
 	return r, ok, nil
 }
 
+func (c *memCache) has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.m[key]
+	return ok
+}
+
 func (c *memCache) Put(_ context.Context, key string, r ports.ProposeResult) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -276,8 +283,10 @@ type harness struct {
 	bundle      *noBundle
 	artifacts   *memArtifacts
 	llm         *scriptedLLM
+	cache       *memCache
 	files       workflow.Set
 	maintenance bool
+	collab      runner.Collaborators
 	runner      *runner.Runner
 }
 
@@ -287,6 +296,19 @@ func withMaintenance() option { return func(h *harness) { h.maintenance = true }
 
 func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
+}
+
+// withFlowContext gives the flow the context step dbt_log, which the
+// dbt-compile type then no longer lists itself.
+func withFlowContext() option {
+	return func(h *harness) {
+		flow := h.files.Flows["rejected-release"]
+		flow.Context = refs("dbt_log")
+		h.files.Flows[flow.Name] = flow
+		typ := h.files.Types["dbt-compile"]
+		typ.Context = refs("failing_node_source", "failure_precedents")
+		h.files.Types[typ.Name] = typ
+	}
 }
 
 func newHarness(t *testing.T, opts ...option) *harness {
@@ -303,12 +325,13 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		bundle:    &noBundle{},
 		artifacts: &memArtifacts{},
 		llm:       &scriptedLLM{answer: fixAnswer},
+		cache:     &memCache{},
 		files:     testFiles(3),
 	}
 	for _, o := range opts {
 		o(h)
 	}
-	collab := runner.Collaborators{
+	h.collab = runner.Collaborators{
 		Source:    h.source,
 		Evidence:  h.evidence,
 		Sanitizer: nopSanitizer{},
@@ -323,21 +346,25 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		CandidateSource: h.bundle,
 		Clock:           h.clock,
 	}
-	reg := runner.NewRegistry(collab)
-	_, err := runner.Validate(h.files, reg)
+	_, err := runner.Validate(h.files, runner.NewRegistry(h.collab))
 	require.NoError(t, err)
-	h.runner = runner.New(runner.Deps{
+	h.runner = h.runnerOver(h.files)
+	return h
+}
+
+// runnerOver is a runner over the harness's store and fakes that runs files.
+func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
+	return runner.New(runner.Deps{
 		NewUoW:      func() uow.UnitOfWork { return memory.NewUnitOfWork(h.store) },
-		Registry:    reg,
-		Files:       h.files,
-		LLM:         llmcache.New(h.llm, &memCache{}, "test-model", discard),
-		Collab:      collab,
+		Registry:    runner.NewRegistry(h.collab),
+		Files:       files,
+		LLM:         llmcache.New(h.llm, h.cache, "test-model", discard),
+		Collab:      h.collab,
 		Clock:       h.clock,
 		Logger:      discard,
 		Maintenance: h.maintenance,
 		Owner:       workerOwner,
 	})
-	return h
 }
 
 func compileNode(id string) remediation.TriggerNode {
@@ -420,10 +447,26 @@ func (h *harness) accept(trig remediation.Trigger) uuid.UUID {
 // release.
 func (h *harness) legacyAttempt(attempt int, status proposal.Status) {
 	h.t.Helper()
+	h.legacyAttemptInRound(1, attempt, status)
+}
+
+// saveStep writes a journal row as it stands.
+func (h *harness) saveStep(row remediation.StepRun) {
+	h.t.Helper()
+	u := memory.NewUnitOfWork(h.store)
+	require.NoError(h.t, u.Begin(ctx))
+	require.NoError(h.t, u.RemediationRepo().SaveStep(ctx, row))
+	require.NoError(h.t, u.Commit())
+}
+
+// legacyAttemptInRound records a terminal attempt today's driver wrote for the
+// release in one round.
+func (h *harness) legacyAttemptInRound(round, attempt int, status proposal.Status) {
+	h.t.Helper()
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(h.t, u.Begin(ctx))
 	require.NoError(h.t, u.ProposalRepo().Upsert(ctx, proposal.Proposal{
-		Source: "compile", ReleaseID: releaseID, RemediationRound: 1, Attempt: attempt, Status: status,
+		Source: "compile", ReleaseID: releaseID, RemediationRound: round, Attempt: attempt, Status: status,
 		ResolvedNodeIDs: []string{"svc-a"}, CreatedAt: t0,
 	}))
 	require.NoError(h.t, u.Commit())

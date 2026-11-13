@@ -35,11 +35,12 @@ const (
 	noTypeSkipReason = "no remediation type matches this failure"
 )
 
-// NextTry opens the remediation's next try from its stored trigger, and is the
-// only way a later try starts. It opens one only while the remediation runs and
-// has no try or its try failed, so calling it again after it succeeded opens
-// nothing. The caller holds the lease; a lost lease returns nil with nothing
-// written.
+// NextTry opens the remediation's next try from its stored trigger, as Drive
+// also does when it finds the remediation with no try or with a failed one; a
+// try therefore opens even when the process stopped between failing a try and
+// calling NextTry. It opens one only while the remediation runs and has no try
+// or its try failed, so calling it again after it succeeded opens nothing. The
+// caller holds the lease; a lost lease returns nil with nothing written.
 func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 	run, running, err := r.load(ctx, id)
 	if err != nil || !running {
@@ -262,9 +263,10 @@ func countAttempts(ctx context.Context, repo repository.ProposalRepository, t re
 }
 
 // newCluster is cluster n of a try, matched to the first type of the flow that
-// handles it. A cluster no type handles is handed over at once with its members
-// skipped: a dbt-test target with the reason tests are never fixed, any other
-// with the reason no type matches.
+// handles it. A single cluster whose target is a dbt test is handed over at
+// once with its member skipped, before any type is matched, since a test is
+// never a fix target whatever its failure. Any other cluster no type handles is
+// handed over at once with its members skipped for that reason.
 func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, flow workflow.Flow, t remediation.Trigger,
 	n int, kind workflow.ClusterKind, target string, members []string) remediation.Cluster {
 	c := remediation.Cluster{
@@ -284,17 +286,18 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 			nodeType = node.NodeType
 		}
 	}
-	if typ, ok := r.d.Files.TypeFor(flow, kind, t.Source, nodeType); ok {
-		c.TypeName = typ.Name
-		return c
-	}
-	reason := noTypeSkipReason
-	if nodeType == string(pkg_model.NodeTypeDbtTest) {
-		reason = dbtTestSkipReason
+	reason := dbtTestSkipReason
+	if nodeType != string(pkg_model.NodeTypeDbtTest) {
+		typ, ok := r.d.Files.TypeFor(flow, kind, t.Source, nodeType)
+		if ok {
+			c.TypeName = typ.Name
+			return c
+		}
+		reason = noTypeSkipReason
 	}
 	c.Status = remediation.ClusterHandedOver
 	c.Outcome = &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason}
-	r.logger.Info("no remediation type handles the cluster; its members are skipped",
+	r.logger.Info("cluster handed over before any step; its members are skipped",
 		"release", t.ReleaseID, "cluster", n, "kind", kind, "target", target, "reason", reason)
 	return c
 }

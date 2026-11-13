@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
@@ -30,11 +31,17 @@ const (
 	kindOutput = "output"
 )
 
-// stepPreflight is the runner's own step that runs a cluster's pre-flight
-// checks in one pass. Its row's output holds the draft as the pass left it:
-// with every edit's original filled and, once every check passed, the URIs of
-// its stored content and diff. Its findings are every finding of the pass.
-const stepPreflight = "preflight"
+// The runner's own steps of a cluster.
+const (
+	// stepPlan finds the steps a cluster runs from its type. It has a row only
+	// when it failed: its type is not among the loaded files.
+	stepPlan = "plan"
+	// stepPreflight runs a cluster's pre-flight checks in one pass. Its row's
+	// output holds the draft as the pass left it: with every edit's original
+	// filled and, once every check passed, the URIs of its stored content and
+	// diff. Its findings are every finding of the pass.
+	stepPreflight = "preflight"
+)
 
 // contextRecord is a context step's output as its row stores it: each piece of
 // evidence encoded on its own, so it decodes into its key's registered type.
@@ -120,9 +127,12 @@ func (r *Runner) finish(row *remediation.StepRun) {
 
 // recordFailure records that a run of a step failed with cause, in a
 // transaction of its own after holding the lease: the row is failed, its
-// failures go up by one and its last error is cause. It returns cause, so the
-// drive stops with it and the next drive runs the step again. A lost lease is
-// returned as it is, and nothing is recorded for a drive whose context ended.
+// failures go up by one and its last error is cause, without NUL characters,
+// which a text column refuses. A failed run stores no output and no findings:
+// only a done row is ever read back, and whatever made its commit fail is not
+// written again. It returns cause, so the drive stops with it and the next
+// drive runs the step again. A lost lease is returned as it is, and nothing is
+// recorded for a drive whose context ended.
 func (r *Runner) recordFailure(ctx context.Context, row remediation.StepRun, cause error) error {
 	if ctx.Err() != nil || errors.Is(cause, repository.ErrLeaseLost) {
 		return cause
@@ -130,7 +140,9 @@ func (r *Runner) recordFailure(ctx context.Context, row remediation.StepRun, cau
 	now := r.clock.Now()
 	row.Status = remediation.StepFailed
 	row.Failures++
-	row.LastError = cause.Error()
+	row.LastError = strings.ReplaceAll(cause.Error(), "\x00", "")
+	row.Output = nil
+	row.Findings = nil
 	row.FinishedAt = &now
 	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
 		return u.RemediationRepo().SaveStep(ctx, row)

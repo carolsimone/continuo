@@ -15,8 +15,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
-	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 )
 
@@ -71,24 +71,6 @@ func TestRunner_AcceptOfAnEmptyFailingSetWritesNothing(t *testing.T) {
 
 	assert.Empty(t, h.store.Remediations())
 	assert.Empty(t, h.store.ProcessedMessages())
-}
-
-func TestDecodeTrigger_ReadsTheV2Payload(t *testing.T) {
-	h := newHarness(t)
-	node := compileNode("svc-a")
-	node.RelationID, node.DBTLogURI, node.CandidateArtifactURI = "rel", "s3://log", "s3://cand"
-	node.Service, node.NodeType, node.OtherService, node.OtherFilePath = "svc-a", "dbt-model", "svc-b", "models/other.sql"
-	node.ChangedAncestors = []remediation.ChangedAncestor{{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 2}}
-	trig := trigger("validation", node, compileNode("svc-b"))
-	trig.CodeBundleURI = "s3://bundle"
-
-	got, err := runner.DecodeTrigger(payloadOf(h.t, trig))
-	require.NoError(t, err)
-	trig.TenantID = ""
-	assert.Equal(t, trig, got)
-
-	_, err = runner.DecodeTrigger([]byte("{"))
-	assert.Error(t, err)
 }
 
 func TestRunner_DriveWithoutTheLeaseWritesNothing(t *testing.T) {
@@ -281,6 +263,25 @@ func TestRunner_DbtTestTargetIsSkipped(t *testing.T) {
 		Status: proposal.StatusSkipped,
 		Reason: "no remediation type matches this failure",
 	}, byTarget[python.NodeID].Outcome)
+	assert.Empty(t, h.store.Steps(id))
+	assert.Zero(t, h.llm.calls())
+}
+
+func TestRunner_DbtTestTargetIsSkippedEvenWhenATypeWouldSelectIt(t *testing.T) {
+	h := newHarness(t)
+	test := compileNode("svc-a")
+	test.NodeType = "dbt-test"
+	id := h.accept(trigger("compile", test))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	c := h.cluster(id, 1, 1)
+	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
+	assert.Equal(t, "", c.TypeName, "dbt-compile selects any node type, and is not used for a test")
+	assert.Equal(t, &proposal.NodeOutcome{
+		Status: proposal.StatusSkipped,
+		Reason: "dbt tests are not fix targets; fix the model or edit the test by hand",
+	}, c.Outcome)
 	assert.Empty(t, h.store.Steps(id))
 	assert.Zero(t, h.llm.calls())
 }
@@ -490,4 +491,161 @@ func TestRunner_NextTryOpensATryOnlyWhenNoneIsOpen(t *testing.T) {
 	assert.Equal(t, remediation.ClusterGathering, h.cluster(id, 1, 1).Status)
 	assert.Empty(t, h.store.Steps(id), "opening a try runs no step")
 	assert.Zero(t, h.llm.calls())
+}
+
+func TestRunner_ARoundTwoTriggerContinuesTheAttemptsWithItsOwnTries(t *testing.T) {
+	h := newHarness(t)
+	for attempt := 1; attempt <= 3; attempt++ {
+		h.legacyAttemptInRound(1, attempt, proposal.StatusFailed)
+	}
+	trig := trigger("compile", compileNode("svc-a"))
+	trig.Round = 2
+	id := h.accept(trig)
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	tries := h.store.Tries(id)
+	require.Len(t, tries, 1, "round 1's attempts do not spend round 2's tries")
+	assert.Equal(t, 4, tries[0].Attempt, "the attempt continues the release's sequence")
+	for _, p := range h.proposals() {
+		assert.NotEqual(t, proposal.StatusEscalated, p.Proposal.Status)
+	}
+	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+}
+
+func TestRunner_ThePromptIsCachedUnderTheRemediationTryClusterAndRound(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	key, err := llmcache.Key("test-model", "remediation:"+id.String()+":try:1:cluster:1:round:1", h.llm.lastRequest())
+	require.NoError(t, err)
+	assert.True(t, h.cache.has(key), "the answer is cached under the cluster's idempotency key")
+}
+
+func TestRunner_ALeaseLostDuringTheModelCallWritesNothing(t *testing.T) {
+	h := newHarness(t)
+	h.llm.onCall = func(int) {
+		repo := h.store.RemediationRepository()
+		id := h.store.Remediations()[0].ID
+		require.NoError(t, repo.ReleaseLease(ctx, id, workerOwner))
+		claimed, err := repo.Claim(ctx, id, "worker-2", h.clock.Now(), lease)
+		require.NoError(t, err)
+		require.True(t, claimed)
+	}
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.runner.Drive(ctx, id), "a lost lease stops the drive quietly")
+
+	rows := h.stepRows(id, 1, 1)
+	assert.Empty(t, rows["dbt-compile"], "the prompt's run is not recorded")
+	assert.Len(t, rows["failure_precedents"], 1, "the steps before it stay committed")
+	assert.Equal(t, remediation.ClusterProposing, h.cluster(id, 1, 1).Status)
+}
+
+func TestRunner_TheFlowContextRunsBeforeTheTypeContext(t *testing.T) {
+	h := newHarness(t, withFlowContext())
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	var order, revisions []string
+	for _, s := range h.store.Steps(id) {
+		order = append(order, s.Step)
+		revisions = append(revisions, s.FileRevision)
+	}
+	assert.Equal(t, []string{"dbt_log", "failing_node_source", "failure_precedents", "dbt-compile",
+		"target_file_was_shown", "content_changed", "confidence_not_low", "preflight"}, order)
+	assert.Equal(t, flowRevision, revisions[0], "a flow step runs under the flow file's revision")
+	assert.Equal(t, "rev-dbt-compile", revisions[1])
+	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+}
+
+func TestRunner_AFailedRunRecordsNoOutput(t *testing.T) {
+	h := newHarness(t)
+	h.llm.onCall = func(int) { h.store.FailNextCommit() }
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.Error(t, h.runner.Drive(ctx, id), "the prompt step's commit fails")
+
+	rows := h.stepRows(id, 1, 1)["dbt-compile"]
+	require.Len(t, rows, 1)
+	assert.Equal(t, remediation.StepFailed, rows[0].Status)
+	assert.Equal(t, 1, rows[0].Failures)
+	assert.Empty(t, rows[0].Output, "a failed run's output is not stored")
+	assert.Empty(t, rows[0].Findings)
+}
+
+func TestRunner_AFailedRunKeepsNoNULInItsError(t *testing.T) {
+	h := newHarness(t)
+	h.source.fail = errors.New("bad\x00byte")
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.Error(t, h.runner.Drive(ctx, id))
+
+	rows := h.stepRows(id, 1, 1)["failing_node_source"]
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].Failures)
+	assert.NotContains(t, rows[0].LastError, "\x00")
+	assert.Contains(t, rows[0].LastError, "badbyte")
+}
+
+func TestRunner_AnUnknownTypeIsRecordedOnThePlanRow(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.NextTry(ctx, id))
+	files := testFiles(3)
+	delete(files.Types, "dbt-compile")
+	r := h.runnerOver(files)
+
+	require.Error(t, r.Drive(ctx, id))
+	require.Error(t, r.Drive(ctx, id))
+
+	rows := h.stepRows(id, 1, 1)["plan"]
+	require.Len(t, rows, 1)
+	assert.Equal(t, "runner", rows[0].Kind)
+	assert.Equal(t, remediation.StepFailed, rows[0].Status)
+	assert.Equal(t, 2, rows[0].Failures, "every drive counts the failure")
+	assert.Contains(t, rows[0].LastError, `type "dbt-compile"`)
+}
+
+func TestRunner_AnUndecodableRowIsRecordedOnTheNextStep(t *testing.T) {
+	cases := []struct {
+		name    string
+		done    []string
+		corrupt string
+		blamed  string
+	}{
+		{name: "a context step's evidence", done: []string{"failing_node_source"}, corrupt: "failing_node_source", blamed: "dbt_log"},
+		{name: "the prompt's draft", done: []string{"failing_node_source", "dbt_log", "failure_precedents", "dbt-compile"}, corrupt: "dbt-compile", blamed: "preflight"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			id := h.accept(trigger("compile", compileNode("svc-a")))
+			require.NoError(t, h.runner.NextTry(ctx, id))
+			for _, name := range tc.done {
+				out := `{"evidence":{"failure_precedents":null}}`
+				switch name {
+				case tc.corrupt:
+					out = `{"evidence":{"source_files":"not an object"},"draft":"not an object"}`
+				case "dbt-compile":
+					out = `{"draft":{}}`
+				}
+				h.saveStep(remediation.StepRun{
+					RemediationID: id, Try: 1, Cluster: 1, Step: name, Kind: "context", Round: 1,
+					Status: remediation.StepDone, Output: []byte(out), StartedAt: t0,
+				})
+			}
+
+			require.Error(t, h.runner.Drive(ctx, id))
+
+			rows := h.stepRows(id, 1, 1)[tc.blamed]
+			require.Len(t, rows, 1)
+			assert.Equal(t, remediation.StepFailed, rows[0].Status)
+			assert.Equal(t, 1, rows[0].Failures)
+			assert.Contains(t, rows[0].LastError, "decode")
+		})
+	}
 }

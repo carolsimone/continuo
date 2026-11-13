@@ -560,7 +560,9 @@ func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.C
 }
 
 // SaveStep inserts the step run or updates it on its unique key, keeping the
-// id the first insert assigned.
+// id the first insert assigned. A NUL character in the output, the findings or
+// the waited-on run ids is stored as the replacement character, since a jsonb
+// column refuses it.
 func (r *RemediationRepository) SaveStep(ctx context.Context, s remediation.StepRun) error {
 	rows := make([]findingRow, 0, len(s.Findings))
 	for _, f := range s.Findings {
@@ -570,9 +572,10 @@ func (r *RemediationRepository) SaveStep(ctx context.Context, s remediation.Step
 	if err != nil {
 		return fmt.Errorf("encode findings: %w", err)
 	}
+	findings = replaceNULEscapes(findings)
 	var output any
 	if len(s.Output) > 0 {
-		output = s.Output
+		output = replaceNULEscapes(s.Output)
 	}
 	var waitingOn any
 	if len(s.WaitingOn) > 0 {
@@ -580,7 +583,7 @@ func (r *RemediationRepository) SaveStep(ctx context.Context, s remediation.Step
 		if err != nil {
 			return fmt.Errorf("encode waiting_on: %w", err)
 		}
-		waitingOn = raw
+		waitingOn = replaceNULEscapes(raw)
 	}
 	var finishedAt any
 	if s.FinishedAt != nil {
