@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,43 @@ func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
 	assert.Equal(t, map[string]string{"run_id": "run_fr", "schedule_name": "single-node-run-00ff00ff"}, payload)
 	assert.Equal(t, []string{"finance", "analytics", "orders", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "agent-chat-llm"},
 		[]string{fake.gotFullRefreshSvc, fake.gotFullRefreshSchema, fake.gotFullRefreshTable, fake.gotFullRefreshSourceRun, fake.gotFullRefreshActor})
+}
+
+func TestFullRefresh_SendsTheAcknowledgedObjects(t *testing.T) {
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr"}}
+
+	_, _, code := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second},
+		[]string{"service-1", "e2e_schema", "seed_table_1", "--acknowledge", "e2e_bi.seed_reader", "--acknowledge", "bi.other"})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, []string{"e2e_bi.seed_reader", "bi.other"}, fake.gotAcknowledged)
+}
+
+func TestFullRefresh_WithoutAcknowledgeSendsNone(t *testing.T) {
+	fake := &fakeNodeRunController{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr"}}
+
+	_, _, code := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second}, []string{"service-1", "e2e_schema", "seed_table_1"})
+
+	require.Equal(t, 0, code)
+	assert.Empty(t, fake.gotAcknowledged)
+}
+
+func TestFullRefresh_LongExplainsTheSeedRulesAndTheAcknowledgeFlag(t *testing.T) {
+	cmd := NewFullRefreshCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
+	long := strings.Join(strings.Fields(cmd.Long), " ")
+
+	for _, want := range []string{
+		"rebuilds the continuo views that read it, in the same run",
+		"--acknowledge",
+		"+full_refresh: false",
+		"seed_full_refresh_undefined",
+		"full_refresh_undefined",
+	} {
+		assert.Contains(t, long, want)
+	}
+	flag := cmd.Flags().Lookup("acknowledge")
+	require.NotNil(t, flag)
+	assert.Equal(t, "an object outside continuo that the seed's full refresh may drop, as <schema>.<name>; repeat for each object the stopped load listed", flag.Usage)
 }
 
 func TestFullRefreshNode_WrongArgCountIsUsage(t *testing.T) {

@@ -12,18 +12,25 @@
 # parse-cache volume at that directory in the team container), parse
 # (parse-export/rehearsal leg; no placeholders).
 #
-# seed is a NORMAL, non-destructive production load: it inserts new/changed
-# rows without dropping the table. It runs on every automatic, scheduled or
-# promoted-release seed load.
+# seed is the plain load that every automatic, scheduled and promoted-release
+# seed load runs. What it does to the table depends on the warehouse. On
+# Postgres it truncates the table and inserts the rows, or, when the seed sets
+# `+full_refresh: true`, drops the table with CASCADE and creates it again from
+# the CSV. On Trino it drops the table and creates it again.
 #
 # full_refresh (optional) rebuilds one dbt model from scratch, and
-# seed_full_refresh (optional) rebuilds one dbt seed from scratch. Both back
-# only the explicit, operator-initiated single-node full-refresh operation —
-# never an automatic load. A block without one of them cannot full-refresh
-# that node kind: such a request fails permanently and never falls back to
-# another block's command. Rebuilding a relation can CASCADE-drop views that
-# select from it on a schema-bound engine (Postgres), which the promotion flow
-# never recreates — that cost is why full refresh is explicit, not automatic.
+# seed_full_refresh (optional) rebuilds one dbt seed from scratch. Both back an
+# operator's single-node full refresh and two automatic cases: a Postgres seed
+# whose columns change and that leaves `+full_refresh` unset runs
+# seed_full_refresh, and a Trino materialized view below a reloaded seed runs
+# full_refresh. A block without one of them cannot run that operation: such a
+# task fails `seed_full_refresh_undefined` or `full_refresh_undefined` before
+# any container starts, and never falls back to another block's command.
+#
+# The run that loads a seed, the promote-seed run among them, rebuilds in the
+# same run the continuo views and materialized views that a dropping load
+# loses. On Postgres it stops before the drop when an object continuo does not
+# own reads the seed.
 default:
   run:               ["dbt", "run", "--select", "{{ node }}"]
   seed:              ["dbt", "seed", "--select", "{{ node }}"]

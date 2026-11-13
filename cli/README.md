@@ -17,12 +17,13 @@ The `Dockerfile` builds a small image with the binary at `/usr/local/bin/continu
 
 ## Connect
 
-The CLI calls three services over gRPC. On a local install, forward them to the default ports:
+The CLI calls four services over gRPC. On a local install, forward them to the default ports:
 
 ```bash
 kubectl -n continuo port-forward svc/run-controller 50051:50051 &
 kubectl -n continuo port-forward svc/catalog 50052:50052 &
 kubectl -n continuo port-forward svc/dead-letter-controller 50055:50055 &
+kubectl -n continuo port-forward svc/release-controller 50056:50056 &
 ```
 
 | Flag | Environment variable | Default | What it sets |
@@ -30,6 +31,7 @@ kubectl -n continuo port-forward svc/dead-letter-controller 50055:50055 &
 | `--endpoint` | `CONTINUO_RUN_CONTROLLER_ADDR` | `localhost:50051` | run-controller: schedules, runs and nodes |
 | `--catalog-endpoint` | `CONTINUO_CATALOG_ADDR` | `localhost:50052` | catalog: code versions and failure precedents |
 | `--dead-letter-endpoint` | `CONTINUO_DEAD_LETTER_ADDR` | `localhost:50055` | dead-letter-controller: dead letters |
+| `--release-endpoint` | `CONTINUO_RELEASE_CONTROLLER_ADDR` | `localhost:50056` | release-controller: seed reload notices of a candidate release |
 | `--timeout` | `CONTINUO_TIMEOUT` | `10s` | Time limit for each call. A value that does not parse is ignored |
 | `--human` | | off | Prints one short line on stderr instead of JSON on stdout |
 
@@ -97,7 +99,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `run show <run-id>` | Shows one run and, for each task, its status, attempt, failure, and the run it waits for if another run holds its node. | |
+| `run show <run-id>` | Shows one run and, for each task, its operation, why the planner chose it, its status, attempt, failure, and the run it waits for if another run holds its node. | |
 | `run graph <run-id>` | Shows the run's nodes with their status, and the dependencies between them. | |
 | `run attempts <run-id> [task-id]` | Lists the attempts of the run's tasks, or of one task: job name, status, exit code, times and log location. | |
 | `run cancel <run-id> <reason>` | Cancels a run. It shows `cancelling` until its Jobs stop, then `cancelled`. Cancelling again changes nothing. | yes |
@@ -112,15 +114,21 @@ A node is one model, seed or python script. Node commands take it as `<service> 
 | Command | What it does | Changes state |
 |---|---|:--:|
 | `node list` | Lists nodes with run statistics: success rate, durations, last status and task timeout. Filter with `--search` (an exact table name), `--service` and `--operation` (`run`, `test` or `build`, default `run`). Page with `--limit` (1 to 200, default 50) and `--offset`. | |
-| `node history <service> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash. `--operation` picks `run`, `test` or `build` (default `run`). | |
+| `node history <service> <schema> <table>` | Lists the node's recent runs: status, image tag, times, log location and content hash, and on a seed task whose load stopped with `unowned_dependents` the `blocking_objects` to name with `node full-refresh --acknowledge`. `--operation` picks `run`, `test` or `build` (default `run`). | |
 | `node trigger <service> <schema> <table> [source-run-id]` | Starts a run of one node (`dbt run`) and prints its `run_id`. With the id of a past run, it uses that run's image and manifest instead of the latest. Exits 3 if the live release has no such node. | yes |
 | `node test <service> <schema> <table> [source-run-id]` | The same, with `dbt test`. | yes |
 | `node build <service> <schema> <table> [source-run-id]` | The same, with `dbt build`. | yes |
-| `node full-refresh <service> <schema> <table> [source-run-id]` | The same, with `dbt --full-refresh`: rebuilds the model or seed from scratch. | yes |
+| `node full-refresh <service> <schema> <table> [source-run-id]` | The same, with `dbt --full-refresh`: rebuilds the model or seed from scratch. A seed's full refresh also rebuilds the continuo views that read it; `--acknowledge <schema>.<name>` (repeatable) names an object outside continuo that the refresh may drop. | yes |
 | `node versions <service> <schema> <table>` | Lists the code versions continuo recorded for the node, newest first, with their hashes. `--include-code` adds the SQL, and `--limit` caps the list (default 20). | |
 | `node diff <service> <schema> <table> --from N --to M` | Shows the SQL diff between two recorded versions, given by the `version_seq` numbers of `node versions`. Both flags are required. | |
 | `node upstream-changes <service> <schema> <table>` | Lists the latest code change of each ancestor of the node, with its distance (`depth`) and diff. `--depth` sets how far up to look (default 3, at most 10), and `--since` (a timestamp) hides older changes. | |
 | `node code-units [<unit-id>]` | Lists the version history of shared-code units, by unit id or for one node with `--service`, `--schema` and `--table`. Empty for a node without shared code. Exits 3 for an unknown unit id. | |
+
+### Releases
+
+| Command | What it does | Changes state |
+|---|---|:--:|
+| `release notices <release-id>` | Lists the seeds whose load a candidate release changes: what each load does, the views it rebuilds, what refreshes on its schedule, what the warehouse holds outside continuo, and whether the load is predicted to go ahead or stop. A notice predicts, the run's preflight decides. | |
 
 ### Failures and dead letters
 
@@ -137,4 +145,4 @@ A dead letter is a message a service gave up on.
 
 | Command | What it does | Changes state |
 |---|---|:--:|
-| `describe` | Prints the catalog of every command with its arguments, flags, exit codes and output shape. | |
+| `describe` | Prints the catalog of every command with its arguments, flags (marking the ones the in-UI assistant may set and the ones that repeat), exit codes and output shape. | |

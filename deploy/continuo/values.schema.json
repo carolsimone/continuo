@@ -90,6 +90,7 @@
         "agentRemediationGrpcAddr": {"type": "string"},
         "agentChatGrpcAddr": {"type": "string"},
         "deadLetterControllerGrpcAddr": {"type": "string"},
+        "releaseControllerGrpcAddr": {"type": "string"},
         "terminationGracePeriodSeconds": {
           "type": "integer",
           "minimum": 20,

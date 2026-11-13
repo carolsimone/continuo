@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	ecredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
@@ -79,7 +80,7 @@ func newDispatchFlow(t *testing.T, db *sqlx.DB) *dispatchFlow {
 func (f *dispatchFlow) rebind() {
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(f.db, logger) }
-	f.handler = ecredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, f.stops, logger), logger)
+	f.handler = ecredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, commandcfg.Defaults(), f.stops, logger), logger)
 }
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox

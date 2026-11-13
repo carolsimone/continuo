@@ -147,10 +147,14 @@ func main() {
 		"CONTINUO_RUN_CONTROLLER_ADDR="+cfg.RunControllerAddr,
 		"CONTINUO_CATALOG_ADDR="+cfg.CatalogAddr,
 	)
-	// An unset dead-letter address is not forwarded, so the CLI falls back to
-	// its own default rather than receiving a blank override.
+	// An unset dead-letter or release-controller address is not forwarded, so
+	// the CLI falls back to its own default rather than receiving a blank
+	// override.
 	if cfg.DeadLetterAddr != "" {
 		cliEnv = append(cliEnv, "CONTINUO_DEAD_LETTER_ADDR="+cfg.DeadLetterAddr)
+	}
+	if cfg.ReleaseAddr != "" {
+		cliEnv = append(cliEnv, "CONTINUO_RELEASE_CONTROLLER_ADDR="+cfg.ReleaseAddr)
 	}
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 

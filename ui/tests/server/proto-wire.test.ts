@@ -99,8 +99,17 @@ describe('proto wire: run.proto', () => {
     const sent = {
       request_id: '5d21c0de-0000-4000-8000-000000000001', service_name: 'svc', schema_name: 'sch',
       table_name: 'tbl', metadata_source: 'snapshot_of_run', source_run_id: 'run-1', operation: 'full_refresh',
+      acknowledged_dependents: ['bi.fx_rates_report', 'bi.daily_totals'],
     };
     expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual(sent);
+  });
+
+  it('TriggerSingleNodeRun request decodes no acknowledged_dependents as an empty list', () => {
+    const sent = {
+      request_id: '5d21c0de-0000-4000-8000-000000000001', service_name: 'svc', schema_name: 'sch',
+      table_name: 'tbl', metadata_source: 'latest', source_run_id: '', operation: '',
+    };
+    expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual({ ...sent, acknowledged_dependents: [] });
   });
 
   it('GetRunGraph decodes fields 3 and 4 as run_promotion_seq and latest_promotion_seq', () => {
@@ -406,8 +415,13 @@ describe('proto wire: run.proto', () => {
       error_message: 'boom',
       log_s3_key: 'logs/task-1-2.log',
       run_results_uri: 'run-results/task-1-2.json',
+      seed_preflight: {
+        drop_semantics: 'cascade', completeness: 'complete', checked: true,
+        dependents: [{ schema: 'bi', name: 'fx_rates_report', kind: 'view', owner: 'bi_owner', depth: 2, allowed: false }],
+        probes: [{ schema: 'bi', name: 'fx_rates_report', ok: false, error: 'no such relation' }],
+      },
     };
-    const second = { ...attempt, task_id: 'task-2', attempt: 0, status: 'succeeded' };
+    const second = { ...attempt, task_id: 'task-2', attempt: 0, status: 'succeeded', seed_preflight: null };
     const resp = method.responseDeserialize(method.responseSerialize({
       attempts: [attempt, second], total_count: 2,
     }));

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
@@ -65,9 +66,9 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
 	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
-	// remediation_round + rebaseline. There is no shadow key: a candidate response never
+	// remediation_round + rebaseline + notices. There is no shadow key: a candidate response never
 	// carries one, since GET /releases/{id} only ever returns a candidate.
-	assert.Len(t, decoded, 16)
+	assert.Len(t, decoded, 17)
 	assert.Equal(t, "rPROV", decoded["release_id"])
 	_, hasShadow := decoded["shadow"]
 	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
@@ -131,4 +132,49 @@ func TestGetReleaseResponse_IncludesRebaseline(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &decoded))
 	assert.Equal(t, true, decoded["bootstrap"])
 	assert.Equal(t, true, decoded["rebaseline"])
+}
+
+func TestGetRelease_ReturnsTheNotices(t *testing.T) {
+	yes := true
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+		ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0", Schedule: "seed",
+		SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_date"}, {Name: "rate_to_eur"}}}
+	candSeed := prodSeed
+	candSeed.ContentHash, candSeed.SeedColumnsHash = "sha256:71fe", "sha256:0d3c"
+	candSeed.SeedColumns = append(append([]release.SeedColumn{}, prodSeed.SeedColumns...), release.SeedColumn{Name: "source"})
+	candidate := release.Topology{
+		candSeed,
+		{UniqueID: "analytics.fx_rates_current", NodeType: "dbt-model", Materialized: "view", Schedule: "hourly", UpstreamUniqueIDs: []string{"analytics.seed_fx_rates_eur"}},
+		{UniqueID: "analytics.fx_rates_latest_eur", NodeType: "dbt-model", Materialized: "view", Schedule: "hourly", UpstreamUniqueIDs: []string{"analytics.fx_rates_current"}},
+	}
+	notices, _ := release.BuildNotices(candidate, release.Topology{prodSeed}, warehouse.SchemaBound, "postgres", false)
+
+	now := time.Unix(1, 0).UTC()
+	withNotices := pipeline.NewCandidate("rel-notices", "finance", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	withNotices.SetNotices(notices)
+	without := pipeline.NewCandidate("rel-none", "finance", "tag", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	deps, releases := newRetryRemediationDeps(now)
+	releases.releases["rel-notices"] = withNotices
+	releases.releases["rel-none"] = without
+
+	get := func(id string) map[string]any {
+		rec := httptest.NewRecorder()
+		newTestServer(deps).Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/releases/"+id, nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+
+	body := get("rel-notices")
+	got, ok := body["notices"].([]any)
+	require.True(t, ok, "notices must be a JSON array")
+	require.Len(t, got, 1)
+	n := got[0].(map[string]any)
+	assert.Equal(t, "seed_reload", n["kind"])
+	assert.Equal(t, "run", n["load"].(map[string]any)["operation"])
+	assert.Equal(t, []any{"source"}, n["columns"].(map[string]any)["added"])
+	assert.Equal(t, "analytics.fx_rates_latest_eur", n["rebuilds"].([]any)[1].(map[string]any)["node_id"])
+
+	assert.Equal(t, []any{}, get("rel-none")["notices"])
 }

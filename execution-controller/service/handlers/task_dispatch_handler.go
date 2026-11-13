@@ -25,24 +25,31 @@ import (
 // holds no trace of, neither a record nor a Job nor a pod the cache or a live
 // read of the API shows, is reported attempt_lost. A dispatch of a fenced run
 // (one run-controller cancelled) that is not held creates no Job: the attempt is
-// stored stopped, or, when its Job exists, adopted to be stopped. A dispatch
-// that may store an attempt takes its run's lock shared before it reads the
-// fence, so a fence being written is waited for and met, and a fence written
-// after sees the attempt. Each attempt stored stopped is counted once the
-// transaction commits.
+// stored stopped, or, when its Job exists, adopted to be stopped. A full
+// refresh whose dbt-commands block defines no full refresh command for its
+// node type is recorded failed before any Job is made, but only once neither
+// the cache nor a live read shows a Job or an unfinished pod of the attempt:
+// one made while the block defined the command is adopted or awaited like
+// any other. A dispatch that may store an attempt takes its run's lock shared
+// before it reads the fence, so a fence being written is waited for and met,
+// and a fence written after sees the attempt. Each attempt stored stopped is
+// counted once the transaction commits.
 type TaskDispatchHandler struct {
-	jobs    ports.JobCache
-	lookup  ports.JobLookup
-	metrics ports.StopMetrics
-	logger  *slog.Logger
-	now     func() time.Time
+	jobs     ports.JobCache
+	lookup   ports.JobLookup
+	commands ports.CommandResolver
+	metrics  ports.StopMetrics
+	logger   *slog.Logger
+	now      func() time.Time
 }
 
 // NewTaskDispatchHandler constructs the handler; jobs is the watch's cache,
-// read for a Job of the attempt, and lookup reads the Job from the Kubernetes
-// API before an attempt is reported lost.
-func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, metrics ports.StopMetrics, logger *slog.Logger) *TaskDispatchHandler {
-	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, metrics: metrics, logger: logger, now: time.Now}
+// read for a Job of the attempt, lookup reads the Job from the Kubernetes
+// API before an attempt is reported lost, and commands tells whether the
+// dbt-commands block of a full refresh's service defines its command.
+func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, commands ports.CommandResolver, metrics ports.StopMetrics,
+	logger *slog.Logger) *TaskDispatchHandler {
+	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, commands: commands, metrics: metrics, logger: logger, now: time.Now}
 }
 
 // Handle applies one task.dispatch:v1 message inside u's transaction; the
@@ -80,20 +87,22 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		}
 	}
 	problem, message := model.DispatchProblem(cmd, evt.KnownStatus)
+	refusal, refusalMessage := h.fullRefreshProblem(cmd)
 	cached := h.jobs.Observe(cmd.JobName)
 
-	action := model.DecideDispatch(found, laterHeld, problem, cached.RunsAttempt(cmd.TaskID, cmd.Attempt),
+	action := model.DecideDispatch(found, laterHeld, problem, refusal, cached.RunsAttempt(cmd.TaskID, cmd.Attempt),
 		cached.HasUnfinishedPod(), evt.KnownStatus)
-	if action == model.ReportLost {
+	if action == model.ReportLost || (action == model.RefuseInvalid && problem == "") {
 		// The cache can trail the API, so a Job or a pod it does not hold may
-		// still run: the attempt is reported lost only once a live read finds
+		// still run: the attempt is reported lost, or refused for a command
+		// the configuration no longer defines, only once a live read finds
 		// neither. A read that fails leaves the dispatch unanswered, and its
 		// message is delivered again.
 		live, err := h.lookup.ObserveLive(ctx, cmd.JobName)
 		if err != nil {
 			return fmt.Errorf("read Job %s of attempt %d of task %s: %w", cmd.JobName, cmd.Attempt, cmd.TaskID, err)
 		}
-		action = model.DecideDispatch(found, laterHeld, problem, live.RunsAttempt(cmd.TaskID, cmd.Attempt),
+		action = model.DecideDispatch(found, laterHeld, problem, refusal, live.RunsAttempt(cmd.TaskID, cmd.Attempt),
 			live.HasUnfinishedPod(), evt.KnownStatus)
 	}
 	switch action {
@@ -107,6 +116,10 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt)
 		return nil
 	case model.RefuseInvalid:
+		if problem == "" {
+			// The command can run; the dbt-commands configuration refuses it.
+			problem, message = refusal, refusalMessage
+		}
 		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, problem, message, now), pkgmodel.AttemptStatusFailed, message)
 	case model.AdoptJob:
 		h.logger.Warn("No record of the attempt, but its Job exists — the record is rebuilt from it",
@@ -115,7 +128,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 	case model.CreateAttempt:
 		return h.add(ctx, u, model.NewDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
 	case model.AwaitOrphanPod:
-		h.logger.Error("An acknowledged attempt has no record and no Job, but a pod of it has not finished — "+
+		h.logger.Error("An attempt with no record and no Job has a pod that has not finished — "+
 			"nothing is reported until the pod is gone; run-controller asks again",
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName, "known_status", evt.KnownStatus)
 		return nil
@@ -126,6 +139,21 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, pkgmodel.FailureReasonAttemptLost, message, now), pkgmodel.AttemptStatusFailed, message)
 	}
 	return fmt.Errorf("dispatch of attempt %d of task %s: no action %d", cmd.Attempt, cmd.TaskID, action)
+}
+
+// fullRefreshProblem returns the reason and message of a full refresh whose
+// dbt-commands block defines no full refresh command for its node type, which
+// no Job could ever run; an empty reason for any other dispatch.
+func (h *TaskDispatchHandler) fullRefreshProblem(cmd command.DeployTask) (pkgmodel.FailureReason, string) {
+	nodeType := pkgmodel.NodeType(cmd.NodeType)
+	if pkgmodel.Operation(cmd.Operation) != pkgmodel.OperationFullRefresh || !nodeType.SupportsFullRefresh() {
+		return "", ""
+	}
+	block, defined := h.commands.FullRefreshBlock(cmd.ServiceName, nodeType)
+	if defined {
+		return "", ""
+	}
+	return model.FullRefreshUndefined(nodeType, block)
 }
 
 // acceptFenced answers a dispatch of a fenced run that holds no record of the

@@ -35,6 +35,23 @@ export interface PublicRelease {
   reject_reason: string;
   reject_detail: string;
   ui_url: string | null;
+  notices: PublicNotice[];
+}
+
+// A seed reload notice of a release as GET /api/v1/releases/:id answers it:
+// what the release's seed change does to the seed's table and the views read
+// from it. load is the operation of the seed's own load, and stops_on the
+// warehouse objects outside continuo that stop the load, empty unless the
+// notice predicts a stop.
+interface PublicNotice {
+  kind: string;
+  node_id: string;
+  service: string;
+  change: string;
+  load: string;
+  columns: { added: string[]; removed: string[]; retyped: string[] };
+  rebuilds: { node_id: string; operation: string }[];
+  stops_on: string[];
 }
 
 // The production pointer as GET /api/v1/current-prod answers it.
@@ -55,6 +72,28 @@ interface PublicSubmitAccepted {
 // changing the shape a pipeline reads.
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const PREDICTION_STOPS = 'stops';
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const strings = (v: unknown): string[] => asArray(v).filter((x): x is string => typeof x === 'string');
+const objectOrEmpty = (v: unknown): Record<string, unknown> => (isObject(v) ? v : {});
+
+// projectNotice copies one of release-controller's seed reload notices into
+// the public shape, field by field.
+function projectNotice(n: Record<string, unknown>): PublicNotice {
+  const columns = objectOrEmpty(n.columns);
+  const outside = n.prediction === PREDICTION_STOPS ? asArray(objectOrEmpty(n.warehouse).outside_continuo) : [];
+  return {
+    kind: str(n.kind),
+    node_id: str(n.node_id),
+    service: str(n.service),
+    change: str(n.change),
+    load: str(objectOrEmpty(n.load).operation),
+    columns: { added: strings(columns.added), removed: strings(columns.removed), retyped: strings(columns.retyped) },
+    rebuilds: asArray(n.rebuilds).filter(isObject).map((r) => ({ node_id: str(r.node_id), operation: str(r.operation) })),
+    stops_on: outside.filter(isObject).map((o) => str(o.object)),
+  };
+}
 
 // upstreamCode is the `code` field of a JSON error body, or '' when the body
 // is not JSON or carries none.
@@ -111,6 +150,7 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
     reject_reason: str(rel.reject_reason),
     reject_detail: str(rel.reject_detail),
     ui_url: publicUrl ? `${publicUrl}/releases/${encodeURIComponent(id)}` : null,
+    notices: asArray(rel.notices).filter(isObject).map(projectNotice),
   };
 }
 

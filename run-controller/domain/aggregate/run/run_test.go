@@ -508,7 +508,7 @@ func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (
 		RunID:  c.ScheduleID,
 		Status: s, Attempt: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id],
 		JobName: c.JobName, ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName,
-		DispatchedAt: c.DispatchedAt, WaitReason: f.waits[id],
+		DispatchedAt: c.DispatchedAt, WaitReason: f.waits[id], Spec: c.Spec(),
 	}, ok, nil
 }
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {

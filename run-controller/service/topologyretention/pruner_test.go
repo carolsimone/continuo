@@ -70,6 +70,12 @@ func (f *pruneTopology) Graph(context.Context, string, string, []topology.NodeKe
 	return topology.Graph{}, errors.New("Graph is not used by the pruner")
 }
 
+func (f *pruneTopology) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, errors.New("ViewClosure is not used by the pruner")
+}
+func (f *pruneTopology) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, errors.New("IsBootstrapRelease is not used by the pruner")
+}
 func (f *pruneTopology) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, errors.New("NodeHashes is not used by the pruner")
 }

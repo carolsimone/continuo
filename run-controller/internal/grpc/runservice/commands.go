@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/commandrequest"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
@@ -127,6 +128,7 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *runv1.TriggerSin
 		TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
 			TenantID: tenantID, Target: target, MetadataSource: run.MetadataSource(req.GetMetadataSource()),
 			Operation: operation, SourceRunID: sourceID, Initiator: identity.FromContext(ctx),
+			AcknowledgedDependents: seedreload.NormalizeObjects(req.GetAcknowledgedDependents()),
 		},
 	})
 	if err != nil {
@@ -264,7 +266,10 @@ func cancelledBy(ctx context.Context, requested string) string {
 //     a defect in run-controller, and nothing it wrote was kept.
 //   - A run, schedule, node or task that does not exist is NotFound; a full
 //     refresh of a node type that cannot be rebuilt, a run of an ingested
-//     node, and a schedule name longer than a run carries are
+//     node, a single-node run of a seed that sets +full_refresh: false and
+//     needs its table rebuilt (a full refresh, or a load of changed columns),
+//     acknowledged dependents on a run that is not a full refresh of a dbt
+//     seed, and a schedule name longer than a run carries are
 //     InvalidArgument; a live release other than the one the caller
 //     previewed, and every other refusal of the run's selection or its
 //     source, is FailedPrecondition.
@@ -289,6 +294,8 @@ func (s *Server) commandError(rpc string, err error, attrs ...any) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, runplan.ErrFullRefreshUnsupported),
 		errors.Is(err, runplan.ErrIngestedNode),
+		errors.Is(err, runplan.ErrSeedFullRefreshDisabled),
+		errors.Is(err, runplan.ErrAcknowledgementNotAllowed),
 		errors.Is(err, run.ErrScheduleNameTooLong):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, run.ErrScheduleHasActiveRun),

@@ -15,11 +15,19 @@ type describePayload struct {
 }
 
 type describeCmd struct {
-	Path     string   `json:"path"`
-	Short    string   `json:"short"`
-	Long     string   `json:"long"`
-	Args     []string `json:"args"`
-	Mutating bool     `json:"mutating"`
+	Path     string         `json:"path"`
+	Short    string         `json:"short"`
+	Long     string         `json:"long"`
+	Args     []string       `json:"args"`
+	Flags    []describeFlag `json:"flags"`
+	Mutating bool           `json:"mutating"`
+}
+
+type describeFlag struct {
+	Name     string `json:"name"`
+	Usage    string `json:"usage"`
+	Chat     bool   `json:"chat"`
+	Repeated bool   `json:"repeated"`
 }
 
 // Catalog implements ports.ToolCatalog from the CLI's self-description.
@@ -40,8 +48,10 @@ func LoadCatalog(ctx context.Context, cliPath string) (*Catalog, error) {
 }
 
 // NewCatalogFromDescribe parses a describe JSON document into a tool catalog.
-// `describe` itself is excluded: the catalog IS the menu, the model never
-// needs to re-read it.
+// A tool's parameters are its command's positionals, then the flags describe
+// marks "chat" (optional, a list of strings when the flag repeats); no other
+// flag reaches the chat. `describe` itself is excluded: the catalog IS the
+// menu, the model never needs to re-read it.
 func NewCatalogFromDescribe(raw []byte) (*Catalog, error) {
 	var p describePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -67,6 +77,17 @@ func NewCatalogFromDescribe(raw []byte) (*Catalog, error) {
 				Required:    required,
 			})
 			def.ParamOrder = append(def.ParamOrder, name)
+		}
+		for _, f := range cmd.Flags {
+			if !f.Chat {
+				continue
+			}
+			def.Params = append(def.Params, ports.ToolParam{
+				Name:        f.Name,
+				Description: f.Usage,
+				Flag:        true,
+				Repeated:    f.Repeated,
+			})
 		}
 		c.tools = append(c.tools, def)
 		c.byName[def.Name] = def

@@ -132,6 +132,26 @@ func TestTopologyRoundTrip(t *testing.T) {
 	assert.Equal(t, topo, got)
 }
 
+// materialized, full_refresh (a false one included) and seed_columns survive
+// the tool's round trip.
+func TestTopologyRoundTrip_KeepsTheSeedReloadFields(t *testing.T) {
+	yes, no := true, false
+	topo := release.Topology{
+		{UniqueID: "a.seed", ServiceName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
+			Materialized: "seed", FullRefresh: &yes,
+			SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate", Type: "numeric"}}},
+		{UniqueID: "a.flags", ServiceName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
+			Materialized: "seed", FullRefresh: &no},
+		{UniqueID: "a.view", ServiceName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a.seed"},
+			Materialized: "view"},
+	}
+	raw, err := json.Marshal(fromTopology(topo))
+	require.NoError(t, err)
+	got, err := readTopology(bytes.NewReader(raw))
+	require.NoError(t, err)
+	assert.Equal(t, topo, got)
+}
+
 // A node's declared timeout in the input array reaches the announced topology.
 func TestReadTopology_KeepsTheTimeout(t *testing.T) {
 	in := `[{"unique_id":"a","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":[],"timeout_seconds":7200},

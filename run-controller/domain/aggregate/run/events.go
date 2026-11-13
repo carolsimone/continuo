@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -58,10 +59,11 @@ func (e RunCancelled) RunID() uuid.UUID { return e.ID }
 // next question waits for the next window. It carries the run, the task and
 // the attempt's number, run-controller's view of the attempt (KnownStatus: dispatched
 // until execution-controller acknowledged it), the node it builds as the run's
-// release holds it, the attempt's Kubernetes Job name, the dbt verb and how
-// long the attempt's container may run. TenantID is the tenant of the run,
-// which the event's outbox row stores. No retry budget travels: run-controller decides
-// every retry.
+// release holds it, the attempt's Kubernetes Job name, how long the attempt's
+// container may run, and the task's DispatchSpec: the dbt verb, why the plan
+// chose it, and a seed's preflight. Every dispatch of a task carries the spec
+// its row stores. TenantID is the tenant of the run, which the event's outbox
+// row stores. No retry budget travels: run-controller decides every retry.
 type TaskDispatched struct {
 	ID           uuid.UUID
 	TenantID     string
@@ -73,10 +75,32 @@ type TaskDispatched struct {
 	JobName      string
 	Operation    model.Operation
 	Timeout      time.Duration
+	// Reason is the task's plan reason; empty when its plan stated none.
+	Reason string
+	// Preflight is the seed's preflight; nil on every other task.
+	Preflight *seedreload.Preflight
 }
 
 func (TaskDispatched) runDomainEvent()    {}
 func (e TaskDispatched) RunID() uuid.UUID { return e.ID }
+
+// TaskRefused is recorded by Run.Start for each task its plan refused: the
+// task never starts a container, so it is stored failed, with an attempt 0
+// that names Reason and carries Detail as its error message. It names the run,
+// the task, its node and the operation the task would have applied. It maps to
+// no stream: the task's row and its attempt hold the refusal.
+type TaskRefused struct {
+	ID        uuid.UUID
+	TenantID  string
+	TaskID    uuid.UUID
+	Key       topology.NodeKey
+	Operation model.Operation
+	Reason    model.FailureReason
+	Detail    string
+}
+
+func (TaskRefused) runDomainEvent()    {}
+func (e TaskRefused) RunID() uuid.UUID { return e.ID }
 
 // RunDispatchTerminal is recorded by Run.MarkDispatchTerminal next to the
 // RunFinalized that carries the outcome (skipped for a benign no_tests

@@ -303,6 +303,31 @@ spec:
       ports:
         - port: 50055
 ---
+# agent-chat reaches release-controller's gRPC server (port 50056) for
+# `continuo release notices`. It is the CLI's one caller, so no other pod is
+# admitted to this port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-release-controller-grpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: release-controller
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $instance }}
+              app.kubernetes.io/name: agent-chat
+      ports:
+        - port: 50056
+---
 # Front door: ui accepts traffic from any source (ingress controller
 # namespaces vary per cluster; authentication is enforced in the app itself).
 apiVersion: networking.k8s.io/v1

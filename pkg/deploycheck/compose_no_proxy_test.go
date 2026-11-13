@@ -101,3 +101,26 @@ func TestComposeNoProxyNamesCatalog(t *testing.T) {
 		}
 	}
 }
+
+// agent-chat's CLI dials every CONTINUO_*_ADDR it is given. In compose, a host
+// missing from NO_PROXY goes to egress-proxy, which refuses it.
+func TestComposeAgentChatNoProxyNamesEveryCLIAddress(t *testing.T) {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, "docker-compose.yml")), &compose); err != nil {
+		t.Fatalf("parse docker-compose.yml: %v", err)
+	}
+
+	chat := compose.Services["agent-chat"].Environment
+	if _, ok := chat["CONTINUO_RELEASE_CONTROLLER_ADDR"]; !ok {
+		t.Fatal("agent-chat has no CONTINUO_RELEASE_CONTROLLER_ADDR")
+	}
+	for name, value := range chat {
+		if !strings.HasPrefix(name, "CONTINUO_") || !strings.HasSuffix(name, "_ADDR") {
+			continue
+		}
+		host, _, _ := strings.Cut(value, ":")
+		if !slices.Contains(noProxyEntries(chat), host) {
+			t.Errorf("agent-chat's NO_PROXY = %q, want an entry %s (the host of %s)", chat["NO_PROXY"], host, name)
+		}
+	}
+}

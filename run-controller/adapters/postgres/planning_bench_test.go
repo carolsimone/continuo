@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/events"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
@@ -104,7 +105,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 	var keys []string
 	require.NoError(b, db.Select(&keys,
 		`SELECT node_key FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, r.RunID()))
-	handler := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, discardLogger())
+	handler := handlers.NewAttemptReportHandler(testTaskDefaults, noRunMetrics{}, noRunMetrics{}, warehouse.SchemaBound, discardLogger())
 	u := newPlanningUoW(db)
 	reported := map[string]bool{}
 
@@ -169,19 +170,23 @@ func BenchmarkReconcileDue(b *testing.B) {
 	}
 }
 
-// noRunMetrics counts nothing.
+// noRunMetrics counts nothing: neither the run series nor the seed reload
+// series.
 type noRunMetrics struct{}
 
-func (noRunMetrics) RunStalled()                   {}
-func (noRunMetrics) RunsCancelling(_, _ int)       {}
-func (noRunMetrics) RunCancelled(time.Duration)    {}
-func (noRunMetrics) LeaseWaiters(int)              {}
-func (noRunMetrics) LeaseGranted(time.Duration)    {}
-func (noRunMetrics) LeaseRepaired()                {}
-func (noRunMetrics) CommandRequest(string, string) {}
-func (noRunMetrics) CronFire(string)               {}
-func (noRunMetrics) CronFires(string, int)         {}
-func (noRunMetrics) Schedules(int, int, int)       {}
+func (noRunMetrics) RunStalled()                    {}
+func (noRunMetrics) RunsCancelling(_, _ int)        {}
+func (noRunMetrics) RunCancelled(time.Duration)     {}
+func (noRunMetrics) LeaseWaiters(int)               {}
+func (noRunMetrics) LeaseGranted(time.Duration)     {}
+func (noRunMetrics) LeaseRepaired()                 {}
+func (noRunMetrics) CommandRequest(string, string)  {}
+func (noRunMetrics) CronFire(string)                {}
+func (noRunMetrics) CronFires(string, int)          {}
+func (noRunMetrics) Schedules(int, int, int)        {}
+func (noRunMetrics) SeedReloadEnded(string, string) {}
+func (noRunMetrics) SeedReloadStopped(string)       {}
+func (noRunMetrics) ViewRebuilt(time.Duration)      {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,26 @@ func TestLoad_AgentRemediationGRPCAddrOverride(t *testing.T) {
 	if cfg.AgentRemediationGRPCAddr != "agent-remediation.other-ns:9999" {
 		t.Fatalf("want override %q, got %q", "agent-remediation.other-ns:9999", cfg.AgentRemediationGRPCAddr)
 	}
+}
+
+func TestLoad_GRPCPort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "")
+	v := &pkgconfig.Validator{}
+	assert.Equal(t, 50056, Load(v).GRPCPort)
+	assert.Empty(t, v.Missing())
+
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "50999")
+	assert.Equal(t, 50999, Load(&pkgconfig.Validator{}).GRPCPort)
+}
+
+func TestLoad_RefusesAnInvalidGRPCPort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_GRPC_PORT", "not-a-port")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	require.Len(t, v.Missing(), 1)
+	assert.Contains(t, v.Missing()[0], "RELEASE_CONTROLLER_GRPC_PORT")
 }
 
 func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
@@ -125,4 +146,26 @@ func TestLoad_ReadsTheRedisPasswordFile(t *testing.T) {
 	v = &pkgconfig.Validator{}
 	Load(v)
 	assert.Contains(t, v.Missing(), "REDIS_PASSWORD")
+}
+
+// release-controller predicts seed reloads by the warehouse family of
+// WAREHOUSE_ENGINE, and refuses to start on an engine it has no family for.
+func TestLoad_WarehouseFamily(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "trino")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Equal(t, "trino", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.LateBinding, cfg.WarehouseFamily)
+	assert.NotContains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE")
+
+	t.Setenv("WAREHOUSE_ENGINE", "")
+	cfg = Load(&pkgconfig.Validator{})
+	assert.Equal(t, "postgres", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.SchemaBound, cfg.WarehouseFamily)
+
+	t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+	v = &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE (unsupported")
 }

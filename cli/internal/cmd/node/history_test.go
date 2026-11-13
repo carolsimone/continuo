@@ -61,6 +61,7 @@ type fakeNodeRunController struct {
 	gotFullRefreshSchema    string
 	gotFullRefreshTable     string
 	gotFullRefreshSourceRun string
+	gotAcknowledged         []string
 
 	listResp         *runv1.ListNodesResponse
 	listErr          error
@@ -99,9 +100,10 @@ func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, s
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
 	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
+	f.gotAcknowledged = acknowledged
 	return f.fullRefreshResp, f.fullRefreshErr
 }
 
@@ -339,6 +341,7 @@ func TestHistory_OutputSchemaDeclaresEveryRunField(t *testing.T) {
 		CompletedAt: "2026-10-24T10:02:00Z", ErrorMessage: "boom", FailureClass: "task", FailureReason: "exit_code",
 		LogS3Key: "logs/k", RunResultsUri: "results/k", Operation: "run", ContentHash: "c1",
 		WaitReason: "node_lease", WaitingOnRunId: "run_1", WaitingSince: "2026-10-24T10:05:00Z",
+		BlockingObjects: []string{"bi.customer_report"},
 	}}}}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
 	require.Equal(t, 0, exit)
@@ -350,16 +353,52 @@ func TestHistory_OutputSchemaDeclaresEveryRunField(t *testing.T) {
 	require.Len(t, emitted.Runs, 1)
 
 	var schema struct {
-		Runs []map[string]string `json:"runs"`
+		Runs []map[string]json.RawMessage `json:"runs"`
 	}
 	cmd := NewHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard)
 	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
 	require.Len(t, schema.Runs, 1, "output_schema declares the fields of one runs item")
 
 	assert.ElementsMatch(t, mapKeys(emitted.Runs[0]), mapKeys(schema.Runs[0]))
-	assert.Equal(t, "string", schema.Runs[0]["wait_reason"])
-	assert.Equal(t, "string", schema.Runs[0]["waiting_on_run_id"])
-	assert.Equal(t, "string", schema.Runs[0]["waiting_since"])
+	assert.JSONEq(t, `"string"`, string(schema.Runs[0]["wait_reason"]))
+	assert.JSONEq(t, `"string"`, string(schema.Runs[0]["waiting_on_run_id"]))
+	assert.JSONEq(t, `"string"`, string(schema.Runs[0]["waiting_since"]))
+	assert.JSONEq(t, `["string"]`, string(schema.Runs[0]["blocking_objects"]))
+	assert.JSONEq(t, `["bi.customer_report"]`, string(emitted.Runs[0]["blocking_objects"]))
+}
+
+// A seed task whose load stopped on objects outside continuo lists them, so
+// the caller can name them with node full-refresh --acknowledge; every other
+// run carries an empty list, never null.
+func TestHistory_ListsTheObjectsAStoppedSeedLoadNamed(t *testing.T) {
+	fake := &fakeNodeRunController{runsResp: &runv1.ListNodeTasksResponse{Tasks: []*runv1.NodeTask{
+		{RunId: "run_2", TaskStatus: "failed", FailureClass: "invalid", FailureReason: "unowned_dependents",
+			BlockingObjects: []string{"bi.churn", "bi.customer_report"}},
+		{RunId: "run_1", TaskStatus: "succeeded"},
+	}}}
+
+	stdout, _, exit := runHistory(t, fake, []string{"finance", "raw", "customers"}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Runs []map[string]json.RawMessage `json:"runs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Runs, 2)
+	assert.JSONEq(t, `["bi.churn","bi.customer_report"]`, string(payload.Runs[0]["blocking_objects"]))
+	assert.JSONEq(t, `[]`, string(payload.Runs[1]["blocking_objects"]))
+}
+
+// The help says what blocking_objects holds and what to do with it.
+func TestHistory_LongExplainsBlockingObjects(t *testing.T) {
+	long := NewHistoryCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, `"blocking_objects":[string]`)
+	assert.Contains(t, long, "unowned_dependents")
+	assert.Contains(t, long, "node full-refresh")
+	assert.Contains(t, long, "--acknowledge")
+	assert.Contains(t, NewFullRefreshCommand(nil, nil, io.Discard, io.Discard).Long, `"node history" lists them in blocking_objects`,
+		"full-refresh says where the objects to acknowledge are listed")
 }
 
 // The help says when the wait fields are set and what they name.

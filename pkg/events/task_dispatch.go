@@ -37,6 +37,12 @@ type TaskDispatch struct {
 	// harness recomputes it from what its image holds and refuses to run on a
 	// mismatch. Empty when run-controller holds none.
 	ContentHash string `json:"content_hash,omitempty"`
+	// PlanReason is why run-controller chose Operation for this task, shown
+	// beside the task. Empty when it states none.
+	PlanReason string `json:"plan_reason,omitempty"`
+	// SeedPreflight asks execution-controller to check the warehouse before a
+	// seed's load. Absent on every other task.
+	SeedPreflight *SeedPreflight `json:"seed_preflight,omitempty"`
 }
 
 // TaskDispatchFields renders p as the Redis fields of one task.dispatch:v1

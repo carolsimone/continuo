@@ -368,8 +368,9 @@ func TestTriggerNodeRun_SendsTheRequestIDAndTheMetadataMode(t *testing.T) {
 	assert.Empty(t, srv.gotSingleNode.GetSourceRunId())
 	assert.Empty(t, srv.gotSingleNode.GetOperation())
 
-	_, err = c.TriggerNodeFullRefresh(context.Background(), id, "svc", "sch", "tbl", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "")
+	_, err = c.TriggerNodeFullRefresh(context.Background(), id, "svc", "sch", "tbl", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "", []string{"bi.a", "bi.b"})
 	require.NoError(t, err)
+	assert.Equal(t, []string{"bi.a", "bi.b"}, srv.gotSingleNode.GetAcknowledgedDependents())
 	assert.Equal(t, "snapshot_of_run", srv.gotSingleNode.GetMetadataSource())
 	assert.Equal(t, "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", srv.gotSingleNode.GetSourceRunId())
 	assert.Equal(t, "full_refresh", srv.gotSingleNode.GetOperation())

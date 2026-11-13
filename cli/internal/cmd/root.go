@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/cmd/dlq"
 	"github.com/carolsimone/continuo/cli/internal/cmd/node"
 	"github.com/carolsimone/continuo/cli/internal/cmd/precedents"
+	"github.com/carolsimone/continuo/cli/internal/cmd/release"
 	"github.com/carolsimone/continuo/cli/internal/cmd/run"
 	"github.com/carolsimone/continuo/cli/internal/cmd/schedule"
 	"github.com/carolsimone/continuo/cli/internal/config"
@@ -22,17 +23,47 @@ func Execute() int {
 }
 
 func executeWith(args []string, stdout, stderr io.Writer) int {
+	root := newRootCommand(stdout, stderr)
+	root.SetArgs(args)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	err := root.Execute()
+	if err == nil {
+		return 0
+	}
+	var cliErr output.CLIError
+	if errors.As(err, &cliErr) {
+		return cliErr.ExitCode()
+	}
+	// Every command and the flag-error handler return a CLIError, so anything
+	// else comes from cobra's own dispatch: a command name it cannot resolve.
+	// That is rejected before any flag is parsed, so --human is read from the
+	// raw arguments rather than from the flag set.
+	e := output.NewUsageError(err.Error())
+	if rawHumanFlag(args) {
+		_ = output.HumanError(stderr, e)
+	} else {
+		_ = output.EmitError(stdout, e)
+	}
+	return e.ExitCode()
+}
+
+// newRootCommand builds the whole command tree: the root's global flags and
+// every command group, writing to stdout and stderr.
+func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	in := config.Inputs{
-		EnvRunControllerAddr: os.Getenv("CONTINUO_RUN_CONTROLLER_ADDR"),
-		EnvCatalogAddr:       os.Getenv("CONTINUO_CATALOG_ADDR"),
-		EnvDeadLetterAddr:    os.Getenv("CONTINUO_DEAD_LETTER_ADDR"),
-		EnvTimeout:           os.Getenv("CONTINUO_TIMEOUT"),
-		EnvActor:             os.Getenv("CONTINUO_ACTOR"),
+		EnvRunControllerAddr:     os.Getenv("CONTINUO_RUN_CONTROLLER_ADDR"),
+		EnvCatalogAddr:           os.Getenv("CONTINUO_CATALOG_ADDR"),
+		EnvDeadLetterAddr:        os.Getenv("CONTINUO_DEAD_LETTER_ADDR"),
+		EnvReleaseControllerAddr: os.Getenv("CONTINUO_RELEASE_CONTROLLER_ADDR"),
+		EnvTimeout:               os.Getenv("CONTINUO_TIMEOUT"),
+		EnvActor:                 os.Getenv("CONTINUO_ACTOR"),
 	}
 	var (
 		flagEndpoint           string
 		flagCatalogEndpoint    string
 		flagDeadLetterEndpoint string
+		flagReleaseEndpoint    string
 		flagTimeout            string
 		flagHuman              bool
 	)
@@ -51,6 +82,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the run-controller service (env: CONTINUO_RUN_CONTROLLER_ADDR)")
 	root.PersistentFlags().StringVar(&flagCatalogEndpoint, "catalog-endpoint", "", "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)")
 	root.PersistentFlags().StringVar(&flagDeadLetterEndpoint, "dead-letter-endpoint", "", "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)")
+	root.PersistentFlags().StringVar(&flagReleaseEndpoint, "release-endpoint", "", "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
 	root.PersistentFlags().BoolVar(&flagHuman, "human", false, "emit human text on stderr instead of JSON on stdout")
 	root.PersistentFlags().Bool("json", true, "forward-compat no-op; JSON is the default")
@@ -59,6 +91,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		in.FlagEndpoint = flagEndpoint
 		in.FlagCatalogEndpoint = flagCatalogEndpoint
 		in.FlagDeadLetterEndpoint = flagDeadLetterEndpoint
+		in.FlagReleaseEndpoint = flagReleaseEndpoint
 		in.FlagTimeout = flagTimeout
 		in.FlagHuman = flagHuman
 		*cfg = config.Resolve(in)
@@ -85,31 +118,10 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(run.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(dlq.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(release.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
-
-	root.SetArgs(args)
-	root.SetOut(stdout)
-	root.SetErr(stderr)
-	err := root.Execute()
-	if err == nil {
-		return 0
-	}
-	var cliErr output.CLIError
-	if errors.As(err, &cliErr) {
-		return cliErr.ExitCode()
-	}
-	// Every command and the flag-error handler return a CLIError, so anything
-	// else comes from cobra's own dispatch: a command name it cannot resolve.
-	// That is rejected before any flag is parsed, so --human is read from the
-	// raw arguments rather than from the flag set.
-	e := output.NewUsageError(err.Error())
-	if rawHumanFlag(args) {
-		_ = output.HumanError(stderr, e)
-	} else {
-		_ = output.EmitError(stdout, e)
-	}
-	return e.ExitCode()
+	return root
 }
 
 // rawHumanFlag reports whether --human appears among the unparsed arguments.

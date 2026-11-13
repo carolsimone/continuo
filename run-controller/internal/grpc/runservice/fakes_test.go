@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/projection"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
 	"github.com/carolsimone/continuo/run-controller/domain/schedule"
+	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/carolsimone/continuo/run-controller/internal/grpc/runservice"
 	"github.com/carolsimone/continuo/run-controller/service/runreads"
@@ -43,6 +44,10 @@ type fakeStore struct {
 	drifts    map[string][]projection.ActiveRunDrift
 	latest    map[string]int64
 	completed map[string][]projection.RunSummary
+	// releaseRuns are the runs of every release, by tenant.
+	releaseRuns map[string][]projection.RunSummary
+	// outages are the open view outages by tenant and node key.
+	outages map[string]map[topology.NodeKey]seeds.ViewOutage
 
 	// The node and schedule rows below belong to tenantA; a read for another
 	// tenant sees none of them.
@@ -77,6 +82,7 @@ type fakeStore struct {
 	attemptLimit          int
 	attemptOffset         int
 	runsLimit, runsOffset int
+	releaseRunsKind       string
 	nodeTasksLimit        int
 	nodeTasksOperation    model.Operation
 	nodesOperation        model.Operation
@@ -96,6 +102,9 @@ func newStore() *fakeStore {
 		drifts:    map[string][]projection.ActiveRunDrift{},
 		latest:    map[string]int64{},
 		completed: map[string][]projection.RunSummary{},
+
+		releaseRuns: map[string][]projection.RunSummary{},
+		outages:     map[string]map[topology.NodeKey]seeds.ViewOutage{},
 
 		scheduleSummaries: map[string][]schedules.Summary{},
 
@@ -226,6 +235,20 @@ func (f fakeRunReads) ListCompletedRuns(_ context.Context, tenantID, scheduleNam
 	return matching, len(matching), nil
 }
 
+func (f fakeRunReads) ListReleaseRuns(_ context.Context, tenantID, releaseID, kind string, limit, offset int) ([]projection.RunSummary, int, error) {
+	f.runsLimit, f.runsOffset, f.releaseRunsKind = limit, offset, kind
+	if f.failWith != nil {
+		return nil, 0, f.failWith
+	}
+	var matching []projection.RunSummary
+	for _, r := range f.releaseRuns[tenantID] {
+		if r.ReleaseID == releaseID && (kind == "" || string(r.Kind) == kind) {
+			matching = append(matching, r)
+		}
+	}
+	return matching, len(matching), nil
+}
+
 func (f fakeRunReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
 	if f.failWith != nil {
 		return 0, nil, f.failWith
@@ -235,6 +258,18 @@ func (f fakeRunReads) ListActiveRunDrifts(_ context.Context, tenantID string) (i
 
 func (f fakeRunReads) LastSuccessDurations(context.Context, string, []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	return nil, nil
+}
+
+type fakeOutages struct{ *fakeStore }
+
+var _ repository.ViewOutageReader = fakeOutages{}
+
+func (f fakeOutages) Get(_ context.Context, tenantID string, key topology.NodeKey) (seeds.ViewOutage, bool, error) {
+	if f.failWith != nil {
+		return seeds.ViewOutage{}, false, f.failWith
+	}
+	o, ok := f.outages[tenantID][key]
+	return o, ok, nil
 }
 
 type fakeNodes struct{ *fakeStore }
@@ -363,7 +398,7 @@ func readsOf(store *fakeStore) runservice.Reads {
 	return runservice.Reads{
 		Runs:     runreads.NewRunDetails(fakeRunDetails{store}, fakeTaskDetails{store}),
 		Attempts: runreads.NewAttempts(fakeAttempts{store}),
-		Nodes:    runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
+		Nodes:    runreads.NewNodes(fakeNodes{store}, fakeOutages{store}, 30*time.Minute),
 		Graphs:   runreads.New(fakeRunReads{store}),
 
 		ScheduleGraphs: runreads.NewScheduleGraphs(fakeScheduleGraphs{store}),

@@ -105,6 +105,8 @@ REQUIRED_EDGES = [
      "operator dashboard reads the topology and run projections over gRPC"),
     ("agent-chat", "dead-letter-controller", 50055,
      "continuo dlq list/show/redrive read and redrive dead letters over gRPC"),
+    ("agent-chat", "release-controller", 50056,
+     "continuo release notices reads a release's seed reload notices over gRPC"),
     ("streams-init", "redis", 6379,
      "the streams-init Job creates every stream and consumer group of the release"),
 ]
@@ -123,6 +125,8 @@ CLOSED_EDGES = [
     ("catalog", "run-controller", 50051,
      "catalog calls no run-controller RPC: run-controller fails a stalled run itself"),
     ("catalog", "postgresql", 5432, "catalog keeps no Postgres"),
+    ("ui", "release-controller", 50056, "only agent-chat calls release-controller's gRPC server"),
+    ("agent-remediation", "release-controller", 50056, "only agent-chat calls release-controller's gRPC server"),
 ]
 
 # While the render holds egress-proxy, no service but the two agents may use it.

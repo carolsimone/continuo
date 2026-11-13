@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +28,13 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	assert.Equal(t, "dbt-model", spec.NodeType)
 	assert.Equal(t, "sha-abc", spec.ImageTag)
 	assert.Equal(t, "sha256:91d4c0", spec.ContentHash)
+}
+
+func TestDeployTask_ToJobSpecCarriesTheSeedPreflight(t *testing.T) {
+	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur"}
+
+	assert.Equal(t, pf, command.DeployTask{NodeType: "dbt-seed", SeedPreflight: pf}.ToJobSpec().SeedPreflight)
+	assert.Nil(t, command.DeployTask{NodeType: "dbt-seed"}.ToJobSpec().SeedPreflight)
 }
 
 func TestValidationDeployTask_SatisfiesCommand(t *testing.T) {
@@ -109,4 +118,10 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 	spec := cmd.ToValidationJobSpec()
 	assert.Equal(t, "clone_from_prod", spec.ValidationOp)
 	assert.Equal(t, "analytics", spec.ProdSchema)
+}
+
+func TestValidationDeployTask_ToValidationJobSpec_CarriesTheSeedPreflight(t *testing.T) {
+	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.fx"}
+	spec := command.ValidationDeployTask{NodeID: "analytics.fx", SeedPreflight: pf}.ToValidationJobSpec()
+	assert.Same(t, pf, spec.SeedPreflight)
 }

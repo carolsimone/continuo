@@ -22,7 +22,7 @@ const topologyLockKey int64 = 0x544F_504F // "TOPO"
 // copyTopologyNodes and copyTopologyEdges stream a release's rows with COPY …
 // FROM STDIN, one round trip per table.
 const (
-	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, test_count, content_hash, seed_columns_hash, image_tag, secret_ref, schedule_name, timeout_seconds) FROM STDIN`
+	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, test_count, content_hash, seed_columns_hash, materialized, full_refresh, resolved_relation_id, image_tag, secret_ref, schedule_name, timeout_seconds) FROM STDIN`
 	copyTopologyEdges = `COPY topology_edges (tenant_id, release_id, upstream_key, downstream_key) FROM STDIN`
 )
 
@@ -75,10 +75,10 @@ func (r *TopologyRepository) SaveRelease(ctx context.Context, rel topology.Relea
 		return false, errors.New("SaveRelease requires an active transaction")
 	}
 	res, err := r.tx.ExecContext(ctx, `
-		INSERT INTO topology_releases (tenant_id, release_id, promotion_seq, topology_uri, topology_sha256)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO topology_releases (tenant_id, release_id, promotion_seq, topology_uri, topology_sha256, bootstrap)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (tenant_id, release_id) DO NOTHING`,
-		rel.TenantID, rel.ReleaseID, rel.PromotionSeq, rel.TopologyURI, rel.TopologySHA256)
+		rel.TenantID, rel.ReleaseID, rel.PromotionSeq, rel.TopologyURI, rel.TopologySHA256, rel.Bootstrap)
 	if err != nil {
 		return false, fmt.Errorf("insert topology release %s: %w", rel.ReleaseID, err)
 	}
@@ -147,9 +147,13 @@ func nodeRows(rel topology.Release) [][]any {
 		if n.TimeoutSeconds != nil {
 			timeout = int64(*n.TimeoutSeconds)
 		}
+		var fullRefresh any
+		if n.FullRefresh != nil {
+			fullRefresh = *n.FullRefresh
+		}
 		rows = append(rows, []any{
 			rel.TenantID, rel.ReleaseID, string(n.Key), n.UniqueID, n.ServiceName, n.SchemaName, n.TableName,
-			n.NodeType, testCount, n.ContentHash, n.SeedColumnsHash, n.ImageTag, n.SecretRef, n.ScheduleName, timeout,
+			n.NodeType, testCount, n.ContentHash, n.SeedColumnsHash, n.Materialized, fullRefresh, n.ResolvedRelationID, n.ImageTag, n.SecretRef, n.ScheduleName, timeout,
 		})
 	}
 	return rows
@@ -238,19 +242,22 @@ func (r *TopologyRepository) SetLivePointer(ctx context.Context, tenantID string
 }
 
 type topologyNodeRow struct {
-	NodeKey         string        `db:"node_key"`
-	UniqueID        string        `db:"unique_id"`
-	ServiceName     string        `db:"service_name"`
-	SchemaName      string        `db:"schema_name"`
-	TableName       string        `db:"table_name"`
-	NodeType        string        `db:"node_type"`
-	TestCount       sql.NullInt32 `db:"test_count"`
-	ContentHash     string        `db:"content_hash"`
-	SeedColumnsHash string        `db:"seed_columns_hash"`
-	ImageTag        string        `db:"image_tag"`
-	SecretRef       string        `db:"secret_ref"`
-	ScheduleName    string        `db:"schedule_name"`
-	TimeoutSeconds  sql.NullInt32 `db:"timeout_seconds"`
+	NodeKey            string        `db:"node_key"`
+	UniqueID           string        `db:"unique_id"`
+	ServiceName        string        `db:"service_name"`
+	SchemaName         string        `db:"schema_name"`
+	TableName          string        `db:"table_name"`
+	NodeType           string        `db:"node_type"`
+	TestCount          sql.NullInt32 `db:"test_count"`
+	ContentHash        string        `db:"content_hash"`
+	SeedColumnsHash    string        `db:"seed_columns_hash"`
+	Materialized       string        `db:"materialized"`
+	FullRefresh        sql.NullBool  `db:"full_refresh"`
+	ResolvedRelationID string        `db:"resolved_relation_id"`
+	ImageTag           string        `db:"image_tag"`
+	SecretRef          string        `db:"secret_ref"`
+	ScheduleName       string        `db:"schedule_name"`
+	TimeoutSeconds     sql.NullInt32 `db:"timeout_seconds"`
 }
 
 func (row topologyNodeRow) toDomain() topology.Node {
@@ -264,20 +271,28 @@ func (row topologyNodeRow) toDomain() topology.Node {
 		n := int(row.TimeoutSeconds.Int32)
 		timeout = &n
 	}
+	var fullRefresh *bool
+	if row.FullRefresh.Valid {
+		b := row.FullRefresh.Bool
+		fullRefresh = &b
+	}
 	return topology.Node{
-		Key:             topology.NodeKey(row.NodeKey),
-		UniqueID:        row.UniqueID,
-		ServiceName:     row.ServiceName,
-		SchemaName:      row.SchemaName,
-		TableName:       row.TableName,
-		NodeType:        row.NodeType,
-		TestCount:       testCount,
-		ContentHash:     row.ContentHash,
-		SeedColumnsHash: row.SeedColumnsHash,
-		ImageTag:        row.ImageTag,
-		SecretRef:       row.SecretRef,
-		ScheduleName:    row.ScheduleName,
-		TimeoutSeconds:  timeout,
+		Key:                topology.NodeKey(row.NodeKey),
+		UniqueID:           row.UniqueID,
+		ServiceName:        row.ServiceName,
+		SchemaName:         row.SchemaName,
+		TableName:          row.TableName,
+		NodeType:           row.NodeType,
+		TestCount:          testCount,
+		ContentHash:        row.ContentHash,
+		SeedColumnsHash:    row.SeedColumnsHash,
+		Materialized:       row.Materialized,
+		FullRefresh:        fullRefresh,
+		ResolvedRelationID: row.ResolvedRelationID,
+		ImageTag:           row.ImageTag,
+		SecretRef:          row.SecretRef,
+		ScheduleName:       row.ScheduleName,
+		TimeoutSeconds:     timeout,
 	}
 }
 
@@ -300,7 +315,8 @@ func (r *TopologyRepository) ReleaseNodes(ctx context.Context, tenantID, release
 
 // topologyNodeColumns lists the topology_nodes columns topologyNodeRow scans.
 const topologyNodeColumns = `node_key, unique_id, service_name, schema_name, table_name, node_type, test_count,
-		       content_hash, seed_columns_hash, image_tag, secret_ref, schedule_name, timeout_seconds`
+		       content_hash, seed_columns_hash, materialized, full_refresh, resolved_relation_id, image_tag, secret_ref, schedule_name,
+		       timeout_seconds`
 
 // ScheduleGraph reads the schedule's nodes through idx_topology_nodes_schedule
 // and the edges into them, then the dbt-seed nodes among the upstreams those
@@ -373,6 +389,57 @@ func (r *TopologyRepository) Graph(ctx context.Context, tenantID, releaseID stri
 		return topology.Graph{}, err
 	}
 	return graphOf(rows, edges), nil
+}
+
+// ViewClosure reads the seeds and every node reachable from them through nodes
+// whose materialization is view, materialized_view or ephemeral, with one
+// recursive query, then the edges into those nodes.
+func (r *TopologyRepository) ViewClosure(ctx context.Context, tenantID, releaseID string, seeds []topology.NodeKey) (topology.Graph, error) {
+	if len(seeds) == 0 {
+		return topology.Graph{}, nil
+	}
+	wanted := make([]string, 0, len(seeds))
+	for _, k := range seeds {
+		wanted = append(wanted, string(k))
+	}
+	var rows []topologyNodeRow
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
+		WITH RECURSIVE closure(node_key) AS (
+		    SELECT unnest($3::text[])
+		  UNION
+		    SELECT e.downstream_key
+		    FROM closure c
+		    JOIN topology_edges e ON e.tenant_id = $1 AND e.release_id = $2 AND e.upstream_key = c.node_key
+		    JOIN topology_nodes n ON n.tenant_id = $1 AND n.release_id = $2 AND n.node_key = e.downstream_key
+		    WHERE n.materialized IN ('view', 'materialized_view', 'ephemeral'))
+		SELECT `+topologyNodeColumns+`
+		FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = $2 AND node_key IN (SELECT node_key FROM closure)`,
+		tenantID, releaseID, pq.Array(wanted)); err != nil {
+		return topology.Graph{}, fmt.Errorf("read the view closure of %d seeds in release %s: %w", len(wanted), releaseID, err)
+	}
+	if len(rows) == 0 {
+		return topology.Graph{}, nil
+	}
+	edges, err := r.edgesInto(ctx, tenantID, releaseID, rows)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	return graphOf(rows, edges), nil
+}
+
+// IsBootstrapRelease reads the release's bootstrap flag.
+func (r *TopologyRepository) IsBootstrapRelease(ctx context.Context, tenantID, releaseID string) (bool, error) {
+	var bootstrap bool
+	err := sqlx.GetContext(ctx, r.conn(), &bootstrap, `
+		SELECT bootstrap FROM topology_releases WHERE tenant_id = $1 AND release_id = $2`, tenantID, releaseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the bootstrap flag of release %s: %w", releaseID, err)
+	}
+	return bootstrap, nil
 }
 
 // edgesInto reads every edge of the release whose downstream is one of rows,

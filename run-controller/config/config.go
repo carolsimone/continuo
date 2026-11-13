@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
 // ServiceName names this service as the producer of the dead letters its
@@ -77,11 +78,22 @@ type Config struct {
 	// TaskTimeout is TASK_TIMEOUT_SECONDS: how long the container of a task
 	// whose node declares no timeout may run, sent on each such dispatch.
 	TaskTimeout time.Duration
+
+	// WarehouseEngine is WAREHOUSE_ENGINE, the install's warehouse engine
+	// (postgres when unset), named in the reasons of seed loads.
+	WarehouseEngine string
+
+	// WarehouseFamily is the family of WarehouseEngine: what a seed's load
+	// drops, and so which views a run rebuilds after it, depends on it. An
+	// engine without a family is recorded on the validator, so run-controller
+	// refuses to start.
+	WarehouseFamily warehouse.Family
 }
 
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
+	engine, family := pkgconfig.LoadWarehouse(v)
 	return Config{
 		Redis:    pkgconfig.LoadRedisFromAddr(v),
 		Postgres: pkgconfig.LoadPostgres(v),
@@ -103,6 +115,9 @@ func Load(v *pkgconfig.Validator) Config {
 
 		TaskMaxRetries: taskMaxRetries(v),
 		TaskTimeout:    pkgconfig.LoadTaskTimeout(v),
+
+		WarehouseEngine: engine,
+		WarehouseFamily: family,
 	}
 }
 

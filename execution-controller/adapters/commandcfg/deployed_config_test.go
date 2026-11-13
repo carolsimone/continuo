@@ -10,9 +10,9 @@ import (
 // The shipped Helm config is the source of truth for the Hetzner ConfigMap.
 // This pins that it always loads and that finance resolves to the customname-dbt
 // dialect for every operation while other services fall back to the default; it
-// also pins that both the default and finance blocks load a seed as a plain,
-// non-destructive dbt seed and define full_refresh (model) and
-// seed_full_refresh (seed) for the explicit single-node full-refresh operation.
+// also pins that both the default and finance blocks load a seed as a plain
+// dbt seed and define full_refresh (model) and seed_full_refresh (seed) for
+// the full-refresh operations.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml")
 

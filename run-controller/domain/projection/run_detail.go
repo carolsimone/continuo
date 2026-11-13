@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 )
 
@@ -60,4 +61,10 @@ type TaskDetail struct {
 	// WaitingOnRunID is the run whose task holds the node the task waits to
 	// write; nil when the task waits for no lease or no task holds the node.
 	WaitingOnRunID *uuid.UUID
+	// Operation is what the task does; model.OperationRun, the empty
+	// operation, for a task that runs its node. PlanReason is why the planner
+	// gave the task its operation or added it to the run; empty for an
+	// ordinary task.
+	Operation  model.Operation
+	PlanReason string
 }

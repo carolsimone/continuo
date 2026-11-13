@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -822,8 +823,11 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 // nodes. The change detector reads unique_id and content_hash, and the
 // activation guard reads service_name (every service live in the prod topology
 // must carry a service_prod pointer or be the release's changed service), so
-// each node map must carry unique_id, content_hash, and service; other node
-// fields stay empty.
+// each node map must carry unique_id, content_hash, and service. The seed
+// reload rules read a seed's declared columns, so a node map may also carry
+// seed_columns (a JSON array of {"name","type"}), seed_columns_hash,
+// materialized and full_refresh ("true" or "false"), which are copied when
+// present; other node fields stay empty.
 // Each call writes under its own release id, so a prior promoted release never
 // lingers across reused-stack runs. current_prod's promotion seq is left
 // alone: seeding announces nothing.
@@ -833,12 +837,24 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 	artifactNodes := make([]topologyartifact.Node, 0, len(nodes))
 	for _, n := range nodes {
 		require.NotEmpty(t, n["service"], "current_prod node %s must identify its service", n["unique_id"])
-		artifactNodes = append(artifactNodes, topologyartifact.Node{
+		node := topologyartifact.Node{
 			UniqueID:          n["unique_id"],
 			ServiceName:       n["service"],
 			ContentHash:       n["content_hash"],
 			UpstreamUniqueIDs: []string{},
-		})
+			SeedColumnsHash:   n["seed_columns_hash"],
+			Materialized:      n["materialized"],
+		}
+		if raw, ok := n["seed_columns"]; ok {
+			require.NoError(t, json.Unmarshal([]byte(raw), &node.SeedColumns),
+				"current_prod node %s: seed_columns must be a JSON array of columns", n["unique_id"])
+		}
+		if raw, ok := n["full_refresh"]; ok {
+			fullRefresh, err := strconv.ParseBool(raw)
+			require.NoError(t, err, "current_prod node %s: full_refresh must be true or false", n["unique_id"])
+			node.FullRefresh = &fullRefresh
+		}
+		artifactNodes = append(artifactNodes, node)
 	}
 	gz, sha, err := topologyartifact.Encode(topologyartifact.Document{
 		SchemaVersion: topologyartifact.SchemaVersion,

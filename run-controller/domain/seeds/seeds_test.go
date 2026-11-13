@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/seeds"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
@@ -182,4 +183,11 @@ func TestRebaselineAdoptions_AdoptsEverySeedWithAHash(t *testing.T) {
 	require.Len(t, got, 2)
 	assert.Equal(t, topology.NodeKey("raw.a"), got[0].Key)
 	assert.Equal(t, "sha256:cb", got[1].SeedColumnsHash)
+}
+
+// A schema_bound engine drops the views a seed load cascades through, so they
+// are missing until rebuilt; a late_binding engine leaves them stale.
+func TestOutageStateFor(t *testing.T) {
+	assert.Equal(t, seeds.OutageMissing, seeds.OutageStateFor(warehouse.SchemaBound))
+	assert.Equal(t, seeds.OutageStale, seeds.OutageStateFor(warehouse.LateBinding))
 }

@@ -127,6 +127,29 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 	return nil
 }
 
+// LoadedSeedColumns reads the recorded seed column fingerprint of each key that
+// has a row.
+func (r *MaterializationRepository) LoadedSeedColumns(ctx context.Context, tenantID string, keys []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	wanted := make([]string, 0, len(keys))
+	for _, k := range keys {
+		wanted = append(wanted, string(k))
+	}
+	var rows []struct {
+		NodeKey         string `db:"node_key"`
+		SeedColumnsHash string `db:"seed_columns_hash"`
+	}
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
+		SELECT node_key, seed_columns_hash FROM node_materializations
+		WHERE tenant_id = $1 AND node_key = ANY($2)`, tenantID, pq.Array(wanted)); err != nil {
+		return nil, fmt.Errorf("read the loaded seed columns of %d nodes: %w", len(wanted), err)
+	}
+	out := make(map[topology.NodeKey]string, len(rows))
+	for _, row := range rows {
+		out[topology.NodeKey(row.NodeKey)] = row.SeedColumnsHash
+	}
+	return out, nil
+}
+
 // DeleteAbsentFrom deletes the tenant's rows whose node the release lacks,
 // except a row whose build request names a run that has not ended (pending,
 // running or cancelling): that row is the only record of the load in flight, and a release

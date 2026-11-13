@@ -54,6 +54,7 @@ func (h *SeedBuildRequestedHandler) Handle(
 			// of proposed source files; the seed Job lays it over the
 			// checked-in project so `dbt seed` loads the proposed CSV.
 			SourceOverlayURI: evt.SourceOverlayURI,
+			SeedPreflight:    s.SeedPreflight,
 			// Seed-build tasks have no SQL URI, upstreams, validation op, or prod schema.
 		}
 		var procID *uuid.UUID

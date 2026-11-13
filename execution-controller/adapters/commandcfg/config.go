@@ -42,8 +42,9 @@ type opSet struct {
 	// is unaffected.
 	FullRefresh []string `yaml:"full_refresh"`
 	// SeedFullRefresh rebuilds one dbt seed from scratch. Optional in every
-	// block, same as FullRefresh: it backs only the explicit, operator-initiated
-	// full_refresh operation on a dbt-seed node — never the normal Seed load.
+	// block, same as FullRefresh: it backs an operator's full refresh of a dbt
+	// seed and the automatic full refresh of a seed whose columns change, never
+	// the plain Seed load.
 	SeedFullRefresh []string `yaml:"seed_full_refresh"`
 }
 

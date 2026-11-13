@@ -604,7 +604,7 @@ func TestRunCancelled_WaitsForADispatchThatMayStoreAnAttemptOfTheRun(t *testing.
 	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
 	require.NoError(t, u.Begin(ctx))
 	t.Cleanup(func() { _ = u.Rollback() })
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, f.metrics, f.logger).Handle(ctx, u, evt, uuid.Nil))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, fakeResolver{}, f.metrics, f.logger).Handle(ctx, u, evt, uuid.Nil))
 
 	fenced := f.inTx(func(fu *postgres.PostgresUnitOfWork) error {
 		_, err := f.handler(noJobs{}).Handle(ctx, fu, f.event(), uuid.Nil)
@@ -643,7 +643,7 @@ func TestTaskDispatch_WaitsForAFenceInProgressAndMeetsIt(t *testing.T) {
 
 	evt := f.dispatchOf()
 	dispatched := f.inTx(func(du *postgres.PostgresUnitOfWork) error {
-		return handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, f.metrics, f.logger).Handle(ctx, du, evt, uuid.Nil)
+		return handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, fakeResolver{}, f.metrics, f.logger).Handle(ctx, du, evt, uuid.Nil)
 	})
 	assert.True(t, f.waitForAdvisoryWaiter(), "the dispatch waits for the fence's run lock")
 	dispatchErr, early := waitOrNot(dispatched)

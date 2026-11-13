@@ -23,10 +23,12 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
 // loading, its reads failing, or a run with no tasks. The Past runs tab lists
 // the schedule's runs.
 export default function RunView({
-  state, selectedRunId, tasks, attemptsByTask, activeGraph, services, expandedServices, onServiceToggle, pastRuns,
+  state, selectedRunId, releaseId, tasks, attemptsByTask, activeGraph, services, expandedServices, onServiceToggle, pastRuns,
 }: {
   state: ReturnType<typeof runTabState>;
   selectedRunId: string | null;
+  // The release the shown run executes on, null when unknown.
+  releaseId?: string | null;
   tasks: Task[];
   attemptsByTask: Map<string, TaskAttempt[]>;
   activeGraph: ScheduleGraph | null;
@@ -76,7 +78,7 @@ export default function RunView({
                 <button className={runView === 'list' ? 'on' : ''} onClick={() => setRunView('list')}>List</button>
                 <button className={runView === 'graph' ? 'on' : ''} onClick={() => setRunView('graph')}>Graph</button>
               </div>
-              <RunProgressHeader tasks={tasks} />
+              <RunProgressHeader tasks={tasks} releaseId={releaseId} />
               {runView === 'list' ? (
                 <RunNodeTable
                   tasks={tasks}

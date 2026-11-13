@@ -615,3 +615,21 @@ func TestCommandString_SkipsBlankOptionalPositional(t *testing.T) {
 	})
 	assert.Equal(t, "continuo node trigger finance analytics orders", got)
 }
+
+// The confirm prompt of a seed's full refresh shows every object the operator
+// acknowledges, as the --acknowledge pairs the executor appends.
+func TestCommandString_ShowsEachItemOfAListFlagInConfirmPrompt(t *testing.T) {
+	def := ports.ToolDef{
+		Name: "node_full-refresh", Mutating: true, CLIPath: []string{"node", "full-refresh"},
+		Params: []ports.ToolParam{
+			{Name: "service", Required: true}, {Name: "schema", Required: true}, {Name: "table", Required: true},
+			{Name: "source-run-id"}, {Name: "acknowledge", Flag: true, Repeated: true},
+		},
+		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+	}
+	got := commandString("continuo", def, map[string]string{
+		"service": "finance", "schema": "raw", "table": "customers",
+		"acknowledge": `["bi.customer_report","bi.churn"]`,
+	})
+	assert.Equal(t, "continuo node full-refresh finance raw customers --acknowledge bi.customer_report --acknowledge bi.churn", got)
+}

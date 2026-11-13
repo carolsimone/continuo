@@ -173,3 +173,38 @@ func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAs
 		Ready: []topology.NodeKey{"a.up"},
 	}, plan)
 }
+
+func TestViewClosure_FollowsViewsAndEphemeralsFromTheSeeds(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	// s seed; v1 view(s); v2 view(v1); e ephemeral(s); v3 view(s, e); t table(s); v4 view(t)
+	specs := []topology.NodeSpec{
+		graphSpec("s", "dbt-seed", "seed"),
+		graphSpec("v1", "dbt-model", "daily", "s"),
+		graphSpec("v2", "dbt-model", "daily", "v1"),
+		graphSpec("e", "dbt-model", "daily", "s"),
+		graphSpec("v3", "dbt-model", "daily", "s", "e"),
+		graphSpec("t", "dbt-model", "daily", "s"),
+		graphSpec("v4", "dbt-model", "daily", "t"),
+	}
+	for i, m := range []string{"seed", "view", "view", "ephemeral", "view", "table", "view"} {
+		specs[i].Materialized = m
+	}
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-closure", 1, "abc", specs...))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+
+	g, err := repo.ViewClosure(ctx, tenant, "rel-closure", []topology.NodeKey{"stg.s"})
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"stg.e", "stg.s", "stg.v1", "stg.v2", "stg.v3"}, g.Keys())
+	assert.Equal(t, []topology.NodeKey{"stg.e", "stg.v1", "stg.v3"}, g.Downstreams("stg.s"))
+	assert.Equal(t, []topology.NodeKey{"stg.e", "stg.s"}, g.Upstreams("stg.v3"))
+
+	none, err := repo.ViewClosure(ctx, tenant, "rel-closure", nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, none.Len())
+	ghost, err := repo.ViewClosure(ctx, tenant, "rel-closure", []topology.NodeKey{"stg.ghost"})
+	require.NoError(t, err)
+	assert.Equal(t, 0, ghost.Len())
+}

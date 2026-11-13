@@ -189,8 +189,8 @@ func TestPass_AsksAboutEachDueAttemptWithItsKnownStatus(t *testing.T) {
 	silent := repository.AttemptKey{TenantID: pkgevents.DefaultTenantID, TaskID: uuid.New(), Attempt: 1}
 	attempts := &fakeAttempts{due: []repository.AttemptKey{quiet, silent}, marked: map[repository.AttemptKey]time.Duration{},
 		questions: map[repository.AttemptKey]run.Question{
-			quiet:  {RunID: uuid.New(), TaskID: quiet.TaskID, Attempt: 0, Status: run.AttemptDispatched, ChecksSent: 0, Node: node, Operation: model.OperationRun},
-			silent: {RunID: uuid.New(), TaskID: silent.TaskID, Attempt: 1, Status: run.AttemptRunning, ChecksSent: 2, Node: node, Operation: model.OperationRun},
+			quiet:  {RunID: uuid.New(), TaskID: quiet.TaskID, Attempt: 0, Status: run.AttemptDispatched, ChecksSent: 0, Node: node, Spec: run.DispatchSpec{Operation: model.OperationRun}},
+			silent: {RunID: uuid.New(), TaskID: silent.TaskID, Attempt: 1, Status: run.AttemptRunning, ChecksSent: 2, Node: node, Spec: run.DispatchSpec{Operation: model.OperationRun}},
 		}}
 	outbox := &recordingOutbox{}
 	f := newFake(attempts, outbox)
@@ -218,8 +218,8 @@ func TestPass_AsksAboutAttemptsOfEveryTenant(t *testing.T) {
 	oursRun, theirsRun := uuid.New(), uuid.New()
 	attempts := &fakeAttempts{due: []repository.AttemptKey{ours, theirs}, marked: map[repository.AttemptKey]time.Duration{},
 		questions: map[repository.AttemptKey]run.Question{
-			ours:   {RunID: oursRun, TaskID: ours.TaskID, Attempt: 0, Status: run.AttemptDispatched, Node: node, Operation: model.OperationRun},
-			theirs: {RunID: theirsRun, TaskID: theirs.TaskID, Attempt: 1, Status: run.AttemptQueued, Node: node, Operation: model.OperationRun},
+			ours:   {RunID: oursRun, TaskID: ours.TaskID, Attempt: 0, Status: run.AttemptDispatched, Node: node, Spec: run.DispatchSpec{Operation: model.OperationRun}},
+			theirs: {RunID: theirsRun, TaskID: theirs.TaskID, Attempt: 1, Status: run.AttemptQueued, Node: node, Spec: run.DispatchSpec{Operation: model.OperationRun}},
 		}}
 	outbox := &recordingOutbox{}
 	f := newFake(attempts, outbox)

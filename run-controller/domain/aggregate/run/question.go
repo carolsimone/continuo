@@ -4,7 +4,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -12,7 +11,7 @@ import (
 // Question is an attempt run-controller asks execution-controller about because
 // nothing was heard of it within its window: the attempt, its status as
 // run-controller last knew it, how often it has been asked about, and what its
-// dispatch carries.
+// dispatch carries, Spec as its task stores it.
 type Question struct {
 	RunID        uuid.UUID
 	TenantID     string
@@ -23,7 +22,7 @@ type Question struct {
 	ChecksSent   int
 	JobName      string
 	Node         topology.Node
-	Operation    model.Operation
+	Spec         DispatchSpec
 }
 
 // Dispatch is the question as a dispatch of the attempt, its known status the
@@ -41,7 +40,9 @@ func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 		KnownStatus:  q.Status,
 		Node:         q.Node,
 		JobName:      q.JobName,
-		Operation:    q.Operation,
+		Operation:    q.Spec.Operation,
+		Reason:       q.Spec.Reason,
+		Preflight:    q.Spec.Preflight,
 		Timeout:      TaskTimeout(q.Node, d),
 	}, NextCheckAfter(q.Status, q.ChecksSent+1)
 }

@@ -13,8 +13,10 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
@@ -144,6 +146,7 @@ type Run struct {
 	codeBundleURI     string
 	createdAt         time.Time
 	transitions       []Transition
+	notices           []release.Notice
 	candidate         *Candidate    // non-nil iff kind == KindCandidate
 	verification      *Verification // non-nil iff kind == KindVerification
 }
@@ -199,6 +202,26 @@ func (r *Run) FailingNodes() []string                    { return r.failingNodes
 func (r *Run) PerNodeResults() []NodeValidationResult    { return r.perNodeResults }
 func (r *Run) CreatedAt() time.Time                      { return r.createdAt }
 func (r *Run) Transitions() []Transition                 { return r.transitions }
+
+// Notices returns the run's seed reload notices, in node-id order.
+func (r *Run) Notices() []release.Notice { return r.notices }
+
+// SetNotices records a copy of the seed reload notices of the release,
+// computed against the production topology it would replace.
+func (r *Run) SetNotices(notices []release.Notice) { r.notices = slices.Clone(notices) }
+
+// ApplyWarehouseFindings records what the preflight of seed nodeID found in
+// the warehouse on that seed's notice. It reports false when the run holds no
+// notice for the seed.
+func (r *Run) ApplyWarehouseFindings(nodeID string, f seedreload.Findings) bool {
+	for i := range r.notices {
+		if r.notices[i].NodeID == nodeID {
+			r.notices[i].ApplyFindings(f)
+			return true
+		}
+	}
+	return false
+}
 
 // Candidate returns the candidate-only facts, nil for a verification.
 func (r *Run) Candidate() *Candidate { return r.candidate }
@@ -540,6 +563,7 @@ type RehydrateInput struct {
 	CodeBundleURI     string
 	CreatedAt         time.Time
 	Transitions       []Transition
+	Notices           []release.Notice
 	// Candidate-only.
 	Bootstrap        bool
 	Rebaseline       bool
@@ -571,6 +595,7 @@ func Rehydrate(in RehydrateInput) *Run {
 		codeBundleURI:     in.CodeBundleURI,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
+		notices:           in.Notices,
 	}
 	switch in.Kind {
 	case KindVerification:

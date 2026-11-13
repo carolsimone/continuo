@@ -114,19 +114,22 @@ func artifactOf(doc topologyartifact.Document) ports.TopologyArtifact {
 			timeout = &seconds
 		}
 		nodes = append(nodes, topology.NodeSpec{
-			UniqueID:          n.UniqueID,
-			ServiceName:       n.ServiceName,
-			SchemaName:        n.SchemaName,
-			TableName:         n.TableName,
-			NodeType:          n.NodeType,
-			TestCount:         &testCount,
-			ContentHash:       n.ContentHash,
-			SeedColumnsHash:   n.SeedColumnsHash,
-			ImageTag:          n.ImageTag,
-			SecretRef:         n.SecretRef,
-			ScheduleName:      n.Schedule,
-			TimeoutSeconds:    timeout,
-			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
+			UniqueID:           n.UniqueID,
+			ServiceName:        n.ServiceName,
+			SchemaName:         n.SchemaName,
+			TableName:          n.TableName,
+			NodeType:           n.NodeType,
+			TestCount:          &testCount,
+			ContentHash:        n.ContentHash,
+			SeedColumnsHash:    n.SeedColumnsHash,
+			Materialized:       n.Materialized,
+			FullRefresh:        n.FullRefresh,
+			ResolvedRelationID: n.ResolvedRelationID,
+			ImageTag:           n.ImageTag,
+			SecretRef:          n.SecretRef,
+			ScheduleName:       n.Schedule,
+			TimeoutSeconds:     timeout,
+			UpstreamUniqueIDs:  append([]string(nil), n.UpstreamUniqueIDs...),
 		})
 	}
 	return ports.TopologyArtifact{TenantID: doc.TenantID, ReleaseID: doc.ReleaseID, Nodes: nodes}

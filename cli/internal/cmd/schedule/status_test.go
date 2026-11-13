@@ -112,6 +112,8 @@ func runStatus(t *testing.T, fake client.RunClient, args []string, human bool) (
 
 type statusTaskJSON struct {
 	Node           string `json:"node"`
+	Operation      string `json:"operation"`
+	PlanReason     string `json:"plan_reason"`
 	Status         string `json:"status"`
 	Attempt        int32  `json:"attempt"`
 	FailureClass   string `json:"failure_class"`
@@ -141,7 +143,8 @@ func ranSchedule() *fakeRunControllerStatus {
 			CancelledBy:    "bob", CancellationReason: "stop", FailureReason: "stalled",
 		},
 		taskPages: []*runv1.ListTasksResponse{{TotalCount: 2, Tasks: []*runv1.Task{
-			{TaskId: "t-a", ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded"},
+			{TaskId: "t-a", ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded",
+				Operation: "full_refresh", PlanReason: "columns changed"},
 			{TaskId: "t-b", ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "failed", Attempt: 1,
 				WaitReason: "node_lease", WaitingOnRunId: "run-1"},
 		}}},
@@ -168,7 +171,7 @@ func TestScheduleStatus_PrintsTheRunShowShape(t *testing.T) {
 	assert.Equal(t, "failed", p.Run["status"])
 	assert.Equal(t, "daily", p.Run["schedule_name"])
 	require.Len(t, p.Tasks, 2)
-	assert.Equal(t, statusTaskJSON{Node: "svc.analytics.orders", Status: "succeeded"}, p.Tasks[0])
+	assert.Equal(t, statusTaskJSON{Node: "svc.analytics.orders", Operation: "full_refresh", PlanReason: "columns changed", Status: "succeeded"}, p.Tasks[0])
 	assert.Equal(t, statusTaskJSON{Node: "svc.analytics.revenue", Status: "failed", Attempt: 1, FailureClass: "task",
 		FailureReason: "dbt_error", WaitReason: "node_lease", WaitingOnRunID: "run-1"}, p.Tasks[1])
 	assert.Equal(t, []string{statusRunID}, fake.getRunIDs)

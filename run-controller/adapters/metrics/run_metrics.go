@@ -4,6 +4,7 @@ package metrics
 import (
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/run-controller/service/ports"
 	"github.com/prometheus/client_golang/prometheus"
@@ -15,6 +16,10 @@ import (
 // granted task waited, the leases the lease waker repaired, and how each call
 // of a command that creates or cancels a run ended. It counts the outcomes of
 // the cron loop's fires and gauges the schedules scheduled, paused and unparsable.
+// It counts the seed loads that drop their table and ended, and the seed loads
+// the planner refused, by action and outcome, and the tasks of a seed reload a
+// seed rule stopped, by reason, and times how long each view a seed load left
+// missing or stale waited for its rebuild.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -26,15 +31,35 @@ type RunMetrics struct {
 	commandRequests   *prometheus.CounterVec
 	cronFires         *prometheus.CounterVec
 	schedules         *prometheus.GaugeVec
+	seedReloads       *prometheus.CounterVec
+	seedReloadStops   *prometheus.CounterVec
+	viewOutageSeconds prometheus.Histogram
 }
 
-var _ ports.RunMetrics = (*RunMetrics)(nil)
+var (
+	_ ports.RunMetrics        = (*RunMetrics)(nil)
+	_ ports.SeedReloadMetrics = (*RunMetrics)(nil)
+)
+
+// The label values of the seed reload series, each exported at 0 from boot.
+var (
+	seedReloadActions  = []string{"load", "full_refresh"}
+	seedReloadOutcomes = []string{"loaded", "stopped", "refused", "failed"}
+	seedReloadReasons  = []model.FailureReason{
+		model.FailureReasonUnownedDependents,
+		model.FailureReasonEngineMismatch,
+		model.FailureReasonSeedFullRefreshDisabled,
+		model.FailureReasonSeedFullRefreshUndefined,
+		model.FailureReasonFullRefreshUndefined,
+	}
+)
 
 // NewRunMetrics registers continuo_runs_stalled_total, continuo_runs_cancelling,
 // continuo_runs_cancelling_overdue, continuo_run_cancel_seconds,
 // continuo_node_lease_waiters, continuo_node_lease_wait_seconds,
 // continuo_node_leases_repaired_total, continuo_command_requests_total,
-// continuo_cron_fires_total and continuo_schedules on reg.
+// continuo_cron_fires_total, continuo_schedules, continuo_seed_reloads_total,
+// continuo_seed_reload_stops_total and continuo_view_outage_seconds on reg.
 func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 	m := &RunMetrics{
 		stalled: prometheus.NewCounter(prometheus.CounterOpts{
@@ -79,9 +104,30 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 			Name: "continuo_schedules",
 			Help: "Schedules with a cron, of every tenant, by state: scheduled, paused, or unparsable (the stored cron or timezone no longer parses, paused or not, so the schedule never fires until an operator saves a new cron over it or removes it).",
 		}, []string{"state"}),
+		seedReloads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "continuo_seed_reloads_total",
+			Help: "Seed loads that drop the seed's table (a seed task with a preflight) that ended, and seed loads the planner refused, by action (load, or full_refresh when the seed's task fully refreshed it) and outcome: loaded, stopped (its preflight found an object the load would destroy, so nothing was dropped), refused (no command can apply the load, so it never started a container) or failed. A seed load that drops nothing is not counted.",
+		}, []string{"action", "outcome"}),
+		seedReloadStops: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "continuo_seed_reload_stops_total",
+			Help: "Tasks of a seed reload, a seed's load or a view's rebuild, that a seed rule stopped before they changed the warehouse, by failure reason: unowned_dependents, engine_mismatch, seed_full_refresh_disabled, seed_full_refresh_undefined or full_refresh_undefined.",
+		}, []string{"reason"}),
+		viewOutageSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "continuo_view_outage_seconds",
+			Help:    "Seconds a view a seed load dropped (missing) or left stale stayed so, from the commit of that load until a task of the view succeeded.",
+			Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400},
+		}),
+	}
+	for _, action := range seedReloadActions {
+		for _, outcome := range seedReloadOutcomes {
+			m.seedReloads.WithLabelValues(action, outcome)
+		}
+	}
+	for _, reason := range seedReloadReasons {
+		m.seedReloadStops.WithLabelValues(string(reason))
 	}
 	reg.Register(m.stalled, m.cancelling, m.cancellingOverdue, m.cancelSeconds, m.leaseWaiters, m.leaseWaitSeconds, m.leasesRepaired,
-		m.commandRequests, m.cronFires, m.schedules)
+		m.commandRequests, m.cronFires, m.schedules, m.seedReloads, m.seedReloadStops, m.viewOutageSeconds)
 	return m
 }
 
@@ -126,3 +172,18 @@ func (m *RunMetrics) Schedules(scheduled, paused, unparsable int) {
 	m.schedules.WithLabelValues("paused").Set(float64(paused))
 	m.schedules.WithLabelValues("unparsable").Set(float64(unparsable))
 }
+
+// SeedReloadEnded counts one seed load that ended with outcome.
+func (m *RunMetrics) SeedReloadEnded(action, outcome string) {
+	m.seedReloads.WithLabelValues(action, outcome).Inc()
+}
+
+// SeedReloadStopped counts one task of a seed reload a seed rule stopped for
+// reason.
+func (m *RunMetrics) SeedReloadStopped(reason string) {
+	m.seedReloadStops.WithLabelValues(reason).Inc()
+}
+
+// ViewRebuilt observes the seconds a view stayed missing or stale until its
+// rebuild succeeded.
+func (m *RunMetrics) ViewRebuilt(after time.Duration) { m.viewOutageSeconds.Observe(after.Seconds()) }

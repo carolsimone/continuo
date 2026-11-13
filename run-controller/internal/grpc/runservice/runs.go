@@ -9,7 +9,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/projection"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
@@ -19,6 +21,40 @@ import (
 // runSummaryTimeLayout is the RFC3339 UTC, whole-second layout of a run
 // summary's timestamps.
 const runSummaryTimeLayout = "2006-01-02T15:04:05Z"
+
+// operationName is the operation as the API names it: the empty operation is
+// "run".
+func operationName(op model.Operation) string {
+	if op == model.OperationRun {
+		return "run"
+	}
+	return string(op)
+}
+
+// toProtoFindings renders the findings of an attempt's seed preflight; nil
+// stays unset.
+func toProtoFindings(f *seedreload.Findings) *runv1.SeedPreflightFindings {
+	if f == nil {
+		return nil
+	}
+	out := &runv1.SeedPreflightFindings{
+		DropSemantics: f.DropSemantics,
+		Completeness:  f.Completeness,
+		Checked:       f.Checked,
+		Dependents:    make([]*runv1.PreflightDependent, 0, len(f.Dependents)),
+		Probes:        make([]*runv1.ViewProbe, 0, len(f.Probes)),
+	}
+	for _, d := range f.Dependents {
+		out.Dependents = append(out.Dependents, &runv1.PreflightDependent{
+			Schema: d.Schema, Name: d.Name, Kind: d.Kind, Owner: d.Owner,
+			Depth: num.ClampInt32(d.Depth), Allowed: d.Allowed,
+		})
+	}
+	for _, p := range f.Probes {
+		out.Probes = append(out.Probes, &runv1.ViewProbe{Schema: p.Schema, Name: p.Name, Ok: p.OK, Error: p.Error})
+	}
+	return out
+}
 
 // GetRun returns one run of the request's tenant; another tenant's run is
 // NotFound.
@@ -111,6 +147,8 @@ func toProtoTask(t projection.TaskDetail) *runv1.Task {
 		WaitReason:     string(t.WaitReason),
 		WaitingOnRunId: uuidOrEmpty(t.WaitingOnRunID),
 		WaitingSince:   timestampOrNil(t.WaitingSince),
+		Operation:      operationName(t.Operation),
+		PlanReason:     t.PlanReason,
 	}
 	// A cancel stamps every task it asks to stop, so a stopping task that then
 	// succeeds or fails still holds the stamps; only a cancelled task was
@@ -172,6 +210,7 @@ func toProtoAttempt(a projection.TaskAttempt) *runv1.TaskAttempt {
 		LogS3Key:      stringOrEmpty(a.LogS3Key),
 		RunResultsUri: stringOrEmpty(a.RunResultsURI),
 	}
+	out.SeedPreflight = toProtoFindings(a.SeedPreflight)
 	if a.ExitCode != nil {
 		out.ExitCode = num.ClampInt32(*a.ExitCode)
 	}
@@ -214,6 +253,8 @@ func (s *Server) GetRunGraph(ctx context.Context, req *runv1.GetRunGraphRequest)
 			WaitReason:     string(n.WaitReason),
 			WaitingOnRunId: uuidOrEmpty(n.WaitingOnRunID),
 			WaitingSince:   rfc3339OrEmpty(n.WaitingSince),
+			Operation:      operationName(n.Operation),
+			PlanReason:     n.PlanReason,
 		})
 	}
 	for _, e := range g.Edges {
@@ -222,32 +263,48 @@ func (s *Server) GetRunGraph(ctx context.Context, req *runv1.GetRunGraphRequest)
 	return resp, nil
 }
 
-// ListRuns returns one page of a schedule's completed runs, newest first.
+// ListRuns returns one page of a schedule's completed runs, or of every run of
+// a release of the kind asked for, newest first. Exactly one of schedule_name
+// and release_id is required, and kind must be empty or a run kind.
 func (s *Server) ListRuns(ctx context.Context, req *runv1.ListRunsRequest) (*runv1.ListRunsResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if req.GetScheduleName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
+	if (req.GetScheduleName() == "") == (req.GetReleaseId() == "") {
+		return nil, status.Error(codes.InvalidArgument, "exactly one of schedule_name and release_id is required")
 	}
-	runs, total, err := s.reads.Graphs.ListRuns(ctx, tenantID, req.GetScheduleName(), int(req.GetPageSize()), int(req.GetPageOffset()))
+	if kind := req.GetKind(); kind != "" && !run.Kind(kind).IsValid() {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid kind: %q", kind)
+	}
+	var runs []projection.RunSummary
+	var total int
+	if req.GetReleaseId() != "" {
+		runs, total, err = s.reads.Graphs.ListReleaseRuns(ctx, tenantID, req.GetReleaseId(), req.GetKind(), int(req.GetPageSize()), int(req.GetPageOffset()))
+	} else {
+		runs, total, err = s.reads.Graphs.ListRuns(ctx, tenantID, req.GetScheduleName(), int(req.GetPageSize()), int(req.GetPageOffset()))
+	}
 	if err != nil {
-		return nil, s.internalError("ListRuns", err, "schedule_name", req.GetScheduleName())
+		return nil, s.internalError("ListRuns", err, "schedule_name", req.GetScheduleName(), "release_id", req.GetReleaseId())
 	}
 	resp := &runv1.ListRunsResponse{
 		Runs:       make([]*runv1.RunSummary, 0, len(runs)),
 		TotalCount: num.ClampInt32(total),
 	}
 	for _, r := range runs {
-		resp.Runs = append(resp.Runs, &runv1.RunSummary{
+		summary := &runv1.RunSummary{
 			RunId:         r.RunID.String(),
 			ScheduleName:  r.ScheduleName,
-			Status:        string(r.TerminalStatus),
+			Status:        string(r.Status),
 			CreatedAt:     r.CreatedAt.UTC().Format(runSummaryTimeLayout),
-			CompletedAt:   r.CompletedAt.UTC().Format(runSummaryTimeLayout),
 			FailureReason: string(r.FailureReason),
-		})
+			Kind:          string(r.Kind),
+			ReleaseId:     r.ReleaseID,
+		}
+		if r.CompletedAt != nil {
+			summary.CompletedAt = r.CompletedAt.UTC().Format(runSummaryTimeLayout)
+		}
+		resp.Runs = append(resp.Runs, summary)
 	}
 	return resp, nil
 }

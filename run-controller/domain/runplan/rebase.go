@@ -21,7 +21,9 @@ import (
 // changed ancestor of what it executes together with that ancestor's
 // descendants, repeated until no changed ancestor is left out. Every other
 // source success g still holds is carried over as succeeded; a source task
-// whose node g no longer holds is left out of the run.
+// whose node g no longer holds is left out of the run. A source rebuild it
+// executes again keeps its operation, reason and seed while that seed is
+// carried over (carryRebuilds).
 //
 // A node is changed when the source run ran it, both the release its source
 // task's result was built on and the live release hold it, and its content
@@ -79,6 +81,30 @@ type ChangedNode struct {
 	Downstream  int
 }
 
+// Replan returns p with plan, a plan that executes every task p.Plan executes
+// and may execute more, such as the rebuilds of the seeds it loads: each task
+// plan executes that p.Plan does not is counted under Downstream, and
+// Inherited is what plan carries over.
+func (p Preview) Replan(plan Plan) Preview {
+	executed := make(map[topology.NodeKey]bool, len(p.Plan.Tasks))
+	for _, t := range p.Plan.Tasks {
+		if !t.Inherited {
+			executed[t.Key] = true
+		}
+	}
+	p.Plan = plan
+	p.Inherited = 0
+	for _, t := range plan.Tasks {
+		switch {
+		case t.Inherited:
+			p.Inherited++
+		case !executed[t.Key]:
+			p.Downstream++
+		}
+	}
+	return p
+}
+
 // Select returns the plan Preview selects.
 func (s Rebase) Select(g topology.Graph) (Plan, error) {
 	pv, err := s.Preview(g)
@@ -126,7 +152,8 @@ func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 		return Preview{}, err
 	}
 
-	pv := Preview{Plan: dagPlan(g, executed, succeededIn(g, s.Source.Tasks)), Changed: changed}
+	plan := carryRebuilds(dagPlan(g, executed, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation)
+	pv := Preview{Plan: plan, Changed: changed}
 	named := make(map[topology.NodeKey]bool, len(changed))
 	for _, c := range changed {
 		named[c.Key] = true

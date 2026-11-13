@@ -8,6 +8,8 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/projection"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
+	"github.com/carolsimone/continuo/run-controller/domain/seeds"
+	"github.com/carolsimone/continuo/run-controller/domain/topology"
 )
 
 // NodeCatalogEntry is one row of the node list with the task timeout the
@@ -25,13 +27,22 @@ type NodeCatalogEntry struct {
 // given.
 type Nodes struct {
 	nodes          repository.NodeReader
+	outages        repository.ViewOutageReader
 	defaultTimeout time.Duration
 }
 
-// NewNodes returns a Nodes over nodes; defaultTimeout is the task timeout of a
-// node whose live release declares none.
-func NewNodes(nodes repository.NodeReader, defaultTimeout time.Duration) *Nodes {
-	return &Nodes{nodes: nodes, defaultTimeout: defaultTimeout}
+// NewNodes returns a Nodes over nodes and the view outages in outages;
+// defaultTimeout is the task timeout of a node whose live release declares
+// none.
+func NewNodes(nodes repository.NodeReader, outages repository.ViewOutageReader, defaultTimeout time.Duration) *Nodes {
+	return &Nodes{nodes: nodes, outages: outages, defaultTimeout: defaultTimeout}
+}
+
+// ViewOutage returns the open outage of tenantID's node that builds
+// schemaName.tableName, a view a seed load left missing or stale; found is
+// false when the node has none.
+func (n *Nodes) ViewOutage(ctx context.Context, tenantID, schemaName, tableName string) (seeds.ViewOutage, bool, error) {
+	return n.outages.Get(ctx, tenantID, topology.KeyOf(schemaName, tableName))
 }
 
 // ListNodeTasks returns the most recent tasks of a node of tenantID applying

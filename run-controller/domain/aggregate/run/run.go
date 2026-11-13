@@ -423,26 +423,38 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 // reads its node there.
 //
 // Each planned task gets the id TaskIDFor derives for r's tenant, r and its node,
-// its node's Job name, r's operation and the node's image. A pending task gets
-// status pending and the retry budget of d; an inherited task gets status
-// succeeded, no retry budget and the task it inherits from, and is never
-// dispatched. Every task is stored first; then, on a run that writes its nodes
-// (every operation but test), each ready task claims its node's write lease,
-// and a ready task whose node another task holds or waits for stays pending,
-// waiting for the lease, undispatched. Each other ready task is made
-// dispatched at now, with its attempt 0 stored dispatched and due for its
-// first check (NextCheckAfter), and recorded as a TaskDispatched of attempt 0,
-// in key order, with its node's timeout (TaskTimeout). The run records the
-// plan: planned_at, the total task count, the inherited tasks as terminal,
-// init status completed, status running, started_at and its progress clock. A
-// plan without a pending task leaves nothing to run, so the run finalizes
-// succeeded at once.
+// its node's Job name, the node's image and the planned task's operation (r's
+// when it names none), plan reason, seed preflight and the seed it rebuilds
+// after. A pending task gets status pending and the retry budget of d; an
+// inherited task gets status succeeded, no retry budget and the task it
+// inherits from, and is never dispatched.
+//
+// A task the plan refused (Refusal) never starts a container: it is stored
+// failed, with an attempt 0 stored failed in the class of its refusal, naming
+// the refusal as its reason and the planned task's reason as its error
+// message, never dispatched and finished at now, and a TaskRefused records it.
+// Every pending task reached from it over g's edges, passing only through such
+// tasks, is stored skipped, as the failure of a task skips what it blocks.
+//
+// Every task is stored first; then, on a run that writes its nodes (every
+// operation but test), each ready task claims its node's write lease, and a
+// ready task whose node another task holds or waits for stays pending, waiting
+// for the lease, undispatched. Each other ready task is made dispatched at
+// now, with its attempt 0 stored dispatched and due for its first check
+// (NextCheckAfter), and recorded as a TaskDispatched of attempt 0, in key
+// order, with its spec and its node's timeout (TaskTimeout). The run records
+// the plan: planned_at, the total task count, the inherited, refused and
+// skipped tasks as terminal, init status completed, status running,
+// started_at and its progress clock. A plan without a pending task leaves
+// nothing to run, so the run finalizes succeeded at once; a plan whose every
+// task it would run was refused or skipped finalizes failed at once.
 //
 // Start refuses, before it stores anything: a terminal run (ErrAlreadyTerminal),
 // a run whose tasks are already stored (ErrAlreadyPlanned), a plan without
 // tasks (ErrNoNodes), a plan naming a node g does not hold
 // (ErrPlanNodeNotInGraph), and a plan whose ready list names a task that is
-// not one of its pending tasks (ErrPlanReadyNotPending).
+// not one of its pending tasks, a refused or skipped one included
+// (ErrPlanReadyNotPending).
 func (r *Run) Start(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -460,10 +472,22 @@ func (r *Run) Start(
 	if len(plan.Tasks) == 0 {
 		return nil, ErrNoNodes
 	}
-	pending := make(map[topology.NodeKey]bool, len(plan.Tasks))
+	refused := make(map[topology.NodeKey]bool)
+	runnable := make(map[topology.NodeKey]bool, len(plan.Tasks))
 	for _, p := range plan.Tasks {
-		if !p.Inherited {
-			pending[p.Key] = true
+		switch {
+		case p.Inherited:
+		case p.Refusal != "":
+			refused[p.Key] = true
+		default:
+			runnable[p.Key] = true
+		}
+	}
+	blocked := blockedBy(g, refused, runnable)
+	pending := make(map[topology.NodeKey]bool, len(runnable))
+	for k := range runnable {
+		if !blocked[k] {
+			pending[k] = true
 		}
 	}
 	ready := make(map[topology.NodeKey]bool, len(plan.Ready))
@@ -476,7 +500,8 @@ func (r *Run) Start(
 
 	built := make([]Task, 0, len(plan.Tasks))
 	var toDispatch []readyTask
-	inherited := int32(0)
+	var refusals []refusedTask
+	terminal := int32(0)
 	for _, p := range plan.Tasks {
 		n, ok := g.Node(p.Key)
 		if !ok {
@@ -487,18 +512,24 @@ func (r *Run) Start(
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
 		t := Task{
-			TaskID:      TaskIDFor(r.tenantID, r.runID, p.Key),
-			ScheduleID:  r.runID,
-			CreatedAt:   now,
-			ServiceName: n.ServiceName,
-			SchemaName:  n.SchemaName,
-			TableName:   n.TableName,
-			NodeKey:     p.Key,
-			JobName:     jobName,
-			Status:      TaskStatusPending,
-			MaxRetries:  int(d.MaxRetries),
-			ImageTag:    n.ImageTag,
-			Operation:   r.operation,
+			TaskID:        TaskIDFor(r.tenantID, r.runID, p.Key),
+			ScheduleID:    r.runID,
+			CreatedAt:     now,
+			ServiceName:   n.ServiceName,
+			SchemaName:    n.SchemaName,
+			TableName:     n.TableName,
+			NodeKey:       p.Key,
+			JobName:       jobName,
+			Status:        TaskStatusPending,
+			MaxRetries:    int(d.MaxRetries),
+			ImageTag:      n.ImageTag,
+			Operation:     r.operation,
+			PlanReason:    p.Reason,
+			SeedPreflight: p.Preflight,
+			RebuildOf:     p.RebuildOf,
+		}
+		if p.Operation != nil {
+			t.Operation = *p.Operation
 		}
 		switch {
 		case p.Inherited:
@@ -506,9 +537,16 @@ func (r *Run) Start(
 			t.Status = TaskStatusSucceeded
 			t.MaxRetries = 0
 			t.InheritedFromTaskID = &root
-			inherited++
+			terminal++
+		case refused[p.Key]:
+			t.Status = TaskStatusFailed
+			refusals = append(refusals, refusedTask{task: t, reason: p.Refusal})
+			terminal++
+		case blocked[p.Key]:
+			t.Status = TaskStatusSkipped
+			terminal++
 		case ready[p.Key]:
-			toDispatch = append(toDispatch, readyTask{taskID: t.TaskID, node: n, jobName: jobName})
+			toDispatch = append(toDispatch, readyTask{taskID: t.TaskID, node: n, jobName: jobName, spec: t.Spec()})
 		}
 		built = append(built, t)
 	}
@@ -516,14 +554,19 @@ func (r *Run) Start(
 	if err := tasks.BulkCreate(ctx, built); err != nil {
 		return nil, fmt.Errorf("bulk create tasks: %w", err)
 	}
+	refusedEvents, err := r.refuse(ctx, tasks, refusals, now)
+	if err != nil {
+		return nil, err
+	}
 	events, err := r.dispatch(ctx, tasks, toDispatch, d, now)
 	if err != nil {
 		return nil, fmt.Errorf("dispatch the ready tasks: %w", err)
 	}
+	events = append(events, refusedEvents...)
 
 	total := num.ClampInt32(len(built))
 	r.totalTaskCount = &total
-	r.terminalTaskCount = inherited
+	r.terminalTaskCount = terminal
 	planned := now
 	r.plannedAt = &planned
 	r.status = RunStatusRunning
@@ -538,6 +581,62 @@ func (r *Run) Start(
 
 	if !plan.HasPending() {
 		return append(events, r.finalize(RunStatusSucceeded, now)...), nil
+	}
+	if terminal == total {
+		return append(events, r.finalize(RunStatusFailed, now)...), nil
+	}
+	return events, nil
+}
+
+// blockedBy returns the runnable tasks reached from a refused task over g's
+// edges, passing only through runnable tasks: none of them can run once the
+// task above it never will.
+func blockedBy(g topology.Graph, refused, runnable map[topology.NodeKey]bool) map[topology.NodeKey]bool {
+	blocked := make(map[topology.NodeKey]bool)
+	stack := make([]topology.NodeKey, 0, len(refused))
+	for k := range refused {
+		stack = append(stack, k)
+	}
+	for len(stack) > 0 {
+		k := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, down := range g.Downstreams(k) {
+			if runnable[down] && !blocked[down] {
+				blocked[down] = true
+				stack = append(stack, down)
+			}
+		}
+	}
+	return blocked
+}
+
+// refusedTask is a task of a run its plan refused, as Start stores it, and why
+// it was refused.
+type refusedTask struct {
+	task   Task
+	reason model.FailureReason
+}
+
+// refuse stores attempt 0 of each refused task, in the order given: failed in
+// the class of its refusal, naming the refusal as its reason and the task's
+// plan reason as its error message, never dispatched and finished at now. It
+// records a TaskRefused for each.
+func (r *Run) refuse(ctx context.Context, tasks TaskCollection, refusals []refusedTask, now time.Time) ([]DomainEvent, error) {
+	events := make([]DomainEvent, 0, len(refusals))
+	for _, rt := range refusals {
+		reason, class := string(rt.reason), string(rt.reason.Class())
+		finished := now
+		a := Attempt{TaskID: rt.task.TaskID, Number: 0, JobName: rt.task.JobName, Status: AttemptFailed,
+			FailureClass: &class, FailureReason: &reason, FinishedAt: &finished}
+		if rt.task.PlanReason != "" {
+			detail := rt.task.PlanReason
+			a.ErrorMessage = &detail
+		}
+		if err := tasks.SaveAttempt(ctx, a); err != nil {
+			return nil, fmt.Errorf("store the refused attempt of %s: %w", rt.task.NodeKey, err)
+		}
+		events = append(events, TaskRefused{ID: r.runID, TenantID: r.tenantID, TaskID: rt.task.TaskID,
+			Key: rt.task.NodeKey, Operation: rt.task.Operation, Reason: rt.reason, Detail: rt.task.PlanReason})
 	}
 	return events, nil
 }
@@ -647,7 +746,7 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 	var ready []readyTask
 	for _, c := range candidates {
 		if c.Ready() {
-			ready = append(ready, readyTask{taskID: c.TaskID, node: c.Node, jobName: c.JobName})
+			ready = append(ready, readyTask{taskID: c.TaskID, node: c.Node, jobName: c.JobName, spec: c.Spec})
 		}
 	}
 	events, err := r.dispatch(ctx, tasks, ready, d, now)
@@ -658,11 +757,13 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 }
 
 // readyTask is a pending, undispatched task of a run that is ready to
-// dispatch: its id, its node as the run's release holds it, and its Job name.
+// dispatch: its id, its node as the run's release holds it, its Job name and
+// the spec its dispatch carries.
 type readyTask struct {
 	taskID  uuid.UUID
 	node    topology.Node
 	jobName string
+	spec    DispatchSpec
 }
 
 // dispatch dispatches attempt 0 of each ready task of r, in the order given.
@@ -711,7 +812,7 @@ func (r *Run) dispatchAttemptZero(ctx context.Context, tasks TaskCollection, rea
 			continue
 		}
 		attempts = append(attempts, firstAttempt(t.taskID, t.jobName, &at))
-		events = append(events, r.dispatchEvent(t.taskID, 0, t.node, t.jobName, d))
+		events = append(events, r.dispatchEvent(t.taskID, 0, t.node, t.jobName, t.spec, d))
 	}
 	if err := tasks.AddAttempts(ctx, attempts); err != nil {
 		return nil, fmt.Errorf("add the first attempts of %d ready tasks: %w", len(attempts), err)
@@ -727,8 +828,9 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 }
 
 // dispatchEvent records the first send of attempt n of the task at node, in
-// r's run, with its node's timeout (d's when the node declares none).
-func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
+// r's run, with the task's spec and its node's timeout (d's when the node
+// declares none).
+func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, spec DispatchSpec, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
 		ID:           r.runID,
 		TenantID:     r.tenantID,
@@ -738,7 +840,9 @@ func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobNa
 		KnownStatus:  AttemptDispatched,
 		Node:         node,
 		JobName:      jobName,
-		Operation:    r.operation,
+		Operation:    spec.Operation,
+		Reason:       spec.Reason,
+		Preflight:    spec.Preflight,
 		Timeout:      TaskTimeout(node, d),
 	}
 }

@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package release.v1;
+
+option go_package = "github.com/carolsimone/continuo/release-controller/api/release/v1;releasev1";
+
+// ReleaseQuery reads what release-controller holds about a candidate release.
+service ReleaseQuery {
+  // GetReleaseNotices returns the seed reload notices stored on a candidate
+  // release, in node-id order, with the release's status. A notice predicts,
+  // the run decides: the run's own preflight and load settle what happens.
+  // Errors: INVALID_ARGUMENT for an empty release_id, NOT_FOUND when no
+  // candidate release has that id (a verification run's id is not one).
+  rpc GetReleaseNotices(GetReleaseNoticesRequest) returns (GetReleaseNoticesResponse);
+}
+
+message GetReleaseNoticesRequest {
+  string release_id = 1;
+}
+
+message GetReleaseNoticesResponse {
+  string release_id = 1;
+  string status = 2;
+  repeated ReleaseNotice notices = 3;
+}
+
+// ReleaseNotice is one seed whose load a release changes.
+message ReleaseNotice {
+  string kind = 1;
+  string node_id = 2;
+  string service = 3;
+  string engine_family = 4;
+  string change = 5;
+  ColumnChanges columns = 6;
+  SeedLoad load = 7;
+  repeated Rebuild rebuilds = 8;
+  repeated ScheduledRefresh refresh_on_schedule = 9;
+  WarehouseFindings warehouse = 10;
+  string prediction = 11;
+  string stop_reason = 12;
+  bool unvalidated = 13;
+}
+
+message ColumnChanges {
+  repeated string added = 1;
+  repeated string removed = 2;
+  repeated string retyped = 3;
+}
+
+message SeedLoad {
+  string operation = 1;
+  bool drops_table = 2;
+  string reason = 3;
+}
+
+message Rebuild {
+  string node_id = 1;
+  string materialized = 2;
+  string operation = 3;
+  string schedule = 4;
+}
+
+message ScheduledRefresh {
+  string node_id = 1;
+  string materialized = 2;
+  string schedule = 3;
+}
+
+message WarehouseFindings {
+  bool checked = 1;
+  string completeness = 2;
+  repeated OutsideObject outside_continuo = 3;
+}
+
+message OutsideObject {
+  string object = 1;
+  string kind = 2;
+  string owner = 3;
+}

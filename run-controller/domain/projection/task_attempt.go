@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // TaskAttempt is one attempt of a task as ListRunAttempts shows it: one
@@ -31,4 +33,7 @@ type TaskAttempt struct {
 	ErrorMessage     *string
 	LogS3Key         *string
 	RunResultsURI    *string
+	// SeedPreflight is what the attempt's seed preflight found in the
+	// warehouse; nil when the attempt ran no preflight.
+	SeedPreflight *seedreload.Findings
 }

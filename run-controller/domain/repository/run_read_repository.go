@@ -11,7 +11,7 @@ import (
 )
 
 // RunReadRepository reads runs the way people see them: a run's graph from
-// its own release, a schedule's completed runs, and how far each schedule's
+// its own release, a schedule's completed runs, a release's runs, and how far each schedule's
 // newest active run is behind the live release.
 type RunReadRepository interface {
 	// GetRunGraph returns the tasks of the tenant's run runID and the
@@ -24,6 +24,11 @@ type RunReadRepository interface {
 	// schedule scheduleName, newest first, and how many completed runs the
 	// schedule has.
 	ListCompletedRuns(ctx context.Context, tenantID, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error)
+
+	// ListReleaseRuns returns one page of the runs of the tenant's release
+	// releaseID, of any status, newest first, only those of kind when it is
+	// not empty, and how many runs match.
+	ListReleaseRuns(ctx context.Context, tenantID, releaseID, kind string, limit, offset int) ([]projection.RunSummary, int, error)
 
 	// ListActiveRunDrifts returns the tenant's live promotion seq (0 when no
 	// release is live) and the newest active run of each of its schedules.

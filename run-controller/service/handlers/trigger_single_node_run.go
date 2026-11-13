@@ -38,14 +38,17 @@ func NewTriggerSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logge
 
 // TriggerSingleNodeRunInput holds the parameters for HandleInTransaction.
 // TenantID is the tenant the run is created for; its source run, in stale
-// mode, is one of that tenant's runs.
+// mode, is one of that tenant's runs. AcknowledgedDependents are the
+// "<schema>.<name>" of the warehouse objects an operator lets a full refresh
+// of a seed drop, normalized by seedreload.NormalizeObjects.
 type TriggerSingleNodeRunInput struct {
-	TenantID       string
-	Target         run.NodeID
-	MetadataSource run.MetadataSource
-	Operation      model.Operation
-	SourceRunID    *uuid.UUID
-	Initiator      identity.Identity
+	TenantID               string
+	Target                 run.NodeID
+	MetadataSource         run.MetadataSource
+	Operation              model.Operation
+	SourceRunID            *uuid.UUID
+	Initiator              identity.Identity
+	AcknowledgedDependents []string
 }
 
 // HandleInTransaction synthesises the single-task Run runID inside u's open
@@ -54,8 +57,9 @@ type TriggerSingleNodeRunInput struct {
 // the source run to be terminal and to carry a task at the requested node. A
 // selection the planner refuses (the node is not in the release or another
 // service owns it, a test of a node without data tests, a full refresh of a
-// type that cannot be rebuilt, a source that names no release) is returned as
-// is, and the caller rolls back.
+// type that cannot be rebuilt, a seed that sets +full_refresh: false and needs
+// its table rebuilt, acknowledged dependents on any other run, a source that
+// names no release) is returned as is, and the caller rolls back.
 func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput) (string, error) {
 	src, err := h.source(ctx, u, in)
 	if err != nil {
@@ -95,7 +99,7 @@ func (h *TriggerSingleNodeRunHandler) source(ctx context.Context, u uow.UnitOfWo
 // first eight hex digits of its id, stores its task and dispatches it, inside
 // u's open transaction. It returns the run's schedule name.
 func (h *TriggerSingleNodeRunHandler) write(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput, src *run.Run) (string, error) {
-	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src)
+	sel, err := h.planner.SingleNode(ctx, u, in.TenantID, in.Target, in.Operation, src, in.AcknowledgedDependents)
 	if err != nil {
 		return "", err
 	}

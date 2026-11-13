@@ -41,6 +41,9 @@ type FakeUnitOfWork struct {
 	// MaterializationRepo backs Materializations().
 	MaterializationRepo repository.MaterializationRepository
 
+	// ViewOutageRepo backs ViewOutages().
+	ViewOutageRepo repository.ViewOutageRepository
+
 	// Graph backs TaskGraph(); GraphTenant records the tenant it was last
 	// asked for.
 	Graph       run.TaskGraph
@@ -131,6 +134,10 @@ func (f *FakeUnitOfWork) Materializations() repository.MaterializationRepository
 	return f.MaterializationRepo
 }
 
+// ViewOutages returns the repository.ViewOutageRepository set via the
+// ViewOutageRepo field.
+func (f *FakeUnitOfWork) ViewOutages() repository.ViewOutageRepository { return f.ViewOutageRepo }
+
 // TaskGraph returns the run.TaskGraph set via the Graph field and records
 // tenantID.
 func (f *FakeUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
@@ -208,6 +215,12 @@ func (f *LiveReleaseOnly) ScheduleGraph(context.Context, string, string, string)
 }
 func (f *LiveReleaseOnly) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
 	return topology.Graph{}, ErrNotFaked
+}
+func (f *LiveReleaseOnly) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, ErrNotFaked
+}
+func (f *LiveReleaseOnly) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, ErrNotFaked
 }
 
 func (f *LiveReleaseOnly) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -576,4 +577,84 @@ func TestHandleSeedBuildResult_Verification_SeedOnlyOK_PassesNoReleaseEvents_Fin
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName)
 	}
 	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+}
+
+// seedBuildingFxRelease leaves a release in SeedBuilding with the design's
+// seed reload notice stored: the candidate changes the columns of
+// analytics.seed_fx_rates_eur, which two views and a table read.
+func seedBuildingFxRelease(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := seedToParsing(t, releaseID, map[string]string{"finance": "sha-f"})
+	candidate, prod := fxReleaseTopologies()
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, candidate),
+	}))
+	r := mustGetRelease(t, store, releaseID)
+	require.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	require.Len(t, r.Notices(), 1)
+	require.Equal(t, "reloads", r.Notices()[0].Prediction)
+	return deps, store
+}
+
+// fxFindings lists the two views the run rebuilds and one view in schema bi
+// that continuo does not own.
+func fxFindings() *seedreload.Findings {
+	return &seedreload.Findings{DropSemantics: "drop_fails", Completeness: "exact", Checked: true, Dependents: []seedreload.Dependent{
+		{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true},
+		{Schema: "analytics", Name: "fx_rates_latest_eur", Kind: "view", Owner: "dbt", Depth: 2, Allowed: true},
+		{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1},
+	}}
+}
+
+func assertFxNoticeStops(t *testing.T, r *pipeline.Run) {
+	t.Helper()
+	require.Len(t, r.Notices(), 1)
+	n := r.Notices()[0]
+	assert.Equal(t, "stops", n.Prediction)
+	assert.Equal(t, "unowned_dependents", n.StopReason)
+	assert.Equal(t, []release.OutsideObject{{Object: "bi.fx_rates_report", Kind: "view", Owner: "bi"}}, n.Warehouse.OutsideContinuo)
+}
+
+func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNotice(t *testing.T) {
+	deps, store := seedBuildingFxRelease(t, "rel-findings-ok")
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: "rel-findings-ok", Status: "ok",
+		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "ok", SeedPreflight: fxFindings()}},
+	}))
+
+	r := mustGetRelease(t, store, "rel-findings-ok")
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assertFxNoticeStops(t, r)
+}
+
+func TestHandleSeedBuildResult_AddsTheWarehouseFindingsToTheNoticeOnAFailedLeg(t *testing.T) {
+	deps, store := seedBuildingFxRelease(t, "rel-findings-failed")
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: "rel-findings-failed", Status: "failed", ErrorDetail: "load failed",
+		PerNode: []handlers.NodeResult{{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", SeedPreflight: fxFindings()}},
+	}))
+
+	r := mustGetRelease(t, store, "rel-findings-failed")
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assertFxNoticeStops(t, r)
+}
+
+func TestHandleSeedBuildResult_AnEntryWithoutFindingsLeavesTheNoticeAlone(t *testing.T) {
+	deps, store := seedBuildingFxRelease(t, "rel-findings-none")
+
+	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: "rel-findings-none", Status: "ok",
+		PerNode: []handlers.NodeResult{
+			{NodeID: "analytics.seed_fx_rates_eur", Status: "ok"},
+			{NodeID: "analytics.not_a_noticed_seed", Status: "ok", SeedPreflight: fxFindings()},
+		},
+	}))
+
+	r := mustGetRelease(t, store, "rel-findings-none")
+	require.Len(t, r.Notices(), 1)
+	assert.Equal(t, "reloads", r.Notices()[0].Prediction)
+	assert.Empty(t, r.Notices()[0].Warehouse.OutsideContinuo)
 }
