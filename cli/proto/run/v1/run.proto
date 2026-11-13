@@ -692,6 +692,7 @@ message ListNodesRequest {
   int32 limit = 3;          // page size; 0 means 50, clamped to at most 200
   int32 offset = 4;         // page offset; default 0
   string operation = 5;     // run | test | build; empty means run
+  bool dormant_only = 6;    // true lists only dormant nodes, those with no schedule that a run starts by hand; false lists every node
 }
 
 message ListNodesResponse {
@@ -713,6 +714,8 @@ message NodeSummary {
   string operation = 11;        // run | test | build
   int32 timeout_seconds = 12;   // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
   bool timeout_declared = 13;   // true when the live release declares the timeout of the node; false when its tasks get the install default
+  string node_type = 14;        // the type of the node in the live release, such as dbt-model
+  bool dormant = 15;            // true when the node has no schedule, so no cron runs it and a run starts it by hand
 }
 
 message ListNodeNamesRequest {
@@ -802,6 +805,8 @@ message ScheduleGraphNode {
   string table_name = 3;
   string node_type = 4;
   string schedule_name = 5;  // the schedule the node belongs to, which differs from the requested one for an upstream node
+  bool dormant = 6;          // true when the node has no schedule, so no cron runs it and a run starts it by hand
+  string last_run_at = 7;    // RFC3339, when the latest run with a task of the node was created; empty when the node never ran or is not dormant
 }
 
 message ScheduleGraphEdge {
@@ -827,4 +832,5 @@ message ScheduleTopologySummary {
 
 message ListScheduleTopologiesResponse {
   repeated ScheduleTopologySummary schedules = 1;
+  int64 dormant_node_count = 2;  // dormant nodes in the live release, which no schedule lists; 0 when no release is live
 }

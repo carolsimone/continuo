@@ -114,6 +114,49 @@ describe('proto wire: run.proto', () => {
     expect(resp.promotion_seq).toBe('42');
   });
 
+  it('GetScheduleGraph decodes a node\'s dormant as field 6 and last_run_at as field 7', () => {
+    const lastRunAt = '2026-11-12T08:30:00Z';
+    const dormantNode = [
+      0x22, 9, ...Buffer.from('dbt-model'), // node_type (field 4), so the node holds a field beside the new ones
+      0x30, 1, // dormant = true
+      0x3a, lastRunAt.length, ...Buffer.from(lastRunAt), // last_run_at
+    ];
+    const plainNode = [0x1a, 1, 0x74]; // table_name = "t", no dormant, no last_run_at
+    const resp = decodeResponse('GetScheduleGraph', [
+      0x0a, dormantNode.length, ...dormantNode,
+      0x0a, plainNode.length, ...plainNode,
+    ]);
+    expect(resp.nodes).toHaveLength(2);
+    expect(resp.nodes[0]).toMatchObject({ node_type: 'dbt-model', dormant: true, last_run_at: lastRunAt });
+    expect(resp.nodes[1]).toMatchObject({ table_name: 't', dormant: false, last_run_at: '' });
+  });
+
+  it('ListScheduleTopologies decodes field 2 as the int64 dormant_node_count', () => {
+    expect(decodeResponse('ListScheduleTopologies', [0x10, 7]).dormant_node_count).toBe('7');
+    // Left out of the wire, the count reads as zero: int64 is loaded as a string.
+    expect(decodeResponse('ListScheduleTopologies', []).dormant_node_count).toBe('0');
+  });
+
+  it('ListNodes request carries dormant_only as field 6', () => {
+    const method = runMethod('ListNodes');
+    expect([...method.requestSerialize({ dormant_only: true })]).toEqual([0x30, 1]);
+    expect(requestRoundTrip('ListNodes', { service_name: 'core', dormant_only: true }))
+      .toMatchObject({ service_name: 'core', dormant_only: true });
+    expect(requestRoundTrip('ListNodes', { service_name: 'core' })).toMatchObject({ dormant_only: false });
+  });
+
+  it('ListNodes response decodes a node\'s node_type as field 14 and dormant as field 15', () => {
+    const node = [
+      0x72, 9, ...Buffer.from('dbt-model'), // node_type (field 14, wire type 2)
+      0x78, 1, // dormant = true (field 15, varint)
+    ];
+    const other = [0x1a, 1, 0x74]; // table_name = "t", no node_type, no dormant
+    const resp = decodeResponse('ListNodes', [0x0a, node.length, ...node, 0x0a, other.length, ...other]);
+    expect(resp.nodes).toHaveLength(2);
+    expect(resp.nodes[0]).toMatchObject({ node_type: 'dbt-model', dormant: true });
+    expect(resp.nodes[1]).toMatchObject({ table_name: 't', node_type: '', dormant: false });
+  });
+
   it('ListActiveRunDrifts decodes field 1 and ActiveRunDrift field 3 as promotion seqs', () => {
     const resp = decodeResponse('ListActiveRunDrifts', [0x08, 9, 0x12, 2, 0x18, 4]);
     expect(resp.latest_promotion_seq).toBe('9');

@@ -2791,11 +2791,12 @@ func (x *NodeTask) GetWaitingSince() string {
 
 type ListNodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                              // case-insensitive exact match on the table name; empty means no filter
-	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // exact service filter; empty means all services
-	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                               // page size; 0 means 50, clamped to at most 200
-	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                             // page offset; default 0
-	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`                        // run | test | build; empty means run
+	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                               // case-insensitive exact match on the table name; empty means no filter
+	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`  // exact service filter; empty means all services
+	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                                // page size; 0 means 50, clamped to at most 200
+	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                              // page offset; default 0
+	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`                         // run | test | build; empty means run
+	DormantOnly   bool                   `protobuf:"varint,6,opt,name=dormant_only,json=dormantOnly,proto3" json:"dormant_only,omitempty"` // true lists only dormant nodes, those with no schedule that a run starts by hand; false lists every node
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2865,6 +2866,13 @@ func (x *ListNodesRequest) GetOperation() string {
 	return ""
 }
 
+func (x *ListNodesRequest) GetDormantOnly() bool {
+	if x != nil {
+		return x.DormantOnly
+	}
+	return false
+}
+
 type ListNodesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Nodes         []*NodeSummary         `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
@@ -2932,6 +2940,8 @@ type NodeSummary struct {
 	Operation       string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build
 	TimeoutSeconds  int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`    // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
 	TimeoutDeclared bool                   `protobuf:"varint,13,opt,name=timeout_declared,json=timeoutDeclared,proto3" json:"timeout_declared,omitempty"` // true when the live release declares the timeout of the node; false when its tasks get the install default
+	NodeType        string                 `protobuf:"bytes,14,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`                       // the type of the node in the live release, such as dbt-model
+	Dormant         bool                   `protobuf:"varint,15,opt,name=dormant,proto3" json:"dormant,omitempty"`                                        // true when the node has no schedule, so no cron runs it and a run starts it by hand
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -3053,6 +3063,20 @@ func (x *NodeSummary) GetTimeoutSeconds() int32 {
 func (x *NodeSummary) GetTimeoutDeclared() bool {
 	if x != nil {
 		return x.TimeoutDeclared
+	}
+	return false
+}
+
+func (x *NodeSummary) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *NodeSummary) GetDormant() bool {
+	if x != nil {
+		return x.Dormant
 	}
 	return false
 }
@@ -3837,6 +3861,8 @@ type ScheduleGraphNode struct {
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	NodeType      string                 `protobuf:"bytes,4,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
 	ScheduleName  string                 `protobuf:"bytes,5,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the schedule the node belongs to, which differs from the requested one for an upstream node
+	Dormant       bool                   `protobuf:"varint,6,opt,name=dormant,proto3" json:"dormant,omitempty"`                              // true when the node has no schedule, so no cron runs it and a run starts it by hand
+	LastRunAt     string                 `protobuf:"bytes,7,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`        // RFC3339, when the latest run with a task of the node was created; empty when the node never ran or is not dormant
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3902,6 +3928,20 @@ func (x *ScheduleGraphNode) GetNodeType() string {
 func (x *ScheduleGraphNode) GetScheduleName() string {
 	if x != nil {
 		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *ScheduleGraphNode) GetDormant() bool {
+	if x != nil {
+		return x.Dormant
+	}
+	return false
+}
+
+func (x *ScheduleGraphNode) GetLastRunAt() string {
+	if x != nil {
+		return x.LastRunAt
 	}
 	return ""
 }
@@ -4117,10 +4157,11 @@ func (x *ScheduleTopologySummary) GetLastUpdatedAt() *timestamppb.Timestamp {
 }
 
 type ListScheduleTopologiesResponse struct {
-	state         protoimpl.MessageState     `protogen:"open.v1"`
-	Schedules     []*ScheduleTopologySummary `protobuf:"bytes,1,rep,name=schedules,proto3" json:"schedules,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState     `protogen:"open.v1"`
+	Schedules        []*ScheduleTopologySummary `protobuf:"bytes,1,rep,name=schedules,proto3" json:"schedules,omitempty"`
+	DormantNodeCount int64                      `protobuf:"varint,2,opt,name=dormant_node_count,json=dormantNodeCount,proto3" json:"dormant_node_count,omitempty"` // dormant nodes in the live release, which no schedule lists; 0 when no release is live
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ListScheduleTopologiesResponse) Reset() {
@@ -4158,6 +4199,13 @@ func (x *ListScheduleTopologiesResponse) GetSchedules() []*ScheduleTopologySumma
 		return x.Schedules
 	}
 	return nil
+}
+
+func (x *ListScheduleTopologiesResponse) GetDormantNodeCount() int64 {
+	if x != nil {
+		return x.DormantNodeCount
+	}
+	return 0
 }
 
 var File_proto_run_v1_run_proto protoreflect.FileDescriptor
@@ -4435,17 +4483,18 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\vwait_reason\x18\x13 \x01(\tR\n" +
 	"waitReason\x12)\n" +
 	"\x11waiting_on_run_id\x18\x14 \x01(\tR\x0ewaitingOnRunId\x12#\n" +
-	"\rwaiting_since\x18\x15 \x01(\tR\fwaitingSince\"\x99\x01\n" +
+	"\rwaiting_since\x18\x15 \x01(\tR\fwaitingSince\"\xbc\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1c\n" +
-	"\toperation\x18\x05 \x01(\tR\toperation\"_\n" +
+	"\toperation\x18\x05 \x01(\tR\toperation\x12!\n" +
+	"\fdormant_only\x18\x06 \x01(\bR\vdormantOnly\"_\n" +
 	"\x11ListNodesResponse\x12)\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x13.run.v1.NodeSummaryR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\xe6\x03\n" +
+	"totalCount\"\x9d\x04\n" +
 	"\vNodeSummary\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -4464,7 +4513,9 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	" \x01(\tR\tlastRunAt\x12\x1c\n" +
 	"\toperation\x18\v \x01(\tR\toperation\x12'\n" +
 	"\x0ftimeout_seconds\x18\f \x01(\x05R\x0etimeoutSeconds\x12)\n" +
-	"\x10timeout_declared\x18\r \x01(\bR\x0ftimeoutDeclared\"9\n" +
+	"\x10timeout_declared\x18\r \x01(\bR\x0ftimeoutDeclared\x12\x1b\n" +
+	"\tnode_type\x18\x0e \x01(\tR\bnodeType\x12\x18\n" +
+	"\adormant\x18\x0f \x01(\bR\adormant\"9\n" +
 	"\x14ListNodeNamesRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
@@ -4519,7 +4570,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x15ListSchedulesResponse\x125\n" +
 	"\tschedules\x18\x01 \x03(\v2\x17.run.v1.ScheduleSummaryR\tschedules\">\n" +
 	"\x17GetScheduleGraphRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xb8\x01\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xf2\x01\n" +
 	"\x11ScheduleGraphNode\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -4527,7 +4578,9 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\n" +
 	"table_name\x18\x03 \x01(\tR\ttableName\x12\x1b\n" +
 	"\tnode_type\x18\x04 \x01(\tR\bnodeType\x12#\n" +
-	"\rschedule_name\x18\x05 \x01(\tR\fscheduleName\"S\n" +
+	"\rschedule_name\x18\x05 \x01(\tR\fscheduleName\x12\x18\n" +
+	"\adormant\x18\x06 \x01(\bR\adormant\x12\x1e\n" +
+	"\vlast_run_at\x18\a \x01(\tR\tlastRunAt\"S\n" +
 	"\x11ScheduleGraphEdge\x12 \n" +
 	"\ffrom_node_id\x18\x01 \x01(\tR\n" +
 	"fromNodeId\x12\x1c\n" +
@@ -4542,9 +4595,10 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1d\n" +
 	"\n" +
 	"node_count\x18\x02 \x01(\x05R\tnodeCount\x12B\n" +
-	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt\"_\n" +
+	"\x0flast_updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastUpdatedAt\"\x8d\x01\n" +
 	"\x1eListScheduleTopologiesResponse\x12=\n" +
-	"\tschedules\x18\x01 \x03(\v2\x1f.run.v1.ScheduleTopologySummaryR\tschedules2\x91\x0e\n" +
+	"\tschedules\x18\x01 \x03(\v2\x1f.run.v1.ScheduleTopologySummaryR\tschedules\x12,\n" +
+	"\x12dormant_node_count\x18\x02 \x01(\x03R\x10dormantNodeCount2\x91\x0e\n" +
 	"\n" +
 	"RunService\x12=\n" +
 	"\bStartRun\x12\x17.run.v1.StartRunRequest\x1a\x18.run.v1.StartRunResponse\x12I\n" +
