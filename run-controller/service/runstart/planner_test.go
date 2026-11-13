@@ -767,6 +767,9 @@ func TestPlanner_AScheduleNodeThatReadsARebuiltViewWaitsForTheRebuild(t *testing
 // Postgres when the seed's columns changed, and on Trino on every load, the
 // seed's columns unchanged. A dormant table below the seed is no rebuild, and
 // neither is the dormant view below that table: the walk stops at a table.
+// The stop at a table comes from ViewClosure, the walk of this test's fake
+// (graphTopology); TestViewClosure_ReachesADormantViewBelowASeed pins the same
+// stop against the real SQL.
 func TestPlanner_ADormantViewBelowAReloadedSeedIsRebuilt(t *testing.T) {
 	const (
 		dormantTable topology.NodeKey = "analytics.fx_rates_archive"

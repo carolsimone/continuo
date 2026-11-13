@@ -653,16 +653,22 @@ func TestPromoteRelease_StoresADormantNodeWithAnEmptySchedule(t *testing.T) {
 }
 
 // A later release that tags a dormant node gives it its schedule on the same
-// :Node: no second :Node appears and its edges hold.
+// :Node, with the same element id: no second :Node appears and its edges hold.
 func TestPromoteRelease_ATagMovesADormantNodeToItsSchedule(t *testing.T) {
 	f := newSwapFixture(t)
 	now := time.Now().UTC()
+	elementIDs := func() []string {
+		return f.column(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN elementId(n) AS v`,
+			map[string]any{"uid": "analytics.b"})
+	}
 
 	f.promote("rel-1", releaseOf(
 		modelNode("analytics.a"),
 		dormantNode("analytics.b", "analytics.a"),
 	), now)
 	require.Equal(t, "", f.node("analytics.b")["schedule_name"])
+	before := elementIDs()
+	require.Len(t, before, 1)
 
 	require.Equal(t, topology.PromotionApplied, f.promote("rel-2", releaseOf(
 		modelNode("analytics.a"),
@@ -672,6 +678,7 @@ func TestPromoteRelease_ATagMovesADormantNodeToItsSchedule(t *testing.T) {
 	assert.Equal(t, int64(1), f.count(
 		`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(n) AS n`, map[string]any{"uid": "analytics.b"}),
 		"one :Node holds the id")
+	assert.Equal(t, before, elementIDs(), "the tag moves the :Node the dormant node was, not a new one")
 	n := f.node("analytics.b")
 	assert.Equal(t, "daily", n["schedule_name"])
 	assert.Equal(t, "rel-2", n["release_id"])

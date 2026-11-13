@@ -141,8 +141,8 @@ func TestEncode_IsDeterministicAndDecodesBack(t *testing.T) {
 	}
 }
 
-// An artifact is immutable, so one written before the unknown-external type was
-// renamed still names it "ingested"; Decode hands every reader the current name.
+// An artifact is immutable, so a stored one can still name the unknown-external
+// type "ingested"; Decode hands every reader the current name.
 func TestDecode_ReadsLegacyIngestedAsUnknownExternal(t *testing.T) {
 	legacy := topologyartifact.Document{
 		TenantID:  "default",

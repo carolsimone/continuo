@@ -1,4 +1,4 @@
-"""The dormant rule: a node a release builds that no schedule runs.
+"""The dormant rule: a node a release builds that has no schedule.
 
 fixtures/dormant_cases.json is a copy of the fixture pkg/domain/model's tests
 read, so the Go and the Python rule answer the same questions.

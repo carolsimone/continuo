@@ -102,10 +102,11 @@ class ReleaseTimings:
     `nodes` and `columns` hold, per runtime, the nodes the release holds (the
     nodes the parses returned and the unknown-external nodes, which no parse returns
     and which count under the `external` runtime) and the columns they
-    declare; `skipped` holds the nodes the parses left out, per reason. Those
-    three name every runtime or reason from construction. `dormant` holds, per
-    service, the dormant nodes the release holds (the nodes a release builds that
-    no schedule tag puts on a cron); a service with none has no entry.
+    declare; `skipped` holds the nodes the parses left out, per reason.
+    `nodes`, `columns` and `skipped` name every runtime or reason from
+    construction. `dormant` holds, per service, the dormant nodes the release
+    holds (the nodes a release builds that no schedule tag puts on a cron); a
+    service with none has no entry.
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 

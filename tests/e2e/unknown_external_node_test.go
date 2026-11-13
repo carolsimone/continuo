@@ -118,7 +118,7 @@ func TestE2E_UnknownExternalNode_ShowsInTheGraphAndNeverRuns(t *testing.T) {
 	// a model of the schedule.
 	waitForRunControllerToApply(t, ctx, clients, releaseID, ingestProbeSchedule, 2*time.Minute)
 
-	// ── 2. run-controller stores the unknown-external node ───────────────────────────
+	// ── 2. run-controller stores the unknown-external node ───────────────────
 	var stored struct {
 		UniqueID     string `db:"unique_id"`
 		ServiceName  string `db:"service_name"`

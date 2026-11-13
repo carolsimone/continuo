@@ -20,8 +20,8 @@ import (
 
 // scriptedRunServer answers StartRun and ListSchedules from a script of
 // errors: call n fails with errs[n] while there is one, then succeeds. It
-// records the request id and the user id of every StartRun and counts the
-// calls of each RPC.
+// records the request id and the user id of every StartRun, every ListNodes
+// request, and counts the calls of each RPC.
 type scriptedRunServer struct {
 	runv1.UnimplementedRunServiceServer
 
@@ -35,6 +35,7 @@ type scriptedRunServer struct {
 	gotCancel     *runv1.CancelActiveRunRequest
 	gotAttempts   *runv1.ListRunAttemptsRequest
 	gotRuns       *runv1.ListRunsRequest
+	gotNodes      []*runv1.ListNodesRequest
 	gotRunID      string
 	getRunCalls   int
 
@@ -135,6 +136,13 @@ func (s *scriptedRunServer) ListRuns(_ context.Context, req *runv1.ListRunsReque
 	defer s.mu.Unlock()
 	s.gotRuns = req
 	return &runv1.ListRunsResponse{TotalCount: 9}, nil
+}
+
+func (s *scriptedRunServer) ListNodes(_ context.Context, req *runv1.ListNodesRequest) (*runv1.ListNodesResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotNodes = append(s.gotNodes, req)
+	return &runv1.ListNodesResponse{TotalCount: 7}, nil
 }
 
 func (s *scriptedRunServer) ListRunAttempts(_ context.Context, req *runv1.ListRunAttemptsRequest) (*runv1.ListRunAttemptsResponse, error) {
@@ -425,6 +433,30 @@ func TestRunClient_RunReadsForwardTheirArguments(t *testing.T) {
 	assert.Equal(t, "task-1", srv.gotAttempts.GetTaskId())
 	assert.Equal(t, int32(200), srv.gotAttempts.GetPageSize())
 	assert.Equal(t, int32(400), srv.gotAttempts.GetPageOffset())
+}
+
+// ListNodes sends dormant_only exactly as it is asked, with every other
+// argument: true keeps only the dormant nodes, false lists every node.
+func TestRunClient_ListNodesSendsDormantOnly(t *testing.T) {
+	srv := &scriptedRunServer{}
+	c := dialScripted(t, srv)
+	ctx := context.Background()
+
+	nodes, err := c.ListNodes(ctx, "orders", "core", "test", true, 20, 40)
+	require.NoError(t, err)
+	assert.Equal(t, int32(7), nodes.GetTotalCount())
+	_, err = c.ListNodes(ctx, "", "", "", false, 0, 0)
+	require.NoError(t, err)
+
+	require.Len(t, srv.gotNodes, 2)
+	asked := srv.gotNodes[0]
+	assert.True(t, asked.GetDormantOnly())
+	assert.Equal(t, "orders", asked.GetSearch())
+	assert.Equal(t, "core", asked.GetServiceName())
+	assert.Equal(t, "test", asked.GetOperation())
+	assert.Equal(t, int32(20), asked.GetLimit())
+	assert.Equal(t, int32(40), asked.GetOffset())
+	assert.False(t, srv.gotNodes[1].GetDormantOnly(), "a list not asked for dormant nodes sends dormant_only false")
 }
 
 func TestRunClient_DoesNotRetryAGetRunOnUnavailable(t *testing.T) {

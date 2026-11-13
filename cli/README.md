@@ -109,7 +109,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 
 ### Nodes
 
-A node is one model, seed or python script. Node commands take it as `<service> <schema> <table>`, and `node list` shows these three for every node.
+A node is one model, seed or python script. Node commands take it as `<service> <schema> <table>`, and `node list` shows these three for every node the live release builds.
 
 | Command | What it does | Changes state |
 |---|---|:--:|

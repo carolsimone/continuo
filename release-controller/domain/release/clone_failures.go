@@ -2,12 +2,12 @@ package release
 
 import "sort"
 
-// The statuses a validation node reports besides a failure: ok when it passed,
-// skipped when it never ran because a node upstream of it failed. Any other
-// status means the node itself failed.
+// The statuses a validation node reports besides a failure: NodeStatusOK when
+// it passed, NodeStatusSkipped when it never ran because a node upstream of it
+// failed. Any other status means the node itself failed.
 const (
-	nodeOK      = "ok"
-	nodeSkipped = "skipped"
+	NodeStatusOK      = "ok"
+	NodeStatusSkipped = "skipped"
 )
 
 // NodeOutcome is one validation node's reported status.
@@ -28,7 +28,7 @@ type NodeOutcome struct {
 // are sorted by id.
 func SplitValidationFailures(results []NodeOutcome, rebuilt map[string]bool) (built, cloned []string) {
 	for _, r := range results {
-		if r.Status == nodeOK || r.Status == nodeSkipped {
+		if r.Status == NodeStatusOK || r.Status == NodeStatusSkipped {
 			continue
 		}
 		if rebuilt[r.NodeID] {

@@ -178,12 +178,12 @@ func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeSchedul
 // schedule's nodes and the seeds they read, and never a dormant node: here a
 // dormant table below the seed seed_1 and a dormant snapshot, both read by the
 // schedule's node a. Neither is in the graph, nor their edges, so a whole-graph
-// plan of the schedule, of any operation, selects neither. A dormant table is
-// never a seed reload's rebuild either. A dormant view below a seed the run
-// loads is the one dormant node a schedule's run can execute: the planner adds
-// it as a rebuild through ViewClosure
-// (TestViewClosure_ReachesADormantViewBelowASeed). The data tests of a dormant
-// model are never stored, since no release stores a test.
+// plan of the schedule selects neither, whether it runs, builds or tests
+// (full_refresh is single-node only). A dormant table is never a seed reload's
+// rebuild either. A dormant view below a seed the run loads is the one dormant
+// node a schedule's run can execute: the planner adds it as a rebuild through
+// ViewClosure (TestViewClosure_ReachesADormantViewBelowASeed). The data tests
+// of a dormant model are never stored, since no release stores a test.
 func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

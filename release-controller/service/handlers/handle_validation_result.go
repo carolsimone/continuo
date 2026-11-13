@@ -111,7 +111,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// aggregate. In the normal complete case every ValidationNodeID is present.
 	var failing []string
 	for _, id := range r.ValidationNodeIDs() {
-		if n, ok := stored[id]; ok && n.Status != "ok" {
+		if n, ok := stored[id]; ok && n.Status != release.NodeStatusOK {
 			failing = append(failing, id)
 		}
 	}
@@ -339,8 +339,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			Service:              f.service,
 			ValidationOp:         f.validationOp,
 		}
-		if nr.Status != "ok" {
-			skipped := nr.Status == nodeSkipped
+		if nr.Status != release.NodeStatusOK {
+			skipped := nr.Status == release.NodeStatusSkipped
 			notPassed = append(notPassed, release.FailedNode{NodeID: nr.NodeID, Service: f.service, Skipped: skipped})
 			ancestors := release.ChangedAncestors(topo, nr.NodeID, changedSet)
 			if !skipped {

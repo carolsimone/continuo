@@ -233,9 +233,8 @@ func TestNodeQueryRepository_GetNode_EqualRetirementFallsBackToUniqueID(t *testi
 	}
 }
 
-// A :Node stored before the type was renamed still holds the legacy name of
-// unknown-external. GetNode reads it as unknown-external, for a live node and
-// for a retired one, and returns every other stored type as it is.
+// A stored :Node can hold "ingested", the legacy name of unknown-external.
+// GetNode reads it as unknown-external, for a live node and for a retired one.
 func TestGetNode_ReadsLegacyIngestedAsUnknownExternal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")

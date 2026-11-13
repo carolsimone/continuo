@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 )
@@ -374,4 +375,51 @@ func TestSummaries_ALiveReleaseOfDormantNodesOnlyHasNoScheduleAndCountsThem(t *t
 	require.NoError(t, err)
 	assert.Empty(t, got.Schedules)
 	assert.Equal(t, 2, got.DormantNodeCount)
+}
+
+// The dormant count is the SQL form of model.IsDormant. A live release holds
+// one node of no schedule of every declared node type, and one unknown-external
+// row under the legacy name "ingested": the count is the number of declared
+// types IsDormant calls dormant. NewRelease drops a dbt test, so its row is
+// added to the stored nodes directly, and the query reads a row of every type.
+func TestSummaries_CountsEveryNodeTypeModelIsDormantCallsDormant(t *testing.T) {
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	var specs []topology.NodeSpec
+	want := 0
+	for _, nt := range model.NodeTypes() {
+		specs = append(specs, graphSpec("n_"+strings.ReplaceAll(string(nt), "-", "_"), string(nt), ""))
+		if model.IsDormant(nt, "") {
+			want++
+		}
+	}
+	legacy := unknownExternalSpec("raw", "legacy")
+	legacy.NodeType = "ingested"
+	specs = append(specs, legacy)
+	rel := topoRelease(t, tenant, "rel-1", 1, "sha-1", specs...)
+	kept := make(map[string]bool, len(rel.Nodes))
+	for _, n := range rel.Nodes {
+		kept[n.UniqueID] = true
+	}
+	for _, s := range specs {
+		if !kept[s.UniqueID] {
+			rel.Nodes = append(rel.Nodes, topology.Node{
+				Key: topology.KeyOf(s.SchemaName, s.TableName), UniqueID: s.UniqueID, ServiceName: s.ServiceName,
+				SchemaName: s.SchemaName, TableName: s.TableName, NodeType: s.NodeType, ContentHash: s.ContentHash,
+			})
+		}
+	}
+	_, err := saveTopoRelease(t, db, rel)
+	require.NoError(t, err)
+	makeTenantLive(t, db, tenant, "rel-1", 1)
+	require.Equal(t, len(model.NodeTypes())+1, countTopoRows(t, db, `
+		SELECT count(DISTINCT node_type) FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = 'rel-1' AND schedule_name = ''`, tenant),
+		"the release stores a node of no schedule of every declared type and of the legacy name")
+	require.Positive(t, want)
+
+	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
+	require.NoError(t, err)
+	assert.Equal(t, want, got.DormantNodeCount)
+	assert.Empty(t, got.Schedules)
 }

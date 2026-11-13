@@ -6,11 +6,6 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// nodeSkipped is the status a validation node reports when it never ran because
-// a node upstream of it failed. Any other status but "ok" means the node itself
-// failed.
-const nodeSkipped = "skipped"
-
 // NodeResult is one per-node result carried by the compile and seed-build
 // aggregate events (the validation leg instead streams per-node content as
 // kind:"node" messages on the unified validation.result:v1 stream). The Redis
@@ -49,7 +44,7 @@ func stageResults(perNode []NodeResult) (results []pipeline.NodeValidationResult
 			RunResultsURI: n.RunResultsURI,
 			DurationMS:    n.DurationMS,
 		}
-		if n.Status != "ok" {
+		if n.Status != release.NodeStatusOK {
 			failing = append(failing, n.NodeID)
 		}
 	}

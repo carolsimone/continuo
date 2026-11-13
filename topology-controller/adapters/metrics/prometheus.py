@@ -119,9 +119,10 @@ class TopologyMetrics:
         """Count a release that ended and replace the gauges of the last one.
 
         A stage that never ran observes nothing. The gauges are set for every
-        family and every skip reason the record names, and the dormant gauge for
-        every release, so one the release lacked drops to 0 instead of keeping
-        the previous release's value.
+        family and every skip reason the record names, so one the release lacked
+        drops to 0 instead of keeping the previous release's value. The dormant
+        gauge is set from the release's dormant total, so a release with none
+        sets it to 0.
         """
         for stage, record in timings.stages.items():
             if record.runs > 0:

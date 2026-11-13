@@ -270,7 +270,9 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	// exist: a Job execution-controller creates for one of them before the
 	// cancel reaches it gets no pod, so these runs build no model. The quota
 	// is removed once the runs have ended, and when the test ends however it
-	// ends.
+	// ends. A promote-seed run of the release still going would lose its pods
+	// to the quota too, so the test requires that none is.
+	requireNoActivePromoteSeedRun(t, ctx, clients, releaseID)
 	blockPodCreation(t, ctx)
 
 	var scheduleRuns []uuid.UUID
@@ -466,4 +468,22 @@ func removeRuns(t *testing.T, clients *testClients, runIDs []uuid.UUID) {
 		}
 	}
 	cleanupK8s(t, ctx)
+}
+
+// requireNoActivePromoteSeedRun fails the test, naming each run, when a
+// promote-seed run of releaseID is still active. The e2e-no-pods quota stops
+// every pod in the Jobs' namespace, so such a run would fail its attempt as
+// timeout start_timeout, which run-controller never retries.
+func requireNoActivePromoteSeedRun(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+	t.Helper()
+	var active []string
+	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &active, `
+		SELECT run_id::text || ' (' || status || ')' FROM runs
+		 WHERE tenant_id = $1 AND kind = 'promote_seed' AND release_id = $2
+		   AND status IN ('pending', 'running', 'cancelling')
+		 ORDER BY run_id`,
+		events.DefaultTenantID, releaseID))
+	require.Empty(t, active,
+		"promote-seed run(s) of release %s are still active, and the e2e-no-pods quota would stop their pods: %v",
+		releaseID, active)
 }
