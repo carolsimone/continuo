@@ -244,7 +244,8 @@ read each other.
 - continuo rebuilds the views and materialized views below the seed. It
   follows the chain through `ephemeral` models.
 - continuo does not rebuild tables, incremental models, snapshots or Python
-  nodes. They keep their data until their own schedules run them.
+  nodes. They keep their data until their own schedules run them. A dormant
+  one has no schedule, so it keeps its data until you run it by hand.
 - On Trino, a materialized view below the seed is rebuilt with a full refresh.
 - On Trino, a view that continuo does not own can go stale after the load.
   continuo checks such views after the load and lists the ones it finds.

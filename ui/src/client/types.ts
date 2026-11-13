@@ -318,7 +318,8 @@ export interface ReleaseNotice {
   load: { operation: string; drops_table: boolean; reason: string };
   // Views the seed's reload rebuilds in the same run.
   rebuilds: { node_id: string; materialized: string; operation: string; schedule: string }[];
-  // Downstream nodes that pick the new table up on their own schedule.
+  // Downstream nodes that pick the new table up on their own schedule; the
+  // schedule is empty for a dormant node, which only a run by hand refreshes.
   refresh_on_schedule: { node_id: string; materialized: string; schedule: string }[];
   warehouse: {
     // False until the seed-build leg's preflight ran to the end.
