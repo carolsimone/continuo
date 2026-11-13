@@ -184,18 +184,22 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 	// A reason the contract declares and marks not healable is not a model
 	// failure a heal proposal could fix: a rehearsal miss is a project
-	// property, an upload failure or an unreadable artifact is continuo's own,
-	// and a failed copy of an unchanged upstream is settled by a run of that
-	// node. A reason that is empty or that this build does not declare (an
-	// older producer, a retry replay) is not dropped here; its stage decides.
+	// property, an upload failure or an internal_error is continuo's own, an
+	// invalid_artifact is a manifest or python contract the release ships
+	// unreadable or invalid (or naming another service, or declaring an invalid
+	// node setting), and a failed copy of an unchanged upstream is settled by a
+	// run of that node. A reason that is empty or that this build does not
+	// declare (an older producer, a retry replay) is not dropped here; its
+	// stage decides.
 	if r := pkg_model.RejectReason(p.Reason); r.IsValid() && !r.Healable() {
 		return nil, nil
 	}
 
 	src, ok := sourceFromPayload(p.Stage, p.Reason)
 	if !ok {
-		// Not a remediable pipeline-leg rejection (e.g. a parse-phase failure):
-		// produce no evidence rather than misrouting it onto a leg's path.
+		// Not a remediable pipeline-leg rejection (a stage this build does not
+		// know, or a stage-less reason that names no leg): produce no evidence
+		// rather than misrouting it onto a leg's path.
 		return nil, nil
 	}
 
