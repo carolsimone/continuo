@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/stretchr/testify/assert"
 )
@@ -89,6 +90,25 @@ func TestAttempt_ApplyKeepsEveryFactTheReportCarries(t *testing.T) {
 	assert.Equal(t, &logKey, a.LogS3Key)
 	assert.Equal(t, &stored, a.ParseCacheReason)
 	assert.Zero(t, a.NextCheckIn, "a final attempt is never asked about")
+}
+
+// An applied report copies the seed preflight findings it carries; a report
+// without findings keeps the stored ones.
+func TestAttemptReport_ApplyCopiesTheSeedPreflightFindings(t *testing.T) {
+	findings := &seedreload.Findings{
+		DropSemantics: "cascade", Completeness: "complete", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "stg", Name: "v", Kind: "view", Depth: 1, Allowed: true}},
+	}
+	a := Attempt{Status: AttemptRunning}
+
+	applied, _ := a.Apply(AttemptReport{Status: AttemptFailed, FailureReason: model.FailureReasonUnownedDependents, SeedPreflight: findings})
+
+	assert.True(t, applied)
+	assert.Equal(t, findings, a.SeedPreflight)
+
+	b := Attempt{Status: AttemptRunning, SeedPreflight: findings}
+	b.Apply(AttemptReport{Status: AttemptRunning})
+	assert.Equal(t, findings, b.SeedPreflight, "a report without findings keeps the stored ones")
 }
 
 // run-controller asks about an attempt it has heard nothing of: an unacknowledged one

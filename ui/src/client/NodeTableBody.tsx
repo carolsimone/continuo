@@ -1,5 +1,5 @@
 import { Fragment, useRef, useState, type MutableRefObject } from 'react';
-import type { Task, TaskAttempt, GraphEdge } from './types';
+import type { Task, TaskAttempt, GraphEdge, SeedPreflight } from './types';
 import type { ServiceGroup } from './NodesPanel';
 import { intraServiceOrder } from './run-graph-helpers';
 import {
@@ -180,8 +180,12 @@ export default function NodeTableBody({
 
                 const nameBlock = (
                   <>
-                    <div className="nodes-node-name">{task.table_name}</div>
+                    <div className="nodes-node-name">
+                      {task.table_name}
+                      {task.operation === 'full_refresh' && <span className="pill-sm pill-sm--muted">Full refresh</span>}
+                    </div>
                     <div className="nodes-node-schema">{task.service_name} · {task.schema_name}</div>
+                    {task.plan_reason && <div className="task-reason">{task.plan_reason}</div>}
                   </>
                 );
 
@@ -292,26 +296,66 @@ function AttemptRows({ attempts }: { attempts: TaskAttempt[] }) {
         {attempts.map(a => {
           const classReason = attemptClassReason(a);
           return (
-            <tr key={a.attempt} className="nodes-row--static">
-              <td className="nodes-attempt">{a.attempt + 1}</td>
-              <td><span className={`pill-sm ${attemptPillClass(a.status)}`}>{a.status}</span></td>
-              <td>
-                {classReason === '—'
-                  ? <span className="nodes-dash">—</span>
-                  : <span className="nodes-reason">{classReason}</span>}
-              </td>
-              <td><span className="nodes-ts">{formatAttemptSeconds(attemptWaitSeconds(a))}</span></td>
-              <td><span className="nodes-ts">{formatAttemptSeconds(a.execution_seconds)}</span></td>
-              <td>
-                {a.log_s3_key
-                  ? <LogLink attempt={a} label="open log ↗" />
-                  : <span className="nodes-dash">—</span>}
-              </td>
-            </tr>
+            <Fragment key={a.attempt}>
+              <tr className="nodes-row--static">
+                <td className="nodes-attempt">{a.attempt + 1}</td>
+                <td><span className={`pill-sm ${attemptPillClass(a.status)}`}>{a.status}</span></td>
+                <td>
+                  {classReason === '—'
+                    ? <span className="nodes-dash">—</span>
+                    : <span className="nodes-reason">{classReason}</span>}
+                </td>
+                <td><span className="nodes-ts">{formatAttemptSeconds(attemptWaitSeconds(a))}</span></td>
+                <td><span className="nodes-ts">{formatAttemptSeconds(a.execution_seconds)}</span></td>
+                <td>
+                  {a.log_s3_key
+                    ? <LogLink attempt={a} label="open log ↗" />
+                    : <span className="nodes-dash">—</span>}
+                </td>
+              </tr>
+              <PreflightFindings preflight={a.seed_preflight} />
+            </Fragment>
           );
         })}
       </tbody>
     </table>
+  );
+}
+
+// PreflightFindings is the sub-row under a seed attempt that lists what its
+// preflight found wrong: each dependant outside the set the load may drop and
+// each view whose probe failed. It renders nothing when there is neither.
+function PreflightFindings({ preflight }: { preflight: SeedPreflight | null | undefined }) {
+  const outside = (preflight?.dependents ?? []).filter(d => !d.allowed);
+  const failed = (preflight?.probes ?? []).filter(p => !p.ok);
+  if (outside.length === 0 && failed.length === 0) return null;
+  return (
+    <tr className="remediation-verif nodes-row--static">
+      <td colSpan={6}>
+        <div className="remediation-verif__runs">
+          {outside.length > 0 && (
+            <>
+              <span className="remediation-verif__label">outside objects</span>
+              {outside.map(d => (
+                <div className="remediation-verif__run" key={`${d.schema}.${d.name}`}>
+                  {`${d.schema}.${d.name} (${d.kind}${d.owner ? `, owner ${d.owner}` : ''})`}
+                </div>
+              ))}
+            </>
+          )}
+          {failed.length > 0 && (
+            <>
+              <span className="remediation-verif__label">failed probes</span>
+              {failed.map(p => (
+                <div className="remediation-verif__run" key={`${p.schema}.${p.name}`}>
+                  {`${p.schema}.${p.name}: ${p.error}`}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 

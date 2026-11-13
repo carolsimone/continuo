@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import { useSingleNodeRun } from './useSingleNodeRun';
-import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
+import type { NodeOutage, NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, dormantTitle, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import { isTerminalStatus, taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
@@ -13,6 +13,7 @@ import { type NodeType, type RunStatus, NODE_TYPES_SUPPORTING_FULL_REFRESH } fro
 import { isNodeOperation, type NodeOperation } from '../server/shared/operation';
 
 const PYTHON_CSV: NodeType = 'python-csv';
+const DBT_SEED: NodeType = 'dbt-seed';
 
 // Node types a full refresh can rebuild, as the contract declares them.
 const FULL_REFRESH_NODE_TYPES: ReadonlySet<string> = new Set<string>(NODE_TYPES_SUPPORTING_FULL_REFRESH);
@@ -109,6 +110,9 @@ export default function NodeDetailPage() {
   // Whether runs holds the answer of the latest history read: false while a
   // read is in flight and after one failed.
   const [runsKnown, setRunsKnown] = useState(false);
+  // The outage of the node's production object the latest history read
+  // reported, null when it has none.
+  const [outage, setOutage] = useState<NodeOutage | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [operation, setOperation] = useState<NodeOperation>(initialOperation);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -148,11 +152,13 @@ export default function NodeDetailPage() {
         if (myGen !== genRef.current) return;
         setRuns(data.tasks || []);
         setRunsKnown(Array.isArray(data.tasks));
+        setOutage(data.outage ?? null);
       })
       .catch(() => {
         if (poll || myGen !== genRef.current) return;
         setRuns([]);
         setRunsKnown(false);
+        setOutage(null);
       });
   }, [service, schema, table, historyOperation]);
 
@@ -255,9 +261,12 @@ export default function NodeDetailPage() {
     if (operation === 'full_refresh') { setPendingSource(runId); setConfirmOpen(true); return; }
     postRun({ source_run_id: runId });
   }, [postRun, operation]);
-  const handleConfirmFullRefresh = useCallback(() => {
+  const handleConfirmFullRefresh = useCallback((acknowledged: string[]) => {
     setConfirmOpen(false);
-    postRun(pendingSource ? { source_run_id: pendingSource } : {}, 'full_refresh');
+    postRun({
+      ...(pendingSource ? { source_run_id: pendingSource } : {}),
+      ...(acknowledged.length > 0 ? { acknowledged_dependents: acknowledged } : {}),
+    }, 'full_refresh');
   }, [postRun, pendingSource]);
 
   const pendingRun = pendingSource ? runs.find(r => r.run_id === pendingSource) : undefined;
@@ -302,7 +311,14 @@ export default function NodeDetailPage() {
       )}
 
       {confirmOpen && createPortal(
-        <FullRefreshConfirmDialog fqn={fqn ?? ''} snapshot={snapshotLine} onConfirm={handleConfirmFullRefresh} onClose={() => setConfirmOpen(false)} />,
+        <FullRefreshConfirmDialog
+          fqn={fqn ?? ''}
+          snapshot={snapshotLine}
+          seed={nodeType === DBT_SEED}
+          objects={runs[0]?.blocking_objects}
+          onConfirm={handleConfirmFullRefresh}
+          onClose={() => setConfirmOpen(false)}
+        />,
         document.body,
       )}
 
@@ -406,6 +422,14 @@ export default function NodeDetailPage() {
 
       {runState === 'error' && runError && (
         <div className="info-strip info-strip--error">{runError}</div>
+      )}
+
+      {outage && (
+        <div className={`info-strip ${outage.state === 'missing' ? 'info-strip--error' : 'info-strip--warning'}`}>
+          <span className="info-strip__icon">⚠</span>
+          {outage.state === 'missing' ? 'Missing in production' : 'Stale'}
+          {outage.since ? ` since ${formatTime(outage.since)}` : ''}, after the load of <code>{outage.seed_node_id}</code>
+        </div>
       )}
 
       <main className="page-content">

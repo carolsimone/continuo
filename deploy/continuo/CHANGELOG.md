@@ -14,12 +14,10 @@ shipped in those.
 
 **TL;DR**
 
-- A table that a node reads and no node builds now shows in the DAG as a grey `unknown-external` node.
-- A dbt model or snapshot with an owner and no tag is now a dormant node in every release: check that it builds, and run it once by hand, since no cron runs it.
-- Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
-- Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
-- The default validation image is `v0.12.0`.
-- No values change is needed.
+- New: a dbt model or snapshot with an owner and no tag is a dormant node. Releases validate it, and no cron runs it, so run it once by hand. A table no node builds is a grey `unknown-external` node. A seed load that drops its table rebuilds the continuo views that read it.
+- You must act: hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards. Then release each service once with `"rebaseline": true`: every node's code fingerprint (`content_hash`) is computed anew.
+- First, check that every dbt team image has `python3` with PyYAML and dbt (step 0), and that each model or snapshot with an owner and no tag builds.
+- No values change is needed, unless you pin `validation.imageTag` below `v0.12.0`, the new default: that now fails the render.
 
 ### Upgrade steps
 
@@ -40,10 +38,15 @@ shipped in those.
 
 Rebuild a Python service on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them moves its hashes outside the window and starts a validation.
 
-This release changes no values key, and it ships as a `MINOR`.
+This release adds the values key `global.releaseControllerGrpcAddr` with a default, and it ships as a `MINOR`.
+
+### Breaking
+
+- **A pinned validation image below `v0.12.0` fails the render.** TL;DR: re-pin `validation.imageTag` to `v0.12.0` or later before you upgrade, or drop the override. Every seed load that drops its table now runs the seed preflight first, and only the `v0.12.0` runner has it. An unmodified values file gets the new default and is not affected.
 
 ### Added
 
+- release-controller serves `release.v1.ReleaseQuery` on gRPC port 50056 for `continuo release notices`, with the values key `global.releaseControllerGrpcAddr` (default `release-controller:50056`). A values file that overrides the whole `services` list gets neither release-controller's `grpcPort` and `RELEASE_CONTROLLER_GRPC_PORT` nor agent-chat's `CONTINUO_RELEASE_CONTROLLER_ADDR`: copy them from the chart's `values.yaml`, or `continuo release notices` cannot reach release-controller. Nothing else depends on them.
 - **Tables no node builds show as `unknown-external` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey node with an `external` chip (node type `unknown-external`) and an edge to each node that reads it.
   - An unknown-external node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an unknown-external node.
@@ -52,6 +55,7 @@ This release changes no values key, and it ships as a `MINOR`.
   - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run.
   - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
   - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
+  - A dormant view or materialized view below a seed is still rebuilt in a run whose load of that seed drops the seed's table, like any view.
   - No values change is needed.
 - **The Dormant tile.** TL;DR: when the live release has dormant nodes, the Topology tab shows a Dormant tile with their number. It opens the Nodes tab filtered to them.
 - **topology-controller serves metrics.** TL;DR: topology-controller now serves Prometheus metrics at `/metrics` on `metrics.port`, as the Go services do, with how long each stage of a release parse takes.
@@ -75,6 +79,7 @@ This release changes no values key, and it ships as a `MINOR`.
   - A function's body (its language, arguments, return type, config, compiled SQL and overload bodies, but not its descriptions), the functions it calls and the macros that on-run hooks and functions call are in the fingerprint. A bare macro call resolves in dbt's order: the node's own package, the root project, other packages, then dbt's own. An enforced contract is hashed on models only.
   - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
 - **The default validation image is `v0.12.0`** (`validation.imageTag`).
+- A seed load that drops the seed's table now rebuilds, in the same run, the continuo views that read it, and stops before it drops an object continuo does not own on Postgres.
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
   - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an unknown-external node, never resolves to a node and is never redirected to the candidate schema.
   - The key and its default are unchanged, and no values change is needed.

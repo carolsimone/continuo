@@ -12,6 +12,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/events"
 	repository "github.com/carolsimone/continuo/run-controller/domain/repository"
@@ -260,7 +262,7 @@ func newTaskStatusHandlerUoW(
 	if taskColl.runID == uuid.Nil && runRepo.stored != nil {
 		taskColl.runID = runRepo.stored.RunID()
 	}
-	u := &uow.FakeUnitOfWork{Graph: unconnectedTasks{}}
+	u := &uow.FakeUnitOfWork{Graph: unconnectedTasks{}, ViewOutageRepo: &fakeViewOutages{}}
 	u.SetRunRepo(runRepo)
 	u.SetOutboxPublisher(outbox)
 	u.SetTaskCollection(taskColl)
@@ -353,7 +355,92 @@ func newAttemptReportHandler() *handlers.AttemptReportHandler {
 }
 
 func newAttemptReportHandlerWith(metrics *fakeRunMetrics) *handlers.AttemptReportHandler {
-	return handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
+	return newSeedReloadHandler(metrics, &fakeSeedReloads{}, warehouse.SchemaBound)
+}
+
+// newSeedReloadHandler is the handler of an install of family, counting seed
+// reloads on reloads.
+func newSeedReloadHandler(metrics *fakeRunMetrics, reloads *fakeSeedReloads, family warehouse.Family) *handlers.AttemptReportHandler {
+	return handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, reloads, family, taskStatusTestLogger())
+}
+
+// fakeSeedReloads records the seed reload series the handler moves: each
+// ended load as "<action>/<outcome>", each stop's reason and each rebuilt
+// view's outage.
+type fakeSeedReloads struct {
+	ended   []string
+	stopped []string
+	rebuilt []time.Duration
+}
+
+func (f *fakeSeedReloads) SeedReloadEnded(action, outcome string) {
+	f.ended = append(f.ended, action+"/"+outcome)
+}
+func (f *fakeSeedReloads) SeedReloadStopped(reason string) { f.stopped = append(f.stopped, reason) }
+func (f *fakeSeedReloads) ViewRebuilt(after time.Duration) { f.rebuilt = append(f.rebuilt, after) }
+
+// openCall is one OpenForRebuilds call.
+type openCall struct {
+	tenantID string
+	runID    uuid.UUID
+	seedKey  topology.NodeKey
+	state    seeds.OutageState
+	since    time.Time
+}
+
+// fakeViewOutages is an in-memory repository.ViewOutageRepository. open holds
+// the open outages by node key; opened and closed record the calls. Its
+// DeleteAbsentFrom deletes the outages of the keys nodesOf leaves out of the
+// release, and nothing while nodesOf is nil.
+type fakeViewOutages struct {
+	open      map[topology.NodeKey]seeds.ViewOutage
+	opened    []openCall
+	closed    []topology.NodeKey
+	deletedIn []string
+	nodesOf   func(releaseID string) []topology.NodeKey
+}
+
+var _ repository.ViewOutageRepository = (*fakeViewOutages)(nil)
+
+func (f *fakeViewOutages) OpenForRebuilds(_ context.Context, tenantID string, runID uuid.UUID, seedKey topology.NodeKey,
+	state seeds.OutageState, since time.Time) (int, error) {
+	f.opened = append(f.opened, openCall{tenantID, runID, seedKey, state, since})
+	return 0, nil
+}
+
+func (f *fakeViewOutages) Close(_ context.Context, _ string, key topology.NodeKey) (time.Time, bool, error) {
+	f.closed = append(f.closed, key)
+	o, ok := f.open[key]
+	delete(f.open, key)
+	return o.Since, ok, nil
+}
+
+func (f *fakeViewOutages) Get(_ context.Context, _ string, key topology.NodeKey) (seeds.ViewOutage, bool, error) {
+	o, ok := f.open[key]
+	return o, ok, nil
+}
+
+func (f *fakeViewOutages) CountByState(context.Context) (map[seeds.OutageState]int, error) {
+	panic("CountByState is not used by the handlers")
+}
+
+func (f *fakeViewOutages) DeleteAbsentFrom(_ context.Context, tenantID, releaseID string) (int64, error) {
+	f.deletedIn = append(f.deletedIn, tenantID+"/"+releaseID)
+	if f.nodesOf == nil {
+		return 0, nil
+	}
+	held := map[topology.NodeKey]bool{}
+	for _, k := range f.nodesOf(releaseID) {
+		held[k] = true
+	}
+	var n int64
+	for k := range f.open {
+		if !held[k] {
+			delete(f.open, k)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // fakeRunMetrics records the cancel durations the handler observes.
@@ -911,4 +998,158 @@ func TestAttemptReport_RecordsTheSeedColumnsHashOfTheLoadedVersion(t *testing.T)
 		Key: "raw.countries", ContentHash: "h-countries", SeedColumnsHash: "sha256:e5a0", ImageTag: "svc:7", ReleaseID: "rel-1",
 		RunID: scheduleID, TaskID: taskID, At: at, Source: seeds.SourceBuild,
 	}}, mats.built)
+}
+
+var reloadNow = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+
+// seedReloadTask is the task of the seed raw.countries whose load drops its
+// table, with the preflight its pod runs first.
+func seedReloadTask(op model.Operation) run.Task {
+	return run.Task{ServiceName: "svc", SchemaName: "raw", TableName: "countries", NodeKey: "raw.countries", ImageTag: "svc:7",
+		Operation: op, SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+			Relation: "raw.countries", Allowed: []string{"stg.v"}}}
+}
+
+// rebuildTask is the task of the view stg.v that rebuilds after the load of
+// raw.countries.
+func rebuildTask() run.Task {
+	return run.Task{ServiceName: "svc", SchemaName: "stg", TableName: "v", NodeKey: "stg.v", ImageTag: "svc:7", RebuildOf: "raw.countries"}
+}
+
+// seedReloadCase wires a report of task's attempt 0, which is running, in a
+// running run of two tasks planned on rel-1 whose task budget is maxRetries,
+// in a unit of work whose clock reads reloadNow. A failed report ends with
+// reason.
+func seedReloadCase(task run.Task, status run.AttemptStatus, reason model.FailureReason, maxRetries int32) (
+	*uow.FakeUnitOfWork, *fakeViewOutages, events.AttemptReported) {
+	runID := uuid.New()
+	task.TaskID, task.ScheduleID = uuid.New(), runID
+	coll := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
+		maxRetries: maxRetries, task: task}).held(task.TaskID, 0, run.AttemptRunning)
+	u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: plannedRun(runID, "rel-1", model.OperationRun, 2)},
+		&fakeTaskStatusOutboxPub{}, coll)
+	u.Graph = nodeGraph{node: topology.Node{Key: task.NodeKey, ServiceName: "svc", SchemaName: task.SchemaName, TableName: task.TableName}}
+	u.TopologyRepo, u.MaterializationRepo = &hashTopology{}, &builtRecorder{}
+	u.SetClock(taskStatusClock{at: reloadNow})
+	rep := report(runID, task.TaskID, 0, status)
+	if reason != "" {
+		rep.Report.FailureReason = reason
+	}
+	return u, u.ViewOutageRepo.(*fakeViewOutages), rep
+}
+
+// The success of a seed load that drops its table opens an outage for each
+// view the run rebuilds after it, at the clock's now: missing on a
+// schema_bound engine, which drops the views with the table, and stale on a
+// late_binding one, which leaves them naming a table that is reloaded.
+func TestAttemptReportHandler_ASeedLoadThatDropsOpensAnOutageForEachRebuild(t *testing.T) {
+	for family, state := range map[warehouse.Family]seeds.OutageState{
+		warehouse.SchemaBound: seeds.OutageMissing,
+		warehouse.LateBinding: seeds.OutageStale,
+	} {
+		t.Run(string(family), func(t *testing.T) {
+			u, outages, rep := seedReloadCase(seedReloadTask(model.OperationRun), run.AttemptSucceeded, "", 0)
+
+			require.NoError(t, newSeedReloadHandler(&fakeRunMetrics{}, &fakeSeedReloads{}, family).Handle(context.Background(), u, rep, uuid.New()))
+
+			assert.Equal(t, []openCall{{tenantID: pkgevents.DefaultTenantID, runID: rep.RunID, seedKey: "raw.countries", state: state, since: reloadNow}},
+				outages.opened)
+		})
+	}
+
+	t.Run("a success of a task without a preflight opens nothing", func(t *testing.T) {
+		u, outages, rep := seedReloadCase(rebuildTask(), run.AttemptSucceeded, "", 0)
+
+		require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
+
+		assert.Empty(t, outages.opened)
+	})
+
+	t.Run("a seed load that fails opens nothing", func(t *testing.T) {
+		u, outages, rep := seedReloadCase(seedReloadTask(model.OperationRun), run.AttemptFailed, model.FailureReasonExitCode, 0)
+
+		require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
+
+		assert.Empty(t, outages.opened)
+	})
+}
+
+// The success of a node's task closes the node's outage and, once the
+// transaction commits, observes how long the outage lasted.
+func TestAttemptReportHandler_ASuccessClosesTheNodesOutage(t *testing.T) {
+	u, outages, rep := seedReloadCase(rebuildTask(), run.AttemptSucceeded, "", 0)
+	outages.open = map[topology.NodeKey]seeds.ViewOutage{"stg.v": {Key: "stg.v", State: seeds.OutageMissing,
+		Since: reloadNow.Add(-90 * time.Second), SeedKey: "raw.countries"}}
+	reloads := &fakeSeedReloads{}
+	require.NoError(t, u.Begin(context.Background()))
+
+	require.NoError(t, newSeedReloadHandler(&fakeRunMetrics{}, reloads, warehouse.SchemaBound).Handle(context.Background(), u, rep, uuid.New()))
+
+	assert.Equal(t, []topology.NodeKey{"stg.v"}, outages.closed)
+	assert.Empty(t, outages.open)
+	assert.Empty(t, reloads.rebuilt, "nothing is observed before the commit")
+	require.NoError(t, u.Commit())
+	assert.Equal(t, []time.Duration{90 * time.Second}, reloads.rebuilt)
+
+	t.Run("a node with no open outage observes nothing", func(t *testing.T) {
+		u, outages, rep := seedReloadCase(rebuildTask(), run.AttemptSucceeded, "", 0)
+		reloads := &fakeSeedReloads{}
+		require.NoError(t, u.Begin(context.Background()))
+
+		require.NoError(t, newSeedReloadHandler(&fakeRunMetrics{}, reloads, warehouse.SchemaBound).Handle(context.Background(), u, rep, uuid.New()))
+		require.NoError(t, u.Commit())
+
+		assert.Equal(t, []topology.NodeKey{"stg.v"}, outages.closed)
+		assert.Empty(t, reloads.rebuilt)
+	})
+}
+
+// A seed load that ended counts its action and outcome, and a task of a seed
+// reload that a seed rule stopped counts its reason, once the transaction
+// commits. A failure the task retries counts nothing, and a view's rebuild
+// counts only its stop.
+func TestAttemptReportHandler_CountsTheOutcomeOfAReloadAfterCommit(t *testing.T) {
+	cases := []struct {
+		name       string
+		task       run.Task
+		status     run.AttemptStatus
+		reason     model.FailureReason
+		maxRetries int32
+		ended      []string
+		stopped    []string
+	}{
+		{"succeeded", seedReloadTask(model.OperationRun), run.AttemptSucceeded, "", 0, []string{"load/loaded"}, nil},
+		{"failed for good, unowned_dependents", seedReloadTask(model.OperationRun), run.AttemptFailed,
+			model.FailureReasonUnownedDependents, 0, []string{"load/stopped"}, []string{"unowned_dependents"}},
+		{"failed for good, engine_mismatch", seedReloadTask(model.OperationRun), run.AttemptFailed,
+			model.FailureReasonEngineMismatch, 0, []string{"load/stopped"}, []string{"engine_mismatch"}},
+		{"failed for good, seed_full_refresh_undefined", seedReloadTask(model.OperationFullRefresh), run.AttemptFailed,
+			model.FailureReasonSeedFullRefreshUndefined, 0, []string{"full_refresh/refused"}, []string{"seed_full_refresh_undefined"}},
+		{"failed for good, exit_code", seedReloadTask(model.OperationRun), run.AttemptFailed,
+			model.FailureReasonExitCode, 0, []string{"load/failed"}, nil},
+		{"failed with retries left, warehouse_unreachable", seedReloadTask(model.OperationRun), run.AttemptFailed,
+			model.FailureReasonWarehouseUnreachable, 2, nil, nil},
+		{"rebuild task failed for good, full_refresh_undefined", rebuildTask(), run.AttemptFailed,
+			model.FailureReasonFullRefreshUndefined, 0, nil, []string{"full_refresh_undefined"}},
+		{"rebuild task succeeded", rebuildTask(), run.AttemptSucceeded, "", 0, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, _, rep := seedReloadCase(tc.task, tc.status, tc.reason, tc.maxRetries)
+			if tc.reason == model.FailureReasonUnownedDependents {
+				rep.Report.SeedPreflight = &seedreload.Findings{Checked: true, Dependents: []seedreload.Dependent{
+					{Schema: "stg", Name: "v", Kind: "view", Allowed: true}, {Schema: "bi", Name: "report", Kind: "view"}}}
+			}
+			reloads := &fakeSeedReloads{}
+			require.NoError(t, u.Begin(context.Background()))
+
+			require.NoError(t, newSeedReloadHandler(&fakeRunMetrics{}, reloads, warehouse.SchemaBound).Handle(context.Background(), u, rep, uuid.New()))
+
+			assert.Empty(t, reloads.ended, "nothing is counted before the commit")
+			assert.Empty(t, reloads.stopped, "nothing is counted before the commit")
+			require.NoError(t, u.Commit())
+			assert.Equal(t, tc.ended, reloads.ended)
+			assert.Equal(t, tc.stopped, reloads.stopped)
+		})
+	}
 }

@@ -631,12 +631,28 @@ func (s *Session) danglingToolCall() (ports.ToolCall, bool) {
 }
 
 // commandString renders the CLI command as a human-readable string for display.
-// It mirrors the argv construction in the cliexec adapter without importing it.
+// It mirrors the argv construction in the cliexec adapter without importing it:
+// the positionals in ParamOrder, then --<flag> <value> once per value of each
+// chat flag. A list value that does not decode is shown as sent, since the
+// executor refuses it.
 func commandString(cliName string, def ports.ToolDef, args map[string]string) string {
 	parts := append([]string{cliName}, def.CLIPath...)
 	for _, name := range def.ParamOrder {
 		if v, ok := args[name]; ok && strings.TrimSpace(v) != "" {
 			parts = append(parts, v)
+		}
+	}
+	for _, p := range def.Params {
+		raw, ok := args[p.Name]
+		if !p.Flag || !ok {
+			continue
+		}
+		vals, err := p.Values(raw)
+		if err != nil {
+			vals = []string{raw}
+		}
+		for _, v := range vals {
+			parts = append(parts, "--"+p.Name, v)
 		}
 	}
 	return strings.Join(parts, " ")

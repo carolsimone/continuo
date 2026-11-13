@@ -71,6 +71,31 @@ function toRun(r: any) {
   };
 }
 
+// toSeedPreflight maps an attempt's SeedPreflightFindings onto the HTTP
+// response, field by field; an attempt that ran no preflight has none (null).
+function toSeedPreflight(p: any) {
+  if (!p) return null;
+  return {
+    drop_semantics: p.drop_semantics,
+    completeness: p.completeness,
+    checked: Boolean(p.checked),
+    dependents: (p.dependents ?? []).map((d: any) => ({
+      schema: d.schema,
+      name: d.name,
+      kind: d.kind,
+      owner: d.owner,
+      depth: Number(d.depth ?? 0),
+      allowed: Boolean(d.allowed),
+    })),
+    probes: (p.probes ?? []).map((v: any) => ({
+      schema: v.schema,
+      name: v.name,
+      ok: Boolean(v.ok),
+      error: v.error,
+    })),
+  };
+}
+
 // toRebasePreview maps a PreviewRebaseResponse onto the HTTP response: the
 // int64 promotion_seq (a string under longs: String) becomes a number, and a
 // changed node's last_success_seconds of 0, meaning it has never succeeded,
@@ -106,6 +131,35 @@ function toRebasePreview(response: any) {
 export function createRunsRouter(client: GrpcClient) {
   const router = Router();
 
+  // GET /api/runs?release_id=&kind=&limit=&offset= — the runs a release
+  // started, of any status, newest first; kind keeps only the runs of that kind.
+  // release_id is required: a schedule's runs are served at /api/schedules/:name/runs.
+  router.get('/', (req, res) => {
+    const releaseId = typeof req.query.release_id === 'string' ? req.query.release_id : '';
+    if (releaseId === '') return res.status(400).json({ error: 'release_id is required' });
+    client.listRuns(
+      {
+        release_id: releaseId,
+        kind: typeof req.query.kind === 'string' ? req.query.kind : '',
+        page_size: parseLimit(req.query.limit, { def: 50, max: 200 }),
+        page_offset: parseOffset(req.query.offset),
+      },
+      (err: any, response: any) => {
+        if (err) return sendGrpcError(res, err);
+        const runs = (response.runs || []).map((r: any) => ({
+          run_id: r.run_id,
+          schedule_name: r.schedule_name,
+          status: r.status,
+          kind: r.kind,
+          release_id: r.release_id || null,
+          created_at: r.created_at || null,
+          completed_at: r.completed_at || null,
+        }));
+        res.json({ total_count: Number(response.total_count ?? 0), runs });
+      }
+    );
+  });
+
   // GET /api/runs/:id/tasks?limit=&offset= — tasks for a run (paged).
   // `total_count` lets a caller detect truncation; run-controller imposes no server-side
   // cap here, so the max is enforced on this side.
@@ -134,6 +188,8 @@ export function createRunsRouter(client: GrpcClient) {
           wait_reason: t.wait_reason || null,
           waiting_on_run_id: t.waiting_on_run_id || null,
           waiting_since: toISO(t.waiting_since),
+          operation: t.operation,
+          plan_reason: t.plan_reason || null,
         }));
         res.json({ total_count: Number(response.total_count ?? 0), tasks });
       }
@@ -172,6 +228,7 @@ export function createRunsRouter(client: GrpcClient) {
           error_message: a.error_message || null,
           log_s3_key: a.log_s3_key || null,
           run_results_uri: a.run_results_uri || null,
+          seed_preflight: toSeedPreflight(a.seed_preflight),
         }));
         res.json({ total_count: Number(response.total_count ?? 0), attempts });
       }
@@ -191,6 +248,8 @@ export function createRunsRouter(client: GrpcClient) {
         wait_reason: n.wait_reason || null,
         waiting_on_run_id: n.waiting_on_run_id || null,
         waiting_since: n.waiting_since || null,
+        operation: n.operation,
+        plan_reason: n.plan_reason || null,
       }));
       res.json({
         nodes,

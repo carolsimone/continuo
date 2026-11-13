@@ -10,11 +10,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
+	"github.com/carolsimone/continuo/run-controller/service/ports"
 	"github.com/carolsimone/continuo/run-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -23,6 +27,11 @@ import (
 // run of a source run's snapshot names a source run that names no release, or
 // one of whose tasks names no node: its tasks cannot be read in any release.
 var ErrSourceHasNoRelease = errors.New("runstart: the source run names no release")
+
+// ErrNoWarehouseFamily is returned when a run would load a seed and the
+// planner has no warehouse family: what a seed's load drops, and so what the
+// run rebuilds, depends on it.
+var ErrNoWarehouseFamily = errors.New("runstart: the planner has no warehouse family")
 
 // Selection is what a new run starts with: the release it runs on, the slice
 // of that release its tasks were chosen from, and the plan chosen.
@@ -37,8 +46,19 @@ type Selection struct {
 // run's tasks under the run's own tenant. Every task it plans gets the retry
 // budget of Tasks, and each dispatch the timeout of its node, else that of
 // Tasks.
+//
+// Every selection that loads a seed, in a run whose operation is not test,
+// applies the seed reload rules of Family, the install's warehouse family, and
+// Engine, its WAREHOUSE_ENGINE: a load that drops the seed's table rebuilds
+// the views below it in the same run, and a load no command can apply is
+// refused. Start counts each refused task on Metrics and logs it on Logger
+// once the run's transaction commits; a nil Metrics or Logger skips that part.
 type Planner struct {
-	Tasks run.TaskDefaults
+	Tasks   run.TaskDefaults
+	Family  warehouse.Family
+	Engine  string
+	Metrics ports.SeedReloadMetrics
+	Logger  *slog.Logger
 }
 
 // LiveStamp takes the topology lock in u's transaction and reads tenantID's
@@ -66,7 +86,10 @@ func (p Planner) Schedule(ctx context.Context, u uow.UnitOfWork, tenantID, sched
 		return sel, err
 	}
 	sel.Plan, err = runplan.WholeDAG{Operation: op}.Select(sel.Graph)
-	return sel, err
+	if err != nil {
+		return sel, err
+	}
+	return p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), nil, sel)
 }
 
 // Rerun selects a rerun of source on source's own release, of source's
@@ -81,13 +104,24 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 		return Selection{}, fmt.Errorf("read the nodes of run %s in release %s: %w", source.RunID(), source.ReleaseID(), err)
 	}
 	plan, err := runplan.Rerun{Source: src}.Select(g)
-	return Selection{Stamp: source.Release(), Graph: g, Plan: plan}, err
+	sel := Selection{Stamp: source.Release(), Graph: g, Plan: plan}
+	if err != nil {
+		return sel, err
+	}
+	return p.withSeedReloads(ctx, u, source.TenantID(), source.Operation(), triggerOf(source.Operation()), nil, sel)
 }
 
 // SingleNode selects a run of tenantID's node target names, with operation
 // op: on source's release when source is not nil, else on the tenant's live
-// release. A source is a run of tenantID.
-func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID string, target run.NodeID, op model.Operation, source *run.Run) (Selection, error) {
+// release. A source is a run of tenantID. A full refresh of a seed is an
+// operator's request for it, and so is a rerun or a rebase of one; acknowledged
+// are the objects reading the seed that an operator named, which its preflight
+// lets the load drop. Naming any for a run that is not a full refresh of a dbt
+// seed is runplan.ErrAcknowledgementNotAllowed. A seed whose +full_refresh:
+// false keeps its table cannot be rebuilt, so a request whose seed task would
+// be refused for it, an operator's full refresh or a load of changed columns,
+// is runplan.ErrSeedFullRefreshDisabled and plans no run.
+func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID string, target run.NodeID, op model.Operation, source *run.Run, acknowledged []string) (Selection, error) {
 	var stamp run.ReleaseStamp
 	if source != nil {
 		if source.ReleaseID() == "" {
@@ -110,8 +144,32 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID stri
 	if err != nil {
 		return Selection{}, fmt.Errorf("read node %s in release %s: %w", key, stamp.ReleaseID, err)
 	}
+	if n, ok := g.Node(key); ok && len(acknowledged) > 0 && (op != model.OperationFullRefresh || n.NodeType != string(model.NodeTypeDbtSeed)) {
+		return Selection{Stamp: stamp, Graph: g}, runplan.ErrAcknowledgementNotAllowed
+	}
 	plan, err := selector.Select(g)
-	return Selection{Stamp: stamp, Graph: g, Plan: plan}, err
+	sel := Selection{Stamp: stamp, Graph: g, Plan: plan}
+	if err != nil {
+		return sel, err
+	}
+	sel, err = p.withSeedReloads(ctx, u, tenantID, op, triggerOf(op), acknowledged, sel)
+	if err != nil {
+		return sel, err
+	}
+	if plannedTask(sel.Plan, key).Refusal == model.FailureReasonSeedFullRefreshDisabled {
+		return sel, fmt.Errorf("%w: %s", runplan.ErrSeedFullRefreshDisabled, key)
+	}
+	return sel, nil
+}
+
+// plannedTask returns the task of p at key, the zero task when p has none.
+func plannedTask(p runplan.Plan, key topology.NodeKey) runplan.PlannedTask {
+	for _, t := range p.Tasks {
+		if t.Key == key {
+			return t
+		}
+	}
+	return runplan.PlannedTask{}
 }
 
 // Seeds selects a promote-seed run of keys on live, tenantID's live release,
@@ -123,12 +181,17 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, tenantID string, l
 		return Selection{}, fmt.Errorf("read %d seeds in release %s: %w", len(keys), live.ReleaseID, err)
 	}
 	plan, err := runplan.Seeds{Keys: keys}.Select(g)
-	return Selection{Stamp: stamp, Graph: g, Plan: plan}, err
+	sel := Selection{Stamp: stamp, Graph: g, Plan: plan}
+	if err != nil {
+		return sel, err
+	}
+	return p.withSeedReloads(ctx, u, tenantID, model.OperationRun, triggerOf(model.OperationRun), nil, sel)
 }
 
 // Start stores sel's tasks on r, under r's tenant, in the run u's transaction
 // has already saved, saves r again and appends r's events to the outbox under
-// msgProcID.
+// msgProcID. Each task the plan refused is counted and logged once u's
+// transaction commits.
 func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Selection, msgProcID uuid.UUID) error {
 	events, err := r.Start(ctx, u.TaskCollection(r.TenantID()), sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
 	if err != nil {
@@ -140,7 +203,105 @@ func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Se
 	if err := u.Outbox().Append(ctx, events, msgProcID); err != nil {
 		return fmt.Errorf("append the events of run %s: %w", r.RunID(), err)
 	}
+	for _, e := range events {
+		if refused, ok := e.(run.TaskRefused); ok {
+			u.AfterCommit(func() { p.reportRefusal(r.ReleaseID(), refused) })
+		}
+	}
 	return nil
+}
+
+// reportRefusal counts e, a task the plan refused, as a seed load that ended
+// refused, with the reason that stopped it, and logs it at WARN.
+func (p Planner) reportRefusal(releaseID string, e run.TaskRefused) {
+	if p.Metrics != nil {
+		action := "load"
+		if e.Operation == model.OperationFullRefresh {
+			action = "full_refresh"
+		}
+		p.Metrics.SeedReloadEnded(action, "refused")
+		p.Metrics.SeedReloadStopped(string(e.Reason))
+	}
+	if p.Logger != nil {
+		p.Logger.Warn("seed load refused: the task never starts",
+			"tenant_id", e.TenantID, "release_id", releaseID, "run_id", e.ID, "node_key", e.Key, "reason", e.Reason)
+	}
+}
+
+// triggerOf returns what asks a run of operation op to load its seeds: an
+// operator's request for a full refresh when op is full_refresh, which only a
+// single-node run, or a rerun or rebase of one, applies; else a load.
+func triggerOf(op model.Operation) seedreload.Trigger {
+	if op == model.OperationFullRefresh {
+		return seedreload.TriggerFullRefresh
+	}
+	return seedreload.TriggerLoad
+}
+
+// withSeedReloads applies the seed reload rules to sel, a selection of a run
+// of tenantID with operation op, whose seed loads trigger asks for, and
+// returns it. A test run loads nothing, and a selection without a seed task to
+// run is returned as it is.
+//
+// Otherwise each seed task is planned from the column fingerprint its table
+// last loaded, the one its release carries and whether that release skipped
+// validation. The selection's graph is read again over its nodes and the views
+// below its seeds, so a node of the selection that reads a rebuilt view waits
+// for the rebuild, and every rebuild is a task of the plan with its edges.
+func (p Planner) withSeedReloads(ctx context.Context, u uow.UnitOfWork, tenantID string, op model.Operation,
+	trigger seedreload.Trigger, acknowledged []string, sel Selection) (Selection, error) {
+	if op == model.OperationTest {
+		return sel, nil
+	}
+	var seeds []topology.NodeKey
+	for _, t := range sel.Plan.Tasks {
+		if n, ok := sel.Graph.Node(t.Key); ok && !t.Inherited && n.NodeType == string(model.NodeTypeDbtSeed) {
+			seeds = append(seeds, t.Key)
+		}
+	}
+	if len(seeds) == 0 {
+		return sel, nil
+	}
+	if !p.Family.IsValid() {
+		return sel, ErrNoWarehouseFamily
+	}
+	release := sel.Stamp.ReleaseID
+	recorded, err := u.Materializations().LoadedSeedColumns(ctx, tenantID, seeds)
+	if err != nil {
+		return sel, fmt.Errorf("read the loaded columns of %d seeds: %w", len(seeds), err)
+	}
+	bootstrap, err := u.Topology().IsBootstrapRelease(ctx, tenantID, release)
+	if err != nil {
+		return sel, fmt.Errorf("read whether release %s skipped validation: %w", release, err)
+	}
+	closure, err := u.Topology().ViewClosure(ctx, tenantID, release, seeds)
+	if err != nil {
+		return sel, fmt.Errorf("read the views below %d seeds in release %s: %w", len(seeds), release, err)
+	}
+	g, err := u.Topology().Graph(ctx, tenantID, release, append(sel.Graph.Keys(), closure.Keys()...))
+	if err != nil {
+		return sel, fmt.Errorf("read the selection and the views below its seeds in release %s: %w", release, err)
+	}
+
+	reloads := make([]runplan.SeedReload, 0, len(seeds))
+	for _, k := range seeds {
+		n, ok := g.Node(k)
+		if !ok {
+			return sel, fmt.Errorf("seed %s is not in release %s", k, release)
+		}
+		plan := seedreload.PlanSeed(seedreload.Request{
+			Seed:        runplan.SeedNode(n),
+			Family:      p.Family,
+			Engine:      p.Engine,
+			Change:      seedreload.ChangeOf(recorded[k], n.SeedColumnsHash),
+			Trigger:     trigger,
+			Unvalidated: bootstrap,
+		}, runplan.SeedReloadGraph(g))
+		reloads = append(reloads, runplan.SeedReload{Seed: k, Plan: plan, Preflight: plan.Preflight(acknowledged)})
+	}
+	sel.Plan = runplan.ApplySeedReloads(sel.Plan, g, op, reloads)
+	sel.Graph = g
+	return sel, nil
 }
 
 // liveScheduleGraph reads the graph of tenantID's scheduleName on the
@@ -170,7 +331,7 @@ func (p Planner) scheduleGraph(ctx context.Context, u uow.UnitOfWork, tenantID s
 }
 
 // source reads source as the runplan source of a derived run, with the keys
-// of its tasks. Every task is marked built on source's release; a rebase
+// of its tasks, each with its operation, plan reason and the seed it rebuilt. Every task is marked built on source's release; a rebase
 // replaces that, for an inherited task, with the release of the run that ran
 // the node.
 func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) (runplan.Source, []topology.NodeKey, error) {
@@ -187,7 +348,10 @@ func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) 
 		if t.NodeKey == "" {
 			return runplan.Source{}, nil, fmt.Errorf("%w: task %s of run %s names no node", ErrSourceHasNoRelease, t.TaskID, source.RunID())
 		}
-		st := runplan.SourceTask{Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID()}
+		st := runplan.SourceTask{
+			Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID(),
+			Operation: t.Operation, Reason: t.PlanReason, RebuildOf: t.RebuildOf,
+		}
 		if t.InheritedFromTaskID != nil {
 			st.InheritedFrom = *t.InheritedFromTaskID
 		}

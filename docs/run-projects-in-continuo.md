@@ -210,6 +210,79 @@ timeout, however long its pod waited to be scheduled. A pod that starts no
 container within that start time fails as `timeout start_timeout`, also without
 a retry.
 
+### Seeds that change
+
+A seed is a CSV that dbt loads into a table. When you change the CSV, continuo
+loads it again after the release is promoted. This section says what that load
+does to the table and to the views that read it.
+
+What a load does depends on your warehouse.
+
+- **Postgres.** A seed loads in one of two ways. Your seed's `+full_refresh`
+  setting picks the way.
+  - With `+full_refresh: true`, every load drops the table with `CASCADE` and
+    creates it again from the CSV. Dropping the table also drops every view that
+    reads it, so every load rebuilds those views.
+  - With the setting unset, a load empties the table and inserts the rows. The
+    views stay. If the CSV gets a new, removed or retyped column, continuo drops
+    the table and creates it again for that load, so you do not need to set
+    `+full_refresh: true` to land a column change.
+  - With `+full_refresh: false`, continuo never drops the table, so it refuses
+    a change of columns and a full refresh. The seed's table stays as it is, and
+    the reason is `seed_full_refresh_disabled`. If you ask for a full refresh
+    with `continuo node full-refresh` (or run the seed node alone), no run
+    starts and the CLI exits with code 2. A release's load, a rerun and a
+    rebase start their run, and the seed's task fails with
+    `seed_full_refresh_disabled` before any container starts. A seed whose only
+    change is its rows loads normally.
+- **Trino.** Every load creates the table again, whatever the setting says.
+
+After a load that drops the table, continuo rebuilds what the drop took away.
+It does this in the same run, after the seed loads and in the order the views
+read each other.
+
+- continuo rebuilds the views and materialized views below the seed. It
+  follows the chain through `ephemeral` models.
+- continuo does not rebuild tables, incremental models, snapshots or Python
+  nodes. They keep their data until their own schedules run them.
+- On Trino, a materialized view below the seed is rebuilt with a full refresh.
+- On Trino, a view that continuo does not own can go stale after the load.
+  continuo checks such views after the load and lists the ones it finds.
+
+A release that only records the seeds as already loaded does not reload any seed.
+
+#### Where to look
+
+- The release page lists a notice for each seed whose load a release changes.
+  It says what the load does and whether it is expected to go ahead or stop.
+  `continuo release notices <release-id>` prints the same notices.
+- `continuo run show <run-id>` gives the reason of each task of a run. A view
+  that continuo rebuilds shows a reason that starts with `rebuild:`.
+- The node page of a view says "Missing in production since ..." while the
+  view is gone, and tells you when it is stale.
+
+#### When a load stops
+
+On Postgres, a load that would drop the table stops before it drops it when an
+object that continuo does not own reads the seed. A view you made by hand is
+such an object. The seed's task fails with `unowned_dependents` and lists the
+objects. Nothing is dropped. You have two ways forward:
+
+1. Run a full refresh and name each object it may drop. Repeat the flag for each
+   object:
+
+   ```bash
+   continuo node full-refresh <service> <schema> <seed> \
+     --acknowledge <schema>.<name> --acknowledge <schema>.<other-name>
+   ```
+
+   The full-refresh dialog on the seed's node page does the same. You tick
+   the objects there.
+2. Remove the object yourself, then run the seed again.
+
+continuo does not recreate an object you named. If you still need it, create it
+again after the load.
+
 ### If your project already has its own `generate_schema_name`
 
 The four demo projects each ship continuo's `generate_schema_name` unchanged, so

@@ -16,6 +16,7 @@ import (
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -663,6 +664,9 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 		// The real encoder: the payload-shape assertions in these tests are
 		// assertions about what actually reaches release.rejected:v1.
 		Rejections: serialization.ReleaseRejectedJSON{},
+
+		Family: warehouse.SchemaBound,
+		Engine: "postgres",
 	}, store
 }
 

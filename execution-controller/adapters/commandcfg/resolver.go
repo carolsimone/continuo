@@ -42,8 +42,10 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 }
 
 // NodeCommand resolves the argv for op against node. OperationRun dispatches on
-// nt (model/seed/snapshot) — a seed resolves to the block's plain,
-// non-destructive Seed template, never SeedFullRefresh; OperationTest and
+// nt (model/seed/snapshot) — a seed resolves to the block's plain Seed
+// template, the one every automatic seed load runs, never SeedFullRefresh (what
+// it does to the table depends on the warehouse and the seed's +full_refresh,
+// see deploy/continuo/files/dbt-commands.yaml); OperationTest and
 // OperationBuild resolve a fixed key regardless of nt; OperationFullRefresh is
 // resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
 // seed to SeedFullRefresh. The default block is always complete (built-in when
@@ -81,7 +83,7 @@ func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pk
 // fullRefreshCommand resolves a full refresh of a node type the contract marks
 // as supporting one: a model to its FullRefresh template, a seed to its
 // SeedFullRefresh template — never to the plain Run/Seed template, which is the
-// non-destructive command an automatic load uses. Either template is resolved
+// command an automatic load runs. Either template is resolved
 // from the block that governs the service — its override when it has one, else
 // the default — and this never falls through from an override to the default,
 // whose binary the team's image may not carry. Every failure wraps
@@ -90,28 +92,51 @@ func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType,
 	if !nt.SupportsFullRefresh() {
 		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
 	}
-	vals := map[string]string{"node": node}
-	var pick func(*opSet) []string
-	var key string
-	switch nt {
-	case pkg_model.NodeTypeDbtModel:
-		pick = func(o *opSet) []string { return o.FullRefresh }
-		key = "full_refresh"
-	case pkg_model.NodeTypeDbtSeed:
-		pick = func(o *opSet) []string { return o.SeedFullRefresh }
-		key = "seed_full_refresh"
-	default:
+	pick, key := fullRefreshTemplate(nt)
+	if pick == nil {
 		return nil, fmt.Errorf("%w: no full-refresh command key is mapped for node type %q", events.ErrPermanent, nt)
 	}
-	block, name := r.cfg.Default, "default"
-	if ops := r.cfg.Services[serviceName]; ops != nil {
-		block, name = ops, "services."+serviceName
-	}
+	block, name := r.governingBlock(serviceName)
 	tpl := pick(block)
 	if tpl == nil {
 		return nil, fmt.Errorf("%w: dbt-commands %s defines no %s command", events.ErrPermanent, name, key)
 	}
-	return substitute(tpl, vals), nil
+	return substitute(tpl, map[string]string{"node": node}), nil
+}
+
+// FullRefreshBlock names the block that governs the service and reports
+// whether it defines the full refresh command of nt, without falling through
+// from an override to the default.
+func (r *Resolver) FullRefreshBlock(serviceName string, nt pkg_model.NodeType) (string, bool) {
+	block, name := r.governingBlock(serviceName)
+	pick, _ := fullRefreshTemplate(nt)
+	if pick == nil {
+		return name, false
+	}
+	return name, pick(block) != nil
+}
+
+// governingBlock is the block that governs the service, its override when it
+// has one, else the default, with the name an error gives it.
+func (r *Resolver) governingBlock(serviceName string) (*opSet, string) {
+	if ops := r.cfg.Services[serviceName]; ops != nil {
+		return ops, "services." + serviceName
+	}
+	return r.cfg.Default, "default"
+}
+
+// fullRefreshTemplate picks the full refresh template of nt from a block, with
+// the key that names it: FullRefresh for a model, SeedFullRefresh for a seed;
+// nil for any other node type.
+func fullRefreshTemplate(nt pkg_model.NodeType) (func(*opSet) []string, string) {
+	switch nt {
+	case pkg_model.NodeTypeDbtModel:
+		return func(o *opSet) []string { return o.FullRefresh }, "full_refresh"
+	case pkg_model.NodeTypeDbtSeed:
+		return func(o *opSet) []string { return o.SeedFullRefresh }, "seed_full_refresh"
+	default:
+		return nil, ""
+	}
 }
 
 // SeedBuildCommand resolves the argv for building a seed into targetSchema.

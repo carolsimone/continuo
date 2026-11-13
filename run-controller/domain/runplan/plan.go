@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/topology"
 	"github.com/google/uuid"
 )
@@ -18,6 +19,23 @@ type PlannedTask struct {
 	// InheritedFrom when it was itself inherited, else the source task.
 	// uuid.Nil when Inherited is false.
 	InheritedFrom uuid.UUID
+	// Operation is the dbt verb the task applies to its node; nil keeps the
+	// run's.
+	Operation *model.Operation
+	// Reason says why the task runs with its operation; empty when the plan
+	// states none.
+	Reason string
+	// Preflight is the check a seed's load runs before it drops its table;
+	// nil on every other task.
+	Preflight *seedreload.Preflight
+	// RebuildOf is the seed whose load drops the relation this task
+	// rebuilds, the smallest seed key when the run loads several seeds above
+	// it; empty on every other task.
+	RebuildOf topology.NodeKey
+	// Refusal is why the planner refused the task, which never runs: the
+	// run stores it failed and skips every pending task below it. Empty on a
+	// task the run may run.
+	Refusal model.FailureReason
 }
 
 // Plan is the selection for one run.
@@ -55,6 +73,14 @@ type SourceTask struct {
 	// run's release when the source run ran the node itself, the release of
 	// the run of its InheritedFrom task when it inherited the result.
 	BuiltOn string
+	// Operation is the operation the source task applied to its node.
+	Operation model.Operation
+	// Reason is the source task's plan reason; empty when its plan stated
+	// none.
+	Reason string
+	// RebuildOf is the seed whose load dropped the relation the source task
+	// rebuilt; empty on every other task.
+	RebuildOf topology.NodeKey
 }
 
 // Source is the run a rerun or a rebase derives from: its operation and its
@@ -97,4 +123,13 @@ var (
 	// nodes read and no node builds. It is never a task, so no run executes
 	// it.
 	ErrExternalNode = errors.New("an unknown-external node is never run")
+	// ErrSeedFullRefreshDisabled: a single-node run names a seed whose
+	// +full_refresh: false keeps its table, and the run needs the table
+	// rebuilt (an operator's full refresh, or a load of changed columns), so
+	// no command can run it.
+	ErrSeedFullRefreshDisabled = errors.New("seed_full_refresh_disabled: the seed sets +full_refresh: false, so a full refresh cannot rebuild it")
+	// ErrAcknowledgementNotAllowed: a request names acknowledged dependents
+	// for a run that is not a full refresh of a dbt seed, the only run whose
+	// load drops objects an operator can accept losing.
+	ErrAcknowledgementNotAllowed = errors.New("acknowledged_dependents is valid only with operation full_refresh on a dbt seed")
 )

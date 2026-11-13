@@ -214,6 +214,15 @@ class ManifestNode:
     # for a dbt node
     materialized: str = ""  # a dbt node's config.materialized ("table",
     # "view", "incremental", "ephemeral", ...); "" for a python node
+    full_refresh: bool | None = None  # a dbt seed's config.full_refresh when it is
+    # a bool; None for a seed that does not set one and for every other node
+
+    @property
+    def seed_columns(self) -> list[dict[str, str]]:
+        """A dbt seed's columns in file order, each as {"name", "type"}: the type is
+        the configured one, "" for a column whose type the seed does not declare.
+        Empty without a header."""
+        return [{"name": h, "type": self.seed_column_types.get(h, "")} for h in self.seed_header]
 
     @property
     def unique_id(self) -> str:

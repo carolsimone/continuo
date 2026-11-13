@@ -137,6 +137,11 @@ func documentFromTopology(releaseID string, topo release.Topology) topologyartif
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
 			SeedColumnsHash:    n.SeedColumnsHash,
+			Materialized:       n.Materialized,
+			FullRefresh:        n.FullRefresh,
+		}
+		for _, c := range n.SeedColumns {
+			nodes[i].SeedColumns = append(nodes[i].SeedColumns, topologyartifact.SeedColumn{Name: c.Name, Type: c.Type})
 		}
 	}
 	return topologyartifact.Document{
@@ -167,6 +172,11 @@ func topologyFromDocument(doc topologyartifact.Document) release.Topology {
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
 			SeedColumnsHash:    n.SeedColumnsHash,
+			Materialized:       n.Materialized,
+			FullRefresh:        n.FullRefresh,
+		}
+		for _, c := range n.SeedColumns {
+			topo[i].SeedColumns = append(topo[i].SeedColumns, release.SeedColumn{Name: c.Name, Type: c.Type})
 		}
 	}
 	return topo

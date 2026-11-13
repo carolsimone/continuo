@@ -14,12 +14,13 @@ import (
 )
 
 // readyCandidatesQuery reads the pending, undispatched tasks of tenant $1's run
-// $2 that read node $4 directly over release $3's edges, with their Job names and the
+// $2 that read node $4 directly over release $3's edges, with their Job names,
+// the operation, plan reason and seed preflight their dispatch carries, and the
 // statuses of their upstream tasks in the run. Each lookup is an index probe:
 // topology_edges by its primary key prefix (tenant, release, upstream) or by
 // idx_topology_edges_downstream, tasks by uq_tasks_run_node.
 const readyCandidatesQuery = `
-	SELECT t.task_id, t.job_name,
+	SELECT t.task_id, t.job_name, t.operation, t.plan_reason, t.seed_preflight,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 	       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
 	       ARRAY(
@@ -81,6 +82,7 @@ func NewTaskGraph(tx *sqlx.Tx, tenantID string) *TaskGraph {
 type readyCandidateRow struct {
 	TaskID  uuid.UUID `db:"task_id"`
 	JobName string    `db:"job_name"`
+	dispatchSpecColumns
 	topologyNodeRow
 	UpstreamStatuses pq.StringArray `db:"upstream_statuses"`
 }
@@ -104,10 +106,15 @@ func (g *TaskGraph) ReadyCandidates(ctx context.Context, runID uuid.UUID, releas
 			}
 			statuses = append(statuses, status)
 		}
+		spec, err := row.spec()
+		if err != nil {
+			return nil, fmt.Errorf("task %s: %w", row.TaskID, err)
+		}
 		out = append(out, run.ReadyCandidate{
 			TaskID:           row.TaskID,
 			Node:             row.toDomain(),
 			JobName:          row.JobName,
+			Spec:             spec,
 			UpstreamStatuses: statuses,
 		})
 	}

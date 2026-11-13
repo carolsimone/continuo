@@ -60,7 +60,9 @@ def _artifact_entry(node: ManifestNode) -> dict:
     """The topology artifact's entry for one node: its identity, the relation it
     stands for, the service and image that run it, its schedule and the
     unique_ids it reads. An optional key is present only when the node sets
-    it."""
+    it: `materialized` (every dbt node but a test), `full_refresh` (a seed that
+    configures one) and `seed_columns` (a seed whose compile extras list its
+    header)."""
     entry = {
         "unique_id":           node.unique_id,
         "schema_name":         node.schema_name,
@@ -85,6 +87,12 @@ def _artifact_entry(node: ManifestNode) -> dict:
         entry["relation_name"] = node.relation_name
     if node.seed_columns_hash:
         entry["seed_columns_hash"] = node.seed_columns_hash
+    if node.materialized:
+        entry["materialized"] = node.materialized
+    if node.full_refresh is not None:
+        entry["full_refresh"] = node.full_refresh
+    if node.seed_columns:
+        entry["seed_columns"] = node.seed_columns
     return entry
 
 

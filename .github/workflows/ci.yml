@@ -45,11 +45,11 @@ jobs:
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. Deliberately below the sum of the two step caps
-    # below (50 + 160) and above the e2e step's own cap, so the e2e step's go
+    # below (50 + 177) and above the e2e step's own cap, so the e2e step's go
     # test timeout fires first when setup finishes within its cap, and names
     # the wedged test: it is a backstop against a hang, not a budget any
     # healthy run approaches.
-    timeout-minutes: 200
+    timeout-minutes: 215
 
     # The repo's default workflow token is restricted (contents/metadata/packages
     # read only), which denies the pull-requests API that paths-filter uses to
@@ -380,31 +380,34 @@ jobs:
         # Start the ui container, wait for it to become healthy, deploy
         # execution-controller, then run the full e2e suite inside the catalog
         # container where the test code lives. Comfortably exceeds the go
-        # test -timeout below (145m) plus the ui-wait/deploy steps that run
+        # test -timeout below (162m) plus the ui-wait/deploy steps that run
         # first in this same step.
         #
-        # The 145m go timeout is derived, not measured, from the per-test
+        # The 162m go timeout is derived, not measured, from the per-test
         # context deadlines the suite actually carries. Every per-test context
         # must be able to fire first, or an operator gets a goroutine dump
         # instead of a named assertion. It is the sum of:
-        #   - 70m, the two longest per-test ceilings (35m + 35m) wedging in one
-        #     run. Five tests now carry a 35m ceiling — the compile, agent,
-        #     retry, and both batched remediation tests — and they all wait on
-        #     the same globally serialized verification/candidate run queue, so
-        #     a wedged queue stalls several of them one after another. Covering
-        #     two is the minimum that still buys a named assertion; covering
-        #     all five would put the ceiling past 3.5 hours.
-        #   - 75m for the rest of the suite. A healthy full run in this job,
-        #     which starts the stack cold, takes about 60m; 75m leaves about
-        #     15m for a slower run.
-        timeout-minutes: 160
+        #   - 87m, the two longest per-test ceilings wedging in one run: the
+        #     seed reload test (47m) and the remediation parse test (40m).
+        #     Eleven more tests carry a 35m ceiling — the compile, agent and
+        #     retry tests, the five batched remediation tests, the two release
+        #     validation tests-bind tests and the verification test — and they
+        #     all wait on the same globally serialized verification/candidate
+        #     run queue, so a wedged queue stalls several of them one after
+        #     another. Covering two is the minimum that still buys a named
+        #     assertion; covering all thirteen would put the ceiling past 9
+        #     hours.
+        #   - 75m for the rest of the suite. A healthy run of every test but
+        #     those two in this job, which starts the stack cold, takes at most
+        #     about 60m; 75m leaves about 15m for a slower run.
+        timeout-minutes: 177
         run: |
           source scripts/lib/common.sh
           # CI_HOST_IP is the lane's bind IP on the self-hosted runner (each kind
           # lane's own Docker daemon publishes there); unset on GitHub-hosted.
           docker compose up -d ui && wait_for_http_host "http://${CI_HOST_IP:-localhost}:8090/api/schedules"
           bash tests/e2e/deploy-execution-controller.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 145m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 162m /app/tests/e2e/...
 
       - name: Cleanup execution-controller
         if: always()

@@ -323,6 +323,8 @@ spec:
               value: {{ include "continuo.redis.url" $ | quote }}
               {{- else if eq $val "__DEAD_LETTER_CONTROLLER_ADDR__" }}
               value: {{ $.Values.global.deadLetterControllerGrpcAddr | quote }}
+              {{- else if eq $val "__RELEASE_CONTROLLER_ADDR__" }}
+              value: {{ $.Values.global.releaseControllerGrpcAddr | quote }}
               {{- else if eq $val "__DOCKERHUB_USERNAME__" }}
               value: {{ $.Values.global.teamImagePrefix | quote }}
               {{- else if eq $val "__VALIDATION_IMAGE__" }}

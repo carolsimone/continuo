@@ -13,7 +13,8 @@ import (
 // a wider slice selects the same plan. The source tasks that did not succeed
 // and every descendant of theirs among the source's tasks are executed along
 // the source release's edges; every other source task is carried over as
-// succeeded.
+// succeeded. A source rebuild it executes again keeps its operation, reason
+// and seed while that seed is carried over (carryRebuilds).
 type Rerun struct {
 	Source Source
 }
@@ -44,5 +45,5 @@ func (s Rerun) Select(g topology.Graph) (Plan, error) {
 	if err := checkNodeTypes(g, keysOf(pending)); err != nil {
 		return Plan{}, err
 	}
-	return dagPlan(g, pending, succeededIn(g, s.Source.Tasks)), nil
+	return carryRebuilds(dagPlan(g, pending, succeededIn(g, s.Source.Tasks)), s.Source.Tasks, s.Source.Operation), nil
 }

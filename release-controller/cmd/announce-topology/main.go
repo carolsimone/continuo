@@ -213,6 +213,9 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
 			SeedColumnsHash:    n.SeedColumnsHash,
+			Materialized:       n.Materialized,
+			FullRefresh:        n.FullRefresh,
+			SeedColumns:        seedColumnsFromArtifact(n.SeedColumns),
 		})
 	}
 	// Catalog strips every dbt-test node before it applies a promotion, so
@@ -245,9 +248,28 @@ func fromTopology(topo release.Topology) []topologyartifact.Node {
 			SecretRef:          n.SecretRef,
 			TimeoutSeconds:     n.TimeoutSeconds,
 			SeedColumnsHash:    n.SeedColumnsHash,
+			Materialized:       n.Materialized,
+			FullRefresh:        n.FullRefresh,
+			SeedColumns:        seedColumnsToArtifact(n.SeedColumns),
 		})
 	}
 	return nodes
+}
+
+func seedColumnsFromArtifact(columns []topologyartifact.SeedColumn) []release.SeedColumn {
+	var out []release.SeedColumn
+	for _, c := range columns {
+		out = append(out, release.SeedColumn{Name: c.Name, Type: c.Type})
+	}
+	return out
+}
+
+func seedColumnsToArtifact(columns []release.SeedColumn) []topologyartifact.SeedColumn {
+	var out []topologyartifact.SeedColumn
+	for _, c := range columns {
+		out = append(out, topologyartifact.SeedColumn{Name: c.Name, Type: c.Type})
+	}
+	return out
 }
 
 func failure(logger *slog.Logger, what string, err error) int {

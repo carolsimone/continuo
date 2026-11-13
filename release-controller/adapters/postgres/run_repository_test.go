@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -898,4 +901,45 @@ func TestRunRepository_RefusesRebaselineWithoutBootstrap(t *testing.T) {
 		Repo: "acme/demo", CommitSHA: "deadbeef", Rebaseline: true, CreatedAt: time.Unix(100, 0).UTC()})
 	_, err := repo.Create(context.Background(), r)
 	require.ErrorContains(t, err, "release_pipeline_runs_rebaseline_needs_bootstrap")
+}
+
+// TestRunRepository_StoresAndReadsTheNotices verifies a run's seed reload
+// notices round-trip through release_pipeline_runs.notices: a new run reads
+// back none, the notices set at parse time are written by the upsert, and
+// warehouse findings applied later replace them on the next save.
+func TestRunRepository_StoresAndReadsTheNotices(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	r := pipeline.NewCandidate("rNOTICES", "finance", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+	got, err := repo.Get(ctx, "rNOTICES")
+	require.NoError(t, err)
+	assert.Empty(t, got.Notices())
+
+	notice := release.Notice{
+		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Service: "finance",
+		EngineFamily: warehouse.SchemaBound, Change: seedreload.ChangeColumns,
+		Columns:           release.ColumnChanges{Added: []string{"source"}, Removed: []string{}, Retyped: []string{}},
+		Load:              seedreload.Load{Operation: model.OperationRun, DropsTable: true, Reason: "columns changed; +full_refresh: true re-creates the table on every load"},
+		Rebuilds:          []seedreload.Rebuild{{Key: "analytics.fx_rates_current", Materialized: "view", Schedule: "hourly"}},
+		RefreshOnSchedule: []seedreload.Boundary{{Key: "analytics.fx_transactions_eur", Materialized: "table", Schedule: "daily"}},
+		Warehouse:         release.WarehouseFindings{OutsideContinuo: []release.OutsideObject{}},
+		Prediction:        "reloads",
+	}
+	got.SetNotices([]release.Notice{notice})
+	require.NoError(t, repo.Save(ctx, got))
+	got, err = repo.Get(ctx, "rNOTICES")
+	require.NoError(t, err)
+	assert.Equal(t, []release.Notice{notice}, got.Notices())
+
+	require.True(t, got.ApplyWarehouseFindings("analytics.seed_fx_rates_eur", seedreload.Findings{Checked: true, Completeness: "exact",
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}))
+	require.NoError(t, repo.Save(ctx, got))
+	got, err = repo.Get(ctx, "rNOTICES")
+	require.NoError(t, err)
+	require.Len(t, got.Notices(), 1)
+	assert.Equal(t, "stops", got.Notices()[0].Prediction)
+	assert.Equal(t, []release.OutsideObject{{Object: "bi.fx_rates_report", Kind: "view", Owner: "bi"}}, got.Notices()[0].Warehouse.OutsideContinuo)
 }

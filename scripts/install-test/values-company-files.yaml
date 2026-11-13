@@ -46,6 +46,7 @@ services:
       CONTINUO_RUN_CONTROLLER_ADDR: run-controller:50051
       CONTINUO_CATALOG_ADDR: catalog:50052
       CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__
+      CONTINUO_RELEASE_CONTROLLER_ADDR: __RELEASE_CONTROLLER_ADDR__
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
 
@@ -92,7 +93,7 @@ services:
   - {name: catalog, enabled: true, httpPort: 8087, grpcPort: 50052}
   - {name: ui, enabled: true, httpPort: 8090, probePath: /healthz}
   - {name: topology-controller, enabled: true, httpPort: 8086}
-  - {name: release-controller, enabled: true, httpPort: 8088, probePath: /healthz}
+  - {name: release-controller, enabled: true, httpPort: 8088, grpcPort: 50056, probePath: /healthz}
   - {name: remediation, enabled: true, httpPort: 8090, probePath: /healthz}
   - {name: agent-remediation, enabled: true, httpPort: 8092, grpcPort: 50054, probePath: /healthz}
   - {name: dead-letter-controller, enabled: true, httpPort: 8096, grpcPort: 50055, probePath: /ready}

@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -237,4 +240,24 @@ func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
 	assert.Equal(t, "ghcr.io/acme/py:1", params.ImageTag)
 	assert.Equal(t, "default", params.Namespace)
 	assert.Empty(t, jobParamsFromSpec(deploy.JobSpec{}, pkg_model.NodeTypeDbtModel, "default").SecretRef)
+}
+
+// The preflight a seed-build request carries reaches the Job the Deployer
+// creates, as the last init container.
+func TestDeploySeedBuild_ThreadsTheSeedPreflight(t *testing.T) {
+	setPreflightEnv(t)
+	client := newValidationTestClient()
+	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
+
+	err := d.DeploySeedBuild(context.Background(), deploy.ValidationJobSpec{
+		JobName: "seedbuild-fx-rates", ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur",
+		ServiceName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
+		NodeType: string(pkg_model.NodeTypeDbtSeed), ImageTag: "abc123", CandidateSchema: "_candidate_rel_1",
+		SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"},
+	})
+	require.NoError(t, err)
+
+	inits := fetchJob(t, client, "default", "seedbuild-fx-rates").Spec.Template.Spec.InitContainers
+	require.NotEmpty(t, inits)
+	assert.Equal(t, model.SeedPreflightContainer, inits[len(inits)-1].Name)
 }

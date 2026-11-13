@@ -116,9 +116,9 @@ describe('GET /api/schedules/:name/runs', () => {
       expect(req).toEqual({ schedule_name: 'daily', page_size: 10, page_offset: 0 });
       cb(null, { runs: [
         { run_id: 'r1', schedule_name: 'daily', status: 'succeeded',
-          created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: '' },
+          created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: '', release_id: 'rel-9' },
         { run_id: 'r2', schedule_name: 'daily', status: 'failed',
-          created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
+          created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled', release_id: '' },
       ], total_count: 2 });
     });
 
@@ -127,9 +127,9 @@ describe('GET /api/schedules/:name/runs', () => {
     expect(res.status).toBe(200);
     expect(res.body.runs).toEqual([
       { run_id: 'r1', schedule_name: 'daily', status: 'succeeded',
-        created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: null },
+        created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: null, release_id: 'rel-9' },
       { run_id: 'r2', schedule_name: 'daily', status: 'failed',
-        created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
+        created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled', release_id: null },
     ]);
     expect(res.body.total_count).toBe(2);
   });

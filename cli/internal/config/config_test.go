@@ -60,3 +60,15 @@ func TestResolve_DeadLetterEndpointPrecedence(t *testing.T) {
 		t.Fatalf("flag = %q", got)
 	}
 }
+
+func TestResolve_ReleaseEndpoint(t *testing.T) {
+	if got := Resolve(Inputs{}).ReleaseControllerEndpoint; got != "localhost:50056" {
+		t.Fatalf("default = %q", got)
+	}
+	if got := Resolve(Inputs{EnvReleaseControllerAddr: "env:1"}).ReleaseControllerEndpoint; got != "env:1" {
+		t.Fatalf("env = %q", got)
+	}
+	if got := Resolve(Inputs{EnvReleaseControllerAddr: "env:1", FlagReleaseEndpoint: "flag:2"}).ReleaseControllerEndpoint; got != "flag:2" {
+		t.Fatalf("flag = %q", got)
+	}
+}

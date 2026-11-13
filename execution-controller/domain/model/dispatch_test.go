@@ -7,6 +7,8 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,7 +34,7 @@ func TestDecideDispatch(t *testing.T) {
 		{"a question about a running attempt it lost", false, false, false, "", pkgmodel.AttemptStatusRunning, ReportLost},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, c.job, false, c.known), c.name)
+		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, "", c.job, false, c.known), c.name)
 	}
 }
 
@@ -43,12 +45,42 @@ func TestDecideDispatch(t *testing.T) {
 // before.
 func TestDecideDispatch_AnOrphanPodIsAwaitedNotReportedLost(t *testing.T) {
 	for _, known := range []pkgmodel.AttemptStatus{pkgmodel.AttemptStatusQueued, pkgmodel.AttemptStatusRunning} {
-		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", false, true, known), known)
-		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", false, false, known), known)
+		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", "", false, true, known), known)
+		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", "", false, false, known), known)
 	}
-	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", false, true, pkgmodel.AttemptStatusRunning))
-	assert.Equal(t, AdoptJob, DecideDispatch(false, false, "", true, true, pkgmodel.AttemptStatusRunning))
-	assert.Equal(t, CreateAttempt, DecideDispatch(false, false, "", false, true, pkgmodel.AttemptStatusDispatched))
+	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", "", false, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, AdoptJob, DecideDispatch(false, false, "", "", true, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, CreateAttempt, DecideDispatch(false, false, "", "", false, true, pkgmodel.AttemptStatusDispatched))
+}
+
+// A refusal that depends on the dbt-commands configuration (a full refresh
+// command the block no longer defines) only stops a Job from being created:
+// a Job of the attempt, or a pod of it that has not finished, may have been
+// made under a configuration that defined the command, so it is adopted or
+// awaited first. A problem of the command itself still wins over a Job, since
+// that command could never have made one.
+func TestDecideDispatch_AConfigRefusalNeverPreemptsAJobOrAPod(t *testing.T) {
+	refusal := pkgmodel.FailureReasonFullRefreshUndefined
+	cases := []struct {
+		name     string
+		problem  pkgmodel.FailureReason
+		job, pod bool
+		known    pkgmodel.AttemptStatus
+		want     DispatchAction
+	}{
+		{"its Job exists", "", true, false, pkgmodel.AttemptStatusDispatched, AdoptJob},
+		{"its Job exists, acknowledged", "", true, false, pkgmodel.AttemptStatusRunning, AdoptJob},
+		{"a pod of it has not finished", "", false, true, pkgmodel.AttemptStatusDispatched, AwaitOrphanPod},
+		{"a pod of it has not finished, acknowledged", "", false, true, pkgmodel.AttemptStatusRunning, AwaitOrphanPod},
+		{"nothing of it runs", "", false, false, pkgmodel.AttemptStatusDispatched, RefuseInvalid},
+		{"nothing of an acknowledged attempt runs", "", false, false, pkgmodel.AttemptStatusRunning, ReportLost},
+		{"the command cannot run and its Job exists", pkgmodel.FailureReasonMalformedDispatch, true, true, pkgmodel.AttemptStatusDispatched, RefuseInvalid},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, DecideDispatch(false, false, c.problem, refusal, c.job, c.pod, c.known), c.name)
+	}
+	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", refusal, false, false, pkgmodel.AttemptStatusDispatched))
+	assert.Equal(t, IgnoreOlder, DecideDispatch(false, true, "", refusal, false, false, pkgmodel.AttemptStatusDispatched))
 }
 
 // An attempt of a fenced run with no record never starts: its Job, when one
@@ -187,4 +219,57 @@ func TestNewAdoptedAndRefusedDeployments(t *testing.T) {
 	assert.Equal(t, pkgmodel.FailureReasonAttemptLost, refused.Facts().Reason)
 	r := refused.ReportOf(pkgmodel.AttemptStatusFailed, "lost")
 	assert.Equal(t, pkgmodel.FailureReasonAttemptLost, r.FailureReason)
+}
+
+// seedDispatch is a dispatch of a seed load that drops its table, with the
+// check-mode preflight run-controller asks for on a schema_bound warehouse.
+func seedDispatch() command.DeployTask {
+	cmd := validDispatch()
+	cmd.NodeType = string(pkgmodel.NodeTypeDbtSeed)
+	cmd.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}}
+	return cmd
+}
+
+// A preflight runs only before a seed's load, in a mode and for a family the
+// runner knows, against a relation that names a schema and a table; any other
+// preflight cannot run and is refused as malformed.
+func TestDispatchProblem_APreflightMustFitASeed(t *testing.T) {
+	reason, message := DispatchProblem(seedDispatch(), pkgmodel.AttemptStatusDispatched)
+	assert.Empty(t, reason, message)
+	report := seedDispatch()
+	report.SeedPreflight.Mode, report.SeedPreflight.Family = seedreload.PreflightReport, warehouse.LateBinding
+	reason, message = DispatchProblem(report, pkgmodel.AttemptStatusDispatched)
+	assert.Empty(t, reason, message)
+
+	for name, edit := range map[string]func(*command.DeployTask){
+		"a model":                 func(c *command.DeployTask) { c.NodeType = string(pkgmodel.NodeTypeDbtModel) },
+		"a snapshot":              func(c *command.DeployTask) { c.NodeType = string(pkgmodel.NodeTypeDbtSnapshot) },
+		"an unknown mode":         func(c *command.DeployTask) { c.SeedPreflight.Mode = "warn" },
+		"no mode":                 func(c *command.DeployTask) { c.SeedPreflight.Mode = "" },
+		"an unknown family":       func(c *command.DeployTask) { c.SeedPreflight.Family = "snowflake" },
+		"no family":               func(c *command.DeployTask) { c.SeedPreflight.Family = "" },
+		"a relation of no dot":    func(c *command.DeployTask) { c.SeedPreflight.Relation = "seed_fx_rates_eur" },
+		"a relation of no schema": func(c *command.DeployTask) { c.SeedPreflight.Relation = ".seed" },
+		"a relation of no name":   func(c *command.DeployTask) { c.SeedPreflight.Relation = "analytics." },
+		"no relation":             func(c *command.DeployTask) { c.SeedPreflight.Relation = "" },
+	} {
+		cmd := seedDispatch()
+		edit(&cmd)
+		reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
+		assert.Equal(t, pkgmodel.FailureReasonMalformedDispatch, reason, name)
+		assert.Contains(t, message, "seed_preflight", name)
+	}
+}
+
+// A full refresh whose dbt-commands block defines no command names the
+// command the block lacks: seed_full_refresh for a seed, full_refresh for a
+// model.
+func TestFullRefreshUndefined(t *testing.T) {
+	reason, message := FullRefreshUndefined(pkgmodel.NodeTypeDbtSeed, "services.finance")
+	assert.Equal(t, pkgmodel.FailureReasonSeedFullRefreshUndefined, reason)
+	assert.Equal(t, "dbt-commands services.finance defines no seed_full_refresh command", message)
+	reason, message = FullRefreshUndefined(pkgmodel.NodeTypeDbtModel, "default")
+	assert.Equal(t, pkgmodel.FailureReasonFullRefreshUndefined, reason)
+	assert.Equal(t, "dbt-commands default defines no full_refresh command", message)
 }

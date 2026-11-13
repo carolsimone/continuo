@@ -39,6 +39,20 @@ type Node struct {
 	// SeedColumnsHash is a seed's column fingerprint; empty without compile
 	// extras.
 	SeedColumnsHash string
+	// Materialized is the dbt materialization of a dbt node; empty when it
+	// declares none.
+	Materialized string
+	// FullRefresh is a dbt node's declared `full_refresh` config; nil when it
+	// declares none.
+	FullRefresh *bool
+	// SeedColumns are a seed's declared columns in declaration order.
+	SeedColumns []SeedColumn
+}
+
+// SeedColumn is one declared column of a seed; Type is empty when the seed
+// declares the column without a type.
+type SeedColumn struct {
+	Name, Type string
 }
 
 // IsExternal reports whether the node only marks a table that something

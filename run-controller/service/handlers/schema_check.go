@@ -16,7 +16,11 @@ import (
 // the node leases and the wait for one, and the tenant of each run, task and
 // attempt, the command requests that make a command run once per request id,
 // the schedules table with the slot a scheduled run records, and the column
-// fingerprint of each seed a release stores and each load records. A migration
+// fingerprint of each seed a release stores and each load records, and the
+// seed reload's columns: each node's materialization, full_refresh setting and
+// resolved relation, a release's bootstrap flag, a task's plan reason, seed
+// preflight and rebuild seed, an attempt's preflight findings, and the
+// view_outages table. A migration
 // applies whole, so a column also stands for what else its migration adds:
 // task_attempts.stop_requested_at for the cancelling, stopping and stopped
 // statuses, the node lease columns for node_leases' release trigger and the
@@ -32,7 +36,13 @@ var RequiredColumns = []string{"task_attempts.attempt", "tasks.attempt", "topolo
 	"schedules.tenant_id", "schedules.name", "schedules.cron", "schedules.timezone", "schedules.description",
 	"schedules.paused", "schedules.next_fire_at", "schedules.version", "schedules.updated_by", "schedules.updated_at",
 	"runs.scheduled_for",
-	"topology_nodes.seed_columns_hash", "node_materializations.seed_columns_hash"}
+	"topology_nodes.seed_columns_hash", "node_materializations.seed_columns_hash",
+	"topology_nodes.materialized", "topology_nodes.full_refresh", "topology_nodes.resolved_relation_id",
+	"topology_releases.bootstrap",
+	"tasks.plan_reason", "tasks.seed_preflight", "tasks.rebuild_seed_key",
+	"task_attempts.seed_preflight_findings",
+	"view_outages.tenant_id", "view_outages.node_key", "view_outages.state", "view_outages.since",
+	"view_outages.seed_key", "view_outages.run_id"}
 
 // ErrSchemaNotReady reports a run-controller database that lacks a column the running
 // code reads.

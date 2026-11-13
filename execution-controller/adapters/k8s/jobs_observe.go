@@ -66,6 +66,21 @@ func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, t
 	return fullLog, tail, nil
 }
 
+// GetContainerLog fetches the full log of the named init or main container of
+// the first pod of jobName. Returns an empty string when no pod is found.
+func (c *K8sClient) GetContainerLog(ctx context.Context, namespace, jobName, container string) (string, error) {
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
+	}
+	if len(pods.Items) == 0 {
+		return "", nil
+	}
+	return c.streamPodLogs(ctx, namespace, pods.Items[0].Name, nil, container)
+}
+
 // pickInitContainerLog returns the name of the first init container that terminated
 // with a non-zero exit code, or empty string if none failed. Used by GetPodLogs to
 // select the fallback log source when the main container never ran.

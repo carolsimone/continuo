@@ -32,20 +32,25 @@ operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
 `compile`, `parse`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
 
-Your `seed` command is a NORMAL, non-destructive load — plain `dbt seed`, not
-`--full-refresh`. It inserts new/changed rows without dropping the table, and
-it is what execution-controller runs for every automatic, scheduled or
-promoted-release seed load.
+Your `seed` command is the plain load, plain `dbt seed`, not `--full-refresh`.
+It is what execution-controller runs for every automatic, scheduled or
+promoted-release seed load. On Postgres it truncates the table and inserts the
+rows, or drops the table with cascade and creates it again when the seed sets
+`+full_refresh: true`. On Trino it drops the table and creates it again. When a
+load drops the table, continuo rebuilds the views and materialized views that
+read it in the same run.
 
 Your image should also provide a model-rebuild verb (backs the `full_refresh`
 command, e.g. `dbt run --full-refresh --select <node>`) and a seed-rebuild verb
 (backs the `seed_full_refresh` command, e.g. `dbt seed --full-refresh --select
 <node>`). Unlike the required operations above, `full_refresh` and
 `seed_full_refresh` are both optional — a block that omits either still boots —
-but they are used only by the explicit, operator-initiated single-node
-full-refresh operation, and are required per-service only for that operation
-to succeed: a service missing the one its node kind needs fails those requests
-permanently, with no fallback to another block's command.
+but a service missing the one an operation needs fails that task with
+`full_refresh_undefined` or `seed_full_refresh_undefined` before any container
+starts, with no fallback to another block's command. continuo runs them for an
+operator's single-node full refresh, for a Postgres seed whose columns change
+while it leaves `+full_refresh` unset (`seed_full_refresh`), and for a Trino
+materialized view below a reloaded seed (`full_refresh`).
 
 Your image must therefore contain a working dbt project (or a wrapper that
 behaves like one) at the path your commands assume, with a `profiles.yml`

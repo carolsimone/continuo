@@ -120,8 +120,17 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
           log_s3_key:       r.log_s3_key   || null,
           run_results_uri:  r.run_results_uri || null,
           operation:        operationFromWire(r.operation),
+          blocking_objects: r.blocking_objects ?? [],
         }));
-        res.json({ tasks });
+        const outage = response.outage
+          ? {
+              state:        response.outage.state,
+              since:        response.outage.since || null,
+              seed_node_id: response.outage.seed_node_id,
+              run_id:       response.outage.run_id,
+            }
+          : null;
+        res.json({ tasks, outage });
       },
     );
   });
@@ -129,13 +138,19 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
   // POST /api/nodes/:service/:schema/:table/run
   // Body: { request_id } → latest mode; { request_id, source_run_id } →
   // snapshot_of_run mode. request_id is the browser-minted UUID run-controller uses to
-  // start one run for a repeated action.
+  // start one run for a repeated action. acknowledged_dependents (an array of
+  // "<schema>.<name>") names the warehouse objects an operator accepts a seed's
+  // full refresh dropping or leaving stale.
   router.post('/:service/:schema/:table/run', (req, res) => {
     const requestId = requireRequestId(req, res);
     if (requestId === null) return;
     const operation = parseNodeRunOperation(req.body?.operation);
     if (operation === null) {
       return res.status(400).json({ error: 'operation must be one of "", run, test, build, full_refresh' });
+    }
+    const acknowledged = req.body?.acknowledged_dependents;
+    if (acknowledged !== undefined && !(Array.isArray(acknowledged) && acknowledged.every((o) => typeof o === 'string'))) {
+      return res.status(400).json({ error: 'acknowledged_dependents must be an array of strings' });
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
@@ -148,6 +163,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
         metadata_source: metadataSource,
         source_run_id:   sourceRunID,
         operation,
+        ...(acknowledged === undefined ? {} : { acknowledged_dependents: acknowledged }),
       },
       userMetadata(req),
       (err: any, response: any) => {

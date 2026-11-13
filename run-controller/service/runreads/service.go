@@ -1,5 +1,5 @@
 // Package runreads serves the run views people read: a run and its tasks and
-// attempts, a run's graph, a schedule's completed runs, how far active runs
+// attempts, a run's graph, a schedule's completed runs, a release's runs, how far active runs
 // are behind the live release, the node history and node list, the schedules of
 // the live release with their graphs, and what a rebase of a failed run would
 // run on the live release. Each read names the tenant it reads and sees only
@@ -42,12 +42,23 @@ func (s *Service) GetRunGraph(ctx context.Context, tenantID string, runID uuid.U
 // page size below 1 becomes DefaultPageSize, one above MaxPageSize becomes
 // MaxPageSize, and a negative offset becomes 0.
 func (s *Service) ListRuns(ctx context.Context, tenantID, scheduleName string, pageSize, pageOffset int) ([]projection.RunSummary, int, error) {
+	pageSize, pageOffset = clampPage(pageSize, pageOffset)
+	return s.repo.ListCompletedRuns(ctx, tenantID, scheduleName, pageSize, pageOffset)
+}
+
+// ListReleaseRuns returns one page of the runs of tenantID's release
+// releaseID, of any status, newest first, only those of kind when it is not
+// empty. Paging is clamped as ListRuns does.
+func (s *Service) ListReleaseRuns(ctx context.Context, tenantID, releaseID, kind string, pageSize, pageOffset int) ([]projection.RunSummary, int, error) {
+	pageSize, pageOffset = clampPage(pageSize, pageOffset)
+	return s.repo.ListReleaseRuns(ctx, tenantID, releaseID, kind, pageSize, pageOffset)
+}
+
+func clampPage(pageSize, pageOffset int) (int, int) {
 	if pageSize < 1 {
 		pageSize = DefaultPageSize
 	}
-	pageSize = min(pageSize, MaxPageSize)
-	pageOffset = max(pageOffset, 0)
-	return s.repo.ListCompletedRuns(ctx, tenantID, scheduleName, pageSize, pageOffset)
+	return min(pageSize, MaxPageSize), max(pageOffset, 0)
 }
 
 // ListActiveRunDrifts returns tenantID's live promotion seq and the newest

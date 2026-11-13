@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -67,6 +68,23 @@ func TestParseTaskStatusReport_AFailureCarriesItsReasonAndFacts(t *testing.T) {
 	assert.Equal(t, "OOMKilled: the container exceeded its memory", *r.ErrorMessage)
 	assert.Nil(t, r.RunResultsURI, "a fact the report leaves empty is not reported")
 	assert.Equal(t, time.Date(2026, 10, 20, 23, 1, 24, 105000000, time.UTC), r.StartedAt.UTC())
+}
+
+// The seed preflight findings a report carries reach the attempt; a report
+// without them carries none.
+func TestParseTaskStatusReport_MapsTheSeedPreflightFindings(t *testing.T) {
+	got, err := ParseTaskStatusReport(reportEntry(t, "preflight"))
+	require.NoError(t, err)
+	assert.Equal(t, model.FailureReasonUnownedDependents, got.Report.FailureReason)
+	assert.Equal(t, &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true,
+		Dependents: []seedreload.Dependent{
+			{Schema: "analytics", Name: "fx_rates_current", Kind: "view", Owner: "dbt", Depth: 1, Allowed: true},
+			{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1},
+		}}, got.Report.SeedPreflight)
+
+	plain, err := ParseTaskStatusReport(reportEntry(t, "failed"))
+	require.NoError(t, err)
+	assert.Nil(t, plain.Report.SeedPreflight)
 }
 
 func TestParseTaskStatusReport_AnEntryItCannotTrustIsPermanent(t *testing.T) {

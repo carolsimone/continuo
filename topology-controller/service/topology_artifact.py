@@ -23,7 +23,7 @@ _STRING_FIELDS = (
     "original_file_path", "schedule",
 )
 
-_OPTIONAL_STRING_FIELDS = ("secret_ref", "relation_name", "seed_columns_hash")
+_OPTIONAL_STRING_FIELDS = ("secret_ref", "relation_name", "seed_columns_hash", "materialized")
 
 
 def topology_artifact_key(tenant_id: str, release_id: str) -> str:
@@ -36,8 +36,9 @@ def _artifact_node(node: Mapping) -> dict:
     document's zero values are: a key outside the artifact's node shape is
     dropped, a missing string is "", a missing test_count 0, missing or null
     upstreams an empty list (upstreams sorted), and an empty secret_ref,
-    relation_name or seed_columns_hash, or an undeclared timeout_seconds, is
-    left out."""
+    relation_name, seed_columns_hash or materialized, an unset full_refresh
+    (anything but a bool), an empty seed_columns, or an undeclared
+    timeout_seconds, is left out."""
     out = {name: str(node.get(name) or "") for name in _STRING_FIELDS}
     out["test_count"] = int(node.get("test_count") or 0)
     out["upstream_unique_ids"] = sorted(str(u) for u in node.get("upstream_unique_ids") or [])
@@ -48,6 +49,14 @@ def _artifact_node(node: Mapping) -> dict:
     timeout_seconds = int(node.get("timeout_seconds") or 0)
     if timeout_seconds > 0:
         out["timeout_seconds"] = timeout_seconds
+    full_refresh = node.get("full_refresh")
+    if isinstance(full_refresh, bool):
+        out["full_refresh"] = full_refresh
+    seed_columns = node.get("seed_columns") or []
+    if seed_columns:
+        out["seed_columns"] = [
+            {"name": str(c["name"]), "type": str(c.get("type") or "")} for c in seed_columns
+        ]
     return out
 
 

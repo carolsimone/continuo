@@ -278,8 +278,56 @@ describe('GET /api/v1/releases/:id', () => {
     expect(res.body).toEqual({
       release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
       repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x',
-      ui_url: 'https://continuo.example.com/releases/r.1',
+      ui_url: 'https://continuo.example.com/releases/r.1', notices: [],
     });
+  });
+
+  it('projects the seed reload notices of a release, field by field', async () => {
+    const notice = {
+      kind: 'seed_reload', node_id: 'analytics.seed_users', service: 'analytics', engine_family: 'schema_bound',
+      change: 'columns_changed', columns: { added: ['plan'], removed: [], retyped: ['age'] },
+      load: { operation: 'full_refresh', drops_table: true, reason: 'columns changed' },
+      rebuilds: [{ node_id: 'analytics.v_users', materialized: 'view', operation: 'run', schedule: 'daily' }],
+      refresh_on_schedule: [{ node_id: 'analytics.m_users', materialized: 'table', schedule: 'daily' }],
+      warehouse: { checked: true, completeness: 'complete', outside_continuo: [{ object: 'e2e_bi.seed_reader', kind: 'view', owner: 'bi' }] },
+      prediction: 'stops', stop_reason: 'unowned_dependents', unvalidated: false, extra_key: 'x',
+    };
+    const client = fakeClient({ getRelease: vi.fn(async () => ({ ...rel, notices: [notice] })) });
+    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
+    expect(res.body.notices).toEqual([{
+      kind: 'seed_reload', node_id: 'analytics.seed_users', service: 'analytics', change: 'columns_changed',
+      load: 'full_refresh', columns: { added: ['plan'], removed: [], retyped: ['age'] },
+      rebuilds: [{ node_id: 'analytics.v_users', operation: 'run' }],
+      stops_on: ['e2e_bi.seed_reader'],
+    }]);
+  });
+
+  it('a notice that reloads has no stops_on, whatever the warehouse holds outside continuo', () => {
+    const notice = {
+      kind: 'seed_reload', node_id: 'a.s', service: 'a', change: 'rows_changed',
+      load: { operation: 'run' }, warehouse: { outside_continuo: [{ object: 'x.y' }] }, prediction: 'reloads',
+    };
+    expect(projectRelease({ ...rel, notices: [notice] }).notices).toEqual([{
+      kind: 'seed_reload', node_id: 'a.s', service: 'a', change: 'rows_changed', load: 'run',
+      columns: { added: [], removed: [], retyped: [] }, rebuilds: [], stops_on: [],
+    }]);
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['a string', 'oops'],
+    ['an object', { kind: 'seed_reload' }],
+    ['null', null],
+  ])('notices is [] when release-controller sends %s', (_label, notices) => {
+    expect(projectRelease({ ...rel, notices }).notices).toEqual([]);
+  });
+
+  it('a notice of the wrong shape is dropped, a field of the wrong type is its empty value', () => {
+    const odd = [1, null, 'x', { kind: 7, node_id: [], load: { operation: 3 }, columns: { added: 'a', removed: [1, 'b'] }, rebuilds: [{ node_id: 2 }, 'z'] }];
+    expect(projectRelease({ ...rel, notices: odd }).notices).toEqual([{
+      kind: '', node_id: '', service: '', change: '', load: '',
+      columns: { added: [], removed: ['b'], retyped: [] }, rebuilds: [{ node_id: '', operation: '' }], stops_on: [],
+    }]);
   });
 
   it('a release of a service the CI identity is not bound to reads as not found, without naming the service', async () => {
@@ -320,7 +368,7 @@ describe('GET /api/v1/releases/:id', () => {
     const odd = { release_id: 7, status: null, changed_service: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
     expect(projectRelease(odd)).toEqual({
       release_id: '', service: '', status: '', terminal: false, bootstrap: false, rebaseline: false,
-      repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null,
+      repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null, notices: [],
     });
   });
 

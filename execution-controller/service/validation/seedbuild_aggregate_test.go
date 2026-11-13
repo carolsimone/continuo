@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,4 +250,53 @@ func (*modeScopedDepRepo) LoadByTaskAttempt(context.Context, string, int) (*mode
 }
 func (*modeScopedDepRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
 	panic("HasAttemptAfter not used by these tests")
+}
+
+func TestSeedBuildAggregate_CarriesEachNodesPreflightFindings(t *testing.T) {
+	withFindings := seedBuildDep(t, "rel", "seed.a", "ok")
+	withFindings.Observe(model.AttemptFacts{SeedPreflight: &seedreload.Findings{
+		DropSemantics: "cascade", Completeness: "exact", Checked: true,
+		Dependents: []seedreload.Dependent{{Schema: "bi", Name: "fx_rates_report", Kind: "view", Owner: "bi", Depth: 1}}}})
+	without := seedBuildDep(t, "rel", "seed.b", "ok")
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{withFindings, without}}
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.EmitSeedBuildAggregateIfComplete(
+		context.Background(), depRepo, outboxRepo, &fakeAggRepo{won: true}, "rel", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	require.Len(t, perNode, 2)
+	assert.JSONEq(t, `{"drop_semantics":"cascade","completeness":"exact","checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]}`,
+		mustJSON(t, perNode[0]["seed_preflight"]))
+	assert.NotContains(t, perNode[1], "seed_preflight", "a node whose facts hold no findings carries none")
+	assert.Contains(t, string(outboxRepo.last.Payload), `"status":"ok"`, "the findings never change the leg's result")
+}
+
+// A seed whose load found a view outside the allowed set still leaves the leg
+// to the seed's own outcome: findings are data, not a verdict.
+func TestSeedBuildAggregate_FindingsDoNotChangeAFailedLegOrAnOkOne(t *testing.T) {
+	findings := &seedreload.Findings{DropSemantics: "cascade", Completeness: "exact", Checked: true}
+	ok := seedBuildDep(t, "rel", "seed.a", "ok")
+	ok.Observe(model.AttemptFacts{SeedPreflight: findings})
+	bad := seedBuildDep(t, "rel", "seed.b", "failed")
+	bad.Observe(model.AttemptFacts{SeedPreflight: findings})
+	outboxRepo := &captureOutbox{}
+
+	require.NoError(t, validation.EmitSeedBuildAggregateIfComplete(context.Background(),
+		&fakeDepRepo{pending: 0, results: []*model.Deployment{ok, bad}}, outboxRepo, &fakeAggRepo{won: true}, "rel", time.Now()))
+
+	require.NotNil(t, outboxRepo.last)
+	perNode := perNodeOf(t, outboxRepo.last.Payload)
+	assert.Equal(t, "ok", perNode[0]["status"])
+	assert.Equal(t, "failed", perNode[1]["status"])
+	assert.Contains(t, string(outboxRepo.last.Payload), `"status":"failed"`)
+	assert.Contains(t, perNode[0]["seed_preflight"].(map[string]any), "dependents", "an empty dependents list renders as an array")
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(raw)
 }

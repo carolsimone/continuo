@@ -127,6 +127,22 @@ def test_a_declared_timeout_is_kept_and_an_undeclared_one_leaves_no_key():
     assert "timeout_seconds" not in third
 
 
+def test_writes_the_seed_reload_fields_only_when_set():
+    nodes = [
+        {"unique_id": "analytics.seed_fx_rates_eur", "node_type": "dbt-seed", "materialized": "seed", "full_refresh": True,
+         "seed_columns": [{"name": "currency", "type": ""}, {"name": "rate_to_eur", "type": "numeric"}]},
+        {"unique_id": "analytics.flags", "node_type": "dbt-seed", "materialized": "seed", "full_refresh": False},
+        {"unique_id": "analytics.py_daily_kpis", "node_type": "python-node", "materialized": "", "full_refresh": None, "seed_columns": []},
+    ]
+    doc = json.loads(canonical_topology_json(tenant_id="default", release_id="rel-1", nodes=nodes))
+    by_id = {n["unique_id"]: n for n in doc["nodes"]}
+    assert by_id["analytics.seed_fx_rates_eur"]["full_refresh"] is True
+    assert by_id["analytics.seed_fx_rates_eur"]["seed_columns"] == [{"name": "currency", "type": ""}, {"name": "rate_to_eur", "type": "numeric"}]
+    assert by_id["analytics.flags"]["full_refresh"] is False
+    assert "seed_columns" not in by_id["analytics.flags"]
+    assert {"materialized", "full_refresh", "seed_columns"}.isdisjoint(by_id["analytics.py_daily_kpis"])
+
+
 def test_upstreams_are_sorted():
     """Edges are a set: the canonical form sorts each node's upstreams, as Go's
     CanonicalJSON does, so resolution order never changes the bytes."""

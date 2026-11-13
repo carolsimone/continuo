@@ -54,10 +54,12 @@ import (
 // run.
 //
 // A report for a run that has ended changes nothing: every attempt of such a
-// run has ended. The boolean result reports whether the report made the task
-// succeeded. Returns ErrTaskNotHeld when the run holds no such task (no task
-// has the report's id, or another run holds it), before the attempt is read,
-// and ErrAttemptNotIssued when the task has no such attempt.
+// run has ended. The status result is the status the report ended the task
+// with (succeeded, failed or cancelled), and empty when the report did not end
+// the task: a failure the task retries leaves it open. Returns ErrTaskNotHeld
+// when the run holds no such task (no task has the report's id, or another run
+// holds it), before the attempt is read, and ErrAttemptNotIssued when the task
+// has no such attempt.
 func (r *Run) RecordAttemptReport(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -65,34 +67,34 @@ func (r *Run) RecordAttemptReport(
 	rep AttemptReport,
 	d TaskDefaults,
 	now time.Time,
-) ([]DomainEvent, bool, error) {
+) ([]DomainEvent, TaskStatus, error) {
 	if r.IsTerminal() {
-		return nil, false, nil
+		return nil, "", nil
 	}
 	task, exists, err := tasks.LoadAttemptState(ctx, rep.TaskID)
 	if err != nil {
-		return nil, false, fmt.Errorf("load task attempt: %w", err)
+		return nil, "", fmt.Errorf("load task attempt: %w", err)
 	}
 	if !exists {
-		return nil, false, ErrTaskNotHeld
+		return nil, "", ErrTaskNotHeld
 	}
 	if task.RunID != r.runID {
-		return nil, false, fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, rep.TaskID, task.RunID)
+		return nil, "", fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, rep.TaskID, task.RunID)
 	}
 	a, held, err := tasks.LoadAttempt(ctx, rep.TaskID, rep.Attempt)
 	if err != nil {
-		return nil, false, fmt.Errorf("load attempt %d: %w", rep.Attempt, err)
+		return nil, "", fmt.Errorf("load attempt %d: %w", rep.Attempt, err)
 	}
 	if !held {
-		return nil, false, fmt.Errorf("%w: attempt %d of task %s", ErrAttemptNotIssued, rep.Attempt, rep.TaskID)
+		return nil, "", fmt.Errorf("%w: attempt %d of task %s", ErrAttemptNotIssued, rep.Attempt, rep.TaskID)
 	}
 	stopping := task.Status == TaskStatusStopping && rep.Attempt == task.Attempt
 	if rep.Status == AttemptStopped && !a.Status.IsFinal() && !stopping {
-		return nil, false, fmt.Errorf("%w: attempt %d of task %s", ErrStopNotRequested, rep.Attempt, rep.TaskID)
+		return nil, "", fmt.Errorf("%w: attempt %d of task %s", ErrStopNotRequested, rep.Attempt, rep.TaskID)
 	}
 	applied, changed := a.Apply(rep)
 	if !applied {
-		return nil, false, nil
+		return nil, "", nil
 	}
 	if stopping && !a.Status.IsFinal() {
 		// The attempt is asked about on the stop's schedule, which the cancel
@@ -100,33 +102,30 @@ func (r *Run) RecordAttemptReport(
 		a.NextCheckIn = 0
 	}
 	if err := tasks.SaveAttempt(ctx, a); err != nil {
-		return nil, false, fmt.Errorf("save attempt %d: %w", a.Number, err)
+		return nil, "", fmt.Errorf("save attempt %d: %w", a.Number, err)
 	}
 	if !changed || rep.Attempt != task.Attempt {
-		return nil, false, nil
+		return nil, "", nil
 	}
 
 	switch a.Status {
 	case AttemptQueued, AttemptRunning:
 		if stopping {
-			return nil, false, nil
+			return nil, "", nil
 		}
-		return nil, false, r.moveTask(ctx, tasks, rep.TaskID, TaskStatus(a.Status), a.Number, now)
+		return nil, "", r.moveTask(ctx, tasks, rep.TaskID, TaskStatus(a.Status), a.Number, now)
 	case AttemptSucceeded:
-		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusSucceeded, d, now)
-		return events, err == nil, err
+		return r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusSucceeded, d, now)
 	case AttemptFailed:
 		if r.status == RunStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
 			events, err := r.dispatchNextAttempt(ctx, tasks, graph, rep.TaskID, task, d, now)
-			return events, false, err
+			return events, "", err
 		}
-		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusFailed, d, now)
-		return events, false, err
+		return r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusFailed, d, now)
 	case AttemptStopped:
-		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusCancelled, d, now)
-		return events, false, err
+		return r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusCancelled, d, now)
 	}
-	return nil, false, nil
+	return nil, "", nil
 }
 
 // moveTask writes status and attempt n on the task and stamps r's progress
@@ -148,10 +147,11 @@ func (r *Run) moveTask(ctx context.Context, tasks TaskCollection, taskID uuid.UU
 // does, and cannot wait in a cycle with a concurrent take of the same nodes.
 // The run releases a task's lease nowhere else, so a task keeps its lease
 // across every retry and while it is stopping, until the report that ends it.
+// It returns status, the status it ended the task with.
 func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID, task TaskAttemptState,
-	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
+	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, TaskStatus, error) {
 	if err := r.moveTask(ctx, tasks, taskID, status, task.Attempt, now); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	r.fillSlot()
 	var events []DomainEvent
@@ -160,29 +160,29 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 		case TaskStatusSucceeded:
 			dispatched, err := r.dispatchReady(ctx, tasks, graph, task.NodeKey, d, now)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			events = dispatched
 		case TaskStatusFailed:
 			if err := r.skipBlocked(ctx, tasks, graph, task.NodeKey); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 		}
 	}
 	if err := tasks.ReleaseLease(ctx, taskID); err != nil {
-		return nil, fmt.Errorf("release the lease of task %s: %w", taskID, err)
+		return nil, "", fmt.Errorf("release the lease of task %s: %w", taskID, err)
 	}
 	finalized, err := r.finalizeWhenEveryTaskEnded(ctx, tasks, now)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return append(events, finalized...), nil
+	return append(events, finalized...), status, nil
 }
 
 // dispatchNextAttempt adds the attempt after the task's current one,
 // dispatched and due for its first check, makes the task dispatched at it and
-// records its TaskDispatched, built from the node the run's release holds. The
-// task keeps the write lease it holds on its node.
+// records its TaskDispatched, built from the node the run's release holds and
+// the task's stored spec. The task keeps the write lease it holds on its node.
 func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID,
 	task TaskAttemptState, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	node, found, err := graph.Node(ctx, r.release.ReleaseID, task.NodeKey)
@@ -204,7 +204,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 	if err := r.moveTask(ctx, tasks, taskID, TaskStatusDispatched, next, now); err != nil {
 		return nil, err
 	}
-	return []DomainEvent{r.dispatchEvent(taskID, next, node, jobName, d)}, nil
+	return []DomainEvent{r.dispatchEvent(taskID, next, node, jobName, task.Spec, d)}, nil
 }
 
 // finalizeWhenEveryTaskEnded finalizes r when every task has ended, the plan

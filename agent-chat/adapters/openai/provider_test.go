@@ -97,3 +97,26 @@ func TestStreamTurn_MapsToolHistory(t *testing.T) {
 	assert.Equal(t, "tool", m2["role"])
 	assert.Equal(t, "call_1", m2["tool_call_id"])
 }
+
+// A repeated chat flag is offered to the model as an array of strings; every
+// other parameter stays a string.
+func TestToWireTools_ARepeatedParamIsAnArrayOfStrings(t *testing.T) {
+	tools := toWireTools([]ports.ToolDef{{
+		Name: "node_full-refresh",
+		Params: []ports.ToolParam{
+			{Name: "service", Required: true},
+			{Name: "acknowledge", Description: "an object", Flag: true, Repeated: true},
+		},
+	}})
+	raw, err := json.Marshal(tools[0].Function.Parameters)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"object","properties":{"acknowledge":{"type":"array","description":"an object","items":{"type":"string"}},"service":{"type":"string"}},"required":["service"]}`, string(raw))
+}
+
+// A list the model sends for a repeated parameter reaches ToolCall.Args as its
+// JSON array, which the executor decodes into one value per item.
+func TestParseToolArgs_KeepsAListAsItsJSONArray(t *testing.T) {
+	args, err := parseToolArgs(`{"service":"finance","acknowledge":["bi.customer_report","bi.churn"]}`)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"service": "finance", "acknowledge": `["bi.customer_report","bi.churn"]`}, args)
+}

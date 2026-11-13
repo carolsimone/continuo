@@ -57,6 +57,11 @@ describe('RunView', () => {
     expect(screen.queryByTestId('run-progress-pct')).toBeNull();
   });
 
+  it('links the shown run to its release from the progress header', () => {
+    renderRunView({ releaseId: 'rel-a1b2c3d-201' });
+    expect(screen.getByRole('link', { name: 'rel-a1b2c3d-201' })).toHaveAttribute('href', '/releases/rel-a1b2c3d-201');
+  });
+
   it('says a run has no tasks for state no-tasks, without a progress header', () => {
     renderRunView({ state: 'no-tasks', tasks: [] });
     expect(screen.getByText('This run has no tasks.')).toBeInTheDocument();

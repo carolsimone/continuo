@@ -11,6 +11,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/events"
@@ -89,7 +90,7 @@ func TestAttemptReport_AReportNamingAnotherTenantIsDeadLettered(t *testing.T) {
 	runID := uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
 	now := time.Now()
 	ended := run.HydrateRun(pkgevents.DefaultTenantID, runID, "daily", run.RunStatusSucceeded, run.KindCron, nil, identity.SystemUserID, model.OperationRun, now, nil, &now, nil, nil, nil, nil, nil, 0)
-	handler := handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: time.Hour}, nil, bindTestLogger())
+	handler := handlers.NewAttemptReportHandler(run.TaskDefaults{MaxRetries: 2, Timeout: time.Hour}, nil, nil, warehouse.SchemaBound, bindTestLogger())
 	bind := func(runs *tenantRuns) (func(context.Context, map[string]any) error, *recordingDedupRepo) {
 		u, dedup := newRecordingUnitOfWork(false)
 		u.SetRunRepo(runs)

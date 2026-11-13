@@ -317,3 +317,72 @@ func TestExecute_AReadCarriesNoRequestID(t *testing.T) {
 		ports.ToolCall{ID: "call-1", Name: "schedule_status", Args: map[string]string{"schedule-name": "daily"}})
 	assert.Empty(t, requestIDOf(t, res))
 }
+
+func fullRefreshCall(args map[string]string) ports.ToolCall {
+	base := map[string]string{"service": "finance", "schema": "raw", "table": "customers"}
+	for k, v := range args {
+		base[k] = v
+	}
+	return call("node_full-refresh", base)
+}
+
+func wideExecutor(t *testing.T) *Executor {
+	return NewExecutor(testCatalog(t), fakeCLI(t), nil, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
+
+// A list parameter arrives as the JSON array the providers encode; each item
+// becomes one --<flag> <value> pair after the positionals, in order.
+func TestExecutor_RendersEachAcknowledgedObjectAsAFlagAfterThePositionals(t *testing.T) {
+	res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+		fullRefreshCall(map[string]string{"acknowledge": `["bi.customer_report","bi.churn"]`}))
+	assert.False(t, res.IsError, res.Output)
+	assert.Contains(t, res.Output,
+		`"argv":"node full-refresh finance raw customers --acknowledge bi.customer_report --acknowledge bi.churn"`)
+}
+
+func TestExecutor_AnEmptyAcknowledgeListAddsNothing(t *testing.T) {
+	res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+		fullRefreshCall(map[string]string{"acknowledge": `[]`}))
+	assert.False(t, res.IsError, res.Output)
+	assert.Contains(t, res.Output, `"argv":"node full-refresh finance raw customers"`)
+}
+
+func TestExecutor_RejectsAnAcknowledgedObjectThatStartsWithADash(t *testing.T) {
+	res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+		fullRefreshCall(map[string]string{"acknowledge": `["bi.report","--endpoint=evil:1"]`}))
+	assert.True(t, res.IsError)
+	assert.Contains(t, res.Output, "must not start with '-'")
+}
+
+func TestExecutor_RejectsAListParameterThatIsNotAnArrayOfStrings(t *testing.T) {
+	for _, raw := range []string{"bi.report", `[1,2]`, `{"a":"b"}`} {
+		res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+			fullRefreshCall(map[string]string{"acknowledge": raw}))
+		assert.True(t, res.IsError, raw)
+		assert.Contains(t, res.Output, "list of strings", raw)
+	}
+}
+
+// A flag the command does not mark for the chat is not a parameter of its tool,
+// so naming it is rejected like any unknown parameter.
+func TestExecutor_RejectsAFlagTheCommandDoesNotMarkForTheChat(t *testing.T) {
+	res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+		fullRefreshCall(map[string]string{"endpoint": "evil:1"}))
+	assert.True(t, res.IsError)
+	assert.Contains(t, res.Output, `unknown parameter \"endpoint\"`)
+}
+
+// A chat-flag item is one object name: whitespace or a control character in it
+// would make the confirm prompt show more objects than the argv sends, or break
+// the prompt's rendering, so the call is refused.
+func TestExecutor_RejectsAnAcknowledgedObjectWithWhitespaceOrAControlCharacter(t *testing.T) {
+	for _, item := range []string{"bi.a --acknowledge bi.b", "bi.a\tbi.b", "bi.a\nbi.b", "bi.a\x1b[2J", "bi.a bi.b"} {
+		raw, err := json.Marshal([]string{item})
+		require.NoError(t, err)
+		res := wideExecutor(t).Execute(context.Background(), "alice", uuid.New(),
+			fullRefreshCall(map[string]string{"acknowledge": string(raw)}))
+		assert.True(t, res.IsError, "%q must be refused", item)
+		assert.Contains(t, res.Output, "whitespace or control characters", item)
+	}
+}

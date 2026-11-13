@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -30,6 +31,8 @@ type seedBuildNodeDTO struct {
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
 	ImageTag    string `json:"image_tag"`
+	// SeedPreflight is present only on a seed whose release noticed a reload.
+	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
 }
 
 // ParseSeedBuildRequested translates a seed.build.requested:v1 XMessage into a
@@ -90,12 +93,13 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 					i, s.UniqueID, s.NodeType, string(pkg_model.NodeTypeDbtSeed))
 		}
 		seeds = append(seeds, events.SeedBuildNode{
-			NodeID:      s.UniqueID,
-			ServiceName: s.ServiceName,
-			SchemaName:  s.SchemaName,
-			TableName:   s.TableName,
-			NodeType:    nodeType,
-			ImageTag:    s.ImageTag,
+			NodeID:        s.UniqueID,
+			ServiceName:   s.ServiceName,
+			SchemaName:    s.SchemaName,
+			TableName:     s.TableName,
+			NodeType:      nodeType,
+			ImageTag:      s.ImageTag,
+			SeedPreflight: s.SeedPreflight.ToDomain(),
 		})
 		seedIDSet[s.UniqueID] = struct{}{}
 	}

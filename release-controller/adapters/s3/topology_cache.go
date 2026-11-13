@@ -31,8 +31,9 @@ func newTopologyCache(size int) *topologyCache {
 	return &topologyCache{size: size, order: list.New(), byURI: map[string]*list.Element{}}
 }
 
-// cloneTopology returns a deep copy of topo: the node slice and every node's
-// slice field are copied, so the result shares no backing array with topo. A
+// cloneTopology returns a deep copy of topo: the node slice, every node's
+// slice fields and its FullRefresh pointee are copied, so the result shares no
+// memory with topo. A
 // topology handed to a caller, and one held by the cache, must never alias.
 // release.Node's reference-typed fields are enumerated by
 // TestCloneTopology_CoversEveryReferenceField.
@@ -43,6 +44,11 @@ func cloneTopology(topo release.Topology) release.Topology {
 	out := make(release.Topology, len(topo))
 	for i, n := range topo {
 		n.UpstreamUniqueIDs = slices.Clone(n.UpstreamUniqueIDs)
+		n.SeedColumns = slices.Clone(n.SeedColumns)
+		if n.FullRefresh != nil {
+			fullRefresh := *n.FullRefresh
+			n.FullRefresh = &fullRefresh
+		}
 		out[i] = n
 	}
 	return out

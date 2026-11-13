@@ -391,3 +391,27 @@ func TestGrantLease_RefusesATaskTheRunDoesNotHold(t *testing.T) {
 	assert.Empty(t, tc.waiterTakes)
 	assert.NotContains(t, tc.leases, fkey("ftable_a"))
 }
+
+// The grant of a seed that waited for its node's lease dispatches it with the
+// task's own operation, plan reason and preflight.
+func TestGrantLease_DispatchKeepsTheTasksDispatchSpec(t *testing.T) {
+	pf := checkPreflight()
+	r, tc := promotedSeedsRun(t)
+	tc.leases["analytics.seed_fx_rates_eur"] = otherRunsTask
+	g := &memTaskGraph{g: fxGraph(), tc: tc}
+	_, err := r.Start(context.Background(), tc, fxReloadPlan(pf), g.g, taskDefaults, startNow)
+	require.NoError(t, err)
+	seed := seedTaskOf(r)
+	require.Equal(t, run.WaitReasonNodeLease, tc.waits[seed])
+	delete(tc.leases, "analytics.seed_fx_rates_eur")
+
+	events, dispatched, err := r.GrantLease(context.Background(), tc, g, seed, taskDefaults, grantAt)
+
+	require.NoError(t, err)
+	assert.True(t, dispatched)
+	d := onlyDispatch(t, events)
+	assert.Equal(t, seed, d.TaskID)
+	assert.Equal(t, model.OperationFullRefresh, d.Operation)
+	assert.Equal(t, "columns changed", d.Reason)
+	assert.Equal(t, pf, d.Preflight)
+}

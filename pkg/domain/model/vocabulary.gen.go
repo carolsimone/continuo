@@ -602,7 +602,7 @@ const (
 	FailureClassTask FailureClass = "task"
 	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
 	FailureClassResource FailureClass = "resource"
-	// FailureClassInfra — the attempt was lost to the platform; its node, its Job or its record is gone, or Kubernetes refused its Job.
+	// FailureClassInfra — the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the seed preflight could not reach the warehouse.
 	FailureClassInfra FailureClass = "infra"
 	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
 	FailureClassStart FailureClass = "start"
@@ -685,6 +685,18 @@ const (
 	FailureReasonJobNameCollision FailureReason = "job_name_collision"
 	// FailureReasonImageContractMismatch — the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.
 	FailureReasonImageContractMismatch FailureReason = "image_contract_mismatch"
+	// FailureReasonSeedFullRefreshDisabled — the seed sets +full_refresh false where only a full refresh can apply its change, so no command can rebuild it; refused before any container starts.
+	FailureReasonSeedFullRefreshDisabled FailureReason = "seed_full_refresh_disabled"
+	// FailureReasonUnownedDependents — the seed preflight found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
+	FailureReasonUnownedDependents FailureReason = "unowned_dependents"
+	// FailureReasonEngineMismatch — the validation image's engine adapter declares another drop family than the install's warehouse engine, so the seed preflight cannot tell what a drop destroys; nothing was dropped.
+	FailureReasonEngineMismatch FailureReason = "engine_mismatch"
+	// FailureReasonSeedFullRefreshUndefined — the task is a seed full refresh and the dbt-commands block that governs its service defines no seed_full_refresh command; refused before any container starts.
+	FailureReasonSeedFullRefreshUndefined FailureReason = "seed_full_refresh_undefined"
+	// FailureReasonFullRefreshUndefined — the task is a model full refresh and the dbt-commands block that governs its service defines no full_refresh command; refused before any container starts.
+	FailureReasonFullRefreshUndefined FailureReason = "full_refresh_undefined"
+	// FailureReasonWarehouseUnreachable — the seed preflight could not connect to the warehouse; nothing was dropped.
+	FailureReasonWarehouseUnreachable FailureReason = "warehouse_unreachable"
 )
 
 // FailureReasons returns every value in contract.yaml declaration order.
@@ -708,6 +720,12 @@ func FailureReasons() []FailureReason {
 		FailureReasonMalformedDispatch,
 		FailureReasonJobNameCollision,
 		FailureReasonImageContractMismatch,
+		FailureReasonSeedFullRefreshDisabled,
+		FailureReasonUnownedDependents,
+		FailureReasonEngineMismatch,
+		FailureReasonSeedFullRefreshUndefined,
+		FailureReasonFullRefreshUndefined,
+		FailureReasonWarehouseUnreachable,
 	}
 }
 
@@ -749,6 +767,18 @@ func (v FailureReason) IsValid() bool {
 	case FailureReasonJobNameCollision:
 		return true
 	case FailureReasonImageContractMismatch:
+		return true
+	case FailureReasonSeedFullRefreshDisabled:
+		return true
+	case FailureReasonUnownedDependents:
+		return true
+	case FailureReasonEngineMismatch:
+		return true
+	case FailureReasonSeedFullRefreshUndefined:
+		return true
+	case FailureReasonFullRefreshUndefined:
+		return true
+	case FailureReasonWarehouseUnreachable:
 		return true
 	}
 	return false
@@ -793,6 +823,18 @@ func (v FailureReason) Class() FailureClass {
 		return FailureClassInvalid
 	case FailureReasonImageContractMismatch:
 		return FailureClassInvalid
+	case FailureReasonSeedFullRefreshDisabled:
+		return FailureClassInvalid
+	case FailureReasonUnownedDependents:
+		return FailureClassInvalid
+	case FailureReasonEngineMismatch:
+		return FailureClassInvalid
+	case FailureReasonSeedFullRefreshUndefined:
+		return FailureClassInvalid
+	case FailureReasonFullRefreshUndefined:
+		return FailureClassInvalid
+	case FailureReasonWarehouseUnreachable:
+		return FailureClassInfra
 	}
 	return ""
 }

@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
 
@@ -149,4 +150,31 @@ func newClientServingLogsPerContainer(t *testing.T, job *batchv1.Job, pod *corev
 	require.NoError(t, err)
 
 	return &K8sClient{clientset: cs, logger: slog.Default()}
+}
+
+func TestGetContainerLog_ReadsTheNamedContainersLog(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "seed-pod", Namespace: "default", Labels: map[string]string{"job-name": "seed-job"}}}
+	client := &K8sClient{clientset: fake.NewSimpleClientset(pod), logger: slog.Default()}
+
+	log, err := client.GetContainerLog(context.Background(), "default", "seed-job", "seed-preflight")
+	require.NoError(t, err)
+	assert.Equal(t, "fake logs", log)
+
+	log, err = client.GetContainerLog(context.Background(), "default", "no-such-job", "seed-preflight")
+	require.NoError(t, err)
+	assert.Empty(t, log, "a Job with no pod left has no log")
+}
+
+func TestGetContainerLog_ReadsOnlyTheNamedContainer(t *testing.T) {
+	pod := &corev1.Pod{
+		TypeMeta:   metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
+		ObjectMeta: metav1.ObjectMeta{Name: "seed-pod", Namespace: "default", Labels: map[string]string{"job-name": "seed-job"}},
+	}
+	client := newClientServingLogsPerContainer(t, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "seed-job", Namespace: "default"}}, pod,
+		map[string]string{"": "dbt output", "seed-preflight": "preflight output"})
+
+	log, err := client.GetContainerLog(context.Background(), "default", "seed-job", "seed-preflight")
+
+	require.NoError(t, err)
+	assert.Equal(t, "preflight output", log)
 }

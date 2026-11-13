@@ -186,4 +186,68 @@ describe('RunNodeTable', () => {
     expect(within(block).getAllByRole('row')[1].querySelector('.pill-sm')?.className)
       .toContain('pill-sm--pending');
   });
+
+  it('shows a task operation and its reason', () => {
+    render(
+      <RunNodeTable
+        tasks={[
+          task('seed_table_1', 'succeeded', { operation: 'full_refresh', plan_reason: 'columns changed' }),
+          task('seed_table_1_view', 'succeeded', {
+            operation: 'run', plan_reason: 'rebuild: dropped by the load of e2e_schema.seed_table_1',
+          }),
+          task('plain', 'succeeded', { operation: 'run', plan_reason: null }),
+        ]}
+        attemptsByTask={noAttempts} edges={[]}
+        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+    );
+    expect(screen.getAllByText('Full refresh')).toHaveLength(1);
+    expect(screen.getByText('Full refresh').className).toContain('pill-sm--muted');
+    expect(screen.getByText('columns changed').className).toContain('task-reason');
+    expect(screen.getByText('rebuild: dropped by the load of e2e_schema.seed_table_1')).toBeInTheDocument();
+    expect(screen.getByText('plain').closest('td')!.querySelector('.task-reason')).toBeNull();
+  });
+
+  it('lists the findings of a failed seed preflight in the expanded attempt', () => {
+    const attempts = groupAttemptsByTask([attempt('seed_table_1', 0, {
+      failure_class: 'invalid', failure_reason: 'unowned_dependents',
+      seed_preflight: {
+        drop_semantics: 'cascade', completeness: 'complete', checked: true,
+        dependents: [
+          { schema: 'bi', name: 'fx_rates_report', kind: 'view', owner: 'bi', depth: 1, allowed: false },
+          { schema: 'e2e_schema', name: 'seed_table_1_view', kind: 'view', owner: 'core', depth: 1, allowed: true },
+        ],
+        probes: [
+          { schema: 'bi', name: 'broken_view', ok: false, error: 'relation does not exist' },
+          { schema: 'bi', name: 'fine_view', ok: true, error: '' },
+        ],
+      },
+    })]);
+    render(
+      <RunNodeTable tasks={[task('seed_table_1', 'failed')]} attemptsByTask={attempts} edges={[]}
+        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+    );
+    expect(screen.queryByText('bi.fx_rates_report (view, owner bi)')).toBeNull();
+    fireEvent.click(screen.getByText('seed_table_1').closest('tr')!);
+    expect(screen.getByText('bi.fx_rates_report (view, owner bi)')).toBeInTheDocument();
+    expect(screen.getByText('bi.broken_view: relation does not exist')).toBeInTheDocument();
+    expect(screen.queryByText(/seed_table_1_view/)).toBeNull();
+    expect(screen.queryByText(/fine_view/)).toBeNull();
+  });
+
+  it('adds no findings row when the preflight found nothing outside the allowed set', () => {
+    const attempts = groupAttemptsByTask([attempt('seed_table_1', 0, {
+      status: 'succeeded',
+      seed_preflight: {
+        drop_semantics: 'cascade', completeness: 'complete', checked: true,
+        dependents: [{ schema: 'e2e_schema', name: 'v', kind: 'view', owner: 'core', depth: 1, allowed: true }],
+        probes: [],
+      },
+    })]);
+    const { container } = render(
+      <RunNodeTable tasks={[task('seed_table_1', 'succeeded')]} attemptsByTask={attempts} edges={[]}
+        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByText('seed_table_1').closest('tr')!);
+    expect(container.querySelector('.remediation-verif')).toBeNull();
+  });
 });

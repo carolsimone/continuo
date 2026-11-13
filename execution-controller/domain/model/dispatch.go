@@ -33,21 +33,31 @@ const (
 	// record nor its Job is held, and no pod of it is left; it is reported
 	// failed as attempt_lost.
 	ReportLost
-	// AwaitOrphanPod: run-controller knows the attempt as acknowledged and neither its
-	// record nor its Job is held, but a pod of it has not finished (its Job
-	// was deleted without its pods). Nothing is written: the pod may still
-	// write the table, and run-controller asks again.
+	// AwaitOrphanPod: run-controller knows the attempt as acknowledged, or the
+	// dbt-commands configuration refuses its command, and neither its record
+	// nor its Job is held, but a pod of it has not finished (its Job was
+	// deleted without its pods). Nothing is written: the pod may still write
+	// the table, and run-controller asks again.
 	AwaitOrphanPod
 )
 
 // DecideDispatch decides what a dispatch leads to, from whether the attempt's
-// record is held, whether a later attempt's is, the problem (if any) that
-// stops the dispatch from running, whether a Job carrying the task and
-// attempt exists, whether a pod of the attempt has not finished, and run-controller's
-// known status. Only a dispatch run-controller still knows as dispatched creates an
-// attempt: an acknowledged attempt is never run again because of a question,
-// and is reported lost only once no pod of it can run.
-func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt, podOfAttemptRunning bool,
+// record is held, whether a later attempt's is, the problem (if any) of the
+// command itself, the refusal (if any) the current dbt-commands configuration
+// gives it, whether a Job carrying the task and attempt exists, whether a pod
+// of the attempt has not finished, and run-controller's known status. Only a
+// dispatch run-controller still knows as dispatched creates an attempt: an
+// acknowledged attempt is never run again because of a question, and is
+// reported lost only once no pod of it can run.
+//
+// The two problems sit at different steps. A problem of the command can
+// never have produced a Job, so it refuses the dispatch before any Job or pod
+// is considered. A configuration refusal (a full refresh command the block no
+// longer defines) only stops a Job from being created: a Job or a pod of the
+// attempt may have been made while the configuration defined the command and
+// may still write the table, so a Job is adopted and an unfinished pod
+// awaited before a dispatched attempt is refused.
+func DecideDispatch(held, laterHeld bool, problem, configRefusal pkgmodel.FailureReason, jobOfAttempt, podOfAttemptRunning bool,
 	knownStatus pkgmodel.AttemptStatus) DispatchAction {
 	switch {
 	case held:
@@ -58,10 +68,12 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 		return RefuseInvalid
 	case jobOfAttempt:
 		return AdoptJob
-	case knownStatus == pkgmodel.AttemptStatusDispatched:
+	case knownStatus == pkgmodel.AttemptStatusDispatched && configRefusal == "":
 		return CreateAttempt
 	case podOfAttemptRunning:
 		return AwaitOrphanPod
+	case knownStatus == pkgmodel.AttemptStatusDispatched:
+		return RefuseInvalid
 	}
 	return ReportLost
 }
@@ -118,8 +130,10 @@ var jobNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // reason when nothing does. An unknown-external node type stops it too: a table no node
 // builds is never run. A job_name that is not a DNS-1123 label of 1 to 63
 // characters stops it: Kubernetes can never read such a Job, so no lookup of
-// the attempt's Job could ever answer. The Job itself may still be refused
-// when it is built (deploy.ErrMalformedDispatch).
+// the attempt's Job could ever answer. A seed preflight stops it unless it is
+// on a seed, in check or report mode, for a known warehouse family, against a
+// relation of a schema and a table. The Job itself may still be refused when
+// it is built (deploy.ErrMalformedDispatch).
 func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus) (pkgmodel.FailureReason, string) {
 	nodeType, err := pkgmodel.ParseNodeType(cmd.NodeType)
 	if err != nil {
@@ -140,7 +154,10 @@ func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus)
 		problem = "image_tag is empty"
 	case cmd.TimeoutSeconds < 1:
 		problem = fmt.Sprintf("timeout_seconds %d is below 1", cmd.TimeoutSeconds)
-	default:
+	case cmd.SeedPreflight != nil:
+		problem = seedPreflightProblem(nodeType, cmd.SeedPreflight)
+	}
+	if problem == "" {
 		if _, err := pkgmodel.ParseOperation(cmd.Operation); err != nil {
 			problem = err.Error()
 		}

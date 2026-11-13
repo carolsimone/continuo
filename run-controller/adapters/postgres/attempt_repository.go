@@ -113,7 +113,7 @@ type questionRow struct {
 	Status       string    `db:"status"`
 	ChecksSent   int       `db:"checks_sent"`
 	JobName      string    `db:"job_name"`
-	Operation    string    `db:"operation"`
+	dispatchSpecColumns
 	topologyNodeRow
 }
 
@@ -128,7 +128,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	var row questionRow
 	err := r.tx.GetContext(ctx, &row, `
 		SELECT s.run_id, s.schedule_name AS run_schedule_name, a.task_id, a.attempt, a.status, a.checks_sent, a.job_name,
-		       t.operation,
+		       t.operation, t.plan_reason, t.seed_preflight,
 		       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 		       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
 		FROM task_attempts a
@@ -146,6 +146,10 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	if err != nil {
 		return run.Question{}, false, fmt.Errorf("lock attempt %d of task %s: %w", key.Attempt, key.TaskID, err)
 	}
+	spec, err := row.spec()
+	if err != nil {
+		return run.Question{}, false, fmt.Errorf("attempt %d of task %s: %w", key.Attempt, key.TaskID, err)
+	}
 	return run.Question{
 		RunID:        row.RunID,
 		TenantID:     key.TenantID,
@@ -156,7 +160,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		ChecksSent:   row.ChecksSent,
 		JobName:      row.JobName,
 		Node:         row.toDomain(),
-		Operation:    operationFromColumn(row.Operation),
+		Spec:         spec,
 	}, true, nil
 }
 

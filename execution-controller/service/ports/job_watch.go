@@ -44,12 +44,15 @@ type JobTerminator interface {
 	DeleteJob(ctx context.Context, jobName string) error
 }
 
-// PodLogReader reads the log of an attempt's pod.
+// PodLogReader reads the logs of an attempt's pod.
 type PodLogReader interface {
 	// GetPodLogs returns the full log and its last tailLines lines of
 	// jobName's pod: its main container's, or a failed init container's when
 	// the main container wrote nothing. Both are empty when no pod is left.
 	GetPodLogs(ctx context.Context, jobName string, tailLines int64) (fullLog, tail string, err error)
+	// GetContainerLog returns the full log of the named container of
+	// jobName's pod; empty when no pod is left.
+	GetContainerLog(ctx context.Context, jobName, container string) (string, error)
 }
 
 // ObservationQueue holds the names of the Jobs whose deployments need

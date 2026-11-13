@@ -589,7 +589,7 @@ vocabularies:
         description: the pod ran out of a node resource; it was killed for memory or evicted.
       - value: infra
         const: Infra
-        description: the attempt was lost to the platform; its node, its Job or its record is gone, or Kubernetes refused its Job.
+        description: the attempt was lost to the platform; its node, its Job or its record is gone, Kubernetes refused its Job, or the seed preflight could not reach the warehouse.
       - value: start
         const: Start
         description: the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
@@ -680,3 +680,27 @@ vocabularies:
         const: ImageContractMismatch
         class: invalid
         description: the python harness found that the contract, script, imports or assets baked into the image do not hash to the content_hash the dispatch carries, so the image is not the code the release promoted.
+      - value: seed_full_refresh_disabled
+        const: SeedFullRefreshDisabled
+        class: invalid
+        description: the seed sets +full_refresh false where only a full refresh can apply its change, so no command can rebuild it; refused before any container starts.
+      - value: unowned_dependents
+        const: UnownedDependents
+        class: invalid
+        description: the seed preflight found an object reading the seed outside the views the run rebuilds and the objects an operator named, on a warehouse where dropping the seed destroys it; nothing was dropped.
+      - value: engine_mismatch
+        const: EngineMismatch
+        class: invalid
+        description: the validation image's engine adapter declares another drop family than the install's warehouse engine, so the seed preflight cannot tell what a drop destroys; nothing was dropped.
+      - value: seed_full_refresh_undefined
+        const: SeedFullRefreshUndefined
+        class: invalid
+        description: the task is a seed full refresh and the dbt-commands block that governs its service defines no seed_full_refresh command; refused before any container starts.
+      - value: full_refresh_undefined
+        const: FullRefreshUndefined
+        class: invalid
+        description: the task is a model full refresh and the dbt-commands block that governs its service defines no full_refresh command; refused before any container starts.
+      - value: warehouse_unreachable
+        const: WarehouseUnreachable
+        class: infra
+        description: the seed preflight could not connect to the warehouse; nothing was dropped.

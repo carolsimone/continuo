@@ -13,6 +13,7 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -2683,4 +2684,131 @@ func TestHandleParsedManifest_Rebaseline_PromotesWithBothFlags(t *testing.T) {
 	p := promotedEvent(t, lastEntryOn(store, streams.ReleasePromotedV2))
 	assert.True(t, p.Bootstrap)
 	assert.True(t, p.Rebaseline)
+}
+
+// fxReleaseTopologies returns the design's seed reload example: production
+// holds analytics.seed_fx_rates_eur, and the candidate adds the column source
+// to it, beside two views and a table that read it.
+func fxReleaseTopologies() (candidate, prod release.Topology) {
+	yes := true
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+		SchemaName: "analytics", TableName: "seed_fx_rates_eur", ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0", Schedule: "seed",
+		SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_date"}, {Name: "rate_to_eur"}}}
+	candSeed := prodSeed
+	candSeed.ContentHash, candSeed.SeedColumnsHash = "sha256:71fe", "sha256:0d3c"
+	candSeed.SeedColumns = append(append([]release.SeedColumn{}, prodSeed.SeedColumns...), release.SeedColumn{Name: "source"})
+	candidate = release.Topology{
+		candSeed,
+		{UniqueID: "analytics.fx_rates_current", ServiceName: "finance", NodeType: "dbt-model", Materialized: "view", Schedule: "hourly",
+			SchemaName: "analytics", TableName: "fx_rates_current", ContentHash: "sha256:c1", UpstreamUniqueIDs: []string{"analytics.seed_fx_rates_eur"}},
+		{UniqueID: "analytics.fx_rates_latest_eur", ServiceName: "finance", NodeType: "dbt-model", Materialized: "view", Schedule: "hourly",
+			SchemaName: "analytics", TableName: "fx_rates_latest_eur", ContentHash: "sha256:c2", UpstreamUniqueIDs: []string{"analytics.fx_rates_current"}},
+		{UniqueID: "analytics.fx_transactions_eur", ServiceName: "finance", NodeType: "dbt-model", Materialized: "table", Schedule: "daily",
+			SchemaName: "analytics", TableName: "fx_transactions_eur", ContentHash: "sha256:c3", UpstreamUniqueIDs: []string{"analytics.seed_fx_rates_eur"}},
+	}
+	return candidate, release.Topology{prodSeed}
+}
+
+func TestHandleParsedManifest_StoresTheNoticesOfEachDroppingSeed(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-notice", map[string]string{"finance": "sha-f"})
+	candidate, prod := fxReleaseTopologies()
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-notice", Status: "ok", TopologyRef: putTopology(t, deps, "rel-notice", candidate),
+	}))
+
+	r, err := store.GetRelease("rel-notice")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
+	require.Len(t, r.Notices(), 1)
+	n := r.Notices()[0]
+	assert.Equal(t, "analytics.seed_fx_rates_eur", n.NodeID)
+	assert.Equal(t, "reloads", n.Prediction)
+	assert.False(t, n.Unvalidated)
+	assert.Len(t, n.Rebuilds, 2)
+}
+
+func TestEmitSeedBuildRequested_CarriesAReportPreflightForEachNoticedSeed(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-preflight", map[string]string{"finance": "sha-f"})
+	candidate, prod := fxReleaseTopologies()
+	// A second changed seed whose load drops nothing has no notice.
+	prodZones := release.Node{UniqueID: "analytics.seed_zones", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+		SchemaName: "analytics", TableName: "seed_zones", ContentHash: "sha256:aa01", SeedColumnsHash: "sha256:bb02", Schedule: "seed"}
+	candZones := prodZones
+	candZones.ContentHash = "sha256:aa02"
+	candidate = append(candidate, candZones)
+	prod = append(prod, prodZones)
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-preflight", Status: "ok", TopologyRef: putTopology(t, deps, "rel-preflight", candidate),
+	}))
+
+	var payload struct {
+		Seeds []map[string]json.RawMessage `json:"seeds"`
+	}
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.SeedBuildRequestedV1).Payload, &payload))
+	require.Len(t, payload.Seeds, 2)
+	assert.JSONEq(t, `"analytics.seed_fx_rates_eur"`, string(payload.Seeds[0]["unique_id"]))
+	assert.JSONEq(t, `{"mode":"report","engine_family":"schema_bound","relation":"analytics.seed_fx_rates_eur","allowed":["analytics.fx_rates_current","analytics.fx_rates_latest_eur"],"acknowledged":[]}`,
+		string(payload.Seeds[0]["seed_preflight"]))
+	assert.JSONEq(t, `"analytics.seed_zones"`, string(payload.Seeds[1]["unique_id"]))
+	assert.NotContains(t, payload.Seeds[1], "seed_preflight")
+}
+
+func TestHandleParsedManifest_ABootstrapStoresNoticesToo(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rel-boot-notice", map[string]string{"finance": "sha-f"})
+	candidate, prod := fxReleaseTopologies()
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-boot-notice", Status: "ok", TopologyRef: putTopology(t, deps, "rel-boot-notice", candidate),
+	}))
+
+	r, err := store.GetRelease("rel-boot-notice")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	require.Len(t, r.Notices(), 1)
+	assert.True(t, r.Notices()[0].Unvalidated, "a bootstrap skips validation, so its column change is unvalidated")
+}
+
+// A bootstrap with nothing in production has no seed to compare against, so
+// it has no notice.
+func TestHandleParsedManifest_ABootstrapOnAnEmptyProductionHasNoNotice(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rel-boot-empty", map[string]string{"finance": "sha-f"})
+	candidate, _ := fxReleaseTopologies()
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-boot-empty", Status: "ok", TopologyRef: putTopology(t, deps, "rel-boot-empty", candidate),
+	}))
+
+	r, err := store.GetRelease("rel-boot-empty")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Empty(t, r.Notices())
+}
+
+func TestHandleParsedManifest_ARebaselineStoresNoNotices(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rel-rebase-notice", map[string]string{"finance": "sha-f"},
+		func(in *handlers.ReceiveCandidateInput) { in.Rebaseline = true })
+	var logBuf bytes.Buffer
+	deps.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+	candidate, prod := fxReleaseTopologies()
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-rebase-notice", Status: "ok", TopologyRef: putTopology(t, deps, "rel-rebase-notice", candidate),
+	}))
+
+	r, err := store.GetRelease("rel-rebase-notice")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
+	assert.Empty(t, r.Notices())
+	// GET /releases/{id} renders the stored notices through this mapping.
+	body, err := json.Marshal(map[string]any{"notices": serialization.NoticesFromDomain(r.Notices())})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"notices":[]}`, string(body))
+	assert.Contains(t, logBuf.String(), "rebaseline release: no seed reload notices")
+	assert.Contains(t, logBuf.String(), "release_id=rel-rebase-notice")
 }

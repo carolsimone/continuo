@@ -221,3 +221,26 @@ func TestNode_IsDormant(t *testing.T) {
 		assert.Equal(t, tc.want, n.IsDormant(), "%s of schedule %q", tc.nodeType, tc.schedule)
 	}
 }
+
+func TestNodeRelation_FallsBackToTheKey(t *testing.T) {
+	assert.Equal(t, "stg.orders", topology.Node{Key: "stg.orders"}.Relation())
+	assert.Equal(t, "stg.alias", topology.Node{Key: "stg.orders", ResolvedRelationID: "stg.alias"}.Relation())
+}
+
+func TestNewRelease_CopiesMaterializedFullRefreshAndRelation(t *testing.T) {
+	yes := true
+	seed := spec("raw", "countries", "dbt-seed")
+	seed.Materialized, seed.FullRefresh = "seed", &yes
+	view := spec("stg", "v", "dbt-model", "raw.countries")
+	view.Materialized, view.ResolvedRelationID = "view", "stg.v_alias"
+
+	rel, err := topology.NewRelease("default", "rel-1", 1, "s3://b/k", "abc", []topology.NodeSpec{seed, view})
+	require.NoError(t, err)
+
+	assert.Equal(t, "seed", rel.Nodes[0].Materialized)
+	require.NotNil(t, rel.Nodes[0].FullRefresh)
+	assert.True(t, *rel.Nodes[0].FullRefresh)
+	assert.NotSame(t, seed.FullRefresh, rel.Nodes[0].FullRefresh, "the release owns its copy of the flag")
+	assert.Equal(t, "stg.v_alias", rel.Nodes[1].Relation())
+	assert.Nil(t, rel.Nodes[1].FullRefresh)
+}

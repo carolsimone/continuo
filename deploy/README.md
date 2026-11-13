@@ -201,8 +201,14 @@ release.
 
 **Release read.** The answer carries `release_id`, `service`, `status`,
 `terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
-`bootstrap`, `rebaseline`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
-the release's page in the dashboard. A CI token can read only releases of the
+`bootstrap`, `rebaseline`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, `ui_url`,
+the release's page in the dashboard, and `notices`. `notices` is an array with
+one entry for each seed whose change reloads its table (`[]` when the release
+has none): `kind`, `node_id`, `service`, `change`, `load` (the operation of the
+seed's own load), `columns` (`added`, `removed` and `retyped` column names),
+`rebuilds` (the views the run rebuilds after the load, each with `node_id` and
+`operation`) and `stops_on` (the warehouse objects outside continuo that stop
+the load, empty unless the load is predicted to stop). A CI token can read only releases of the
 services its bindings grant; a release of any other service answers `404`
 `not_found`, exactly as a release that does not exist. A pipeline polling for
 `terminal` stays well inside the read limit (300 a minute per principal) with

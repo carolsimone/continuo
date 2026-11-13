@@ -26,6 +26,10 @@ type MaterializationRepository interface {
 	// request as it is.
 	RecordBuilt(ctx context.Context, tenantID string, b seeds.Built) error
 
+	// LoadedSeedColumns returns the seed column fingerprint recorded for each of
+	// keys that has a row; a key with no row is left out.
+	LoadedSeedColumns(ctx context.Context, tenantID string, keys []topology.NodeKey) (map[topology.NodeKey]string, error)
+
 	// DeleteAbsentFrom deletes the rows of nodes the release does not have and
 	// returns how many it deleted. A row whose latest request names a run that
 	// is still pending or running is kept.

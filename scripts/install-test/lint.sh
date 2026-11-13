@@ -495,7 +495,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, catalog backup, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -525,6 +525,14 @@ done
   || { echo "FAIL: the upgrade notes do not say exactly once that schedules are no longer read from the chart"; exit 1; }
 if grep -qF "$schedules_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the schedules upgrade note"; exit 1
+fi
+# An upgrading operator is told once that a validation image below v0.12.0 must
+# be re-pinned; an installing one is told nothing.
+repin_note='A validation.imageTag below v0.12.0 fails the render'
+[ "$(grep -cF "$repin_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that a validation image below v0.12.0 must be re-pinned"; exit 1; }
+if grep -qF "$repin_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the validation re-pin note"; exit 1
 fi
 # An upgrading operator with catalog's backup on is told once what S3 access
 # the exports need and how to turn them off; an installing one, and one who
@@ -981,6 +989,46 @@ if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.ba
   echo "FAIL: a release without llm.baseUrl must render"; exit 1
 fi
 
+# The validation image gate refuses a runner that cannot run what continuo
+# sends it: below v0.12.0 there is no seed_preflight, which every seed load
+# that drops its table runs first.
+echo "--- validation: the image gate refuses a runner below v0.12.0"
+for old in v0.5.0 v0.10.0 v0.11.0; do
+  refuse_render 'predates seed_preflight' --set "validation.imageTag=${old}"
+done
+for ok in v0.12.0 v0.12.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 v0.13.1; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "validation.imageTag=${ok}" > /dev/null \
+    || { echo "FAIL: validation.imageTag=${ok} must render"; exit 1; }
+done
+
+# agent-chat's continuo CLI reaches release-controller's gRPC server at the
+# address global.releaseControllerGrpcAddr holds, and release-controller's port
+# admits agent-chat alone.
+echo "--- release-controller's gRPC port: agent-chat gets its address, and only agent-chat reaches it"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" > "${tmp}/rc-grpc-default.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.releaseControllerGrpcAddr=rc.corp.example:50056 > "${tmp}/rc-grpc-moved.yaml"
+[ "$(grep -A1 'name: CONTINUO_RELEASE_CONTROLLER_ADDR' "${tmp}/rc-grpc-default.yaml" | grep -cF 'value: "release-controller:50056"')" = 1 ] \
+  || { echo "FAIL: agent-chat's CONTINUO_RELEASE_CONTROLLER_ADDR must default to release-controller:50056"; exit 1; }
+[ "$(grep -A1 'name: CONTINUO_RELEASE_CONTROLLER_ADDR' "${tmp}/rc-grpc-moved.yaml" | grep -cF 'value: "rc.corp.example:50056"')" = 1 ] \
+  || { echo "FAIL: CONTINUO_RELEASE_CONTROLLER_ADDR must render from global.releaseControllerGrpcAddr"; exit 1; }
+grep -qF 'name: RELEASE_CONTROLLER_GRPC_PORT' "${tmp}/rc-grpc-default.yaml" \
+  || { echo "FAIL: release-controller must get RELEASE_CONTROLLER_GRPC_PORT"; exit 1; }
+python3 - "${tmp}/rc-grpc-default.yaml" <<'PY' || { echo "FAIL: release-controller's gRPC port must admit agent-chat alone"; exit 1; }
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+policies = [d for d in docs if d["kind"] == "NetworkPolicy" and any(
+    p.get("port") == 50056 for r in d["spec"].get("ingress", []) for p in r.get("ports", []))]
+assert len(policies) == 1, [p["metadata"]["name"] for p in policies]
+policy = policies[0]
+assert policy["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/name"] == "release-controller"
+sources = [f["podSelector"]["matchLabels"]["app.kubernetes.io/name"]
+           for r in policy["spec"]["ingress"] for f in r["from"]]
+assert sources == ["agent-chat"], sources
+services = [d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == "release-controller"]
+assert [p["port"] for p in services[0]["spec"]["ports"] if p["name"] == "grpc"] == [50056]
+PY
+
 # The egress-proxy allowlist follows the LLM, GitHub and S3 settings, so a
 # company that switches provider never edits it by hand. Every egress.* entry
 # is validated as written; a bad one fails the render naming the key and the
@@ -1156,13 +1204,19 @@ python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-dlc.ya
 grep -q 'kubernetes.io/metadata.name: ops$' "${tmp}/egress-np-dlc.yaml" \
   || { echo "FAIL: a global.*GrpcAddr in another namespace must reach the agents' egress policy"; exit 1; }
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.releaseControllerGrpcAddr=release-controller.ops.svc:50056 > "${tmp}/egress-np-rc.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-rc.yaml"
+grep -q 'kubernetes.io/metadata.name: ops$' "${tmp}/egress-np-rc.yaml" \
+  || { echo "FAIL: global.releaseControllerGrpcAddr in another namespace must reach the agents' egress policy"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set global.deadLetterControllerGrpcAddr=dlc.corp.example:50055 \
+  --set global.releaseControllerGrpcAddr=rc.corp.example:50056 \
   --set global.runControllerGrpcAddr=run-controller.corp.example:50051 > "${tmp}/egress-np-fqdn.yaml"
-if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|run-controller\.corp\.example'; then
+if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|rc\.corp\.example|run-controller\.corp\.example'; then
   echo "FAIL: a global.*GrpcAddr whose host is no in-cluster name must go through the proxy, not NO_PROXY"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-fqdn.yaml"
-for f in egress-np-global egress-np-env egress-np-forms egress-np-dlc egress-np-fqdn egress-allowlisted-local \
+for f in egress-np-global egress-np-env egress-np-forms egress-np-dlc egress-np-rc egress-np-fqdn egress-allowlisted-local \
   egress-allowlisted-wildcard egress-allowlisted-public egress-llm-localhost; do
   python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
 done

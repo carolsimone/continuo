@@ -78,6 +78,13 @@ def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
     return SkippedNode(node_id=node_id, service=service, reason=reason)
 
 
+def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
+    """A seed's config.full_refresh when it is a bool; None for any other value
+    and for every node that is not a seed."""
+    value = config.get("full_refresh")
+    return value if resource_type == "seed" and isinstance(value, bool) else None
+
+
 def _table_name(node: dict) -> str:
     """The table name a dbt node is known by: its name, or "<name>.v<version>"
     for a versioned model, so each version of a model is a node of its own and
@@ -155,6 +162,7 @@ def parse_manifest(
             schema_name=node["schema"],
             resolved_relation=node.get("alias") or table_name,
             materialized=(node.get("config") or {}).get("materialized") or "",
+            full_refresh=_seed_full_refresh(resource_type, node.get("config") or {}),
             service_name=node["fqn"][0].replace("_", "-"),
             owner=owner,
             schedule_name=schedule_name,

@@ -80,6 +80,12 @@ func (f *fakeTopologyRepo) Graph(context.Context, string, string, []topology.Nod
 	return topology.Graph{}, nil
 }
 
+func (f *fakeTopologyRepo) ViewClosure(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, nil
+}
+func (f *fakeTopologyRepo) IsBootstrapRelease(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeTopologyRepo) NodeHashes(context.Context, string, string, topology.NodeKey) (topology.NodeHashes, bool, error) {
 	return topology.NodeHashes{}, false, nil
 }
@@ -101,6 +107,9 @@ func (f *fakeMaterializationRepo) RecordAttempt(context.Context, string, topolog
 
 func (f *fakeMaterializationRepo) RecordBuilt(context.Context, string, seeds.Built) error { return nil }
 
+func (f *fakeMaterializationRepo) LoadedSeedColumns(context.Context, string, []topology.NodeKey) (map[topology.NodeKey]string, error) {
+	return nil, nil
+}
 func (f *fakeMaterializationRepo) DeleteAbsentFrom(_ context.Context, tenantID, releaseID string) (int64, error) {
 	f.deletedFor = append(f.deletedFor, tenantID+"/"+releaseID)
 	return 0, nil
@@ -149,7 +158,63 @@ func seedSpec(table string) topology.NodeSpec {
 }
 
 func promotedUoW(topo *fakeTopologyRepo, mats *fakeMaterializationRepo) *uow.FakeUnitOfWork {
-	return &uow.FakeUnitOfWork{TopologyRepo: topo, MaterializationRepo: mats}
+	return &uow.FakeUnitOfWork{TopologyRepo: topo, MaterializationRepo: mats, ViewOutageRepo: &fakeViewOutages{}}
+}
+
+// A promotion that moves the live release deletes the outages of the nodes
+// the release no longer holds, in its own transaction, so a view whose
+// rebuild failed and that the release removes is no longer counted missing.
+func TestReleasePromotedHandler_DeletesTheOutagesOfNodesTheReleaseDropped(t *testing.T) {
+	topo := &fakeTopologyRepo{live: topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 3}, loaded: true}
+	outages := &fakeViewOutages{
+		open: map[topology.NodeKey]seeds.ViewOutage{
+			"stg.v1": {Key: "stg.v1", State: seeds.OutageMissing, SeedKey: "raw.orders"},
+			"stg.v2": {Key: "stg.v2", State: seeds.OutageMissing, SeedKey: "raw.orders"},
+		},
+		nodesOf: func(releaseID string) []topology.NodeKey {
+			var keys []topology.NodeKey
+			for _, rel := range topo.saved {
+				if rel.ReleaseID != releaseID {
+					continue
+				}
+				for _, n := range rel.Nodes {
+					keys = append(keys, n.Key)
+				}
+			}
+			return keys
+		},
+	}
+	u := promotedUoW(topo, &fakeMaterializationRepo{})
+	u.ViewOutageRepo = outages
+	view := func(table string) topology.NodeSpec {
+		spec := seedSpec(table)
+		spec.UniqueID, spec.SchemaName, spec.NodeType = "stg."+table, "stg", "dbt-model"
+		return spec
+	}
+	h := handlers.NewReleasePromotedHandler(&fakeArtifactReader{}, nil, testLogger())
+
+	require.NoError(t, h.Handle(context.Background(), u, handlers.ReleasePromotedInput{
+		Promotion: promotedRelease("rel-2", 4), Nodes: []topology.NodeSpec{seedSpec("orders"), view("v1")},
+	}, uuid.New()))
+
+	assert.Equal(t, []string{"default/rel-2"}, outages.deletedIn)
+	_, found, err := outages.Get(context.Background(), "default", "stg.v2")
+	require.NoError(t, err)
+	assert.False(t, found, "the outage of a node the release dropped is deleted")
+	_, found, err = outages.Get(context.Background(), "default", "stg.v1")
+	require.NoError(t, err)
+	assert.True(t, found, "the outage of a node the release holds stays")
+
+	t.Run("a promotion that leaves the live release deletes nothing", func(t *testing.T) {
+		topo := &fakeTopologyRepo{live: topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 4}, loaded: true}
+		u := promotedUoW(topo, &fakeMaterializationRepo{})
+		outages := u.ViewOutageRepo.(*fakeViewOutages)
+
+		require.NoError(t, h.Handle(context.Background(), u,
+			handlers.ReleasePromotedInput{Promotion: promotedRelease("rel-1", 3)}, uuid.New()))
+
+		assert.Empty(t, outages.deletedIn)
+	})
 }
 
 func TestReleasePromotedHandler_LoadFillsTheNodes(t *testing.T) {
@@ -339,4 +404,19 @@ func TestReleasePromotedHandler_PassesRebaselineToTheSeedReconcile(t *testing.T)
 	require.Len(t, reconciler.triggers, 1)
 	assert.True(t, reconciler.triggers[0].Bootstrap)
 	assert.True(t, reconciler.triggers[0].Rebaseline)
+}
+
+func TestReleasePromotedHandler_StoresTheReleaseAsBootstrapWhenThePromotionIs(t *testing.T) {
+	for _, bootstrap := range []bool{true, false} {
+		topo := &fakeTopologyRepo{loaded: true}
+		h := handlers.NewReleasePromotedHandler(&fakeArtifactReader{}, nil, testLogger())
+		p := promotedRelease("rel-1", 1)
+		p.Bootstrap = bootstrap
+
+		require.NoError(t, h.Handle(context.Background(), promotedUoW(topo, &fakeMaterializationRepo{}),
+			handlers.ReleasePromotedInput{Promotion: p, Nodes: []topology.NodeSpec{seedSpec("orders")}}, uuid.New()))
+
+		require.Len(t, topo.saved, 1)
+		assert.Equal(t, bootstrap, topo.saved[0].Bootstrap)
+	}
 }

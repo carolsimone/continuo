@@ -157,3 +157,32 @@ func TestRerun_OfASingleNodeRunOfADormantNodeRunsItAgain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, planOf(pending("dormant_d"), "dormant_d"), plan)
 }
+
+// A rerun that executes a source rebuild again keeps the rebuild's operation,
+// reason and seed while the seed is carried over as succeeded; when the rerun
+// loads the seed again, that load plans the rebuild instead.
+func TestRerun_CarriesASourceRebuildWhileItsSeedIsInherited(t *testing.T) {
+	const (
+		s  topology.NodeKey = "analytics.seed_fx"
+		mv topology.NodeKey = "analytics.fx_mv"
+	)
+	g := topology.NewGraph([]topology.Node{{Key: s, NodeType: "dbt-seed"}, {Key: mv, NodeType: "dbt-model"}},
+		[]topology.Edge{{Upstream: s, Downstream: mv}})
+	seedTask := runplan.SourceTask{Key: s, TaskID: uuid.New(), Succeeded: true}
+	rebuild := runplan.SourceTask{Key: mv, TaskID: uuid.New(), Operation: model.OperationFullRefresh,
+		Reason: "rebuild: dropped by the load of analytics.seed_fx", RebuildOf: s}
+
+	p, err := runplan.Rerun{Source: runplan.Source{Operation: model.OperationRun, Tasks: []runplan.SourceTask{seedTask, rebuild}}}.Select(g)
+	assert.NoError(t, err)
+	full := model.OperationFullRefresh
+	assert.Equal(t, []runplan.PlannedTask{
+		{Key: mv, Operation: &full, Reason: rebuild.Reason, RebuildOf: s},
+		{Key: s, Inherited: true, InheritedFrom: seedTask.TaskID},
+	}, p.Tasks)
+	assert.Equal(t, []topology.NodeKey{mv}, p.Ready)
+
+	seedTask.Succeeded = false
+	p, err = runplan.Rerun{Source: runplan.Source{Operation: model.OperationRun, Tasks: []runplan.SourceTask{seedTask, rebuild}}}.Select(g)
+	assert.NoError(t, err)
+	assert.Equal(t, []runplan.PlannedTask{{Key: mv}, {Key: s}}, p.Tasks)
+}

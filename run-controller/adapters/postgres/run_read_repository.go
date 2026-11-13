@@ -43,6 +43,8 @@ type runGraphNodeRow struct {
 	WaitReason     string     `db:"wait_reason"`
 	WaitingSince   *time.Time `db:"lease_wait_since"`
 	WaitingOnRunID *uuid.UUID `db:"waiting_on_run_id"`
+	Operation      string     `db:"operation"`
+	PlanReason     string     `db:"plan_reason"`
 }
 
 type runGraphEdgeRow struct {
@@ -80,7 +82,9 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 		       COALESCE(n.node_type, '')     AS node_type,
 		       COALESCE(t.wait_reason, '')   AS wait_reason,
 		       t.lease_wait_since,
-		       l.run_id                      AS waiting_on_run_id
+		       l.run_id                      AS waiting_on_run_id,
+		       t.operation,
+		       t.plan_reason
 		FROM tasks t
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		LEFT JOIN topology_nodes n
@@ -101,6 +105,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
 			WaitReason: run.WaitReason(n.WaitReason), WaitingSince: n.WaitingSince,
 			WaitingOnRunID: n.WaitingOnRunID,
+			Operation:      operationFromColumn(n.Operation), PlanReason: n.PlanReason,
 		})
 	}
 
@@ -123,12 +128,28 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 }
 
 type runSummaryRow struct {
-	RunID        uuid.UUID `db:"run_id"`
-	ScheduleName string    `db:"schedule_name"`
-	Status       string    `db:"status"`
-	FailReason   *string   `db:"failure_reason"`
-	CreatedAt    time.Time `db:"created_at"`
-	CompletedAt  time.Time `db:"completed_at"`
+	RunID        uuid.UUID  `db:"run_id"`
+	ScheduleName string     `db:"schedule_name"`
+	Kind         string     `db:"kind"`
+	Status       string     `db:"status"`
+	ReleaseID    *string    `db:"release_id"`
+	FailReason   *string    `db:"failure_reason"`
+	CreatedAt    time.Time  `db:"created_at"`
+	CompletedAt  *time.Time `db:"completed_at"`
+}
+
+const runSummaryColumns = `run_id, schedule_name, kind, status, release_id, failure_reason, created_at, completed_at`
+
+func (row runSummaryRow) summary() projection.RunSummary {
+	s := projection.RunSummary{
+		RunID: row.RunID, ScheduleName: row.ScheduleName, Kind: run.Kind(row.Kind),
+		Status: run.RunStatus(row.Status), ReleaseID: stringOrEmpty(row.ReleaseID),
+		CreatedAt: row.CreatedAt, CompletedAt: row.CompletedAt,
+	}
+	if row.FailReason != nil {
+		s.FailureReason = run.RunFailureReason(*row.FailReason)
+	}
+	return s
 }
 
 // ListCompletedRuns implements repository.RunReadRepository.
@@ -141,26 +162,42 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, tenantID, sch
 	}
 	var rows []runSummaryRow
 	if err := r.db.SelectContext(ctx, &rows, `
-		SELECT run_id, schedule_name, status, failure_reason, created_at, completed_at
+		SELECT `+runSummaryColumns+`
 		FROM runs
 		WHERE tenant_id = $4 AND schedule_name = $1 AND completed_at IS NOT NULL
 		ORDER BY created_at DESC, run_id
 		LIMIT $2 OFFSET $3`, scheduleName, limit, offset, tenantID); err != nil {
 		return nil, 0, fmt.Errorf("list completed runs of %s: %w", scheduleName, err)
 	}
+	return summariesOf(rows), total, nil
+}
+
+// ListReleaseRuns implements repository.RunReadRepository.
+func (r *RunReadRepository) ListReleaseRuns(ctx context.Context, tenantID, releaseID, kind string, limit, offset int) ([]projection.RunSummary, int, error) {
+	var total int
+	if err := r.db.GetContext(ctx, &total, `
+		SELECT count(*) FROM runs
+		WHERE tenant_id = $1 AND release_id = $2 AND ($3 = '' OR kind = $3)`, tenantID, releaseID, kind); err != nil {
+		return nil, 0, fmt.Errorf("count the runs of release %s: %w", releaseID, err)
+	}
+	var rows []runSummaryRow
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT `+runSummaryColumns+`
+		FROM runs
+		WHERE tenant_id = $1 AND release_id = $2 AND ($3 = '' OR kind = $3)
+		ORDER BY created_at DESC, run_id
+		LIMIT $4 OFFSET $5`, tenantID, releaseID, kind, limit, offset); err != nil {
+		return nil, 0, fmt.Errorf("list the runs of release %s: %w", releaseID, err)
+	}
+	return summariesOf(rows), total, nil
+}
+
+func summariesOf(rows []runSummaryRow) []projection.RunSummary {
 	runs := make([]projection.RunSummary, 0, len(rows))
 	for _, row := range rows {
-		s := projection.RunSummary{
-			RunID: row.RunID, ScheduleName: row.ScheduleName,
-			TerminalStatus: run.RunStatus(row.Status),
-			CreatedAt:      row.CreatedAt, CompletedAt: row.CompletedAt,
-		}
-		if row.FailReason != nil {
-			s.FailureReason = run.RunFailureReason(*row.FailReason)
-		}
-		runs = append(runs, s)
+		runs = append(runs, row.summary())
 	}
-	return runs, total, nil
+	return runs
 }
 
 type activeRunRow struct {

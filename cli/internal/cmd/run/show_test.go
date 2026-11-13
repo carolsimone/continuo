@@ -27,7 +27,8 @@ func showFake() *fakeRunClient {
 	return &fakeRunClient{
 		run: fullRun(),
 		taskPages: []*runv1.ListTasksResponse{{TotalCount: 3, Tasks: []*runv1.Task{
-			{TaskId: "t-a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: "succeeded", Attempt: 1},
+			{TaskId: "t-a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: "succeeded", Attempt: 1,
+				Operation: "full_refresh", PlanReason: "columns changed"},
 			{TaskId: "t-b", ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: "failed", Attempt: 2},
 			{TaskId: "t-c", ServiceName: "svc", SchemaName: "raw", TableName: "c", Status: "pending",
 				WaitReason: "node_lease", WaitingOnRunId: "run-other"},
@@ -44,6 +45,8 @@ func showFake() *fakeRunClient {
 
 type showTask struct {
 	Node           string `json:"node"`
+	Operation      string `json:"operation"`
+	PlanReason     string `json:"plan_reason"`
 	Status         string `json:"status"`
 	Attempt        int32  `json:"attempt"`
 	FailureClass   string `json:"failure_class"`
@@ -68,7 +71,7 @@ func TestRunShow_PrintsTheRunAndEachTasksLatestAttemptFailure(t *testing.T) {
 	assert.Equal(t, "failed", p.Run["status"])
 	assert.Equal(t, "2026-10-27T09:05:00Z", p.Run["completed_at"])
 	require.Len(t, p.Tasks, 3)
-	assert.Equal(t, showTask{Node: "svc.raw.a", Status: "succeeded", Attempt: 1}, p.Tasks[0],
+	assert.Equal(t, showTask{Node: "svc.raw.a", Operation: "full_refresh", PlanReason: "columns changed", Status: "succeeded", Attempt: 1}, p.Tasks[0],
 		"a task that succeeded after a failed attempt carries no failure")
 	assert.Equal(t, showTask{Node: "svc.raw.b", Status: "failed", Attempt: 2, FailureClass: "timeout", FailureReason: "deadline_exceeded"}, p.Tasks[1],
 		"the failure of a task is the one of its latest attempt")

@@ -47,4 +47,5 @@ proto:
 	  --go-grpc_out=. --go-grpc_opt=paths=source_relative \
 	  proto/run/v1/run.proto \
 	  proto/catalog/v1/catalog.proto \
-	  proto/deadletter/v1/deadletter.proto
+	  proto/deadletter/v1/deadletter.proto \
+	  proto/release/v1/release.proto

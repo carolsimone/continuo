@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -133,4 +134,25 @@ func TestTaskMaxRetriesRangeMatchesTheChart(t *testing.T) {
 	got := schema.Properties.Runs.Properties.TaskMaxRetries
 	assert.Equal(t, MinTaskMaxRetries, got.Minimum)
 	assert.Equal(t, MaxTaskMaxRetries, got.Maximum)
+}
+
+// run-controller plans seed reloads by the warehouse family of
+// WAREHOUSE_ENGINE, and refuses to start on an engine it has no family for.
+func TestLoad_WarehouseFamily(t *testing.T) {
+	t.Setenv("WAREHOUSE_ENGINE", "trino")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Equal(t, "trino", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.LateBinding, cfg.WarehouseFamily)
+	assert.NotContains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE")
+
+	t.Setenv("WAREHOUSE_ENGINE", "")
+	cfg = Load(&pkgconfig.Validator{})
+	assert.Equal(t, "postgres", cfg.WarehouseEngine)
+	assert.Equal(t, warehouse.SchemaBound, cfg.WarehouseFamily)
+
+	t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+	v = &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE (unsupported")
 }

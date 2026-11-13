@@ -57,6 +57,11 @@ models:
       +tags: ["e2e-deadline"]
     ftable_deadline_down:
       +tags: ["e2e-deadline"]
+    # seed_table_1_view is a view over seed_table_1 on a schedule of its own,
+    # which the seed reload e2e rebuilds when the seed's load drops its table.
+    seed_table_1_view:
+      +materialized: view
+      +tags: ["seed-view"]
     # dormant_probe has no entry here: it carries the project's owner and no
     # tag, so topology-controller keeps it as a dormant node, with no schedule.
     # No cron and no schedule's run builds it; the dormant-node e2e test runs

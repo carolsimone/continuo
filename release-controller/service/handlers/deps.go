@@ -3,6 +3,7 @@ package handlers
 import (
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
@@ -33,4 +34,10 @@ type Deps struct {
 	// verification runs, so candidates wait and fixes already being verified
 	// finish.
 	Maintenance bool
+
+	// Family is the warehouse family of WAREHOUSE_ENGINE and Engine its name:
+	// each release's seed reload notices predict what a seed's load drops by
+	// the family, and name the engine in their reasons.
+	Family warehouse.Family
+	Engine string
 }

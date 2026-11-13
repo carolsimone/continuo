@@ -3,16 +3,21 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type describeFlagJSON struct {
-	Name    string `json:"name"`
-	Usage   string `json:"usage"`
-	Default string `json:"default"`
+	Name     string `json:"name"`
+	Usage    string `json:"usage"`
+	Default  string `json:"default"`
+	Chat     bool   `json:"chat"`
+	Repeated bool   `json:"repeated"`
 }
 type describeCommandJSON struct {
 	Path         string             `json:"path"`
@@ -45,7 +50,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -101,6 +106,32 @@ func TestDescribe_CommandContentIsAccurate(t *testing.T) {
 	for _, want := range []string{"human", "endpoint", "timeout"} {
 		assert.True(t, flagNames[want], "expected global flag --%s in the catalog flag list", want)
 	}
+}
+
+func TestDescribe_ReleaseNoticesIsADocumentedReadOnlyCommand(t *testing.T) {
+	c := findCmd(t, runDescribe(t), "release notices")
+	assert.Equal(t, []string{"<release-id>"}, c.Args)
+	assert.False(t, c.Mutating, "release notices only reads")
+	require.NotEmpty(t, c.Examples)
+	assert.Equal(t, "continuo release notices rel-a1b2c3d-201", c.Examples[0])
+	assert.Contains(t, c.Long, "predicts")
+	assert.Contains(t, c.Long, "preflight")
+
+	var schema map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(c.OutputSchema, &schema))
+	for _, k := range []string{"release_id", "status", "notices"} {
+		_, ok := schema[k]
+		assert.True(t, ok, "release notices output_schema missing key %q", k)
+	}
+	var exits []int
+	require.NoError(t, json.Unmarshal(c.ExitCodes, &exits))
+	assert.Equal(t, []int{0, 2, 3, 5, 6}, exits)
+
+	flagNames := map[string]bool{}
+	for _, f := range c.Flags {
+		flagNames[f.Name] = true
+	}
+	assert.True(t, flagNames["release-endpoint"], "expected global flag --release-endpoint in the catalog flag list")
 }
 
 func TestDescribe_HumanModeWritesSummaryToStderr(t *testing.T) {
@@ -253,4 +284,57 @@ func TestDescribe_RunWriteCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {
 		require.NoError(t, json.Unmarshal(findCmd(t, p, path).ExitCodes, &got))
 		assert.Equal(t, want, got, path)
 	}
+}
+
+// The chat sets only the flags a command marks in its chat_flags annotation.
+// node full-refresh marks --acknowledge, which repeats; every other flag of
+// every command, the global flags included, stays out of the chat's reach.
+func TestDescribe_MarksTheFlagsTheChatMaySetAndTheOnesThatRepeat(t *testing.T) {
+	p := runDescribe(t)
+
+	chatFlags := map[string][]string{}
+	for _, c := range p.Commands {
+		for _, f := range c.Flags {
+			if f.Chat {
+				chatFlags[c.Path] = append(chatFlags[c.Path], f.Name)
+			}
+		}
+	}
+	assert.Equal(t, map[string][]string{"node full-refresh": {"acknowledge"}}, chatFlags)
+
+	byName := map[string]describeFlagJSON{}
+	for _, f := range findCmd(t, p, "node full-refresh").Flags {
+		byName[f.Name] = f
+	}
+	require.Contains(t, byName, "acknowledge")
+	assert.True(t, byName["acknowledge"].Repeated, "--acknowledge is a string array, so describe marks it repeated")
+	require.Contains(t, byName, "endpoint")
+	assert.False(t, byName["endpoint"].Repeated)
+	assert.False(t, byName["endpoint"].Chat)
+}
+
+// Every name a command lists in chat_flags is one of its own flags, and is a
+// string or a string array, since the chat renders it as --<name> <value>
+// once per item: a string slice would split one item on its commas.
+func TestChatFlags_NameRealStringFlagsOfTheirCommand(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if raw, ok := c.Annotations[chatFlagsAnnotation]; ok {
+			for _, name := range strings.Split(raw, ",") {
+				name = strings.TrimSpace(name)
+				if !assert.NotEmpty(t, name, "%s lists a blank chat flag in %q", c.CommandPath(), raw) {
+					continue
+				}
+				f := c.LocalFlags().Lookup(name)
+				if assert.NotNil(t, f, "%s lists chat flag %q, which it does not define", c.CommandPath(), name) {
+					assert.Contains(t, []string{"string", "stringArray"}, f.Value.Type(),
+						"%s chat flag --%s must be a string or a string array", c.CommandPath(), name)
+				}
+			}
+		}
+		for _, child := range c.Commands() {
+			walk(child)
+		}
+	}
+	walk(newRootCommand(io.Discard, io.Discard))
 }

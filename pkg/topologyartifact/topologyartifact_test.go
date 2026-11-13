@@ -55,6 +55,43 @@ func TestCanonicalJSON_MatchesGoldenFixture(t *testing.T) {
 	assert.Equal(t, fx.Canonical, string(got))
 }
 
+func TestCanonicalJSON_WritesTheSeedReloadFieldsOnlyWhenSet(t *testing.T) {
+	yes, no := true, false
+	doc := topologyartifact.Document{SchemaVersion: 1, TenantID: "default", ReleaseID: "rel-1", Nodes: []topologyartifact.Node{
+		{UniqueID: "analytics.seed_fx_rates_eur", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+			SeedColumns: []topologyartifact.SeedColumn{{Name: "currency"}, {Name: "rate_to_eur", Type: "numeric"}}},
+		{UniqueID: "analytics.flags", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &no},
+		{UniqueID: "analytics.fx_rates_current", NodeType: "dbt-model", Materialized: "view"},
+		{UniqueID: "analytics.py_daily_kpis", NodeType: "python-node"},
+	}}
+	raw, err := topologyartifact.CanonicalJSON(doc)
+	require.NoError(t, err)
+	var got struct{ Nodes []map[string]json.RawMessage }
+	require.NoError(t, json.Unmarshal(raw, &got))
+	byID := map[string]map[string]json.RawMessage{}
+	for _, n := range got.Nodes {
+		var id string
+		require.NoError(t, json.Unmarshal(n["unique_id"], &id))
+		byID[id] = n
+	}
+	assert.JSONEq(t, `true`, string(byID["analytics.seed_fx_rates_eur"]["full_refresh"]))
+	assert.JSONEq(t, `[{"name":"currency","type":""},{"name":"rate_to_eur","type":"numeric"}]`, string(byID["analytics.seed_fx_rates_eur"]["seed_columns"]))
+	assert.JSONEq(t, `false`, string(byID["analytics.flags"]["full_refresh"]))
+	assert.NotContains(t, byID["analytics.flags"], "seed_columns")
+	assert.JSONEq(t, `"view"`, string(byID["analytics.fx_rates_current"]["materialized"]))
+	for _, k := range []string{"materialized", "full_refresh", "seed_columns"} {
+		assert.NotContains(t, byID["analytics.py_daily_kpis"], k)
+	}
+	gz, sum, err := topologyartifact.Encode(doc)
+	require.NoError(t, err)
+	back, err := topologyartifact.Decode(gz, sum)
+	require.NoError(t, err)
+	seedBack := back.Nodes[3] // the document holds its nodes sorted by unique_id
+	assert.Equal(t, doc.Nodes[0].SeedColumns, seedBack.SeedColumns)
+	assert.Equal(t, doc.Nodes[0].FullRefresh, seedBack.FullRefresh)
+	assert.Equal(t, "seed", seedBack.Materialized)
+}
+
 func TestCanonicalJSON_DoesNotDependOnInputOrder(t *testing.T) {
 	fx := loadTopologyFixture(t)
 	reordered := fx.Input

@@ -4,6 +4,7 @@ package command
 
 import (
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // Command is a marker interface for all commands.
@@ -43,6 +44,10 @@ type DeployTask struct {
 	// python node's pod receives it as CONTENT_HASH to check its image
 	// against. Empty when the dispatch carries none.
 	ContentHash string
+	// SeedPreflight is the check a seed's pod runs against the warehouse, in
+	// an init container after every other one and before dbt, ahead of the
+	// load that drops the seed's table; nil when the dispatch asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 func (DeployTask) isCommand() {}
@@ -88,6 +93,10 @@ type ValidationDeployTask struct {
 	// every production release. Its DTO field is omitempty so an absent value
 	// keeps the job_params JSON byte-identical.
 	SourceOverlayURI string
+	// SeedPreflight is the report-mode check a seed-build pod runs against
+	// the seed's production table, ahead of dbt; nil for every other leg and
+	// for a seed whose request asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -110,6 +119,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		Attempt:        c.Attempt,
 		TimeoutSeconds: c.TimeoutSeconds,
 		ContentHash:    c.ContentHash,
+		SeedPreflight:  c.SeedPreflight,
 	}
 }
 
@@ -136,5 +146,6 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		ParseProdS3URI:       c.ParseProdS3URI,
 		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 		SourceOverlayURI:     c.SourceOverlayURI,
+		SeedPreflight:        c.SeedPreflight,
 	}
 }

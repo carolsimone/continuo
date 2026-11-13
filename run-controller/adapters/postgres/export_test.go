@@ -8,3 +8,7 @@ const (
 	LastSuccessDurationsQueryForTest = lastSuccessDurationsQuery
 	LastRunsQueryForTest             = lastRunsQuery
 )
+
+// TranslateRunEventForTest is the outbox row an event maps to, for the
+// payload tests.
+var TranslateRunEventForTest = translateRunEvent
