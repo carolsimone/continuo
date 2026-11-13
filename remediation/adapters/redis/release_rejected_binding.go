@@ -16,11 +16,6 @@ import (
 	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
-// validationOpCloneFromProd is release-controller's validation op for a node
-// copied from its production table instead of built from its own code. The
-// value crosses the release.rejected wire as a per-node validation_op.
-const validationOpCloneFromProd = "clone_from_prod"
-
 // rejectedPayload mirrors the release.rejected:v1 wire shape produced by
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
@@ -51,10 +46,11 @@ type rejectedPayload struct {
 		DBTLogURI            string `json:"dbt_log_uri"`
 		RunResultsURI        string `json:"run_results_uri"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
-		// ValidationOp is how the validation leg prepared the node:
-		// build_from_sql, build_from_columns, check_binds, or
-		// validationOpCloneFromProd. Empty on a non-validation rejection and
-		// from a producer that does not send it.
+		// ValidationOp is how the validation leg prepared the node, a value
+		// of the validation_op vocabulary (pkg/domain/model.ValidationOp).
+		// It decodes as a string, so a value this build does not declare
+		// still decodes. Empty on a non-validation rejection and from a
+		// producer that does not send it.
 		ValidationOp string `json:"validation_op"`
 		// RelationID is the contested physical relation for a
 		// duplicate-relation rejection, distinct from NodeID (the target
@@ -205,7 +201,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {
-		if n.Status != "failed" || n.ValidationOp == validationOpCloneFromProd {
+		if n.Status != "failed" || pkg_model.ValidationOp(n.ValidationOp) == pkg_model.ValidationOpCloneFromProd {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{

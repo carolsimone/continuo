@@ -261,3 +261,25 @@ func TestRejectReasonUpstreamCloneFailed_IsDeclaredAndNotHealable(t *testing.T) 
 			r, r.IsValid(), r.Healable())
 	}
 }
+
+// The validation runner reads these four values as VALIDATION_OP, and
+// remediation drops a failed node whose op is clone_from_prod. The runner's
+// candidate-schema ops (ensure_schema, drop_schema) are execution-controller's
+// own and stay out of the vocabulary.
+func TestValidationOp_DeclaresTheFourNodeOps(t *testing.T) {
+	want := []model.ValidationOp{"build_from_sql", "build_from_columns", "check_binds", "clone_from_prod"}
+	got := model.ValidationOps()
+	if len(got) != len(want) {
+		t.Fatalf("ValidationOps() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] || !got[i].IsValid() {
+			t.Errorf("ValidationOps()[%d] = %q (valid %v), want %q", i, got[i], got[i].IsValid(), want[i])
+		}
+	}
+	for _, schemaOp := range []model.ValidationOp{"ensure_schema", "drop_schema"} {
+		if schemaOp.IsValid() {
+			t.Errorf("%q is a candidate-schema op, not a validation op", schemaOp)
+		}
+	}
+}

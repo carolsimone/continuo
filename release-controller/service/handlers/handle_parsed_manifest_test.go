@@ -575,7 +575,7 @@ func TestHandleParsedManifest_UnknownExternalUpstreamIsNotValidated(t *testing.T
 	nodes := decodeValidationRequestedNodes(t, store)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, "a.m", nodes[0]["unique_id"])
-	assert.Equal(t, "build_from_sql", nodes[0]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), nodes[0]["validation_op"])
 	assert.Empty(t, nodes[0]["upstream_node_ids"], "the unknown-external edge gates nothing")
 	for _, n := range nodes {
 		assert.NotEqual(t, "unknown-external", n["node_type"])
@@ -620,7 +620,7 @@ func TestHandleParsedManifest_ATableANodeStartsBuildingIsValidated(t *testing.T)
 	require.Len(t, byID, 2)
 	for _, id := range []string{"raw.x", "a.m"} {
 		require.Contains(t, byID, id)
-		assert.Equal(t, "build_from_sql", byID[id]["validation_op"], id)
+		assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID[id]["validation_op"], id)
 	}
 	for _, n := range nodes {
 		assert.NotEqual(t, "unknown-external", n["node_type"])
@@ -1086,8 +1086,8 @@ func TestHandleParseOK_DerivesCandidateArtifactURIPerNode(t *testing.T) {
 	}
 	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_a1.sql", got["a1"])
 	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_a2.json", got["a2"])
-	assert.Equal(t, "build_from_sql", op["a1"])
-	assert.Equal(t, "build_from_columns", op["a2"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), op["a1"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromColumns), op["a2"])
 }
 
 // TestHandleParsedManifest_OK_TestCountSurvivesFromTheArtifact pins that
@@ -1303,27 +1303,27 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	byID := indexNodesByUniqueID(t, nodes)
 
 	// dbt changed.
-	assert.Equal(t, "build_from_sql", byID["model.shop.orders"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID["model.shop.orders"]["validation_op"])
 	assert.Equal(t, "", byID["model.shop.orders"]["prod_schema"])
 
 	// dbt unchanged.
-	assert.Equal(t, "clone_from_prod", byID["model.core.dim"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["model.core.dim"]["validation_op"])
 	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
 
 	// python-node changed.
-	assert.Equal(t, "build_from_columns", byID["python.shop.enrich"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromColumns), byID["python.shop.enrich"]["validation_op"])
 	assert.Equal(t, "", byID["python.shop.enrich"]["prod_schema"])
 
 	// python-node unchanged.
-	assert.Equal(t, "clone_from_prod", byID["python.core.stats"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["python.core.stats"]["validation_op"])
 	assert.Equal(t, "analytics", byID["python.core.stats"]["prod_schema"])
 
 	// python-csv changed.
-	assert.Equal(t, "build_from_columns", byID["csv.shop.fx"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromColumns), byID["csv.shop.fx"]["validation_op"])
 	assert.Equal(t, "", byID["csv.shop.fx"]["prod_schema"])
 
 	// python-csv unchanged.
-	assert.Equal(t, "clone_from_prod", byID["csv.core.rates"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["csv.core.rates"]["validation_op"])
 	assert.Equal(t, "analytics", byID["csv.core.rates"]["prod_schema"])
 }
 
@@ -1388,16 +1388,16 @@ func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
 	nodes := decodeValidationRequestedNodes(t, store)
 	byID := indexNodesByUniqueID(t, nodes)
 
-	assert.Equal(t, "check_binds", byID["test.p.not_null_m_id.1"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCheckBinds), byID["test.p.not_null_m_id.1"]["validation_op"])
 	assert.Equal(t, "", byID["test.p.not_null_m_id.1"]["prod_schema"])
 
-	assert.Equal(t, "check_binds", byID["test.p.rel.2"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCheckBinds), byID["test.p.rel.2"]["validation_op"])
 	assert.Equal(t, "", byID["test.p.rel.2"]["prod_schema"])
 
-	assert.Equal(t, "build_from_sql", byID["svc.m"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID["svc.m"]["validation_op"])
 	assert.Equal(t, "", byID["svc.m"]["prod_schema"])
 
-	assert.Equal(t, "clone_from_prod", byID["svc.u"]["validation_op"])
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["svc.u"]["validation_op"])
 	assert.Equal(t, "analytics", byID["svc.u"]["prod_schema"])
 }
 
@@ -2363,8 +2363,8 @@ func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidate
 	for _, n := range payload.Nodes {
 		ops[n.UniqueID] = n.ValidationOp
 	}
-	assert.Equal(t, "build_from_sql", ops[verifyMID], "the validated change is built from its candidate SQL, never cloned from production")
-	assert.Equal(t, "build_from_sql", ops[verifyDID])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyMID], "the validated change is built from its candidate SQL, never cloned from production")
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyDID])
 }
 
 // TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNodeAlone:
@@ -2485,8 +2485,8 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 	for _, n := range payload.Nodes {
 		ops[n.UniqueID] = n.ValidationOp
 	}
-	assert.Equal(t, "build_from_sql", ops[verifyAncID], "the context ancestor is built from its candidate SQL")
-	assert.Equal(t, "build_from_sql", ops[verifyFixID])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyAncID], "the context ancestor is built from its candidate SQL")
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), ops[verifyFixID])
 	_, sawSibling := ops[verifySibID]
 	assert.False(t, sawSibling, "the still-broken sibling is not in the validation request at all; nodes=%v", ops)
 }

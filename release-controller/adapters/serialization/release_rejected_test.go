@@ -138,7 +138,7 @@ func TestEncodeValidationRejection(t *testing.T) {
 				DBTLogURI:            "s3://logs/a.log",
 				CandidateArtifactURI: "s3://cand/a.sql",
 				NodeType:             "dbt-model",
-				ValidationOp:         "build_from_sql",
+				ValidationOp:         pkg_model.ValidationOpBuildFromSQL,
 				FilePath:             "models/a.sql",
 				Service:              "svc",
 			},
@@ -148,7 +148,7 @@ func TestEncodeValidationRejection(t *testing.T) {
 				DBTLogURI:     "s3://logs/b.log",
 				RunResultsURI: "s3://logs/b.json",
 				NodeType:      "dbt-model",
-				ValidationOp:  "build_from_sql",
+				ValidationOp:  pkg_model.ValidationOpBuildFromSQL,
 				FilePath:      "models/b.sql",
 				Service:       "svc",
 				ChangedAncestors: []ports.ChangedAncestor{
@@ -177,8 +177,8 @@ func TestReleaseRejected_ValidationOpIsEncoded(t *testing.T) {
 		AggregateStatus: "failed",
 		FailingNodes:    []string{"analytics.b"},
 		PerNode: []ports.RejectedNode{
-			{NodeID: "analytics.b", Status: "failed", NodeType: "dbt-model", ValidationOp: "clone_from_prod"},
-			{NodeID: "analytics.s", Status: "skipped", NodeType: "dbt-model", ValidationOp: "build_from_sql"},
+			{NodeID: "analytics.b", Status: "failed", NodeType: "dbt-model", ValidationOp: pkg_model.ValidationOpCloneFromProd},
+			{NodeID: "analytics.s", Status: "skipped", NodeType: "dbt-model", ValidationOp: pkg_model.ValidationOpBuildFromSQL},
 			{NodeID: "analytics.x", Status: "skipped"},
 		},
 	})
@@ -195,7 +195,7 @@ func TestReleaseRejected_ValidationOpIsEncoded(t *testing.T) {
 // Only the validation leg chooses a validation op, so no other shape carries
 // the key even when a handler sets it.
 func TestReleaseRejected_OnlyTheValidationShapeCarriesValidationOp(t *testing.T) {
-	node := ports.RejectedNode{NodeID: "svc.sch.a", Status: "failed", ValidationOp: "build_from_sql"}
+	node := ports.RejectedNode{NodeID: "svc.sch.a", Status: "failed", ValidationOp: pkg_model.ValidationOpBuildFromSQL}
 	for _, shape := range []ports.RejectionShape{
 		ports.RejectionShapeParse,
 		ports.RejectionShapeCompile,

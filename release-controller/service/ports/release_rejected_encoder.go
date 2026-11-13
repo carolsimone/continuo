@@ -81,7 +81,7 @@ type RejectedNode struct {
 	// build_from_sql, build_from_columns or check_binds for a node checked
 	// from its own candidate code, clone_from_prod for an unchanged upstream
 	// cloned empty from its production table. Only the validation leg sets it.
-	ValidationOp string
+	ValidationOp pkg_model.ValidationOp
 
 	// RelationID, OtherService and OtherFilePath describe a duplicate-table
 	// collision: the contested relation, and the competing claimant that a

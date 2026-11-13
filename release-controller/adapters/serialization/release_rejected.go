@@ -305,7 +305,7 @@ func validationNode(n ports.RejectedNode) validationNodeDTO {
 		RunResultsURI:        n.RunResultsURI,
 		CandidateArtifactURI: n.CandidateArtifactURI,
 		NodeType:             n.NodeType,
-		ValidationOp:         n.ValidationOp,
+		ValidationOp:         string(n.ValidationOp),
 		FilePath:             n.FilePath,
 		Service:              n.Service,
 		ChangedAncestors:     mapAncestors(n.ChangedAncestors),

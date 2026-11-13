@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
@@ -69,7 +70,7 @@ func TestValidationDeployTaskDTORoundTrip(t *testing.T) {
 	want := command.ValidationDeployTask{
 		ReleaseID: "r", NodeID: "n", ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
 		NodeType: "dbt-model", ImageTag: "v1", JobName: "j", CandidateSchema: "cand",
-		CandidateArtifactURI: "s3://c", ValidationOp: "build_from_sql", ProdSchema: "prod",
+		CandidateArtifactURI: "s3://c", ValidationOp: string(pkg_model.ValidationOpBuildFromSQL), ProdSchema: "prod",
 		UpstreamNodeIDs: []string{"u1"}, ManifestS3URI: "s3://m",
 		ParseProdS3URI: "s3://pp", ParseCandidateS3URI: "s3://pc", SourceOverlayURI: "s3://so",
 	}

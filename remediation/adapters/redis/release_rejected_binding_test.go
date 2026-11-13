@@ -387,7 +387,13 @@ func TestEvidenceFromRejected_SkipsClonedNodes(t *testing.T) {
 // production, and when the producer sends no op at all (an older producer):
 // only validation_op clone_from_prod marks a node as a copy.
 func TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy(t *testing.T) {
-	for _, op := range []string{"", "build_from_sql", "build_from_columns", "check_binds"} {
+	ops := []string{""}
+	for _, op := range pkg_model.ValidationOps() {
+		if op != pkg_model.ValidationOpCloneFromProd {
+			ops = append(ops, string(op))
+		}
+	}
+	for _, op := range ops {
 		t.Run("validation_op "+op, func(t *testing.T) {
 			raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
 				"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"` + op + `"}]}`)

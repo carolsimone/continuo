@@ -1249,17 +1249,17 @@ type rejectedValidationPayload struct {
 	Reason       string   `json:"reason"`
 	FailingNodes []string `json:"failing_nodes"`
 	PerNode      []struct {
-		NodeID       string `json:"node_id"`
-		Status       string `json:"status"`
-		ValidationOp string `json:"validation_op"`
+		NodeID       string                 `json:"node_id"`
+		Status       string                 `json:"status"`
+		ValidationOp pkg_model.ValidationOp `json:"validation_op"`
 	} `json:"per_node"`
 }
 
-func decodeRejectedValidation(t *testing.T, store *fakeStore) (rejectedValidationPayload, map[string]string) {
+func decodeRejectedValidation(t *testing.T, store *fakeStore) (rejectedValidationPayload, map[string]pkg_model.ValidationOp) {
 	t.Helper()
 	var p rejectedValidationPayload
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleaseRejectedV1).Payload, &p))
-	ops := make(map[string]string, len(p.PerNode))
+	ops := make(map[string]pkg_model.ValidationOp, len(p.PerNode))
 	for _, n := range p.PerNode {
 		ops[n.NodeID] = n.ValidationOp
 	}
@@ -1294,8 +1294,8 @@ func TestHandleValidationResult_OnlyClonedFailed_RejectsUpstreamCloneFailed(t *t
 	assert.Equal(t, "validation", p.Stage)
 	assert.Equal(t, "upstream_clone_failed", p.Reason)
 	assert.Equal(t, []string{"analytics.b"}, p.FailingNodes)
-	assert.Equal(t, "clone_from_prod", ops["analytics.b"], "b was copied from production")
-	assert.Equal(t, "build_from_sql", ops["analytics.s"], "s was built from its own code")
+	assert.Equal(t, pkg_model.ValidationOpCloneFromProd, ops["analytics.b"], "b was copied from production")
+	assert.Equal(t, pkg_model.ValidationOpBuildFromSQL, ops["analytics.s"], "s was built from its own code")
 	assert.JSONEq(t, string(findEntry(t, store, streams.ReleaseRejectedV1).Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
@@ -1332,8 +1332,8 @@ func TestHandleValidationResult_MixedFailure_RejectsValidationFailedAndNamesClon
 	p, ops := decodeRejectedValidation(t, store)
 	assert.Equal(t, "validation_failed", p.Reason)
 	assert.Equal(t, []string{"analytics.s"}, p.FailingNodes)
-	assert.Equal(t, "clone_from_prod", ops["analytics.b"])
-	assert.Equal(t, "build_from_sql", ops["analytics.s"])
+	assert.Equal(t, pkg_model.ValidationOpCloneFromProd, ops["analytics.b"])
+	assert.Equal(t, pkg_model.ValidationOpBuildFromSQL, ops["analytics.s"])
 }
 
 // A node skipped below a changed node that failed stays among the failing
@@ -1362,10 +1362,10 @@ func TestHandleValidationResult_MixedFailure_KeepsSkippedNodesFailing(t *testing
 	assert.Equal(t, []string{"analytics.s", "analytics.t"}, r.FailingNodes())
 
 	_, ops := decodeRejectedValidation(t, store)
-	assert.Equal(t, map[string]string{
-		"analytics.b": "clone_from_prod",
-		"analytics.s": "build_from_sql",
-		"analytics.t": "build_from_sql",
+	assert.Equal(t, map[string]pkg_model.ValidationOp{
+		"analytics.b": pkg_model.ValidationOpCloneFromProd,
+		"analytics.s": pkg_model.ValidationOpBuildFromSQL,
+		"analytics.t": pkg_model.ValidationOpBuildFromSQL,
 	}, ops, "every per-node entry names how validation prepared its node")
 }
 
@@ -1434,7 +1434,7 @@ func TestHandleValidationResult_SeedBuildLegLeavesTheBuiltSeedOutOfTheValidation
 	assert.Equal(t, string(pkg_model.RejectReasonUpstreamCloneFailed), r.FailReason())
 	assert.Equal(t, []string{"analytics.b"}, r.FailingNodes())
 	_, ops := decodeRejectedValidation(t, store)
-	assert.Equal(t, map[string]string{"analytics.b": "clone_from_prod", "analytics.s": "build_from_sql"}, ops)
+	assert.Equal(t, map[string]pkg_model.ValidationOp{"analytics.b": pkg_model.ValidationOpCloneFromProd, "analytics.s": pkg_model.ValidationOpBuildFromSQL}, ops)
 }
 
 // contextRebuildVerification seeds a verification run of service-3 and
@@ -1548,21 +1548,21 @@ func TestHandleValidationResult_RejectionNamesTheOpTheValidationRequestNamed(t *
 
 	var requested struct {
 		Nodes []struct {
-			UniqueID     string `json:"unique_id"`
-			ValidationOp string `json:"validation_op"`
+			UniqueID     string                 `json:"unique_id"`
+			ValidationOp pkg_model.ValidationOp `json:"validation_op"`
 		} `json:"nodes"`
 	}
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &requested))
-	requestedOps := make(map[string]string, len(requested.Nodes))
+	requestedOps := make(map[string]pkg_model.ValidationOp, len(requested.Nodes))
 	for _, n := range requested.Nodes {
 		requestedOps[n.UniqueID] = n.ValidationOp
 	}
-	require.Equal(t, map[string]string{
-		"analytics.b":   "clone_from_prod",
-		"analytics.s":   "build_from_sql",
-		"analytics.t":   "build_from_sql",
-		"analytics.py":  "build_from_columns",
-		"analytics.tst": "check_binds",
+	require.Equal(t, map[string]pkg_model.ValidationOp{
+		"analytics.b":   pkg_model.ValidationOpCloneFromProd,
+		"analytics.s":   pkg_model.ValidationOpBuildFromSQL,
+		"analytics.t":   pkg_model.ValidationOpBuildFromSQL,
+		"analytics.py":  pkg_model.ValidationOpBuildFromColumns,
+		"analytics.tst": pkg_model.ValidationOpCheckBinds,
 	}, requestedOps, "the fixture requests every validation op")
 
 	seedValidationNodes(t, deps, "rOps", []handlers.NodeResult{

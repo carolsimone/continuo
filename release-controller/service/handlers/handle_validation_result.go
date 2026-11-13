@@ -294,10 +294,13 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// path for a node whose candidate moved it. node_type additionally lets the
 	// remediation agent recognise a python node — whose candidate artifact is a
 	// JSON validation spec rather than SQL — without a topology lookup of its own.
-	type candidateFacts struct{ artifactURI, nodeType, filePath, service, validationOp string }
+	type candidateFacts struct {
+		artifactURI, nodeType, filePath, service string
+		validationOp                             pkg_model.ValidationOp
+	}
 	factsByNodeID := make(map[string]candidateFacts, len(topo))
 	for _, n := range topo {
-		op, _ := validationOpFor(n, rebuilt)
+		op, _ := release.ValidationOpFor(n, rebuilt)
 		factsByNodeID[n.UniqueID] = candidateFacts{
 			artifactURI:  candidateArtifactURI(d.Bucket, r.ID(), n),
 			nodeType:     n.NodeType,

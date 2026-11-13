@@ -378,6 +378,29 @@ vocabularies:
         healable: false
         description: validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
 
+  - name: validation_op
+    const: ValidationOp
+    description: >-
+      How the validation leg prepares one node of a candidate release in the
+      candidate schema. release-controller names it per node on
+      validation.requested:v1 and on each per_node entry of a validation
+      rejection on release.rejected:v1; execution-controller passes it to the
+      validation runner as VALIDATION_OP; remediation never turns a failed
+      clone_from_prod node into a failure to fix.
+    values:
+      - value: build_from_sql
+        const: BuildFromSQL
+        description: a dbt model or snapshot built from its own candidate code; the runner builds its compiled SQL, with no data, in the candidate schema.
+      - value: build_from_columns
+        const: BuildFromColumns
+        description: a python node built from its own candidate code; the runner bind-checks its declared reads and creates its empty typed table from its validation spec.
+      - value: check_binds
+        const: CheckBinds
+        description: a dbt test built from its own candidate code; the runner EXPLAINs its compiled SQL against the candidate schema and creates nothing.
+      - value: clone_from_prod
+        const: CloneFromProd
+        description: an unchanged upstream of a node built from candidate code; the runner copies its production table, empty, into the candidate schema. A failure points at that production table, which a run of the node settles, not a code change.
+
   - name: dead_letter_kind
     const: DeadLetterKind
     description: Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies.

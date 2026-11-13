@@ -292,7 +292,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
 	}
 
-	rebuiltFromCandidate := rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs)
+	rebuiltFromCandidate := release.RebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs)
 
 	// Nothing to validate: no candidate node is new or content-changed vs prod
 	// (e.g. a release that only bumps image tags, or removes a node). Emitting an
@@ -451,11 +451,11 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 
 // rebuiltFromCandidateFor derives, for a run whose validation set is already
 // chosen, the set of validation nodes built from their own candidate code
-// (rebuiltFromCandidateSet over the run's scope closure and context rebuilds).
-// The seed-build leg reads it to find the seeds it just built, and the
-// validation-result leg reads it to tell a node checked from its own code from
-// an unchanged upstream cloned from production. Both derive it exactly as the
-// parse leg did when it requested the run, so every leg names the same
+// (release.RebuiltFromCandidateSet over the run's scope closure and context
+// rebuilds). The seed-build leg reads it to find the seeds it just built, and
+// the validation-result leg reads it to tell a node checked from its own code
+// from an unchanged upstream cloned from production. Both derive it exactly as
+// the parse leg did when it requested the run, so every leg names the same
 // validation op for a node.
 func rebuiltFromCandidateFor(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, topo, prod release.Topology, validationIDs []string) (map[string]bool, error) {
 	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
@@ -463,34 +463,7 @@ func rebuiltFromCandidateFor(ctx context.Context, d *Deps, u uow.UnitOfWork, r *
 		return nil, err
 	}
 	changedClosure := release.DescendantsClosure(topo, scope)
-	return rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs), nil
-}
-
-// rebuiltFromCandidateSet is the set of validation nodes built from their own
-// candidate SQL (build_from_sql / build_from_columns) rather than cloned empty
-// from production: the scope's descendant closure, plus any verification
-// context rebuild that lands in the validation set as an ancestor of the scope.
-// A context node outside the validation set is irrelevant to the run and is not
-// built. The parse, seed-build and validation-result legs all derive the build
-// strategy from this same set, so they never disagree on whether a node is
-// rebuilt from the candidate.
-func rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs []string) map[string]bool {
-	set := make(map[string]bool, len(changedClosure)+len(contextRebuilds))
-	for _, id := range changedClosure {
-		set[id] = true
-	}
-	if len(contextRebuilds) > 0 {
-		inValidation := make(map[string]bool, len(validationIDs))
-		for _, id := range validationIDs {
-			inValidation[id] = true
-		}
-		for _, id := range contextRebuilds {
-			if inValidation[id] {
-				set[id] = true
-			}
-		}
-	}
-	return set
+	return release.RebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs), nil
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
@@ -682,7 +655,7 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 		if !ok {
 			continue
 		}
-		op, prodSchema := validationOpFor(n, rebuiltFromCandidate)
+		op, prodSchema := release.ValidationOpFor(n, rebuiltFromCandidate)
 		node := map[string]any{
 			"unique_id":              n.UniqueID,
 			"service_name":           n.ServiceName,
@@ -692,7 +665,7 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 			"image_tag":              n.ImageTag,
 			"upstream_node_ids":      release.InSetUpstreams(topo, id, inSet),
 			"candidate_artifact_uri": candidateArtifactURI(bucket, releaseID, n),
-			"validation_op":          op,
+			"validation_op":          string(op),
 			"prod_schema":            prodSchema,
 		}
 		if n.RelationName != "" {
@@ -701,31 +674,6 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 		out = append(out, node)
 	}
 	return out
-}
-
-// validationOpFor returns the runner op and the prod source schema for a
-// validation node. A changed-closure dbt node has compiled SQL rewritten to
-// the candidate schema (build_from_sql); a changed-closure python node has a
-// JSON validation spec of declared reads + output columns
-// (build_from_columns); a changed-closure dbt-test has its compiled SQL
-// EXPLAINed against the candidate schema (check_binds) — it never builds
-// anything. Every other node in the validation set is an unchanged
-// upstream — there is no candidate artifact for it — so it is cloned empty
-// from its production schema regardless of kind.
-func validationOpFor(n release.Node, rebuiltFromCandidate map[string]bool) (op, prodSchema string) {
-	if rebuiltFromCandidate[n.UniqueID] {
-		switch {
-		case pkg_model.NodeType(n.NodeType).IsPython():
-			return "build_from_columns", ""
-		case n.NodeType == string(pkg_model.NodeTypeDbtTest):
-			// A test's compiled SQL is EXPLAINed against the candidate schema;
-			// nothing is created. A test is a leaf, so it is never here as an
-			// unchanged upstream.
-			return "check_binds", ""
-		}
-		return "build_from_sql", ""
-	}
-	return "clone_from_prod", n.SchemaName
 }
 
 var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)

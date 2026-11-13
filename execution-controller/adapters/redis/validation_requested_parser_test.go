@@ -236,9 +236,9 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 	for _, n := range evt.Nodes {
 		byID[n.NodeID] = n
 	}
-	assert.Equal(t, "clone_from_prod", byID["model.core.dim"].ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), byID["model.core.dim"].ValidationOp)
 	assert.Equal(t, "analytics", byID["model.core.dim"].ProdSchema)
-	assert.Equal(t, "build_from_sql", byID["model.shop.orders"].ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), byID["model.shop.orders"].ValidationOp)
 	assert.Equal(t, "", byID["model.shop.orders"].ProdSchema)
 }
 

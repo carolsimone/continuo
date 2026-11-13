@@ -42,6 +42,14 @@ REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.IN
 """Values of RejectReason a remediation attempt can fix by changing the user's source."""
 
 
+class ValidationOp(StrEnum):
+    """How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed clone_from_prod node into a failure to fix."""
+    BUILD_FROM_SQL = "build_from_sql"
+    BUILD_FROM_COLUMNS = "build_from_columns"
+    CHECK_BINDS = "check_binds"
+    CLONE_FROM_PROD = "clone_from_prod"
+
+
 class DeadLetterKind(StrEnum):
     """Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies."""
     PERMANENT = "permanent"
