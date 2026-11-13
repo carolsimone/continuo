@@ -196,6 +196,7 @@ function ScheduleDetail({ name, mode, requestId }: {
               lastRunId, runsCount, taskCount: tasks.length, tasksRead, selectedRunId, runGraph, readFailed,
             })}
             selectedRunId={selectedRunId}
+            releaseId={scheduler?.release_id}
             tasks={tasks}
             attemptsByTask={attemptsByTask}
             activeGraph={activeGraph}

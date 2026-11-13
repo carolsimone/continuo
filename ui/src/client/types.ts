@@ -48,6 +48,8 @@ export interface Scheduler {
   // Why the run failed when no task of it failed (stalled, empty_selection,
   // invalid_node_type); null otherwise.
   failure_reason?: string | null;
+  // The release the run executes on; null when run-controller recorded none.
+  release_id?: string | null;
 }
 
 export interface Task {
@@ -67,6 +69,10 @@ export interface Task {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  // What the task does to its node, and why the run planned it that way
+  // (null when the plan gave no reason).
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 export interface GraphNode {
@@ -79,6 +85,10 @@ export interface GraphNode {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  // The node's operation and plan reason in a run graph, as on Task; absent on
+  // a schedule's topology graph.
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 // A dependency edge in execution order: `from` runs first, `to` reads its
@@ -115,6 +125,8 @@ export interface RunGraphNode {
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
   waiting_since?: string | null;
+  operation?: WireOperation;
+  plan_reason?: string | null;
 }
 
 export interface RunGraph {
@@ -143,6 +155,36 @@ export interface TaskAttempt {
   error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
+  // What a seed's preflight found before its load; null on an attempt that ran
+  // none.
+  seed_preflight?: SeedPreflight | null;
+}
+
+// A seed preflight's findings: the objects that depend on the seed (allowed
+// marks the ones the load may drop) and the probe of each view the run
+// rebuilds.
+export interface SeedPreflight {
+  drop_semantics: string;
+  completeness: string;
+  checked: boolean;
+  dependents: SeedPreflightDependent[];
+  probes: SeedPreflightProbe[];
+}
+
+export interface SeedPreflightDependent {
+  schema: string;
+  name: string;
+  kind: string;
+  owner: string;
+  depth: number;
+  allowed: boolean;
+}
+
+export interface SeedPreflightProbe {
+  schema: string;
+  name: string;
+  ok: boolean;
+  error: string;
 }
 
 export interface NodeRun {
