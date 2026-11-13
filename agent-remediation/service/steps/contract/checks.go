@@ -19,6 +19,17 @@ import (
 // read: the "reads: {csv: <uri>}" key the runtime loads the file from.
 const csvReadKey = "csv"
 
+// The names the checks of this file register under.
+const (
+	nameContractPathsInsideFolder workflow.StepName = "contract_paths_inside_folder"
+	nameYAMLReads                 workflow.StepName = "yaml_reads"
+	nameNodeIdentityUnchanged     workflow.StepName = "node_identity_unchanged"
+	nameReadsKept                 workflow.StepName = "reads_kept"
+	nameCSVReadKept               workflow.StepName = "csv_read_kept"
+	nameNoNewSecretRef            workflow.StepName = "no_new_secret_ref"
+	nameDeclaredOnce              workflow.StepName = "declared_once"
+)
+
 var (
 	needsDraft        = []remediation.EvidenceKey{remediation.KeyDraft}
 	needsDraftAndFile = []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyContractFile}
@@ -61,8 +72,6 @@ var _ step.Check = (*ContractPathsInsideFolder)(nil)
 
 // NewContractPathsInsideFolder builds the contract_paths_inside_folder step.
 func NewContractPathsInsideFolder() *ContractPathsInsideFolder { return &ContractPathsInsideFolder{} }
-
-const nameContractPathsInsideFolder workflow.StepName = "contract_paths_inside_folder"
 
 // Meta describes the step.
 func (*ContractPathsInsideFolder) Meta() step.Meta {
@@ -158,8 +167,6 @@ var _ step.Check = (*YAMLReads)(nil)
 func NewYAMLReads(inspector ports.ContractInspector) *YAMLReads {
 	return &YAMLReads{inspector: inspector}
 }
-
-const nameYAMLReads workflow.StepName = "yaml_reads"
 
 // Meta describes the step.
 func (*YAMLReads) Meta() step.Meta {
@@ -288,7 +295,7 @@ func buildDeclarationMaps(insp ports.ContractInspector, files []ports.ProposedFi
 func NewNodeIdentityUnchanged(inspector ports.ContractInspector) step.Check {
 	return &declarationCheck{
 		meta: step.Meta{
-			Name: "node_identity_unchanged",
+			Name: nameNodeIdentityUnchanged,
 			Kind: step.KindCheck,
 			Description: "Fails a draft after which a node the answer's files declared is no longer declared, or is declared under a " +
 				"changed identity (schema, table, script, kind, owner, schedule, criticality or secret_ref).",
@@ -336,7 +343,7 @@ func identityFindings(before, after map[string]ports.NodeDeclaration) []remediat
 func NewReadsKept(inspector ports.ContractInspector) step.Check {
 	return &declarationCheck{
 		meta: step.Meta{
-			Name: "reads_kept",
+			Name: nameReadsKept,
 			Kind: step.KindCheck,
 			Description: "Fails a draft after which a node the answer's files declared no longer declares a read it declared before. " +
 				"A read may be corrected or replaced, never dropped.",
@@ -357,34 +364,44 @@ func NewReadsKept(inspector ports.ContractInspector) step.Check {
 func readsKeptFindings(before, after map[string]ports.NodeDeclaration) []remediation.Finding {
 	var found []remediation.Finding
 	for _, k := range sortedDeclarationKeys(before) {
-		now, still := after[k]
-		if !still {
-			continue
+		if f, ok := droppedReadFinding(k, before[k], after); ok {
+			found = append(found, f)
 		}
-		dropped := droppedReads(before[k].ReadKeys, now.ReadKeys)
-		if len(dropped) == 0 {
-			continue
-		}
-		found = append(found, remediation.Finding{
-			Code: "read_dropped",
-			Message: fmt.Sprintf(
-				"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
-					"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
-					"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
-					"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k),
-		})
 	}
 	return found
+}
+
+// droppedReadFinding is the read_dropped finding for node k when the answer
+// declares k but no longer declares one or more reads it declared before. A node
+// the answer removes altogether has no finding here: it is the identity check's.
+func droppedReadFinding(k string, was ports.NodeDeclaration, after map[string]ports.NodeDeclaration) (remediation.Finding, bool) {
+	now, still := after[k]
+	if !still {
+		return remediation.Finding{}, false
+	}
+	dropped := droppedReads(was.ReadKeys, now.ReadKeys)
+	if len(dropped) == 0 {
+		return remediation.Finding{}, false
+	}
+	return remediation.Finding{
+		Code: "read_dropped",
+		Message: fmt.Sprintf(
+			"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
+				"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
+				"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
+				"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k),
+	}, true
 }
 
 // NewCSVReadKept builds the csv_read_kept step.
 func NewCSVReadKept(inspector ports.ContractInspector) step.Check {
 	return &declarationCheck{
 		meta: step.Meta{
-			Name: "csv_read_kept",
+			Name: nameCSVReadKept,
 			Kind: step.KindCheck,
-			Description: "Fails a draft after which a node that declared a \"csv\" read no longer declares one. " +
-				"The read's uri may be corrected, but the key may never be removed or renamed.",
+			Description: "Fails a draft after which a node that declared a \"csv\" read no longer declares one (its uri may be corrected, " +
+				"but the key may never be removed or renamed), or after which any node no longer declares another read it declared. " +
+				"It takes the place of reads_kept for a python-csv node.",
 			Needs:  needsDraft,
 			Stages: preflightOnly,
 		},
@@ -393,19 +410,24 @@ func NewCSVReadKept(inspector ports.ContractInspector) step.Check {
 	}
 }
 
-// csvReadKeptFindings finds one csv_read_dropped finding for each node that
-// declared a "csv" read before the edit and does not afterwards. That key names
-// the file the runtime loads, and the read's value (the uri) is the one thing a
-// python-csv fix is allowed to change, so the finding names the csv read
-// specifically. A read of another name is reads_kept's finding.
+// csvReadKeptFindings walks the nodes in key order and finds at most one
+// finding for each. A node that declared a "csv" read before the edit and does
+// not afterwards is a csv_read_dropped finding: that key names the file the
+// runtime loads, and the read's value (the uri) is the one thing a python-csv
+// fix may change, so the finding names the csv read specifically. Otherwise a
+// node that dropped any other read is the read_dropped finding of reads_kept:
+// every node the answer's files touch is held to the blanket rule, a sibling's
+// script being never edited by the fix. A node the answer removes altogether is
+// the identity check's finding.
 func csvReadKeptFindings(before, after map[string]ports.NodeDeclaration) []remediation.Finding {
 	var found []remediation.Finding
 	for _, k := range sortedDeclarationKeys(before) {
+		was := before[k]
 		now, still := after[k]
 		if !still {
 			continue
 		}
-		if hasReadKey(before[k].ReadKeys, csvReadKey) && !hasReadKey(now.ReadKeys, csvReadKey) {
+		if hasReadKey(was.ReadKeys, csvReadKey) && !hasReadKey(now.ReadKeys, csvReadKey) {
 			found = append(found, remediation.Finding{
 				Code: "csv_read_dropped",
 				Message: fmt.Sprintf(
@@ -414,6 +436,10 @@ func csvReadKeptFindings(before, after map[string]ports.NodeDeclaration) []remed
 						"removed or renamed, or the node would have nothing left for the runtime to read the file from",
 					csvReadKey, k, csvReadKey),
 			})
+			continue
+		}
+		if f, ok := droppedReadFinding(k, was, after); ok {
+			found = append(found, f)
 		}
 	}
 	return found
@@ -423,7 +449,7 @@ func csvReadKeptFindings(before, after map[string]ports.NodeDeclaration) []remed
 func NewNoNewSecretRef(inspector ports.ContractInspector) step.Check {
 	return &declarationCheck{
 		meta: step.Meta{
-			Name:        "no_new_secret_ref",
+			Name:        nameNoNewSecretRef,
 			Kind:        step.KindCheck,
 			Description: "Fails a draft that adds a node naming a Secret. A fix may add nodes but never grants a node credentials.",
 			Needs:       needsDraft,
@@ -549,8 +575,6 @@ var _ step.Check = (*DeclaredOnce)(nil)
 func NewDeclaredOnce(locator ports.ContractLocator) *DeclaredOnce {
 	return &DeclaredOnce{locator: locator}
 }
-
-const nameDeclaredOnce workflow.StepName = "declared_once"
 
 // Meta describes the step.
 func (*DeclaredOnce) Meta() step.Meta {

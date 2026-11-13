@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -27,7 +28,7 @@ func NewContractPackages(packager ports.ContractPackager, dialect string) *Contr
 	return &ContractPackages{packager: packager, dialect: dialect}
 }
 
-const nameContractPackages = "contract_packages"
+const nameContractPackages workflow.StepName = "contract_packages"
 
 // Meta describes the step.
 func (*ContractPackages) Meta() step.Meta {
@@ -77,7 +78,7 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 		return step.CheckOutput{}, fmt.Errorf("package contract for %s: %w", in.Failure.Target.NodeID, err)
 	}
 	return step.CheckOutput{
-		Result:   remediation.CheckResult{Check: nameContractPackages},
+		Result:   remediation.CheckResult{Check: string(nameContractPackages)},
 		Evidence: map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes(merged)},
 	}, nil
 }

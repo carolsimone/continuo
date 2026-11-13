@@ -59,7 +59,7 @@ func (s *Scratch) PatchedCheckout(ctx context.Context, files []ports.ProposedFil
 		return "", nil, ErrScratchClosed
 	}
 	if s.root != "" {
-		return s.root, s.originals, nil
+		return s.root, maps.Clone(s.originals), nil
 	}
 	for _, f := range files {
 		if !filepath.IsLocal(filepath.FromSlash(f.Path)) {
@@ -77,7 +77,7 @@ func (s *Scratch) PatchedCheckout(ctx context.Context, files []ports.ProposedFil
 		return "", nil, err
 	}
 	s.root, s.cleanup, s.originals = root, cleanup, originals
-	return root, originals, nil
+	return root, maps.Clone(originals), nil
 }
 
 // Originals returns what the files of the pass held before they were applied,

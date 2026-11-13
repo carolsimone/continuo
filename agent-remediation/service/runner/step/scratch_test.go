@@ -187,4 +187,26 @@ func TestScratch_AFailedApplyRemovesTheCheckoutAndTheNextCallStartsOver(t *testi
 	require.Error(t, err)
 	assert.Equal(t, 1, a.cleanups)
 	assert.Nil(t, s.Originals())
+
+	root, originals, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{{Path: "dir/inner.txt", Content: "y"}})
+	require.NoError(t, err)
+	assert.Len(t, a.fetches, 2, "the second call fetches a new checkout")
+	assert.Equal(t, map[string]string{"dir/inner.txt": "x"}, originals)
+	assert.Equal(t, "y", read(t, root, "dir/inner.txt"))
+}
+
+func TestScratch_TheOriginalsAMapHandsOutAreCopies(t *testing.T) {
+	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
+	s := step.NewScratch(a, "r", "c")
+	defer s.Close()
+	files := []ports.ProposedFile{{Path: "a.yaml", Content: "new"}}
+
+	_, first, err := s.PatchedCheckout(context.Background(), files)
+	require.NoError(t, err)
+	first["a.yaml"] = "tampered"
+	_, second, err := s.PatchedCheckout(context.Background(), files)
+	require.NoError(t, err)
+	second["a.yaml"] = "tampered again"
+
+	assert.Equal(t, map[string]string{"a.yaml": "old"}, s.Originals())
 }

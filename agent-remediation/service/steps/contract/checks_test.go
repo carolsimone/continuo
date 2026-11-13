@@ -405,28 +405,58 @@ func TestReadsKept(t *testing.T) {
 }
 
 func TestCSVReadKept(t *testing.T) {
-	const dropped = "the model's answer no longer declares the %q read of %s. A python-csv node's single read names the " +
-		"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be " +
-		"removed or renamed, or the node would have nothing left for the runtime to read the file from"
-	want := []remediation.Finding{{Code: "csv_read_dropped", Message: fmt.Sprintf(dropped, "csv", "fx.rates", "csv")}}
+	const (
+		csvDropped = "the model's answer no longer declares the %q read of %s. A python-csv node's single read names the " +
+			"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be " +
+			"removed or renamed, or the node would have nothing left for the runtime to read the file from"
+		dropped = "the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still " +
+			"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix " +
+			"does not change — still performs that read, and no release would catch it again. A read may be corrected " +
+			"or replaced, never dropped"
+	)
+	csv := func(node string) remediation.Finding {
+		return remediation.Finding{Code: "csv_read_dropped", Message: fmt.Sprintf(csvDropped, "csv", node, "csv")}
+	}
+	blanket := func(read, node string) remediation.Finding {
+		return remediation.Finding{Code: "read_dropped", Message: fmt.Sprintf(dropped, read, node)}
+	}
 	cases := []struct {
 		name          string
 		before, after []ports.NodeDeclaration
 		want          []remediation.Finding
 	}{
 		{"the csv read kept passes", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates", "csv")}, nil},
-		{"the csv read dropped", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates")}, want},
-		{"the csv read renamed", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates", "file")}, want},
-		{"another read dropped is the reads_kept check's finding",
-			[]ports.NodeDeclaration{decl("fx", "rates", "csv", "x")}, []ports.NodeDeclaration{decl("fx", "rates", "csv")}, nil},
-		{"a node that never read csv passes",
-			[]ports.NodeDeclaration{decl("fx", "rates", "a")}, []ports.NodeDeclaration{decl("fx", "rates", "b")}, nil},
+		{"the csv read dropped", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates")},
+			[]remediation.Finding{csv("fx.rates")}},
+		{"the csv read renamed", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates", "file")},
+			[]remediation.Finding{csv("fx.rates")}},
+		{"a read added passes", []ports.NodeDeclaration{decl("fx", "rates", "csv")}, []ports.NodeDeclaration{decl("fx", "rates", "csv", "x")}, nil},
+		{"a node added passes", nil, []ports.NodeDeclaration{decl("fx", "new", "a")}, nil},
+		{"a node that dropped another read than csv is the blanket rule's finding",
+			[]ports.NodeDeclaration{decl("fx", "rates", "csv", "x")}, []ports.NodeDeclaration{decl("fx", "rates", "csv")},
+			[]remediation.Finding{blanket(`"x"`, "fx.rates")}},
+		{"a node that never read csv and dropped a plain read is the blanket rule's finding",
+			[]ports.NodeDeclaration{decl("fx", "sib", "a")}, []ports.NodeDeclaration{decl("fx", "sib")},
+			[]remediation.Finding{blanket(`"a"`, "fx.sib")}},
+		{"a node that never read csv and kept its reads passes",
+			[]ports.NodeDeclaration{decl("fx", "sib", "a")}, []ports.NodeDeclaration{decl("fx", "sib", "a", "b")}, nil},
+		{"a node that dropped csv and another read is one csv finding",
+			[]ports.NodeDeclaration{decl("fx", "rates", "csv", "x")}, []ports.NodeDeclaration{decl("fx", "rates")},
+			[]remediation.Finding{csv("fx.rates")}},
 		{"a node removed is the identity check's finding",
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv")}, nil, nil},
 		{"a sibling's csv read dropped names the sibling",
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "sib", "csv")},
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "sib")},
-			[]remediation.Finding{{Code: "csv_read_dropped", Message: fmt.Sprintf(dropped, "csv", "fx.sib", "csv")}}},
+			[]remediation.Finding{csv("fx.sib")}},
+		{"the first finding across a lower-key sibling breach and a csv breach is the lane's first",
+			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "a_sib", "s")},
+			[]ports.NodeDeclaration{decl("fx", "rates"), decl("fx", "a_sib")},
+			[]remediation.Finding{blanket(`"s"`, "fx.a_sib"), csv("fx.rates")}},
+		{"a csv breach under the lower key comes first",
+			[]ports.NodeDeclaration{decl("fx", "a_csv", "csv"), decl("fx", "z_sib", "s")},
+			[]ports.NodeDeclaration{decl("fx", "a_csv"), decl("fx", "z_sib")},
+			[]remediation.Finding{csv("fx.a_csv"), blanket(`"s"`, "fx.z_sib")}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
