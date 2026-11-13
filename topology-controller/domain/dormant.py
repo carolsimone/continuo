@@ -6,15 +6,10 @@ _BUILT_RUNTIMES = frozenset({NodeRuntime.DBT, NodeRuntime.PYTHON})
 
 
 def is_dormant(node_type: NodeType, schedule: str) -> bool:
-    """Whether a node of this type and schedule is dormant: a release builds it
-    and no schedule tag puts it on a cron. A run started by hand executes it,
-    and any run whose load of a seed drops the seed's table includes it only
-    to rebuild it, as a view or materialized view below that seed.
-
-    A dbt test only validates, a table no node builds is not built, and a type
-    the contract does not declare has no runtime, so none of them is dormant.
-    pkg/domain/model.IsDormant is the same rule, and tests/fixtures/dormant_cases.json
-    pins the two to each other.
+    """Whether a node of this type and schedule is dormant: a node of a type a
+    release builds (runtime dbt or python, other than a dbt test) with an empty
+    schedule. It applies the rule pkg/domain/model.IsDormant states and
+    explains, and tests/fixtures/dormant_cases.json pins the two to each other.
     """
     return (
         schedule == ""

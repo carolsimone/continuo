@@ -242,8 +242,9 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 		dormantProbeKey, dormantNodes)
 
 	// The release planned the promote-seed runs of its seeds in the transaction
-	// that made it live. Wait for them, so the runs below meet no Job of theirs.
-	waitForPromoteSeedRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
+	// that made it live. Wait for them, and for any other release's, so the
+	// runs below meet no Job of theirs and the pod quota below stops none.
+	waitForPromoteSeedRunsToEnd(t, ctx, clients, "", 5*time.Minute)
 
 	// ── 4. no run of a schedule holds a task for it ──────────────────────────
 	// A run names its schedule, and no schedule has an empty name.
@@ -270,9 +271,9 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	// exist: a Job execution-controller creates for one of them before the
 	// cancel reaches it gets no pod, so these runs build no model. The quota
 	// is removed once the runs have ended, and when the test ends however it
-	// ends. A promote-seed run of the release still going would lose its pods
+	// ends. A promote-seed run of any release still going would lose its pods
 	// to the quota too, so the test requires that none is.
-	requireNoActivePromoteSeedRun(t, ctx, clients, releaseID)
+	requireNoActivePromoteSeedRun(t, ctx, clients)
 	blockPodCreation(t, ctx)
 
 	var scheduleRuns []uuid.UUID
@@ -471,19 +472,14 @@ func removeRuns(t *testing.T, clients *testClients, runIDs []uuid.UUID) {
 }
 
 // requireNoActivePromoteSeedRun fails the test, naming each run, when a
-// promote-seed run of releaseID is still active. The e2e-no-pods quota stops
-// every pod in the Jobs' namespace, so such a run would fail its attempt as
-// timeout start_timeout, which run-controller never retries.
-func requireNoActivePromoteSeedRun(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+// promote-seed run of any release is still active. The e2e-no-pods quota
+// stops every pod in the Jobs' namespace, whatever run it belongs to, so such
+// a run would fail its attempt as timeout start_timeout, which run-controller
+// never retries.
+func requireNoActivePromoteSeedRun(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
-	var active []string
-	require.NoError(t, clients.runControllerDB.SelectContext(ctx, &active, `
-		SELECT run_id::text || ' (' || status || ')' FROM runs
-		 WHERE tenant_id = $1 AND kind = 'promote_seed' AND release_id = $2
-		   AND status IN ('pending', 'running', 'cancelling')
-		 ORDER BY run_id`,
-		events.DefaultTenantID, releaseID))
+	active, err := activePromoteSeedRuns(ctx, clients, "")
+	require.NoError(t, err)
 	require.Empty(t, active,
-		"promote-seed run(s) of release %s are still active, and the e2e-no-pods quota would stop their pods: %v",
-		releaseID, active)
+		"promote-seed run(s) are still active, and the e2e-no-pods quota would stop their pods: %v", active)
 }

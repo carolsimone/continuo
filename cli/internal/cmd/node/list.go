@@ -17,7 +17,7 @@ import (
 // to measure (no terminal task, no timed task) are pointers so that sentinel
 // is omitted rather than emitted as a misleading negative number. NodeType is
 // the node's type in the live release, such as dbt-model; Dormant is true for a
-// node of no schedule. Both are always present.
+// node continuo builds that has no schedule tag. Both are always present.
 type nodeSummary struct {
 	ServiceName    string `json:"service_name"`
 	SchemaName     string `json:"schema_name"`

@@ -181,7 +181,7 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 
 	e := findEntry(t, store, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
-		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+		"the rejection payload stored on the release must match the one emitted on %s", streams.ReleaseRejectedV1)
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
@@ -703,7 +703,7 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_b.json", byID["b"],
 		"failing node must carry candidate_artifact_uri")
 	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
-		"failing node must carry run_results_uri through to release.rejected:v1")
+		"failing node must carry run_results_uri through to %s", streams.ReleaseRejectedV1)
 }
 
 // TestHandleValidationResult_Rejected_CarriesCandidateNodeTypeAndLocation asserts
@@ -1297,7 +1297,7 @@ func TestHandleValidationResult_OnlyClonedFailed_RejectsUpstreamCloneFailed(t *t
 	assert.Equal(t, pkg_model.ValidationOpCloneFromProd, ops["analytics.b"], "b was copied from production")
 	assert.Equal(t, pkg_model.ValidationOpBuildFromSQL, ops["analytics.s"], "s was built from its own code")
 	assert.JSONEq(t, string(findEntry(t, store, streams.ReleaseRejectedV1).Payload), string(r.RejectionPayload()),
-		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+		"the rejection payload stored on the release must match the one emitted on %s", streams.ReleaseRejectedV1)
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 

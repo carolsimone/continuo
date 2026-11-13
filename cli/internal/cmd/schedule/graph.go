@@ -17,7 +17,9 @@ type nodeEntry struct {
 	SchemaName  string `json:"schema_name"`
 	ServiceName string `json:"service_name"`
 	NodeType    string `json:"node_type"`
-	// Dormant is true for a node of no schedule. It is always present.
+	// Dormant is true for a node continuo builds that has no schedule tag,
+	// and false for every other node, an unknown-external one included. It is
+	// always present.
 	Dormant bool `json:"dormant"`
 }
 

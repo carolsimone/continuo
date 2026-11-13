@@ -349,8 +349,8 @@ func waitForReleaseRunsToEnd(t *testing.T, ctx context.Context, clients *testCli
 		var active int
 		err := clients.runControllerDB.GetContext(ctx, &active, `
 			SELECT count(*) FROM runs
-			 WHERE tenant_id = $1 AND release_id = $2 AND status IN ('pending', 'running', 'cancelling')`,
-			events.DefaultTenantID, releaseID)
+			 WHERE tenant_id = $1 AND release_id = $2 AND status = ANY($3)`,
+			events.DefaultTenantID, releaseID, activeRunStatuses)
 		if err == nil && active == 0 {
 			return
 		}

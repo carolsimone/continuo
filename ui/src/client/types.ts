@@ -397,7 +397,7 @@ export interface NodeSummary {
   timeout_declared: boolean;
   // The node's type in the live release, such as dbt-model.
   node_type: string;
-  // True when the node has no schedule tag (a dormant node).
+  // True for a node continuo builds that has no schedule tag (a dormant node).
   dormant: boolean;
 }
 
