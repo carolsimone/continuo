@@ -19,6 +19,9 @@ type UnitOfWork interface {
 	Rollback() error
 	// ProposalRepo returns the ProposalRepository bound to the active transaction.
 	ProposalRepo() repository.ProposalRepository
+	// RemediationRepo returns the RemediationRepository bound to the active
+	// transaction.
+	RemediationRepo() repository.RemediationRepository
 	// OutboxRepo returns the outbox.Repository bound to the active transaction.
 	OutboxRepo() outbox.Repository
 	// MessageProcessingRepo returns the messageprocessing.Repository bound to the

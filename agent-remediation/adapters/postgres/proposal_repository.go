@@ -11,6 +11,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 )
 
@@ -82,19 +83,28 @@ func servicesArray(s []string) pq.StringArray {
 	return pq.StringArray(s)
 }
 
+// remediationIDArg is the remediation_id column value of a proposal: NULL for
+// an attempt the proposal driver made, the remediation's id otherwise.
+func remediationIDArg(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
 // InsertGenerating persists an in-flight 'generating' row for the attempt right
 // before the model is called. It is idempotent: ON CONFLICT on the natural key
 // (release_id, attempt) DO NOTHING, so a redelivery that re-runs the same
 // attempt leaves the single generating row untouched. Only the identity +
-// status columns, plus the resolved nodes and their initial outcomes, are
-// written; the remaining columns take their defaults and are populated when
-// Upsert finalizes the row.
+// status columns, plus the resolved nodes, their initial outcomes and the
+// remediation the attempt belongs to, are written; the remaining columns take
+// their defaults and are populated when Upsert finalizes the row.
 func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at,
-			 resolved_node_ids, node_outcomes, services)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			 resolved_node_ids, node_outcomes, services, remediation_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (release_id, attempt) DO NOTHING`
 	resolved, err := marshalResolved(p.ResolvedNodeIDs)
 	if err != nil {
@@ -107,7 +117,7 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		proposal.StatusGenerating, p.CreatedAt,
-		resolved, outcomes, servicesArray(p.Services),
+		resolved, outcomes, servicesArray(p.Services), remediationIDArg(p.RemediationID),
 	); err != nil {
 		return fmt.Errorf("insert generating proposal: %w", err)
 	}
@@ -158,7 +168,9 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 // (release_id, attempt): when an in-flight generating row exists (the common
 // healable path) it is finalized in place via ON CONFLICT … DO UPDATE;
 // otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
-// escalation — that never marked generating).
+// escalation — that never marked generating). A proposal that names its
+// remediation records it; one that does not leaves an existing row's
+// remediation as it was.
 func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
@@ -168,8 +180,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits,
-			 resolved_node_ids, node_outcomes, verifications, services)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+			 resolved_node_ids, node_outcomes, verifications, services, remediation_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			verification_run_id    = EXCLUDED.verification_run_id,
@@ -190,7 +202,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			resolved_node_ids      = EXCLUDED.resolved_node_ids,
 			node_outcomes          = EXCLUDED.node_outcomes,
 			verifications          = EXCLUDED.verifications,
-			services               = EXCLUDED.services`
+			services               = EXCLUDED.services,
+			remediation_id         = COALESCE(EXCLUDED.remediation_id, proposal.remediation_id)`
 	edits, err := marshalFileEdits(p.Edits)
 	if err != nil {
 		return fmt.Errorf("marshal proposal file edits: %w", err)
@@ -214,7 +227,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
-		resolved, outcomes, verifications, servicesArray(p.Services),
+		resolved, outcomes, verifications, servicesArray(p.Services), remediationIDArg(p.RemediationID),
 	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
@@ -994,11 +1007,12 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service st
 // makes bounded progress on each tick.
 const verifyingBatchLimit = 20
 
-// ListVerifying returns proposals awaiting verification (status='verifying'),
-// oldest first, capped at verifyingBatchLimit.
+// ListVerifying returns the proposal driver's proposals awaiting verification
+// (status='verifying'), oldest first, capped at verifyingBatchLimit. A proposal
+// that belongs to a remediation is left out: the runner finalizes those.
 func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
 	q := `SELECT ` + proposalColumns + ` FROM proposal
-	      WHERE status = $1 ORDER BY created_at ASC LIMIT $2`
+	      WHERE status = $1 AND remediation_id IS NULL ORDER BY created_at ASC LIMIT $2`
 	var rows []proposalRow
 	if err := r.q.SelectContext(ctx, &rows, q, proposal.StatusVerifying, verifyingBatchLimit); err != nil {
 		return nil, fmt.Errorf("list verifying proposals: %w", err)
@@ -1051,6 +1065,17 @@ func (r *ProposalRepository) MarkVerified(ctx context.Context, id string, verifi
 		return false, fmt.Errorf("mark verified: rows affected: %w", err)
 	}
 	return n > 0, nil
+}
+
+// MarkFixVerified finalizes a proposal the runner verified. It refuses a zero
+// Verified, which holds no proof that its drafts were checked and verified, and
+// otherwise does what MarkVerified does with the proposal id and verifications
+// the Verified carries.
+func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
+	if v.IsZero() {
+		return false, errors.New("mark fix verified: the verified proposal is the zero value")
+	}
+	return r.MarkVerified(ctx, v.ProposalID(), v.Verifications())
 }
 
 // MarkVerifyFailed finalizes a proposal a verification run rejected,

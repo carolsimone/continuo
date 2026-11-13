@@ -63,6 +63,12 @@ func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
 	return NewProposalRepository(u.tx, u.serviceRepoPaths)
 }
 
+// RemediationRepo returns the RemediationRepository bound to the current
+// transaction.
+func (u *UnitOfWork) RemediationRepo() repository.RemediationRepository {
+	return NewRemediationRepository(u.tx)
+}
+
 // OutboxTable is the outbox table this service writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.

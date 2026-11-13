@@ -23,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -358,6 +359,10 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []
 	return false, nil
 }
 
+func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
+	return false, nil
+}
+
 func (r *fakeProposalRepo) UpdateVerificationPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
 	return nil
 }
@@ -513,6 +518,7 @@ func (u *fakeUoW) Commit() error {
 }
 func (u *fakeUoW) Rollback() error                                     { return nil }
 func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.pr }
+func (u *fakeUoW) RemediationRepo() repository.RemediationRepository   { return nil }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
 

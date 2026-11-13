@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
 // Sentinel errors returned by ProposalRepository methods.
@@ -234,10 +235,11 @@ type ProposalRepository interface {
 	// terminal or never opened) — an idempotent no-op.
 	RecordPROutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 
-	// ListVerifying returns proposals awaiting verification
-	// (status='verifying'), oldest first, capped at 20 rows so the polling
-	// reconciler always makes bounded progress across every in-flight
-	// verification rather than being starved by one stuck row.
+	// ListVerifying returns the proposal driver's proposals awaiting
+	// verification (status='verifying'), oldest first, capped at 20 rows so the
+	// polling reconciler always makes bounded progress across every in-flight
+	// verification rather than being starved by one stuck row. A proposal that
+	// belongs to a remediation is left out: the runner finalizes those itself.
 	ListVerifying(ctx context.Context) ([]proposal.View, error)
 
 	// MarkVerified finalizes a proposal every verification run passed,
@@ -248,6 +250,11 @@ type ProposalRepository interface {
 	// CAS fired; false means the row was no longer 'verifying' — already
 	// finalized by a concurrent or repeated reconciler pass.
 	MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (hit bool, err error)
+
+	// MarkFixVerified finalizes a proposal the runner verified, exactly as
+	// MarkVerified does with the proposal id and verifications v carries. It
+	// refuses a zero Verified with an error and writes nothing.
+	MarkFixVerified(ctx context.Context, v remediation.Verified) (hit bool, err error)
 
 	// MarkVerifyFailed finalizes a proposal a verification run rejected,
 	// transitioning status 'verifying' -> 'failed' and recording verifyErr so

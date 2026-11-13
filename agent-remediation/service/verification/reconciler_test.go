@@ -17,6 +17,7 @@ import (
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
@@ -234,6 +235,10 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 // writes the phase (and activation) onto the matching verification in place —
 // the same effect the real UPDATE statement has — so a later pass in the same
 // test sees the phase it just recorded.
+func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
+	return false, nil
+}
+
 func (r *fakeProposalRepo) UpdateVerificationPhase(_ context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
 	r.phaseWrites = append(r.phaseWrites, struct {
 		id, runID string
@@ -364,6 +369,7 @@ func (u *fakeUoW) Begin(context.Context) error                         { return 
 func (u *fakeUoW) Commit() error                                       { u.commits++; return nil }
 func (u *fakeUoW) Rollback() error                                     { return nil }
 func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.pr }
+func (u *fakeUoW) RemediationRepo() repository.RemediationRepository   { return nil }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
 

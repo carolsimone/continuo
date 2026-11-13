@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -125,6 +126,10 @@ func (r *fakeRepo) MarkVerified(_ context.Context, _ string, _ []proposal.Verifi
 func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []proposal.Verification) (bool, error) {
 	return false, nil
 }
+func (r *fakeRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
+	return false, nil
+}
+
 func (r *fakeRepo) UpdateVerificationPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
 	return nil
 }
@@ -138,6 +143,7 @@ func (u *fakeUoW) Begin(_ context.Context) error                       { return 
 func (u *fakeUoW) Commit() error                                       { u.repo.committed = true; return nil }
 func (u *fakeUoW) Rollback() error                                     { return nil }
 func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.repo }
+func (u *fakeUoW) RemediationRepo() repository.RemediationRepository   { return nil }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return &fakeOutboxRepo{repo: u.repo} }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return nil }
 
