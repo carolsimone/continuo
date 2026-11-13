@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/commandrequest"
+	"github.com/carolsimone/continuo/run-controller/domain/runplan"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	svchandlers "github.com/carolsimone/continuo/run-controller/service/handlers"
 	"github.com/carolsimone/continuo/run-controller/service/runstart"
@@ -419,4 +420,59 @@ func TestTriggerSingleNodeRun_TheAcknowledgedObjectsArePartOfTheFingerprint(t *t
 	assert.ErrorIs(t, err, commandrequest.ErrReused, "naming none is another request than naming two")
 	assert.Equal(t, 1, commandRecords(t, requestID.String()))
 
+}
+
+// A single-node call the planner refuses stores no command record and no run,
+// so the same request id may be sent again once the refusal no longer holds.
+func TestTriggerSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
+	ctx := context.Background()
+	h := newBuiltHarness(runControllerDB)
+	planner := runstart.Planner{Tasks: defaultPlanner.Tasks, Family: warehouse.SchemaBound, Engine: "postgres"}
+	commands := svchandlers.NewRunCommands(h.factory, noRunMetrics{}, planner, h.logger)
+	single := func(requestID uuid.UUID, table string, op model.Operation, acknowledged ...string) svchandlers.TriggerSingleNodeRunCommand {
+		return svchandlers.TriggerSingleNodeRunCommand{RequestID: requestID, TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
+			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: table},
+			MetadataSource: run.MetadataSourceLatest, Operation: op, AcknowledgedDependents: acknowledged,
+		}}
+	}
+	tasksAt := func(table string) int {
+		return countOf(t, runControllerDB, `SELECT count(*) FROM tasks WHERE node_key = $1`, "raw."+table)
+	}
+
+	t.Run("a full refresh of a seed that keeps its table", func(t *testing.T) {
+		const table = "rs_refused_false_seed"
+		keep := false
+		falseSeed := scheduledNode("raw", table, "dbt-seed", "rs-refused")
+		falseSeed.FullRefresh = &keep
+		promoteRelease(t, runControllerDB, falseSeed)
+		requestID := uuid.New()
+
+		_, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
+		require.ErrorIs(t, err, runplan.ErrSeedFullRefreshDisabled)
+		assert.Zero(t, commandRecords(t, requestID.String()))
+		assert.Zero(t, tasksAt(table))
+
+		promoteRelease(t, runControllerDB, scheduledNode("raw", table, "dbt-seed", "rs-refused"))
+		retry, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh))
+		require.NoError(t, err)
+		t.Cleanup(func() { finishRun(t, retry.RunID.String()) })
+		assert.False(t, retry.Replayed)
+		assert.Equal(t, 1, commandRecords(t, requestID.String()))
+	})
+
+	t.Run("an acknowledgement on a view", func(t *testing.T) {
+		const table = "rs_refused_view"
+		promoteRelease(t, runControllerDB, scheduledNode("raw", table, "dbt-model", "rs-refused"))
+		requestID := uuid.New()
+
+		_, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationFullRefresh, "bi.a"))
+		require.ErrorIs(t, err, runplan.ErrAcknowledgementNotAllowed)
+		assert.Zero(t, commandRecords(t, requestID.String()))
+		assert.Zero(t, tasksAt(table))
+
+		retry, err := commands.TriggerSingleNodeRun(ctx, single(requestID, table, model.OperationRun))
+		require.NoError(t, err)
+		t.Cleanup(func() { finishRun(t, retry.RunID.String()) })
+		assert.Equal(t, 1, commandRecords(t, requestID.String()))
+	})
 }

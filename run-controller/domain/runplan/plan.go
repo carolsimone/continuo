@@ -122,8 +122,10 @@ var (
 	// nodes read and no node builds. It is never a task, so no run executes
 	// it.
 	ErrIngestedNode = errors.New("an ingested node is never run")
-	// ErrSeedFullRefreshDisabled: an operator's full refresh names a seed
-	// whose +full_refresh: false keeps its table, so no command rebuilds it.
+	// ErrSeedFullRefreshDisabled: a single-node run names a seed whose
+	// +full_refresh: false keeps its table, and the run needs the table
+	// rebuilt (an operator's full refresh, or a load of changed columns), so
+	// no command can run it.
 	ErrSeedFullRefreshDisabled = errors.New("seed_full_refresh_disabled: the seed sets +full_refresh: false, so a full refresh cannot rebuild it")
 	// ErrAcknowledgementNotAllowed: a request names acknowledged dependents
 	// for a run that is not a full refresh of a dbt seed, the only run whose

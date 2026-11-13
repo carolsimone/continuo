@@ -876,9 +876,9 @@ func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T)
 	assert.Equal(t, seed, taskOf(sel.Plan, current).RebuildOf)
 }
 
-// A full refresh of a seed with +full_refresh: false on a schema_bound
-// warehouse cannot be rebuilt by any command, so the request is refused and
-// plans no run. On a late_binding warehouse every load re-creates the table,
+// A full refresh, or a load of changed columns, of a seed with
+// +full_refresh: false on a schema_bound warehouse cannot be applied by any
+// command, so the request is refused and plans no run. On a late_binding warehouse every load re-creates the table,
 // so the same seed is planned and its preflight only reports.
 func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.T) {
 	ctx := context.Background()
@@ -904,9 +904,16 @@ func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.
 
 	u, topo = fxUoW(nil)
 	topo.graph = falseSeed
+	_, err = fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationRun, nil, nil)
+	assert.ErrorIs(t, err, runplan.ErrSeedFullRefreshDisabled, "a load of changed columns needs the table rebuilt too")
+
+	u, topo = fxUoW(nil)
+	topo.graph = falseSeed
+	u.MaterializationRepo = loadedColumns{seed: "sha256:new"}
 	sel, err = fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationRun, nil, nil)
-	require.NoError(t, err, "a load, unlike an operator's full refresh, is not refused here")
-	assert.Empty(t, sel.Plan.Ready)
+	require.NoError(t, err, "a load of new rows only drops nothing")
+	assert.Empty(t, taskOf(sel.Plan, seed).Refusal)
+	assert.Equal(t, []topology.NodeKey{seed}, sel.Plan.Ready)
 }
 
 // The objects an operator names reach the seed's preflight, and the run is the

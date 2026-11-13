@@ -57,10 +57,9 @@ type TriggerSingleNodeRunInput struct {
 // the source run to be terminal and to carry a task at the requested node. A
 // selection the planner refuses (the node is not in the release or another
 // service owns it, a test of a node without data tests, a full refresh of a
-// type that cannot be rebuilt, a full refresh of a seed that sets
-// +full_refresh: false, acknowledged dependents on any other run, a source that
-// names no release) is returned as
-// is, and the caller rolls back.
+// type that cannot be rebuilt, a seed that sets +full_refresh: false and needs
+// its table rebuilt, acknowledged dependents on any other run, a source that
+// names no release) is returned as is, and the caller rolls back.
 func (h *TriggerSingleNodeRunHandler) HandleInTransaction(ctx context.Context, u uow.UnitOfWork, runID uuid.UUID, in TriggerSingleNodeRunInput) (string, error) {
 	src, err := h.source(ctx, u, in)
 	if err != nil {

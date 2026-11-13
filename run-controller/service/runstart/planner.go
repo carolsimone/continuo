@@ -117,9 +117,10 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 // operator's request for it, and so is a rerun or a rebase of one; acknowledged
 // are the objects reading the seed that an operator named, which its preflight
 // lets the load drop. Naming any for a run that is not a full refresh of a dbt
-// seed is runplan.ErrAcknowledgementNotAllowed, and a full refresh of a seed
-// whose +full_refresh: false keeps its table is
-// runplan.ErrSeedFullRefreshDisabled.
+// seed is runplan.ErrAcknowledgementNotAllowed. A seed whose +full_refresh:
+// false keeps its table cannot be rebuilt, so a request whose seed task would
+// be refused for it, an operator's full refresh or a load of changed columns,
+// is runplan.ErrSeedFullRefreshDisabled and plans no run.
 func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID string, target run.NodeID, op model.Operation, source *run.Run, acknowledged []string) (Selection, error) {
 	var stamp run.ReleaseStamp
 	if source != nil {
@@ -155,7 +156,7 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID stri
 	if err != nil {
 		return sel, err
 	}
-	if op == model.OperationFullRefresh && plannedTask(sel.Plan, key).Refusal == model.FailureReasonSeedFullRefreshDisabled {
+	if plannedTask(sel.Plan, key).Refusal == model.FailureReasonSeedFullRefreshDisabled {
 		return sel, fmt.Errorf("%w: %s", runplan.ErrSeedFullRefreshDisabled, key)
 	}
 	return sel, nil

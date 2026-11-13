@@ -266,7 +266,8 @@ func cancelledBy(ctx context.Context, requested string) string {
 //     a defect in run-controller, and nothing it wrote was kept.
 //   - A run, schedule, node or task that does not exist is NotFound; a full
 //     refresh of a node type that cannot be rebuilt, a run of an ingested
-//     node, a full refresh of a seed that sets +full_refresh: false,
+//     node, a single-node run of a seed that sets +full_refresh: false and
+//     needs its table rebuilt (a full refresh, or a load of changed columns),
 //     acknowledged dependents on a run that is not a full refresh of a dbt
 //     seed, and a schedule name longer than a run carries are
 //     InvalidArgument; a live release other than the one the caller
