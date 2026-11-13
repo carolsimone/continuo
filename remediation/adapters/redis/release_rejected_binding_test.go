@@ -301,6 +301,60 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 	}
 }
 
+// TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable verifies that a
+// reason the contract declares and marks not healable produces no evidence,
+// whatever its stage and per-node entries say. upstream_clone_failed is the
+// case: validation could not copy an unchanged upstream's production table,
+// which a run of that node settles and no code change does.
+func TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable(t *testing.T) {
+	require.True(t, pkg_model.RejectReasonUpstreamCloneFailed.IsValid())
+	require.False(t, pkg_model.RejectReasonUpstreamCloneFailed.Healable())
+
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"upstream_clone_failed",
+		"repo":"o/r","commit_sha":"sha","failing_nodes":["analytics.b"],
+		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod","dbt_log_uri":"s3://b/b.log"}]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Empty(t, evs, "a declared reason that is not healable yields no evidence")
+}
+
+// TestEvidenceFromRejected_SkipsClonedNodes verifies that in a release where a
+// changed node and a node copied from its production table both failed, only
+// the changed node yields evidence. The reason stays validation_failed and the
+// copied node appears in per_node alone: no change to the release's code fixes
+// a copy of production.
+func TestEvidenceFromRejected_SkipsClonedNodes(t *testing.T) {
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+		"repo":"o/r","commit_sha":"sha","failing_nodes":["analytics.s"],
+		"per_node":[
+			{"node_id":"analytics.s","status":"failed","validation_op":"build_from_sql","dbt_log_uri":"s3://b/s.log"},
+			{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod","dbt_log_uri":"s3://b/b.log"}
+		]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Len(t, evs, 1, "the cloned node is never fixed")
+	assert.Equal(t, "analytics.s", evs[0].NodeID)
+	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+}
+
+// TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath verifies that only a
+// declared, non-healable reason is dropped before the stage decides: a message
+// with an empty reason (an older producer, a retry replay) or a reason this
+// build does not declare still yields evidence for its failed nodes.
+func TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath(t *testing.T) {
+	for _, reason := range []string{"", "no-such-reason"} {
+		t.Run("reason "+reason, func(t *testing.T) {
+			raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"` + reason + `",
+				"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"build_from_sql"}]}`)
+			evs, err := evidenceFromRejected(raw)
+			require.NoError(t, err)
+			require.Len(t, evs, 1)
+			assert.Equal(t, "analytics.s", evs[0].NodeID)
+			assert.Equal(t, failure.SourceValidation, evs[0].Source)
+		})
+	}
+}
+
 func TestEvidenceFromRejected_IgnoresUnknownTopLevelFields(t *testing.T) {
 	raw := []byte(`{"release_id":"r","stage":"validation","reason":"validation_failed","future_field":true,
 		"per_node":[{"node_id":"model.core.orders","status":"failed"}]}`)

@@ -571,6 +571,23 @@ func TestClassifyRejection_NoEmitDecisionsWritesNoTrigger(t *testing.T) {
 	}
 }
 
+// TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing pins what a dropped
+// rejection (no failed node left to fix) reaches: no unit of work, no recorded
+// decision, no remediation.requested.
+func TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{}, ob: &fakeOutbox{}}
+	deps := depsWith(u, "", nil)
+	begun := false
+	deps.NewUoW = func() uow.UnitOfWork { begun = true; return u }
+
+	require.NoError(t, ClassifyRejection(context.Background(), deps, nil))
+
+	assert.False(t, begun, "a rejection with no evidence opens no transaction")
+	assert.Empty(t, u.dec.saved, "no decision is recorded")
+	assert.Empty(t, u.ob.entries, "no remediation.requested is enqueued")
+	assert.False(t, u.committed)
+}
+
 func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	var fetches int

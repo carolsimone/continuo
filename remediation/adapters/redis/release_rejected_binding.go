@@ -16,6 +16,11 @@ import (
 	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
+// validationOpCloneFromProd is release-controller's validation op for a node
+// copied from its production table instead of built from its own code. The
+// value crosses the release.rejected wire as a per-node validation_op.
+const validationOpCloneFromProd = "clone_from_prod"
+
 // rejectedPayload mirrors the release.rejected:v1 wire shape produced by
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
@@ -46,6 +51,11 @@ type rejectedPayload struct {
 		DBTLogURI            string `json:"dbt_log_uri"`
 		RunResultsURI        string `json:"run_results_uri"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
+		// ValidationOp is how the validation leg prepared the node:
+		// build_from_sql, build_from_columns, check_binds, or
+		// validationOpCloneFromProd. Empty on a non-validation rejection and
+		// from a producer that does not send it.
+		ValidationOp string `json:"validation_op"`
 		// RelationID is the contested physical relation for a
 		// duplicate-relation rejection, distinct from NodeID (the target
 		// claimant's own unique_id) — the two differ whenever the target
@@ -117,10 +127,9 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
 // field, which covers the stage-less duplicate_table rejection. The bool is
-// false when the rejection is not remediable — invalid_artifact/internal_error
-// parse rejections are handled by the classifier's own drop,
-// unbuildable_cross_service_upstream, or an unknown future stage; the caller
-// then produces no evidence rather than misrouting it.
+// false when the rejection is not remediable — a stage this build does not
+// know, or a stage-less reason that names no pipeline leg; the caller then
+// produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
 	case "parse":
@@ -147,7 +156,10 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 }
 
 // evidenceFromRejected translates a release.rejected:v1 payload into one
-// FailureEvidence per failed node. Nodes with status != "failed" are skipped.
+// FailureEvidence per failed node. Nodes with status != "failed" are skipped,
+// and so is a node validation copied from its production table: no change to
+// the release's code fixes a copy of production. A rejection whose reason the
+// contract declares and marks not healable yields no evidence at all.
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
@@ -170,11 +182,13 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		return nil, nil
 	}
 
-	// Parse-export-leg rejections are not model failures: a rehearsal miss is
-	// a project *property* (env_var() at parse time / partial parse disabled)
-	// and an upload failure is continuo-internal. Neither is fixable by a
-	// model change, so no heal evidence is produced for them.
-	if p.Reason == "parse_rehearsal_failed" || p.Reason == "artifact_upload_failed" {
+	// A reason the contract declares and marks not healable is not a model
+	// failure a heal proposal could fix: a rehearsal miss is a project
+	// property, an upload failure or an unreadable artifact is continuo's own,
+	// and a failed copy of an unchanged upstream is settled by a run of that
+	// node. A reason that is empty or that this build does not declare (an
+	// older producer, a retry replay) is not dropped here; its stage decides.
+	if r := pkg_model.RejectReason(p.Reason); r.IsValid() && !r.Healable() {
 		return nil, nil
 	}
 
@@ -187,7 +201,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {
-		if n.Status != "failed" {
+		if n.Status != "failed" || n.ValidationOp == validationOpCloneFromProd {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{
