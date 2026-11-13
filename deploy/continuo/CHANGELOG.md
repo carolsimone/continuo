@@ -87,6 +87,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
 - **The release page shows how long each node took.** TL;DR: the duration column of a release's node results shows each compile, seed-build and validation Job's run time instead of a dash.
 - **A model with an owner and no tag is validated.** TL;DR: continuo used to skip such a model. It is now a dormant node, and a release checks it like any model, so a broken one rejects the release.
   - To keep a model out of continuo, leave out its `meta.owner` or tag it `local_stub`.
+  - This is only for your own dbt project. A model, seed or snapshot of an installed dbt package is left out when it has no tag, even though dbt gives it the owner of your project's top-level `+meta`. A seed like that used to reject the release `invalid_artifact`. A package's node with a tag still rejects the release `invalid_artifact`.
 - **The Nodes tab lists every node of the live release.** TL;DR: a node that never ran is listed too, after the nodes that ran, with `never` and dashes. A node the live release does not hold is not listed, whatever runs it had.
   - A `Dormant only` filter lists only the dormant nodes.
   - The Service filter offers every service with a listed node, and the search suggests every listed table, a node that never ran included. A node the live release does not hold is no longer suggested.
@@ -96,7 +97,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
   - It is not healable: remediation drops the rejection before it reads its nodes, so it proposes no fix and records no `classification_decision` row, and "Try again" is refused.
   - remediation never tries to fix a copied node, in a `validation_failed` rejection either.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
-- **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner` and `local_stub`.
+- **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
 
 ### Security
 - Service and CLI images are built with Go 1.27.4, and every Go module requires Go 1.26.11: both fix GO-2026-6859 in `net/http` (an HTTP/1 server that uses `MaxBytesReader` or `MaxBytesHandler` could crash when its handler read the request body while it wrote the response header). No values change. PATCH.

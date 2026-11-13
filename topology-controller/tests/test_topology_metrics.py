@@ -39,11 +39,20 @@ def test_every_outcome_and_failure_kind_pair_and_every_skip_reason_is_exported_a
 
 
 def test_no_node_is_skipped_for_want_of_a_tag():
-    """A model with an owner and no tag is kept as a dormant node, so the skip
-    reasons are the owner gate and the local stub."""
-    assert sorted(reason.value for reason in SkipReason) == ["local_stub", "no_owner"]
+    """A model of the project with an owner and no tag is kept as a dormant node,
+    so the skip reasons are the owner gate, the local stub and an untagged node
+    of an installed package."""
+    assert sorted(reason.value for reason in SkipReason) == ["installed_package", "local_stub", "no_owner"]
     metrics = TopologyMetrics("topology-controller")
     assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_tag") is None
+
+
+def test_the_installed_package_reason_is_exported_at_zero_from_boot_and_set_by_a_release():
+    metrics = TopologyMetrics("topology-controller")
+    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="installed_package") == 0.0
+    metrics.release_finished(_finished({"dbt": 2}, {SkipReason.INSTALLED_PACKAGE: 4}))
+    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="installed_package") == 4.0
+    assert _value(metrics, "continuo_topology_release_skipped_nodes", reason="no_owner") == 0.0
 
 
 def test_the_dormant_gauge_is_exported_at_zero_from_boot():

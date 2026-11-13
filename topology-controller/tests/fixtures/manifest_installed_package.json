@@ -1,0 +1,78 @@
+{
+  "metadata": {
+    "dbt_version": "1.12.0b1",
+    "project_name": "shop_core"
+  },
+  "nodes": {
+    "model.shop_core.orders": {
+      "unique_id": "model.shop_core.orders",
+      "package_name": "shop_core",
+      "name": "orders",
+      "schema": "analytics",
+      "fqn": ["shop_core", "orders"],
+      "tags": ["daily"],
+      "resource_type": "model",
+      "config": {"meta": {"owner": "finance"}},
+      "compiled_code": "SELECT id FROM analytics.pkg_model",
+      "checksum": {"name": "sha256", "checksum": "hash-orders"}
+    },
+    "model.shop_core.monthly_report": {
+      "unique_id": "model.shop_core.monthly_report",
+      "package_name": "shop_core",
+      "name": "monthly_report",
+      "schema": "analytics",
+      "fqn": ["shop_core", "monthly_report"],
+      "tags": [],
+      "resource_type": "model",
+      "config": {"meta": {"owner": "finance"}},
+      "compiled_code": "SELECT id FROM analytics.orders",
+      "checksum": {"name": "sha256", "checksum": "hash-monthly-report"}
+    },
+    "seed.shop_core.countries": {
+      "unique_id": "seed.shop_core.countries",
+      "package_name": "shop_core",
+      "name": "countries",
+      "schema": "analytics",
+      "fqn": ["shop_core", "countries"],
+      "tags": [],
+      "resource_type": "seed",
+      "config": {"meta": {"owner": "finance"}},
+      "checksum": {"name": "sha256", "checksum": "hash-countries"}
+    },
+    "model.evalpkg.pkg_model": {
+      "unique_id": "model.evalpkg.pkg_model",
+      "package_name": "evalpkg",
+      "name": "pkg_model",
+      "schema": "analytics",
+      "fqn": ["evalpkg", "pkg_model"],
+      "tags": [],
+      "resource_type": "model",
+      "config": {"meta": {"owner": "finance"}},
+      "compiled_code": "SELECT 1 AS id",
+      "checksum": {"name": "sha256", "checksum": "hash-pkg-model"}
+    },
+    "seed.evalpkg.pkg_seed": {
+      "unique_id": "seed.evalpkg.pkg_seed",
+      "package_name": "evalpkg",
+      "name": "pkg_seed",
+      "schema": "analytics",
+      "fqn": ["evalpkg", "pkg_seed"],
+      "tags": [],
+      "resource_type": "seed",
+      "config": {"meta": {"owner": "finance"}},
+      "checksum": {"name": "sha256", "checksum": "hash-pkg-seed"}
+    },
+    "model.evalpkg.pkg_no_owner": {
+      "unique_id": "model.evalpkg.pkg_no_owner",
+      "package_name": "evalpkg",
+      "name": "pkg_no_owner",
+      "schema": "analytics",
+      "fqn": ["evalpkg", "pkg_no_owner"],
+      "tags": [],
+      "resource_type": "model",
+      "config": {"meta": {}},
+      "compiled_code": "SELECT 1 AS id",
+      "checksum": {"name": "sha256", "checksum": "hash-pkg-no-owner"}
+    }
+  }
+}

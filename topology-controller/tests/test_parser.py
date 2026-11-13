@@ -681,6 +681,114 @@ def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_service(tmp_path):
     assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]
 
 
+PACKAGE_FIXTURE = FIXTURES / "manifest_installed_package.json"
+
+
+def _write_manifest(tmp_path, nodes, *, metadata=None) -> str:
+    """A manifest of `nodes`, with a `metadata` block when one is given."""
+    manifest = {"macros": {}, "nodes": nodes}
+    if metadata is not None:
+        manifest["metadata"] = metadata
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    return str(path)
+
+
+def _package_node(name, *, package="evalpkg", owner="finance", tags=(), resource_type="model"):
+    """A node of the dbt package `package` as dbt writes it: its fqn starts with
+    the package's name."""
+    return _svc_a_model(name, owner=owner, tags=tags, resource_type=resource_type,
+                        package_name=package, fqn=[package, name])
+
+
+def _parse_package_fixture(**options):
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(str(PACKAGE_FIXTURE), skipped=skipped, **options).nodes
+    return {n.table_name: n for n in nodes}, skipped
+
+
+def test_an_untagged_node_of_an_installed_package_is_skipped():
+    """dbt applies a project's top-level `models: +meta` to the models of its
+    installed packages too, so such a model has an owner. With no tag it is left
+    out: it belongs to the package, not to the project the manifest is of."""
+    nodes, skipped = _parse_package_fixture()
+    assert sorted(nodes) == ["countries", "monthly_report", "orders"]
+    assert skipped == [
+        SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("seed.evalpkg.pkg_seed", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("model.evalpkg.pkg_no_owner", "evalpkg", SkipReason.NO_OWNER),
+    ]
+
+
+def test_an_untagged_node_of_the_project_is_kept_beside_an_installed_package():
+    nodes, _ = _parse_package_fixture()
+    report, countries = nodes["monthly_report"], nodes["countries"]
+    assert (report.service_name, report.schedule_name) == ("shop-core", "")
+    assert is_dormant(report.node_type, report.schedule_name)
+    assert (countries.service_name, countries.schedule_name) == ("shop-core", "seed")
+
+
+def test_a_tagged_node_of_an_installed_package_is_kept_for_the_service_check(tmp_path):
+    """A tag on a package's node is a choice to schedule it, so the parse keeps
+    it under the package's service and the handler's service check refuses it."""
+    path = _write_manifest(tmp_path, {"model.evalpkg.pkg_daily": _package_node("pkg_daily", tags=["daily"])},
+                           metadata={"project_name": "shop_core"})
+    skipped: list[SkippedNode] = []
+    (node,) = parse_manifest(path, skipped=skipped).nodes
+    assert (node.service_name, node.schedule_name) == ("evalpkg", "daily")
+    assert skipped == []
+
+
+def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
+    path = _write_manifest(tmp_path, {
+        "model.evalpkg.bare": _package_node("bare", owner=None),
+        "model.evalpkg.stub": _package_node("stub", tags=["local_stub"]),
+    }, metadata={"project_name": "shop_core"})
+    skipped: list[SkippedNode] = []
+    assert parse_manifest(path, skipped=skipped).nodes == []
+    assert skipped == [
+        SkippedNode("model.evalpkg.bare", "evalpkg", SkipReason.NO_OWNER),
+        SkippedNode("model.evalpkg.stub", "evalpkg", SkipReason.LOCAL_STUB),
+    ]
+
+
+@pytest.mark.parametrize("top_level", [
+    {}, {"metadata": None}, {"metadata": {}}, {"metadata": {"project_name": ""}}, {"metadata": {"project_name": None}},
+])
+def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, top_level):
+    """Without the manifest's project name or a declared service the parse cannot
+    tell the project from a package: it keeps the node, and the handler's service
+    check stays the guard."""
+    manifest = {"macros": {}, "nodes": {"model.evalpkg.pkg_model": _package_node("pkg_model")}, **top_level}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    skipped: list[SkippedNode] = []
+    (node,) = parse_manifest(str(path), skipped=skipped).nodes
+    assert (node.service_name, node.schedule_name) == ("evalpkg", "")
+    assert skipped == []
+
+
+def test_the_declared_service_names_the_project_when_the_manifest_does_not(tmp_path):
+    path = _write_manifest(tmp_path, {
+        "model.shop_core.report": _package_node("report", package="shop_core"),
+        "model.evalpkg.pkg_model": _package_node("pkg_model"),
+    })
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(path, skipped=skipped, declared_service="shop-core").nodes
+    assert [(n.table_name, n.schedule_name) for n in nodes] == [("report", "")]
+    assert skipped == [SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE)]
+
+
+def test_the_manifests_own_project_name_wins_over_the_declared_service():
+    """A declared service that differs from the manifest's project (a misnamed
+    service, which the handler's service check refuses) does not turn the
+    project's own untagged nodes into package nodes."""
+    nodes, skipped = _parse_package_fixture(declared_service="billing")
+    assert sorted(nodes) == ["countries", "monthly_report", "orders"]
+    assert [s.reason for s in skipped] == [
+        SkipReason.INSTALLED_PACKAGE, SkipReason.INSTALLED_PACKAGE, SkipReason.NO_OWNER]
+
+
 def test_a_model_counts_its_declared_columns(tmp_path):
     columns = {name: {"name": name} for name in ("id", "amount", "created_at")}
     path = _write_nodes(tmp_path, **{"model.svc_a.wide": _svc_a_model("wide", columns=columns)})

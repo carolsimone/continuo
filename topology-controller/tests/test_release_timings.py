@@ -89,11 +89,21 @@ def test_log_fields_carry_the_release_its_counts_and_every_stage():
         "outcome": "ok",
         "nodes": {"dbt": 2, "python": 1, "external": 0},
         "columns": {"dbt": 3, "python": 2, "external": 0},
-        "skipped": {"no_owner": 1, "local_stub": 0},
+        "skipped": {"no_owner": 1, "local_stub": 0, "installed_package": 0},
         "dormant": {"svc-a": 1},
         "stages_ms": timings.stages_ms(),
         "peak_rss_bytes": 0,
     }
+
+
+def test_add_skips_counts_each_skip_under_its_own_reason():
+    timings = _timings()
+    timings.add_skips([
+        SkippedNode("model.evalpkg.a", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("seed.evalpkg.b", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("model.svc_a.c", "svc-a", SkipReason.NO_OWNER),
+    ])
+    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.LOCAL_STUB: 0, SkipReason.INSTALLED_PACKAGE: 2}
 
 
 def test_log_fields_name_the_failure_kind_of_a_failed_release():
@@ -108,7 +118,7 @@ def test_a_release_with_no_nodes_counts_every_runtime_and_reason_at_zero():
     fields = _timings().log_fields()
     zero = {"dbt": 0, "python": 0, "external": 0}
     assert (fields["nodes"], fields["columns"]) == (zero, zero)
-    assert fields["skipped"] == {"no_owner": 0, "local_stub": 0}
+    assert fields["skipped"] == {"no_owner": 0, "local_stub": 0, "installed_package": 0}
     assert fields["dormant"] == {}
 
 

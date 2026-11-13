@@ -119,6 +119,13 @@ in it, deliberately:
    [`continuo` command line](#the-continuo-command-line)), and until then
    it runs only when triggered.
 
+   A model, seed or snapshot of an installed dbt package (one your
+   `packages.yml` names) is never a node of your service. dbt gives it the
+   top-level `+meta` of your `dbt_project.yml`, owner included, so continuo
+   looks at its tag. With no tag, continuo leaves it out. With a tag, continuo
+   rejects the release as `invalid_artifact`, because a service's release may
+   hold only the nodes of its own project.
+
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).

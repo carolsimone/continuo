@@ -7,10 +7,11 @@ holds the parts and their fold). A seed the compile extras name also carries its
 column fingerprint, CSV header and column types, and the parse reports the
 service's provenance: the manifest's dbt version, the extras' package versions
 and the seeds whose source part is still dbt's `path` checksum. A model, seed or
-snapshot a gate leaves out (no owner, a local stub) is reported through the
-caller's `skipped` list, never raised. A model or snapshot with an owner and no
-tag is kept with an empty schedule (a dormant node); a seed with no tag takes
-the `seed` schedule.
+snapshot a gate leaves out (no owner, a local stub, an untagged node of an
+installed dbt package) is reported through the caller's `skipped` list, never
+raised. A model or snapshot of the project with an owner and no tag is kept
+with an empty schedule (a dormant node); a seed of the project with no tag
+takes the `seed` schedule.
 """
 import json
 import logging
@@ -61,8 +62,8 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
     "snapshot": NodeType.DBT_SNAPSHOT,
 }
 
-# The schedule each resource type takes when it carries no tag. A seed loads on
-# the "seed" schedule; a model or snapshot has none, so it is a dormant node.
+# The schedule a node of the project takes when it carries no tag. A seed loads
+# on the "seed" schedule; a model or snapshot has none, so it is a dormant node.
 _RESOURCE_TYPE_UNTAGGED_SCHEDULE: dict[str, str] = {
     "model":    "",
     "seed":     "seed",
@@ -75,6 +76,15 @@ def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
     node the parse never builds can still lack an fqn without raising."""
     service = (node.get("fqn") or [""])[0].replace("_", "-")
     return SkippedNode(node_id=node_id, service=service, reason=reason)
+
+
+def _project_service(root_project: str, declared_service: str) -> str:
+    """The service of the dbt project the manifest was compiled from: the
+    manifest's own project name (`metadata.project_name`) with `_` written as
+    `-`, else the service the release declares the manifest for; "" when
+    neither is known. A model, seed or snapshot whose fqn starts with another
+    name is a node of an installed dbt package."""
+    return root_project.replace("_", "-") if root_project else declared_service
 
 
 def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
@@ -100,6 +110,7 @@ def parse_manifest(
     extras: CompileExtras | None = None,
     *,
     skipped: list[SkippedNode] | None = None,
+    declared_service: str = "",
 ) -> ParsedArtifact:
     """Parse a dbt manifest into its nodes and the shared code they use.
 
@@ -109,17 +120,24 @@ def parse_manifest(
     seed the extras name also carries seed_columns_hash, seed_header and
     seed_column_types from its entry, which stay empty otherwise.
 
-    A model, seed or snapshot that a gate leaves out (no owner, a local stub)
-    is never an error: when `skipped` is given, the node is appended to it with
-    its reason, and nothing is logged here, so the caller reports every skip in
-    one place. The gates run in that order, so a node with neither owner nor tag
-    is reported as having no owner.
+    A model, seed or snapshot that a gate leaves out is never an error: when
+    `skipped` is given, the node is appended to it with its reason, and nothing
+    is logged here, so the caller reports every skip in one place. The gates run
+    in this order: no owner, a `local_stub` tag, then no tag on a node of an
+    installed dbt package. dbt applies a project's top-level `+meta` to the
+    nodes of its installed packages too, so a package's node can carry the
+    project's owner; with no tag it is not the service's to schedule. A node of
+    a package that carries a tag is kept under the package's service, so the
+    caller's service check refuses it. The project is the manifest's own
+    `metadata.project_name`, else `declared_service`. When neither is known, no
+    node is left out for belonging to a package.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
     with _rejecting_hash_input(manifest_path):
         ctx = ManifestContext.from_manifest(manifest, extras)
+    project_service = _project_service(ctx.root_project, declared_service)
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
     used_units: dict[str, CodeUnit] = {}
@@ -145,6 +163,12 @@ def parse_manifest(
                 skipped.append(_skipped(node_id, node, SkipReason.LOCAL_STUB))
             continue
 
+        service_name = node["fqn"][0].replace("_", "-")
+        if not tags and project_service and service_name != project_service:
+            if skipped is not None:
+                skipped.append(_skipped(node_id, node, SkipReason.INSTALLED_PACKAGE))
+            continue
+
         schedule_name = tags[0] if tags else _RESOURCE_TYPE_UNTAGGED_SCHEDULE[resource_type]
 
         meta = node.get("config", {}).get("meta") or {}
@@ -162,7 +186,7 @@ def parse_manifest(
             resolved_relation=node.get("alias") or table_name,
             materialized=(node.get("config") or {}).get("materialized") or "",
             full_refresh=_seed_full_refresh(resource_type, node.get("config") or {}),
-            service_name=node["fqn"][0].replace("_", "-"),
+            service_name=service_name,
             owner=owner,
             schedule_name=schedule_name,
             criticality=criticality,

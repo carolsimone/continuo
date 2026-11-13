@@ -23,11 +23,16 @@ class ManifestKind(StrEnum):
 
 class SkipReason(StrEnum):
     """Why the parse leg leaves a dbt node out of the topology without failing
-    the release: it declares no owner, or it is a local stub. A value is the
-    string the logs report. A node with an owner and no schedule tag is not left
-    out: it is a dormant node with an empty schedule."""
+    the release: it declares no owner, it is a local stub, or it is a node of an
+    installed dbt package (not of the project the manifest was compiled from)
+    that carries no tag. A value is the string the logs report. A node of the
+    project with an owner and no schedule tag is not left out: it is a dormant
+    node with an empty schedule. A node of an installed package that carries a
+    tag is not left out either: it is kept under the package's service, which
+    the release's service check refuses."""
     NO_OWNER = "no_owner"
     LOCAL_STUB = "local_stub"
+    INSTALLED_PACKAGE = "installed_package"
 
 
 @dataclass(frozen=True)

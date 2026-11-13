@@ -1269,7 +1269,7 @@ def test_a_release_logs_one_release_line(caplog):
     (line,) = _release_lines(caplog)
     assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
         logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
-    assert line.skipped == {"no_owner": 0, "local_stub": 0}
+    assert line.skipped == {"no_owner": 0, "local_stub": 0, "installed_package": 0}
     assert line.dormant == {}
     assert list(line.stages_ms) == [stage.value for stage in Stage]
     assert not hasattr(line, "failure_kind")
@@ -1312,7 +1312,7 @@ def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner_no_tag", "no_owner")]
-    assert timings.skipped == {SkipReason.NO_OWNER: 2, SkipReason.LOCAL_STUB: 1}
+    assert timings.skipped == {SkipReason.NO_OWNER: 2, SkipReason.LOCAL_STUB: 1, SkipReason.INSTALLED_PACKAGE: 0}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
@@ -1324,7 +1324,52 @@ def test_a_model_with_an_owner_and_no_tag_is_kept_not_skipped_and_counted_dorman
     assert timings.nodes == {"dbt": 2, "python": 0, "external": 0}
     assert timings.dormant == {"svc-a": 1}
     (line,) = _release_lines(caplog)
-    assert (line.skipped, line.dormant) == ({"no_owner": 0, "local_stub": 0}, {"svc-a": 1})
+    assert (line.skipped, line.dormant) == ({"no_owner": 0, "local_stub": 0, "installed_package": 0}, {"svc-a": 1})
+
+
+def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_published(caplog):
+    """dbt gives the models of an installed package the project's top-level
+    owner, so the manifest of service shop-core holds untagged nodes of the
+    package evalpkg. They are left out, so the service check passes, and the
+    table one of them writes is an unknown-external node for its reader."""
+    source = _make_source_with_declared([("manifest_installed_package.json", "shop-core")])
+    publisher, writer = MagicMock(), RecordingArtifactWriter()
+    with caplog.at_level(logging.INFO):
+        timings = build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    by_id = {n["unique_id"]: n for n in writer.nodes}
+    assert {uid: (n["service_name"], n["node_type"], n["schedule"]) for uid, n in by_id.items()} == {
+        "analytics.orders": ("shop-core", "dbt-model", "daily"),
+        "analytics.monthly_report": ("shop-core", "dbt-model", ""),
+        "analytics.countries": ("shop-core", "dbt-seed", "seed"),
+        "analytics.pkg_model": ("", "unknown-external", ""),
+    }
+    assert by_id["analytics.orders"]["upstream_unique_ids"] == ["analytics.pkg_model"]
+    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.LOCAL_STUB: 0, SkipReason.INSTALLED_PACKAGE: 2}
+    skips = [(r.service, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert skips == [
+        ("evalpkg", "model.evalpkg.pkg_model", "installed_package"),
+        ("evalpkg", "seed.evalpkg.pkg_seed", "installed_package"),
+        ("evalpkg", "model.evalpkg.pkg_no_owner", "no_owner"),
+    ]
+
+
+def test_a_tagged_node_of_an_installed_package_still_fails_the_service_check(tmp_path):
+    manifest = json.loads((FIXTURES / "manifest_installed_package.json").read_text())
+    manifest["nodes"]["model.evalpkg.pkg_model"]["tags"] = ["daily"]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    publisher = MagicMock()
+
+    build_handler(source_of(ManifestFile(path=str(path), declared_service="shop-core")), publisher,
+                  make_uploader()).handle(release_id="rel-1")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kw["detail"] == "shop-core: manifest contains nodes for ['evalpkg']"
+    publisher.publish_ok.assert_not_called()
 
 
 def test_a_dormant_node_enters_the_topology_the_code_bundle_and_the_candidate_schema(tmp_path):

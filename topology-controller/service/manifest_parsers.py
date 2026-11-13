@@ -28,9 +28,11 @@ class ParseFn(Protocol):
 
 def _parse_dbt(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
-    there are any. The extras must name the manifest's declared service."""
+    there are any. The extras must name the manifest's declared service, and the
+    declared service stands for the manifest's project when the manifest does
+    not name it."""
     extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
-    return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped)
+    return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service)
 
 
 def _parse_python(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
