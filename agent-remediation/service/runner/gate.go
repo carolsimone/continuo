@@ -84,7 +84,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 		}
 		row.Findings = verdict.Result.Findings
 		r.finish(&row)
-		return r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+		return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 			return r.refuseAttempt(ctx, u, run, f.Message)
 		})
 	}
@@ -92,7 +92,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 	row.WaitingOn = verdict.Result.RunIDs
 	p := verifyingAttempt(run, checked, verdict.Verifications)
 	deadline := r.clock.Now().Add(r.d.VerificationTimeout + tryVerifyingSlack)
-	if err := r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+	if err := r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func (r *Runner) pollGate(ctx context.Context, id uuid.UUID) error {
 	}
 	switch {
 	case verdict.Result.Waiting:
-		return r.writePhases(ctx, row, attempt, verdict.Phases)
+		return r.writePhases(ctx, run, row, attempt, verdict.Phases)
 	case verdict.Result.Passed():
 		return r.passGate(ctx, run, row, attempt, checked, verdict)
 	}
@@ -211,18 +211,22 @@ func attemptRow(ctx context.Context, repo repository.ProposalRepository, run try
 
 // writePhases records what a poll that read the gate's runs found: each run's
 // phase that differs from what the attempt's proposal row records, and the gate
-// row's failures, which a poll that got through resets to zero so that only
-// consecutive failed polls add up. It writes in one transaction, and writes
-// nothing when no phase differs and the row has no failures.
-func (r *Runner) writePhases(ctx context.Context, row remediation.StepRun, attempt proposal.View, phases []proposal.Verification) error {
+// row's failures and the remediation's own, which a poll that got through
+// resets to zero so that only consecutive failed polls add up. It writes in one
+// transaction, and writes nothing when no phase differs and neither the row
+// nor the remediation has failures.
+func (r *Runner) writePhases(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, phases []proposal.Verification) error {
 	changed := changedPhases(attempt.Verifications, phases)
 	reset := row.Failures > 0
-	if len(changed) == 0 && !reset {
+	if len(changed) == 0 && !reset && !failuresToClear(run) {
 		return nil
 	}
 	cleared := row
 	cleared.Failures, cleared.LastError = 0, ""
 	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+		if err := r.clearFailures(ctx, u, run); err != nil {
+			return err
+		}
 		if reset {
 			if err := u.RemediationRepo().SaveStep(ctx, cleared); err != nil {
 				return fmt.Errorf("save step %s: %w", cleared.Step, err)
@@ -387,6 +391,9 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 	}
 	final := mergeVerifications(attempt.Verifications, verdict.Verifications)
 	err = r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+		if err := r.clearFailures(ctx, u, run); err != nil {
+			return err
+		}
 		if err := u.RemediationRepo().SaveStep(ctx, gateRow); err != nil {
 			return fmt.Errorf("save step %s: %w", gateRow.Step, err)
 		}

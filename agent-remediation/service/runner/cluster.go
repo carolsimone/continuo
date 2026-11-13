@@ -138,7 +138,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	if err != nil {
 		return err
 	}
-	return r.commitStep(ctx, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
+	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
 }
 
 // runPrompt runs the cluster's prompt step through a model handle keyed by the
@@ -185,7 +185,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if err != nil {
 		return err
 	}
-	return r.commitStep(ctx, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
+	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
 }
 
 // runPreflight runs every pre-flight check of the cluster's type on the draft,
@@ -254,7 +254,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	pass.Findings = findings
 	r.finish(&pass)
 	rows = append(rows, pass)
-	return r.commitStep(ctx, pass, rows, append([]remediation.Cluster{next}, added...))
+	return r.commitStep(ctx, run, pass, rows, append([]remediation.Cluster{next}, added...))
 }
 
 // runCheck runs one pre-flight check and returns its finished row, its result

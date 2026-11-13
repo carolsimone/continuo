@@ -26,11 +26,11 @@ const (
 
 // Sweeper ends the remediations that can make no more progress and that no
 // worker is driving: one with a step that failed five times, one that failed
-// five times before a step could run, and one whose try is still drafting or
-// checking past its deadline. It acts on a remediation
-// only after it claimed it, so one that a worker or the gate poller is on is
-// left to them. A worker ends the remediation of a drive that failed itself, by
-// the same rules.
+// five times in a row before a step could run, and one whose try is still
+// drafting or checking past its deadline. It acts on a remediation only after
+// it claimed it, so one that a worker or the gate poller is on is left to
+// them. A worker ends the remediation of a drive that failed itself, by the
+// same rules.
 type Sweeper struct {
 	newUoW   func() uow.UnitOfWork
 	repo     func() repository.RemediationRepository
@@ -71,8 +71,8 @@ func (s *Sweeper) Run(ctx context.Context) {
 
 // Sweep makes one pass over the remediations that have a step, or whose own
 // row has failures, past the failure limit and those whose try is past its
-// deadline. It tries each of them even
-// when one fails, and returns every error joined.
+// deadline. It tries each of them even when one fails, and returns every error
+// joined.
 func (s *Sweeper) Sweep(ctx context.Context) error {
 	now := s.clock.Now()
 	repo := s.repo()

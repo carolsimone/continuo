@@ -485,7 +485,8 @@ func (r *RemediationRepository) ReleaseLease(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
-// SaveRemediation writes the run's own columns and leaves its lease alone.
+// SaveRemediation writes the run's own columns and leaves its lease, failures
+// and last error alone.
 func (r *RemediationRepository) SaveRemediation(ctx context.Context, rem remediation.Remediation) error {
 	fields, err := encodeStringMap(rem.TriggerFields)
 	if err != nil {
@@ -494,11 +495,11 @@ func (r *RemediationRepository) SaveRemediation(ctx context.Context, rem remedia
 	res, err := r.q.ExecContext(ctx, `
 		UPDATE remediation
 		   SET flow = $2, status = $3, trigger_payload = $4, trigger_message_id = $5,
-		       trigger_fields = $6, current_try = $7, failure = $8, failures = $9, last_error = $10,
-		       updated_at = COALESCE($11::timestamptz, now())
+		       trigger_fields = $6, current_try = $7, failure = $8,
+		       updated_at = COALESCE($9::timestamptz, now())
 		 WHERE id = $1`,
 		rem.ID, rem.Flow, rem.Status, jsonOr(rem.TriggerPayload, "{}"), rem.TriggerMessageID,
-		jsonOr(fields, "{}"), rem.CurrentTry, rem.Failure, rem.Failures, rem.LastError, timeArg(rem.UpdatedAt))
+		jsonOr(fields, "{}"), rem.CurrentTry, rem.Failure, timeArg(rem.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("save remediation: %w", err)
 	}
@@ -515,18 +516,33 @@ func (r *RemediationRepository) SaveRemediation(ctx context.Context, rem remedia
 // CountFailure raises the remediation's failures by one and records lastError
 // as its last error.
 func (r *RemediationRepository) CountFailure(ctx context.Context, id uuid.UUID, lastError string) error {
-	res, err := r.q.ExecContext(ctx, `
+	return r.setFailures(ctx, "count remediation failure", id, `
 		UPDATE remediation SET failures = failures + 1, last_error = $2
-		 WHERE id = $1`, id, lastError)
+		 WHERE id = $1`, lastError)
+}
+
+// ClearFailures sets the remediation's failures to zero and its last error to
+// empty.
+func (r *RemediationRepository) ClearFailures(ctx context.Context, id uuid.UUID) error {
+	return r.setFailures(ctx, "clear remediation failures", id, `
+		UPDATE remediation SET failures = 0, last_error = ''
+		 WHERE id = $1`)
+}
+
+// setFailures runs statement, an UPDATE of one remediation's failures whose
+// first argument is the id, and maps a row it did not find to
+// ErrRemediationNotFound.
+func (r *RemediationRepository) setFailures(ctx context.Context, what string, id uuid.UUID, statement string, args ...any) error {
+	res, err := r.q.ExecContext(ctx, statement, append([]any{id}, args...)...)
 	if err != nil {
-		return fmt.Errorf("count remediation failure: %w", err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("count remediation failure: rows affected: %w", err)
+		return fmt.Errorf("%s: rows affected: %w", what, err)
 	}
 	if n == 0 {
-		return fmt.Errorf("count remediation failure %s: %w", id, repository.ErrRemediationNotFound)
+		return fmt.Errorf("%s %s: %w", what, id, repository.ErrRemediationNotFound)
 	}
 	return nil
 }

@@ -25,11 +25,11 @@ const (
 // returns every refusal, joined, each naming its file and line. A flow or type
 // that cannot run is an error: an unknown step, a step at a stage it may not
 // stand in, a missing stage, a flow that lists no loaded type, a gate that is
-// not exactly one step that runs the verification, a step that reads evidence no earlier step
-// of its chain provides, `rounds` or `tries` below 1, an output that is not a
-// pull request or a hand-over or that publishes an event outside the stream
-// contract, an unsupported version or trigger, and two listed types that can
-// select the same failure. A type no flow lists is only a warning.
+// not exactly one step that runs the verification, a step that reads evidence
+// no earlier step of its chain provides, `rounds` or `tries` below 1, an output
+// that is not a pull request or a hand-over or that publishes an event outside
+// the stream contract, an unsupported version or trigger, and two listed types
+// that can select the same failure. A type no flow lists is only a warning.
 func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
 	v := &validator{set: set, reg: reg, seen: map[string]bool{}}
 	for _, name := range sortedKeys(set.Flows) {
@@ -103,7 +103,7 @@ func (v *validator) flow(f workflow.Flow) {
 	case len(f.Gate) == 0:
 		v.refuse(f.Pos, "flow %q has no gate", f.Name)
 	case len(f.Gate) > 1:
-		v.refuse(f.Pos, "flow %q has %d gate steps, and a gate is one step that runs the verification", f.Name, len(f.Gate))
+		v.refuse(f.Gate[1].Pos, "flow %q has %d gate steps, and a gate is one step that runs the verification", f.Name, len(f.Gate))
 	case !slices.ContainsFunc(gate, func(m step.Meta) bool { return m.MayStandAsGateRun }):
 		v.refuse(f.Pos, "flow %q has a gate with no step that runs the verification", f.Name)
 	}

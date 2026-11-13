@@ -185,11 +185,15 @@ func (r *Runner) countFailure(ctx context.Context, row remediation.StepRun, caus
 }
 
 // commitStep commits the rows of a step run and the clusters it changed, in
-// one transaction after holding the lease. A commit that fails is recorded as
-// a failure of blame, the row of the step that ran.
-func (r *Runner) commitStep(ctx context.Context, blame remediation.StepRun, rows []remediation.StepRun, clusters []remediation.Cluster) error {
+// one transaction after holding the lease, and clears the failures run's
+// remediation counted in a row before it (clearFailures). A commit that fails
+// is recorded as a failure of blame, the row of the step that ran.
+func (r *Runner) commitStep(ctx context.Context, run tryRun, blame remediation.StepRun, rows []remediation.StepRun, clusters []remediation.Cluster) error {
 	now := r.clock.Now()
 	err := r.commit(ctx, blame.RemediationID, func(u uow.UnitOfWork) error {
+		if err := r.clearFailures(ctx, u, run); err != nil {
+			return err
+		}
 		repo := u.RemediationRepo()
 		for _, row := range rows {
 			if err := repo.SaveStep(ctx, row); err != nil {

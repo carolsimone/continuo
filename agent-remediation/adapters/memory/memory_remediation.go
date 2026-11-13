@@ -233,8 +233,6 @@ func (r *remediationRepository) SaveRemediation(_ context.Context, rem remediati
 		}
 		stored.CurrentTry = rem.CurrentTry
 		stored.Failure = rem.Failure
-		stored.Failures = rem.Failures
-		stored.LastError = rem.LastError
 		stored.UpdatedAt = orNow(rem.UpdatedAt)
 		return nil
 	})
@@ -248,6 +246,17 @@ func (r *remediationRepository) CountFailure(_ context.Context, id uuid.UUID, la
 		}
 		stored.Failures++
 		stored.LastError = lastError
+		return nil
+	})
+}
+
+func (r *remediationRepository) ClearFailures(_ context.Context, id uuid.UUID) error {
+	return r.gate(func(d *data) error {
+		stored, ok := d.remediations[id]
+		if !ok {
+			return fmt.Errorf("clear remediation failures %s: %w", id, repository.ErrRemediationNotFound)
+		}
+		stored.Failures, stored.LastError = 0, ""
 		return nil
 	})
 }

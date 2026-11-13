@@ -159,10 +159,14 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 		return fmt.Errorf("mark generating: %w", err)
 	}
 	rem.CurrentTry = try.Try
-	rem.Failures, rem.LastError = 0, ""
 	rem.UpdatedAt = now
 	if err := repo.SaveRemediation(ctx, rem); err != nil {
 		return fmt.Errorf("save remediation: %w", err)
+	}
+	if rem.Failures > 0 {
+		if err := repo.ClearFailures(ctx, rem.ID); err != nil {
+			return fmt.Errorf("clear the failures of remediation %s: %w", rem.ID, err)
+		}
 	}
 	r.logger.Info("remediation try opened", "remediation", rem.ID, "release", t.ReleaseID,
 		"try", try.Try, "attempt", attempt, "clusters", len(groups))
@@ -263,6 +267,9 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 			return r.settleTry(ctx, run, checked)
 		}
 		return r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
+			if err := r.clearFailures(ctx, u, run); err != nil {
+				return err
+			}
 			return r.saveTry(ctx, u, *run.snap.Try, remediation.TryChecking, r.clock.Now().Add(tryCheckingTime))
 		})
 	}
@@ -272,7 +279,7 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 			return r.runCrossCheck(ctx, run, drafts, ref.Name)
 		}
 		if len(row.Findings) > 0 {
-			return r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+			return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 				return r.refuseAttempt(ctx, u, run, row.Findings[0].Message)
 			})
 		}
@@ -321,7 +328,7 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, drafts []step.Cl
 	row.Findings = res.Findings
 	r.finish(&row)
 	f, refused := firstFinding([]remediation.CheckResult{res})
-	return r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+	return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 		if !refused {
 			return nil
 		}
@@ -330,10 +337,14 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, drafts []step.Cl
 }
 
 // commitFlowStep commits a flow-level step's row and what fn writes, in one
-// transaction after holding the lease. A commit that fails is recorded as a
-// failure of the step.
-func (r *Runner) commitFlowStep(ctx context.Context, row remediation.StepRun, fn func(u uow.UnitOfWork) error) error {
+// transaction after holding the lease, and clears the failures run's
+// remediation counted in a row before it (clearFailures). A commit that fails
+// is recorded as a failure of the step.
+func (r *Runner) commitFlowStep(ctx context.Context, run tryRun, row remediation.StepRun, fn func(u uow.UnitOfWork) error) error {
 	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+		if err := r.clearFailures(ctx, u, run); err != nil {
+			return err
+		}
 		if err := u.RemediationRepo().SaveStep(ctx, row); err != nil {
 			return fmt.Errorf("save step %s: %w", row.Step, err)
 		}

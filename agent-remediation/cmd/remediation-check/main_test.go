@@ -212,8 +212,8 @@ func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 
 			assert.Equal(t, 1, code, stderr)
 			r := decode(t, stdout)
-			assert.Contains(t, strings.Join(r.Errors, "\n"), "flows/rejected-release.yaml:")
-			assert.Contains(t, strings.Join(r.Errors, "\n"), "2 gate steps")
+			assert.Contains(t, strings.Join(r.Errors, "\n"), `flows/rejected-release.yaml:22: flow "rejected-release" has 2 gate steps`,
+				"the refusal names the line of the second gate step")
 			assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 		})
 	}

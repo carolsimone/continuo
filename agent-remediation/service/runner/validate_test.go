@@ -226,18 +226,18 @@ func TestValidate_RefusesAGateWithNoRealRun(t *testing.T) {
 }
 
 // The runner runs a gate of one long check, so a gate of more steps, even one
-// step named twice, is refused where the flow is written rather than failing
-// every remediation at its gate.
+// step named twice, is refused at the line of its second step rather than
+// failing every remediation at its gate.
 func TestValidate_RefusesAGateOfMoreThanOneStep(t *testing.T) {
 	t.Run("two steps", func(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
 			f.Gate = []workflow.StepRef{ref(flowFile, 8, "verification_run"), ref(flowFile, 9, "a_gate_without_a_run")}
-		}, `flows/f.yaml:1`, `"f"`, `2 gate steps`)
+		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 	t.Run("one step twice", func(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
 			f.Gate = []workflow.StepRef{ref(flowFile, 8, "verification_run"), ref(flowFile, 9, "verification_run")}
-		}, `flows/f.yaml:1`, `"f"`, `2 gate steps`)
+		}, `flows/f.yaml:9: flow "f" has 2 gate steps`)
 	})
 }
 

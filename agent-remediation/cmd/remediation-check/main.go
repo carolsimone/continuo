@@ -6,10 +6,10 @@
 //
 // files loads the flow, type and fixture files under <dir>, validates them
 // against the steps the runner registers, checks that they define the flow
-// every heal trigger runs, and runs the conformance suite over them: every type a flow lists through every type scenario, and every flow
-// through every flow scenario, in worlds of scripted fakes over the memory
-// store. When the files do not load or do not validate it reports the errors
-// and skips the suite.
+// every heal trigger runs, and runs the conformance suite over them: every type
+// a flow lists through every type scenario, and every flow through every flow
+// scenario, in worlds of scripted fakes over the memory store. When the files
+// do not load or do not validate it reports the errors and skips the suite.
 //
 // stdout carries one JSON object and nothing else:
 //

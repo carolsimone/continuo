@@ -260,6 +260,30 @@ func (r *Runner) countRemediationFailure(ctx context.Context, id uuid.UUID, caus
 	return cause
 }
 
+// failuresToClear reports whether run's remediation was loaded with failures
+// counted on its own row and with a try open: one that has not failed. Such a
+// load ended the failures in a row, and the next step that commits clears
+// them. A remediation with no try, or whose try failed, keeps its failures
+// until a try opens, so a try that cannot open is never cleared by the load
+// that precedes the next attempt to open it.
+func failuresToClear(run tryRun) bool {
+	t := run.snap.Try
+	return run.snap.Remediation.Failures > 0 && t != nil && t.Status != remediation.TryFailed
+}
+
+// clearFailures clears, in u's transaction, the failures run's remediation
+// counted on its own row, when failuresToClear says the load ended them.
+func (r *Runner) clearFailures(ctx context.Context, u uow.UnitOfWork, run tryRun) error {
+	if !failuresToClear(run) {
+		return nil
+	}
+	id := run.snap.Remediation.ID
+	if err := u.RemediationRepo().ClearFailures(ctx, id); err != nil {
+		return fmt.Errorf("clear the failures of remediation %s: %w", id, err)
+	}
+	return nil
+}
+
 // read runs fn in a transaction it rolls back.
 func (r *Runner) read(ctx context.Context, fn func(u uow.UnitOfWork) error) error {
 	u := r.d.NewUoW()

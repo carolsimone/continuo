@@ -31,10 +31,11 @@ type Remediation struct {
 	LeaseOwner string
 	LeaseUntil *time.Time
 	Failure    string
-	// Failures counts the drives that failed before a step's row could record
-	// the error: the remediation could not be loaded, or its next try could not
-	// open. LastError is the error of the last of them. Both are cleared when a
-	// try opens.
+	// Failures counts the drives in a row that failed before a step's row could
+	// record the error: the remediation could not be loaded, or its next try
+	// could not open. LastError is the error of the last of them. A try that
+	// opens clears both, and so does a step that commits after a load that
+	// found a try open.
 	Failures  int
 	LastError string
 	CreatedAt time.Time

@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -654,6 +655,14 @@ func TestRemediationRepository_SaveRemediationWritesTheRunAndLeavesTheLeaseAlone
 	})
 }
 
+// countFailures counts n failures on the remediation's own row.
+func countFailures(t *testing.T, env contractEnv, id uuid.UUID, n int) {
+	t.Helper()
+	for i := range n {
+		require.NoError(t, env.remediations.CountFailure(context.Background(), id, fmt.Sprintf("failure %d", i+1)))
+	}
+}
+
 func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -673,16 +682,31 @@ func TestRemediationRepository_CountFailureRaisesTheRemediationsOwnFailures(t *t
 		assert.Empty(t, snap.Remediation.Failure)
 		assert.Zero(t, snap.Remediation.CurrentTry)
 
-		// SaveRemediation writes both, which is how a try that opens clears them.
+		// SaveRemediation leaves both alone, so a snapshot loaded before a
+		// count never writes it back.
 		rem := snap.Remediation
-		rem.Failures, rem.LastError = 0, ""
+		rem.Failures, rem.LastError, rem.Failure = 0, "", "kept"
 		require.NoError(t, env.remediations.SaveRemediation(ctx, rem))
+		snap, err = env.remediations.Load(ctx, r.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, snap.Remediation.Failures)
+		assert.Equal(t, "flow still missing", snap.Remediation.LastError)
+		assert.Equal(t, "kept", snap.Remediation.Failure)
+
+		// ClearFailures sets both back, inside a unit of work too, and leaves the
+		// rest of the row.
+		u = env.newUoW()
+		require.NoError(t, u.Begin(ctx))
+		require.NoError(t, u.RemediationRepo().ClearFailures(ctx, r.ID))
+		require.NoError(t, u.Commit())
 		snap, err = env.remediations.Load(ctx, r.ID)
 		require.NoError(t, err)
 		assert.Zero(t, snap.Remediation.Failures)
 		assert.Empty(t, snap.Remediation.LastError)
+		assert.Equal(t, "kept", snap.Remediation.Failure)
 
 		require.ErrorIs(t, env.remediations.CountFailure(ctx, uuid.New(), "boom"), repository.ErrRemediationNotFound)
+		require.ErrorIs(t, env.remediations.ClearFailures(ctx, uuid.New()), repository.ErrRemediationNotFound)
 	})
 }
 
@@ -756,13 +780,12 @@ func TestRemediationRepository_ListFailingSteps(t *testing.T) {
 		// A remediation that failed itself is listed by its own failures, with
 		// or without a try.
 		own := mustCreate(t, env, newRemediation("rel-own", 1, contractBase.Add(2*time.Minute)))
-		own.Failures, own.LastError = 5, "flow missing"
-		require.NoError(t, env.remediations.SaveRemediation(ctx, own))
+		countFailures(t, env, own.ID, 5)
 		ownFew := mk("rel-own-few", contractBase)
-		ownFew.CurrentTry, ownFew.Failures = 1, 4
-		require.NoError(t, env.remediations.SaveRemediation(ctx, ownFew))
+		countFailures(t, env, ownFew.ID, 4)
 		ownEnded := mustCreate(t, env, newRemediation("rel-own-ended", 1, contractBase))
-		ownEnded.Failures, ownEnded.Status = 5, remediation.StatusSystemFailure
+		countFailures(t, env, ownEnded.ID, 5)
+		ownEnded.Status = remediation.StatusSystemFailure
 		require.NoError(t, env.remediations.SaveRemediation(ctx, ownEnded))
 
 		ids, err := env.remediations.ListFailingSteps(ctx, 5, 10)

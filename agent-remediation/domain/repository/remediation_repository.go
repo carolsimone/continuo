@@ -64,8 +64,9 @@ type RemediationRepository interface {
 	// otherwise.
 	ReleaseLease(ctx context.Context, id uuid.UUID, owner string) error
 
-	// SaveRemediation writes r's status, flow, trigger, current try, failure,
-	// failures, last error and UpdatedAt. It never touches the lease. It returns
+	// SaveRemediation writes r's status, flow, trigger, current try, failure and
+	// UpdatedAt. It never touches the lease, nor the failures and last error,
+	// which only CountFailure and ClearFailures change. It returns
 	// ErrRemediationNotFound for an unknown id.
 	SaveRemediation(ctx context.Context, r remediation.Remediation) error
 
@@ -74,6 +75,11 @@ type RemediationRepository interface {
 	// needs no snapshot, so it records a remediation that cannot be loaded. It
 	// returns ErrRemediationNotFound for an unknown id.
 	CountFailure(ctx context.Context, id uuid.UUID, lastError string) error
+
+	// ClearFailures sets the remediation's failures to zero and its last error
+	// to empty, leaving the rest of the row as it is. It returns
+	// ErrRemediationNotFound for an unknown id.
+	ClearFailures(ctx context.Context, id uuid.UUID) error
 
 	// SaveTry inserts the try or updates it on (remediation, try).
 	SaveTry(ctx context.Context, t remediation.Try) error

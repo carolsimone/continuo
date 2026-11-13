@@ -118,9 +118,9 @@ func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, sna
 
 // stuckReason says why the remediation can make no more progress, or "" when it
 // can: a step of its current try that has not finished and failed at least
-// stepFailureLimit times, a remediation that failed that many times before a
-// step could run (it could not be loaded, or its next try could not open), or
-// a drafting or checking try past its deadline.
+// stepFailureLimit times, a remediation that failed that many times in a row
+// before a step could run (it could not be loaded, or its next try could not
+// open), or a drafting or checking try past its deadline.
 func stuckReason(snap remediation.Snapshot, now time.Time) string {
 	for _, st := range snap.Steps {
 		if st.Status == remediation.StepDone || st.Failures < stepFailureLimit {
@@ -133,7 +133,7 @@ func stuckReason(snap remediation.Snapshot, now time.Time) string {
 		return reason
 	}
 	if rem := snap.Remediation; rem.Failures >= stepFailureLimit {
-		reason := fmt.Sprintf("the remediation failed %d times before a step could run", rem.Failures)
+		reason := fmt.Sprintf("the remediation failed %d times in a row before a step could run", rem.Failures)
 		if rem.LastError != "" {
 			reason += ", the last time with: " + rem.LastError
 		}

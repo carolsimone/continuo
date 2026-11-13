@@ -1,9 +1,11 @@
 package runner_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -50,7 +52,7 @@ func TestWorker_EndsARemediationThatCannotBeLoaded(t *testing.T) {
 
 	require.Eventually(t, func() bool { return h.remediation(id).Status == remediation.StatusSystemFailure }, 10*time.Second, 5*time.Millisecond)
 	rem := h.remediation(id)
-	assert.Contains(t, rem.Failure, "the remediation failed 5 times before a step could run")
+	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
 	assert.Contains(t, rem.Failure, `follows flow "rejected-release", which the loaded files do not define`)
 	assert.Contains(t, rem.LastError, "which the loaded files do not define")
 	assert.Empty(t, h.store.Tries(id), "no try ever opened")
@@ -84,7 +86,7 @@ func TestSweeper_EndsARemediationWhoseTryCannotOpen(t *testing.T) {
 
 	rem := h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
-	assert.Contains(t, rem.Failure, "the remediation failed 5 times before a step could run, the last time with: ")
+	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run, the last time with: ")
 	assert.Contains(t, rem.Failure, "commit failed")
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
 	assert.Empty(t, h.proposals(), "no attempt row was ever written")
@@ -132,10 +134,97 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 
 	rem := h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
-	assert.Contains(t, rem.Failure, "the remediation failed 5 times before a step could run")
+	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	row := h.attempt(1)
 	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
 	assert.Equal(t, rem.Failure, row.VerifyError, "the verifying attempt row is failed with the reason")
 	assert.Equal(t, []string{svcARun1}, []string{row.Proposal.Verifications[0].RunID}, "it keeps the run it recorded")
+}
+
+// sweepUnclaimed lets go of the runner's lease on the remediation and sweeps,
+// as the sweeper finds a remediation no worker holds.
+func (h *harness) sweepUnclaimed(id uuid.UUID) {
+	h.t.Helper()
+	require.NoError(h.t, h.store.RemediationRepository().ReleaseLease(ctx, id, workerOwner))
+	require.NoError(h.t, h.sweeper().Sweep(ctx))
+}
+
+// Only failures in a row end a remediation. A poll that loads the remediation
+// and gets through clears what the failed polls before it counted, even when
+// it reads no new phase, so failed loads spread over a long verification never
+// add up to five; five in a row still end it.
+func TestSweeper_OnlyFailedPollLoadsInARowEndAVerifyingRemediation(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	require.Equal(t, remediation.TryVerifying, h.try(id, 1).Status)
+	broken := h.runnerOver(h.withoutTheFlow())
+	failPolls := func(n int) {
+		t.Helper()
+		for range n {
+			h.reclaim(id)
+			snap, err := h.store.RemediationRepository().Load(ctx, id)
+			require.NoError(t, err)
+			require.Error(t, broken.PollGate(ctx, snap))
+		}
+	}
+
+	failPolls(remediationFailureLimit - 1)
+	require.Equal(t, remediationFailureLimit-1, h.remediation(id).Failures)
+	require.NoError(t, h.poll(id), "a poll that gets through, with the run still queued")
+	rem := h.remediation(id)
+	assert.Zero(t, rem.Failures, "the good poll ended the failures in a row")
+	assert.Empty(t, rem.LastError)
+
+	failPolls(remediationFailureLimit - 1)
+	h.sweepUnclaimed(id)
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "four in a row after a good poll do not end it")
+	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+
+	failPolls(1)
+	h.sweepUnclaimed(id)
+	rem = h.remediation(id)
+	assert.Equal(t, remediation.StatusSystemFailure, rem.Status, "the fifth in a row ends it")
+	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
+	assert.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+}
+
+// The same in a drafting try, where every step loads the remediation first: a
+// drive whose step commits after a good load clears what the failed loads
+// before it counted, even when a later step of that drive fails.
+func TestSweeper_OnlyFailedDriveLoadsInARowEndADraftingRemediation(t *testing.T) {
+	h := newHarness(t)
+	id := h.drafting()
+	broken := h.runnerOver(h.withoutTheFlow())
+	failDrives := func(n int) {
+		t.Helper()
+		for range n {
+			h.reclaim(id)
+			require.Error(t, broken.Drive(ctx, id))
+		}
+	}
+
+	failDrives(remediationFailureLimit - 1)
+	require.Equal(t, remediationFailureLimit-1, h.remediation(id).Failures)
+	// The model is down: the drive commits the cluster's context steps, then
+	// its prompt step fails.
+	h.llm.err = errors.New("model is down")
+	require.Error(t, h.drive(id))
+	require.Equal(t, 1, h.promptFailures(id))
+	rem := h.remediation(id)
+	assert.Zero(t, rem.Failures, "the context step's commit ended the failures in a row")
+	assert.Empty(t, rem.LastError)
+
+	failDrives(remediationFailureLimit - 1)
+	h.sweepUnclaimed(id)
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "four in a row after a committed step do not end it")
+	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status)
+
+	failDrives(1)
+	h.sweepUnclaimed(id)
+	rem = h.remediation(id)
+	assert.Equal(t, remediation.StatusSystemFailure, rem.Status, "the fifth in a row ends it")
+	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
+	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
 }
