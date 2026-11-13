@@ -131,12 +131,20 @@ func (l *loader) loadDocument(file, revision string, root *yaml.Node) {
 	switch kindNode.Value {
 	case kindFixture:
 		return
-	case kindFlow:
-		l.loadFlow(file, revision, root)
-	case kindType:
-		l.loadType(file, revision, root)
+	case kindFlow, kindType:
 	default:
 		l.fail(file, kindNode.Line, "unknown kind %q (flow, type or fixture)", kindNode.Value)
+		return
+	}
+	// An alias would let a mapping reach the decoder without its keys being
+	// checked, so a flow or type file holds none.
+	if refuseAliases(l, file, root) {
+		return
+	}
+	if kindNode.Value == kindFlow {
+		l.loadFlow(file, revision, root)
+	} else {
+		l.loadType(file, revision, root)
 	}
 }
 
@@ -172,7 +180,11 @@ func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
 		Pos:            pos,
 	}
 	flow.TypesPos = pos
-	if f.Types.Kind != 0 {
+	switch {
+	case f.Types.Kind == 0 || f.Types.Tag == "!!null":
+	case f.Types.Kind != yaml.SequenceNode:
+		l.fail(file, f.Types.Line, "types must be a list of type names")
+	default:
 		flow.TypesPos = at(keyLine(root, "types", pos.Line))
 		for _, n := range f.Types.Content {
 			if n.Kind != yaml.ScalarNode {
@@ -183,6 +195,10 @@ func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
 		}
 	}
 	if len(l.errs) > before {
+		return
+	}
+	if flow.Name == "" {
+		l.fail(file, pos.Line, "flow has no name")
 		return
 	}
 	if prev, dup := l.flowFile[flow.Name]; dup {
@@ -249,6 +265,10 @@ func (l *loader) loadType(file, revision string, root *yaml.Node) {
 	if len(l.errs) > before {
 		return
 	}
+	if typ.Name == "" {
+		l.fail(file, pos.Line, "type has no name")
+		return
+	}
 	if prev, dup := l.typeFile[typ.Name]; dup {
 		l.fail(file, pos.Line, "type %q is already defined at %s:%d", typ.Name, prev.File, prev.Line)
 		return
@@ -282,6 +302,22 @@ func (l *loader) checkKeys(file string, n *yaml.Node, allowed []string) {
 			l.fail(file, k.Line, "field %q is not known here (allowed: %s)", k.Value, strings.Join(allowed, ", "))
 		}
 	}
+}
+
+// refuseAliases fails every alias node under n, with its line, and reports
+// whether it found one.
+func refuseAliases(l *loader, file string, n *yaml.Node) bool {
+	found := false
+	if n.Kind == yaml.AliasNode {
+		l.fail(file, n.Line, "YAML aliases are not supported (alias *%s)", n.Value)
+		found = true
+	}
+	for _, c := range n.Content {
+		if refuseAliases(l, file, c) {
+			found = true
+		}
+	}
+	return found
 }
 
 // valueOf returns the value node of key in the mapping n, or nil.

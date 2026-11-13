@@ -1,6 +1,7 @@
 package workflowfile
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -176,5 +177,78 @@ func TestLoad_RefusesAFileThatIsNotYAML(t *testing.T) {
 	fsys := fstest.MapFS{"f.yaml": {Data: []byte("kind: flow\n\tname: [\n")}}
 	_, err := Load(fsys)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "f.yaml")
+	assert.Contains(t, err.Error(), "f.yaml:2")
+}
+
+func TestLoad_RefusesAnAliasThatWouldHideUnknownFields(t *testing.T) {
+	cases := map[string]string{
+		"alias value of a mapping": "kind: type\nname: x\nmatch: &m {cluster: single, source: compile}\nagent: *m\n",
+		"alias in the other order": "kind: type\nname: x\nagent: &a {prompt: p, rounds: 1}\nmatch: *a\n",
+		"alias in a list":          "kind: type\nname: x\ncontext: [&c a, *c]\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte(body)}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "alias")
+			assert.Regexp(t, `x\.yaml:[0-9]+:`, err.Error())
+		})
+	}
+}
+
+func TestLoad_RefusesAMergeKey(t *testing.T) {
+	t.Run("from an alias", func(t *testing.T) {
+		body := "kind: type\nname: x\nbase: &b {rouds: 1}\nagent:\n  <<: *b\n"
+		_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte(body)}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "x.yaml:")
+	})
+	t.Run("from an inline mapping", func(t *testing.T) {
+		body := "kind: type\nname: x\nagent:\n  <<: {rouds: 1}\n"
+		_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte(body)}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "x.yaml:4")
+	})
+}
+
+func TestLoad_RefusesATypeOrFlowWithNoName(t *testing.T) {
+	for kind, want := range map[string]string{"type": "type has no name", "flow": "flow has no name"} {
+		_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte("kind: " + kind + "\nversion: 1\n")}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "x.yaml:1")
+		assert.Contains(t, err.Error(), want)
+	}
+}
+
+func TestLoad_RefusesTypesThatIsNotAList(t *testing.T) {
+	for name, body := range map[string]string{
+		"scalar":  "kind: flow\nname: f\ntypes: foo\n",
+		"mapping": "kind: flow\nname: f\ntypes: {a: b}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(body)}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "f.yaml:3")
+			assert.Contains(t, err.Error(), "types")
+		})
+	}
+}
+
+func TestLoad_RefusesAnUnknownKeyInANestedMapping(t *testing.T) {
+	cases := map[string]struct{ body, at string }{
+		"output.on_pass":    {"kind: flow\nname: f\noutput:\n  on_pass:\n    action: pull_request\n    emit: x\n", "f.yaml:6"},
+		"output.on_give_up": {"kind: flow\nname: f\noutput:\n  on_give_up: { action: hand_over, mails: x }\n", "f.yaml:4"},
+		"output":            {"kind: flow\nname: f\noutput:\n  on_fail: {}\n", "f.yaml:4"},
+		"match":             {"kind: type\nname: t\nmatch:\n  cluster: single\n  sources: compile\n", "t.yaml:5"},
+		"match flow style":  {"kind: type\nname: t\nmatch: { cluster: single, sourse: compile }\n", "t.yaml:3"},
+		"agent flow style":  {"kind: type\nname: t\nagent: { prompt: p, round: 1 }\n", "t.yaml:3"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			file := strings.SplitN(c.at, ":", 2)[0]
+			_, err := Load(fstest.MapFS{file: {Data: []byte(c.body)}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.at)
+		})
+	}
 }
