@@ -82,6 +82,7 @@ type fakeStore struct {
 	nodesOperation        model.Operation
 	nodesSearch           string
 	nodesService          string
+	nodesDormantOnly      bool
 	nodesLimit            int
 	nodesOffset           int
 	nodeNamesService      string
@@ -252,8 +253,9 @@ func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _ string, op
 	return f.nodeTasks, nil
 }
 
-func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error) {
+func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error) {
 	f.nodesSearch, f.nodesService, f.nodesOperation, f.nodesLimit, f.nodesOffset = search, serviceName, operation, limit, offset
+	f.nodesDormantOnly = dormantOnly
 	if f.failWith != nil {
 		return nil, 0, f.failWith
 	}

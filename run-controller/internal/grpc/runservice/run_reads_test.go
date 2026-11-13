@@ -260,11 +260,11 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 	store := newStore()
 	store.nodes = []*projection.NodeSummary{
 		{
-			ServiceName: "svc", SchemaName: "sch", TableName: "orders", RunCount: 12, SuccessRatePct: 90,
+			ServiceName: "svc", SchemaName: "sch", TableName: "orders", NodeType: "dbt-model", RunCount: 12, SuccessRatePct: 90,
 			AvgDurationSec: 30, P95DurationSec: 80, FlakyRatePct: 8, LastStatus: "succeeded",
-			LastRunAt: base, Operation: "run", TimeoutSeconds: ptr(600),
+			LastRunAt: &base, Operation: "run", TimeoutSeconds: ptr(600),
 		},
-		{ServiceName: "svc", SchemaName: "sch", TableName: "users", RunCount: 1, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastRunAt: base},
+		{ServiceName: "svc", SchemaName: "sch", TableName: "users", NodeType: "python-node", Dormant: true, RunCount: 1, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastRunAt: &base},
 	}
 
 	resp, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Search: "ord", ServiceName: "svc"})
@@ -286,12 +286,49 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 	assert.Equal(t, "run", n.GetOperation())
 	assert.Equal(t, int32(600), n.GetTimeoutSeconds())
 	assert.True(t, n.GetTimeoutDeclared())
+	assert.Equal(t, "dbt-model", n.GetNodeType())
+	assert.False(t, n.GetDormant())
 	u := resp.GetNodes()[1]
+	assert.Equal(t, "python-node", u.GetNodeType())
+	assert.True(t, u.GetDormant())
 	assert.Equal(t, int32(-1), u.GetSuccessRatePct())
 	assert.Equal(t, int32(1800), u.GetTimeoutSeconds(), "a node declaring no timeout gets the install default")
 	assert.False(t, u.GetTimeoutDeclared())
 	assert.Equal(t, "ord", store.nodesSearch)
 	assert.Equal(t, "svc", store.nodesService)
+}
+
+// A node that never ran is listed with no task, no last status and an empty
+// last_run_at.
+func TestListNodes_MapsANodeThatNeverRan(t *testing.T) {
+	store := newStore()
+	store.nodes = []*projection.NodeSummary{{
+		ServiceName: "svc", SchemaName: "sch", TableName: "dormant", NodeType: "dbt-model", Dormant: true,
+		SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, Operation: "run",
+	}}
+
+	resp, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.GetNodes(), 1)
+	n := resp.GetNodes()[0]
+	assert.Equal(t, "dormant", n.GetTableName())
+	assert.Zero(t, n.GetTaskCount())
+	assert.Empty(t, n.GetLastStatus())
+	assert.Empty(t, n.GetLastRunAt(), "a node that never ran has no last run")
+	assert.True(t, n.GetDormant())
+	assert.Equal(t, "dbt-model", n.GetNodeType())
+}
+
+// ListNodes hands the reader the request's dormant_only.
+func TestListNodes_PassesDormantOnly(t *testing.T) {
+	for _, dormantOnly := range []bool{true, false} {
+		store := newStore()
+		store.nodesDormantOnly = !dormantOnly
+		_, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{DormantOnly: dormantOnly})
+		require.NoError(t, err)
+		assert.Equal(t, dormantOnly, store.nodesDormantOnly)
+	}
 }
 
 func TestListNodes_ClampsPaging(t *testing.T) {
@@ -615,7 +652,7 @@ func TestListRunAttempts_ClampsPaging(t *testing.T) {
 func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
 	store := newStore()
 	store.nodeTasks = []*projection.NodeRun{{ScheduleID: uuid.New(), TaskID: uuid.New(), CreatedAt: base}}
-	store.nodes = []*projection.NodeSummary{{ServiceName: "svc", TableName: "orders", LastRunAt: base}}
+	store.nodes = []*projection.NodeSummary{{ServiceName: "svc", TableName: "orders", LastRunAt: &base}}
 	store.nodeNames = []string{"orders"}
 	store.nodeServices = []string{"svc"}
 	store.scheduleSummaries[tenantA] = []schedules.Summary{{Name: "daily", ModelCount: 1}}

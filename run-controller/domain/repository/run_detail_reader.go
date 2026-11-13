@@ -36,11 +36,17 @@ type NodeReader interface {
 	// the node's full refreshes. limit is capped at 50, 0 meaning 50.
 	ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
 
-	// ListNodes returns one page of the node list of operation (the
-	// node list of model.OperationRun includes full refreshes) and how many
+	// ListNodes returns one page of the node list of operation and how many
 	// nodes match search (a case-insensitive exact match on the table name;
-	// empty means all) and serviceName (exact; empty means all).
-	ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, limit, offset int) ([]*projection.NodeSummary, int, error)
+	// empty means all), serviceName (exact; empty means all) and dormantOnly
+	// (true keeps only dormant nodes). The list holds one row per node of the
+	// tenant's live release that a release builds, a node that never ran
+	// included: a table no node builds and a dbt test are never listed, and
+	// neither is a node the live release no longer holds. The node list of
+	// model.OperationRun includes full refreshes, and that of
+	// model.OperationTest holds only the nodes with data tests. A tenant with
+	// no live release has no node.
+	ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error)
 
 	// ListNodeNames returns the distinct table names of nodes that have run,
 	// sorted, only serviceName's when it is not empty.

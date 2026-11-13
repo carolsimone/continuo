@@ -37,18 +37,19 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 		}
 		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 	}
+	liveTables(t, db, "svc", "analytics", "opnode")
 	seed("run", "succeeded")
 	seed("test", "failed")
 	time.Sleep(10 * time.Millisecond)
 
-	testRows, _, err := repo.ListNodes(ctx, "opnode", "", "test", 50, 0)
+	testRows, _, err := repo.ListNodes(ctx, "opnode", "", "test", false, 50, 0)
 	if err != nil {
 		t.Fatalf("ListNodes test: %v", err)
 	}
 	if len(testRows) != 1 || testRows[0].LastStatus != "failed" {
 		t.Fatalf("test slice = %+v, want 1 failed row", testRows)
 	}
-	runRows, _, err := repo.ListNodes(ctx, "opnode", "", "run", 50, 0)
+	runRows, _, err := repo.ListNodes(ctx, "opnode", "", "run", false, 50, 0)
 	if err != nil {
 		t.Fatalf("ListNodes run: %v", err)
 	}
@@ -119,11 +120,12 @@ func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 		}
 		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 	}
+	liveTables(t, db, "svc", "analytics", "frnode")
 	seed("run", "succeeded")
 	time.Sleep(10 * time.Millisecond)
 	seed("full_refresh", "failed")
 
-	rows, total, err := repo.ListNodes(ctx, "frnode", "", "run", 50, 0)
+	rows, total, err := repo.ListNodes(ctx, "frnode", "", "run", false, 50, 0)
 	if err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
@@ -198,6 +200,7 @@ func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
 		}
 		t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, sid) })
 	}
+	liveTables(t, db, "svc", "analytics", "defaultop")
 	seed("run", "succeeded")
 	time.Sleep(10 * time.Millisecond)
 	seed("full_refresh", "failed")
@@ -215,7 +218,7 @@ func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
 		t.Fatalf("history operations = %v, want the run and the full refresh", ops)
 	}
 
-	nodeList, total, err := nodes.ListNodes(ctx, pkgevents.DefaultTenantID, "defaultop", "", model.OperationRun, 50, 0)
+	nodeList, total, err := nodes.ListNodes(ctx, pkgevents.DefaultTenantID, "defaultop", "", model.OperationRun, false, 50, 0)
 	if err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
