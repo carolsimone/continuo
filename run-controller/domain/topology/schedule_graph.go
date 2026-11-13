@@ -19,8 +19,9 @@ type ScheduleGraph struct {
 
 // ScheduleGraphNode is one node of a ScheduleGraph. LastRunAt is, for a
 // dormant node (Node.IsDormant), the creation time of the run of its newest
-// task in the tenant; it is nil for a dormant node that never ran and for
-// every node that is not dormant.
+// run or full_refresh task in the tenant: a test task of the node is not a run
+// of it. It is nil for a dormant node with no such task, one only tested
+// included, and for every node that is not dormant.
 type ScheduleGraphNode struct {
 	Node
 	LastRunAt *time.Time

@@ -1,13 +1,20 @@
 package redis
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
+	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
 func TestEvidenceFromRejected(t *testing.T) {
@@ -410,6 +417,45 @@ func TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, evs, 1)
 	})
+}
+
+// TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp
+// verifies that a validation_op this build does not declare (a newer
+// producer's) still decodes, since the field is a string, and that its failed
+// node yields evidence: only clone_from_prod marks a node as a copy.
+func TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp(t *testing.T) {
+	const op = "some_future_op"
+	require.False(t, pkg_model.ValidationOp(op).IsValid(), "the op must be one this build does not declare")
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+		"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"` + op + `"}]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	assert.Equal(t, "analytics.s", evs[0].NodeID)
+	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+}
+
+// TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug verifies that
+// a rejection that yields no failed node to classify, here one whose reason
+// the contract marks not healable, is acknowledged with one DEBUG line naming
+// its stream, release, stage and reason, so an operator can tell why
+// remediation proposed no fix.
+func TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h := newRejectionHandler(streams.ReleaseRejectedV1, handlers.Deps{}, logger)
+	payload := `{"release_id":"rel-7","stage":"validation","reason":"upstream_clone_failed",
+		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"build_from_sql"}]}`
+
+	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "1-0", Values: map[string]any{"payload": payload}}))
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &line), "exactly one log line: %s", buf.String())
+	assert.Equal(t, "DEBUG", line["level"])
+	assert.Equal(t, streams.ReleaseRejectedV1, line["stream"])
+	assert.Equal(t, "rel-7", line["release_id"])
+	assert.Equal(t, "validation", line["stage"])
+	assert.Equal(t, "upstream_clone_failed", line["reason"])
 }
 
 // TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath verifies that only a

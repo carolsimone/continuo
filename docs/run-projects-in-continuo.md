@@ -126,6 +126,14 @@ in it, deliberately:
    rejects the release as `invalid_artifact`, because a service's release may
    hold only the nodes of its own project.
 
+   A model that stands in for a table it does not really build (a stub with
+   the same schema and name as another service's table, or as a table another
+   system loads) needs the tag `local_stub`, or no owner, so that continuo
+   leaves it out. With an owner and no tag it is a dormant node that claims
+   the table: a stub of another service's table makes every release fail with
+   `duplicate_table`, and a run of a stub of a loaded table replaces that
+   table.
+
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).

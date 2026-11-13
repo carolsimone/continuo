@@ -246,8 +246,9 @@ type nodeSummaryRow struct {
 	P95Dur         *float64 `db:"p95_dur"`
 	FlakyCount     int      `db:"flaky_count"`
 	LastStatus     string   `db:"last_status"`
-	// LastRunAt is the creation of the run of the node's newest task; nil
-	// when the node never ran.
+	// LastRunAt is the creation of the run of the node's newest task of the
+	// row's operation dimension (for the run dimension, a run or full_refresh
+	// task); nil when the node has no task of that dimension.
 	LastRunAt *time.Time `db:"last_run_at"`
 	Operation string     `db:"operation"`
 	// TimeoutSeconds is the live release's declared task timeout for the node;

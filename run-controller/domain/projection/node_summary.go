@@ -31,8 +31,9 @@ type NodeSummary struct {
 	// their first attempt (attempt > 0).
 	FlakyRatePct int
 	LastStatus   string
-	// LastRunAt is when the run of the node's newest task was created; nil
-	// when the node never ran.
+	// LastRunAt is when the run of the node's newest task of the row's
+	// operation dimension was created (for the run dimension, a run or
+	// full_refresh task); nil when the node has no task of that dimension.
 	LastRunAt *time.Time
 	// Operation is the run/test/build dimension this node-list row was scoped
 	// to when queried: "run" | "test" | "build".

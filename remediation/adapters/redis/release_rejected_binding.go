@@ -239,16 +239,19 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // handler serves both consumers. The consumer group is created idempotently
 // by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps), logger)
+	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps, logger), logger)
 }
 
 // newRejectionHandler returns the MessageHandler that classifies the failed
 // nodes of one release.rejected:v1-shaped message from the named stream. A
 // message with no payload field, or one whose payload cannot be decoded, is a
 // permanent failure: the handler returns events.ErrPermanent, so the consumer
-// dead-letters it. Any error from classification is returned as is, so the
-// consumer redelivers it.
-func newRejectionHandler(stream string, deps handlers.Deps) pkgredis.MessageHandler {
+// dead-letters it. A message that yields no failed node to classify (a reason
+// the contract marks not healable, a shadow rejection, a stage this build does
+// not know, or only copies of production) is acknowledged with one DEBUG line
+// naming its release, stage and reason. Any error from classification is
+// returned as is, so the consumer redelivers it.
+func newRejectionHandler(stream string, deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
@@ -258,8 +261,26 @@ func newRejectionHandler(stream string, deps handlers.Deps) pkgredis.MessageHand
 		if err != nil {
 			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, stream, err)
 		}
+		if len(evs) == 0 {
+			logNothingToClassify(ctx, logger, stream, []byte(raw))
+			return nil
+		}
 		return handlers.ClassifyRejection(ctx, deps, evs)
 	}
+}
+
+// logNothingToClassify logs at DEBUG that a rejection yields no failed node to
+// classify, naming the rejection's release, stage and reason. raw has already
+// decoded as a rejection, so its header decodes too.
+func logNothingToClassify(ctx context.Context, logger *slog.Logger, stream string, raw []byte) {
+	var head struct {
+		ReleaseID string `json:"release_id"`
+		Stage     string `json:"stage"`
+		Reason    string `json:"reason"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	logger.DebugContext(ctx, "release rejection has no failed node to classify",
+		"stream", stream, "release_id", head.ReleaseID, "stage", head.Stage, "reason", head.Reason)
 }
 
 // NewReleaseRejectedConsumer constructs a StreamConsumer that reads

@@ -294,8 +294,8 @@ func insertNodeRunOf(t *testing.T, db *sqlx.DB, tenant, service, op string, crea
 }
 
 // The schedule graph returns a dormant node a schedule's node reads, marked
-// dormant, with the creation time of the run of its newest task; a dormant
-// node that never ran has no last run. A node of a schedule is not dormant and
+// dormant, with the creation time of the run of its newest run or full_refresh
+// task; a dormant node that never ran has no last run. A node of a schedule is not dormant and
 // carries no last run, whatever it ran, and a run of another tenant is not
 // read.
 func TestGraph_ReturnsADormantUpstreamWithItsLastRun(t *testing.T) {
