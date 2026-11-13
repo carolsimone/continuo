@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import ReleaseDetailPage from '../../src/client/ReleaseDetailPage';
@@ -448,5 +448,210 @@ describe('ReleaseDetailPage — timeline preview follows the release kind', () =
     const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
       .map(p => p.firstChild?.textContent);
     expect(ghosts).toEqual(['compiling', 'parsing']);
+  });
+});
+
+// The notice of the design's example: a seed that gains a column, two views
+// the run rebuilds, one table that refreshes on its own schedule and one view
+// outside continuo that stops the load.
+const designNotice = {
+  kind: 'seed_reload', node_id: 'analytics.seed_fx_rates_eur', service: 'finance',
+  engine_family: 'schema_bound', change: 'columns',
+  columns: { added: ['source'], removed: [], retyped: [] },
+  load: { operation: 'run', drops_table: true, reason: 'columns changed; +full_refresh: true re-creates the table on every load' },
+  rebuilds: [
+    { node_id: 'analytics.fx_rates_current', materialized: 'view', operation: 'run', schedule: 'hourly' },
+    { node_id: 'analytics.fx_rates_latest_eur', materialized: 'view', operation: 'run', schedule: 'hourly' },
+  ],
+  refresh_on_schedule: [{ node_id: 'analytics.fx_transactions_eur', materialized: 'table', schedule: 'daily' }],
+  warehouse: {
+    checked: true, completeness: 'exact',
+    outside_continuo: [{ object: 'bi.fx_rates_report', kind: 'view', owner: 'bi' }],
+  },
+  prediction: 'stops', stop_reason: 'unowned_dependents', unvalidated: false,
+};
+
+const promotedRelease = {
+  ...DETAIL_OK,
+  release_id: 'rel-a1b2c3d-201',
+  transitions: [
+    { to: 'received', at: '2026-06-01T10:00:00Z' },
+    { to: 'seed_building', at: '2026-06-01T10:01:00Z' },
+    { to: 'promoted', at: '2026-06-01T10:05:00Z' },
+  ],
+  per_node_results: [],
+};
+
+let runsResponse: any[] = [];
+function mockRuns(runs: any[]) { runsResponse = runs; }
+
+function mockRelease(detail: any) {
+  vi.stubGlobal('fetch', vi.fn((url: any) => {
+    const u = String(url);
+    if (u.startsWith('/api/runs')) {
+      return Promise.resolve({ ok: true, json: async () => ({ total_count: runsResponse.length, runs: runsResponse }) });
+    }
+    return Promise.resolve({ ok: true, json: async () => detail });
+  }));
+}
+
+function renderPage(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/releases/:id" element={<ReleaseDetailPage />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function strips(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll('.info-strip--warning')).map(s => s.textContent ?? '');
+}
+
+describe('ReleaseDetailPage — seed reload notices', () => {
+  beforeEach(() => { runsResponse = []; });
+
+  it('shows a warning strip for each seed reload notice', async () => {
+    mockRelease({ ...promotedRelease, notices: [designNotice] });
+    renderPage('/releases/rel-a1b2c3d-201');
+    const strip = await screen.findByText(/Seed reload: analytics.seed_fx_rates_eur adds the column source/);
+    expect(strip.closest('.info-strip--warning')).not.toBeNull();
+    expect(strip.textContent).toContain('rebuilds the 2 views that read it');
+    expect(strip.textContent).toContain('bi.fx_rates_report');
+    expect(strip.textContent).toContain('The reload will stop before the drop');
+  });
+
+  it('words a notice in the order of the design', async () => {
+    mockRelease({ ...promotedRelease, notices: [designNotice] });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(container)).toEqual([
+      '⚠Seed reload: analytics.seed_fx_rates_eur adds the column source '
+      + '(columns changed; +full_refresh: true re-creates the table on every load) '
+      + 'and, in the same run, rebuilds the 2 views that read it: analytics.fx_rates_current, analytics.fx_rates_latest_eur. '
+      + 'analytics.fx_transactions_eur (table) refreshes on its own schedule, daily. '
+      + '1 object outside continuo reads the seed: bi.fx_rates_report (view, owner bi). '
+      + 'The reload will stop before the drop until an operator names them in a full refresh of the seed, '
+      + 'or removes them and runs the seed again.',
+    ]);
+  });
+
+  it('draws one strip per notice and words a row change, a removal and a type change', async () => {
+    mockRelease({
+      ...promotedRelease,
+      notices: [
+        { ...designNotice, node_id: 'a.rows', change: 'rows', rebuilds: [], refresh_on_schedule: [], prediction: 'reloads',
+          warehouse: { checked: true, completeness: 'exact', outside_continuo: [] } },
+        { ...designNotice, node_id: 'a.cols', columns: { added: [], removed: ['x', 'y'], retyped: ['z'] },
+          rebuilds: [designNotice.rebuilds[0]], refresh_on_schedule: [], prediction: 'reloads',
+          warehouse: { checked: true, completeness: 'exact', outside_continuo: [] } },
+      ],
+    });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: a.rows reloads new rows/);
+    const texts = strips(container);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain('Seed reload: a.rows reloads new rows (columns changed;');
+    expect(texts[0]).not.toContain('rebuilds');
+    expect(texts[1]).toContain('Seed reload: a.cols removes the columns x, y and changes the type of the column z');
+    expect(texts[1]).toContain('rebuilds the 1 view that reads it: analytics.fx_rates_current.');
+  });
+
+  it('names the stop reason of a refused reload', async () => {
+    mockRelease({
+      ...promotedRelease,
+      notices: [{ ...designNotice, prediction: 'refused', stop_reason: 'seed_full_refresh_disabled',
+        warehouse: { checked: true, completeness: 'exact', outside_continuo: [] } }],
+    });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(container)[0]).toContain('The reload is refused: seed_full_refresh_disabled.');
+    expect(strips(container)[0]).not.toContain('will stop before the drop');
+  });
+
+  it('warns that objects outside continuo may go stale on a late binding warehouse', async () => {
+    mockRelease({ ...promotedRelease, notices: [{ ...designNotice, engine_family: 'late_binding', prediction: 'reloads' }] });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(container)[0]).toContain('They may go stale; recreate them after the reload.');
+  });
+
+  it('says a release skipped validation', async () => {
+    mockRelease({ ...promotedRelease, notices: [{ ...designNotice, unvalidated: true }] });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(container)[0]).toContain('unvalidated: the release skipped validation');
+  });
+
+  it('says the warehouse was not checked only once the seed-build stage has run', async () => {
+    const unchecked = { ...designNotice, warehouse: { checked: false, completeness: '', outside_continuo: [] }, prediction: 'reloads' };
+    mockRelease({ ...promotedRelease, notices: [unchecked] });
+    const done = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(done.container)[0]).toContain('The warehouse was not checked.');
+    done.unmount();
+
+    const building = { ...promotedRelease, status: 'seed_building', transitions: promotedRelease.transitions.slice(0, 2) };
+    mockRelease({ ...building, notices: [unchecked] });
+    const waiting = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(waiting.container)[0]).not.toContain('not checked');
+    waiting.unmount();
+
+    const parsing = { ...promotedRelease, status: 'parsing', transitions: promotedRelease.transitions.slice(0, 1) };
+    mockRelease({ ...parsing, notices: [unchecked] });
+    const early = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(early.container)[0]).not.toContain('not checked');
+  });
+
+  it('does not say the warehouse was not checked when it was', async () => {
+    mockRelease({ ...promotedRelease, notices: [designNotice] });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    expect(strips(container)[0]).not.toContain('not checked');
+  });
+
+  it('draws no strip for a release without notices', async () => {
+    mockRelease(promotedRelease);
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
+    expect(strips(container)).toEqual([]);
+    mockRelease({ ...promotedRelease, notices: [] });
+  });
+});
+
+describe('ReleaseDetailPage — the runs a promotion started', () => {
+  beforeEach(() => { runsResponse = []; });
+
+  it('lists the runs the promotion started', async () => {
+    mockRuns([{ run_id: 'r1', kind: 'promote_seed', status: 'succeeded', schedule_name: 'promote-seed-5b2e0a1c' }]);
+    mockRelease(promotedRelease);
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    const link = await screen.findByRole('link', { name: /Seed reload/ });
+    expect(link).toHaveAttribute('href', '/run/r1');
+    const row = link.closest('tr')!;
+    expect(row.querySelector('.pill-sm--succeeded')?.textContent).toBe('succeeded');
+    expect(row.textContent).toContain('promote-seed-5b2e0a1c');
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      '/api/runs?release_id=rel-a1b2c3d-201&kind=promote_seed', expect.anything());
+    expect(container.textContent).toContain('Seed reload runs');
+  });
+
+  it('draws nothing when the promotion started no run', async () => {
+    mockRelease(promotedRelease);
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(expect.stringContaining('/api/runs?'), expect.anything()));
+    expect(container.textContent).not.toContain('Seed reload runs');
+  });
+
+  it('does not look for runs of a release that is not promoted', async () => {
+    mockRuns([{ run_id: 'r1', kind: 'promote_seed', status: 'running', schedule_name: 'promote-seed-5b2e0a1c' }]);
+    mockRelease({ ...promotedRelease, status: 'validating' });
+    renderPage('/releases/rel-a1b2c3d-201');
+    await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(expect.stringContaining('/api/runs?'), expect.anything());
   });
 });

@@ -280,6 +280,45 @@ export interface ReleaseTransition {
   at: string;
 }
 
+// What a release's seed change does to the seed's table and the views read
+// from it, as release-controller predicts it from the release's topology and,
+// once the seed-build leg has probed the warehouse, from what it found there.
+export interface ReleaseNotice {
+  kind: string; // 'seed_reload'
+  node_id: string;
+  service: string;
+  engine_family: 'schema_bound' | 'late_binding';
+  change: 'rows' | 'columns';
+  columns: { added: string[]; removed: string[]; retyped: string[] };
+  load: { operation: string; drops_table: boolean; reason: string };
+  // Views the seed's reload rebuilds in the same run.
+  rebuilds: { node_id: string; materialized: string; operation: string; schedule: string }[];
+  // Downstream nodes that pick the new table up on their own schedule.
+  refresh_on_schedule: { node_id: string; materialized: string; schedule: string }[];
+  warehouse: {
+    // False until the seed-build leg's preflight ran to the end.
+    checked: boolean;
+    completeness: string;
+    // Warehouse objects outside continuo that read the seed's table.
+    outside_continuo: { object: string; kind: string; owner: string }[];
+  };
+  prediction: 'reloads' | 'stops' | 'refused';
+  stop_reason: string;
+  // The release skipped validation.
+  unvalidated: boolean;
+}
+
+// A promote-seed run as GET /api/runs?release_id=&kind= lists it.
+export interface ReleaseRun {
+  run_id: string;
+  schedule_name: string;
+  status: RunStatus;
+  kind: string;
+  release_id: string | null;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
 export interface ReleaseDetail {
   release_id: string;
   status: string;
@@ -306,6 +345,9 @@ export interface ReleaseDetail {
   // How the release's artifact is parsed: 'dbt' or 'python'. Decides the
   // pipeline path — a python release has no compile leg.
   manifest_kind?: string;
+  // The seed reloads the release's seed changes cause. Absent on a release
+  // recorded before notices existed.
+  notices?: ReleaseNotice[];
 }
 
 export interface NodeSummary {
