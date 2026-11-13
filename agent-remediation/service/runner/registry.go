@@ -5,9 +5,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // described is what every step implements, whatever its Kind.
@@ -31,7 +33,6 @@ type Registry struct {
 // collaborator, so a zero Collaborators builds a registry that can describe
 // its steps.
 func NewRegistry(c Collaborators) *Registry {
-	_ = c // step constructors take the ports they use from c
 	r := &Registry{
 		steps: map[workflow.StepName]entry{},
 		// The keys the runner itself puts in a cluster's evidence. Each step
@@ -39,22 +40,61 @@ func NewRegistry(c Collaborators) *Registry {
 		evidence: map[remediation.EvidenceKey]func() any{
 			remediation.KeyFailure: func() any { return remediation.Failure{} },
 			remediation.KeyDraft:   func() any { return remediation.Draft{} },
+			// The keys the registered steps provide.
+			remediation.KeyDBTLog:            func() any { return remediation.Text("") },
+			remediation.KeyFailurePrecedents: func() any { return []prompt.Precedent{} },
+			remediation.KeyUpstreamChanges:   func() any { return []prompt.UpstreamChange{} },
 		},
 	}
+	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
+	r.register(shared.NewPrecedents(c.Precedents, c.Sanitizer, c.Logger))
+	r.register(shared.NewUpstreamChanges(c.Upstream, c.Sanitizer, c.Logger))
+	r.register(shared.NewContentChanged())
+	r.register(shared.NewConfidenceNotLow())
 	return r
 }
 
 // register adds s under the name its Meta gives. It panics on a name already
-// registered or an empty one, which is a programming error.
+// registered, an empty one, or a Kind the step's methods do not match, which
+// are programming errors.
 func (r *Registry) register(s described) {
 	m := s.Meta()
 	if m.Name == "" {
 		panic("runner: step registered with no name")
 	}
+	if !implementsKind(s, m.Kind) {
+		panic(fmt.Sprintf("runner: step %q declares kind %q but does not implement its interface", m.Name, m.Kind))
+	}
 	if _, dup := r.steps[m.Name]; dup {
 		panic(fmt.Sprintf("runner: step %q registered twice", m.Name))
 	}
 	r.steps[m.Name] = entry{step: s, meta: m}
+}
+
+// implementsKind reports whether s has the methods the runner calls on a step
+// of kind k. An approver step has no interface the runner checks.
+func implementsKind(s described, k step.Kind) bool {
+	switch k {
+	case step.KindContext:
+		_, ok := s.(step.ContextSource)
+		return ok
+	case step.KindPrompt:
+		_, ok := s.(step.Prompt)
+		return ok
+	case step.KindCheck:
+		_, isCheck := s.(step.Check)
+		_, isCross := s.(step.CrossCheck)
+		_, isLong := s.(step.LongCheck)
+		return isCheck || isCross || isLong
+	case step.KindOutput:
+		_, isPass := s.(step.PassOutput)
+		_, isGiveUp := s.(step.GiveUpOutput)
+		return isPass || isGiveUp
+	case step.KindApprover:
+		return true
+	default:
+		return false
+	}
 }
 
 // Lookup returns the step registered under name, with its Meta.

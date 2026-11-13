@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
@@ -22,12 +24,52 @@ type stubStep struct{ meta step.Meta }
 
 func (s stubStep) Meta() step.Meta { return s.meta }
 
+// stubFor returns a stub that implements the interface of m's Kind.
+func stubFor(m step.Meta) described {
+	base := stubStep{m}
+	switch m.Kind {
+	case step.KindContext:
+		return stubContext{base}
+	case step.KindPrompt:
+		return stubPrompt{base}
+	case step.KindCheck:
+		return stubCheck{base}
+	case step.KindOutput:
+		return stubPass{base}
+	default:
+		return base
+	}
+}
+
+type stubContext struct{ stubStep }
+
+func (stubContext) Gather(context.Context, step.ContextInput) (step.ContextOutput, error) {
+	return step.ContextOutput{}, nil
+}
+
+type stubPrompt struct{ stubStep }
+
+func (stubPrompt) Propose(context.Context, step.PromptInput, step.Model) (step.PromptOutput, error) {
+	return step.PromptOutput{}, nil
+}
+
+type stubCheck struct{ stubStep }
+
+func (stubCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, error) {
+	return step.CheckOutput{}, nil
+}
+
+type stubPass struct{ stubStep }
+
+func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediation.Verified) error {
+	return nil
+}
+
 // stubRegistry holds one stub step per kind and stage the checks care about.
 func stubRegistry() *Registry {
 	r := NewRegistry(Collaborators{})
 	for _, m := range []step.Meta{
 		{Name: "failing_node_source", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeySourceFiles}},
-		{Name: "dbt_log", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "reads_dbt_log", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "reads_the_draft", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeySourceFiles}},
@@ -40,7 +82,7 @@ func stubRegistry() *Registry {
 		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
 	} {
 		m.Description = string(m.Name)
-		r.register(stubStep{m})
+		r.register(stubFor(m))
 	}
 	return r
 }
