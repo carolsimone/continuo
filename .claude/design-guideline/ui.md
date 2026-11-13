@@ -999,9 +999,9 @@ Rules:
 Two kinds of node on a schedule's graph belong to no schedule: an
 **unknown-external** node (a table continuo reads and does not build) and a
 **dormant** node (a node continuo builds that has no schedule tag). A run
-started by hand executes a dormant node, and a schedule's run includes one
-only to rebuild it as a view or materialized view below a seed whose load
-drops the seed's table. The schedule's latest view paints no run status, so
+started by hand executes a dormant node, and any run whose load of a seed
+drops the seed's table rebuilds a dormant view or materialized view below that
+seed. The schedule's latest view paints no run status, so
 each carries one fixed look in place of the status fill, a chip on its top
 border that names it, and a hover title on the whole node. A run's own view
 (`RunSwimlane`, `RunNodeTable`) never takes this look: a dormant view that
@@ -1010,7 +1010,7 @@ other.
 
 ```jsx
 {/* React Flow's node wrapper, which takes the title through the node's domAttributes */}
-<div className="react-flow__node" title="No schedule tag: runs only by hand. Last run 2h ago.">
+<div className="react-flow__node" title="No schedule tag: you run it by hand. Last run 2h ago.">
   <div className="dag-node-label">
     <NodeTypeIcon nodeType="dbt-model" />
     <span>orders_backfill</span>
@@ -1034,7 +1034,7 @@ other.
 | Kind | Fill | Border | Text | Label | Chip | Title |
 |---|---|---|---|---|---|---|
 | unknown-external | `#e2e8f0` | `#94a3b8` solid | default | `schema.table`, no icon | `external` | `A table continuo reads and does not build. continuo does not know who builds it.` |
-| dormant | `#f1f5f9` | `#94a3b8` solid | `#475569` | type icon + table | `dormant` | `No schedule tag: runs only by hand. Last run 2h ago.` or `… Last run: never.` |
+| dormant | `#f1f5f9` | `#94a3b8` solid | `#475569` | type icon + table | `dormant` | `No schedule tag: you run it by hand. Last run 2h ago.` or `… Last run: never.` |
 
 Rules:
 
@@ -1596,7 +1596,7 @@ Content rules:
 - One bold title line (the schedule name).
 - Exactly one metadata line: `N nodes · updated Xm ago`.
 - The Dormant tile (`DormantTile`) is the same `.snapshot-tile`, last in the
-  grid: the title `Dormant` and the line `N dormant nodes · run only by hand`
+  grid: the title `Dormant` and the line `N dormant nodes · run by hand`
   (`1 dormant node` for one). It opens the Nodes tab filtered to dormant
   nodes (`/?tab=nodes&dormant=1`). With no dormant node there is no tile, not
   a tile reading 0.
