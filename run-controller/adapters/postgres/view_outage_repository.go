@@ -38,16 +38,34 @@ func (r *ViewOutageRepository) conn() sqlx.ExtContext {
 	return r.db
 }
 
-// OpenForRebuilds inserts one outage per task of the run whose
-// rebuild_seed_key is the seed, keyed by the task's node. An outage already
-// open keeps its since and takes the new state, seed and run.
+// OpenForRebuilds inserts one outage, naming the seed, per rebuild task of
+// the run (a task with a rebuild_seed_key) that is stamped for the seed or
+// that the seed reaches over the run's release's edges through view,
+// materialized_view and ephemeral nodes, the nodes a seed's load drops with
+// its table. A view below two seeds is stamped for one of them, so the walk
+// opens it whichever seed loads first. An outage already open keeps its since
+// and takes the new state, seed and run.
 func (r *ViewOutageRepository) OpenForRebuilds(ctx context.Context, tenantID string, runID uuid.UUID, seedKey topology.NodeKey,
 	state seeds.OutageState, since time.Time) (int, error) {
 	res, err := r.conn().ExecContext(ctx, `
+		WITH RECURSIVE run_release AS (
+		    SELECT release_id FROM runs WHERE tenant_id = $1 AND run_id = $2
+		), reached(node_key) AS (
+		    SELECT $3::text
+		  UNION
+		    SELECT e.downstream_key
+		    FROM reached c
+		    JOIN topology_edges e
+		      ON e.tenant_id = $1 AND e.release_id = (SELECT release_id FROM run_release) AND e.upstream_key = c.node_key
+		    JOIN topology_nodes n
+		      ON n.tenant_id = e.tenant_id AND n.release_id = e.release_id AND n.node_key = e.downstream_key
+		    WHERE n.materialized IN ('view', 'materialized_view', 'ephemeral')
+		)
 		INSERT INTO view_outages (tenant_id, node_key, state, since, seed_key, run_id)
-		SELECT t.tenant_id, t.node_key, $4, $5, t.rebuild_seed_key, t.run_id
+		SELECT t.tenant_id, t.node_key, $4, $5, $3, t.run_id
 		FROM tasks t
-		WHERE t.tenant_id = $1 AND t.run_id = $2 AND t.rebuild_seed_key = $3 AND t.node_key IS NOT NULL
+		WHERE t.tenant_id = $1 AND t.run_id = $2 AND t.node_key IS NOT NULL AND t.rebuild_seed_key <> ''
+		  AND (t.rebuild_seed_key = $3 OR t.node_key IN (SELECT node_key FROM reached))
 		ON CONFLICT (tenant_id, node_key) DO UPDATE SET
 			state    = EXCLUDED.state,
 			seed_key = EXCLUDED.seed_key,

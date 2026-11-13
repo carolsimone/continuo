@@ -19,9 +19,10 @@ type ViewOutageReader interface {
 // left missing or stale, from the commit of that load until a task of the view
 // succeeds.
 type ViewOutageRepository interface {
-	// OpenForRebuilds opens an outage in state, since since, for each task of
-	// run runID that rebuilds after the load of seedKey, and returns how many
-	// it opened or updated. An outage already open keeps its since and takes
+	// OpenForRebuilds opens an outage in state, since since, naming seedKey,
+	// for each task of run runID that rebuilds a view the load of seedKey
+	// drops, whichever seed the task is stamped for, and returns how many it
+	// opened or updated. An outage already open keeps its since and takes
 	// the new state, seed and run.
 	OpenForRebuilds(ctx context.Context, tenantID string, runID uuid.UUID, seedKey topology.NodeKey,
 		state seeds.OutageState, since time.Time) (int, error)

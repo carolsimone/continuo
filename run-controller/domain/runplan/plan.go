@@ -29,7 +29,8 @@ type PlannedTask struct {
 	// nil on every other task.
 	Preflight *seedreload.Preflight
 	// RebuildOf is the seed whose load drops the relation this task
-	// rebuilds; empty on every other task.
+	// rebuilds, the smallest seed key when the run loads several seeds above
+	// it; empty on every other task.
 	RebuildOf topology.NodeKey
 	// Refusal is why the planner refused the task, which never runs: the
 	// run stores it failed and skips every pending task below it. Empty on a

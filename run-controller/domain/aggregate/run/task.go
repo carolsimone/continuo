@@ -36,7 +36,8 @@ type Task struct {
 	// its table; nil on every other task.
 	SeedPreflight *seedreload.Preflight
 	// RebuildOf is the seed whose load drops the relation this task
-	// rebuilds; empty on every other task.
+	// rebuilds, the smallest seed key when the run loads several seeds above
+	// it; empty on every other task.
 	RebuildOf topology.NodeKey
 	// DispatchedAt is when the task's dispatch was written; nil until then,
 	// and always nil on an inherited task, which is never dispatched.

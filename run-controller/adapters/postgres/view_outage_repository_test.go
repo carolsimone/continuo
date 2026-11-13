@@ -115,3 +115,77 @@ func TestViewOutageRepository_DeletesTheOutagesOfNodesTheReleaseDropped(t *testi
 	require.NoError(t, err)
 	assert.True(t, found, "another tenant's outage stays")
 }
+
+// materializedSpec is a dbt node of stg with the materialization, reading
+// upstream.
+func materializedSpec(table, nodeType, materialized string, upstream ...string) topology.NodeSpec {
+	spec := topoSpec("stg", table, nodeType, "h-"+table, upstream...)
+	spec.Materialized = materialized
+	return spec
+}
+
+// A seed load opens an outage for every rebuild of its run it reaches through
+// views, materialized views and ephemeral nodes, whichever seed the rebuild is
+// stamped for, and nothing past a table. Release rel-1 holds two seeds and
+// their readers:
+//
+//	stg.sa ─┬─> stg.v (view, stamped for stg.sa)
+//	stg.sb ─┤
+//	        ├─> stg.e (ephemeral) ─> stg.w (view, stamped for stg.sb)
+//	        └─> stg.t (table) ─┬─> stg.x (view, stamped for stg.so)
+//	stg.so ────────────────────┘
+//
+// stg.sb loads first: stg.v and stg.w open with stg.sb as their seed, stg.x
+// stays closed. stg.sa then fails, which records nothing, and stg.v's outage
+// stays. A later load of stg.sa keeps the time stg.v's outage opened.
+func TestViewOutageRepository_ASeedLoadOpensEveryRebuildItReaches(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "aa",
+		materializedSpec("sa", "dbt-seed", "seed"),
+		materializedSpec("sb", "dbt-seed", "seed"),
+		materializedSpec("so", "dbt-seed", "seed"),
+		materializedSpec("v", "dbt-model", "view", "stg.sa", "stg.sb"),
+		materializedSpec("e", "dbt-model", "ephemeral", "stg.sb"),
+		materializedSpec("w", "dbt-model", "view", "stg.e"),
+		materializedSpec("t", "dbt-model", "table", "stg.sb"),
+		materializedSpec("x", "dbt-model", "view", "stg.t", "stg.so")))
+	require.NoError(t, err)
+	runID := insertOutageRun(t, db, tenant, map[topology.NodeKey]topology.NodeKey{
+		"stg.sa": "", "stg.sb": "", "stg.v": "stg.sa", "stg.w": "stg.sb", "stg.t": "", "stg.x": "stg.so",
+	})
+	_, err = db.Exec(`UPDATE runs SET release_id = 'rel-1', promotion_seq = 1 WHERE tenant_id = $1 AND run_id = $2`, tenant, runID)
+	require.NoError(t, err)
+	outages := postgres.NewViewOutageRepository(db, nil)
+	t0 := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+
+	n, err := outages.OpenForRebuilds(ctx, tenant, runID, "stg.sb", seeds.OutageMissing, t0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	for _, key := range []topology.NodeKey{"stg.v", "stg.w"} {
+		got, found, err := outages.Get(ctx, tenant, key)
+		require.NoError(t, err)
+		require.True(t, found, "%s is below stg.sb", key)
+		assert.Equal(t, seeds.ViewOutage{Key: key, State: seeds.OutageMissing, Since: got.Since, SeedKey: "stg.sb", RunID: runID}, got)
+		assert.True(t, got.Since.Equal(t0))
+	}
+	for _, key := range []topology.NodeKey{"stg.t", "stg.x", "stg.sa"} {
+		_, found, err := outages.Get(ctx, tenant, key)
+		require.NoError(t, err)
+		assert.False(t, found, "%s is not a rebuild stg.sb reaches", key)
+	}
+
+	got, found, err := outages.Get(ctx, tenant, "stg.v")
+	require.NoError(t, err)
+	require.True(t, found, "stg.sa's failure leaves stg.v's outage open")
+	assert.True(t, got.Since.Equal(t0))
+
+	_, err = outages.OpenForRebuilds(ctx, tenant, runID, "stg.sa", seeds.OutageMissing, t0.Add(time.Hour))
+	require.NoError(t, err)
+	got, found, err = outages.Get(ctx, tenant, "stg.v")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, topology.NodeKey("stg.sa"), got.SeedKey)
+	assert.True(t, got.Since.Equal(t0), "an open outage keeps the time it opened")
+}
