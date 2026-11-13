@@ -25,7 +25,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/fixer"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
@@ -215,7 +215,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 		SQLDialect:          "trino",
 		ServiceRepoPaths:    map[string]string{"svc": "path"},
 	}
-	collab := runnerCollaborators(cfg, fixer.Services{}, nil)
+	collab := runnerCollaborators(cfg, runnerAdapters{}, discardLogger())
 	deps := newRunnerDeps(cfg, collab, workflow.Set{}, nil, nil, "host:7", discardLogger())
 
 	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)
@@ -348,29 +348,53 @@ output:
 	assert.GreaterOrEqual(t, refusals, 2, "each refusal is logged on its own line, with its file and line:\n%s", buf.String())
 }
 
-// TestMain_RunnerCollaboratorsAreTheFixerServicesWithoutTheModel: every field
-// of fixer.Services but the model is a field of runner.Collaborators of the
-// same type, and a service the fixer is given reaches the runner.
-func TestMain_RunnerCollaboratorsAreTheFixerServicesWithoutTheModel(t *testing.T) {
-	svcType, collabType := reflect.TypeOf(fixer.Services{}), reflect.TypeOf(runner.Collaborators{})
-	for i := range svcType.NumField() {
-		f := svcType.Field(i)
-		if f.Name == "LLM" {
-			continue
-		}
-		c, ok := collabType.FieldByName(f.Name)
-		if assert.True(t, ok, "runner.Collaborators has no field %s", f.Name) {
-			assert.Equal(t, f.Type, c.Type, f.Name)
-		}
+// TestMain_RunnerCollaboratorsFillEveryField: from a fully configured install
+// and every adapter main builds, every field of runner.Collaborators is set, so
+// no step is built over a missing port, and the install's configuration
+// reaches the steps.
+func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
+	cfg := config.Config{
+		ServiceRepoPaths:    map[string]string{"svc": "cfg-path"},
+		SQLDialect:          "trino",
+		VerificationTimeout: 37 * time.Minute,
 	}
-
 	logger := discardLogger()
-	paths := map[string]string{"svc": "cfg-path"}
-	collab := runnerCollaborators(config.Config{ServiceRepoPaths: paths}, fixer.Services{
-		Logger: logger, ServiceRepoPaths: map[string]string{"svc": "other"}, SQLDialect: "postgres",
-	}, nil)
+	// Each adapter is a value of the ports it answers, standing in for the
+	// adapter main builds; runnerCollaborators never calls one.
+	collab := runnerCollaborators(cfg, runnerAdapters{
+		github: struct {
+			ports.SourceReader
+			ports.RepoArchive
+		}{},
+		evidence:  struct{ ports.EvidenceReader }{},
+		artifacts: struct{ ports.ArtifactWriter }{},
+		graph: struct {
+			ports.NodeLocator
+			ports.UpstreamChangeReader
+			ports.VersionReader
+			ports.PrecedentReader
+		}{},
+		bundle: struct{ ports.CandidateSourceReader }{},
+		contracts: struct {
+			ports.ContractLocator
+			ports.ContractInspector
+		}{},
+		packager: struct{ ports.ContractPackager }{},
+		release: struct {
+			ports.ReleaseReader
+			ports.VerificationPipeline
+		}{},
+		proposals: struct{ repository.AttemptLister }{},
+	}, logger)
+
+	v := reflect.ValueOf(collab)
+	for i := range v.NumField() {
+		assert.False(t, v.Field(i).IsZero(), "runner.Collaborators.%s is not set", v.Type().Field(i).Name)
+	}
 	assert.Same(t, logger, collab.Logger)
-	assert.Equal(t, paths, collab.ServiceRepoPaths, "the install's configuration wins")
+	assert.Equal(t, cfg.ServiceRepoPaths, collab.ServiceRepoPaths)
+	assert.Equal(t, "trino", collab.SQLDialect)
+	assert.Equal(t, 37*time.Minute, collab.VerificationTimeout)
 }
 
 // The liveness budgets cover what each loop does between two beats: a worker

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -34,7 +33,6 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/config"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/fixer"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -326,24 +324,17 @@ func main() {
 	// now. Its built-in files are checked against the steps the registry holds
 	// before anything starts, and a refused file stops startup.
 	newUoW := func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) }
-	collab := runnerCollaborators(cfg, fixer.Services{
-		Source:            gh,
-		Evidence:          evidenceReader,
-		Sanitizer:         sanitizer.Passthrough{},
-		Artifacts:         artifactWriter,
-		Logger:            logger,
-		Locator:           graphClient,
-		Upstream:          graphClient,
-		Versions:          graphClient,
-		Precedents:        graphClient,
-		CandidateSource:   bundleReader,
-		Archive:           gh,
-		ContractLocator:   contracts,
-		ContractInspector: contracts,
-		Packager:          packager,
-		Releases:          releaseGateway,
-		PriorAttempts:     proposalRepo,
-	}, releaseGateway)
+	collab := runnerCollaborators(cfg, runnerAdapters{
+		github:    gh,
+		evidence:  evidenceReader,
+		artifacts: artifactWriter,
+		graph:     graphClient,
+		bundle:    bundleReader,
+		contracts: contracts,
+		packager:  packager,
+		release:   releaseGateway,
+		proposals: proposalRepo,
+	}, logger)
 	files, err := loadRunnerFiles(workflows.Builtin, collab, logger)
 	if err != nil {
 		logger.Error("the built-in remediation files are refused", "error", err)
@@ -625,33 +616,67 @@ func (t trackedLoop) Run(ctx context.Context) {
 	t.live.WorkerExited(t.name, err)
 }
 
-// runnerCollaborators is the ports the steps are built from: the fixer's
-// services without the model, which a prompt step reaches through the runner,
-// plus the verification pipeline, the clock, and what the install configures
-// (the repository paths of the services, the warehouse's SQL dialect and how
-// long a verification may run). Each field of svc is copied to the field of the
-// same name, so a field the fixer's services gain reaches the runner too.
-func runnerCollaborators(cfg config.Config, svc fixer.Services, pipeline ports.VerificationPipeline) runner.Collaborators {
-	var c runner.Collaborators
-	from, to := reflect.ValueOf(svc), reflect.ValueOf(&c).Elem()
-	for i := range from.NumField() {
-		f := from.Type().Field(i)
-		if f.Name == "LLM" {
-			continue
-		}
-		dst := to.FieldByName(f.Name)
-		if !dst.IsValid() || dst.Type() != f.Type {
-			panic(fmt.Sprintf("runner.Collaborators has no field %s of type %s, which fixer.Services carries", f.Name, f.Type))
-		}
-		dst.Set(from.Field(i))
+// runnerAdapters are the adapters main builds that the runner's steps read
+// through, each typed by every port it answers for the steps: the GitHub client
+// reads single files and fetches whole checkouts, the catalog client answers
+// every graph read, the contract locator also inspects a contract's
+// declarations, and the release gateway reads a release's failures and runs
+// verifications.
+type runnerAdapters struct {
+	github interface {
+		ports.SourceReader
+		ports.RepoArchive
 	}
-	c.Pipeline = pipeline
-	c.ServiceRepoPaths = cfg.ServiceRepoPaths
-	c.SQLDialect = cfg.SQLDialect
-	c.VerificationTimeout = cfg.VerificationTimeout
-	c.Clock = ports.SystemClock{}
-	c.Patcher = repofs.CheckoutPatcher{}
-	return c
+	evidence  ports.EvidenceReader
+	artifacts ports.ArtifactWriter
+	graph     interface {
+		ports.NodeLocator
+		ports.UpstreamChangeReader
+		ports.VersionReader
+		ports.PrecedentReader
+	}
+	bundle    ports.CandidateSourceReader
+	contracts interface {
+		ports.ContractLocator
+		ports.ContractInspector
+	}
+	packager ports.ContractPackager
+	release  interface {
+		ports.ReleaseReader
+		ports.VerificationPipeline
+	}
+	proposals repository.AttemptLister
+}
+
+// runnerCollaborators is the ports the steps are built from: the adapters main
+// built, the sanitizer, the patcher that writes a draft over a checkout, the
+// system clock, and what the install configures (the repository paths of the
+// services, the warehouse's SQL dialect and how long a verification may run).
+func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
+	return runner.Collaborators{
+		Source:              a.github,
+		Evidence:            a.evidence,
+		Sanitizer:           sanitizer.Passthrough{},
+		Artifacts:           a.artifacts,
+		Logger:              logger,
+		ServiceRepoPaths:    cfg.ServiceRepoPaths,
+		Locator:             a.graph,
+		Upstream:            a.graph,
+		Versions:            a.graph,
+		Precedents:          a.graph,
+		CandidateSource:     a.bundle,
+		Archive:             a.github,
+		Patcher:             repofs.CheckoutPatcher{},
+		ContractLocator:     a.contracts,
+		ContractInspector:   a.contracts,
+		Packager:            a.packager,
+		Releases:            a.release,
+		PriorAttempts:       a.proposals,
+		SQLDialect:          cfg.SQLDialect,
+		Pipeline:            a.release,
+		Clock:               ports.SystemClock{},
+		VerificationTimeout: cfg.VerificationTimeout,
+	}
 }
 
 // newRunnerDeps is what the runner works with. The registry is built from
