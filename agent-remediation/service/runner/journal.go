@@ -2,26 +2,23 @@ package runner
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
 // The journal holds one row per run of a step: per try, cluster, step and
-// round. A row records the step's input digest, its output as JSON, its
-// findings, how long it took and, for a model call, the model, the prompt
-// version and the tokens. A cluster's evidence is rebuilt from the outputs of
-// its done rows whenever a step runs, so a step that runs after a restart sees
-// exactly what it would have seen without one.
+// round. A row records the step's input digest, its output, its findings, how
+// long it took and, for a model call, the model, the prompt version and the
+// tokens. The output is one of the journal records of package serialization,
+// which also computes the input digest. A cluster's evidence is rebuilt from
+// the outputs of its done rows whenever a step runs, so a step that runs after
+// a restart sees exactly what it would have seen without one.
 
 // The kinds of journal row the runner writes besides a step's own Kind.
 const (
@@ -46,32 +43,6 @@ const (
 	// that failed.
 	stepDrafts = "drafts"
 )
-
-// contextRecord is a context step's output as its row stores it: each piece of
-// evidence encoded on its own, so it decodes into its key's registered type.
-type contextRecord struct {
-	Evidence map[remediation.EvidenceKey]json.RawMessage `json:"evidence,omitempty"`
-	Declined bool                                        `json:"declined,omitempty"`
-	Decline  string                                      `json:"decline,omitempty"`
-}
-
-// promptRecord is a prompt step's output as its row stores it.
-type promptRecord struct {
-	Draft    remediation.Draft `json:"draft"`
-	Declined bool              `json:"declined,omitempty"`
-	Decline  string            `json:"decline,omitempty"`
-}
-
-// checkRecord is a pre-flight check's output as its row stores it.
-type checkRecord struct {
-	Result   remediation.CheckResult                     `json:"result"`
-	Evidence map[remediation.EvidenceKey]json.RawMessage `json:"evidence,omitempty"`
-}
-
-// preflightRecord is the output of the runner's pre-flight pass.
-type preflightRecord struct {
-	Draft remediation.Draft `json:"draft"`
-}
 
 type stepKey struct {
 	cluster int
@@ -214,54 +185,23 @@ func (r *Runner) commitStep(ctx context.Context, run tryRun, blame remediation.S
 	return nil
 }
 
-// encodeEvidence encodes each piece of evidence a step gathered on its own. It
-// refuses a key with no registered type, since its value could not be decoded
-// again.
-func (r *Runner) encodeEvidence(values map[remediation.EvidenceKey]any) (map[remediation.EvidenceKey]json.RawMessage, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	out := make(map[remediation.EvidenceKey]json.RawMessage, len(values))
-	for k, v := range values {
-		if _, ok := r.d.Registry.EvidenceType(k); !ok {
-			return nil, fmt.Errorf("evidence %q has no registered type", k)
-		}
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return nil, fmt.Errorf("encode evidence %q: %w", k, err)
-		}
-		out[k] = raw
-	}
-	return out, nil
+// encodeEvidence encodes each piece of evidence a step gathered on its own,
+// each by the Go type the registry gives its key.
+func (r *Runner) encodeEvidence(values map[remediation.EvidenceKey]any) (serialization.EncodedEvidence, error) {
+	return serialization.EncodeEvidence(values, r.d.Registry.EvidenceType)
 }
 
 // withEvidence returns ev with every encoded piece of evidence added, each
 // decoded into the Go type the registry gives its key, in key order.
-func (r *Runner) withEvidence(ev remediation.Evidence, raw map[remediation.EvidenceKey]json.RawMessage) (remediation.Evidence, error) {
-	keys := make([]remediation.EvidenceKey, 0, len(raw))
-	for k := range raw {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		zero, ok := r.d.Registry.EvidenceType(k)
-		if !ok {
-			return ev, fmt.Errorf("evidence %q has no registered type", k)
-		}
-		ptr := reflect.New(reflect.TypeOf(zero()))
-		if err := json.Unmarshal(raw[k], ptr.Interface()); err != nil {
-			return ev, fmt.Errorf("decode evidence %q: %w", k, err)
-		}
-		ev = ev.With(k, ptr.Elem().Interface())
-	}
-	return ev, nil
+func (r *Runner) withEvidence(ev remediation.Evidence, encoded serialization.EncodedEvidence) (remediation.Evidence, error) {
+	return encoded.AddTo(ev, r.d.Registry.EvidenceType)
 }
 
 // contextEvidence returns ev with the evidence a done context step's row
 // recorded.
 func (r *Runner) contextEvidence(ev remediation.Evidence, row remediation.StepRun) (remediation.Evidence, error) {
-	var rec contextRecord
-	if err := json.Unmarshal(row.Output, &rec); err != nil {
+	rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
+	if err != nil {
 		return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
 	}
 	return r.withEvidence(ev, rec.Evidence)
@@ -269,8 +209,8 @@ func (r *Runner) contextEvidence(ev remediation.Evidence, row remediation.StepRu
 
 // promptDraft returns the draft a done prompt step's row recorded.
 func promptDraft(row remediation.StepRun) (remediation.Draft, error) {
-	var rec promptRecord
-	if err := json.Unmarshal(row.Output, &rec); err != nil {
+	rec, err := serialization.DecodeRecord[serialization.PromptRecord](row.Output)
+	if err != nil {
 		return remediation.Draft{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
 	}
 	return rec.Draft, nil
@@ -278,8 +218,8 @@ func promptDraft(row remediation.StepRun) (remediation.Draft, error) {
 
 // preflightDraft returns the draft a done pre-flight pass's row recorded.
 func preflightDraft(row remediation.StepRun) (remediation.Draft, error) {
-	var rec preflightRecord
-	if err := json.Unmarshal(row.Output, &rec); err != nil {
+	rec, err := serialization.DecodeRecord[serialization.PreflightRecord](row.Output)
+	if err != nil {
 		return remediation.Draft{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
 	}
 	return rec.Draft, nil
@@ -287,34 +227,10 @@ func preflightDraft(row remediation.StepRun) (remediation.Draft, error) {
 
 // checkResult returns the result and the evidence a done pre-flight check's
 // row recorded.
-func checkResult(row remediation.StepRun) (checkRecord, error) {
-	var rec checkRecord
-	if err := json.Unmarshal(row.Output, &rec); err != nil {
-		return checkRecord{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
+func checkResult(row remediation.StepRun) (serialization.CheckRecord, error) {
+	rec, err := serialization.DecodeRecord[serialization.CheckRecord](row.Output)
+	if err != nil {
+		return serialization.CheckRecord{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
 	}
 	return rec, nil
-}
-
-// evidenceValues is every piece of evidence ev holds, by key.
-func evidenceValues(ev remediation.Evidence) map[remediation.EvidenceKey]any {
-	out := make(map[remediation.EvidenceKey]any, len(ev.Keys()))
-	for _, k := range ev.Keys() {
-		v, _ := remediation.Get[any](ev, k)
-		out[k] = v
-	}
-	return out
-}
-
-// inputDigest identifies what a step ran on: the cluster's evidence and the
-// round. Two runs with the same digest were given the same input.
-func inputDigest(ev remediation.Evidence, round int) (string, error) {
-	raw, err := json.Marshal(struct {
-		Evidence map[remediation.EvidenceKey]any `json:"evidence"`
-		Round    int                             `json:"round"`
-	}{evidenceValues(ev), round})
-	if err != nil {
-		return "", fmt.Errorf("encode the step's input: %w", err)
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
 }

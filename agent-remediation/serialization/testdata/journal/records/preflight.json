@@ -1,0 +1,25 @@
+{
+  "draft": {
+    "Edits": [
+      {
+        "Path": "services/orders/models/orders_daily.sql",
+        "Original": "select 1",
+        "Content": "select 2",
+        "TargetNodeID": "orders.model.orders_daily",
+        "ContentKey": "proposed-fix/rel-1/orders/attempt-3.source.sql",
+        "DiffKey": "proposed-fix/rel-1/orders/attempt-3.source.diff",
+        "ContentURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.sql",
+        "DiffURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.diff"
+      }
+    ],
+    "NamedTarget": "models/orders_daily.sql",
+    "TargetShown": true,
+    "Rationale": "the column was renamed upstream",
+    "Confidence": "high",
+    "Model": "model-1",
+    "SuspectedRoot": "orders.model.stg_orders",
+    "CandidateFixSQLURI": "s3://artifacts/fix.sql",
+    "CandidateFixDiffURI": "s3://artifacts/fix.diff",
+    "SourceResolved": true
+  }
+}

@@ -2,12 +2,12 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -111,7 +111,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	if err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
-	if row.InputDigest, err = inputDigest(ev, c.Round); err != nil {
+	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
 	out, err := src.Gather(ctx, step.ContextInput{Failure: f, Evidence: ev})
@@ -122,7 +122,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	if err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
 	}
-	if row.Output, err = json.Marshal(contextRecord{Evidence: evidence, Declined: out.Declined, Decline: out.Decline}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(serialization.ContextRecord{Evidence: evidence, Declined: out.Declined, Decline: out.Decline}); err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", ps.name, err))
 	}
 	r.finish(&row)
@@ -150,7 +150,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
-	if row.InputDigest, err = inputDigest(ev, c.Round); err != nil {
+	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
 	m := newModel(r.d.LLM, run.snap.Remediation.ID, run.snap.Try.Try, c.Cluster, c.Round, promptlog.Failure{
@@ -165,7 +165,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
 	}
-	if row.Output, err = json.Marshal(promptRecord{Draft: out.Draft, Declined: out.Declined, Decline: out.Decline}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(serialization.PromptRecord{Draft: out.Draft, Declined: out.Declined, Decline: out.Decline}); err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", ps.name, err))
 	}
 	r.finish(&row)
@@ -201,7 +201,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	pass := r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
 	ev = ev.With(remediation.KeyDraft, draft)
 	var err error
-	if pass.InputDigest, err = inputDigest(ev, c.Round); err != nil {
+	if pass.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, pass, err)
 	}
 	scratch := step.NewScratch(r.d.Collab.Archive, run.trigger.Repo, run.trigger.CommitSHA)
@@ -248,7 +248,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 			return err
 		}
 	}
-	if pass.Output, err = json.Marshal(preflightRecord{Draft: draft}); err != nil {
+	if pass.Output, err = serialization.EncodeRecord(serialization.PreflightRecord{Draft: draft}); err != nil {
 		return r.recordFailure(ctx, pass, fmt.Errorf("encode the pre-flight draft: %w", err))
 	}
 	pass.Findings = findings
@@ -267,7 +267,7 @@ func (r *Runner) runCheck(ctx context.Context, run tryRun, c remediation.Cluster
 	if err != nil {
 		return row, remediation.CheckResult{}, nil, err
 	}
-	if row.InputDigest, err = inputDigest(ev, c.Round); err != nil {
+	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return row, remediation.CheckResult{}, nil, err
 	}
 	out, err := chk.Check(ctx, step.CheckInput{Failure: f, Evidence: ev, Draft: draft, Scratch: scratch})
@@ -278,7 +278,7 @@ func (r *Runner) runCheck(ctx context.Context, run tryRun, c remediation.Cluster
 	if err != nil {
 		return row, remediation.CheckResult{}, nil, fmt.Errorf("step %s: %w", ps.name, err)
 	}
-	if row.Output, err = json.Marshal(checkRecord{Result: out.Result, Evidence: evidence}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(serialization.CheckRecord{Result: out.Result, Evidence: evidence}); err != nil {
 		return row, remediation.CheckResult{}, nil, fmt.Errorf("encode the output of step %s: %w", ps.name, err)
 	}
 	row.Findings = out.Result.Findings

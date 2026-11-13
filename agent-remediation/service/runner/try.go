@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -322,7 +322,7 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, drafts []step.Cl
 	if err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", name, err))
 	}
-	if row.Output, err = json.Marshal(checkRecord{Result: res}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(serialization.CheckRecord{Result: res}); err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", name, err))
 	}
 	row.Findings = res.Findings

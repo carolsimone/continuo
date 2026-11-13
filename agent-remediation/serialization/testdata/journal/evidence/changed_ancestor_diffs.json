@@ -1,0 +1,8 @@
+[
+  {
+    "NodeID": "orders.model.stg_orders",
+    "Service": "orders",
+    "Depth": 1,
+    "Diff": "-a\n+b"
+  }
+]

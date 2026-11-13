@@ -1,0 +1,16 @@
+{
+  "draft": {
+    "Edits": null,
+    "NamedTarget": "",
+    "TargetShown": false,
+    "Rationale": "",
+    "Confidence": "",
+    "Model": "",
+    "SuspectedRoot": "",
+    "CandidateFixSQLURI": "",
+    "CandidateFixDiffURI": "",
+    "SourceResolved": false
+  },
+  "declined": true,
+  "decline": "the model declined"
+}

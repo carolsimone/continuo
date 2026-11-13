@@ -1,0 +1,6 @@
+{
+  "Source": "select 1",
+  "Origin": "code_bundle",
+  "FilePath": "models/orders_daily.sql",
+  "Service": "orders"
+}

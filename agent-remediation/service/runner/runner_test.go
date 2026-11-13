@@ -3,7 +3,6 @@ package runner_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -397,10 +397,8 @@ func TestRunner_PassedPreflightWritesTheArtifacts(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, proposal.ComputeUnifiedDiff("select 1", "select 2", "services/svc-a/models/orders.sql"), diff)
 
-	var out struct {
-		Draft remediation.Draft `json:"draft"`
-	}
-	require.NoError(t, json.Unmarshal(h.stepRows(id, 1, 1)["preflight"][0].Output, &out))
+	out, err := serialization.DecodeRecord[serialization.PreflightRecord](h.stepRows(id, 1, 1)["preflight"][0].Output)
+	require.NoError(t, err)
 	require.Len(t, out.Draft.Edits, 1)
 	e := out.Draft.Edits[0]
 	assert.Equal(t, "services/svc-a/models/orders.sql", e.Path)

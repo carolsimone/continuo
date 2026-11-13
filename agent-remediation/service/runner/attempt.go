@@ -1,14 +1,12 @@
 package runner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
@@ -112,21 +110,11 @@ func draftsOf(checked []checkedCluster) []step.ClusterDraft {
 // draftsDigest identifies what a flow-level step ran on: every draft it was
 // given, with its cluster and evidence.
 func draftsDigest(drafts []step.ClusterDraft) (string, error) {
-	type entry struct {
-		Cluster  int                             `json:"cluster"`
-		Draft    remediation.Draft               `json:"draft"`
-		Evidence map[remediation.EvidenceKey]any `json:"evidence"`
-	}
-	entries := make([]entry, 0, len(drafts))
+	digested := make([]serialization.DigestedDraft, 0, len(drafts))
 	for _, d := range drafts {
-		entries = append(entries, entry{Cluster: d.Cluster.Cluster, Draft: d.Draft, Evidence: evidenceValues(d.Evidence)})
+		digested = append(digested, serialization.DigestedDraft{Cluster: d.Cluster.Cluster, Draft: d.Draft, Evidence: d.Evidence})
 	}
-	raw, err := json.Marshal(entries)
-	if err != nil {
-		return "", fmt.Errorf("encode the step's drafts: %w", err)
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return serialization.DraftsDigest(digested)
 }
 
 // nodeOutcomes is how the try ended for each failing node: verifying for the

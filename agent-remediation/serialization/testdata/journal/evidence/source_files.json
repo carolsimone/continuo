@@ -1,0 +1,10 @@
+{
+  "Files": {
+    "models/orders_daily.sql": "select 1"
+  },
+  "Order": [
+    "models/orders_daily.sql"
+  ],
+  "Primary": "models/orders_daily.sql",
+  "Service": "orders"
+}

@@ -1,0 +1,8 @@
+{
+  "Schema": "analytics",
+  "Table": "fx",
+  "RepoRoot": "svc",
+  "ContractDir": "svc/contracts",
+  "YAMLPath": "svc/contracts/fx.yaml",
+  "YAMLText": "nodes: []"
+}

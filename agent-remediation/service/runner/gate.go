@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -74,7 +74,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 	if err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", name, err))
 	}
-	if row.Output, err = json.Marshal(checkRecord{Result: verdict.Result}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(serialization.CheckRecord{Result: verdict.Result}); err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", name, err))
 	}
 	if !verdict.Result.Waiting {
@@ -297,7 +297,7 @@ func mergeVerifications(stored, read []proposal.Verification) []proposal.Verific
 
 // concluded is the gate's row once the gate gave its verdict res.
 func (r *Runner) concluded(row remediation.StepRun, res remediation.CheckResult) (remediation.StepRun, error) {
-	out, err := json.Marshal(checkRecord{Result: res})
+	out, err := serialization.EncodeRecord(serialization.CheckRecord{Result: res})
 	if err != nil {
 		return row, fmt.Errorf("encode the output of step %s: %w", row.Step, err)
 	}

@@ -1,0 +1,9 @@
+[
+  {
+    "NodeID": "orders.model.stg_orders",
+    "Depth": 1,
+    "CodeDiff": "-a\n+b",
+    "ConfigDiff": "-c\n+d",
+    "Truncated": true
+  }
+]
