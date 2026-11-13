@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/validation"
@@ -51,6 +52,9 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyCodeBundleSource:     func() any { return remediation.CandidateSource{} },
 			remediation.KeyOwnChangeDiff:        func() any { return remediation.Text("") },
 			remediation.KeyChangedAncestorDiffs: func() any { return []prompt.ReleaseUpstreamChange{} },
+			remediation.KeyContractFile:         func() any { return remediation.ContractFile{} },
+			remediation.KeyContractEntry:        func() any { return remediation.Text("") },
+			remediation.KeyPriorAttempts:        func() any { return []prompt.PriorAttempt{} },
 		},
 	}
 	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
@@ -69,6 +73,13 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(validation.NewOwnChangeDiff(c.Versions, c.Sanitizer, c.Logger))
 	r.register(validation.NewChangedAncestorDiffs(c.CandidateSource, c.Versions, c.Sanitizer, c.Logger))
 	r.register(validation.NewDBTValidation(c.Artifacts, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
+	r.register(contract.NewContractFile(c.Archive, c.ContractLocator, c.Logger))
+	r.register(contract.NewFailingSiblings(c.Archive, c.ContractLocator, c.Releases, c.Logger))
+	r.register(contract.NewContractEntry(c.CandidateSource, c.Sanitizer, c.Logger))
+	r.register(contract.NewPriorAttempts(c.PriorAttempts, c.Evidence, c.Sanitizer, c.Logger))
+	r.register(contract.NewPythonContract(c.Sanitizer))
+	r.register(contract.NewPythonParse(c.Sanitizer))
+	r.register(contract.NewCSVContract(c.Sanitizer))
 	return r
 }
 
