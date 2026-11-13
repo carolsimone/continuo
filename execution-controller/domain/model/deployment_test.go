@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -758,4 +759,26 @@ func TestDeployment_RunDurationOfAnOutcomeAtTheStartIsZero(t *testing.T) {
 	took, ok := d.RunDuration()
 	assert.True(t, ok, "an outcome at the instant of the start is a measured duration of zero")
 	assert.Zero(t, took)
+}
+
+func TestDeployment_RecordProbesSetsThemOnFindingsThatHoldNone(t *testing.T) {
+	probe := []seedreload.Probe{{Schema: "bi", Name: "v", OK: true}}
+	findings := &seedreload.Findings{Checked: true}
+	d := model.NewDeployment(deployableCmd(), nil, time.Now())
+	d.Observe(model.AttemptFacts{SeedPreflight: findings})
+
+	assert.True(t, d.RecordProbes(probe))
+
+	assert.Equal(t, probe, d.Facts().SeedPreflight.Probes)
+	assert.Empty(t, findings.Probes, "the findings the caller holds are not changed")
+	assert.False(t, d.RecordProbes([]seedreload.Probe{{Schema: "bi", Name: "w"}}), "probes already set stay")
+	assert.Equal(t, probe, d.Facts().SeedPreflight.Probes)
+}
+
+func TestDeployment_RecordProbesNeedsFindingsAndProbes(t *testing.T) {
+	d := model.NewDeployment(deployableCmd(), nil, time.Now())
+	assert.False(t, d.RecordProbes([]seedreload.Probe{{Schema: "bi", Name: "v"}}), "no findings")
+	d.Observe(model.AttemptFacts{SeedPreflight: &seedreload.Findings{}})
+	assert.False(t, d.RecordProbes(nil), "no probes")
+	assert.Nil(t, d.Facts().SeedPreflight.Probes)
 }

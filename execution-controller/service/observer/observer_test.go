@@ -267,10 +267,7 @@ func TestProbeViews_ProbesTheViewsOutsideTheAllowedSetOfASucceededLoad(t *testin
 	assert.Equal(t, "analytics-seed-1", prober.requests[0].JobName)
 	assert.Equal(t, "analytics.seed_fx_rates_eur", prober.requests[0].NodeID)
 	assert.Equal(t, []string{"bi.fx_rates_report"}, prober.requests[0].Views)
-	require.NotNil(t, got)
-	assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}}, got.Probes)
-	assert.Len(t, got.Dependents, 2, "the findings are kept")
-	assert.Empty(t, reportFindings().Probes)
+	assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", Error: "VIEW_IS_STALE"}}, got)
 }
 
 func TestProbeViews_SpellsEachViewAsThePreflightReportedIt(t *testing.T) {
@@ -330,8 +327,7 @@ func TestProbeViews_AProbeThatCannotRunMarksEachViewNotProbed(t *testing.T) {
 
 			got := observerWithProber(prober).probeViews(context.Background(), seedDeployment(seedreload.PreflightReport), succeededFacts(reportFindings()))
 
-			require.NotNil(t, got)
-			assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: tc.want}}, got.Probes)
+			assert.Equal(t, []seedreload.Probe{{Schema: "bi", Name: "fx_rates_report", OK: false, Error: tc.want}}, got)
 		})
 	}
 }

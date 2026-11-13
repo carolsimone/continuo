@@ -439,11 +439,10 @@ func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, 
 	facts := dep.Facts()
 	endedFacts(func(f model.AttemptFacts) { facts, _ = facts.Merge(f) }, func() model.AttemptFacts { return facts },
 		obs, live, logs, unexplained, now)
-	if probed := o.probeViews(ctx, dep, facts); probed != nil {
-		logs.SeedPreflight = probed
-	}
+	probes := o.probeViews(ctx, dep, facts)
 	_, err := o.inTx(ctx, dep.JobName(), func(u uow.UnitOfWork, d *model.Deployment) error {
 		endedFacts(func(f model.AttemptFacts) { d.Observe(f) }, d.Facts, obs, live, logs, unexplained, now)
+		d.RecordProbes(probes)
 		verdict := model.Classify(d.Facts())
 		if !verdict.Succeeded && !verdict.Stopped {
 			d.Observe(model.AttemptFacts{Reason: verdict.Reason, Message: fallbackMessage(verdict.Reason)})

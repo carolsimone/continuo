@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/google/uuid"
 )
 
@@ -431,6 +432,20 @@ func (d *Deployment) Observe(f AttemptFacts) bool {
 	merged, changed := d.facts.Merge(f)
 	d.facts = merged
 	return changed
+}
+
+// RecordProbes sets probes as the answers of the findings the attempt settles
+// on, when it has findings that hold none yet. The findings are copied, never
+// changed in place. It reports whether it set them.
+func (d *Deployment) RecordProbes(probes []seedreload.Probe) bool {
+	f := d.facts.SeedPreflight
+	if len(probes) == 0 || f == nil || len(f.Probes) > 0 {
+		return false
+	}
+	probed := *f
+	probed.Probes = probes
+	d.facts.SeedPreflight = &probed
+	return true
 }
 
 // BeginTermination records why execution-controller ends the attempt itself

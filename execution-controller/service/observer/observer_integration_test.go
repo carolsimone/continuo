@@ -1313,3 +1313,39 @@ func TestSettleEnded_ProbesOnlyOnceAnAttemptIsSettled(t *testing.T) {
 
 	assert.Len(t, h.probe.requests, 1)
 }
+
+// The findings of a pod awaiting its stop are stored before its attempt ends;
+// the probe of the settle that follows still reaches the report.
+func TestSettleEnded_ProbesFindingsAnEarlierRecordPassAlreadyStored(t *testing.T) {
+	h := newHarness(t)
+	h.probe.log = probeBlock(true, `[{"schema":"bi","name":"fx_rates_report","ok":true,"error":""}]`)
+	dep := h.startedSeed(t, h.now.Add(-time.Hour), seedreload.PreflightReport)
+	h.logs.containers = map[string]string{model.SeedPreflightContainer: preflightBlock("success", "", outsideViewFindings)}
+	h.logs.full = "partial output"
+	pod := runningPod(h.now.Add(-50 * time.Minute))
+	pod.DeletingSince = ts(h.now)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{pod}})
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	stored := h.reload(t, dep.JobName()).Facts()
+	require.NotEmpty(t, stored.LogKey, "the record pass read the log")
+	require.NotNil(t, stored.SeedPreflight, "and stored the findings")
+	require.Empty(t, stored.SeedPreflight.Probes)
+	require.Empty(t, h.probe.requests, "nothing is probed while the attempt runs")
+
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-time.Minute), 0, "Completed")}})
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	assert.Len(t, h.probe.requests, 1)
+	reports := h.reports(t)
+	require.Len(t, reports, 2, "the running report, then the final one")
+	assert.Equal(t, "succeeded", reports[1]["status"])
+	findings, ok := reports[1]["seed_preflight"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{map[string]any{"schema": "bi", "name": "fx_rates_report", "ok": true}}, findings["probes"])
+	kept := h.reload(t, dep.JobName()).Facts().SeedPreflight
+	require.NotNil(t, kept)
+	assert.Len(t, kept.Probes, 1)
+}

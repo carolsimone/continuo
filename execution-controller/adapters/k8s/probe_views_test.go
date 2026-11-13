@@ -27,7 +27,7 @@ func TestProbeJob_RunsTheProbeOpOnTheOutsideViews(t *testing.T) {
 		Views: []string{"bi.fx_rates_report"}}, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "continuo-probe", job.Labels["app"])
-	assert.Equal(t, int64(40), *job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(30), *job.Spec.ActiveDeadlineSeconds, "under the observer's 40 s probe timeout, so the log can still be read")
 	assert.Equal(t, int32(120), *job.Spec.TTLSecondsAfterFinished)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, "probe-views", job.Spec.Template.Spec.Containers[0].Name)

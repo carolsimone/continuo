@@ -27,7 +27,9 @@ const (
 	// here and is never mistaken for an attempt.
 	probeAppLabel = "continuo-probe"
 	// probeDeadline is how long a probe pod may run before Kubernetes ends it.
-	probeDeadline = 40 * time.Second
+	// It is shorter than the 40 s the observer allows the whole probe, so a
+	// probe that runs to this deadline still leaves time to read its pod's log.
+	probeDeadline = 30 * time.Second
 	// probeJobTTL is how long a finished probe Job stays if its deletion fails.
 	probeJobTTL = int32(120)
 	// maxProbeJobNameLen keeps a probe Job name, which Kubernetes copies into

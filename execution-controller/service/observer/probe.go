@@ -12,14 +12,13 @@ import (
 )
 
 // probeViews probes the external views the preflight of d's seed found outside
-// the allowed set, and returns the findings with each view's answer as Probes.
-// facts are the facts d settles on. It returns nil, and probes nothing, unless
+// the allowed set, and returns each view's answer. facts are the facts d settles on. It returns nil, and probes nothing, unless
 // d is a production attempt whose preflight ran in report mode (a
 // late-binding warehouse), its findings list a dependant outside the allowed
 // set and hold no probes yet, and the attempt succeeded. A probe that cannot
 // run, that times out, or whose block says the warehouse was not reached
 // records every view as not probed; it never fails the attempt.
-func (o *Observer) probeViews(ctx context.Context, d *model.Deployment, facts model.AttemptFacts) *seedreload.Findings {
+func (o *Observer) probeViews(ctx context.Context, d *model.Deployment, facts model.AttemptFacts) []seedreload.Probe {
 	cmd := d.Command()
 	if d.Mode() != model.ModeProduction || cmd.SeedPreflight == nil || cmd.SeedPreflight.Mode != seedreload.PreflightReport {
 		return nil
@@ -50,9 +49,7 @@ func (o *Observer) probeViews(ctx context.Context, d *model.Deployment, facts mo
 			probes[i] = seedreload.Probe{Schema: dep.Schema, Name: dep.Name, Error: "not probed: " + err.Error()}
 		}
 	}
-	probed := *findings
-	probed.Probes = probes
-	return &probed
+	return probes
 }
 
 // probesOf is the answer of each view in the probe block that log holds. An
