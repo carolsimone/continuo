@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/cross"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/gate"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/upstream"
@@ -99,6 +100,8 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(cross.NewNoPathEditedTwice(c.ServiceRepoPaths, c.Logger))
 	r.register(cross.NewOneManifestKind(c.ServiceRepoPaths, c.Logger))
 	r.register(gate.NewVerificationRun(c.Evidence, c.Artifacts, c.Releases, c.Pipeline, c.ServiceRepoPaths, c.Clock, c.VerificationTimeout, c.Logger))
+	r.register(outputs.NewPullRequest(c.Clock))
+	r.register(outputs.NewHandOver(c.Clock))
 	return r
 }
 
