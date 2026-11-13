@@ -730,7 +730,7 @@ message ListNodeTasksResponse {
 message ViewOutage {
   string state = 1;         // missing | stale
   string since = 2;         // RFC3339, when the load left the view so
-  string seed_node_id = 3;  // the seed whose load did it, "schema.table"
+  string seed_node_id = 3;  // the seed whose load did it, "schema.table" in lowercase
   string run_id = 4;        // the run of that load
 }
 
@@ -757,7 +757,7 @@ message NodeTask {
   string wait_reason = 19;        // node_lease while the task waits for another run to release its node; empty otherwise
   string waiting_on_run_id = 20;  // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
   string waiting_since = 21;      // RFC3339, when the task began waiting for wait_reason; empty when it has none
-  // blocking_objects are the "schema.name" of each dependent of the seed that its
+  // blocking_objects are the lowercased "schema.name" of each dependent of the seed that its
   // preflight did not allow, on a seed task whose latest attempt failed
   // unowned_dependents; empty otherwise.
   repeated string blocking_objects = 22;

@@ -2935,7 +2935,7 @@ type ViewOutage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`                               // missing | stale
 	Since         string                 `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"`                               // RFC3339, when the load left the view so
-	SeedNodeId    string                 `protobuf:"bytes,3,opt,name=seed_node_id,json=seedNodeId,proto3" json:"seed_node_id,omitempty"` // the seed whose load did it, "schema.table"
+	SeedNodeId    string                 `protobuf:"bytes,3,opt,name=seed_node_id,json=seedNodeId,proto3" json:"seed_node_id,omitempty"` // the seed whose load did it, "schema.table" in lowercase
 	RunId         string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                  // the run of that load
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3023,7 +3023,7 @@ type NodeTask struct {
 	WaitReason     string                 `protobuf:"bytes,19,opt,name=wait_reason,json=waitReason,proto3" json:"wait_reason,omitempty"`                 // node_lease while the task waits for another run to release its node; empty otherwise
 	WaitingOnRunId string                 `protobuf:"bytes,20,opt,name=waiting_on_run_id,json=waitingOnRunId,proto3" json:"waiting_on_run_id,omitempty"` // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
 	WaitingSince   string                 `protobuf:"bytes,21,opt,name=waiting_since,json=waitingSince,proto3" json:"waiting_since,omitempty"`           // RFC3339, when the task began waiting for wait_reason; empty when it has none
-	// blocking_objects are the "schema.name" of each dependent of the seed that its
+	// blocking_objects are the lowercased "schema.name" of each dependent of the seed that its
 	// preflight did not allow, on a seed task whose latest attempt failed
 	// unowned_dependents; empty otherwise.
 	BlockingObjects []string `protobuf:"bytes,22,rep,name=blocking_objects,json=blockingObjects,proto3" json:"blocking_objects,omitempty"`
