@@ -44,14 +44,17 @@ const (
 //     never run, and leaves out rel_probe, a model of a schedule, which
 //     ListNodes without dormant_only lists as not dormant. Every node of the
 //     unfiltered dormant list is dormant, and the ui's node list
-//     (GET /api/nodes?dormant=1) lists it the same way. ListScheduleTopologies
-//     counts the release's dormant nodes as model.IsDormant counts them.
+//     (GET /api/nodes?dormant=1) lists it the same way. ListNodes lists no
+//     node of e2e_raw.ingest_probe, the release's unknown-external node.
+//     ListScheduleTopologies counts the release's dormant nodes as
+//     model.IsDormant counts them.
 //  4. StartRun with no schedule name is refused, and no schedule ListSchedules
 //     lists has an empty name, so no run selects the nodes of no schedule.
 //     StartRun of every schedule of the release creates a run with no task
 //     for the node; each run is cancelled as soon as it is created, since its
-//     tasks are written with it. No run of the tenant then holds a task for
-//     the node.
+//     tasks are written with it, and a ResourceQuota keeps every pod from
+//     being created while the runs exist, so none of them builds a model. No
+//     run of the tenant then holds a task for the node.
 //  5. TriggerSingleNodeRun of it creates a run of exactly its task, which
 //     succeeds, and ListNodes then lists it with that run, still dormant.
 //
@@ -65,10 +68,10 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	}
 
 	// additive polls: the promotion (5m) + run-controller's copy (2m) + the seed
-	// loads of the release (5m) + the end of the schedules' runs (3m, since they
-	// are cancelled together and end together) + the single-node run (5m) =
-	// 20m. The restore and the removal of the schedules' runs have contexts of
-	// their own.
+	// loads of the release (5m) + the pod quota taking effect (1m) + the end of
+	// the schedules' runs (3m, since they are cancelled together and end
+	// together) + the single-node run (5m) = 21m. The restore and the removal
+	// of the schedules' runs have contexts of their own.
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 
@@ -183,6 +186,20 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	}
 	assert.True(t, listed, "ListNodes(dormant_only) with no other filter lists %s: %v", dormantProbeKey, everyDormant.GetNodes())
 
+	// The live release holds e2e_raw.ingest_probe, the table service-1's
+	// ingest_probe_reader reads and no model builds, as an unknown-external
+	// node, and the node list never lists it.
+	var externalType string
+	require.NoError(t, clients.runControllerDB.GetContext(ctx, &externalType, `
+		SELECT node_type FROM topology_nodes WHERE tenant_id = $1 AND release_id = $2 AND node_key = $3`,
+		events.DefaultTenantID, releaseID, unknownExternalKey),
+		"release %s holds the unknown-external node %s", releaseID, unknownExternalKey)
+	require.Equal(t, string(model.NodeTypeUnknownExternal), externalType, "%s is an unknown-external node", unknownExternalKey)
+	external, err := clients.runClient.ListNodes(ctx, &runv1.ListNodesRequest{Search: unknownExternalTable})
+	require.NoError(t, err, "ListNodes(search %s)", unknownExternalTable)
+	assert.Empty(t, external.GetNodes(), "ListNodes lists no unknown-external node: %v", external.GetNodes())
+	assert.Zero(t, external.GetTotalCount(), "ListNodes counts no unknown-external node")
+
 	// The ui's node list, which the Nodes tab reads.
 	uiList := mustGetJSON(t, fmt.Sprintf("%s/api/nodes?search=%s&service=%s&dormant=1",
 		clients.uiBase, dormantProbeTable, dormantProbeService))
@@ -246,6 +263,13 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 		events.DefaultTenantID, releaseID))
 	require.NotEmpty(t, schedules, "release %s holds the schedules of service-1's models", releaseID)
 
+	// No pod can be created in the Jobs' namespace while the schedules' runs
+	// exist: a Job execution-controller creates for one of them before the
+	// cancel reaches it gets no pod, so these runs build no model. The quota
+	// is removed once the runs have ended, and when the test ends however it
+	// ends.
+	blockPodCreation(t, ctx)
+
 	var scheduleRuns []uuid.UUID
 	defer func() { removeRuns(t, clients, scheduleRuns) }()
 	for _, schedule := range schedules {
@@ -277,6 +301,7 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	for _, runID := range scheduleRuns {
 		verifySchedulerCancelled(t, ctx, clients, runID)
 	}
+	unblockPodCreation(t)
 	require.Zero(t, tasksOfDormantProbe(t, ctx, clients),
 		"no run of tenant %s holds a task for the dormant node %s", events.DefaultTenantID, dormantProbeKey)
 	t.Logf("✅ runs of the %d schedules %v hold no task for %s", len(schedules), schedules, dormantProbeKey)

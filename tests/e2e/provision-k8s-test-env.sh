@@ -124,8 +124,9 @@ kubectl apply -f job-s3-secret.yaml || {
     exit 1
 }
 
-# The start-timeout e2e test applies the e2e-no-pods ResourceQuota, which
-# forbids every new pod in the namespace, and deletes it when it ends. Delete
+# The start-timeout and dormant-node e2e tests apply the e2e-no-pods
+# ResourceQuota, which forbids every new pod in the namespace, and delete it
+# when they end. Delete
 # one a killed test run left behind, or no pod could start here, this
 # Deployment's included.
 log_info "Removing any e2e-no-pods ResourceQuota left behind..."
