@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -256,7 +257,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	if err != nil {
 		return err
 	}
-	notices, _ := releaseNotices(d, r, topo, prod)
+	notices, preflights := releaseNotices(d, r, topo, prod)
 	r.SetNotices(notices)
 
 	// Derive the validation build sets: candidate nodes rebuilt from their own
@@ -337,7 +338,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// leg; validation.requested is emitted later, on seed.build.completed.
 	seedIDs := newChangedSeedIDs(topo, validationIDs, rebuiltFromCandidate)
 	if len(seedIDs) > 0 {
-		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, now)
+		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, preflights, now)
 	}
 
 	// No new/changed seeds: Part A path (validate directly).
@@ -498,7 +499,9 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFro
 // carrying the fields execution-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
 // seeds are built, not checked by the adapter; no upstreams: seeds are roots.
-func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
+// A seed with an entry in preflights also carries it as seed_preflight, the
+// check execution-controller runs against the warehouse before the seed loads.
+func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights map[string]*seedreload.Preflight) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -509,14 +512,18 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 		if !ok {
 			continue
 		}
-		out = append(out, map[string]any{
+		seed := map[string]any{
 			"unique_id":    n.UniqueID,
 			"service_name": n.ServiceName,
 			"node_type":    n.NodeType,
 			"schema_name":  n.SchemaName,
 			"table_name":   n.TableName,
 			"image_tag":    n.ImageTag,
-		})
+		}
+		if p := preflights[id]; p != nil {
+			seed["seed_preflight"] = events.SeedPreflightOf(p)
+		}
+		out = append(out, seed)
 	}
 	return out
 }
@@ -524,8 +531,10 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
 // reference to the candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
+// preflights holds the report preflight of each noticed seed.
 func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
-	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
+	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string,
+	preflights map[string]*seedreload.Preflight, now time.Time) error {
 
 	if err := r.TransitionToSeedBuilding(ref, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
@@ -540,7 +549,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		"mode":              "seed_build",
 		"candidate_schema":  candidateSchema,
 		"image_tags":        r.ImageTags(),
-		"seeds":             seedBuildNodesInOrder(topo, seedIDs),
+		"seeds":             seedBuildNodesInOrder(topo, seedIDs, preflights),
 		"seed_ids_in_order": seedIDs,
 	}
 	// A verification run carries the overlay of proposed source files; the

@@ -2729,6 +2729,34 @@ func TestHandleParsedManifest_StoresTheNoticesOfEachDroppingSeed(t *testing.T) {
 	assert.Len(t, n.Rebuilds, 2)
 }
 
+func TestEmitSeedBuildRequested_CarriesAReportPreflightForEachNoticedSeed(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-preflight", map[string]string{"finance": "sha-f"})
+	candidate, prod := fxReleaseTopologies()
+	// A second changed seed whose load drops nothing has no notice.
+	prodZones := release.Node{UniqueID: "analytics.seed_zones", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+		SchemaName: "analytics", TableName: "seed_zones", ContentHash: "sha256:aa01", SeedColumnsHash: "sha256:bb02", Schedule: "seed"}
+	candZones := prodZones
+	candZones.ContentHash = "sha256:aa02"
+	candidate = append(candidate, candZones)
+	prod = append(prod, prodZones)
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-preflight", Status: "ok", TopologyRef: putTopology(t, deps, "rel-preflight", candidate),
+	}))
+
+	var payload struct {
+		Seeds []map[string]json.RawMessage `json:"seeds"`
+	}
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.SeedBuildRequestedV1).Payload, &payload))
+	require.Len(t, payload.Seeds, 2)
+	assert.JSONEq(t, `"analytics.seed_fx_rates_eur"`, string(payload.Seeds[0]["unique_id"]))
+	assert.JSONEq(t, `{"mode":"report","engine_family":"schema_bound","relation":"analytics.seed_fx_rates_eur","allowed":["analytics.fx_rates_current","analytics.fx_rates_latest_eur"],"acknowledged":[]}`,
+		string(payload.Seeds[0]["seed_preflight"]))
+	assert.JSONEq(t, `"analytics.seed_zones"`, string(payload.Seeds[1]["unique_id"]))
+	assert.NotContains(t, payload.Seeds[1], "seed_preflight")
+}
+
 func TestHandleParsedManifest_ABootstrapStoresNoticesToo(t *testing.T) {
 	deps, store := seedToParsingBootstrap(t, "rel-boot-notice", map[string]string{"finance": "sha-f"})
 	candidate, prod := fxReleaseTopologies()

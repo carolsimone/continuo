@@ -1,6 +1,9 @@
 package redis
 
-import "github.com/carolsimone/continuo/release-controller/service/handlers"
+import (
+	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/release-controller/service/handlers"
+)
 
 // stageNodeResultDTO is the JSON shape of one per_node entry on the aggregate
 // events of the compile and seed-build legs (compile.completed:v1 and
@@ -17,6 +20,10 @@ type stageNodeResultDTO struct {
 	// that failed (compile | parse-prod | parse-candidate | upload). Empty for
 	// successes and for non-compile legs.
 	FailedContainer string `json:"failed_container,omitempty"`
+
+	// SeedPreflight is what the preflight of a seed found in the warehouse,
+	// sent on the seed-build leg's entry of a seed that asked for one.
+	SeedPreflight *events.SeedPreflightFindings `json:"seed_preflight,omitempty"`
 }
 
 // stageNodeResultsToInput maps the decoded per-node wire entries to the
@@ -36,6 +43,7 @@ func stageNodeResultsToInput(in []stageNodeResultDTO) []handlers.NodeResult {
 			RunResultsURI:   n.RunResultsURI,
 			DurationMS:      n.DurationMS,
 			FailedContainer: n.FailedContainer,
+			SeedPreflight:   n.SeedPreflight.ToDomain(),
 		}
 	}
 	return out

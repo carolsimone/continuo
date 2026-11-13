@@ -57,6 +57,20 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	return handleSeedBuildOK(ctx, d, u, r, in, now)
 }
 
+// applyWarehouseFindings records what each seed's preflight found in the
+// warehouse on the release's notice for that seed. A result without findings
+// changes nothing, and neither does one for a seed the release has no notice for.
+func applyWarehouseFindings(d *Deps, r *pipeline.Run, perNode []NodeResult) {
+	for _, n := range perNode {
+		if n.SeedPreflight == nil {
+			continue
+		}
+		if !r.ApplyWarehouseFindings(n.NodeID, *n.SeedPreflight) {
+			d.Logger.Info("seed preflight findings for a seed with no notice", "release_id", r.ID(), "node_id", n.NodeID)
+		}
+	}
+}
+
 func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleSeedBuildResultInput, now time.Time) error {
 	// Build per-node results and derive the failing set.
 	results, failing := stageResults(in.PerNode)
@@ -69,6 +83,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	}
 
 	r.RecordStageResults("seed_build", results)
+	applyWarehouseFindings(d, r, in.PerNode)
 
 	// Build a single lookup from the candidate topology so per-node rejection
 	// entries carry the source location the remediation agent needs: the
@@ -145,6 +160,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	// per-seed build status even when the overall build succeeds.
 	results, _ := stageResults(in.PerNode)
 	r.RecordStageResults("seed_build", results)
+	applyWarehouseFindings(d, r, in.PerNode)
 
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
