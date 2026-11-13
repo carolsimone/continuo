@@ -27,9 +27,11 @@ var (
 // An implementation bound to a unit of work's transaction is what a step's
 // commit uses (Hold, Load and the Save methods). One bound to the database
 // serves the worker, the verification poller and the retention sweeper, which
-// call ClaimNext, Claim, ReleaseLease, Get, the list methods and
-// DeleteFinishedOlderThan outside any transaction. In both places two claimers
-// never get one remediation.
+// call ClaimNext, Claim, ReleaseLease, the list methods and
+// DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
+// that takes no lock and needs no transaction, so either implementation may
+// serve it; the worker calls it inside a read-only unit of work that is rolled
+// back. In both places two claimers never get one remediation.
 type RemediationRepository interface {
 	// Create inserts r. created is false when a remediation already exists for
 	// the same (tenant, release, round); that row is left as it was.
