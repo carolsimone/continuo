@@ -1,5 +1,22 @@
 import type { ReleaseNotice } from './types';
 
+// A notice is read defensively: a list or object it lacks counts as empty, so
+// one malformed notice cannot take the page down.
+function normalize(n: ReleaseNotice): ReleaseNotice {
+  return {
+    ...n,
+    columns: { added: n.columns?.added ?? [], removed: n.columns?.removed ?? [], retyped: n.columns?.retyped ?? [] },
+    load: { operation: n.load?.operation ?? '', drops_table: n.load?.drops_table ?? false, reason: n.load?.reason ?? '' },
+    rebuilds: n.rebuilds ?? [],
+    refresh_on_schedule: n.refresh_on_schedule ?? [],
+    warehouse: {
+      checked: n.warehouse?.checked ?? false,
+      completeness: n.warehouse?.completeness ?? '',
+      outside_continuo: n.warehouse?.outside_continuo ?? [],
+    },
+  };
+}
+
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 // columnChange words what the release does to the seed's columns, or says the
@@ -22,7 +39,7 @@ function noticeText(n: ReleaseNotice, warehouseCheckExpected: boolean): string {
   const rebuilds = n.rebuilds.length > 0
     ? ` and, in the same run, rebuilds the ${n.rebuilds.length} ${plural(n.rebuilds.length, 'view that reads', 'views that read')} it: ${n.rebuilds.map((r) => r.node_id).join(', ')}`
     : '';
-  const sentences = [`Seed reload: ${n.node_id} ${columnChange(n)} (${n.load.reason})${rebuilds}.`];
+  const sentences = [`Seed reload: ${n.node_id} ${columnChange(n)}${n.load.reason ? ` (${n.load.reason})` : ''}${rebuilds}.`];
 
   for (const r of n.refresh_on_schedule) {
     sentences.push(`${r.node_id} (${r.materialized}) refreshes on its own schedule, ${r.schedule}.`);
@@ -47,7 +64,7 @@ function noticeText(n: ReleaseNotice, warehouseCheckExpected: boolean): string {
 }
 
 // SeedReloadNotices draws one warning strip per seed reload notice of a
-// release, and nothing for a release with none. seedBuildRan says the
+// release, and nothing for a release with none. A notice naming no node is skipped. seedBuildRan says the
 // release's seed-build stage has finished, the point from which an unchecked
 // warehouse is a fact worth stating rather than a stage still to come.
 export default function SeedReloadNotices({ notices, seedBuildRan }: {
@@ -56,7 +73,7 @@ export default function SeedReloadNotices({ notices, seedBuildRan }: {
 }) {
   return (
     <>
-      {(notices ?? []).map((n) => (
+      {(notices ?? []).filter((n) => n.node_id).map(normalize).map((n) => (
         <div key={n.node_id} className="info-strip info-strip--warning">
           <span className="info-strip__icon">⚠</span>
           <span>{noticeText(n, seedBuildRan)}</span>

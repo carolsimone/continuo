@@ -618,7 +618,26 @@ describe('ReleaseDetailPage — seed reload notices', () => {
     const { container } = renderPage('/releases/rel-a1b2c3d-201');
     await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
     expect(strips(container)).toEqual([]);
+  });
+
+  it('draws no strip for a release whose notices list is empty', async () => {
     mockRelease({ ...promotedRelease, notices: [] });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
+    expect(strips(container)).toEqual([]);
+  });
+
+  it('draws a notice that lacks its lists and skips one that names no node', async () => {
+    mockRelease({
+      ...promotedRelease,
+      notices: [
+        { kind: 'seed_reload', node_id: 'a.bare', change: 'columns', prediction: 'reloads' },
+        { kind: 'seed_reload', change: 'rows', prediction: 'reloads' },
+      ],
+    });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: a.bare changes its columns\./);
+    expect(strips(container)).toHaveLength(1);
   });
 });
 
@@ -653,5 +672,69 @@ describe('ReleaseDetailPage — the runs a promotion started', () => {
     renderPage('/releases/rel-a1b2c3d-201');
     await waitFor(() => expect(screen.getByText('rel-a1b2c3d-201')).toBeInTheDocument());
     expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(expect.stringContaining('/api/runs?'), expect.anything());
+  });
+});
+
+describe('ReleaseRunsPanel — polling', () => {
+  const run = (status: string) => ({ run_id: 'r1', kind: 'promote_seed', status, schedule_name: 'promote-seed-5b2e0a1c' });
+
+  // answers[i] is the runs list the i-th read returns; the last repeats.
+  function mockReads(answers: any[][]) {
+    let i = 0;
+    vi.stubGlobal('fetch', vi.fn((url: any) => {
+      const u = String(url);
+      if (u.startsWith('/api/runs')) {
+        const runs = answers[Math.min(i++, answers.length - 1)];
+        return Promise.resolve({ ok: true, json: async () => ({ total_count: runs.length, runs }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => promotedRelease });
+    }));
+  }
+  const reads = () => vi.mocked(fetch).mock.calls.filter(c => String(c[0]).startsWith('/api/runs')).length;
+  const tickFor = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+  beforeEach(() => { vi.useFakeTimers(); });
+
+  it('reads again while the list is empty and shows a run once it exists', async () => {
+    mockReads([[], [run('pending')]]);
+    renderPage('/releases/rel-a1b2c3d-201');
+    await tickFor(0);
+    expect(reads()).toBe(1);
+    expect(screen.queryByRole('link', { name: /Seed reload/ })).toBeNull();
+    await tickFor(5000);
+    expect(screen.getByRole('link', { name: /Seed reload/ })).toHaveAttribute('href', '/run/r1');
+  });
+
+  it('keeps reading while a run is active and stops once every run is terminal', async () => {
+    mockReads([[run('running')], [run('running')], [run('succeeded')]]);
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await tickFor(0);
+    expect(container.querySelector('tbody .pill-sm--running')).not.toBeNull();
+    await tickFor(5000);
+    expect(reads()).toBe(2);
+    await tickFor(5000);
+    expect(reads()).toBe(3);
+    expect(container.querySelector('tbody .pill-sm--succeeded')).not.toBeNull();
+    expect(container.querySelector('tbody .pill-sm--running')).toBeNull();
+    await tickFor(60000);
+    expect(reads()).toBe(3);
+  });
+
+  it('stops reading after a bounded window while the list stays empty', async () => {
+    mockReads([[]]);
+    renderPage('/releases/rel-a1b2c3d-201');
+    await tickFor(0);
+    await tickFor(60000);
+    expect(reads()).toBe(6);
+  });
+
+  it('stops reading when the page goes away', async () => {
+    mockReads([[run('running')]]);
+    const { unmount } = renderPage('/releases/rel-a1b2c3d-201');
+    await tickFor(0);
+    unmount();
+    const before = reads();
+    await tickFor(30000);
+    expect(reads()).toBe(before);
   });
 });
